@@ -2460,20 +2460,54 @@ impl Import {
         self.import_record_index == u32::MAX
     }
 
-    pub fn import_record_loader(&self) -> Option<crate::Loader> {
+    /// The `with: { ... }` (or `assert: { ... }`) object literal of the
+    /// `import()` options, when the options are an object literal.
+    fn import_attributes_object(&self) -> Option<StoreRef<Object>> {
         let crate::ExprData::EObject(obj) = &self.options.data else {
             return None;
         };
         let with = Object::get(obj, b"with").or_else(|| Object::get(obj, b"assert"))?;
-        let crate::ExprData::EObject(with_obj) = &with.data else {
+        let crate::ExprData::EObject(with_obj) = with.data else {
             return None;
         };
-        let str_ = Object::get(with_obj, b"type")?.data.as_e_string()?;
+        Some(with_obj)
+    }
+
+    /// The import attributes of `import(path, { with: { key: "value" } })`,
+    /// in source order. `None` when the `with` object is not a plain object
+    /// literal of string-literal keys and values.
+    pub fn import_record_attributes<'b>(
+        &self,
+        bump: &'b Bump,
+    ) -> Option<&'b [crate::ImportAttribute]> {
+        let with_obj = self.import_attributes_object()?;
+        let mut attributes: Vec<crate::ImportAttribute> = Vec::new();
+        for prop in with_obj.properties.slice().iter() {
+            if prop.kind != G::PropertyKind::Normal
+                || prop.flags.contains(crate::flags::Property::IsComputed)
+            {
+                return None;
+            }
+            let mut key_str = prop.key?.data.as_e_string()?;
+            let mut value_str = prop.value?.data.as_e_string()?;
+            attributes.push(crate::ImportAttribute {
+                // SAFETY: `bump` is the parser arena, which outlives the import
+                // record that stores these slices.
+                key: unsafe { bun_ptr::detach_lifetime(key_str.slice(bump)) },
+                value: unsafe { bun_ptr::detach_lifetime(value_str.slice(bump)) },
+            });
+        }
+        Some(bump.alloc_slice_copy(&attributes))
+    }
+
+    pub fn import_record_loader(&self) -> Option<crate::Loader> {
+        let with_obj = self.import_attributes_object()?;
+        let str_ = Object::get(&with_obj, b"type")?.data.as_e_string()?;
 
         if !str_.is_utf16 {
             if let Some(loader) = crate::Loader::from_string(&str_.data) {
                 if loader == crate::Loader::Sqlite {
-                    let Some(embed) = Object::get(with_obj, b"embed") else {
+                    let Some(embed) = Object::get(&with_obj, b"embed") else {
                         return Some(loader);
                     };
                     let Some(embed_str) = embed.data.as_e_string() else {

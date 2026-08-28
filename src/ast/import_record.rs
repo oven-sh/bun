@@ -19,6 +19,10 @@ pub struct ImportRecord {
     pub tag: Tag,
     pub loader: Option<Loader>,
 
+    /// The `with { ... }` (or legacy `assert { ... }`) clause as written, in
+    /// source order. Empty when the import has none. Arena-owned like `path`.
+    pub attributes: &'static [ImportAttribute],
+
     pub source_index: Index,
 
     /// The original import specifier as written in source code (e.g., "./foo.js").
@@ -97,6 +101,52 @@ bitflags::bitflags! {
 }
 
 pub type List<'a> = bun_alloc::ArenaVec<'a, ImportRecord>;
+
+/// One `key: "value"` entry of an import attributes clause. Both sides are
+/// UTF-8; the key is an identifier or a string literal in the source.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ImportAttribute {
+    pub key: &'static [u8],
+    pub value: &'static [u8],
+}
+
+impl ImportRecord {
+    /// The value of the import's `type` attribute, if it has one.
+    pub fn type_attribute(&self) -> Option<&'static [u8]> {
+        self.attributes
+            .iter()
+            .find(|attr| attr.key == b"type")
+            .map(|attr| attr.value)
+    }
+
+    /// Writes the module-graph key of `path_text` imported with `attributes`
+    /// into `buf` and returns it. It is the path alone when there are no
+    /// attributes; otherwise the path followed by every `key`/`value` pair,
+    /// length-prefixed and ordered by key, so the same file imported with
+    /// different attributes is a different module (the runtime's module map
+    /// and esbuild both key on the attributes too).
+    pub fn module_graph_key<'k>(
+        path_text: &'k [u8],
+        attributes: &[ImportAttribute],
+        buf: &'k mut Vec<u8>,
+    ) -> &'k [u8] {
+        if attributes.is_empty() {
+            return path_text;
+        }
+        use std::io::Write as _;
+        let mut sorted: Vec<&ImportAttribute> = attributes.iter().collect();
+        sorted.sort_by_key(|attr| attr.key);
+        buf.clear();
+        buf.extend_from_slice(path_text);
+        for attr in sorted {
+            write!(buf, "\0{}:", attr.key.len()).expect("unreachable");
+            buf.extend_from_slice(attr.key);
+            write!(buf, "\0{}:", attr.value.len()).expect("unreachable");
+            buf.extend_from_slice(attr.value);
+        }
+        buf
+    }
+}
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]

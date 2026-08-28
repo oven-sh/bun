@@ -801,6 +801,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
             // are required); spell out the remaining defaults explicitly.
             tag: Default::default(),
             loader: None,
+            attributes: &[],
             source_index: Default::default(),
             original_path: b"",
             flags: Default::default(),
@@ -3112,6 +3113,7 @@ impl<'a> Parser<'a> {
                 },
                 tag: Default::default(),
                 loader: None,
+                attributes: &[],
                 source_index: Default::default(),
                 original_path: b"",
                 flags: Default::default(),

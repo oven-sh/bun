@@ -1319,6 +1319,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             is_macro: false,
             import_tag: bun_ast::ImportRecordTag::None,
             loader: None,
+            attributes: &[],
         };
 
         if p.lexer.token == T::TNoSubstitutionTemplateLiteral {
@@ -1327,101 +1328,94 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.expect(T::TStringLiteral)?;
         }
 
-        if !p.lexer.has_newline_before
-            && (
-                // Import Assertions are deprecated.
-                // Import Attributes are the new way to do this.
-                // But some code may still use "assert"
-                // We support both and treat them identically.
-                // Once Prettier & TypeScript support import attributes, we will add runtime support
-                p.lexer.is_contextual_keyword(b"assert") || p.lexer.token == T::TWith
-            )
+        // `with { ... }` import attributes, or the deprecated `assert { ... }`
+        // import assertions, which Bun treats the same way. `with` is a keyword
+        // so a newline may precede it; `assert` is a contextual keyword and the
+        // grammar forbids a newline before it.
+        if p.lexer.token == T::TWith
+            || (!p.lexer.has_newline_before && p.lexer.is_contextual_keyword(b"assert"))
         {
             p.lexer.next()?;
             p.lexer.expect(T::TOpenBrace)?;
 
-            #[derive(Copy, Clone, PartialEq, Eq)]
-            enum SupportedAttribute {
-                Type,
-                Embed,
-                BunBakeGraph,
-            }
-
+            let mut attributes: smallvec::SmallVec<[bun_ast::ImportAttribute; 2]> =
+                smallvec::SmallVec::new();
             let mut has_seen_embed_true = false;
 
             while p.lexer.token != T::TCloseBrace {
-                let supported_attribute: Option<SupportedAttribute> = 'brk: {
-                    // Parse the key
-                    if p.lexer.is_identifier_or_keyword() {
-                        if p.lexer.identifier == b"type" {
-                            break 'brk Some(SupportedAttribute::Type);
-                        }
-                        if p.lexer.identifier == b"embed" {
-                            break 'brk Some(SupportedAttribute::Embed);
-                        }
-                        if p.lexer.identifier == b"bunBakeGraph" {
-                            break 'brk Some(SupportedAttribute::BunBakeGraph);
-                        }
-                    } else if p.lexer.token == T::TStringLiteral {
-                        let estr = p.lexer.to_utf8_e_string()?;
-                        let string_literal_text = estr.slice8();
-                        if string_literal_text == b"type" {
-                            break 'brk Some(SupportedAttribute::Type);
-                        }
-                        if string_literal_text == b"embed" {
-                            break 'brk Some(SupportedAttribute::Embed);
-                        }
-                        if string_literal_text == b"bunBakeGraph" {
-                            break 'brk Some(SupportedAttribute::BunBakeGraph);
-                        }
-                    } else {
-                        p.lexer.expect(T::TIdentifier)?;
-                    }
-
-                    break 'brk None;
+                // Parse the key
+                let key_range = p.lexer.range();
+                let key: &'a [u8] = if p.lexer.is_identifier_or_keyword() {
+                    p.lexer.identifier
+                } else if p.lexer.token == T::TStringLiteral {
+                    let estr = p.lexer.to_utf8_e_string()?;
+                    // SAFETY: E::String slice8() is arena-owned for 'a.
+                    unsafe { bun_collections::detach_lifetime(estr.slice8()) }
+                } else {
+                    p.lexer.expect(T::TIdentifier)?;
+                    return Err(Error::SyntaxError);
                 };
-
+                if attributes.iter().any(|attr| attr.key == key) {
+                    p.lexer.add_range_error(
+                        key_range,
+                        format_args!("Duplicate import attribute {}", bun_core::fmt::quote(key)),
+                    )?;
+                }
                 p.lexer.next()?;
                 p.lexer.expect(T::TColon)?;
 
-                p.lexer.expect(T::TStringLiteral)?;
-                let estr = p.lexer.to_utf8_e_string()?;
-                let string_literal_text = estr.slice8();
-                if let Some(attr) = supported_attribute {
-                    match attr {
-                        SupportedAttribute::Type => {
-                            let type_attr = string_literal_text;
-                            if type_attr == b"macro" {
-                                path.is_macro = true;
-                            } else if let Some(loader) = bun_ast::Loader::from_string(type_attr) {
-                                path.loader = Some(loader);
-                                if loader == bun_ast::Loader::Sqlite && has_seen_embed_true {
-                                    path.loader = Some(bun_ast::Loader::SqliteEmbedded);
-                                }
-                            } else {
-                                // unknown loader; consider erroring
+                // Parse the value
+                let value_range = p.lexer.range();
+                let value: &'a [u8] = if p.lexer.token == T::TStringLiteral {
+                    let estr = p.lexer.to_utf8_e_string()?;
+                    // SAFETY: E::String slice8() is arena-owned for 'a.
+                    unsafe { bun_collections::detach_lifetime(estr.slice8()) }
+                } else {
+                    p.lexer.expect(T::TStringLiteral)?;
+                    return Err(Error::SyntaxError);
+                };
+                p.lexer.next()?;
+
+                attributes.push(bun_ast::ImportAttribute {
+                    // SAFETY: arena-owned for 'a; the record that stores these
+                    // lives in the same arena.
+                    key: unsafe { bun_collections::detach_lifetime(key) },
+                    value: unsafe { bun_collections::detach_lifetime(value) },
+                });
+
+                match key {
+                    b"type" => {
+                        if value == b"macro" {
+                            path.is_macro = true;
+                        } else if let Some(loader) = bun_ast::Loader::from_string(value) {
+                            path.loader = Some(loader);
+                            if loader == bun_ast::Loader::Sqlite && has_seen_embed_true {
+                                path.loader = Some(bun_ast::Loader::SqliteEmbedded);
                             }
                         }
-                        SupportedAttribute::Embed => {
-                            if string_literal_text == b"true" {
-                                has_seen_embed_true = true;
-                                if path.loader == Some(bun_ast::Loader::Sqlite) {
-                                    path.loader = Some(bun_ast::Loader::SqliteEmbedded);
-                                }
-                            }
-                        }
-                        SupportedAttribute::BunBakeGraph => {
-                            if string_literal_text == b"ssr" {
-                                path.import_tag = bun_ast::ImportRecordTag::BakeResolveToSsrGraph;
-                            } else {
-                                let r = p.lexer.range();
-                                p.lexer.add_range_error(
-                                    r,
-                                    format_args!("'bunBakeGraph' can only be set to 'ssr'"),
-                                )?;
+                        // A `type` Bun has no loader for stays on the record. The
+                        // bundler and the module loader report it when they load
+                        // the file, so an external import keeps it verbatim.
+                    }
+                    b"embed" => {
+                        if value == b"true" {
+                            has_seen_embed_true = true;
+                            if path.loader == Some(bun_ast::Loader::Sqlite) {
+                                path.loader = Some(bun_ast::Loader::SqliteEmbedded);
                             }
                         }
                     }
+                    b"bunBakeGraph" => {
+                        if value == b"ssr" {
+                            path.import_tag = bun_ast::ImportRecordTag::BakeResolveToSsrGraph;
+                        } else {
+                            p.lexer.add_range_error(
+                                value_range,
+                                format_args!("'bunBakeGraph' can only be set to 'ssr'"),
+                            )?;
+                        }
+                    }
+                    _ => {}
                 }
 
                 if p.lexer.token != T::TComma {
@@ -1432,6 +1426,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             p.lexer.expect(T::TCloseBrace)?;
+            path.attributes = p.arena.alloc_slice_copy(&attributes);
         }
 
         Ok(path)

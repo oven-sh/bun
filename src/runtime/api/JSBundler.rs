@@ -1157,7 +1157,7 @@ pub mod js_bundler {
                         global_this,
                         "loader",
                         &options::LOADER_API_NAMES,
-                        "\"js\", \"jsx\", \"ts\", \"tsx\", \"css\", \"file\", \"json\", \"toml\", \"wasm\", \"napi\", \"base64\", \"dataurl\", \"text\", \"html\"",
+                        "\"js\", \"jsx\", \"ts\", \"tsx\", \"css\", \"file\", \"json\", \"toml\", \"wasm\", \"napi\", \"base64\", \"dataurl\", \"text\", \"bytes\", \"html\"",
                     )?);
                     loader_names.push(prop.to_owned_slice().into_boxed_slice());
                 }

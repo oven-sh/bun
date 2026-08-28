@@ -991,6 +991,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.import_records.items_mut()[import_record_index as usize].loader = Some(loader);
             }
 
+            self.import_records.items_mut()[import_record_index as usize].attributes =
+                state.import_attributes;
+
             self.import_records.items_mut()[import_record_index as usize]
                 .flags
                 .set(
@@ -3865,7 +3868,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             item_refs.shrink_and_free(stmt.items.len() + usize::from(stmt.default_name.is_some()));
         }
 
-        if path.import_tag != bun_ast::ImportRecordTag::None || path.loader.is_some() {
+        if !path.attributes.is_empty() {
             self.validate_and_set_import_type(&path, &mut stmt)?;
         }
 
@@ -3878,13 +3881,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     fn validate_and_set_import_type(
         &mut self,
-        path: &ParsedPath,
+        path: &ParsedPath<'a>,
         stmt: &mut S::Import,
     ) -> Result<(), crate::Error> {
+        self.set_import_record_attributes(stmt.import_record_index, path);
         if let Some(loader) = path.loader {
-            self.import_records.items_mut()[stmt.import_record_index as usize].loader =
-                Some(loader);
-
             if loader == options::Loader::Sqlite || loader == options::Loader::SqliteEmbedded {
                 // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
                 for item in stmt.items.iter() {
@@ -3899,7 +3900,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         break;
                     }
                 }
-            } else if loader == options::Loader::File || loader == options::Loader::Text {
+            } else if matches!(
+                loader,
+                options::Loader::File | options::Loader::Text | options::Loader::Bytes
+            ) {
                 // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
                 for item in stmt.items.iter() {
                     // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
@@ -3913,11 +3917,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
             }
-        } else if path.import_tag == bun_ast::ImportRecordTag::BakeResolveToSsrGraph {
-            self.import_records.items_mut()[stmt.import_record_index as usize].tag =
-                path.import_tag;
         }
         Ok(())
+    }
+
+    /// Copies the parsed `with { ... }` clause onto the import record.
+    pub(crate) fn set_import_record_attributes(
+        &mut self,
+        import_record_index: u32,
+        path: &ParsedPath<'a>,
+    ) {
+        let record = &mut self.import_records.items_mut()[import_record_index as usize];
+        // SAFETY: arena-owned for 'a, the same arena that owns the record's path.
+        record.attributes = unsafe { bun_collections::detach_lifetime(path.attributes) };
+        record.loader = path.loader;
+        if path.import_tag == bun_ast::ImportRecordTag::BakeResolveToSsrGraph {
+            record.tag = path.import_tag;
+        }
     }
 
     pub(crate) fn create_default_name(&mut self, loc: bun_ast::Loc) -> js_ast::LocRef {
@@ -4659,6 +4675,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             path,
             tag: bun_ast::ImportRecordTag::None,
             loader: None,
+            attributes: &[],
             source_index: bun_ast::Index::INVALID,
             original_path: b"",
             flags: bun_ast::ImportRecordFlags::empty(),

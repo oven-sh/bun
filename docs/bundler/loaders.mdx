@@ -19,6 +19,8 @@ import my_toml from "./my_file" with { type: "toml" };
 const { default: my_toml } = await import("./my_file", { with: { type: "toml" } });
 ```
 
+The same file imported with different `type` attributes is a different module each time. An import that the bundler leaves in the output, such as an external package or any import under `--no-bundle`, keeps its `with { ... }` clause as written for every target.
+
 ## Built-in loaders
 
 ### `js`
@@ -310,6 +312,21 @@ export default "Hello, world!";
 ```
 
 </CodeGroup>
+
+---
+
+### `bytes`
+
+**Bytes loader.** Not the default for any extension. Select it with the `type` import attribute.
+
+Bun reads the file and returns its bytes as a `Uint8Array`.
+
+```js
+import bytes from "./model.bin" with { type: "bytes" };
+console.log(bytes instanceof Uint8Array); // => true
+```
+
+When the file is referenced during a build, Bun inlines the contents into the bundle as base64 and decodes it when the module runs. A standalone executable (`bun build --compile`) embeds the raw bytes instead.
 
 ---
 

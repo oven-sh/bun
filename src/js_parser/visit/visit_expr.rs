@@ -1822,6 +1822,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 import_options: e_.options,
                 loc: e_.expr.loc,
                 import_loader: e_.import_record_loader(),
+                // SAFETY: parser arena slices outlive the import record.
+                import_attributes: unsafe {
+                    bun_collections::detach_lifetime(
+                        e_.import_record_attributes(p.arena).unwrap_or(&[]),
+                    )
+                },
                 ..Default::default()
             };
 

@@ -3385,6 +3385,58 @@ fn transpile_source_code_inner(
         }
 
         // ────────────────────────────────────────────────────────────────────
+        // `with { type: "bytes" }` — the file's bytes as a `Uint8Array`.
+        // ────────────────────────────────────────────────────────────────────
+        L::Bytes => {
+            let owned: Vec<u8>;
+            let bytes: &[u8] = if let Some(source) = args.virtual_source {
+                &source.contents
+            } else {
+                use bun_sys_jsc::ErrorJsc as _;
+                let file = match bun_sys::File::openat(
+                    bun_sys::Fd::cwd(),
+                    path.text,
+                    bun_sys::O::RDONLY,
+                    0,
+                ) {
+                    Ok(file) => file,
+                    Err(err) => {
+                        return Err(global_object.throw_value(err.to_js(global_object)?).into());
+                    }
+                };
+                owned = match file.read_to_end() {
+                    Ok(bytes) => bytes,
+                    Err(err) => {
+                        return Err(global_object.throw_value(err.to_js(global_object)?).into());
+                    }
+                };
+                // The watcher takes the fd when it adopts the file; `file`
+                // closes it otherwise.
+                let mut should_close = true;
+                maybe_watch_file(
+                    jsc_vm,
+                    &mut should_close,
+                    file.handle(),
+                    false,
+                    path,
+                    bun_watcher::Watcher::get_hash(path.text),
+                    None,
+                );
+                if !should_close {
+                    let _adopted_by_watcher = file.into_raw();
+                }
+                &owned
+            };
+            use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
+            Ok(ResolvedSource {
+                jsvalue_for_export: bun_jsc::ArrayBuffer::create_uint8_array(global_object, bytes)?,
+                source_url: input_specifier.create_if_different(path.text),
+                tag: ResolvedSourceTag::ExportDefaultObject,
+                ..Default::default()
+            })
+        }
+
+        // ────────────────────────────────────────────────────────────────────
         // Everything else — file loader: `export default <path>`.
         // ────────────────────────────────────────────────────────────────────
         _ => {
@@ -3781,6 +3833,29 @@ export default db;
             });
         }
 
+        if file.loader == Loader::Bytes {
+            // A `with { type: "bytes" }` import the bundler embedded as an asset
+            // (`Loader::Bytes` arm of `ParseTask`): the section holds the raw
+            // bytes, read back through the `/$bunfs/` virtual root like the
+            // sqlite shim above.
+            // CommonJS, in the wrapped form `JSCommonJSModule::evaluate` expects,
+            // so that the bundler's `require("<bunfs path>")` gets the array
+            // itself rather than a module namespace.
+            const BYTES_MODULE_SOURCE_STANDALONE: &[u8] = b"\
+// @bun @bun-cjs
+(function(exports, require, module, __filename, __dirname) {
+const buffer = require('node:fs').readFileSync(__filename);
+module.exports = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+})
+";
+            return Some(ResolvedSource {
+                source_code: bun_core::String::static_(BYTES_MODULE_SOURCE_STANDALONE),
+                source_url: specifier.clone(),
+                is_commonjs_module: true,
+                ..ResolvedSource::default()
+            });
+        }
+
         // SAFETY: `file.module_info`/`file.bytecode` are live subranges of
         // the embedded section (set in `Graph::from_bytes`).
         let (module_info, bytecode) = unsafe { (&*file.module_info, &*file.bytecode) };
@@ -3854,6 +3929,7 @@ fn force_loader_from_api_u8(api_loader: u8) -> Option<Loader> {
         20 => Some(L::Json5),
         21 => Some(L::Md),
         22 => Some(L::Xml),
+        23 => Some(L::Bytes),
         // 254 = `_none`; everything else is open-tail.
         _ => None,
     }
@@ -4047,9 +4123,12 @@ unsafe fn get_loader_and_virtual_source<'a>(
         loader = Some(Loader::Text);
     }
     if let Some(attr_str) = type_attribute_str {
-        if let Some(attr_loader) = Loader::from_string(attr_str) {
-            loader = Some(attr_loader);
-        }
+        // JSC accepts any `type` value and hands it here; one that names no
+        // loader is an error, as in Node (ERR_IMPORT_ATTRIBUTE_UNSUPPORTED).
+        let Some(attr_loader) = Loader::from_string(attr_str) else {
+            return Err(crate::Error::UnsupportedImportAttributeType);
+        };
+        loader = Some(attr_loader);
     }
 
     // SAFETY: per fn contract.
@@ -4195,6 +4274,19 @@ pub unsafe extern "C" fn Bun__transpileFile(
         )
     } {
         Ok(lr) => lr,
+        Err(crate::Error::UnsupportedImportAttributeType) => {
+            let js = global
+                .err(
+                    bun_jsc::ErrCode::ERR_IMPORT_ATTRIBUTE_UNSUPPORTED,
+                    format_args!(
+                        "Importing with a type attribute of {} is not supported",
+                        bun_core::fmt::quote(type_attribute_str.unwrap_or_default())
+                    ),
+                )
+                .to_js();
+            *ret = ErrorableResolvedSource::err(js);
+            return ptr::null_mut();
+        }
         Err(_) => {
             let js = global
                 .err(

@@ -692,6 +692,8 @@ pub struct TransposeState {
     pub(crate) loc: bun_ast::Loc,
     pub(crate) import_record_tag: Option<bun_ast::ImportRecordTag>,
     pub(crate) import_loader: Option<bun_ast::Loader>,
+    /// The entries of a `{ with: { ... } }` options object literal.
+    pub(crate) import_attributes: &'static [bun_ast::ImportAttribute],
     pub(crate) import_options: Expr,
 }
 
@@ -704,6 +706,7 @@ impl Default for TransposeState {
             loc: bun_ast::Loc::EMPTY,
             import_record_tag: None,
             import_loader: None,
+            import_attributes: &[],
             import_options: Expr::EMPTY,
         }
     }
@@ -1050,6 +1053,8 @@ pub struct ParsedPath<'a> {
     pub(crate) is_macro: bool,
     pub(crate) import_tag: bun_ast::ImportRecordTag,
     pub(crate) loader: Option<bun_ast::Loader>,
+    /// Every `with { ... }` entry, in source order.
+    pub(crate) attributes: &'a [bun_ast::ImportAttribute],
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

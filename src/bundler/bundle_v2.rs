@@ -2349,6 +2349,13 @@ pub mod bv2_impl {
             let transpiler: *mut Transpiler<'a> = self.transpiler_for_target(target);
             let source_dir =
                 Fs::PathName::init(&import_record.source_file).dir_with_trailing_slash();
+            let key_attributes: &'static [bun_ast::ImportAttribute] = {
+                let record: &ImportRecord = &self.graph.ast.items_import_records()
+                    [import_record.importer_source_index as usize]
+                    .as_slice()[import_record.import_record_index as usize];
+                self.module_graph_key_attributes(record)
+            };
+            let mut module_key_buf: Vec<u8> = Vec::new();
 
             // Check the FileMap first for in-memory files
             if let Some(file_map) = self.file_map {
@@ -2359,6 +2366,11 @@ pub mod bv2_impl {
                 ) {
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
+                    let module_key = ImportRecord::module_graph_key(
+                        path_primary.text,
+                        key_attributes,
+                        &mut module_key_buf,
+                    );
                     // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
                     // `self.graph`; capture the slot as `*mut u32` so subsequent `self.*` calls
                     // type-check. SAFETY: `path_to_source_index_map(target)` is not mutated again
@@ -2366,7 +2378,7 @@ pub mod bv2_impl {
                     let (found_existing, value_ptr): (bool, *mut u32) = {
                         let entry = self
                             .path_to_source_index_map(target)
-                            .get_or_put(path_primary.text)
+                            .get_or_put(module_key)
                             .expect("oom");
                         (
                             entry.found_existing,
@@ -2607,9 +2619,11 @@ pub mod bv2_impl {
             path.assert_pretty_is_valid();
             path.assert_file_path_is_absolute();
 
+            let module_key =
+                ImportRecord::module_graph_key(path.text, key_attributes, &mut module_key_buf);
             // borrowck: get-then-put (instead of a single get-or-put) so the map
             // borrow doesn't span `enqueue_parse_task` (which needs `&mut self`).
-            if let Some(existing) = self.path_to_source_index_map(target).get(path.text) {
+            if let Some(existing) = self.path_to_source_index_map(target).get(module_key) {
                 out_source_index = Some(Index::init(existing));
             } else {
                 path = self
@@ -2649,7 +2663,7 @@ pub mod bv2_impl {
                     )
                     .expect("oom");
                 self.path_to_source_index_map(target)
-                    .put(path.text, idx)
+                    .put(module_key, idx)
                     .expect("oom");
                 out_source_index = Some(Index::init(idx));
 
@@ -2669,7 +2683,7 @@ pub mod bv2_impl {
                 if self.transpiler.options.server_components && !loader.is_javascript_like() {
                     // reshaped for borrowck — cannot hold two `&mut` into
                     // `self.graph` simultaneously, so re-derive the map per insert.
-                    let key_text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
+                    let key_text: Box<[u8]> = module_key.to_vec().into_boxed_slice();
                     let main_target = self.transpiler.options.target;
                     let separate_ssr = self
                         .framework
@@ -4337,34 +4351,35 @@ pub mod bv2_impl {
                     if !key.is_empty() {
                         let loader = loaders[index];
                         let target = targets[index];
-                        let mut template: options::PathTemplate = if loader == Loader::Text {
-                            // Text modules ignore `--asset-naming`: without `[hash]`
-                            // two same-named files would share one path.
-                            options::PathTemplate::ASSET.into()
-                        } else {
-                            let mut template: options::PathTemplate =
-                                if self.graph.html_imports.server_source_indices.len() != 0
-                                    && self.transpiler.options.asset_naming.is_empty()
-                                {
-                                    options::PathTemplate::ASSET_WITH_TARGET.into()
-                                } else {
-                                    options::PathTemplate::ASSET.into()
-                                };
+                        let mut template: options::PathTemplate =
+                            if matches!(loader, Loader::Text | Loader::Bytes) {
+                                // Text and bytes modules ignore `--asset-naming`: without `[hash]`
+                                // two same-named files would share one path.
+                                options::PathTemplate::ASSET.into()
+                            } else {
+                                let mut template: options::PathTemplate =
+                                    if self.graph.html_imports.server_source_indices.len() != 0
+                                        && self.transpiler.options.asset_naming.is_empty()
+                                    {
+                                        options::PathTemplate::ASSET_WITH_TARGET.into()
+                                    } else {
+                                        options::PathTemplate::ASSET.into()
+                                    };
 
-                            // SAFETY: see `self_ptr` note above — `transpiler_for_target` needs
-                            // `&mut self` only to pick between two stored `*mut Transpiler`s; it
-                            // never touches `graph.input_files`.
-                            let asset_naming = unsafe {
-                                &(*self_ptr)
-                                    .transpiler_for_target(target)
-                                    .options
-                                    .asset_naming
+                                // SAFETY: see `self_ptr` note above — `transpiler_for_target` needs
+                                // `&mut self` only to pick between two stored `*mut Transpiler`s; it
+                                // never touches `graph.input_files`.
+                                let asset_naming = unsafe {
+                                    &(*self_ptr)
+                                        .transpiler_for_target(target)
+                                        .options
+                                        .asset_naming
+                                };
+                                if !asset_naming.is_empty() {
+                                    template.data.clone_from(asset_naming);
+                                }
+                                template
                             };
-                            if !asset_naming.is_empty() {
-                                template.data.clone_from(asset_naming);
-                            }
-                            template
-                        };
 
                         let source = &mut sources[index];
 
@@ -6136,6 +6151,50 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
+        /// The attributes that take part in a record's module-graph key. The
+        /// dev server's incremental graph is keyed by path alone, so it keeps
+        /// one module per path.
+        pub(crate) fn module_graph_key_attributes(
+            &self,
+            import_record: &ImportRecord,
+        ) -> &'static [bun_ast::ImportAttribute] {
+            if self.dev_server.is_some() {
+                &[]
+            } else {
+                import_record.attributes
+            }
+        }
+
+        /// Reports a `with { type: "..." }` whose value names no loader. Only
+        /// for a file the bundler loads itself: an external import keeps the
+        /// clause verbatim for the target runtime to interpret.
+        fn has_unsupported_type_attribute(
+            &mut self,
+            source: &bun_ast::Source,
+            import_record: &ImportRecord,
+            bake_graph: bake::Graph,
+        ) -> bool {
+            if import_record.loader.is_some() {
+                return false;
+            }
+            let Some(type_value) = import_record.type_attribute() else {
+                return false;
+            };
+            if type_value == b"macro" {
+                return false;
+            }
+            self.log_for_resolution_failures(source.path.text, bake_graph)
+                .add_range_error_fmt(
+                    Some(source),
+                    import_record.range,
+                    format_args!(
+                        "Importing with a type attribute of {} is not supported",
+                        bun_core::fmt::quote(type_value)
+                    ),
+                );
+            true
+        }
+
         /// Resolve all unresolved import records for a module, or only `ctx.only_records`.
         /// Skips records that are already resolved (valid source_index), unused, or internal.
         /// Returns a resolve queue of new modules to schedule, plus any fatal error.
@@ -6188,6 +6247,7 @@ pub mod bv2_impl {
             resolve_queue.reserve(estimated_resolve_queue_count);
 
             let mut last_error: Option<Error> = None;
+            let mut module_key_buf: Vec<u8> = Vec::new();
 
             'outer: for (i, import_record) in ctx.import_records.iter_mut().enumerate() {
                 if !only_selected_record(only_records, i) {
@@ -6371,6 +6431,9 @@ pub mod bv2_impl {
                     {
                         let mut file_map_result = _file_map_result;
                         let mut path_primary = file_map_result.path_pair.primary;
+                        if self.has_unsupported_type_attribute(source, import_record, bake_graph) {
+                            continue;
+                        }
                         let import_record_loader = import_record.loader.unwrap_or_else(|| {
                             Fs::Path::init(path_primary.text)
                                 .loader(&transpiler.options.loaders)
@@ -6378,15 +6441,17 @@ pub mod bv2_impl {
                         });
                         import_record.loader = Some(import_record_loader);
 
-                        if let Some(id) =
-                            self.path_to_source_index_map(target).get(path_primary.text)
-                        {
+                        let module_key = ImportRecord::module_graph_key(
+                            path_primary.text,
+                            self.module_graph_key_attributes(import_record),
+                            &mut module_key_buf,
+                        );
+                        if let Some(id) = self.path_to_source_index_map(target).get(module_key) {
                             import_record.source_index = Index::init(id);
                             continue;
                         }
 
-                        let resolve_entry =
-                            resolve_queue.get_or_put(path_primary.text).expect("oom");
+                        let resolve_entry = resolve_queue.get_or_put(module_key).expect("oom");
                         if resolve_entry.found_existing {
                             // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
                             import_record.path =
@@ -6717,6 +6782,10 @@ pub mod bv2_impl {
                     }
                 }
 
+                if self.has_unsupported_type_attribute(source, import_record, bake_graph) {
+                    continue;
+                }
+
                 let import_record_loader = 'brk: {
                     let resolved_loader = import_record.loader.unwrap_or_else(|| {
                         path.loader(&transpiler.options.loaders)
@@ -6744,7 +6813,12 @@ pub mod bv2_impl {
                     && target.is_server_side()
                     && self.dev_server.is_none();
 
-                if let Some(id) = self.path_to_source_index_map(target).get(path.text) {
+                let module_key = ImportRecord::module_graph_key(
+                    path.text,
+                    self.module_graph_key_attributes(import_record),
+                    &mut module_key_buf,
+                );
+                if let Some(id) = self.path_to_source_index_map(target).get(module_key) {
                     if self.dev_server.is_some() && loader != Loader::Html {
                         import_record.path =
                             self.graph.input_files.items_source()[id as usize].path;
@@ -6758,7 +6832,7 @@ pub mod bv2_impl {
                     import_record.kind = ImportKind::HtmlManifest;
                 }
 
-                let resolve_entry = resolve_queue.get_or_put(path.text).expect("oom");
+                let resolve_entry = resolve_queue.get_or_put(module_key).expect("oom");
                 if resolve_entry.found_existing {
                     // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
                     import_record.path =
@@ -7011,6 +7085,8 @@ pub mod bv2_impl {
                 drop(value);
             }
 
+            let key_uses_attributes = self.dev_server.is_none();
+            let mut module_key_buf: Vec<u8> = Vec::new();
             // Inlined `self.path_to_source_index_map(ctx.target)` (== `&mut self.graph.build_graphs[target]`)
             // so borrowck sees it as disjoint from `self.graph.input_files` above.
             let path_to_source_index_map = &mut self.graph.build_graphs[ctx.target];
@@ -7018,7 +7094,16 @@ pub mod bv2_impl {
                 if !only_selected_record(ctx.only_records, i) {
                     continue;
                 }
-                if let Some(source_index) = path_to_source_index_map.get_path(&record.path) {
+                let module_key = ImportRecord::module_graph_key(
+                    record.path.text,
+                    if key_uses_attributes {
+                        record.attributes
+                    } else {
+                        &[]
+                    },
+                    &mut module_key_buf,
+                );
+                if let Some(source_index) = path_to_source_index_map.get(module_key) {
                     if save_import_record_source_index
                         || input_file_loaders[source_index as usize].is_css()
                     {
@@ -7282,7 +7367,7 @@ pub mod bv2_impl {
                         .items_content_hash_for_additional_file_mut()[result_source_index] =
                         result.content_hash_for_additional_file;
                     if !result.unique_key_for_additional_file.is_empty()
-                        && result.loader == Loader::Text
+                        && matches!(result.loader, Loader::Text | Loader::Bytes)
                     {
                         // `process_resolve_queue` only counts `should_copy_for_bundling()`
                         // loaders, and a zero count skips `process_files_to_copy`.

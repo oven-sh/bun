@@ -160,6 +160,8 @@ pub enum Error {
     AsyncModule,
     #[error("BlobNotFound")]
     BlobNotFound,
+    #[error("UnsupportedImportAttributeType")]
+    UnsupportedImportAttributeType,
     #[error("JSErrorObject")]
     JSErrorObject,
     #[error("InvalidRoutePattern")]
@@ -474,6 +476,7 @@ impl Error {
             Self::UnexpectedPendingResolution => "UnexpectedPendingResolution",
             Self::AsyncModule => "AsyncModule",
             Self::BlobNotFound => "BlobNotFound",
+            Self::UnsupportedImportAttributeType => "UnsupportedImportAttributeType",
             Self::JSErrorObject => "JSErrorObject",
             Self::InvalidRoutePattern => "InvalidRoutePattern",
             Self::InvalidRequest => "InvalidRequest",

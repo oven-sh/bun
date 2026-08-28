@@ -189,6 +189,7 @@ pub static LOADER_API_NAMES: api::Loader = {
     b"html" => api::Loader::html,
     b"md" => api::Loader::md,
     b"markdown" => api::Loader::md,
+    b"bytes" => api::Loader::bytes,
 };
 }
 
@@ -221,6 +222,7 @@ impl LoaderExt for Loader {
             Loader::Text => api::Loader::text,
             Loader::SqliteEmbedded | Loader::Sqlite => api::Loader::sqlite,
             Loader::Md => api::Loader::md,
+            Loader::Bytes => api::Loader::bytes,
         }
     }
 
@@ -249,6 +251,7 @@ impl LoaderExt for Loader {
             api::Loader::sqlite => Loader::Sqlite,
             api::Loader::sqlite_embedded => Loader::SqliteEmbedded,
             api::Loader::md => Loader::Md,
+            api::Loader::bytes => Loader::Bytes,
         }
     }
 }

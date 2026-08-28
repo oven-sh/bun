@@ -973,6 +973,58 @@ pub mod parse_worker {
                 );
                 return Ok(ast);
             }
+            Loader::Bytes => {
+                // `export default __toBytes("<base64>")`. A standalone executable
+                // instead embeds the bytes as an asset that the runtime serves as
+                // a `Uint8Array` with no decoding (`__bun_fetch_builtin_module`),
+                // so there the module becomes `export default require("<bunfs path>")`.
+                let (root, runtime_api_call): (Expr, &'static [u8]) =
+                    if topts.compile_mode.is_executable() && topts.target.is_bun() {
+                        let unique_key = register_embedded_asset(
+                            bump,
+                            source,
+                            unique_key_prefix,
+                            unique_key_for_additional_file,
+                        );
+                        (require_embedded_asset(unique_key), b"")
+                    } else {
+                        let contents: &[u8] = &source.contents;
+                        let encoded: &mut [u8] =
+                            bump.alloc_slice_fill_copy(bun_base64::encode_len(contents), 0u8);
+                        let len = bun_base64::encode(encoded, contents);
+                        let encoded: &[u8] = &encoded[..len];
+                        (
+                            Expr::init(
+                                E::String {
+                                    data: encoded.into(),
+                                    ..Default::default()
+                                },
+                                Loc { start: 0 },
+                            ),
+                            b"__toBytes",
+                        )
+                    };
+                let mut ast = JSAst::init(
+                    js_parser::new_lazy_export_ast(
+                        bump,
+                        &mut topts.define,
+                        opts,
+                        log,
+                        root,
+                        source,
+                        runtime_api_call,
+                    )?
+                    .ok_or(AnyError::ParserError)?,
+                );
+                ast.add_url_for_css(
+                    bump,
+                    source,
+                    None,
+                    None,
+                    topts.compile_mode.is_standalone_html(),
+                );
+                return Ok(ast);
+            }
             Loader::Md => {
                 let html = match bun_md::root::render_to_html(&source.contents) {
                     Ok(h) => h,

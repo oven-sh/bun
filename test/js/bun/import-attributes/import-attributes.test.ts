@@ -1,4 +1,4 @@
-import { bunExe, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import * as path from "path";
 
 const loaders = ["js", "jsx", "ts", "tsx", "json", "jsonc", "toml", "yaml", "text", "sqlite", "file"];
@@ -360,4 +360,118 @@ describe("?raw", () => {
       expect(await fn(question_raw, null, filename + "?raw")).toEqual({ default: code });
     });
   }
+});
+
+// The runtime reads the same `with { ... }` clause the parser keeps on the
+// import record: every form of import carries it, `type` picks the loader, and
+// the module map keys a file by (path, type).
+describe.concurrent("with clause at runtime", () => {
+  async function run(files: Record<string, string | Buffer>, entry = "entry.js") {
+    using dir = tempDir("import-attributes-runtime", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), entry],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("the same file imported with two types is two modules", async () => {
+    expect(
+      await run({
+        "entry.js": `
+          import txt from "./data.json" with { type: "text" };
+          import json from "./data.json" with { type: "json" };
+          import plain from "./data.json";
+          const dyn = await import("./data.json", { with: { type: "text" } });
+          console.log(typeof txt, typeof json, typeof plain, typeof dyn.default, json === plain);
+        `,
+        "data.json": `{"a":1}`,
+      }),
+    ).toEqual({ stdout: "string object object string false\n", stderr: "", exitCode: 0 });
+  });
+
+  test("re-exports carry the clause", async () => {
+    expect(
+      await run({
+        "entry.js": `
+          import { a, b, ns } from "./reexport.js";
+          console.log(a, typeof b, JSON.stringify(ns.default));
+        `,
+        "reexport.js": `
+          export * from "./data.json" with { type: "json" };
+          export { default as b } from "./data.json" with { type: "text" };
+          export * as ns from "./data.json" with { type: "json" };
+        `,
+        "data.json": `{"a":1}`,
+      }),
+    ).toEqual({ stdout: '1 string {"a":1}\n', stderr: "", exitCode: 0 });
+  });
+
+  test("a newline before `with` is allowed and `assert` still works", async () => {
+    expect(
+      await run({
+        "entry.js": `import a from "./data.json"\nwith { type: "text" };\nimport b from "./data.json" assert { type: "json" };\nconsole.log(typeof a, typeof b);\n`,
+        "data.json": `{"a":1}`,
+      }),
+    ).toEqual({ stdout: "string object\n", stderr: "", exitCode: 0 });
+  });
+
+  test("keys other than type are accepted", async () => {
+    expect(
+      await run({
+        "entry.js": `
+          import a from "./data.json" with { type: "json", custom: "thing", "quoted-key": "v" };
+          console.log(JSON.stringify(a));
+        `,
+        "data.json": `{"a":1}`,
+      }),
+    ).toEqual({ stdout: '{"a":1}\n', stderr: "", exitCode: 0 });
+  });
+
+  test("a duplicate key is a syntax error", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "entry.js": `import a from "./data.json" with { type: "json", type: "json" };\nconsole.log(a);\n`,
+      "data.json": `{"a":1}`,
+    });
+    expect(stdout).toBe("");
+    expect(stderr).toContain('Duplicate import attribute "type"');
+    expect(exitCode).toBe(1);
+  });
+
+  test("an unknown type is an error", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "entry.js": `import a from "./data.json" with { type: "nope" };\nconsole.log(a);\n`,
+      "data.json": `{"a":1}`,
+    });
+    expect(stdout).toBe("");
+    expect(stderr).toContain('Importing with a type attribute of "nope" is not supported');
+    expect(stderr).toContain("ERR_IMPORT_ATTRIBUTE_UNSUPPORTED");
+    expect(exitCode).toBe(1);
+  });
+
+  test("type: bytes gives the file's bytes as a Uint8Array", async () => {
+    expect(
+      await run({
+        "entry.js": `
+          import data from "./data.bin" with { type: "bytes" };
+          import empty from "./empty.bin" with { type: "bytes" };
+          const dyn = await import("./data.bin", { with: { type: "bytes" } });
+          console.log(
+            data instanceof Uint8Array,
+            data.constructor === Uint8Array,
+            Array.from(data).join(","),
+            empty.length,
+            dyn.default === data,
+            Array.from(dyn.default).join(","),
+          );
+        `,
+        "data.bin": Buffer.from([1, 2, 3, 4, 5]),
+        "empty.bin": Buffer.alloc(0),
+      }),
+    ).toEqual({ stdout: "true true 1,2,3,4,5 0 true 1,2,3,4,5\n", stderr: "", exitCode: 0 });
+  });
 });

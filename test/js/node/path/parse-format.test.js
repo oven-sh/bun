@@ -214,6 +214,21 @@ describe("path.parse", () => {
 });
 
 describe("path.format", () => {
+  // lib/path.js formatExt() tests `ext[0] === '.'`, an indexed read of whatever was passed, and
+  // then stringifies ext. Results checked against node 26.3.0.
+  test("a non-string ext is indexed, not coerced first", () => {
+    for (const ns of [path.posix, path.win32]) {
+      expect([
+        ns.format({ name: "f", ext: [".txt"] }),
+        ns.format({ name: "f", ext: { 0: "x", toString: () => ".js" } }),
+        ns.format({ name: "f", ext: 42 }),
+        ns.format({ name: "f", ext: ["a"] }),
+        ns.format({ name: "f", ext: "txt" }),
+        ns.format({ name: "f", ext: ".txt" }),
+      ]).toEqual(["f..txt", "f..js", "f.42", "f.a", "f.txt", "f.txt"]);
+    }
+  });
+
   test("formats { dir, name, ext } with a dot-less ext when the result exceeds the platform path limit", async () => {
     // When `base` is absent and `ext` does not start with ".", format() inserts the dot itself.
     // The formatted result must stay correct even when the combined length of dir/name/ext is far

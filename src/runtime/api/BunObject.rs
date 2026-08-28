@@ -1058,7 +1058,7 @@ fn do_open(global_this: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsRe
     // default `OpenOptions` launches the platform's default opener.
     let mut options = OpenOptions::default();
     let mut wait = false;
-    let mut abort_signal: Option<*mut WebCore::AbortSignal> = None;
+    let mut abort_signal: Option<bun_jsc::AbortSignalRef> = None;
     if let Some(opts_value) = arguments.next_eat() {
         if !opts_value.is_undefined_or_null() {
             if !opts_value.is_object() || opts_value.js_type().is_array() {
@@ -1095,15 +1095,15 @@ fn do_open(global_this: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsRe
             // becomes aborted after the launch does not chase the handler.
             if let Some(signal_value) = opts_value.get(global_this, b"signal")? {
                 if !signal_value.is_undefined_or_null() {
-                    if let Some(signal) = WebCore::AbortSignal::from_js(signal_value) {
-                        // `from_js` returns a live FFI handle owned by JS.
-                        // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref`
-                        // is the centralised non-null deref proof.
-                        let sig = WebCore::AbortSignal::opaque_ref(signal);
-                        if let Some(abort_error) = sig.node_abort_error_if_aborted(global_this) {
+                    if let Some(signal) = WebCore::AbortSignal::ref_from_js(signal_value) {
+                        // `AbortSignalRef` (`ExternalShared<AbortSignal>`):
+                        // `Clone` → `ref()`, `Drop` → `unref()`, `Deref` → the
+                        // AbortSignal methods. Holding the ref keeps the
+                        // underlying signal alive until the launch settles.
+                        if let Some(abort_error) = signal.node_abort_error_if_aborted(global_this) {
                             return Err(global_this.throw_value(abort_error));
                         }
-                        abort_signal = Some(sig.ref_());
+                        abort_signal = Some(signal);
                     } else {
                         return Err(global_this.throw_invalid_argument_type_value(
                             b"signal",
@@ -1116,14 +1116,9 @@ fn do_open(global_this: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsRe
         }
     }
 
-    // The signal ref must be released on every path from here (scopeguard).
-    let _signal_guard = scopeguard::guard(abort_signal, |abort_signal| {
-        if let Some(signal) = abort_signal {
-            // SAFETY: ref was taken above under the same opaque_ref proof as
-            // the spawn binding's identical pattern.
-            WebCore::AbortSignal::opaque_ref(signal).unref();
-        }
-    });
+    // The stored `AbortSignalRef` must be released on every path from here;
+    // `Drop` performs the balancing `unref()` (scopeguard).
+    let _signal_guard = scopeguard::guard(abort_signal, drop);
 
     // Build the launch. Errors here are caller-input failures (NUL bytes,
     // empty target, unsupported OS) and reject the promise without ever

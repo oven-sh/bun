@@ -5434,16 +5434,6 @@ impl VirtualMachine {
         false
     }
 
-    /// Reports an uncaught exception through the owning VM's handler; returns `undefined`.
-    pub(crate) fn report_uncaught_exception(
-        global_object: &JSGlobalObject,
-        exception: &Exception,
-    ) -> JSValue {
-        let jsc_vm = global_object.bun_vm().as_mut();
-        let _ = jsc_vm.uncaught_exception(global_object, exception.value(), false);
-        JSValue::UNDEFINED
-    }
-
     /// Note: takes a runtime bool + concrete writer.
     pub(crate) fn print_stack_trace(
         writer: &mut bun_core::io::Writer,

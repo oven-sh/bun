@@ -2610,28 +2610,6 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createValueNotJS(JSC::JSGlobalObje
     return headers;
 }
 
-JSC::EncodedJSValue WebCore__FetchHeaders__createValue(JSC::JSGlobalObject* arg0, StringPointer* arg1, StringPointer* arg2, const EncodedSlice* arg3, uint32_t count)
-{
-    auto throwScope = DECLARE_THROW_SCOPE(arg0->vm());
-    Vector<KeyValuePair<String, String>> pairs;
-    pairs.reserveCapacity(count);
-    EncodedSlice buf = *arg3;
-    for (uint32_t i = 0; i < count; i++) {
-        WTF::String name = Zig::toStringCopy(buf, arg1[i]);
-        WTF::String value = Zig::toStringCopy(buf, arg2[i]);
-        pairs.unsafeAppendWithoutCapacityCheck(KeyValuePair<String, String>(name, value));
-    }
-
-    Ref<WebCore::FetchHeaders> headers = WebCore::FetchHeaders::create();
-    WebCore::propagateException(*arg0, throwScope, headers->fill(WebCore::FetchHeaders::Init(WTF::move(pairs))));
-
-    JSValue value = WebCore::toJSNewlyCreated(arg0, static_cast<Zig::GlobalObject*>(arg0), WTF::move(headers));
-
-    JSFetchHeaders* fetchHeaders = uncheckedDowncast<JSFetchHeaders>(value);
-    fetchHeaders->computeMemoryCost();
-    return JSC::JSValue::encode(fetchHeaders);
-}
-
 void WebCore__FetchHeaders__get_(WebCore::FetchHeaders* headers, const EncodedSlice* arg1, EncodedSlice* arg2, JSC::JSGlobalObject* global)
 {
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());
@@ -5152,12 +5130,6 @@ bool JSC__VM__isTerminationException(JSC::VM* vm, JSC::Exception* exception)
     return vm->isTerminationException(exception);
 }
 
-[[ZIG_EXPORT(nothrow)]]
-bool JSC__VM__hasTerminationRequest(JSC::VM* vm)
-{
-    return vm->hasTerminationRequest();
-}
-
 // The one crossing from the loop-level stop into the exception currency: a nested wait/drain inside a
 // host function learned of a stop and must hand a JsError to its caller, so it throws the VM's
 // TerminationException for real -- what VMTraps::handleTraps(NeedTermination) does. Always leaves it
@@ -6387,16 +6359,6 @@ CPP_DECL size_t WebCore__DOMFormData__count(WebCore::DOMFormData* arg0)
     return arg0->count();
 }
 
-extern "C" void DOMFormData__toQueryString(
-    DOMFormData* formData,
-    void* ctx,
-    void (*callback)(void* ctx, EncodedSlice* encoded))
-{
-    auto str = formData->toURLEncodedString();
-    EncodedSlice encoded = toEncodedSlice(str);
-    callback(ctx, &encoded);
-}
-
 CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__createFromURLQuery(JSC::JSGlobalObject* arg0, const EncodedSlice* arg1)
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(arg0);
@@ -6644,15 +6606,6 @@ CPP_DECL size_t Bun__JSValue__getArrayBufferViewByteOffset(JSC::EncodedJSValue e
 CPP_DECL [[ZIG_EXPORT(nothrow)]] void JSC__SourceProvider__deref(JSC::SourceProvider* provider)
 {
     provider->deref();
-}
-
-CPP_DECL bool Bun__CallFrame__isFromBunMain(JSC::CallFrame* callFrame, JSC::VM* vm)
-{
-    auto source = callFrame->callerSourceOrigin(*vm);
-
-    if (source.isNull())
-        return false;
-    return source.string() == "builtin://bun/main"_s;
 }
 
 CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JSGlobalObject* globalObject, BunString* outSourceURL, unsigned int* outLine, unsigned int* outColumn)

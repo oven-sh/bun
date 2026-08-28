@@ -94,8 +94,9 @@ describe.skipIf(!isLinux)("tls.getCACertificates('system')", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
+    const fingerprints = JSON.parse(stdout);
     expect(exitCode).toBe(0);
-    return JSON.parse(stdout);
+    return fingerprints;
   }
 
   test("reports each system root once", async () => {

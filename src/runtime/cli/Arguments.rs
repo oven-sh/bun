@@ -40,6 +40,21 @@ pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
     Ok(option_loader.to_api())
 }
 
+/// Exit when `source` is not a valid regular expression. Only the validity
+/// matters here: each bundler thread compiles its own copy from `source`
+/// (`RegExpPattern::matches`).
+fn validate_regex_option(flag: &[u8], source: &[u8]) {
+    if RegularExpression::validate(&bun_core::String::from_bytes(source), RegexFlags::None).is_err()
+    {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: {} expects a valid regular expression but received {}",
+            BStr::new(flag),
+            bun_core::fmt::QuotedFormatter { text: source },
+        );
+        Global::exit(1);
+    }
+}
+
 fn resolve_jsx_runtime(s: &[u8]) -> crate::Result<api::JsxRuntime> {
     if s == b"automatic" {
         Ok(api::JsxRuntime::Automatic)
@@ -512,6 +527,15 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!("--minify-identifiers             Minify identifiers"),
         parse_param!(
             "--keep-names                     Preserve original function and class names when minifying"
+        ),
+        parse_param!(
+            "--mangle-props <STR>             Rename properties whose name matches this regex. Unsafe: see docs/bundler/minifier"
+        ),
+        parse_param!(
+            "--reserve-props <STR>            Do not rename properties whose name matches this regex, even if they match --mangle-props"
+        ),
+        parse_param!(
+            "--mangle-quoted                  Also rename properties written as string literals, such as x[\"name\"]"
         ),
         parse_param!(
             "--css-chunking                   Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS"
@@ -2087,6 +2111,24 @@ fn parse_build_command_options(
     ctx.bundler_options.minify_whitespace = minify_flag || args.flag(b"--minify-whitespace");
     ctx.bundler_options.minify_identifiers = minify_flag || args.flag(b"--minify-identifiers");
     ctx.bundler_options.keep_names = args.flag(b"--keep-names");
+
+    if let Some(include) = args.option(b"--mangle-props") {
+        validate_regex_option(b"--mangle-props", include);
+        let mut mangle_props =
+            bun_options_types::MangleProps::new(bun_options_types::RegExpPattern::new(include, 0));
+        if let Some(exclude) = args.option(b"--reserve-props") {
+            validate_regex_option(b"--reserve-props", exclude);
+            mangle_props.exclude = Some(bun_options_types::RegExpPattern::new(exclude, 0));
+        }
+        mangle_props.quoted = args.flag(b"--mangle-quoted");
+        ctx.bundler_options.mangle_props = Some(mangle_props);
+    } else if args.option(b"--reserve-props").is_some() {
+        Output::err_generic("--reserve-props requires --mangle-props", ());
+        Global::crash();
+    } else if args.flag(b"--mangle-quoted") {
+        Output::err_generic("--mangle-quoted requires --mangle-props", ());
+        Global::crash();
+    }
 
     ctx.bundler_options.css_chunking = args.flag(b"--css-chunking");
 

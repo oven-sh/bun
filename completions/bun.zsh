@@ -590,6 +590,9 @@ _bun_build_completion() {
         '--minify-whitespace[Remove unneeded whitespace]' \
         '--minify-syntax[Transform code to use less syntax]' \
         '--minify-identifiers[Shorten variable names]' \
+        '--mangle-props[Rename properties whose name matches this regex. Unsafe: see docs/bundler/minifier]:mangle-props' \
+        '--reserve-props[Do not rename properties whose name matches this regex, even if they match --mangle-props]:reserve-props' \
+        '--mangle-quoted[Also rename properties written as string literals, such as quoted object keys]' \
         '--sourcemap[Generate sourcemaps]: :->sourcemap' \
         '--target[The intended execution environment for the bundle. "browser", "bun" or "node"]: :->target' \
         '--splitting[Whether to enable code splitting (requires --outdir)]' \

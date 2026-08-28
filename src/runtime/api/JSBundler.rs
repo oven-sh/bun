@@ -16,7 +16,9 @@ use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc as _};
 use bun_options_types::compile_target::CompileTarget;
+use bun_options_types::mangle_props::{is_permanently_reserved_prop, regexp_flags};
 use bun_options_types::schema::api; // bun.schema.api
+use bun_options_types::{MangleProps, RegExpPattern};
 use bun_standalone_graph::StandaloneModuleGraph;
 
 // `CompileTarget.fromJS` / `.fromSlice` are JSC-aware option parsers shared
@@ -100,6 +102,152 @@ pub mod js_bundler {
             );
 
             this.map.put_assume_capacity(&key, bytes);
+        }
+
+        Ok(this)
+    }
+
+    fn is_regexp(value: JSValue) -> bool {
+        value.is_cell() && value.js_type() == jsc::JSType::RegExpObject
+    }
+
+    /// `RegExp.prototype.source` and `.flags` of a value that passed
+    /// `is_regexp`. `option` names the field for the error message.
+    fn regexp_pattern_from_js(
+        global_this: &JSGlobalObject,
+        option: &str,
+        value: JSValue,
+    ) -> JsResult<RegExpPattern> {
+        let Some(source) = value.get_optional_slice(global_this, b"source")? else {
+            return Err(global_this
+                .throw_invalid_arguments(format_args!("Expected {} to be a RegExp", option)));
+        };
+        let flags = match value.get_optional_slice(global_this, b"flags")? {
+            Some(flags) => regexp_flags::from_js_flags(flags.slice()),
+            None => 0,
+        };
+        Ok(RegExpPattern::new(source.slice(), flags))
+    }
+
+    /// Parse `minify.mangleProps`: a `RegExp` (the `include` pattern alone) or
+    /// `{ include, exclude?, reserved?, quoted?, cache? }`.
+    fn mangle_props_from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<MangleProps> {
+        if is_regexp(value) {
+            return Ok(MangleProps::new(regexp_pattern_from_js(
+                global_this,
+                "minify.mangleProps",
+                value,
+            )?));
+        }
+        if !value.is_object() {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "Expected minify.mangleProps to be a RegExp or an object"
+            )));
+        }
+
+        let include = match value.get(global_this, "include")? {
+            Some(include) if is_regexp(include) => {
+                regexp_pattern_from_js(global_this, "minify.mangleProps.include", include)?
+            }
+            _ => {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "Expected minify.mangleProps.include to be a RegExp"
+                )));
+            }
+        };
+        let mut this = MangleProps::new(include);
+
+        if let Some(exclude) = value.get(global_this, "exclude")? {
+            if !exclude.is_null() {
+                if !is_regexp(exclude) {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected minify.mangleProps.exclude to be a RegExp"
+                    )));
+                }
+                this.exclude = Some(regexp_pattern_from_js(
+                    global_this,
+                    "minify.mangleProps.exclude",
+                    exclude,
+                )?);
+            }
+        }
+
+        if let Some(reserved) = value.get(global_this, "reserved")? {
+            if !reserved.is_null() {
+                if !(reserved.is_cell() && reserved.js_type().is_array()) {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected minify.mangleProps.reserved to be an array of strings"
+                    )));
+                }
+                let mut iter = reserved.array_iterator(global_this)?;
+                while let Some(entry) = iter.next()? {
+                    if !entry.is_string() {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "Expected minify.mangleProps.reserved to be an array of strings"
+                        )));
+                    }
+                    let slice = entry.to_utf8(global_this)?;
+                    this.reserved.insert(slice.slice())?;
+                    drop(slice);
+                }
+            }
+        }
+
+        if let Some(quoted) = value.get(global_this, "quoted")? {
+            if !quoted.is_null() {
+                if !quoted.is_boolean() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected minify.mangleProps.quoted to be a boolean"
+                    )));
+                }
+                this.quoted = quoted.to_boolean();
+            }
+        }
+
+        if let Some(cache) = value.get(global_this, "cache")? {
+            if !cache.is_null() {
+                let Some(cache_obj) = cache.get_object() else {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected minify.mangleProps.cache to be an object"
+                    )));
+                };
+                let cache_iter = jsc::JSPropertyIterator::init(
+                    global_this,
+                    cache_obj,
+                    jsc::JSPropertyIteratorOptions {
+                        skip_empty_name: true,
+                        include_value: true,
+                        ..Default::default()
+                    },
+                )?;
+                while let Some((prop, property_value)) = cache_iter.next()? {
+                    let mangled: Option<Box<[u8]>> = if property_value == JSValue::FALSE {
+                        None
+                    } else if property_value.is_string() {
+                        let target = property_value.to_utf8(global_this)?;
+                        if target.slice().is_empty() {
+                            return Err(global_this.throw_invalid_arguments(format_args!(
+                                "minify.mangleProps.cache[\"{}\"] must not be an empty string",
+                                prop
+                            )));
+                        }
+                        if is_permanently_reserved_prop(target.slice()) {
+                            return Err(global_this.throw_invalid_arguments(format_args!(
+                                "minify.mangleProps.cache[\"{}\"] must not be \"__proto__\", \"constructor\", or \"prototype\"",
+                                prop
+                            )));
+                        }
+                        Some(Box::from(target.slice()))
+                    } else {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "Expected minify.mangleProps.cache[\"{}\"] to be a string or false",
+                            prop
+                        )));
+                    };
+                    let key = prop.to_utf8();
+                    this.cache.put(key.slice(), mangled)?;
+                }
+            }
         }
 
         Ok(this)
@@ -834,6 +982,12 @@ pub mod js_bundler {
                     if let Some(keep_names) = minify.get_boolean_loose(global_this, "keepNames")? {
                         this.minify.keep_names = keep_names;
                     }
+                    if let Some(mangle_props) = minify.get(global_this, "mangleProps")? {
+                        if !mangle_props.is_null() {
+                            this.minify.mangle_props =
+                                Some(mangle_props_from_js(global_this, mangle_props)?);
+                        }
+                    }
                 } else {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "Expected minify to be a boolean or an object"
@@ -1369,6 +1523,9 @@ pub mod js_bundler {
         pub(crate) identifiers: bool,
         pub(crate) syntax: bool,
         pub(crate) keep_names: bool,
+        /// `minify.mangleProps`. Independent of the three boolean modes:
+        /// `minify: true` leaves it `None`.
+        pub(crate) mangle_props: Option<MangleProps>,
     }
 
     fn build(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<JSValue> {

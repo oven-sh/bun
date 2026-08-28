@@ -11,6 +11,7 @@
 use bun_options_types::TargetExt as _;
 use core::ptr::{self, NonNull};
 use std::io::Write as _;
+use std::sync::Arc;
 
 use bun_alloc::Arena;
 use bun_bundler::bundle_v2::{
@@ -769,6 +770,29 @@ impl JSBundleCompletionTask {
                     );
                 }
 
+                // mangleCache: { [original]: mangled | false }, only with minify.mangleProps
+                if let Some(mangle_cache) = &build.mangle_cache {
+                    let mangle_cache_js =
+                        JSValue::create_empty_object(global_this, mangle_cache.len());
+                    for entry in mangle_cache {
+                        let mangled = match &entry.mangled {
+                            Some(mangled) => {
+                                match bun_string_jsc::create_utf8_for_js(global_this, mangled) {
+                                    Ok(v) => v,
+                                    Err(e) => return promise.reject(global_this, Err(e)),
+                                }
+                            }
+                            None => JSValue::FALSE,
+                        };
+                        mangle_cache_js.put(
+                            global_this,
+                            bun_core::String::borrow_utf8(&entry.original),
+                            mangled,
+                        );
+                    }
+                    build_output.put(global_this, b"mangleCache", mangle_cache_js);
+                }
+
                 let did_handle_callbacks = if let Some(plugin) = this.plugins_mut() {
                     match Self::run_on_end_callbacks(
                         global_this,
@@ -1001,6 +1025,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.minify_whitespace = config.minify.whitespace;
         transpiler.options.minify_identifiers = config.minify.identifiers;
         transpiler.options.keep_names = config.minify.keep_names;
+        transpiler.options.mangle_props = config.minify.mangle_props.take().map(Arc::new);
         transpiler.options.inlining = config.minify.syntax;
         transpiler.options.source_map = config.source_map;
         transpiler.options.packages = config.packages;

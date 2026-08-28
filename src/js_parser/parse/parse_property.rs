@@ -542,7 +542,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         return Err(crate::Error::SyntaxError);
                     }
 
-                    key = p.new_expr(E::EString::init(name), name_range.loc);
+                    key = if p.is_mangled_prop(name) {
+                        let ref_ = p.store_name_in_ref(name);
+                        p.new_expr(
+                            E::NameOfSymbol {
+                                ref_,
+                                has_property_key_comment: false,
+                            },
+                            name_range.loc,
+                        )
+                    } else {
+                        p.new_expr(E::EString::init(name), name_range.loc)
+                    };
 
                     // Parse a shorthand property
                     let is_shorthand_property = !opts.is_class

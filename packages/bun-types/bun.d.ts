@@ -3166,6 +3166,80 @@ declare module "bun" {
   }
 
   /**
+   * Options for `minify.mangleProps`, which renames property names across
+   * the whole bundle.
+   *
+   * @see {@link BuildConfig.minify}
+   * @see [Property mangling docs](https://bun.com/docs/bundler/minifier#property-mangling)
+   *
+   * @category Bundler
+   */
+  interface ManglePropsOptions {
+    /**
+     * Only property names that match this `RegExp` are renamed. The test
+     * runs against the property name alone: `/_$/` selects `foo_` but not
+     * `foo`, and `/^_/` selects `_foo`.
+     *
+     * Renaming is unsafe for any name that code outside the bundle reads or
+     * writes, so pick a pattern that only matches names you control, such as
+     * a naming convention for private properties. A pattern like `/./`
+     * renames every property the bundler sees.
+     *
+     * CLI: `--mangle-props`.
+     */
+    include: RegExp;
+
+    /**
+     * Property names that match this `RegExp` keep their name, even if they
+     * match {@link include}.
+     *
+     * CLI: `--reserve-props`.
+     */
+    exclude?: RegExp;
+
+    /**
+     * Exact property names that keep their name, even if they match
+     * {@link include}. No generated name is ever one of these.
+     *
+     * `__proto__`, `constructor` and `prototype` are always reserved.
+     * Digit-only names, private names (`#x`) and import/export names are
+     * never renamed either.
+     */
+    reserved?: string[];
+
+    /**
+     * Also rename property names written as string literals in property
+     * positions: `x["name"]`, `{ "name": 1 }`, `"name" in x` and the
+     * destructuring key `{ "name": y }`.
+     *
+     * By default only names written as identifiers are renamed (`x.name`,
+     * `{ name: 1 }`, `class { name }`), so a string literal is how you keep
+     * one property access out of the renaming, and a string that is kept is
+     * never used as a generated name. Whether or not this is set, a string
+     * literal preceded by a `@__KEY__` comment (written like a `@__PURE__`
+     * annotation) is renamed wherever it appears, and a template literal
+     * key is never renamed.
+     *
+     * CLI: `--mangle-quoted`.
+     *
+     * @default false
+     */
+    quoted?: boolean;
+
+    /**
+     * Names assigned by an earlier build, usually the
+     * {@link BuildOutput.mangleCache} of that build. A string value pins the
+     * output name: `{ foo_: "a" }` renames `foo_` to `a` in this build too. A
+     * `false` value keeps that property name as written. Names generated in
+     * this build never collide with a key or a value of the cache.
+     *
+     * A string value must not be empty, `__proto__`, `constructor` or
+     * `prototype`.
+     */
+    cache?: Record<string, string | false>;
+  }
+
+  /**
    * @see [Bun.build API docs](https://bun.com/docs/bundler#api)
    */
   interface BuildConfig {
@@ -3321,6 +3395,9 @@ declare module "bun" {
      * Use `true`/`false` to enable/disable all minification options. Alternatively,
      * you can pass an object for granular control over certain minifications.
      *
+     * `mangleProps` is not one of the options that `true` enables. It is off
+     * unless set, and it works with any combination of the other options.
+     *
      * @default false
      */
     minify?:
@@ -3330,6 +3407,43 @@ declare module "bun" {
           syntax?: boolean;
           identifiers?: boolean;
           keepNames?: boolean;
+          /**
+           * Rename every property whose name matches this `RegExp` to a
+           * short name (`a`, `b`, ...), consistently across the whole bundle.
+           * A bare `RegExp` is shorthand for `{ include }`; see
+           * {@link ManglePropsOptions} for `exclude`, `reserved`, `quoted`
+           * and `cache`.
+           *
+           * Renaming changes the shape of objects, so anything that reads a
+           * renamed property by its original name breaks: code outside the
+           * bundle, keys built at runtime, `eval`, JSON and other data. Only
+           * use a pattern that matches names you control, such as `/_$/`
+           * for a private-property naming convention.
+           *
+           * Never renamed: `__proto__`, `constructor`, `prototype`,
+           * digit-only names, private names (`#x`), import and export names,
+           * and names written as string literals unless `quoted` is set.
+           *
+           * The names assigned in a build are returned as
+           * {@link BuildOutput.mangleCache}.
+           *
+           * CLI: `--mangle-props`, `--reserve-props`, `--mangle-quoted`.
+           *
+           * @example
+           * ```ts
+           * await Bun.build({
+           *   entrypoints: ["./src/index.ts"],
+           *   outdir: "./dist",
+           *   minify: {
+           *     whitespace: true,
+           *     syntax: true,
+           *     identifiers: true,
+           *     mangleProps: /_$/,
+           *   },
+           * });
+           * ```
+           */
+          mangleProps?: RegExp | ManglePropsOptions;
         };
 
     /**
@@ -4279,6 +4393,34 @@ declare module "bun" {
      * ```
      */
     metafile?: BuildMetafile;
+    /**
+     * The property names that `minify.mangleProps` renamed in this build,
+     * each mapped to its new name, together with every entry of the `cache`
+     * that was passed in (a `false` value marks a name that keeps its
+     * spelling).
+     *
+     * Only present when {@link BuildConfig.minify | minify.mangleProps} is set.
+     *
+     * Pass it back as `minify.mangleProps.cache` so the next build gives
+     * every name listed here the same new name, and picks names for new
+     * properties that collide with none of them.
+     *
+     * @example
+     * ```ts
+     * const cache = await Bun.file("./mangle-cache.json")
+     *   .json()
+     *   .catch(() => ({}));
+     *
+     * const result = await Bun.build({
+     *   entrypoints: ["./src/index.ts"],
+     *   outdir: "./dist",
+     *   minify: { mangleProps: { include: /_$/, cache } },
+     * });
+     *
+     * await Bun.write("./mangle-cache.json", JSON.stringify(result.mangleCache));
+     * ```
+     */
+    mangleCache?: Record<string, string | false>;
   }
 
   /**

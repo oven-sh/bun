@@ -204,6 +204,8 @@ pub struct BundlerOptions {
     pub minify_whitespace: bool,
     pub minify_identifiers: bool,
     pub keep_names: bool,
+    /// `--mangle-props`, with `--reserve-props` and `--mangle-quoted` folded in.
+    pub mangle_props: Option<crate::MangleProps>,
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
     pub output_format: bundle_enums::Format,
@@ -261,6 +263,7 @@ impl Default for BundlerOptions {
             minify_whitespace: false,
             minify_identifiers: false,
             keep_names: false,
+            mangle_props: None,
             ignore_dce_annotations: false,
             emit_dce_annotations: true,
             output_format: bundle_enums::Format::Esm,

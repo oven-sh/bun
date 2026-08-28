@@ -213,6 +213,11 @@ impl BuildCommand {
         this_transpiler.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
         this_transpiler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         this_transpiler.options.keep_names = ctx.bundler_options.keep_names;
+        this_transpiler.options.mangle_props = ctx
+            .bundler_options
+            .mangle_props
+            .take()
+            .map(std::sync::Arc::new);
         this_transpiler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
         this_transpiler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
 
@@ -367,6 +372,14 @@ impl BuildCommand {
                     );
                     Global::exit(1);
                 }
+            }
+
+            // Property names are assigned by the linker, which the transform-only path skips.
+            if this_transpiler.options.mangle_props.is_some() {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r><d>:<r> --mangle-props requires bundling and cannot be combined with --no-bundle"
+                );
+                Global::exit(1);
             }
         }
 
@@ -653,6 +666,13 @@ impl BuildCommand {
                 }
                 // resolver.opts.entry_naming — field does not exist on the
                 // resolver subset; bundler-side `entry_naming` is sufficient.
+            }
+
+            // `--mangle-props` matches property names with JSC's regex engine
+            // on the parse workers. That needs WTF's thread machinery, which
+            // only `JSCInitialize` on the main thread sets up.
+            if this_transpiler.options.mangle_props.is_some() {
+                bun_jsc::initialize(bun_jsc::InitializeOptions::default());
             }
 
             // Stack-owned Mini event loop so its tasks/concurrent_tasks queues

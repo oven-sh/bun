@@ -91,6 +91,15 @@ impl RegularExpression {
         // SAFETY: `this` is a valid live Yarr RegularExpression handle; consumed here.
         unsafe { Yarr__RegularExpression__deinit(this) }
     }
+
+    /// Compile `pattern` once to check that it is a valid regular expression,
+    /// then free it.
+    pub fn validate(pattern: &BunString, flags: Flags) -> Result<(), RegularExpressionError> {
+        let regex = Self::init(pattern, flags)?;
+        // SAFETY: `regex` is the live handle `init` just returned; consumed here.
+        unsafe { Self::destroy(regex) };
+        Ok(())
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -115,11 +124,12 @@ fn __bun_regex_compile(pattern: &BunString) -> Option<core::ptr::NonNull<()>> {
 }
 
 /// `bun_options_types::mangle_props::RegExpPattern` compiles the
-/// `--mangle-props` patterns through this on each bundler worker thread. Yarr
-/// does not need `JSCInitialize` to compile or interpret a pattern (the
-/// `--test-name-pattern` regex is compiled before `bun test` initializes
-/// JSC), and `bun build` never initializes JSC, so this must not call
-/// `crate::initialize`.
+/// `--mangle-props` patterns through this on each bundler worker thread.
+/// Yarr's interpreter needs WTF's thread machinery (`ThreadSpecific` for the
+/// stack check), and `WTF::initializeMainThread` must run on the process main
+/// thread, so this does not call `crate::initialize` itself: `bun build`
+/// initializes JSC on the main thread before it bundles with `--mangle-props`
+/// (`build_command.rs`), and `Bun.build` always runs inside a VM.
 #[unsafe(no_mangle)]
 fn __bun_regex_compile_with_flags(
     pattern: &BunString,

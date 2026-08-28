@@ -788,6 +788,29 @@ To granularly enable certain minifications:
   </Tab>
 </Tabs>
 
+`mangleProps` renames every property whose name matches a regex to a short name, consistently across the bundle. It is off unless you set it, and `minify: true` does not turn it on. Renaming is unsafe for any property that code outside the bundle reads, so pick a pattern that matches only names you control:
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      minify: {
+        mangleProps: /_$/, // rename foo_, bar_, ...
+      },
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --mangle-props '_$'
+    ```
+  </Tab>
+</Tabs>
+
+`mangleProps` also accepts an object with `include`, `exclude`, `reserved`, `quoted`, and `cache`, and the build result carries the assigned names as `mangleCache`. See [property mangling](/bundler/minifier#property-mangling) for the rules and the options.
+
 ### external
 
 A list of import paths to consider external. Defaults to `[]`.
@@ -1488,6 +1511,7 @@ interface BuildOutput {
   success: boolean;
   logs: Array<object>; // see docs for details
   metafile?: BuildMetafile; // only when metafile: true
+  mangleCache?: Record<string, string | false>; // only when minify.mangleProps is set
 }
 
 interface BuildArtifact extends Blob {
@@ -1768,6 +1792,13 @@ interface BuildConfig {
         whitespace?: boolean;
         syntax?: boolean;
         identifiers?: boolean;
+        /**
+         * Rename the properties whose name matches this RegExp to short names.
+         * Off unless set; `minify: true` does not enable it. Unsafe for
+         * properties that code outside the bundle reads.
+         * See /bundler/minifier#property-mangling.
+         */
+        mangleProps?: RegExp | ManglePropsOptions;
       };
   /**
    * Ignore dead code elimination/tree-shaking annotations such as @__PURE__ and package.json
@@ -1832,6 +1863,14 @@ interface BuildConfig {
   tsconfig?: string;
 
   outdir?: string;
+}
+
+interface ManglePropsOptions {
+  include: RegExp; // property names to rename
+  exclude?: RegExp; // matching names keep their name, CLI: --reserve-props
+  reserved?: string[]; // exact names that keep their name
+  quoted?: boolean; // default false, also rename x["name"] and { "name": 1 }, CLI: --mangle-quoted
+  cache?: Record<string, string | false>; // names from an earlier build's mangleCache; false keeps the name
 }
 
 interface BuildOutput {

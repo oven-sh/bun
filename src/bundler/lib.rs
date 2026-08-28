@@ -129,6 +129,9 @@ pub mod linker_context {
     #[path = "computeCrossChunkDependencies.rs"]
     pub mod compute_cross_chunk_dependencies;
 
+    #[path = "mangleProps.rs"]
+    pub(crate) mod mangle_props;
+
     #[path = "convertStmtsForChunk.rs"]
     pub(crate) mod convert_stmts_for_chunk;
 

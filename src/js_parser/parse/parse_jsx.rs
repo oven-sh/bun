@@ -74,8 +74,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             key_prop_i = i;
                         }
 
-                        let prop_name =
-                            p.new_expr(E::EString::init(prop_name_literal), key_range.loc);
+                        let prop_name = p.jsx_attribute_key(prop_name_literal, key_range.loc);
 
                         // Parse the value
                         let value: Expr = if p.lexer.token != T::TEquals {
@@ -136,28 +135,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 let key = 'brk: {
                                     match &expr.data {
                                         ExprData::EImportIdentifier(ident) => {
-                                            break 'brk p.new_expr(
-                                                E::EString::init(p.load_name_from_ref(ident.ref_)),
-                                                expr.loc,
-                                            );
+                                            let name = p.load_name_from_ref(ident.ref_);
+                                            break 'brk p.jsx_attribute_key(name, expr.loc);
                                         }
                                         ExprData::ECommonjsExportIdentifier(ident) => {
-                                            break 'brk p.new_expr(
-                                                E::EString::init(p.load_name_from_ref(ident.ref_)),
-                                                expr.loc,
-                                            );
+                                            let name = p.load_name_from_ref(ident.ref_);
+                                            break 'brk p.jsx_attribute_key(name, expr.loc);
                                         }
                                         ExprData::EIdentifier(ident) => {
-                                            break 'brk p.new_expr(
-                                                E::EString::init(p.load_name_from_ref(ident.ref_)),
-                                                expr.loc,
-                                            );
+                                            let name = p.load_name_from_ref(ident.ref_);
+                                            break 'brk p.jsx_attribute_key(name, expr.loc);
                                         }
                                         ExprData::EDot(dot) => {
-                                            break 'brk p.new_expr(
-                                                E::EString::init(&dot.name),
-                                                dot.name_loc,
-                                            );
+                                            let name: &'a [u8] = dot.name.slice();
+                                            break 'brk p.jsx_attribute_key(name, dot.name_loc);
                                         }
                                         ExprData::EIndex(index) => {
                                             if matches!(index.index.data, ExprData::EString(_)) {
@@ -380,5 +371,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
         }
+    }
+
+    /// The key of a JSX attribute. `--mangle-props` treats an attribute name
+    /// like an identifier property key, except a namespaced one (`xlink:href`).
+    fn jsx_attribute_key(&mut self, name: &'a [u8], loc: bun_ast::Loc) -> Expr {
+        if !bun_core::strings::contains_char(name, b':') && self.is_mangled_prop(name) {
+            let ref_ = self.store_name_in_ref(name);
+            return self.new_expr(
+                E::NameOfSymbol {
+                    ref_,
+                    has_property_key_comment: false,
+                },
+                loc,
+            );
+        }
+        self.new_expr(E::EString::init(name), loc)
     }
 }

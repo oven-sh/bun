@@ -64,7 +64,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Tag::EIdentifier => Self::e_identifier(self, e, in_),
             Tag::EJsxElement => Self::e_jsx_element(self, e, in_),
             Tag::ETemplate => Self::e_template(self, e, in_),
-            Tag::EBinary => Self::e_binary(self, e),
+            Tag::EBinary => Self::e_binary(self, e, in_),
             Tag::EIndex => Self::e_index(self, e, in_),
             Tag::EUnary => Self::e_unary(self, e, in_),
             Tag::EDot => Self::e_dot(self, e, in_),
@@ -79,6 +79,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Tag::EArrow => Self::e_arrow(self, e, in_),
             Tag::EFunction => Self::e_function(self, e, in_),
             Tag::EClass => Self::e_class(self, e, in_),
+            Tag::ENameOfSymbol => Self::e_name_of_symbol(self, e, in_),
             _ => {}
         }
     }
@@ -92,9 +93,48 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // not emitted: it is not necessary and it was causing breakages.
     }
 
-    fn e_string(_: &mut Self, _e: &mut Expr, _: ExprIn) {
-        // If you're using this, you're probably not using 0-prefixed legacy octal notation
-        // if e.LegacyOctalLoc.Start > 0 {
+    fn e_string(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        if !in_.should_mangle_strings_as_props {
+            return;
+        }
+        let Some(mangle_props) = p.options.mangle_props else {
+            return;
+        };
+
+        // A property name written as a string. Only UTF-8 names can collide
+        // with a generated name.
+        let mut s = e.data.e_string().expect("infallible: variant checked");
+        if s.is_utf16 {
+            return;
+        }
+        let name: &'a [u8] = s.slice(p.arena);
+        if mangle_props.quoted && !s.prefer_template && p.is_mangled_prop(name) {
+            let ref_ = p.symbol_for_mangled_prop(name);
+            *e = p.new_expr(
+                E::NameOfSymbol {
+                    ref_,
+                    has_property_key_comment: false,
+                },
+                e.loc,
+            );
+            return;
+        }
+        p.reserved_props.put(name, ()).expect("unreachable");
+    }
+
+    /// `--mangle-props`: bind the property name to this file's
+    /// `Kind::MangledProp` symbol. A parse-time name (a `store_name_in_ref`
+    /// ref) is resolved here; a re-visit only counts the use.
+    fn e_name_of_symbol(p: &mut Self, e: &mut Expr, _: ExprIn) {
+        let Data::ENameOfSymbol(mut e_) = e.data else {
+            return;
+        };
+        if e_.ref_.is_symbol() {
+            p.record_mangled_prop_usage(e_.ref_);
+            return;
+        }
+        let name = p.load_name_from_ref(e_.ref_);
+        e_.ref_ = p.symbol_for_mangled_prop(name);
     }
 
     fn e_number(_: &mut Self, _e: &mut Expr, _: ExprIn) {
@@ -798,7 +838,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
     }
-    fn e_binary(p: &mut Self, e: &mut Expr) {
+    fn e_binary(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         use crate::visit::visit_binary::BinaryExpressionVisitor;
         let e_ = expr.data.e_binary().expect("infallible: variant checked");
@@ -814,6 +854,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             e: e_,
             loc: expr.loc,
             left_in: ExprIn::default(),
+            should_mangle_strings_as_props: in_.should_mangle_strings_as_props,
         };
 
         // Everything uses a single stack to reduce allocation overhead. This stack
@@ -861,6 +902,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 e: left_binary.unwrap(),
                 loc: left.loc,
                 left_in: ExprIn::default(),
+                should_mangle_strings_as_props: left_in.should_mangle_strings_as_props,
             };
         }
 
@@ -882,9 +924,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let is_delete_target = matches!(p.delete_target, Data::EIndex(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
 
         // "a['b']" => "a.b"
+        // A template literal name (`a[`b`]`) is never mangled; with
+        // `--mangle-quoted` it stays an index until the rewrites below ran.
         if p.options.features.minify_syntax {
             if let Some(mut s) = e_.index.data.e_string() {
-                if !s.is_utf16 && s.is_identifier(p.arena) {
+                if !s.is_utf16
+                    && s.is_identifier(p.arena)
+                    && !(s.prefer_template && p.mangles_quoted_props())
+                {
                     let dot = p.new_expr(
                         E::Dot {
                             name: s.data,
@@ -904,7 +951,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     *e = dot;
-                    p.visit_expr_in_out(e, in_);
+                    p.visit_expr_in_out(
+                        e,
+                        ExprIn {
+                            was_originally_quoted_index: true,
+                            ..in_
+                        },
+                    );
                     return;
                 }
             }
@@ -992,14 +1045,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
             }
             _ => {
-                p.visit_expr(&mut e_.index);
+                // A string literal index takes the same order as `e_dot`: every
+                // rewrite first, `--mangle-props` last (below). Strings nested in
+                // `?:` or `,` are handled by `e_string` through the flag.
+                let is_string_literal = matches!(e_.index.data, Data::EString(_));
+                p.visit_expr_in_out(
+                    &mut e_.index,
+                    ExprIn {
+                        should_mangle_strings_as_props: !is_string_literal,
+                        ..Default::default()
+                    },
+                );
 
                 let unwrapped = e_.index.unwrap_inlined();
                 if let Some(mut s) = unwrapped.data.e_string() {
                     if !s.is_utf16 {
+                        let name: &'a [u8] = s.slice(p.arena);
+                        let is_mangled_quoted = !s.prefer_template
+                            && p.mangles_quoted_props()
+                            && p.is_mangled_prop(name);
+
                         // "a['b' + '']" => "a.b"
                         // "enum A { B = 'b' }; a[A.B]" => "a.b"
-                        if p.options.features.minify_syntax && s.is_identifier(p.arena) {
+                        if p.options.features.minify_syntax
+                            && !is_mangled_quoted
+                            && s.is_identifier(p.arena)
+                        {
                             let dot = p.new_expr(
                                 E::Dot {
                                     name: s.data,
@@ -1018,6 +1089,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 p.delete_target = dot.data;
                             }
 
+                            if p.options.mangle_props.is_some() {
+                                p.reserved_props.put(name, ()).expect("unreachable");
+                            }
+
                             // don't call visitExprInOut on `dot` because we've already visited `target` above!
                             *e = dot;
                             return;
@@ -1031,7 +1106,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if let Some(rewrite) = p.maybe_rewrite_property_access(
                                 expr.loc,
                                 e_.target,
-                                s.data.slice(),
+                                name,
                                 unwrapped.loc,
                                 IdentifierOpts::default()
                                     .with_is_call_target(is_call_target)
@@ -1042,6 +1117,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 *e = rewrite;
                                 return;
                             }
+                        }
+
+                        if is_mangled_quoted {
+                            let ref_ = p.symbol_for_mangled_prop(name);
+                            e_.index = p.new_expr(
+                                E::NameOfSymbol {
+                                    ref_,
+                                    has_property_key_comment: false,
+                                },
+                                unwrapped.loc,
+                            );
+                        } else if p.options.mangle_props.is_some() {
+                            p.reserved_props.put(name, ()).expect("unreachable");
                         }
                     }
                 }
@@ -1454,9 +1542,82 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
         }
+
+        if p.options.mangle_props.is_some() {
+            Self::maybe_mangle_dot(p, e, in_, is_call_target, is_delete_target);
+        }
     }
 
-    fn e_if(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    /// `--mangle-props`: every rewrite in `e_dot` declined, so this is a plain
+    /// property access. Turn `x.name` into `x[<mangled name>]` when `name` is
+    /// selected.
+    #[inline(never)]
+    fn maybe_mangle_dot(
+        p: &mut Self,
+        e: &mut Expr,
+        in_: ExprIn,
+        is_call_target: bool,
+        is_delete_target: bool,
+    ) {
+        let expr = *e;
+        let e_ = expr.data.e_dot().expect("infallible: variant checked");
+        let name: &'a [u8] = e_.name.slice();
+
+        if in_.was_originally_quoted_index && !p.mangles_quoted_props() {
+            p.reserved_props.put(name, ()).expect("unreachable");
+            return;
+        }
+        // A revisit sees every `E::Dot` the first visit chose to keep (a kept
+        // quoted name loses its `was_originally_quoted_index` flag by then);
+        // the only new dot is the one `e_index` just made.
+        if p.is_revisit_for_substitution && !in_.was_originally_quoted_index {
+            return;
+        }
+        // An import namespace (`ns?.name`, which `maybe_rewrite_property_access`
+        // skips) or a macro namespace (`m.name()`, matched by `e_call`) must
+        // keep the export name.
+        if let Data::EIdentifier(id) = e_.target.data {
+            if p.import_items_for_namespace.contains_key(&id.ref_)
+                || (Self::ALLOW_MACROS && p.macro_.refs.contains_key(&id.ref_))
+            {
+                return;
+            }
+        }
+        if !p.is_mangled_prop(name) {
+            return;
+        }
+
+        let ref_ = p.symbol_for_mangled_prop(name);
+        let index = p.new_expr(
+            E::NameOfSymbol {
+                ref_,
+                has_property_key_comment: false,
+            },
+            e_.name_loc,
+        );
+        let replacement = p.new_expr(
+            E::Index {
+                target: e_.target,
+                index,
+                optional_chain: e_.optional_chain,
+            },
+            expr.loc,
+        );
+
+        if is_call_target {
+            p.call_target = replacement.data;
+        }
+        if is_delete_target {
+            p.delete_target = replacement.data;
+        }
+        if matches!(p.then_catch_chain.next_target, Data::EDot(nt) if core::ptr::eq(&raw const *e_, &raw const *nt))
+        {
+            p.then_catch_chain.next_target = replacement.data;
+        }
+        *e = replacement;
+    }
+
+    fn e_if(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let mut e_ = e.data.e_if().expect("infallible: variant checked");
         let is_call_target =
             matches!(p.call_target, Data::EIf(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
@@ -1468,19 +1629,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         e_.test = SideEffects::simplify_boolean(p, e_.test);
 
+        // A property name written as `x[c ? "a" : "b"]` keeps that status in both branches.
+        let branch_in = ExprIn {
+            should_mangle_strings_as_props: in_.should_mangle_strings_as_props,
+            ..Default::default()
+        };
+
         let Some(side_effects) = SideEffects::to_boolean(p, &e_.test.data) else {
-            p.visit_expr(&mut e_.yes);
-            p.visit_expr(&mut e_.no);
+            p.visit_expr_in_out(&mut e_.yes, branch_in);
+            p.visit_expr_in_out(&mut e_.no, branch_in);
             return;
         };
 
         // Mark the control flow as dead if the branch is never taken
         if side_effects.value {
             // "true ? live : dead"
-            p.visit_expr(&mut e_.yes);
+            p.visit_expr_in_out(&mut e_.yes, branch_in);
             let old = p.is_control_flow_dead;
             p.is_control_flow_dead = true;
-            p.visit_expr(&mut e_.no);
+            p.visit_expr_in_out(&mut e_.no, branch_in);
             p.is_control_flow_dead = old;
 
             if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
@@ -1505,9 +1672,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // "false ? dead : live"
             let old = p.is_control_flow_dead;
             p.is_control_flow_dead = true;
-            p.visit_expr(&mut e_.yes);
+            p.visit_expr_in_out(&mut e_.yes, branch_in);
             p.is_control_flow_dead = old;
-            p.visit_expr(&mut e_.no);
+            p.visit_expr_in_out(&mut e_.no, branch_in);
 
             // "(a, false) ? b : c" => "a, c"
             if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
@@ -1650,11 +1817,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut has_proto = false;
         for property in e_.properties.slice_mut() {
             if property.kind != G::PropertyKind::Spread {
-                p.visit_expr(
+                p.visit_expr_in_out(
                     property
                         .key
                         .as_mut()
                         .unwrap_or_else(|| panic!("Expected property key")),
+                    ExprIn {
+                        should_mangle_strings_as_props: true,
+                        ..Default::default()
+                    },
                 );
                 let key = property.key.expect("infallible: prop has key");
                 // Forbid duplicate "__proto__" properties according to the specification

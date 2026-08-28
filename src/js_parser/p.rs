@@ -563,6 +563,17 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub(crate) const_values: bun_ast::ast_result::ConstValuesMap,
 
+    /// `--mangle-props`: property name → this file's `Kind::MangledProp`
+    /// symbol. Moved into `Ast.mangled_props`.
+    pub(crate) mangled_props: bun_ast::ast_result::MangledPropsMap,
+    /// `--mangle-props`: property names this file uses but does not mangle.
+    /// Moved into `Ast.reserved_props`.
+    pub(crate) reserved_props: bun_ast::ast_result::ReservedPropsSet,
+    /// `--mangle-props`: memo of `MangleProps::is_mangled` per name, so the
+    /// regex runs once per distinct property name. Not `reserved_props`: a
+    /// quoted name that is kept is reserved but still eligible for `x.name`.
+    mangled_prop_memo: StringBoolMap,
+
     // These are backed by stack fallback allocators in _parse, and are uninitialized until then.
     pub(crate) binary_expression_stack: ListManaged<'a, BinaryExpressionVisitor>,
     // Reusable stack for `SideEffects::simplify_unused_binary_comma_expr`;
@@ -1345,7 +1356,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         visit(self.symbols.as_slice(), &mut freq, self.module_scope());
 
-        // TODO: mangledProps
+        // Subtract out all mangled property names
+        for ref_ in self.mangled_props.values() {
+            let symbol = &self.symbols[ref_.inner_index() as usize];
+            freq.scan(
+                symbol.original_name.slice(),
+                -(i32::try_from(symbol.use_count_estimate).expect("int cast")),
+            );
+        }
 
         Some(freq)
     }
@@ -1464,6 +1482,106 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// `--mangle-props`: whether property `name` is renamed. Memoized per file.
+    /// Every rejected name goes into `reserved_props` so the linker never
+    /// generates it as a mangled name.
+    #[inline]
+    pub(crate) fn is_mangled_prop(&mut self, name: &[u8]) -> bool {
+        match self.options.mangle_props {
+            Some(mangle_props) => self.is_mangled_prop_uncached(mangle_props, name),
+            None => false,
+        }
+    }
+
+    /// `--mangle-quoted`: property names written as string literals are
+    /// mangled too.
+    #[inline]
+    pub(crate) fn mangles_quoted_props(&self) -> bool {
+        self.options.mangle_props.is_some_and(|m| m.quoted)
+    }
+
+    #[inline(never)]
+    fn is_mangled_prop_uncached(
+        &mut self,
+        mangle_props: &options::MangleProps,
+        name: &[u8],
+    ) -> bool {
+        if let Some(&is_mangled) = self.mangled_prop_memo.get(name) {
+            return is_mangled;
+        }
+        let is_mangled = mangle_props.is_mangled(name);
+        self.mangled_prop_memo
+            .put(name, is_mangled)
+            .expect("unreachable");
+        if !is_mangled {
+            self.reserved_props.put(name, ()).expect("unreachable");
+        }
+        is_mangled
+    }
+
+    /// `--mangle-props`: the `Kind::MangledProp` symbol for `name`, created on
+    /// first use. The symbol is never declared in a scope and never enters
+    /// `symbol_uses`; only `use_count_estimate` is tracked, for name assignment.
+    pub(crate) fn symbol_for_mangled_prop(&mut self, name: &[u8]) -> Ref {
+        let ref_ = match self.mangled_props.get(name) {
+            Some(&ref_) => ref_,
+            None => {
+                let name: &'a [u8] = self.arena.alloc_slice_copy(name);
+                let ref_ = self.new_symbol(js_ast::symbol::Kind::MangledProp, name);
+                self.mangled_props.put(name, ref_).expect("unreachable");
+                ref_
+            }
+        };
+        self.record_mangled_prop_usage(ref_);
+        ref_
+    }
+
+    pub(crate) fn record_mangled_prop_usage(&mut self, ref_: Ref) {
+        if !self.is_control_flow_dead && !self.is_revisit_for_substitution {
+            self.symbols[ref_.inner_index() as usize].use_count_estimate += 1;
+        }
+    }
+
+    /// `target.name`, or `target[<mangled name>]` when `name` is mangled. For
+    /// property accesses synthesized during the visit pass, which `e_dot`
+    /// never visits. `loc` is the location of the whole access.
+    pub(crate) fn dot_or_mangled_prop_visit(
+        &mut self,
+        target: Expr,
+        name: &'a [u8],
+        name_loc: bun_ast::Loc,
+        loc: bun_ast::Loc,
+    ) -> Expr {
+        if self.is_mangled_prop(name) {
+            let ref_ = self.symbol_for_mangled_prop(name);
+            let index = self.new_expr(
+                E::NameOfSymbol {
+                    ref_,
+                    has_property_key_comment: false,
+                },
+                name_loc,
+            );
+            return self.new_expr(
+                E::Index {
+                    target,
+                    index,
+                    optional_chain: None,
+                },
+                loc,
+            );
+        }
+
+        self.new_expr(
+            E::Dot {
+                target,
+                name: name.into(),
+                name_loc,
+                ..Default::default()
+            },
+            loc,
+        )
+    }
+
     pub(crate) fn log_arrow_arg_errors(&mut self, errors: &mut DeferredArrowArgErrors) {
         if errors.invalid_expr_await.len > 0 {
             let r = errors.invalid_expr_await;
@@ -1537,9 +1655,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let ns_alias_opt = self.symbols[ref_.inner_index() as usize]
                 .namespace_alias
                 .as_ref()
-                .map(|a| (a.namespace_ref, a.alias));
-            if let Some((ns_ref, alias_ptr)) = ns_alias_opt {
+                .map(|a| (a.namespace_ref, a.alias, a.import_record_index));
+            if let Some((ns_ref, alias_ptr, import_record_index)) = ns_alias_opt {
                 let alias: &'a [u8] = alias_ptr.slice();
+
+                // A member of a sibling block of the same TypeScript namespace
+                // (`find_symbol` made this alias; it has no import record and
+                // is not an import item). The printer would print the alias
+                // as `ns.name` from the `E::ImportIdentifier`, which bypasses
+                // `--mangle-props`: build the property access here instead.
+                if TYPESCRIPT
+                    && import_record_index == u32::MAX
+                    && !self.is_import_item.contains_key(&ref_)
+                    && self.is_mangled_prop(alias)
+                {
+                    self.record_usage(ns_ref);
+                    let target = self.new_expr(E::Identifier::init(ns_ref), loc);
+                    return self.dot_or_mangled_prop_visit(target, alias, loc, loc);
+                }
                 if let Some(&js_ast::ts::Data::Namespace(ns)) =
                     self.ref_to_ts_namespace_member.get(&ns_ref)
                 {
@@ -1569,15 +1702,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                             js_ast::ts::Data::Namespace(map) => {
                                 let target = self.new_expr(E::Identifier::init(ns_ref), loc);
-                                let expr = self.new_expr(
-                                    E::Dot {
-                                        target,
-                                        name: alias.into(),
-                                        name_loc: loc,
-                                        ..Default::default()
-                                    },
-                                    loc,
-                                );
+                                let expr = self.dot_or_mangled_prop_visit(target, alias, loc, loc);
                                 self.ts_namespace = RecentlyVisitedTSNamespace {
                                     expr: expr.data,
                                     map: Some(map),
@@ -1652,15 +1777,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 self.record_usage(ns_ref);
                 let target = self.new_expr(E::Identifier::init(ns_ref), loc);
-                let prop = self.new_expr(
-                    E::Dot {
-                        target,
-                        name: name.into(),
-                        name_loc: loc,
-                        ..Default::default()
-                    },
-                    loc,
-                );
+                let prop = self.dot_or_mangled_prop_visit(target, name, loc, loc);
 
                 if matches!(self.ts_namespace.expr, js_ast::ExprData::EIdentifier(e) if e.ref_.eql(ident.ref_))
                 {
@@ -4814,16 +4931,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ) {
                 value = rewrote;
             } else {
-                value = self.new_expr(
-                    E::Dot {
-                        target: value,
-                        name: (*part).into(),
-                        name_loc: loc,
-                        can_be_removed_if_unused: self.options.features.dead_code_elimination,
-                        ..Default::default()
-                    },
-                    loc,
-                );
+                value = self.dot_or_mangled_prop_visit(value, part, loc, loc);
+                if let Some(dot) = value.data.e_dot_mut() {
+                    dot.can_be_removed_if_unused = self.options.features.dead_code_elimination;
+                }
             }
         }
 
@@ -6040,19 +6151,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // If the "||=" operator is supported, our minified output can be slightly smaller
             if is_export {
                 if let Some(namespace) = self.enclosing_namespace_arg_ref {
-                    let name = self.symbols[name_ref.inner_index() as usize].original_name;
+                    let name: &'a [u8] = self.symbols[name_ref.inner_index() as usize]
+                        .original_name
+                        .slice();
 
                     // "name = (enclosing.name ||= {})"
                     self.record_usage(namespace);
                     self.record_usage(name_ref);
-                    let left = self.new_expr(
-                        E::Dot {
-                            target: Expr::init_identifier(namespace, name_loc),
-                            // `Symbol.original_name` is already `StoreStr` (= `E::Str`); plain copy.
-                            name,
-                            name_loc,
-                            ..Default::default()
-                        },
+                    let left = self.dot_or_mangled_prop_visit(
+                        Expr::init_identifier(namespace, name_loc),
+                        name,
+                        name_loc,
                         name_loc,
                     );
                     let right = self.new_expr(E::Object::default(), name_loc);
@@ -7110,24 +7219,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .expect("infallible: in namespace");
         self.record_usage(enclosing_ref);
 
-        // E::Dot.name is `&'static [u8]` pending crate-wide 'bump
-        // threading. Symbol.original_name is an arena-owned `StoreStr` (lives for
-        // parser 'a, which outlives every Expr). Erase the lifetime to fit the
-        // placeholder field type.
         // SAFETY: arena-owned slice valid for the AST lifetime.
-        let name: &'static [u8] = self.symbols[r#ref.inner_index() as usize]
+        let name: &'a [u8] = self.symbols[r#ref.inner_index() as usize]
             .original_name
             .slice();
 
-        self.new_expr(
-            E::Dot {
-                target: Expr::init_identifier(enclosing_ref, loc),
-                name: name.into(),
-                name_loc: loc,
-                ..Default::default()
-            },
-            loc,
-        )
+        self.dot_or_mangled_prop_visit(Expr::init_identifier(enclosing_ref, loc), name, loc, loc)
     }
 
     pub(crate) fn wrap_identifier_hoisting(&mut self, loc: bun_ast::Loc, r#ref: Ref) -> Expr {
@@ -8382,8 +8479,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_lazy_export: false,
             redirect_import_record_index: None,
             target: js_ast::Target::Browser,
-            mangled_props: Default::default(),
-            reserved_props: Default::default(),
+            mangled_props: core::mem::take(&mut self.mangled_props),
+            reserved_props: core::mem::take(&mut self.reserved_props),
         }))
     }
 
@@ -8738,6 +8835,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
             const_values: Default::default(),
+            mangled_props: Default::default(),
+            reserved_props: Default::default(),
+            mangled_prop_memo: Default::default(),
             binary_expression_stack: BumpVec::new_in(arena),
             binary_expression_simplify_stack: BumpVec::new_in(arena),
             ref_to_ts_namespace_member: Default::default(),

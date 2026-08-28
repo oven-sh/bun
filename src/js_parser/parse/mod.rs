@@ -330,6 +330,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut str_ = p.lexer.to_e_string()?;
         str_.prefer_template = p.lexer.token == T::TNoSubstitutionTemplateLiteral;
 
+        // `/* @__KEY__ */ "name"` marks the string as a property name for `--mangle-props`
+        if p.lexer.has_key_comment_before && str_.is_utf8() {
+            let name: &'a [u8] = str_.data.slice();
+            if p.is_mangled_prop(name) {
+                let ref_ = p.store_name_in_ref(name);
+                let expr = p.new_expr(
+                    E::NameOfSymbol {
+                        ref_,
+                        has_property_key_comment: true,
+                    },
+                    loc,
+                );
+                p.lexer.next()?;
+                return Ok(expr);
+            }
+        }
+
         let expr = p.new_expr(str_, loc);
         p.lexer.next()?;
         Ok(expr)
@@ -1199,13 +1216,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 p.lexer.next()?;
 
-                key = p.new_expr(
-                    E::String {
-                        data: name.into(),
-                        ..Default::default()
-                    },
-                    loc,
-                );
+                key = if p.is_mangled_prop(name) {
+                    let ref_ = p.store_name_in_ref(name);
+                    p.new_expr(
+                        E::NameOfSymbol {
+                            ref_,
+                            has_property_key_comment: false,
+                        },
+                        loc,
+                    )
+                } else {
+                    p.new_expr(
+                        E::String {
+                            data: name.into(),
+                            ..Default::default()
+                        },
+                        loc,
+                    )
+                };
 
                 if p.lexer.token != T::TColon && p.lexer.token != T::TOpenParen {
                     let ref_ = p.store_name_in_ref(name);

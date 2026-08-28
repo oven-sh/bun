@@ -148,6 +148,7 @@ pub struct LexerSnapshot<'a> {
     pub(crate) token: T,
     pub(crate) has_newline_before: bool,
     pub(crate) has_pure_comment_before: bool,
+    pub(crate) has_key_comment_before: bool,
     pub(crate) has_react_hooks_suppression_before: bool,
     pub(crate) has_react_hooks_block_suppression: bool,
     pub(crate) preserve_all_comments_before: bool,
@@ -210,6 +211,9 @@ pub struct Lexer<'a> {
     pub token: T,
     pub(crate) has_newline_before: bool,
     pub(crate) has_pure_comment_before: bool,
+    /// A `/* @__KEY__ */` (or `#__KEY__`) comment precedes the current token.
+    /// `--mangle-props` treats the annotated string literal as a property name.
+    pub(crate) has_key_comment_before: bool,
     /// Set (and never cleared by `next()`) once an `eslint-disable[-next-line]`
     /// comment naming `react-hooks/rules-of-hooks` or `react-hooks/exhaustive-deps`
     /// has been scanned. The parser reads this at function-body close to set
@@ -333,6 +337,7 @@ impl<'a> Lexer<'a> {
             token: self.token,
             has_newline_before: self.has_newline_before,
             has_pure_comment_before: self.has_pure_comment_before,
+            has_key_comment_before: self.has_key_comment_before,
             has_react_hooks_suppression_before: self.has_react_hooks_suppression_before,
             has_react_hooks_block_suppression: self.has_react_hooks_block_suppression,
             preserve_all_comments_before: self.preserve_all_comments_before,
@@ -371,6 +376,7 @@ impl<'a> Lexer<'a> {
         self.token = original.token;
         self.has_newline_before = original.has_newline_before;
         self.has_pure_comment_before = original.has_pure_comment_before;
+        self.has_key_comment_before = original.has_key_comment_before;
         self.has_react_hooks_suppression_before = original.has_react_hooks_suppression_before;
         self.has_react_hooks_block_suppression = original.has_react_hooks_block_suppression;
         self.preserve_all_comments_before = original.preserve_all_comments_before;
@@ -1258,6 +1264,7 @@ impl<'a> Lexer<'a> {
     pub fn next(&mut self) -> Result<(), Error> {
         self.has_newline_before = self.end == 0;
         self.has_pure_comment_before = false;
+        self.has_key_comment_before = false;
         self.prev_token_was_await_keyword = false;
 
         // PERF: bind the source slice once so every inlined `step()` in the
@@ -2124,6 +2131,13 @@ impl<'a> Lexer<'a> {
             }
         }
 
+        if !self.has_key_comment_before {
+            if strings::has_prefix_with_word_boundary(chunk, b"__KEY__") {
+                self.has_key_comment_before = true;
+                return "__KEY__".len();
+            }
+        }
+
         if strings::has_prefix_with_word_boundary(chunk, b"jsx") {
             if let Some(span) =
                 PragmaArg::scan(self.start + offset_for_errors, b"jsx", chunk, allow_newline)
@@ -2225,6 +2239,7 @@ impl<'a> Lexer<'a> {
             token: T::TEndOfFile,
             has_newline_before: false,
             has_pure_comment_before: false,
+            has_key_comment_before: false,
             has_react_hooks_suppression_before: false,
             has_react_hooks_block_suppression: false,
             preserve_all_comments_before: false,

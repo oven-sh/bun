@@ -1003,6 +1003,17 @@ pub struct ExprIn {
     pub(crate) is_immediately_assigned_to_decl: bool,
 
     pub(crate) property_access_for_method_call_maybe_should_replace_with_undefined: bool,
+
+    /// `--mangle-props`: this expression is a property name written as a
+    /// string (`x["name"]`, `{ "name": 1 }`, `"name" in x`). A string literal
+    /// here is mangled only with `--mangle-quoted`; otherwise it is recorded
+    /// as a reserved property name. Propagated into the branches of `?:` and
+    /// the right operand of `,`.
+    pub(crate) should_mangle_strings_as_props: bool,
+
+    /// `--mangle-props`: this `E::Dot` was `x["name"]` before the minifier
+    /// rewrote it, so the quoted rule above applies to its name.
+    pub(crate) was_originally_quoted_index: bool,
 }
 
 /// This function exists to tie all of these checks together in one place

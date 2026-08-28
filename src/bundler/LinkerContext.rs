@@ -840,6 +840,8 @@ impl<'a> LinkerContext<'a> {
             self.check_for_memory_corruption();
         }
 
+        self.mangle_props()?;
+
         self.graph.symbols.follow_all();
 
         Ok(chunks)

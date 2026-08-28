@@ -247,8 +247,16 @@ export interface BundlerTestInput {
   keepNames?: boolean;
   legalComments?: "none" | "inline" | "eof" | "linked" | "external";
   loader?: Record<`.${string}`, Loader>;
+  /** `--mangle-props` / `minify.mangleProps.include`: rename property names matching this regex */
   mangleProps?: RegExp;
+  /** `--mangle-quoted` / `minify.mangleProps.quoted`: also rename quoted property names like `x["name"]` */
   mangleQuoted?: boolean;
+  /** `--reserve-props` / `minify.mangleProps.exclude`: never rename property names matching this regex */
+  reserveProps?: RegExp;
+  /** `minify.mangleProps.reserved` (API only): exact property names to never rename */
+  mangleReserved?: string[];
+  /** `minify.mangleProps.cache` (API only): pins a name (`string`) or keeps it unchanged (`false`) */
+  mangleCache?: Record<string, string | false>;
   mainFields?: string[];
   metafile?: boolean | string;
   minifyIdentifiers?: boolean;
@@ -511,6 +519,10 @@ function expectBundled(
     legalComments,
     loader,
     mainFields,
+    mangleCache,
+    mangleProps,
+    mangleQuoted,
+    mangleReserved,
     matchesReference,
     metafile,
     minifyIdentifiers,
@@ -523,6 +535,7 @@ function expectBundled(
     outputPaths,
     plugins,
     publicPath,
+    reserveProps,
     root: outbase,
     run,
     runtimeFiles,
@@ -613,6 +626,12 @@ function expectBundled(
   }
   if (!ESBUILD && inject) {
     throw new Error("inject not implemented in bun build");
+  }
+  if ((mangleQuoted || reserveProps || mangleReserved || mangleCache) && !mangleProps) {
+    throw new Error("mangleQuoted, reserveProps, mangleReserved and mangleCache require mangleProps");
+  }
+  if (!ESBUILD && mangleProps && bundling === false) {
+    throw new Error("mangleProps requires bundling in bun build (--mangle-props cannot be combined with --no-bundle)");
   }
   if (!ESBUILD && loader) {
     const loaderValues = [...new Set(Object.values(loader))];
@@ -778,6 +797,9 @@ function expectBundled(
       if (reactCompilerOutputMode) {
         throw new Error("reactCompilerOutputMode not possible in backend=CLI (API-only option)");
       }
+      if (mangleReserved || mangleCache) {
+        throw new Error("mangleReserved and mangleCache not possible in backend=CLI (API-only options)");
+      }
       const cmd = (
         !ESBUILD
           ? [
@@ -813,6 +835,9 @@ function expectBundled(
               minifyIdentifiers && `--minify-identifiers`,
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
+              mangleProps && `--mangle-props=${mangleProps.source}`,
+              reserveProps && `--reserve-props=${reserveProps.source}`,
+              mangleQuoted && `--mangle-quoted`,
               drop?.length && drop.map(x => ["--drop=" + x]),
               features?.length && features.map(x => ["--feature=" + x]),
               globalName && `--global-name=${globalName}`,
@@ -858,6 +883,9 @@ function expectBundled(
               minifyIdentifiers && `--minify-identifiers`,
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
+              mangleProps && `--mangle-props=${mangleProps.source}`,
+              reserveProps && `--reserve-props=${reserveProps.source}`,
+              mangleQuoted && `--mangle-quoted`,
               globalName && `--global-name=${globalName}`,
               external && external.map(x => `--external:${x}`),
               packages && ["--packages", packages],
@@ -1188,6 +1216,17 @@ function expectBundled(
             identifiers: minifyIdentifiers,
             syntax: minifySyntax,
             keepNames: keepNames,
+            ...(mangleProps
+              ? {
+                  mangleProps: {
+                    include: mangleProps,
+                    exclude: reserveProps,
+                    quoted: mangleQuoted,
+                    reserved: mangleReserved,
+                    cache: mangleCache,
+                  },
+                }
+              : {}),
           },
           naming: {
             entry: useOutFile ? path.basename(outfile!) : entryNaming,

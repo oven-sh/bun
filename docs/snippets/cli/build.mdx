@@ -150,6 +150,19 @@ bun build <entry points>
   Preserve original function and class names when minifying
 </ParamField>
 
+<ParamField path="--mangle-props" type="string">
+  Rename properties whose name matches this regex to short names, consistently across the bundle. Unsafe for properties
+  that code outside the bundle reads; see [property mangling](/bundler/minifier#property-mangling)
+</ParamField>
+
+<ParamField path="--reserve-props" type="string">
+  Do not rename properties whose name matches this regex, even if they match <code>--mangle-props</code>
+</ParamField>
+
+<ParamField path="--mangle-quoted" type="boolean">
+  Also rename properties written as string literals, such as <code>x["name"]</code>
+</ParamField>
+
 ### Development Features
 
 <ParamField path="--watch" type="boolean">

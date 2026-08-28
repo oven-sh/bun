@@ -1939,7 +1939,6 @@ pub(crate) mod __gated_printer {
 
         pub(crate) fn mangled_prop_name(&mut self, ref_: Ref) -> &'a [u8] {
             let ref_ = self.symbols().follow(ref_);
-            // TODO: we don't support that
             if let Some(mangled_props) = self.options.mangled_props {
                 if let Some(name) = mangled_props.get(&ref_) {
                     return name;
@@ -3644,16 +3643,33 @@ pub(crate) mod __gated_printer {
                     if e.optional_chain.is_none() {
                         flags.insert(ExprFlag::HasNonOptionalChainParent);
 
-                        if let Some(str) = e.index.data.as_e_string() {
-                            let str = str.flattened(self.bump);
-                            if str.is_utf8() {
-                                if let Some(value) =
-                                    self.try_to_get_imported_enum_value(e.target, str.slice8())
-                                {
-                                    self.print_inlined_enum(value, str.slice8(), level);
-                                    return;
+                        match &e.index.data {
+                            ExprData::EString(str) => {
+                                let str = str.flattened(self.bump);
+                                if str.is_utf8() {
+                                    if let Some(value) =
+                                        self.try_to_get_imported_enum_value(e.target, str.slice8())
+                                    {
+                                        self.print_inlined_enum(value, str.slice8(), level);
+                                        return;
+                                    }
                                 }
                             }
+                            // `E.name` where `name` is a mangled property: the enum
+                            // values are keyed by the original member name.
+                            ExprData::ENameOfSymbol(n) => {
+                                let followed = self.symbols().follow(n.ref_);
+                                if let Some(symbol) = self.symbols().get_const(followed) {
+                                    let original_name = symbol.original_name.slice();
+                                    if let Some(value) =
+                                        self.try_to_get_imported_enum_value(e.target, original_name)
+                                    {
+                                        self.print_inlined_enum(value, original_name, level);
+                                        return;
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
                     } else {
                         if flags.contains(ExprFlag::HasNonOptionalChainParent) {
@@ -3663,8 +3679,10 @@ pub(crate) mod __gated_printer {
                         flags.remove(ExprFlag::HasNonOptionalChainParent);
                     }
 
-                    // The index target is not directly followed by `of`.
-                    flags.remove(ExprFlag::IsFollowedByOf);
+                    // Same mask as `E::Dot`: the target's result is used by the
+                    // property access (`require("./a").x;` must keep the
+                    // namespace object) and it is not directly followed by `of`.
+                    flags &= ExprFlag::HasNonOptionalChainParent | ExprFlag::ForbidCall;
                     self.print_expr(e.target, Level::Postfix, flags);
 
                     let is_optional_chain_start =
@@ -3680,6 +3698,25 @@ pub(crate) mod __gated_printer {
                             }
                             self.add_source_mapping(e.index.loc);
                             self.print_symbol(priv_.ref_);
+                        }
+                        ExprData::ENameOfSymbol(n) => {
+                            let name = self.mangled_prop_name(n.ref_);
+                            if lexer::is_identifier(name) {
+                                if !is_optional_chain_start {
+                                    if self.prev_num_end == self.writer.written() {
+                                        // "1.a" is a syntax error, so print "1 .a" instead
+                                        self.print(b" ");
+                                    }
+                                    self.print(b".");
+                                }
+                                self.add_source_mapping_for_name(e.index.loc, name, n.ref_);
+                                self.print_identifier(name);
+                            } else {
+                                self.print(b"[");
+                                self.add_source_mapping_for_name(e.index.loc, name, n.ref_);
+                                self.print_string_literal_utf8(name, false);
+                                self.print(b"]");
+                            }
                         }
                         _ => {
                             self.print(b"[");
@@ -4440,12 +4477,10 @@ pub(crate) mod __gated_printer {
                     self.add_source_mapping_for_name(expr.loc, name, e.ref_);
 
                     if !self.options.minify_whitespace && e.has_property_key_comment {
-                        self.print(b" /* @__KEY__ */");
+                        self.print(b"/* @__KEY__ */ ");
                     }
 
-                    self.print(b'"');
-                    self.print_string_characters_utf8(name, b'"');
-                    self.print(b'"');
+                    self.print_string_literal_utf8(name, true);
                 }
                 ExprData::EJsxElement(_) | ExprData::EPrivateIdentifier(_) => {
                     if cfg!(debug_assertions) {
@@ -4934,6 +4969,50 @@ pub(crate) mod __gated_printer {
                         self.print(c);
                     }
                 }
+                ExprData::ENameOfSymbol(n) => {
+                    if IS_JSON {
+                        unreachable!();
+                    }
+                    let name = self.mangled_prop_name(n.ref_);
+                    self.add_source_mapping_for_name(key.loc, name, n.ref_);
+                    self.print_space_before_identifier();
+                    if lexer::is_identifier(name) {
+                        self.print_identifier(name);
+
+                        // Use a shorthand property if the names are the same
+                        if let Some(val) = &item.value {
+                            match &val.data {
+                                ExprData::EIdentifier(e) => {
+                                    if name == self.name_for_symbol(e.ref_) {
+                                        if let Some(initial) = &item.initializer {
+                                            self.print_initializer(*initial);
+                                        }
+                                        return;
+                                    }
+                                }
+                                ExprData::EImportIdentifier(e) => 'inner: {
+                                    let ref_ = self.symbols().follow(e.ref_);
+                                    if self.options.input_files_for_dev_server.is_some() {
+                                        break 'inner;
+                                    }
+                                    if let Some(symbol) = self.symbols().get_const(ref_) {
+                                        if symbol.namespace_alias.is_none()
+                                            && name == self.name_for_symbol(e.ref_)
+                                        {
+                                            if let Some(initial) = &item.initializer {
+                                                self.print_initializer(*initial);
+                                            }
+                                            return;
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    } else {
+                        self.print_string_literal_utf8(name, false);
+                    }
+                }
                 _ => {
                     if IS_JSON {
                         unreachable!();
@@ -5169,6 +5248,41 @@ pub(crate) mod __gated_printer {
                                                 Level::Lowest,
                                                 ExprFlag::none(),
                                             );
+                                        }
+                                    }
+                                    ExprData::ENameOfSymbol(n) => {
+                                        let name = self.mangled_prop_name(n.ref_);
+                                        self.add_source_mapping_for_name(
+                                            property.key.loc,
+                                            name,
+                                            n.ref_,
+                                        );
+                                        self.print_space_before_identifier();
+                                        if lexer::is_identifier(name) {
+                                            self.print_identifier(name);
+
+                                            // Use a shorthand property if the names are the same
+                                            if let BindingData::BIdentifier(id) =
+                                                &property.value.data
+                                            {
+                                                let id = id.get();
+                                                if name == self.name_for_symbol(id.r#ref) {
+                                                    if Self::MAY_HAVE_MODULE_INFO && tlm.is_export {
+                                                        if let Some(mi) = self.module_info() {
+                                                            let name_id = mi.str(name);
+                                                            mi.add_export_info_local(
+                                                                name_id, name_id,
+                                                            );
+                                                        }
+                                                    }
+                                                    self.maybe_print_default_binding_value(
+                                                        property,
+                                                    );
+                                                    continue;
+                                                }
+                                            }
+                                        } else {
+                                            self.print_string_literal_utf8(name, false);
                                         }
                                     }
                                     _ => {

@@ -99,6 +99,10 @@ pub struct BinaryExpressionVisitor {
 
     /// Input for visiting the left child
     pub(crate) left_in: ExprIn,
+
+    /// `ExprIn::should_mangle_strings_as_props` of this binary expression. A
+    /// comma operator passes it on to its right operand.
+    pub(crate) should_mangle_strings_as_props: bool,
 }
 
 impl BinaryExpressionVisitor {
@@ -165,6 +169,15 @@ impl BinaryExpressionVisitor {
                 } else {
                     p.visit_expr(&mut e_.right);
                 }
+            }
+            Op::Code::BinComma => {
+                p.visit_expr_in_out(
+                    &mut e_.right,
+                    ExprIn {
+                        should_mangle_strings_as_props: v.should_mangle_strings_as_props,
+                        ..ExprIn::default()
+                    },
+                );
             }
             _ => {
                 p.visit_expr(&mut e_.right);
@@ -751,6 +764,7 @@ impl BinaryExpressionVisitor {
 
         v.left_in = ExprIn {
             assign_target: Op::Code::binary_assign_target(e_.op),
+            should_mangle_strings_as_props: e_.op == Op::Code::BinIn,
             ..ExprIn::default()
         };
 

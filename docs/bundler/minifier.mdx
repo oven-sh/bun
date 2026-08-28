@@ -1189,6 +1189,202 @@ await Bun.build({
 
 `--keep-names` preserves the `.name` property on functions and classes while still minifying the identifiers themselves.
 
+## Property mangling
+
+Identifier minification renames variables and functions. It leaves property names alone, because code outside the bundle can read any property. Property mangling renames the properties you select: every property whose name matches a regex gets a short name (`a`, `b`, ...). Every file in the bundle uses the same short name for the same property.
+
+<Warning>
+Property mangling is unsafe unless the regex matches only names that your own code uses. Anything that reads a renamed property by its original name breaks: code outside the bundle, JSON and other data, and strings that become property names at runtime. Use a naming convention such as a trailing underscore for the properties you want to rename. A regex such as `/./` renames every property access in the bundle, including accesses to properties that external packages and the platform define.
+</Warning>
+
+Pass the regex with `--mangle-props`. The CLI takes the pattern without slashes or flags:
+
+```bash
+bun build ./index.ts --mangle-props '_$' --outfile=out.js
+```
+
+In the JavaScript API, pass a `RegExp` as `minify.mangleProps`:
+
+```ts
+await Bun.build({
+  entrypoints: ["./index.ts"],
+  outdir: "./out",
+  minify: {
+    mangleProps: /_$/,
+  },
+});
+```
+
+Property mangling is separate from the three minification modes. `--minify` and `minify: true` do not turn it on, and it works with any combination of the other flags.
+
+With `/_$/`, Bun renames every property whose name ends in an underscore:
+
+```ts Input
+export let o = { foo_: 1, bar_() {} };
+o.foo_;
+o?.bar_();
+let { foo_ } = o;
+export class C {
+  baz_ = 1;
+  static qux_() {}
+}
+```
+
+```js Output
+var o = { a: 1, b() {} };
+o.a;
+o?.b();
+var { a: foo_ } = o;
+
+class C {
+  c = 1;
+  static d() {}
+}
+export {
+  C,
+  o
+};
+```
+
+Bun assigns the shortest names to the most used properties. A generated name never collides with a JavaScript keyword, with another property name written in the bundle, with a reserved name, or with a name in the cache.
+
+### What Bun renames
+
+Bun renames a matching property name when it appears as:
+
+- A member access: `x.name_`, `x?.name_`
+- An object literal key written as an identifier: `{ name_: 1 }`, `{ name_ }`, `{ name_() {} }`, `get name_() {}`
+- A class member: fields, methods, getters, setters, static members, and `accessor` fields
+- A destructuring key: `let { name_ } = x`, `({ name_: y } = x)`
+- A JSX attribute without a namespace (`<Foo name_={1} />`) and a JSX member tag (`<Foo.name_ />`)
+- A property access that Bun generates for TypeScript syntax: parameter properties (`constructor(public name_: string)`), namespace exports, and enum members
+
+### What Bun never renames
+
+- `__proto__`, `constructor`, and `prototype`
+- Names made of digits only, such as `x["0"]`, which is the same property as `x[0]`
+- Private names such as `#name_`
+- Import and export names. `import { name_ } from "./a"` and `export { x as name_ }` are module bindings, not properties.
+- Template literal keys such as `` x[`name_`] ``
+- Names written as string literals, unless you enable `--mangle-quoted` (see below)
+- Names that match `--reserve-props`, names listed in `reserved`, and names mapped to `false` in the cache
+
+Bun rewrites some member accesses before property mangling runs and does not rename them: `ns.name_` on a namespace import of a bundled module resolves to that module's export, `E.name_` on a TypeScript enum whose value Bun inlines becomes that value, and `import.meta.*`, `require.resolve`, and `define` replacements keep their meaning.
+
+### Quoted names
+
+By default, a property name written as a string literal keeps its name. `x["name_"]`, `{ "name_": 1 }`, `"name_" in x`, and `let { "name_": y } = x` stay as written, even if the name matches the regex. A string literal is how you keep one property access out of the renaming. Bun also makes sure that no generated name collides with a quoted name it kept.
+
+```ts Input
+export let o = { foo_: 1, "bar_": 2 };
+o.foo_;
+o["foo_"];
+```
+
+```js Output
+var o = { a: 1, bar_: 2 };
+o.a;
+o["foo_"];
+export {
+  o
+};
+```
+
+`bar_` keeps its name. Bun prints a kept key without quotes when the name is a valid identifier.
+
+To rename quoted names too, pass `--mangle-quoted` (CLI) or `quoted: true` (API):
+
+```bash
+bun build ./index.ts --mangle-props '_$' --mangle-quoted --outfile=out.js
+```
+
+```ts
+await Bun.build({
+  entrypoints: ["./index.ts"],
+  outdir: "./out",
+  minify: {
+    mangleProps: {
+      include: /_$/,
+      quoted: true,
+    },
+  },
+});
+```
+
+To rename a string that is not in a property position, put a `/* @__KEY__ */` comment in front of it. Bun treats the string as a property name wherever it appears, whether or not `quoted` is on:
+
+```ts Input
+const key = /* @__KEY__ */ "foo_";
+Object.defineProperty(o, /* @__KEY__ */ "bar_", { value: 1 });
+```
+
+```js Output
+var key = /* @__KEY__ */ "a";
+Object.defineProperty(o, /* @__KEY__ */ "b", { value: 1 });
+```
+
+`/* #__KEY__ */` works the same way.
+
+### Keeping names
+
+Two options keep a matching name as written:
+
+- `--reserve-props <regex>` (CLI) or `exclude` (API): a regex. A name that matches both `include` and `exclude` keeps its name.
+- `reserved` (API only): a list of exact names.
+
+```bash
+bun build ./index.ts --mangle-props '_$' --reserve-props '^__' --outfile=out.js
+```
+
+```ts
+await Bun.build({
+  entrypoints: ["./index.ts"],
+  outdir: "./out",
+  minify: {
+    mangleProps: {
+      include: /_$/,
+      exclude: /^__/,
+      reserved: ["id_", "type_"],
+    },
+  },
+});
+```
+
+### Keeping names stable across builds
+
+The generated names depend on how often the bundle uses each property, so a change in one file can change the name of every property. When the output of one build has to stay compatible with another, pass the names from the first build into the second.
+
+`Bun.build` returns the assigned names as `mangleCache` on the build result. The object maps each original name to its new name. Pass it back as `minify.mangleProps.cache`: every listed name gets the same new name again, and new properties get names that collide with none of them. A value of `false` keeps that name as written.
+
+```ts
+const cacheFile = Bun.file("./mangle-cache.json");
+const cache = (await cacheFile.exists()) ? await cacheFile.json() : {};
+
+const result = await Bun.build({
+  entrypoints: ["./index.ts"],
+  outdir: "./out",
+  minify: {
+    mangleProps: {
+      include: /_$/,
+      cache,
+    },
+  },
+});
+
+// result.mangleCache holds the input entries plus every name assigned in this build
+await Bun.write(cacheFile, JSON.stringify(result.mangleCache, null, 2));
+```
+
+`mangleCache` is only present on the result when `mangleProps` is set. A cache value must be a non-empty string or `false`, and it must not be `__proto__`, `constructor`, or `prototype`. The CLI has no equivalent of the cache.
+
+### Limitations
+
+- Property mangling runs in the linker, so it requires bundling. `bun build --no-bundle --mangle-props` is an error.
+- External packages are not part of the bundle, so their own code keeps its property names. Bun still renames your accesses to their properties when the names match, including members of a namespace import (`import * as ns from "pkg"; ns.name_`).
+- Bun does not rename code inside `eval` strings and `new Function` bodies.
+- Bun renames TypeScript enum members, but the reverse mapping `E[0]` still returns the original member name, which is no longer a property of the enum.
+- Bun does not rename a property name that is computed at runtime, such as `x[key]`.
+
 ## Combined Example
 
 Using all three minification modes together:

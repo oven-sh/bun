@@ -672,7 +672,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Arena-owned B::Object valid for 'a; exclusive during visit pass.
                 for property in bind.properties_mut() {
                     if !property.flags.contains(flags::Property::IsSpread) {
-                        self.visit_expr(&mut property.key);
+                        self.visit_expr_in_out(
+                            &mut property.key,
+                            ExprIn {
+                                should_mangle_strings_as_props: true,
+                                ..Default::default()
+                            },
+                        );
                     }
 
                     self.visit_binding(property.value, duplicate_arg_check.as_deref_mut());
@@ -891,7 +897,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
                     self.record_declared_symbol(priv_ref);
                 } else if let Some(key) = property.key.as_mut() {
-                    self.visit_expr(key);
+                    self.visit_expr_in_out(
+                        key,
+                        ExprIn {
+                            should_mangle_strings_as_props: true,
+                            ..Default::default()
+                        },
+                    );
                 }
 
                 // Make it an error to use "arguments" in a class body
@@ -1032,7 +1044,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             && p.flags.contains(flags::Property::IsComputed)
                             && !matches!(
                                 p.key.map(|k| k.data),
-                                Some(ExprData::EString(_) | ExprData::ENumber(_))
+                                Some(
+                                    ExprData::EString(_)
+                                        | ExprData::ENumber(_)
+                                        | ExprData::ENameOfSymbol(_)
+                                )
                             )
                     });
 
@@ -1070,28 +1086,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .slice();
                         let arg_ident = self.new_expr(E::Identifier::init(id_ref), bind_loc);
                         let this_target = self.new_expr(E::This {}, bind_loc);
-                        let dot = self.new_expr(
-                            E::Dot {
-                                target: this_target,
-                                name: name.into(),
-                                name_loc: bind_loc,
-                                ..Default::default()
-                            },
-                            bind_loc,
-                        );
+                        let dot =
+                            self.dot_or_mangled_prop_visit(this_target, name, bind_loc, bind_loc);
                         injected.push(Stmt::assign(dot, arg_ident));
 
                         if use_define {
-                            // New symbol so renaming can't desync the field from the arg.
-                            let field_symbol_ref = self
-                                .declare_symbol(SymbolKind::Other, bind_loc, name)
-                                .unwrap_or(id_ref);
-                            self.symbols[field_symbol_ref.inner_index() as usize]
-                                .set_must_not_be_renamed(true);
-                            let field_ident =
-                                self.new_expr(E::Identifier::init(field_symbol_ref), bind_loc);
+                            let key = if self.is_mangled_prop(name) {
+                                let ref_ = self.symbol_for_mangled_prop(name);
+                                self.new_expr(
+                                    E::NameOfSymbol {
+                                        ref_,
+                                        has_property_key_comment: false,
+                                    },
+                                    bind_loc,
+                                )
+                            } else {
+                                // New symbol so renaming can't desync the field from the arg.
+                                let field_symbol_ref = self
+                                    .declare_symbol(SymbolKind::Other, bind_loc, name)
+                                    .unwrap_or(id_ref);
+                                self.symbols[field_symbol_ref.inner_index() as usize]
+                                    .set_must_not_be_renamed(true);
+                                self.new_expr(E::Identifier::init(field_symbol_ref), bind_loc)
+                            };
                             class_body.push(G::Property {
-                                key: Some(field_ident),
+                                key: Some(key),
                                 ..Default::default()
                             });
                         }

@@ -3971,6 +3971,29 @@
           "multiple": false
         },
         {
+          "name": "mangle-props",
+          "description": "Rename properties whose name matches this regex. Unsafe: see docs/bundler/minifier",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "reserve-props",
+          "description": "Do not rename properties whose name matches this regex, even if they match --mangle-props",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "mangle-quoted",
+          "description": "Also rename properties written as string literals, such as x[\"name\"]",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "css-chunking",
           "description": "Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS",
           "hasValue": false,

@@ -653,85 +653,117 @@ pub fn relative_buf_z<'a>(buf: &'a mut [u8], from: &[u8], to: &[u8]) -> &'a ZStr
     ZStr::from_buf(&buf[..], len)
 }
 
+/// Normalizes `from` and `to` into `from_buf` and `to_buf` (each
+/// [`relative_scratch_len`] bytes), resolving a non-absolute input against the
+/// top-level dir; `to_scratch` is intermediate space for a non-absolute `to`.
+fn relative_normalize_inputs<'f, 't, P: PlatformT>(
+    from_buf: &'f mut [u8],
+    to_buf: &'t mut [u8],
+    to_scratch: &mut [u8],
+    from: &[u8],
+    to: &[u8],
+) -> (&'f [u8], &'t [u8]) {
+    let normalized_from: &'f [u8] = if P::P.is_absolute(from) {
+        'brk: {
+            if P::P == Platform::Loose && cfg!(windows) {
+                // we want to invoke the windows resolution behavior but end up with a
+                // string with forward slashes.
+                let normalized =
+                    normalize_string_buf::<true, platform::Windows, true>(from, &mut from_buf[1..]);
+                platform_to_posix_in_place::<u8>(normalized);
+                break 'brk &*normalized;
+            }
+            // reshaped for borrowck — capture len, drop inner &mut, re-slice
+            let path_len = normalize_string_buf::<true, P, true>(from, &mut from_buf[1..]).len();
+            if P::P == Platform::Windows {
+                break 'brk &from_buf[1..1 + path_len];
+            }
+            from_buf[0] = P::P.separator();
+            break 'brk &from_buf[0..path_len + 1];
+        }
+    } else {
+        // Normalize into to_buf (overwritten below anyway), then join into
+        // from_buf, so from_buf is not both input and output.
+        let norm_len = normalize_string_buf::<true, P, true>(from, &mut to_buf[..]).len();
+        join_abs_string_buf::<P>(
+            Fs::FileSystem::instance().top_level_dir(),
+            from_buf,
+            &[&to_buf[..norm_len]],
+        )
+    };
+
+    let normalized_to: &'t [u8] = if P::P.is_absolute(to) {
+        'brk: {
+            if P::P == Platform::Loose && cfg!(windows) {
+                let normalized =
+                    normalize_string_buf::<true, platform::Windows, true>(to, &mut to_buf[1..]);
+                platform_to_posix_in_place::<u8>(normalized);
+                break 'brk &*normalized;
+            }
+            // reshaped for borrowck — capture len, drop inner &mut, re-slice
+            let path_len = normalize_string_buf::<true, P, true>(to, &mut to_buf[1..]).len();
+            if P::P == Platform::Windows {
+                break 'brk &to_buf[1..1 + path_len];
+            }
+            to_buf[0] = P::P.separator();
+            break 'brk &to_buf[0..path_len + 1];
+        }
+    } else {
+        // As above: normalize into to_scratch, then join into to_buf.
+        let norm_len = normalize_string_buf::<true, P, true>(to, to_scratch).len();
+        join_abs_string_buf::<P>(
+            Fs::FileSystem::instance().top_level_dir(),
+            to_buf,
+            &[&to_scratch[..norm_len]],
+        )
+    };
+
+    (normalized_from, normalized_to)
+}
+
+/// Bytes each [`relative_normalize_inputs`] buffer must hold: an input, the
+/// top-level dir it may be joined onto, a separator slot, and the byte
+/// normalization can add (see [`normalize_string_spill`]).
+fn relative_scratch_len<P: PlatformT>(from: &[u8], to: &[u8]) -> usize {
+    let cwd_len = if P::P.is_absolute(from) && P::P.is_absolute(to) {
+        0
+    } else {
+        Fs::FileSystem::instance().top_level_dir().len()
+    };
+    cwd_len + from.len().max(to.len()) + 4
+}
+
+/// Upper bound on what [`relative_normalized_buf`] writes: one `..` per
+/// component of `from` (counting both separator styles over-approximates),
+/// one joining separator, then a suffix of `to`.
+fn relative_max_len(normalized_from: &[u8], normalized_to: &[u8]) -> usize {
+    let from_components = strings::count_char(normalized_from, SEP_POSIX)
+        + strings::count_char(normalized_from, SEP_WINDOWS)
+        + 1;
+    3 * from_components + 1 + normalized_to.len()
+}
+
+/// `from`, `to` and the result must each fit in a `PathBuffer`. The result can
+/// outgrow both inputs (a `..` per level of `from` outside the common prefix);
+/// use [`relative_platform_spill`] when that is possible.
 pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     buf: &'a mut [u8],
     from: &[u8],
     to: &[u8],
 ) -> &'a [u8] {
-    // RELATIVE_FROM_BUF and RELATIVE_TO_BUF are independent allocations so the
-    // two `&mut` borrows below are disjoint.
-    let relative_from_buf = RELATIVE_FROM_BUF.with(lazy_path_buf);
-    let relative_to_buf = RELATIVE_TO_BUF.with(lazy_path_buf);
-
-    let normalized_from: &[u8] = if P::P.is_absolute(from) {
-        'brk: {
-            if P::P == Platform::Loose && cfg!(windows) {
-                // we want to invoke the windows resolution behavior but end up with a
-                // string with forward slashes.
-                let normalized = normalize_string_buf::<true, platform::Windows, true>(
-                    from,
-                    &mut relative_from_buf[1..],
-                );
-                platform_to_posix_in_place::<u8>(normalized);
-                break 'brk &*normalized;
-            }
-            // reshaped for borrowck — capture len, drop inner &mut, re-slice
-            let path_len =
-                normalize_string_buf::<true, P, true>(from, &mut relative_from_buf[1..]).len();
-            if P::P == Platform::Windows {
-                break 'brk &relative_from_buf[1..1 + path_len];
-            }
-            relative_from_buf[0] = P::P.separator();
-            break 'brk &relative_from_buf[0..path_len + 1];
-        }
-    } else {
-        // Avoid aliasing relative_from_buf as both input (normalize result)
-        // and output (join target): normalize into relative_to_buf scratch,
-        // then join into relative_from_buf. Safe because normalized_to is computed
-        // afterwards (overwrites relative_to_buf anyway).
-        let norm_len = normalize_string_buf::<true, P, true>(from, &mut relative_to_buf[..]).len();
-        join_abs_string_buf::<P>(
-            Fs::FileSystem::instance().top_level_dir(),
-            relative_from_buf,
-            &[&relative_to_buf[..norm_len]],
-        )
-    };
-
-    let normalized_to: &[u8] = if P::P.is_absolute(to) {
-        'brk: {
-            if P::P == Platform::Loose && cfg!(windows) {
-                let normalized = normalize_string_buf::<true, platform::Windows, true>(
-                    to,
-                    &mut relative_to_buf[1..],
-                );
-                platform_to_posix_in_place::<u8>(normalized);
-                break 'brk &*normalized;
-            }
-            // reshaped for borrowck — capture len, drop inner &mut, re-slice
-            let path_len =
-                normalize_string_buf::<true, P, true>(to, &mut relative_to_buf[1..]).len();
-            if P::P == Platform::Windows {
-                break 'brk &relative_to_buf[1..1 + path_len];
-            }
-            relative_to_buf[0] = P::P.separator();
-            break 'brk &relative_to_buf[0..path_len + 1];
-        }
-    } else {
-        // Avoid aliasing relative_to_buf as both input (normalize result)
-        // and output (join target): normalize into `buf` scratch (caller
-        // output buffer, untouched until the final relative_normalized_buf call
-        // and disjoint from both threadlocals), then join into relative_to_buf.
-        let norm_len = normalize_string_buf::<true, P, true>(to, buf).len();
-        join_abs_string_buf::<P>(
-            Fs::FileSystem::instance().top_level_dir(),
-            relative_to_buf,
-            &[&buf[..norm_len]],
-        )
-    };
-
+    // The thread-local bufs are independent allocations; `buf` is only scratch
+    // for a non-absolute `to`, and that use ends before the final write.
+    let (normalized_from, normalized_to) = relative_normalize_inputs::<P>(
+        RELATIVE_FROM_BUF.with(lazy_path_buf),
+        RELATIVE_TO_BUF.with(lazy_path_buf),
+        buf,
+        from,
+        to,
+    );
     relative_normalized_buf::<P, ALWAYS_COPY>(buf, normalized_from, normalized_to)
 }
 
+/// See [`relative_platform_buf`] for the length limits.
 pub fn relative_platform<P: PlatformT, const ALWAYS_COPY: bool>(
     from: &[u8],
     to: &[u8],
@@ -744,8 +776,66 @@ pub fn relative_platform<P: PlatformT, const ALWAYS_COPY: bool>(
     )
 }
 
+/// [`relative_normalized`] without its length limit: the result uses the
+/// thread-local buffer when it fits and `spill` (grown as needed) otherwise.
+pub fn relative_normalized_spill<'a, P: PlatformT>(
+    spill: &'a mut Vec<u8>,
+    normalized_from: &[u8],
+    normalized_to: &[u8],
+) -> &'a [u8] {
+    let needed = relative_max_len(normalized_from, normalized_to);
+    let out: &'a mut [u8] = if needed <= MAX_PATH_BYTES {
+        // SAFETY: thread-local scratch; single live borrow per thread.
+        RELATIVE_TO_COMMON_PATH_BUF.with(lazy_path_buf)
+    } else {
+        if spill.len() < needed {
+            spill.resize(needed, 0);
+        }
+        spill.as_mut_slice()
+    };
+    // ALWAYS_COPY: the result must be a prefix of `out`, never a view into
+    // the caller's (possibly temporary) inputs.
+    let len = relative_normalized_buf::<P, true>(out, normalized_from, normalized_to).len();
+    &out[..len]
+}
+
+/// [`relative_platform`] without its length limits: the inputs and the result
+/// use the thread-local buffers when they fit, and otherwise heap scratch and
+/// `spill` respectively. The result is valid until the next `relative*` call
+/// on this thread.
+pub fn relative_platform_spill<'a, P: PlatformT>(
+    spill: &'a mut Vec<u8>,
+    from: &[u8],
+    to: &[u8],
+) -> &'a [u8] {
+    let scratch_len = relative_scratch_len::<P>(from, to);
+    let mut heap: Vec<u8>;
+    let (from_buf, to_buf, to_scratch): (&mut [u8], &mut [u8], &mut [u8]) =
+        if scratch_len <= MAX_PATH_BYTES {
+            // SAFETY: thread-local scratch; single live borrow per thread. The
+            // common-path buf is only scratch here; its borrow ends before
+            // `relative_normalized_spill` reuses it for the result.
+            (
+                RELATIVE_FROM_BUF.with(lazy_path_buf).as_mut_slice(),
+                RELATIVE_TO_BUF.with(lazy_path_buf).as_mut_slice(),
+                RELATIVE_TO_COMMON_PATH_BUF
+                    .with(lazy_path_buf)
+                    .as_mut_slice(),
+            )
+        } else {
+            heap = vec![0u8; scratch_len * 3];
+            let (from_buf, rest) = heap.split_at_mut(scratch_len);
+            let (to_buf, to_scratch) = rest.split_at_mut(scratch_len);
+            (from_buf, to_buf, to_scratch)
+        };
+    let (normalized_from, normalized_to) =
+        relative_normalize_inputs::<P>(from_buf, to_buf, to_scratch, from, to);
+    relative_normalized_spill::<P>(spill, normalized_from, normalized_to)
+}
+
 pub fn relative_alloc(from: &[u8], to: &[u8]) -> Result<Box<[u8]>, bun_alloc::AllocError> {
-    let result = relative_platform::<platform::Auto, false>(from, to);
+    let mut spill = Vec::new();
+    let result = relative_platform_spill::<platform::Auto>(&mut spill, from, to);
     Ok(Box::<[u8]>::from(result))
 }
 
@@ -2529,6 +2619,58 @@ mod tests {
             .unwrap_or(text_len)
     }
 
+    /// Returns `haystack_len` when `needle` does not occur, like the kernel.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_last_index_of_char(
+        haystack: *const u8,
+        haystack_len: usize,
+        needle: u8,
+    ) -> usize {
+        // SAFETY: test stub; callers pass a valid (ptr, len) pair.
+        let haystack = unsafe { core::slice::from_raw_parts(haystack, haystack_len) };
+        haystack
+            .iter()
+            .rposition(|&b| b == needle)
+            .unwrap_or(haystack_len)
+    }
+
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_count_char(
+        haystack: *const u8,
+        haystack_len: usize,
+        needle: u8,
+    ) -> usize {
+        // SAFETY: test stub; callers pass a valid (ptr, len) pair.
+        let haystack = unsafe { core::slice::from_raw_parts(haystack, haystack_len) };
+        haystack.iter().filter(|&&b| b == needle).count()
+    }
+
+    /// Only linked, never reached: `strings::last_index_of_char_t::<u8>` also
+    /// names the `u16` kernel.
+    #[cfg(not(miri))]
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_memrmem16(
+        haystack: *const u16,
+        haystack_len: usize,
+        needle: *const u16,
+        needle_len: usize,
+    ) -> usize {
+        // SAFETY: test stub; callers pass valid (ptr, len) pairs.
+        let (haystack, needle) = unsafe {
+            (
+                core::slice::from_raw_parts(haystack, haystack_len),
+                core::slice::from_raw_parts(needle, needle_len),
+            )
+        };
+        if needle.is_empty() {
+            return haystack_len;
+        }
+        (0..haystack_len.saturating_sub(needle_len - 1))
+            .rev()
+            .find(|&i| haystack[i..].starts_with(needle))
+            .unwrap_or(usize::MAX)
+    }
+
     #[test]
     fn normalize_string_spill_leaves_spill_untouched_when_the_input_fits() {
         let mut spill = Vec::new();
@@ -2704,5 +2846,98 @@ mod tests {
             join_string_buf_w_same::<platform::Windows>(&mut out, &[&long, &rest]),
             &expected[..]
         );
+    }
+
+    /// A single-component absolute path of exactly `len` bytes.
+    fn abs_path(len: usize, fill: u8) -> Vec<u8> {
+        let mut path = b"/".to_vec();
+        path.resize(len, fill);
+        path
+    }
+
+    #[test]
+    fn relative_spill_leaves_spill_untouched_when_the_result_fits() {
+        let mut spill = Vec::new();
+        assert_eq!(
+            relative_platform_spill::<platform::Posix>(&mut spill, b"/a/b", b"/a/c/d.js"),
+            b"../c/d.js"
+        );
+        assert_eq!(
+            relative_platform_spill::<platform::Posix>(&mut spill, b"/a/b", b"/a/b/c.js"),
+            b"c.js"
+        );
+        assert_eq!(
+            relative_platform_spill::<platform::Posix>(&mut spill, b"/a/b", b"/a/b"),
+            b""
+        );
+        assert!(spill.is_empty());
+    }
+
+    #[test]
+    fn relative_spill_spills_a_result_longer_than_a_path_buffer() {
+        // `to` fits in a PathBuffer; the added `..` levels push the result past one.
+        let to = abs_path(MAX_PATH_BYTES - 1, b'f');
+        let mut expected = b"../../../".to_vec();
+        expected.extend_from_slice(&to[1..]);
+        assert!(expected.len() > MAX_PATH_BYTES);
+
+        let mut spill = Vec::new();
+        assert_eq!(
+            relative_platform_spill::<platform::Posix>(&mut spill, b"/x/y/z", &to),
+            &expected[..]
+        );
+        assert!(!spill.is_empty());
+
+        // A shorter result after a longer one must not include the previous tail.
+        let to = abs_path(MAX_PATH_BYTES - 4, b'g');
+        let mut expected = b"../../../".to_vec();
+        expected.extend_from_slice(&to[1..]);
+        assert!(expected.len() > MAX_PATH_BYTES);
+        assert_eq!(
+            relative_platform_spill::<platform::Posix>(&mut spill, b"/x/y/z", &to),
+            &expected[..]
+        );
+    }
+
+    #[test]
+    fn relative_spill_accepts_inputs_longer_than_a_path_buffer() {
+        let mut spill = Vec::new();
+
+        let to = abs_path(MAX_PATH_BYTES * 2, b'h');
+        let mut expected = b"../".to_vec();
+        expected.extend_from_slice(&to[1..]);
+        assert_eq!(
+            relative_platform_spill::<platform::Posix>(&mut spill, b"/x", &to),
+            &expected[..]
+        );
+
+        // Every component of a long `from` becomes a `..`.
+        let components = MAX_PATH_BYTES;
+        let from = b"/d".repeat(components);
+        let mut expected = b"..".to_vec();
+        expected.extend_from_slice(&b"/..".repeat(components - 1));
+        expected.extend_from_slice(b"/e.js");
+        assert_eq!(
+            relative_platform_spill::<platform::Posix>(&mut spill, &from, b"/e.js"),
+            &expected[..]
+        );
+
+        // A short result must be copied out of the heap input scratch.
+        let dir = abs_path(MAX_PATH_BYTES + 1, b'k');
+        let mut file = dir.clone();
+        file.extend_from_slice(b"/e.js");
+        assert_eq!(
+            relative_platform_spill::<platform::Posix>(&mut spill, &dir, &file),
+            b"e.js"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn relative_alloc_handles_a_result_longer_than_a_path_buffer() {
+        let to = abs_path(MAX_PATH_BYTES - 1, b'm');
+        let mut expected = b"../../../".to_vec();
+        expected.extend_from_slice(&to[1..]);
+        assert_eq!(&*relative_alloc(b"/x/y/z", &to).unwrap(), &expected[..]);
     }
 }

@@ -2632,7 +2632,10 @@ impl<'a> Transpiler<'a> {
             return crate::linker::dupe(_entry);
         }
 
-        let entry = fs.relative_to(entry);
+        let mut rel_spill = Vec::new();
+        let entry = bun_paths::resolve_path::relative_platform_spill::<
+            bun_paths::resolve_path::platform::Auto,
+        >(&mut rel_spill, fs.top_level_dir, entry);
 
         if !strings::starts_with(entry, b"./") {
             // Entry point paths without a leading "./" are interpreted as package
@@ -2899,7 +2902,10 @@ impl<'a> Transpiler<'a> {
         let mut file_path = Fs::Path::init(file_path_text);
 
         let top_level_dir = self.fs().top_level_dir;
-        let rel = bun_paths::resolve_path::relative(top_level_dir, file_path_text);
+        let mut rel_spill = Vec::new();
+        let rel = bun_paths::resolve_path::relative_platform_spill::<
+            bun_paths::resolve_path::platform::Auto,
+        >(&mut rel_spill, top_level_dir, file_path_text);
         file_path.pretty = crate::linker::dupe(rel);
 
         let mut output_file = options::OutputFile::zero_value();
@@ -3070,10 +3076,10 @@ impl<'a> Transpiler<'a> {
         loader: options::Loader,
         output: &[u8],
     ) -> Box<[u8]> {
-        let rel_to_root = bun_paths::resolve_path::relative_platform::<
+        let mut rel_spill = Vec::new();
+        let rel_to_root = bun_paths::resolve_path::relative_platform_spill::<
             bun_paths::resolve_path::platform::Loose,
-            false,
-        >(&self.options.root_dir, file_path_text);
+        >(&mut rel_spill, &self.options.root_dir, file_path_text);
         let pathname = Fs::PathName::init(rel_to_root);
 
         let ext: &[u8] = if loader == options::Loader::Css {

@@ -2593,11 +2593,13 @@ pub mod bv2_impl {
 
             if path.pretty.as_ptr() == path.text.as_ptr() {
                 // TODO: outbase
-                let rel = bun_paths::resolve_path::relative_platform::<
+                let mut spill = Vec::new();
+                let rel = bun_paths::resolve_path::relative_platform_spill::<
                     bun_paths::resolve_path::platform::Loose,
-                    false,
                 >(
-                    bun_resolver::fs::FileSystem::get().top_level_dir, path.text
+                    &mut spill,
+                    bun_resolver::fs::FileSystem::get().top_level_dir,
+                    path.text,
                 );
                 // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
                 // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
@@ -4370,14 +4372,16 @@ pub mod bv2_impl {
 
                         let output_path: Box<[u8]> = {
                             // TODO: outbase
-                            let pathname =
-                                Fs::PathName::init(bun_paths::resolve_path::relative_platform::<
+                            let mut spill = Vec::new();
+                            let pathname = Fs::PathName::init(
+                                bun_paths::resolve_path::relative_platform_spill::<
                                     bun_paths::resolve_path::platform::Loose,
-                                    false,
                                 >(
+                                    &mut spill,
                                     &self.transpiler.options.root_dir,
                                     source.path.text,
-                                ));
+                                ),
+                            );
 
                             template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
                             template.placeholder.dir = pathname.dir.to_vec().into_boxed_slice();
@@ -6668,12 +6672,6 @@ pub mod bv2_impl {
                         import_record.source_index = Index::INVALID;
 
                         if let Some(entry) = dev_server.is_file_cached(path.text, bake_graph) {
-                            let rel = bun_paths::resolve_path::relative_platform::<
-                                bun_paths::resolve_path::platform::Loose,
-                                false,
-                            >(
-                                self.transpiler.fs().top_level_dir, path.text
-                            );
                             if loader == Loader::Html && entry.kind == bake_types::CacheKind::Asset
                             {
                                 // Overload `path.text` to point to the final URL
@@ -6699,8 +6697,6 @@ pub mod bv2_impl {
                                 };
                                 import_record.path.is_disabled = false;
                             } else {
-                                import_record.path.text = path.text;
-                                import_record.path.pretty = rel;
                                 import_record.path = path_as_static(
                                     &self
                                         .path_with_pretty_initialized(path, target)
@@ -7794,9 +7790,6 @@ pub mod bv2_impl {
     ) -> crate::Result<bun_paths::fs::Path<'static>> {
         use crate::bun_fs::PathResolverExt as _;
         use crate::bun_node_fallbacks;
-        use bun_io::Write as _;
-
-        let mut buf = bun_paths::path_buffer_pool::get();
 
         let is_node = path.namespace == b"node";
         if is_node
@@ -7806,49 +7799,45 @@ pub mod bv2_impl {
             return Ok(*path);
         }
 
-        if path.is_file() || is_node {
-            let mut buf2 = bun_paths::path_buffer_pool::get();
-            let rel = bun_paths::resolve_path::relative_platform_buf::<
-                bun_paths::resolve_path::platform::Loose,
-                false,
-            >(&mut **buf2, top_level_dir, path.text);
-            let mut path_clone: crate::bun_fs::Path<'_> = *path;
-            if target == options::Target::ServerComponentsSsr {
-                let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
-                let _ = fbs.write_all(b"ssr:");
-                let _ = fbs.write_all(rel);
-                let written = fbs.pos;
-                path_clone.pretty = &buf.0[..written];
-            } else {
-                path_clone.pretty = rel;
-            }
-            path_clone.dupe_alloc_fix_pretty(bump).map_err(Into::into)
+        // `pretty` is a display path never handed to the filesystem, so it is
+        // not bounded by MAX_PATH_BYTES; `dupe_alloc_fix_pretty` copies it into `bump`.
+        let ssr_prefix: &[u8] = if target == options::Target::ServerComponentsSsr {
+            b"ssr:"
         } else {
-            let mut path_clone: crate::bun_fs::Path<'_> = *path;
-            let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
-            if target == options::Target::ServerComponentsSsr {
-                let _ = fbs.write_all(b"ssr:");
+            b""
+        };
+        let mut spill = Vec::new();
+        let mut prefixed = Vec::new();
+        let mut path_clone: crate::bun_fs::Path<'_> = *path;
+        path_clone.pretty = if path.is_file() || is_node {
+            let rel = bun_paths::resolve_path::relative_platform_spill::<
+                bun_paths::resolve_path::platform::Loose,
+            >(&mut spill, top_level_dir, path.text);
+            if ssr_prefix.is_empty() {
+                rel
+            } else {
+                prefixed = [ssr_prefix, rel].concat();
+                &prefixed
             }
-            let _ = write_escaped_namespace(&mut fbs, path_clone.namespace);
-            let _ = fbs.write_all(b":");
-            let _ = fbs.write_all(path_clone.text);
-            let written = fbs.pos;
-            path_clone.pretty = &buf.0[..written];
-            path_clone.dupe_alloc_fix_pretty(bump).map_err(Into::into)
-        }
+        } else {
+            prefixed.reserve(ssr_prefix.len() + path.namespace.len() + 1 + path.text.len());
+            prefixed.extend_from_slice(ssr_prefix);
+            push_escaped_namespace(&mut prefixed, path.namespace);
+            prefixed.extend_from_slice(b":");
+            prefixed.extend_from_slice(path.text);
+            &prefixed
+        };
+        path_clone.dupe_alloc_fix_pretty(bump).map_err(Into::into)
     }
 
-    fn write_escaped_namespace<W: bun_io::Write + ?Sized>(
-        w: &mut W,
-        slice: &[u8],
-    ) -> bun_io::Result {
-        let mut rest = slice;
+    fn push_escaped_namespace(out: &mut Vec<u8>, namespace: &[u8]) {
+        let mut rest = namespace;
         while let Some(i) = strings::index_of_char(rest, b':') {
-            w.write_all(&rest[..i as usize])?;
-            w.write_all(b"::")?;
+            out.extend_from_slice(&rest[..i as usize]);
+            out.extend_from_slice(b"::");
             rest = &rest[i as usize + 1..];
         }
-        w.write_all(rest)
+        out.extend_from_slice(rest);
     }
 
     #[repr(u8)]

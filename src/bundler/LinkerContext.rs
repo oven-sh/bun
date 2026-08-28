@@ -2502,10 +2502,12 @@ impl<'a> LinkerContext<'a> {
                                 let path = &parse_graph.additional_output_files
                                     [*output_file_id as usize]
                                     .dest_path;
-                                hash.write(bun_paths::resolve_path::relative_platform::<
+                                let mut spill = Vec::new();
+                                hash.write(bun_paths::resolve_path::relative_platform_spill::<
                                     bun_paths::resolve_path::platform::Posix,
-                                    false,
-                                >(from_chunk_dir, path));
+                                >(
+                                    &mut spill, from_chunk_dir, path
+                                ));
                             }
                         }
                         crate::chunk::QueryKind::Chunk => out.push(piece.query.index()),

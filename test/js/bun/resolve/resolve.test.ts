@@ -1655,11 +1655,12 @@ describe("TypeScript extension rewrite matrix", () => {
   });
 });
 
-// A tsconfig `paths` substitution that ends in `.d.ts` is there for type
-// checking only. The resolver skips it (case-insensitively, like esbuild) and
-// falls through to the next substitution or to node_modules.
+// A tsconfig `paths` substitution that names a declaration file (`.d.ts`,
+// `.d.mts`, `.d.cts`, any case) is there for type checking only. The resolver
+// skips it, like esbuild does for `.d.ts`, and falls through to the next
+// substitution or to node_modules.
 describe("tsconfig paths skip `.d.ts` substitutions", () => {
-  test.concurrent("exact, wildcard, and upper-case `.D.TS` entries fall through", async () => {
+  test.concurrent("exact, wildcard, upper-case, `.d.mts` and `.d.cts` entries fall through", async () => {
     using dir = tempDir("tsconfig-paths-dts", {
       "tsconfig.json": JSON.stringify({
         compilerOptions: {
@@ -1670,6 +1671,8 @@ describe("tsconfig paths skip `.d.ts` substitutions", () => {
             "upper": ["./types/upper.D.TS"],
             "upper-star/*": ["./types/*.D.TS"],
             "fallback": ["./types/fallback.d.ts", "./src/fallback.ts"],
+            "esm-types": ["./types/esm-types.d.mts"],
+            "cjs-types/*": ["./types/*.d.cts"],
           },
         },
       }),
@@ -1678,6 +1681,8 @@ describe("tsconfig paths skip `.d.ts` substitutions", () => {
       "types/upper.D.TS": `export declare const u: number;`,
       "types/up.D.TS": `export declare const v: number;`,
       "types/fallback.d.ts": `export declare const f: string;`,
+      "types/esm-types.d.mts": `export declare const m: number;`,
+      "types/lib.d.cts": `export declare const c: number;`,
       "src/fallback.ts": `export const f = "fallback.ts";`,
       "node_modules/foo/package.json": JSON.stringify({ name: "foo", type: "module", main: "index.js" }),
       "node_modules/foo/index.js": `export const x = 123;`,
@@ -1687,18 +1692,24 @@ describe("tsconfig paths skip `.d.ts` substitutions", () => {
       "node_modules/upper/index.js": `export const u = 7;`,
       "node_modules/upper-star/package.json": JSON.stringify({ name: "upper-star", type: "module" }),
       "node_modules/upper-star/up.js": `export const v = 8;`,
+      "node_modules/esm-types/package.json": JSON.stringify({ name: "esm-types", main: "index.mjs" }),
+      "node_modules/esm-types/index.mjs": `export const m = 9;`,
+      "node_modules/cjs-types/package.json": JSON.stringify({ name: "cjs-types" }),
+      "node_modules/cjs-types/lib.js": `module.exports.c = 10;`,
       "entry.ts": `
         import { x } from "foo";
         import { y } from "bar/lib";
         import { u } from "upper";
         import { v } from "upper-star/up";
         import { f } from "fallback";
-        console.log(x, y, u, v, f);
+        import { m } from "esm-types";
+        import { c } from "cjs-types/lib";
+        console.log(x, y, u, v, f, m, c);
       `,
     });
 
     expect(await runWildcardScript(String(dir), "entry.ts")).toEqual({
-      stdout: "123 456 7 8 fallback.ts",
+      stdout: "123 456 7 8 fallback.ts 9 10",
       stderr: "",
       exitCode: 0,
     });

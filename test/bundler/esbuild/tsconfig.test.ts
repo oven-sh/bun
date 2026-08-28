@@ -818,9 +818,10 @@ describe("bundler", () => {
       stdout: "55",
     },
   });
-  // A `paths` substitution that ends in `.d.ts` (any case) is skipped, for an
-  // exact key and after `*` substitution. The import falls through to the next
-  // substitution or to node_modules, like esbuild's `matchTSConfigPaths`.
+  // A `paths` substitution that names a declaration file (`.d.ts`, `.d.mts`,
+  // `.d.cts`, any case) is skipped, for an exact key and after `*`
+  // substitution. The import falls through to the next substitution or to
+  // node_modules, like esbuild's `matchTSConfigPaths` does for `.d.ts`.
   itBundled("tsconfig/PathsSkipDeclarationFiles", {
     files: {
       "/Users/user/project/entry.ts": /* ts */ `
@@ -829,7 +830,9 @@ describe("bundler", () => {
         import { u } from "upper";
         import { v } from "upper-star/up";
         import { f } from "fallback";
-        console.log(x, y, u, v, f);
+        import { m } from "esm-types";
+        import { c } from "cjs-types/lib";
+        console.log(x, y, u, v, f, m, c);
       `,
       "/Users/user/project/tsconfig.json": /* json */ `
         {
@@ -840,7 +843,9 @@ describe("bundler", () => {
               "bar/*": ["./types/*.d.ts"],
               "upper": ["./types/upper.D.TS"],
               "upper-star/*": ["./types/*.D.TS"],
-              "fallback": ["./types/fallback.d.ts", "./src/fallback.ts"]
+              "fallback": ["./types/fallback.d.ts", "./src/fallback.ts"],
+              "esm-types": ["./types/esm-types.d.mts"],
+              "cjs-types/*": ["./types/*.d.cts"]
             }
           }
         }
@@ -850,6 +855,8 @@ describe("bundler", () => {
       "/Users/user/project/types/upper.D.TS": `export declare const u: number;`,
       "/Users/user/project/types/up.D.TS": `export declare const v: number;`,
       "/Users/user/project/types/fallback.d.ts": `export declare const f: string;`,
+      "/Users/user/project/types/esm-types.d.mts": `export declare const m: number;`,
+      "/Users/user/project/types/lib.d.cts": `export declare const c: number;`,
       "/Users/user/project/src/fallback.ts": `export const f = "fallback.ts";`,
       "/Users/user/project/node_modules/foo/package.json": `{ "name": "foo", "type": "module", "main": "index.js" }`,
       "/Users/user/project/node_modules/foo/index.js": `export const x = 123;`,
@@ -859,9 +866,13 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/upper/index.js": `export const u = 7;`,
       "/Users/user/project/node_modules/upper-star/package.json": `{ "name": "upper-star", "type": "module" }`,
       "/Users/user/project/node_modules/upper-star/up.js": `export const v = 8;`,
+      "/Users/user/project/node_modules/esm-types/package.json": `{ "name": "esm-types", "main": "index.mjs" }`,
+      "/Users/user/project/node_modules/esm-types/index.mjs": `export const m = 9;`,
+      "/Users/user/project/node_modules/cjs-types/package.json": `{ "name": "cjs-types" }`,
+      "/Users/user/project/node_modules/cjs-types/lib.js": `module.exports.c = 10;`,
     },
     run: {
-      stdout: "123 456 7 8 fallback.ts",
+      stdout: "123 456 7 8 fallback.ts 9 10",
     },
   });
   itBundled("tsconfig/PathsSkipDeclarationFilesNoFallback", {

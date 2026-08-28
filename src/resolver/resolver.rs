@@ -4965,21 +4965,24 @@ impl<'a> Resolver<'a> {
         MatchStatus::NotFound
     }
 
-    /// A `paths` substitution that ends in `.d.ts` is only there for type
-    /// checking. Skip it so the import falls through to the real module,
-    /// like esbuild's `matchTSConfigPaths`.
+    /// A `paths` substitution that names a declaration file is only there for
+    /// type checking. Skip it so the import falls through to the real module,
+    /// like esbuild's `matchTSConfigPaths` (which checks `.d.ts` only).
     fn is_type_only_tsconfig_path(&mut self, substitution: &[u8]) -> bool {
-        const DTS: &[u8] = b".d.ts";
-        let Some(tail_start) = substitution.len().checked_sub(DTS.len()) else {
+        const DECLARATION_EXTS: [&[u8]; 3] = [b".d.ts", b".d.mts", b".d.cts"];
+        let Some(ext) = DECLARATION_EXTS.iter().find(|ext| {
+            substitution
+                .len()
+                .checked_sub(ext.len())
+                .is_some_and(|start| substitution[start..].eq_ignore_ascii_case(ext))
+        }) else {
             return false;
         };
-        if !substitution[tail_start..].eq_ignore_ascii_case(DTS) {
-            return false;
-        }
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
-                "Ignoring substitution \"{}\" because it ends in \".d.ts\"",
-                bstr::BStr::new(substitution)
+                "Ignoring substitution \"{}\" because it ends in \"{}\"",
+                bstr::BStr::new(substitution),
+                bstr::BStr::new(ext)
             ));
         }
         true

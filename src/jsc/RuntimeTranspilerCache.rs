@@ -669,7 +669,63 @@ impl RuntimeTranspilerCache {
             .len();
         }
 
-        0
+        #[cfg(unix)]
+        {
+            Self::tmpdir_cache_dir(top, buf)
+        }
+        #[cfg(not(unix))]
+        {
+            0
+        }
+    }
+
+    /// `<tmpdir>/bun-<euid>/@t@`: the last resort when there is no home
+    /// directory (minimal containers, some CI runners, systemd services).
+    ///
+    /// A cache entry is executed as code, and every local user can write to
+    /// the temp directory, so a shared `<tmpdir>/bun/@t@` would let another
+    /// user plant entries. The root is per-user instead: created `0700`, then
+    /// checked through an `O_NOFOLLOW` directory fd before anything is read
+    /// from it. It has to be a directory owned by the effective uid with no
+    /// group/other write bits. Anything else returns 0 ("cache disabled").
+    #[cfg(unix)]
+    fn tmpdir_cache_dir(top: &[u8], buf: &mut PathBuffer) -> usize {
+        let euid = sys::c::geteuid();
+        let mut name_buf = [0u8; 16];
+        let name = bun_core::fmt::buf_print_infallible(&mut name_buf, format_args!("bun-{}", euid));
+        let parts: &[&[u8]] = &[bun_resolver::fs::RealFS::tmpdir_path(), name];
+        let root = path_handler::join_abs_string_buf_z::<platform::Loose>(top, &mut buf[..], parts);
+        let root_len = root.len();
+        const SUFFIX: &[u8] = b"/@t@";
+        if root_len + SUFFIX.len() >= MAX_PATH_BYTES {
+            return 0;
+        }
+
+        match sys::mkdir(root, 0o700) {
+            Ok(()) => {}
+            Err(err) if err.get_errno() == sys::E::EEXIST => {}
+            Err(_) => return 0,
+        }
+        let Ok(fd) = sys::open(
+            root,
+            sys::O::RDONLY | sys::O::DIRECTORY | sys::O::NOFOLLOW | sys::O::CLOEXEC,
+            0,
+        ) else {
+            return 0;
+        };
+        let _close = sys::CloseOnDrop::new(fd);
+        let Ok(st) = sys::fstat(fd) else {
+            return 0;
+        };
+        let mode = st.st_mode as sys::Mode;
+        if !sys::S::ISDIR(mode) || st.st_uid != euid || mode & (sys::S::IWGRP | sys::S::IWOTH) != 0
+        {
+            return 0;
+        }
+
+        buf[root_len..root_len + SUFFIX.len()].copy_from_slice(SUFFIX);
+        buf[root_len + SUFFIX.len()] = 0;
+        root_len + SUFFIX.len()
     }
 
     // Only do this at most once per-thread.

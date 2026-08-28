@@ -452,70 +452,11 @@ impl<'a> Transpiler<'a> {
         }
     }
 
-    /// Resolve an entry-point specifier, busting the directory cache and
-    /// retrying once on failure before reporting the error to the log.
+    /// Resolve an entry-point specifier, reporting the error to the log on failure.
     pub fn resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
         match self._resolve_entry_point(entry_point) {
             Ok(r) => self.reject_disabled_entry_point(r, entry_point),
             Err(err) => {
-                let mut cache_bust_buf = bun_paths::PathBuffer::uninit();
-
-                // Bust directory cache and try again
-                // reshaped for borrowck — a single labelled block would
-                // return a slice that aliases either `entry_point` (via
-                // `dirname`) or `cache_bust_buf`. Rust can't unify the two
-                // disjoint mutable borrows of `cache_bust_buf` across `break`,
-                // so compute `busted` directly instead.
-                let busted: bool = 'name: {
-                    // Neither buster name below would fit `cache_bust_buf`.
-                    if self.fs().top_level_dir.len() + entry_point.len() + 4
-                        > bun_paths::MAX_PATH_BYTES
-                    {
-                        break 'name false;
-                    }
-                    if bun_paths::is_absolute(entry_point) {
-                        let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                            entry_point,
-                        );
-                        if !dir.is_empty() {
-                            // Normalized with trailing slash
-                            let buster_name = bun_paths::string_paths::normalize_slashes_only(
-                                &mut cache_bust_buf[..],
-                                dir,
-                                bun_paths::SEP,
-                            );
-                            break 'name self.resolver.bust_dir_cache(
-                                bun_paths::string_paths::without_trailing_slash_windows_path(
-                                    buster_name,
-                                ),
-                            );
-                        }
-                    }
-
-                    // `".."` needs no platform separator rewrite.
-                    let parts: [&[u8]; 2] = [entry_point, b".."];
-                    let top_level_dir = self.fs().top_level_dir;
-
-                    let buster_name = bun_paths::resolve_path::join_abs_string_buf_z::<
-                        bun_paths::platform::Auto,
-                    >(
-                        top_level_dir, &mut cache_bust_buf[..], &parts
-                    );
-                    self.resolver.bust_dir_cache(
-                        bun_paths::string_paths::without_trailing_slash_windows_path(
-                            buster_name.as_bytes(),
-                        ),
-                    )
-                };
-
-                // Only re-query if we previously had something cached.
-                if busted {
-                    if let Ok(result) = self._resolve_entry_point(entry_point) {
-                        return self.reject_disabled_entry_point(result, entry_point);
-                    }
-                    // ignore this error, we will print the original error
-                }
-
                 self.log_mut().add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,
@@ -1471,6 +1412,18 @@ impl<'a> Transpiler<'a> {
             ) {
                 Ok(e) => e,
                 Err(err) => {
+                    // The cached listing that produced this path is stale.
+                    if matches!(
+                        err,
+                        resolver::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                            | resolver::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
+                    ) {
+                        if let Some(dir) = bun_paths::dirname(path.text) {
+                            self.resolver.bust_dir_cache(
+                                bun_paths::string_paths::without_trailing_slash_windows_path(dir),
+                            );
+                        }
+                    }
                     let _ = log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,

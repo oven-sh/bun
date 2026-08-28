@@ -2415,145 +2415,125 @@ pub mod bv2_impl {
                 }
             }
 
-            let mut had_busted_dir_cache = false;
-            let resolve_result: _resolver::Result = loop {
-                // SAFETY: see `transpiler` note above.
-                match unsafe { &mut *transpiler }.resolver.resolve(
-                    source_dir,
-                    &import_record.specifier,
-                    import_record.kind,
-                ) {
-                    Ok(r) => break r,
-                    Err(err) => {
-                        // Only perform directory busting when hot-reloading is enabled
-                        if err == _resolver::Error::ModuleNotFound {
-                            if let Some(dev) = &self.dev_server {
-                                if !had_busted_dir_cache {
-                                    // Only re-query if we previously had something cached.
-                                    // SAFETY: see `transpiler` note above.
-                                    if unsafe { &mut *transpiler }
-                                        .resolver
-                                        .bust_dir_cache_from_specifier(
-                                            &import_record.source_file,
-                                            &import_record.specifier,
-                                        )
-                                    {
-                                        had_busted_dir_cache = true;
-                                        continue;
-                                    }
-                                }
-
-                                // Tell Bake's Dev Server to wait for the file to be imported.
-                                dev.track_resolution_failure(
-                                    &import_record.source_file,
-                                    &import_record.specifier,
-                                    target.bake_graph(),
-                                    self.graph.input_files.items_loader()
-                                        [import_record.importer_source_index as usize],
-                                )
-                                .expect("oom");
-
-                                // Turn this into an invalid AST, so that incremental mode skips it when printing.
-                                // SAFETY: truncating to len 0 never exposes uninitialized elements.
-                                unsafe {
-                                    self.graph.ast.items_parts_mut()
-                                        [import_record.importer_source_index as usize]
-                                        .set_len((0) as usize)
-                                };
-                            }
-                        }
-
-                        let handles_import_errors;
-                        // reshaped for borrowck — `log_for_resolution_failures` borrows
-                        // `&mut self`; the returned log is backed by either a DevServer-owned slot or
-                        // `*self.transpiler.log` (both raw-pointer-derived), so detach the lifetime
-                        // so `self.graph.*` / `self.transpiler.*` reads below type-check.
-                        // SAFETY: log lives in DevServer / transpiler, disjoint from `self.graph`.
-                        let log: &mut bun_ast::Log = unsafe {
-                            bun_ptr::detach_lifetime_mut(self.log_for_resolution_failures(
+            // SAFETY: see `transpiler` note above.
+            let resolve_result: _resolver::Result = match unsafe { &mut *transpiler }
+                .resolver
+                .resolve(source_dir, &import_record.specifier, import_record.kind)
+            {
+                Ok(r) => r,
+                Err(err) => {
+                    if err == _resolver::Error::ModuleNotFound {
+                        if let Some(dev) = &self.dev_server {
+                            // Tell Bake's Dev Server to wait for the file to be imported.
+                            dev.track_resolution_failure(
                                 &import_record.source_file,
+                                &import_record.specifier,
                                 target.bake_graph(),
-                            ))
-                        };
+                                self.graph.input_files.items_loader()
+                                    [import_record.importer_source_index as usize],
+                            )
+                            .expect("oom");
 
-                        {
-                            let record: &mut ImportRecord =
-                                &mut self.graph.ast.items_import_records_mut()
+                            // Turn this into an invalid AST, so that incremental mode skips it when printing.
+                            // SAFETY: truncating to len 0 never exposes uninitialized elements.
+                            unsafe {
+                                self.graph.ast.items_parts_mut()
                                     [import_record.importer_source_index as usize]
-                                    .as_mut_slice()
-                                    [import_record.import_record_index as usize];
-                            handles_import_errors = record
-                                .flags
-                                .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
-
-                            // Disable failing packages from being printed.
-                            // This may cause broken code to write.
-                            // However, doing this means we tell them all the resolve errors
-                            // Rather than just the first one.
-                            record.path.is_disabled = true;
-                            record
-                                .flags
-                                .insert(bun_ast::ImportRecordFlags::WAS_UNRESOLVED);
+                                    .set_len((0) as usize)
+                            };
                         }
-                        let source: Option<&bun_ast::Source> = Some(
-                            &self.graph.input_files.items_source()
-                                [import_record.importer_source_index as usize],
-                        );
+                    }
 
-                        if err == _resolver::Error::ModuleNotFound {
-                            let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
-                            let path_to_use = &import_record.specifier;
+                    let handles_import_errors;
+                    // reshaped for borrowck — `log_for_resolution_failures` borrows
+                    // `&mut self`; the returned log is backed by either a DevServer-owned slot or
+                    // `*self.transpiler.log` (both raw-pointer-derived), so detach the lifetime
+                    // so `self.graph.*` / `self.transpiler.*` reads below type-check.
+                    // SAFETY: log lives in DevServer / transpiler, disjoint from `self.graph`.
+                    let log: &mut bun_ast::Log = unsafe {
+                        bun_ptr::detach_lifetime_mut(self.log_for_resolution_failures(
+                            &import_record.source_file,
+                            target.bake_graph(),
+                        ))
+                    };
 
-                            if !handles_import_errors
-                                && !self.transpiler.options.ignore_module_resolution_errors
-                            {
-                                if is_package_path(&import_record.specifier) {
-                                    if target == Target::Browser
-                                        && options::is_node_builtin(path_to_use)
-                                    {
-                                        add_error(
-                                            log,
-                                            source,
-                                            import_record.range,
-                                            format_args!(
-                                                "Browser build cannot {} Node.js module: \"{}\". To use Node.js builtins, set target to 'node' or 'bun'",
-                                                bstr::BStr::new(import_record.kind.error_label()),
-                                                bstr::BStr::new(path_to_use)
-                                            ),
-                                            path_to_use,
-                                            import_record.kind,
-                                        );
-                                    } else {
-                                        add_error(
-                                            log,
-                                            source,
-                                            import_record.range,
-                                            format_args!(
-                                                "Could not resolve: \"{}\". Maybe you need to \"bun install\"?",
-                                                bstr::BStr::new(path_to_use)
-                                            ),
-                                            path_to_use,
-                                            import_record.kind,
-                                        );
-                                    }
+                    {
+                        let record: &mut ImportRecord =
+                            &mut self.graph.ast.items_import_records_mut()
+                                [import_record.importer_source_index as usize]
+                                .as_mut_slice()
+                                [import_record.import_record_index as usize];
+                        handles_import_errors = record
+                            .flags
+                            .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
+
+                        // Disable failing packages from being printed.
+                        // This may cause broken code to write.
+                        // However, doing this means we tell them all the resolve errors
+                        // Rather than just the first one.
+                        record.path.is_disabled = true;
+                        record
+                            .flags
+                            .insert(bun_ast::ImportRecordFlags::WAS_UNRESOLVED);
+                    }
+                    let source: Option<&bun_ast::Source> = Some(
+                        &self.graph.input_files.items_source()
+                            [import_record.importer_source_index as usize],
+                    );
+
+                    if err == _resolver::Error::ModuleNotFound {
+                        let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
+                        let path_to_use = &import_record.specifier;
+
+                        if !handles_import_errors
+                            && !self.transpiler.options.ignore_module_resolution_errors
+                        {
+                            if is_package_path(&import_record.specifier) {
+                                if target == Target::Browser
+                                    && options::is_node_builtin(path_to_use)
+                                {
+                                    add_error(
+                                        log,
+                                        source,
+                                        import_record.range,
+                                        format_args!(
+                                            "Browser build cannot {} Node.js module: \"{}\". To use Node.js builtins, set target to 'node' or 'bun'",
+                                            bstr::BStr::new(import_record.kind.error_label()),
+                                            bstr::BStr::new(path_to_use)
+                                        ),
+                                        path_to_use,
+                                        import_record.kind,
+                                    );
                                 } else {
                                     add_error(
                                         log,
                                         source,
                                         import_record.range,
                                         format_args!(
-                                            "Could not resolve: \"{}\"",
+                                            "Could not resolve: \"{}\". Maybe you need to \"bun install\"?",
                                             bstr::BStr::new(path_to_use)
                                         ),
                                         path_to_use,
                                         import_record.kind,
                                     );
                                 }
+                            } else {
+                                add_error(
+                                    log,
+                                    source,
+                                    import_record.range,
+                                    format_args!(
+                                        "Could not resolve: \"{}\"",
+                                        bstr::BStr::new(path_to_use)
+                                    ),
+                                    path_to_use,
+                                    import_record.kind,
+                                );
                             }
                         }
-                        // assume other errors are already in the log
-                        return;
                     }
+                    // assume other errors are already in the log
+                    return;
                 }
             };
             let mut resolve_result = resolve_result;
@@ -6419,177 +6399,152 @@ pub mod bv2_impl {
                     }
                 }
 
-                let mut had_busted_dir_cache = false;
-                let resolve_result: _resolver::Result = 'inner: loop {
-                    match transpiler.resolver.resolve_with_framework(
-                        source_dir,
-                        import_record.path.text,
-                        import_record.kind,
-                    ) {
-                        Ok(r) => break r,
-                        Err(err) => {
-                            // borrowck — `log_for_resolution_failures` returns
-                            // `&mut Log` tied to `&mut self`, but it's always a raw-ptr
-                            // deref (DevServer vtable or `transpiler.log`). Detach via
-                            // `*mut` so later `self.*` reads don't conflict.
-                            // SAFETY: log lives in DevServer/transpiler, disjoint from `self.graph`.
-                            let log: &mut bun_ast::Log = unsafe {
-                                &mut *std::ptr::from_mut::<bun_ast::Log>(
-                                    self.log_for_resolution_failures(source.path.text, bake_graph),
+                let resolve_result: _resolver::Result = match transpiler
+                    .resolver
+                    .resolve_with_framework(source_dir, import_record.path.text, import_record.kind)
+                {
+                    Ok(r) => r,
+                    Err(err) => {
+                        // borrowck — `log_for_resolution_failures` returns
+                        // `&mut Log` tied to `&mut self`, but it's always a raw-ptr
+                        // deref (DevServer vtable or `transpiler.log`). Detach via
+                        // `*mut` so later `self.*` reads don't conflict.
+                        // SAFETY: log lives in DevServer/transpiler, disjoint from `self.graph`.
+                        let log: &mut bun_ast::Log = unsafe {
+                            &mut *std::ptr::from_mut::<bun_ast::Log>(
+                                self.log_for_resolution_failures(source.path.text, bake_graph),
+                            )
+                        };
+
+                        if err == _resolver::Error::ModuleNotFound {
+                            if let Some(dev) = self.dev_server {
+                                // Tell DevServer about the resolution failure.
+                                dev.track_resolution_failure(
+                                    source.path.text,
+                                    import_record.path.text,
+                                    ctx.target.bake_graph(), // use the source file target not the altered one
+                                    loader,
                                 )
-                            };
-
-                            // Only perform directory busting when hot-reloading is enabled
-                            if err == _resolver::Error::ModuleNotFound {
-                                if self.bun_watcher.is_some() {
-                                    if !had_busted_dir_cache {
-                                        bun_core::scoped_log!(
-                                            watcher,
-                                            "busting dir cache {} -> {}",
-                                            bstr::BStr::new(&source.path.text),
-                                            bstr::BStr::new(&import_record.path.text)
-                                        );
-                                        // Only re-query if we previously had something cached.
-                                        if transpiler.resolver.bust_dir_cache_from_specifier(
-                                            source.path.text,
-                                            import_record.path.text,
-                                        ) {
-                                            had_busted_dir_cache = true;
-                                            continue 'inner;
-                                        }
-                                    }
-                                    if let Some(dev) = self.dev_server {
-                                        // Tell DevServer about the resolution failure.
-                                        dev.track_resolution_failure(
-                                            source.path.text,
-                                            import_record.path.text,
-                                            ctx.target.bake_graph(), // use the source file target not the altered one
-                                            loader,
-                                        )
-                                        .expect("oom");
-                                    }
-                                }
+                                .expect("oom");
                             }
+                        }
 
-                            // Disable failing packages from being printed.
-                            // This may cause broken code to write.
-                            // However, doing this means we tell them all the resolve errors
-                            // Rather than just the first one.
-                            import_record.path.is_disabled = true;
-                            import_record
+                        // Disable failing packages from being printed.
+                        // This may cause broken code to write.
+                        // However, doing this means we tell them all the resolve errors
+                        // Rather than just the first one.
+                        import_record.path.is_disabled = true;
+                        import_record
+                            .flags
+                            .insert(bun_ast::ImportRecordFlags::WAS_UNRESOLVED);
+
+                        if err == _resolver::Error::ModuleNotFound {
+                            let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
+
+                            if !import_record
                                 .flags
-                                .insert(bun_ast::ImportRecordFlags::WAS_UNRESOLVED);
-
-                            if err == _resolver::Error::ModuleNotFound {
-                                let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
-
-                                if !import_record
-                                    .flags
-                                    .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
-                                    && !self.transpiler.options.ignore_module_resolution_errors
-                                {
-                                    last_error = Some(err.into());
-                                    if is_package_path(import_record.path.text) {
-                                        if ctx.target == Target::Browser
-                                            && options::is_node_builtin(import_record.path.text)
-                                        {
-                                            add_error(
-                                                log,
-                                                Some(source),
-                                                import_record.range,
-                                                format_args!(
-                                                    "Browser build cannot {} Node.js builtin: \"{}\"{}",
-                                                    bstr::BStr::new(
-                                                        import_record.kind.error_label()
-                                                    ),
-                                                    bstr::BStr::new(&import_record.path.text),
-                                                    if self.dev_server.is_none() {
-                                                        ". To use Node.js builtins, set target to 'node' or 'bun'"
-                                                    } else {
-                                                        ""
-                                                    },
-                                                ),
-                                                import_record.path.text,
-                                                import_record.kind,
-                                            );
-                                        } else if !ctx.target.is_bun()
-                                            && (import_record.path.text == b"bun"
-                                                || import_record.path.text.starts_with(b"bun:"))
-                                        {
-                                            add_error(
-                                                log,
-                                                Some(source),
-                                                import_record.range,
-                                                format_args!(
-                                                    "Browser build cannot {} Bun builtin: \"{}\"{}",
-                                                    bstr::BStr::new(
-                                                        import_record.kind.error_label()
-                                                    ),
-                                                    bstr::BStr::new(&import_record.path.text),
-                                                    if self.dev_server.is_none() {
-                                                        ". When bundling for Bun, set target to 'bun'"
-                                                    } else {
-                                                        ""
-                                                    },
-                                                ),
-                                                import_record.path.text,
-                                                import_record.kind,
-                                            );
-                                        } else {
-                                            add_error(
-                                                log,
-                                                Some(source),
-                                                import_record.range,
-                                                format_args!(
-                                                    "Could not resolve: \"{}\". Maybe you need to \"bun install\"?",
-                                                    bstr::BStr::new(&import_record.path.text)
-                                                ),
-                                                import_record.path.text,
-                                                import_record.kind,
-                                            );
-                                        }
-                                    } else {
-                                        #[cfg(windows)]
-                                        let mut buf = bun_paths::path_buffer_pool::get();
-                                        let specifier_to_use: &[u8] = if loader == Loader::Html
-                                            && import_record.path.text.starts_with(
-                                                Fs::FileSystem::instance().top_level_dir,
-                                            ) {
-                                            let specifier_to_use = &import_record.path.text
-                                                [Fs::FileSystem::instance().top_level_dir.len()..];
-                                            #[cfg(windows)]
-                                            {
-                                                &*bun_paths::resolve_path::path_to_posix_buf::<u8>(
-                                                    specifier_to_use,
-                                                    &mut *buf,
-                                                )
-                                            }
-                                            #[cfg(not(windows))]
-                                            {
-                                                specifier_to_use
-                                            }
-                                        } else {
-                                            import_record.path.text
-                                        };
+                                .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+                                && !self.transpiler.options.ignore_module_resolution_errors
+                            {
+                                last_error = Some(err.into());
+                                if is_package_path(import_record.path.text) {
+                                    if ctx.target == Target::Browser
+                                        && options::is_node_builtin(import_record.path.text)
+                                    {
                                         add_error(
                                             log,
                                             Some(source),
                                             import_record.range,
                                             format_args!(
-                                                "Could not resolve: \"{}\"",
-                                                bstr::BStr::new(specifier_to_use)
+                                                "Browser build cannot {} Node.js builtin: \"{}\"{}",
+                                                bstr::BStr::new(import_record.kind.error_label()),
+                                                bstr::BStr::new(&import_record.path.text),
+                                                if self.dev_server.is_none() {
+                                                    ". To use Node.js builtins, set target to 'node' or 'bun'"
+                                                } else {
+                                                    ""
+                                                },
                                             ),
-                                            specifier_to_use,
+                                            import_record.path.text,
+                                            import_record.kind,
+                                        );
+                                    } else if !ctx.target.is_bun()
+                                        && (import_record.path.text == b"bun"
+                                            || import_record.path.text.starts_with(b"bun:"))
+                                    {
+                                        add_error(
+                                            log,
+                                            Some(source),
+                                            import_record.range,
+                                            format_args!(
+                                                "Browser build cannot {} Bun builtin: \"{}\"{}",
+                                                bstr::BStr::new(import_record.kind.error_label()),
+                                                bstr::BStr::new(&import_record.path.text),
+                                                if self.dev_server.is_none() {
+                                                    ". When bundling for Bun, set target to 'bun'"
+                                                } else {
+                                                    ""
+                                                },
+                                            ),
+                                            import_record.path.text,
+                                            import_record.kind,
+                                        );
+                                    } else {
+                                        add_error(
+                                            log,
+                                            Some(source),
+                                            import_record.range,
+                                            format_args!(
+                                                "Could not resolve: \"{}\". Maybe you need to \"bun install\"?",
+                                                bstr::BStr::new(&import_record.path.text)
+                                            ),
+                                            import_record.path.text,
                                             import_record.kind,
                                         );
                                     }
+                                } else {
+                                    #[cfg(windows)]
+                                    let mut buf = bun_paths::path_buffer_pool::get();
+                                    let specifier_to_use: &[u8] = if loader == Loader::Html
+                                        && import_record
+                                            .path
+                                            .text
+                                            .starts_with(Fs::FileSystem::instance().top_level_dir)
+                                    {
+                                        let specifier_to_use = &import_record.path.text
+                                            [Fs::FileSystem::instance().top_level_dir.len()..];
+                                        #[cfg(windows)]
+                                        {
+                                            &*bun_paths::resolve_path::path_to_posix_buf::<u8>(
+                                                specifier_to_use,
+                                                &mut *buf,
+                                            )
+                                        }
+                                        #[cfg(not(windows))]
+                                        {
+                                            specifier_to_use
+                                        }
+                                    } else {
+                                        import_record.path.text
+                                    };
+                                    add_error(
+                                        log,
+                                        Some(source),
+                                        import_record.range,
+                                        format_args!(
+                                            "Could not resolve: \"{}\"",
+                                            bstr::BStr::new(specifier_to_use)
+                                        ),
+                                        specifier_to_use,
+                                        import_record.kind,
+                                    );
                                 }
-                            } else {
-                                // assume other errors are already in the log
-                                last_error = Some(err.into());
                             }
-                            continue 'outer;
+                        } else {
+                            // assume other errors are already in the log
+                            last_error = Some(err.into());
                         }
+                        continue 'outer;
                     }
                 };
                 let mut resolve_result = resolve_result;

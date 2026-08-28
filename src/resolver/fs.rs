@@ -604,7 +604,11 @@ impl DirEntry {
         let mut scratch_lookup_buffer = PathBuffer::uninit();
 
         let query = strings::copy_lowercase_if_needed(query_, &mut scratch_lookup_buffer[..]);
-        let &result_ptr = self.data.get(query)?;
+        let Some(&result_ptr) = self.data.get(query) else {
+            // A resolution in progress records its negatives; see `Resolver::bust_touched_dirs`.
+            crate::resolver::record_missing_entry(self.dir, query_);
+            return None;
+        };
         Some(EntryLookup {
             entry: result_ptr,
             _marker: core::marker::PhantomData,

@@ -121,24 +121,23 @@ pub enum ModuleInfoError {
 /// in place; nothing is widened or copied.
 ///
 /// `body` / `table` are lifetime-erased: they point either into the
-/// executable's mapped section (`'static`) or into `owned`, which lives as long
-/// as `self`.
+/// executable's mapped section (`'static`) or into the `Owned` variant's bytes,
+/// which live as long as `self`.
 pub struct ModuleInfoDeserialized {
     body: Body<'static>,
     table: ModuleInfoStrings<'static>,
     pub flags: Flags,
-    /// Backing storage for `body`/`table`: `None` when they live in the
-    /// executable's mapped section.
-    _owned: Option<Box<[u8]>>,
 }
 
 /// Where a record's names come from: a self-contained record carries its own
-/// strings (`WTF::StringImpl` bodies the runtime atomizes); a record inside an
-/// executable indexes the slot table every module of the executable shares,
-/// resolved by JSC as the bytecode's own string slots are.
-#[derive(Clone, Copy)]
+/// strings (`WTF::StringImpl` bodies the runtime atomizes) and the bytes they
+/// live in; a record inside an executable indexes the slot table every module
+/// of the executable shares, resolved by JSC as the bytecode's own string slots are.
 pub enum ModuleInfoStrings<'a> {
-    Owned(ModuleInfoStringTable<'a>),
+    Owned {
+        table: ModuleInfoStringTable<'a>,
+        _bytes: Box<[u8]>,
+    },
     Shared(ModuleInfoSlotTable<'a>),
 }
 /// One name of a record, as the runtime resolves it.
@@ -152,14 +151,14 @@ pub enum ModuleInfoString<'a> {
 impl<'a> ModuleInfoStrings<'a> {
     pub fn count(&self) -> u32 {
         match self {
-            Self::Owned(t) => t.count,
+            Self::Owned { table, .. } => table.count,
             Self::Shared(t) => t.count(),
         }
     }
     /// String `id`, or `None` if out of bounds (corrupt input).
     pub fn get(&self, id: u32) -> Option<ModuleInfoString<'a>> {
         match self {
-            Self::Owned(t) => t.get(id),
+            Self::Owned { table, .. } => table.get(id),
             Self::Shared(t) => t.get(id).map(ModuleInfoString::Slot),
         }
     }
@@ -298,9 +297,11 @@ impl ModuleInfoDeserialized {
         let (flags, body) = Body::parse(&bytes[table.byte_len..])?;
         Ok(Box::new(ModuleInfoDeserialized {
             body,
-            table: ModuleInfoStrings::Owned(table),
+            table: ModuleInfoStrings::Owned {
+                table,
+                _bytes: owned,
+            },
             flags,
-            _owned: Some(owned),
         }))
     }
 
@@ -322,7 +323,6 @@ impl ModuleInfoDeserialized {
             body,
             table: ModuleInfoStrings::Shared(*table),
             flags,
-            _owned: None,
         }))
     }
 }

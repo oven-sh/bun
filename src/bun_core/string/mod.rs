@@ -104,10 +104,16 @@ unsafe extern "C" {
     // `assert_ffi_layout!` above). C++ reads/writes only the `tag`/`value`
     // fields in place; the type encodes the sole pointer-validity precondition,
     // so `safe fn` discharges the link-time proof here.
-    safe fn BunString__toThreadSafe(this: &mut String);
+    safe fn BunString__threadIsolatedCopy(this: &String) -> String;
+    safe fn BunString__makeThreadShareable(this: &mut String);
     fn BunString__createAtom(bytes: *const u8, len: usize) -> String;
     fn BunString__tryCreateAtom(bytes: *const u8, len: usize) -> String;
     fn BunString__createStaticExternal(bytes: *const u8, len: usize, isLatin1: bool) -> String;
+    fn BunString__createStaticExternalLatin1WithHash(
+        bytes: *const u8,
+        len: usize,
+        hash: u32,
+    ) -> String;
     fn BunString__createExternal(
         bytes: *const u8,
         len: usize,
@@ -366,6 +372,13 @@ impl String {
         // without copying and never frees it.
         unsafe { BunString__createStaticExternal(bytes.as_ptr(), bytes.len(), is_latin1) }
     }
+    /// [`Self::create_static_external`] for Latin-1 bytes whose `WTF::StringImpl::hash()` is already known, so the
+    /// result is thread-shareable without reading the bytes.
+    pub fn create_static_external_latin1_with_hash(bytes: &[u8], hash: u32) -> Self {
+        debug_assert!(!bytes.is_empty());
+        // SAFETY: as above; `hash` is StringImpl::hash() of `bytes`.
+        unsafe { BunString__createStaticExternalLatin1WithHash(bytes.as_ptr(), bytes.len(), hash) }
+    }
     /// UTF-16 form of [`Self::create_static_external`]: `units` must be
     /// 2-byte aligned and live for the rest of the process.
     pub fn create_static_external_utf16(units: &[u16]) -> Self {
@@ -517,28 +530,39 @@ impl String {
             core::ptr::null_mut()
         }
     }
-    pub fn to_thread_safe(&mut self) {
-        if self.tag == Tag::WTFStringImpl {
-            BunString__toThreadSafe(self)
-        }
-        debug_assert!(self.is_thread_safe());
-    }
-    /// True iff this `String` may be sent to / shared with another thread
-    /// without racing the WTF `StringImpl`'s non-atomic refcount: every tag
-    /// except `WTFStringImpl` is inert (raw slice / static / dead), and a
-    /// WTF-backed string is safe iff its impl reports `isThreadSafe()`.
-    ///
-    /// Call sites that move a `String` across a thread boundary must ensure
-    /// this holds (typically by calling [`to_thread_safe`] first); see the
-    /// `Send`/`Sync` SAFETY comment for the full contract.
-    #[inline]
-    pub(crate) fn is_thread_safe(&self) -> bool {
-        if self.tag == Tag::WTFStringImpl {
-            // SAFETY: WTF tag guarantees `value.wtf` is a valid live impl.
-            self.as_wtf().is_thread_safe()
+    /// An isolated copy of a WTF-backed impl (+1, `clone()` for other tags),
+    /// for handing the value to one other thread; not for sharing one impl
+    /// between VMs.
+    pub fn thread_isolated_copy(&self) -> String {
+        let copy = if self.tag == Tag::WTFStringImpl {
+            BunString__threadIsolatedCopy(self)
         } else {
-            true
+            self.clone()
+        };
+        debug_assert!(copy.is_thread_isolated());
+        copy
+    }
+    /// Make a WTF-backed impl safe to hand to any number of threads/VMs:
+    /// isolated if it was an atom/symbol/substring, pre-hashed, and never
+    /// atomized in place; hand it out with `clone()`.
+    pub fn make_thread_shareable(&mut self) {
+        if self.tag == Tag::WTFStringImpl {
+            BunString__makeThreadShareable(self)
         }
+        debug_assert!(self.is_thread_shareable());
+    }
+    /// What [`thread_isolated_copy`] yields: no thread-affine state (not an
+    /// atom, symbol or substring), so the value may be handed to one other
+    /// thread. Non-WTF tags are inert and always qualify.
+    #[inline]
+    pub(crate) fn is_thread_isolated(&self) -> bool {
+        self.tag != Tag::WTFStringImpl || self.as_wtf().is_thread_isolated()
+    }
+    /// What [`make_thread_shareable`] yields: isolated, pre-hashed and never
+    /// atomized in place, so any number of threads may hold it.
+    #[inline]
+    pub(crate) fn is_thread_shareable(&self) -> bool {
+        self.tag != Tag::WTFStringImpl || self.as_wtf().is_thread_shareable()
     }
 
     #[inline]
@@ -918,23 +942,13 @@ impl String {
         Utf8WithString { utf8, string: self }
     }
 
-    /// Like [`into_utf8_with_string`] but guarantees the resulting buffer is
-    /// safe to send to another thread.
+    /// [`into_utf8_with_string`] then [`Utf8WithString::make_thread_isolated`].
     ///
     /// [`into_utf8_with_string`]: Self::into_utf8_with_string
-    pub fn into_utf8_with_string_thread_safe(self) -> Utf8WithString {
+    #[inline]
+    pub fn into_utf8_with_string_thread_isolated(self) -> Utf8WithString {
         let mut out = self.into_utf8_with_string();
-        if out.string.tag == Tag::WTFStringImpl {
-            if out.utf8.is_none() {
-                // 8-bit all-ASCII: a thread-safe `string` keeps backing the bytes.
-                if out.string.is_thread_safe() {
-                    return out;
-                }
-                out.utf8 = Some(out.slice().to_vec());
-            }
-            // Transcoded or copied; drop the WTF backing to release memory.
-            out.string = String::EMPTY;
-        }
+        out.make_thread_isolated();
         out
     }
 
@@ -983,23 +997,21 @@ impl Default for String {
 }
 // SAFETY: `String` is a tag + raw ptr to a `WTF::StringImpl` (or a borrowed
 // `EncodedSlice` slice / static / dead sentinel). All non-WTF tags are trivially
-// `Send + Sync` (no interior mutability, no refcount). The WTF tag is the
-// hazard: `WTF::StringImpl`'s refcount is non-atomic unless the impl was
-// created thread-safe, so sending/sharing a non-thread-safe impl across
-// threads and then `ref_()`/`deref()`ing it is a data race.
+// `Send + Sync` (no interior mutability, no refcount). A `WTF::StringImpl`'s
+// refcount is atomic; the hazards are per-thread atom tables and the lazily
+// computed hash/flags (see "Cross-thread string hazards" in `src/CLAUDE.md`).
 //
 // We keep the blanket impls to match the C++ `BunString`
 // FFI contract (the type must round-trip by value through `extern "C"` and sit
 // in `Send + Sync` containers), and instead enforce the invariant at the
-// boundary: any code that moves a `String` to another thread MUST first call
-// [`String::to_thread_safe`] (or otherwise guarantee [`String::is_thread_safe`]
-// returns `true`). [`String::debug_assert_thread_safe`] is the debug-build
-// checkpoint for that hand-off; `to_thread_safe()` itself asserts its own
-// postcondition. A `ThreadSafeString` newtype split would make this static,
-// but is deferred until the FFI surface can be reshaped.
+// boundary: code that moves a `String` to one other thread calls
+// [`String::thread_isolated_copy`], code that shares one impl between
+// threads/VMs calls [`String::make_thread_shareable`] (asserting
+// [`String::is_thread_isolated`] / [`String::is_thread_shareable`]).
 unsafe impl Send for String {}
-// SAFETY: same contract as the `Send` impl above — sharing requires
-// `is_thread_safe()`; non-WTF tags are inert and trivially `Sync`.
+// SAFETY: same contract as the `Send` impl above — a hand-off requires
+// `is_thread_isolated()`, sharing `is_thread_shareable()`; non-WTF tags are
+// inert and trivially `Sync`.
 unsafe impl Sync for String {}
 
 impl Drop for String {
@@ -1570,9 +1582,41 @@ impl Utf8WithString {
         (self.utf8, self.string)
     }
 
-    /// If `string` is WTF-backed, migrate it to a thread-safe impl.
-    pub fn to_thread_safe(&mut self) {
-        self.string.to_thread_safe();
+    /// For handing the value to one work-pool job that is dropped back on
+    /// the JS thread: keep a WTF-backed `string` only when it backs the bytes
+    /// and is not an atom/symbol, otherwise own the bytes and drop it.
+    pub fn make_thread_isolated(&mut self) {
+        if self.string.tag != Tag::WTFStringImpl {
+            return;
+        }
+        if self.utf8.is_none() {
+            let wtf = self.string.as_wtf();
+            // The job only reads the bytes and the deref happens on the JS thread, so a plain/substring impl may stay.
+            if !wtf.is_atom() && !wtf.is_symbol() {
+                return;
+            }
+            self.utf8 = Some(self.slice().to_vec());
+        }
+        self.string = String::EMPTY;
+    }
+
+    /// For a holder that may be dropped on any thread (a `Blob` store): the
+    /// bytes end up owned by this value alone — the transcoded `utf8` if
+    /// there is one (the WTF backing is dropped), else a
+    /// [`String::thread_isolated_copy`] that is never handed to JS.
+    pub fn thread_isolated_copy(self) -> Self {
+        if self.string.tag != Tag::WTFStringImpl {
+            return self;
+        }
+        let string = if self.utf8.is_some() {
+            String::EMPTY
+        } else {
+            self.string.thread_isolated_copy()
+        };
+        Self {
+            utf8: self.utf8,
+            string,
+        }
     }
 }
 
@@ -1752,7 +1796,9 @@ pub mod printer {
         }
     }
 
-    /// Same algorithm as `bun_js_printer::write_pre_quoted_string`.
+    const MALFORMED: i32 = -1;
+
+    /// Same algorithm as `bun_js_printer::write_pre_quoted_string`, except malformed UTF-8 becomes U+FFFD.
     /// PERF: (quote_char, ascii_only, json, encoding) are runtime params —
     /// profile if it shows up on a hot path.
     pub fn write_pre_quoted_string<W: PrinterWriter + ?Sized>(
@@ -1787,9 +1833,18 @@ pub mod printer {
             let clamped_width = (width as usize).min(n.saturating_sub(i));
             let c: i32 = match encoding {
                 StrEncoding::Utf8 => {
-                    let mut buf = [0u8; 4];
-                    buf[..clamped_width].copy_from_slice(&text_in[i..i + clamped_width]);
-                    strings::decode_wtf8_rune_t::<i32>(buf, width, 0)
+                    if width == 1 {
+                        // width 1 with a byte >= 0x80 is a stray continuation byte or an invalid lead.
+                        if text_in[i] >= 0x80 {
+                            MALFORMED
+                        } else {
+                            text_in[i] as i32
+                        }
+                    } else {
+                        let mut buf = [0u8; 4];
+                        buf[..clamped_width].copy_from_slice(&text_in[i..i + clamped_width]);
+                        strings::decode_wtf8_rune_t::<i32>(buf, width, MALFORMED)
+                    }
                 }
                 StrEncoding::Ascii => {
                     debug_assert!(text_in[i] <= 0x7F);
@@ -1798,6 +1853,17 @@ pub mod printer {
                 StrEncoding::Latin1 => text_in[i] as i32,
                 StrEncoding::Utf16 => text16[i] as i32,
             };
+
+            if c == MALFORMED {
+                if ascii_only {
+                    writer.write_all(&bmp_escape(0xFFFD))?;
+                } else {
+                    writer.write_all("\u{FFFD}".as_bytes())?;
+                }
+                // One byte, not `width`, so the bytes after a truncated sequence survive.
+                i += 1;
+                continue;
+            }
 
             if can_print_without_escape(c, ascii_only) {
                 match encoding {

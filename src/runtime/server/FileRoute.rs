@@ -199,36 +199,14 @@ impl FileRoute {
         let buf = self.headers.buf.as_slice();
 
         debug_assert_eq!(names.len(), values.len());
-        // S008: variant payloads are ZST opaques — safe `*mut → &mut` deref.
-        match resp {
-            AnyResponse::SSL(s) => {
-                let s = bun_opaque::opaque_deref_mut(s);
-                for (name, value) in names.iter().zip(values) {
-                    s.write_header(sp_slice(*name, buf), sp_slice(*value, buf));
+        for (name, value) in names.iter().zip(values) {
+            resp.write_header(sp_slice(*name, buf), sp_slice(*value, buf));
+        }
+        if !matches!(resp, AnyResponse::H3(_)) {
+            if let Some(srv) = self.server.get() {
+                if let Some(alt) = srv.h3_alt_svc() {
+                    resp.write_header(b"alt-svc", alt);
                 }
-                if let Some(srv) = self.server.get() {
-                    if let Some(alt) = srv.h3_alt_svc() {
-                        s.write_header(b"alt-svc", alt);
-                    }
-                }
-            }
-            AnyResponse::TCP(s) => {
-                let s = bun_opaque::opaque_deref_mut(s);
-                for (name, value) in names.iter().zip(values) {
-                    s.write_header(sp_slice(*name, buf), sp_slice(*value, buf));
-                }
-                if let Some(srv) = self.server.get() {
-                    if let Some(alt) = srv.h3_alt_svc() {
-                        s.write_header(b"alt-svc", alt);
-                    }
-                }
-            }
-            AnyResponse::H3(s) => {
-                let s = bun_opaque::opaque_deref_mut(s);
-                for (name, value) in names.iter().zip(values) {
-                    s.write_header(sp_slice(*name, buf), sp_slice(*value, buf));
-                }
-                // tag == .H3 → no alt-svc header
             }
         }
 
@@ -274,7 +252,6 @@ impl FileRoute {
         let Some(path) = store.get_path() else {
             req.set_yield(true);
             route.on_response_complete(resp);
-            route.deref();
             return;
         };
 
@@ -301,7 +278,6 @@ impl FileRoute {
         let Ok(fd) = fd_result else {
             req.set_yield(true);
             route.on_response_complete(resp);
-            route.deref();
             return;
         };
 
@@ -317,7 +293,6 @@ impl FileRoute {
                 #[cfg(not(windows))]
                 Closer::close(fd, ());
                 route.on_response_complete(resp);
-                route.deref();
             }
             Serve::Stream {
                 file_type,
@@ -581,10 +556,9 @@ pub(crate) fn write_any_status(resp: AnyResponse, status: u16) {
     match resp {
         AnyResponse::SSL(r) => crate::server::write_status::<true>(r, status),
         AnyResponse::TCP(r) => crate::server::write_status::<false>(r, status),
-        AnyResponse::H3(r) => {
+        AnyResponse::H3(_) | AnyResponse::H2(_) => {
             let mut b = bun_core::fmt::ItoaBuf::new();
-            let s = bun_core::fmt::itoa(&mut b, status);
-            bun_opaque::opaque_deref_mut(r).write_status(s);
+            resp.write_status(bun_core::fmt::itoa(&mut b, status));
         }
     }
 }

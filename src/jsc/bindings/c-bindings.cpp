@@ -16,10 +16,16 @@
 #include <termios.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#if OS(DARWIN)
+#include <mach-o/loader.h>
+#endif
 #else
 #include <uv.h>
 #include <windows.h>
 #include <corecrt_io.h>
+#include <atomic>
+#include <new>
+#include <wtf/Threading.h>
 #endif // !OS(WINDOWS)
 #include <lshpack.h>
 
@@ -606,9 +612,33 @@ extern "C" void Bun__setCTRLHandler(BOOL add)
 {
     SetConsoleCtrlHandler(Ctrlhandler, add);
 }
+
+// Held, never released, across ExitProcess: a WTF suspender it kills between
+// SuspendThread and ResumeThread of this thread would leave it suspended forever.
+extern "C" void Bun__lockThreadSuspensionForExit()
+{
+    static std::atomic<DWORD> owner { 0 };
+    DWORD self = GetCurrentThreadId();
+    DWORD expected = 0;
+    if (!owner.compare_exchange_strong(expected, self, std::memory_order_acq_rel)) {
+        // Re-entered on the thread that already holds the lock.
+        if (expected == self)
+            return;
+        // Another thread's exit holds it and is about to terminate this thread.
+        for (;;)
+            SleepEx(INFINITE, FALSE);
+    }
+    alignas(WTF::ThreadSuspendLocker) static unsigned char storage[sizeof(WTF::ThreadSuspendLocker)];
+    new (storage) WTF::ThreadSuspendLocker();
+}
 #endif
 
 extern "C" int32_t bun_is_stdio_null[3] = { 0, 0, 0 };
+
+#if OS(DARWIN)
+extern "C" int __cxa_atexit(void (*)(void*), void*, void*);
+extern "C" struct mach_header __dso_handle;
+#endif
 
 extern "C" void bun_initialize_process()
 {
@@ -730,7 +760,12 @@ extern "C" void bun_initialize_process()
     Bun__setCTRLHandler(1);
 #endif
 
-#if OS(DARWIN) || ASAN_ENABLED
+#if OS(DARWIN)
+    // atexit() on macOS dladdr()s the handler, a linear walk of this executable's
+    // symbol table (~0.5ms with symbols). __cxa_atexit lands on the same LIFO
+    // list without the lookup, as the compiler does for static destructors.
+    __cxa_atexit([](void*) { Bun__onExit(); }, nullptr, &__dso_handle);
+#elif ASAN_ENABLED
     atexit(Bun__onExit);
 #elif !OS(WINDOWS)
     at_quick_exit(Bun__onExit);
@@ -1132,7 +1167,7 @@ static bool initializePESection()
     PIMAGE_SECTION_HEADER sectionHeader = IMAGE_FIRST_SECTION(ntHeaders);
 
     for (int i = 0; i < ntHeaders->FileHeader.NumberOfSections; i++) {
-        if (strncmp((char*)sectionHeader->Name, ".bun", 4) == 0) {
+        if (memcmp(sectionHeader->Name, ".bun\0\0\0\0", 8) == 0) {
             // Found the .bun section
             // Section format: 8 bytes size (uint64_t) + data
             BYTE* sectionData = (BYTE*)hModule + sectionHeader->VirtualAddress;

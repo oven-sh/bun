@@ -15,6 +15,7 @@ use bun_event_loop::EventLoopHandle;
 use bun_io::ParentDeathWatchdog;
 #[cfg(unix)]
 use bun_io::{FilePoll, KeepAlive};
+use bun_ptr::RefPtr;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
@@ -147,18 +148,26 @@ impl Drop for Process {
 /// stay live until the handle is dropped or the exit has been dispatched —
 /// keeping the handle in one of the owner's fields satisfies that.
 ///
-/// Every method projects a call-scoped borrow of the `Process` (its own heap
-/// allocation, event-loop thread only); none escapes this type. Dropping the
-/// handle from inside the exit handler re-enters the `Process` whose `on_exit`
-/// is dispatching, exactly as the raw-pointer owners do.
-pub struct ProcessHandle(bun_ptr::RefPtr<Process>);
+/// Borrows of the `Process` (its own heap allocation, event-loop thread only)
+/// are call-scoped. Dropping the handle from inside the exit handler re-enters
+/// the `Process` whose `on_exit` is dispatching.
+pub struct ProcessHandle(RefPtr<Process>);
+
+impl core::ops::Deref for ProcessHandle {
+    type Target = Process;
+    #[inline]
+    fn deref(&self) -> &Process {
+        &self.0
+    }
+}
 
 impl ProcessHandle {
+    /// Call-scoped `&mut` to the process (event-loop thread only).
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    fn process_mut(&self) -> &mut Process {
-        // SAFETY: we hold a ref, so the pointee is live; the borrow ends with
-        // the forwarding call (see the type-level note on re-entrancy).
+    pub fn process_mut(&self) -> &mut Process {
+        // SAFETY: we hold a ref, so the pointee is live; callers keep the
+        // borrow call-scoped.
         unsafe { &mut *self.0.as_ptr() }
     }
 
@@ -170,25 +179,32 @@ impl ProcessHandle {
         self.process_mut().set_exit_handler(h);
     }
 
-    /// See [`Process::watch_or_reap`]; may synchronously run the exit handler.
+    /// See [`Process::watch_or_reap`]; may synchronously run the exit handler,
+    /// so call this on a handle the handler does not re-borrow (a local, not
+    /// the owner's slot).
     pub fn watch_or_reap(&self) -> bun_sys::Result<bool> {
         self.process_mut().watch_or_reap()
     }
 
-    /// See [`Process::on_exit`]; runs the exit handler.
+    /// See [`Process::on_exit`]; runs the exit handler (same rule as
+    /// [`watch_or_reap`](Self::watch_or_reap)).
     pub fn on_exit(&self, status: Status, rusage: &Rusage) {
         self.process_mut().on_exit(status, rusage)
     }
 
-    pub fn has_exited(&self) -> bool {
-        self.0.data().has_exited()
+    pub fn kill(&self, signal: u8) -> Maybe<()> {
+        self.process_mut().kill(signal)
+    }
+
+    /// The process's address, for identity checks in exit callbacks.
+    pub fn as_ptr(&self) -> *mut Process {
+        self.0.as_ptr()
     }
 }
 
 impl Drop for ProcessHandle {
     fn drop(&mut self) {
         self.process_mut().detach();
-        self.0.deref();
     }
 }
 
@@ -317,7 +333,7 @@ impl Process {
 
     /// # Safety
     /// `this` carries the +1 ref taken when the waiter-thread task was queued.
-    /// `ScopedRef::adopt` releases it on return — which may free `this` — so
+    /// `RefPtr::from_raw` releases it on return — which may free `this` — so
     /// this takes `*mut Self`, not `&mut self` (a `&mut` argument's
     /// Stacked-Borrows protector outliving the allocation is UB; see :215).
     #[cfg(unix)]
@@ -327,8 +343,8 @@ impl Process {
         rusage: &Rusage,
     ) {
         // SAFETY: caller contract — adopts the queued +1 ref.
-        let _g = unsafe { bun_ptr::ScopedRef::<Process>::adopt(this) };
-        // SAFETY: `_g` keeps `this` live; `&mut` scoped to the poller unref.
+        let _guard = unsafe { RefPtr::from_raw(this) };
+        // SAFETY: `_guard` keeps `this` live; `&mut` scoped to the poller unref.
         unsafe {
             if let Poller::WaiterThread(waiter) = &mut (*this).poller {
                 let ctx = event_loop_handle_to_ctx((*this).event_loop);
@@ -336,7 +352,7 @@ impl Process {
                 (*this).poller = Poller::Detached;
             }
         }
-        // SAFETY: `_g` keeps `this` live; `&mut` scoped to this call (which
+        // SAFETY: `_guard` keeps `this` live; `&mut` scoped to this call (which
         // can fire the JS exit handler).
         unsafe { (*this).on_wait_pid(waitpid_result, rusage) };
     }
@@ -346,8 +362,8 @@ impl Process {
     #[cfg(unix)]
     pub unsafe fn on_wait_pid_from_event_loop_task(this: *mut Self) {
         // SAFETY: caller contract — adopts the queued +1 ref.
-        let _g = unsafe { bun_ptr::ScopedRef::<Process>::adopt(this) };
-        // SAFETY: `_g` keeps `this` live.
+        let _guard = unsafe { RefPtr::from_raw(this) };
+        // SAFETY: `_guard` keeps `this` live.
         unsafe { (*this).wait(false) };
     }
 
@@ -597,13 +613,13 @@ impl Process {
         // `Poller::Uv` payload inside `*this` (see `on_exit_uv`).
         let _pid = unsafe { (*uv_handle).pid };
         // SAFETY: `*mut Process` back-pointer stashed in `data` at spawn. Stay
-        // raw — `ScopedRef::Drop` may free the allocation, so never bind a
+        // raw — `RefPtr::drop` may free the allocation, so never bind a
         // `&mut Process` whose tag would have to outlive that.
         let this: *mut Process = unsafe { (*uv_handle).data.cast() };
         // SAFETY: adopts the +1 ref taken at `uv_spawn`.
-        let _g = unsafe { bun_ptr::ScopedRef::<Process>::adopt(this) };
+        let _guard = unsafe { RefPtr::from_raw(this) };
         bun_sys::windows::libuv::log!("Process.onClose({})", _pid);
-        // SAFETY: `_g` keeps `this` live for this block.
+        // SAFETY: `_guard` keeps `this` live for this block.
         unsafe {
             if matches!((*this).poller, Poller::Uv(_)) {
                 (*this).poller = Poller::Detached;
@@ -1569,16 +1585,15 @@ impl Drop for WindowsSpawnResult {
 
 #[cfg(windows)]
 impl WindowsSpawnResult {
-    pub fn to_process(&mut self, _event_loop: impl Sized) -> *mut Process {
-        self.process.take().unwrap()
+    pub fn to_process(&mut self, _event_loop: impl Sized) -> RefPtr<Process> {
+        // SAFETY: the live heap `Process` allocated by `spawn_process_windows`
+        // with its initial ref.
+        unsafe { RefPtr::from_raw(self.process.take().unwrap()) }
     }
 
-    /// [`to_process`](Self::to_process), returning the owning handle.
+    /// [`to_process`](Self::to_process) as the exit-handler owner's handle.
     pub fn to_process_handle(&mut self, event_loop: impl Sized) -> ProcessHandle {
-        // SAFETY: `to_process` returns the live heap `Process` allocated by
-        // `spawn_process_windows` with its initial ref; that ref moves into
-        // the handle.
-        ProcessHandle(unsafe { bun_ptr::RefPtr::from_raw(self.to_process(event_loop)) })
+        ProcessHandle(self.to_process(event_loop))
     }
 }
 
@@ -1738,20 +1753,19 @@ impl WindowsSpawnOptions {
 /// `Process`/`EventLoopHandle` dependency); `to_process` is added here as a
 /// trait method so callers keep the `.to_process(loop_, sync)` spelling.
 pub trait SpawnResultExt: Sized {
-    fn to_process(self, event_loop: EventLoopHandle) -> *mut Process;
+    fn to_process(self, event_loop: EventLoopHandle) -> RefPtr<Process>;
 
-    /// [`to_process`](Self::to_process), returning the owning handle.
+    /// [`to_process`](Self::to_process) as the exit-handler owner's handle.
     fn to_process_handle(self, event_loop: EventLoopHandle) -> ProcessHandle {
-        // SAFETY: `to_process` returns a live heap `Process` whose initial ref
-        // the caller owns; that ref moves into the handle.
-        ProcessHandle(unsafe { bun_ptr::RefPtr::from_raw(self.to_process(event_loop)) })
+        ProcessHandle(self.to_process(event_loop))
     }
 }
 
 #[cfg(unix)]
 impl SpawnResultExt for PosixSpawnResult {
-    fn to_process(self, event_loop: EventLoopHandle) -> *mut Process {
-        Process::init_posix(&self, event_loop)
+    fn to_process(self, event_loop: EventLoopHandle) -> RefPtr<Process> {
+        // SAFETY: `init_posix` heap-allocates the `Process` with its initial ref.
+        unsafe { RefPtr::from_raw(Process::init_posix(&self, event_loop)) }
     }
 }
 
@@ -2742,16 +2756,11 @@ mod spawn_process_body {
                     Ok(proces) => proces,
                 };
 
-            // `*mut Process` — intrusive refcount (heap::alloc in to_process).
-            let process: *mut Process = spawned.to_process(());
-            let _detach_guard = scopeguard::guard(process, |process| {
-                // SAFETY: sole owner during sync spawn; loop has drained, so no
-                // uv callback holds a competing `&mut Process`.
-                unsafe {
-                    (*process).detach();
-                    Process::deref(process);
-                }
-            });
+            // Sole owner during sync spawn; detached and released on return,
+            // by which time the loop has drained and no uv callback holds a
+            // competing `&mut Process`.
+            let process_handle = spawned.to_process_handle(());
+            let process: *mut Process = process_handle.as_ptr();
             // SAFETY: just allocated; no other borrow live yet.
             unsafe {
                 (*process).enable_keeping_event_loop_alive();
@@ -2793,7 +2802,7 @@ mod spawn_process_body {
             // Borrows.
             let this_ptr: *mut SyncWindowsProcess =
                 bun_core::heap::into_raw(SyncWindowsProcess::new(SyncWindowsProcess {
-                    process: spawned.to_process(()),
+                    process: spawned.to_process(()).into_raw(),
                     stderr: Vec::new(),
                     stdout: Vec::new(),
                     err: bun_sys::E::SUCCESS,
@@ -2802,9 +2811,9 @@ mod spawn_process_body {
                 }));
             // SAFETY: `(*this_ptr).process` was just produced by `to_process` (sole
             // owner, mutable provenance from heap::alloc).
+            let _frame_ref = unsafe { RefPtr::init_ref((*this_ptr).process) };
             unsafe {
                 let p = &mut *(*this_ptr).process;
-                p.ref_();
                 // SAFETY: `this_ptr` is the live `SyncWindowsProcess` on the
                 // caller's stack; `p` is owned by it and dropped before return.
                 p.set_exit_handler(ProcessExit::new(ProcessExitKind::SyncWindows, this_ptr));
@@ -2873,12 +2882,9 @@ mod spawn_process_body {
                     stderr: flatten_owned_chunks(core::mem::take(&mut (*this_ptr).stderr)),
                 }
             };
-            // SAFETY: drop the ref taken above, then reclaim the SyncWindowsProcess
-            // allocation.
-            unsafe {
-                Process::deref((*this_ptr).process);
-                drop(bun_core::heap::take(this_ptr));
-            }
+            // SAFETY: reclaim the SyncWindowsProcess allocation; `_frame_ref`
+            // releases the process after.
+            drop(unsafe { bun_core::heap::take(this_ptr) });
             Ok(Ok(result))
         }
 

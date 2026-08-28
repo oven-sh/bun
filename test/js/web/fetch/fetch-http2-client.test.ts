@@ -482,6 +482,70 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     );
   });
 
+  test("upload larger than the write-buffer high-water mark when the peer window never runs out", async () => {
+    // The peer advertises a 1 MiB stream window and a 16 MiB connection
+    // window, so flow control never pauses a 2 MB body; the client must keep
+    // framing after a flush that fully drains instead of waiting for a
+    // writable event that never comes.
+    const received = new Map<number, number>();
+    const server = nodetls.createServer({ ...tls, ALPNProtocols: ["h2"] }, socket => {
+      let buf = Buffer.alloc(0);
+      let prefaceSeen = false;
+      socket.on("error", () => {});
+      socket.on("data", chunk => {
+        buf = Buffer.concat([buf, chunk]);
+        if (!prefaceSeen) {
+          if (buf.length < 24) return;
+          buf = buf.subarray(24);
+          prefaceSeen = true;
+          // SETTINGS_INITIAL_WINDOW_SIZE (0x4) = 1 MiB, then open the connection window by 16 MiB.
+          socket.write(frame(4, 0, 0, Buffer.concat([Buffer.from([0, 4]), u32be(1 << 20)])));
+          socket.write(frame(8, 0, 0, u32be(1 << 24)));
+        }
+        while (buf.length >= 9) {
+          const len = buf.readUIntBE(0, 3);
+          if (buf.length < 9 + len) return;
+          const type = buf[3],
+            flags = buf[4],
+            id = buf.readUInt32BE(5) & 0x7fffffff;
+          buf = buf.subarray(9 + len);
+          if (type === 4 && !(flags & 1)) socket.write(frame(4, 1, 0));
+          if (type === 0) {
+            received.set(id, (received.get(id) ?? 0) + len);
+            // Top the stream window back up in 1 MiB steps so it is never the limiter.
+            if ((received.get(id)! & ((1 << 20) - 1)) < len) socket.write(frame(8, 0, id, u32be(1 << 20)));
+            if (flags & 1) {
+              socket.write(frame(1, 4, id, hpackStatus(200)));
+              socket.write(frame(0, 1, id, Buffer.from(String(received.get(id)))));
+            }
+          }
+        }
+      });
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = await spawnFetch(`
+        const opts = { method: "POST", tls: { rejectUnauthorized: false } };
+        const one = await fetch("https://localhost:${port}/", { ...opts, body: new Blob([new Uint8Array(2_000_000)]) });
+        console.log(one.status, await one.text());
+        const many = await Promise.all(
+          Array.from({ length: 4 }, () =>
+            fetch("https://localhost:${port}/", { ...opts, body: new Blob([new Uint8Array(512 * 1024)]) }).then(r => r.text()),
+          ),
+        );
+        console.log(many.join(","));
+      `);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("200 2000000\n524288,524288,524288,524288");
+      expect(exitCode).toBe(0);
+    } finally {
+      server.close();
+    }
+  });
+
   test("cold-start: parallel requests coalesce onto one TLS connect", async () => {
     let sessions = 0;
     const server = makeH2Server();
@@ -885,6 +949,31 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
           expect(exitCode).toBe(0);
           expect(attempts).toBe(2);
           expect(state.connections).toBe(1);
+        },
+      );
+    });
+
+    test("RST_STREAM(NO_ERROR) after a complete response keeps the response; a later RST is ignored", async () => {
+      // RFC 9113 §8.1: the server may finish the response before the request
+      // body and reset with NO_ERROR; DATA we had in flight can then draw a
+      // second RST_STREAM(STREAM_CLOSED), which must not clobber the result.
+      await withRawH2Server(
+        (conn, id) => {
+          conn.headers(id, hpackStatus(200));
+          conn.data(id, "early", true);
+          conn.rst(id, http2.constants.NGHTTP2_NO_ERROR);
+          conn.rst(id, http2.constants.NGHTTP2_STREAM_CLOSED);
+        },
+        async url => {
+          await using proc = await spawnFetch(`
+            const body = new ReadableStream({ start(c) { c.enqueue(new Uint8Array(1024)); /* never closes */ } });
+            const r = await fetch("${url}", { method: "POST", body, duplex: "half", tls: { rejectUnauthorized: false } });
+            console.log(r.status, await r.text());
+          `);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(stdout.trim()).toBe("200 early");
+          expect(exitCode).toBe(0);
         },
       );
     });

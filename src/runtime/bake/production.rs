@@ -743,12 +743,12 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
 
                             if let Some(entry_point_index) = file.entry_point_index {
                                 if (entry_point_index as usize) < module_keys.len() {
-                                    let mut str = BunString::create_format(format_args!(
+                                    let str = BunString::create_format(format_args!(
                                         "bake:/{}",
                                         BStr::new(without_prefix)
                                     ));
-                                    str.to_thread_safe();
-                                    module_keys[entry_point_index as usize] = str;
+                                    module_keys[entry_point_index as usize] =
+                                        str.thread_isolated_copy();
                                 }
                             }
 
@@ -771,7 +771,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                         OutputKind::Sourcemap => {}
                         OutputKind::ModuleInfo
                         | OutputKind::BuiltinBytecode
-                        | OutputKind::BytecodeStringTable => {}
+                        | OutputKind::BytecodeStringTable
+                        | OutputKind::ModuleInfoStringTable => {}
                         OutputKind::MetafileJson | OutputKind::MetafileMarkdown => {}
                     }
                 }

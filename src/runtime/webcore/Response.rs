@@ -5,6 +5,7 @@ use core::ptr::NonNull;
 
 use bun_jsc::JsCell;
 use bun_jsc::{AbortSignal, AbortSignalRef, GlobalRef};
+use bun_ptr::RefPtr;
 
 use crate::webcore::jsc::{
     BuiltinName, CallFrame, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef,
@@ -67,7 +68,10 @@ impl HeadersRef {
 
     /// `FetchHeaders.createFromJS(global, value)` — may throw, may return null.
     #[inline]
-    fn create_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
+    pub(crate) fn create_from_js(
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<Option<Self>> {
         // SAFETY: C++ returns a +1 ref or null.
         Ok(FetchHeaders::create_from_js(global, value)?.map(|p| unsafe { Self::adopt(p) }))
     }
@@ -126,11 +130,11 @@ impl BodyAbortListener {
         // `attach_abort_signal`; `clean_native_bindings` removes it before the
         // box is dropped, so it is live here. Copy out up front: erroring a
         // still-streaming body can re-enter `Response::unref` via
-        // `FetchTasklet::ignore_remaining_response_body` and destroy this box.
+        // `FetchTasklet::abandon_response_body` and destroy this box.
         let (response, global) =
             unsafe { ((*ctx.cast::<Self>()).response, (*ctx.cast::<Self>()).global) };
-        Response::ref_(response.as_mut_ptr());
-        let _keepalive = scopeguard::guard((), move |()| Response::unref(response.as_mut_ptr()));
+        // SAFETY: `response` is live (see above).
+        let _keepalive = unsafe { RefPtr::init_ref(response.as_mut_ptr()) };
         if !matches!(
             response.get_body_value(),
             BodyValue::Used | BodyValue::Error(_) | BodyValue::Null | BodyValue::Empty
@@ -194,13 +198,15 @@ bun_jsc::impl_js_class_via_generated!(Response => bun_jsc::generated::JSResponse
 /// `body`, so the `UnsafeCell` indirection still suppresses field-level
 /// `noalias` caching across re-entry.
 #[repr(C)]
+#[derive(bun_ptr::CellRefCounted)]
+#[ref_count(destroy = Response::destroy)]
 pub struct Response {
     body: JsCell<Body>,
     init: JsCell<Init>,
     url: JsCell<BunString>,
     redirected: Cell<bool>,
-    /// We increment this count in fetch so if JS Response is discarted we can resolve the Body
-    /// In the server we use a flag response_protected to protect/unprotect the response
+    /// The JS wrapper, fetch (so a discarded JS Response can still resolve
+    /// its body) and HTMLRewriter each hold a ref.
     ref_count: Cell<u32>,
     /// Bun.serve's RequestContext holds a weak reference so `onAbort` /
     /// `handleResolveStream` / `handleRejectStream` can safely observe that the
@@ -484,8 +490,7 @@ impl Response {
         global: &JSGlobalObject,
         signal: &AbortSignal,
     ) {
-        // SAFETY: `signal` is live; `ref_()` bumps the intrusive refcount.
-        let signal_ref = unsafe { AbortSignalRef::adopt(signal.ref_()) };
+        let signal_ref = signal.ref_();
         signal.pending_activity_ref();
         let mut listener = Box::new(BodyAbortListener {
             signal: signal_ref,
@@ -803,7 +808,7 @@ impl Response {
     }
 
     fn destroy(this: *mut Response) {
-        // SAFETY: called from unref() when ref_count hits 0; this is the unique owner
+        // SAFETY: ref_count hit 0; this is the unique owner
         unsafe {
             // We assign safe-empty values rather than `drop_in_place` so the
             // struct stays in a valid (all-empty) state if `on_finalize()`
@@ -837,42 +842,8 @@ impl Response {
         }
     }
 
-    /// # Safety
-    /// `this` must point to a live `Response` on which the caller already holds
-    /// at least one intrusive ref.
-    pub(crate) fn ref_(this: *mut Response) -> *mut Response {
-        // SAFETY: caller contract — `this` is live.
-        unsafe {
-            (*this).ref_count.set((*this).ref_count.get() + 1);
-        }
-        this
-    }
-
-    /// # Safety
-    /// `this` must point to a live `Response` on which the caller holds one
-    /// intrusive ref; that ref is released (and the allocation destroyed if it
-    /// was the last).
-    pub(crate) fn unref(this: *mut Response) {
-        // SAFETY: caller contract — `this` is live.
-        unsafe {
-            let rc = (*this).ref_count.get();
-            debug_assert!(rc > 0);
-            (*this).ref_count.set(rc - 1);
-            if rc == 1 {
-                Self::destroy(this);
-            }
-        }
-    }
-
-    pub fn finalize(self: Box<Self>) {
-        // Refcounted: release the JS wrapper's +1; allocation may outlive this
-        // call if other refs remain, so hand ownership back to the raw refcount
-        // FIRST so a panic in the work below leaks instead of UAF-ing siblings.
-        let this = bun_core::heap::release(self);
-        this.js_ref.with_mut(JsRef::finalize);
-        // SAFETY: `heap::release` returned the live raw pointer for the +1 we
-        // just reclaimed from the JS wrapper.
-        Self::unref(this);
+    pub fn finalize(&self) {
+        self.js_ref.with_mut(JsRef::finalize);
     }
 
     pub(crate) fn construct_json(

@@ -28,6 +28,7 @@ use bun_jsc::module_loader::{ArenaResetGuard, FetchFlags, TranspileArgs, Transpi
 use bun_jsc::resolved_source::Bytecode;
 use bun_jsc::virtual_machine::{
     InitOptions, RuntimeHooks, RuntimeState as OpaqueRuntimeState, SweepResult, VirtualMachine,
+    WorkerExecArgvFlags,
 };
 use bun_jsc::{
     AnyPromise, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSModuleLoader,
@@ -305,7 +306,11 @@ pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCt
             )),
         }
     }
-    rare.default_client_ssl_ctx.unwrap()
+    rare.default_client_ssl_ctx
+        .as_ref()
+        .unwrap()
+        .as_ptr()
+        .cast()
 }
 
 /// `RareData.sslCtxCache().getOrCreateOpts(opts, &err)` — RuntimeHooks slot
@@ -325,10 +330,7 @@ fn ssl_ctx_cache_get_or_create(
     // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a stable
     // address for the VM's lifetime and is only touched from the JS thread.
     let cache = unsafe { &mut (*state).ssl_ctx_cache };
-    cache
-        .get_or_create_opts(opts, err)
-        // SAFETY: `get_or_create_opts` returns a +1 ref.
-        .and_then(|ctx| unsafe { bun_boringssl::c::OwnedSslCtx::from_raw(ctx) })
+    cache.get_or_create_opts(opts, err)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1390,11 +1392,10 @@ unsafe fn process_exit(global: *mut JSGlobalObject, code: u8) {
 /// `vm.standalone_module_graph` here and cast it to `&mut Graph` — that
 /// shared-ref provenance has no write permission, so the resulting `&mut` is
 /// instant UB under Stacked Borrows regardless of `INIT_LOCK`. `Graph::get()`
-/// hands out the `*mut` directly from the backing `UnsafeCell`, which is the
-/// same path every other mutating caller (`node_fs`, `Blob`) uses.
+/// hands out the `*mut` directly from the backing `UnsafeCell`.
 ///
-/// Called on the JS thread; `Graph::find` / `LazySourceMap::load` only mutate
-/// the per-`File` lazy caches (sourcemap decode is serialized by `INIT_LOCK`).
+/// `LazySourceMap::load` is the graph's only post-init mutation and is
+/// serialized by `INIT_LOCK`.
 fn load_standalone_sourcemap(
     path: &[u8],
 ) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>> {
@@ -1479,15 +1480,15 @@ mod vm_loader_ctx {
             is_blob_url(spec) => crate::webcore::object_url_registry::is_blob_url(spec),
             resolve_blob(spec) => {
                 crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
-                    .resolve_and_dupe(spec)
+                    .resolve_and_dupe(spec, &*(*this).global)
                     .map(|b| bun_core::heap::into_raw(Box::new(b)).cast::<()>())
             },
             blob_loader(b) => blob(b).get_loader(&*this),
             // Returned slices borrow blob heap storage that lives until
             // `blob_deinit`; erased to `'static` per the interface signature —
             // sound because the bundler caller drops them before `blob_deinit`.
-            blob_file_name(b) => blob(b)
-                .get_file_name()
+            blob_store_path(b) => blob(b)
+                .store_path()
                 .map(|s| core::slice::from_raw_parts(s.as_ptr(), s.len())),
             blob_needs_read_file(b) => blob(b).needs_to_read_file(),
             blob_shared_view(b) => {
@@ -1525,7 +1526,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     console_print_runtime_object,
     load_standalone_sourcemap,
     apply_standalone_runtime_flags,
-    parse_worker_exec_argv_allow_addons,
+    parse_worker_exec_argv_flags,
     stop_cron_for_vm_teardown,
     cron_clear_all_reload,
     retroactively_report_discovered_tests,
@@ -1565,26 +1566,19 @@ unsafe fn apply_standalone_runtime_flags(
     crate::run_main::apply_standalone_runtime_flags(unsafe { &mut *transpiler }, graph);
 }
 
-/// Parse a Worker's `execArgv` against the
-/// `RunCommand` param table and return `!args.flag("--no-addons")`, or `None`
-/// on parse error.
-///
-/// Note: the Rust `bun_clap::parse_ex` port currently constrains
-/// `ArgIter<'static>` (parsed values are stored by reference), which would
-/// force leaking the per-call UTF-8 copies of `exec_argv`. Spec only ever
-/// reads the single `--no-addons` flag from the result (per the in-tree
-/// `// TODO: currently this only checks for --no-addons`), so this body scans
-/// the converted argv directly with the same `stop_after_positional_at = 1`
-/// short-circuit. Full clap routing can return when `ComptimeClap` grows a
-/// borrowed-lifetime variant.
+/// Scan a Worker's `execArgv` for `--no-addons` and `--no-ffi-cc`. Like the
+/// CLI parser, the scan stops at the first positional.
 ///
 /// # Safety
 /// Each `WTFStringImpl` in `exec_argv` is a live WTF string (the C++
 /// `Worker::create` array, kept alive for the worker's lifetime).
-unsafe fn parse_worker_exec_argv_allow_addons(
+unsafe fn parse_worker_exec_argv_flags(
     exec_argv: &[bun_core::WTFStringImpl],
-) -> Option<bool> {
-    let mut no_addons = false;
+) -> Option<WorkerExecArgvFlags> {
+    let mut flags = WorkerExecArgvFlags {
+        allow_addons: true,
+        allow_ffi_cc: true,
+    };
     for &arg in exec_argv {
         if arg.is_null() {
             continue;
@@ -1592,7 +1586,6 @@ unsafe fn parse_worker_exec_argv_allow_addons(
         // SAFETY: per fn contract — `arg` is a live `WTFStringImpl*`.
         let owned = unsafe { &*arg }.to_owned_slice_z();
         let bytes = owned.as_bytes();
-        // `stop_after_positional_at = 1` — first non-flag token ends parsing.
         if bytes.first() != Some(&b'-') {
             break;
         }
@@ -1600,11 +1593,12 @@ unsafe fn parse_worker_exec_argv_allow_addons(
             break;
         }
         if bytes == b"--no-addons" {
-            no_addons = true;
+            flags.allow_addons = false;
+        } else if bytes == b"--no-ffi-cc" {
+            flags.allow_ffi_cc = false;
         }
     }
-    // Override `allow_addons` unconditionally on successful parse.
-    Some(!no_addons)
+    Some(flags)
 }
 
 /// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` —
@@ -2789,15 +2783,11 @@ fn transpile_source_code_inner(
                 // disable_transpiling: return raw source.
                 if disable_transpilying {
                     let source_code = match args.flags {
-                        FetchFlags::PrintSourceAndClone => {
-                            bun_core::String::clone_utf8(&source.contents)
-                        }
                         FetchFlags::PrintSource => {
                             // The file contents live in a Drop-carrying
                             // `source_contents_backing` on `parse_result`, so a
                             // borrow would dangle once `parse_result` drops on
-                            // return. Clone instead — matches the
-                            // `PrintSourceAndClone` arm.
+                            // return. Clone instead.
                             bun_core::String::clone_utf8(&source.contents)
                         }
                         FetchFlags::Transpile => unreachable!(),
@@ -3749,28 +3739,18 @@ fn __bun_fetch_builtin_module(
     }
 
     // ── Standalone-module-graph probe ───────────────────────────────────
-    // The VM field is the resolver's
-    // read-only `&dyn StandaloneModuleGraph`; for `File::to_wtf_string`
-    // (mutates the lazy `wtf_string` cache) we need write provenance, so
-    // reach the concrete `Graph` via its `UnsafeCell` singleton accessor —
-    // same path as `load_standalone_sourcemap` / `node_fs`.
-    if jsc_vm.standalone_module_graph.is_some() {
-        let graph = bun_standalone_graph::Graph::get()
-            .expect("vm.standalone_module_graph set ⇔ Graph singleton populated");
-        // Spec uses `graph.files.getPtr(spec)` (no virtual-root prefix
-        // check). SAFETY: `graph` is the `UnsafeCell::get()` pointer to the
-        // process-lifetime singleton; this hook runs on the JS thread and
-        // the only mutation below (`to_wtf_string`) is the per-`File`
-        // idempotent `wtf_string` cache.
-        if let Some(file) = unsafe { (*graph).files.get_mut(spec) } {
-            use bun_standalone_graph::StandaloneModuleGraph::ModuleFormat;
+    // `files.get` (no virtual-root prefix check), not `find_ref`.
+    if let Some(file) =
+        bun_standalone_graph::Graph::get_ref().and_then(|graph| graph.files.get(spec))
+    {
+        use bun_standalone_graph::StandaloneModuleGraph::ModuleFormat;
 
-            if matches!(file.loader, Loader::Sqlite | Loader::SqliteEmbedded) {
-                // Distinct from
-                // [`SQLITE_MODULE_SOURCE`]: the standalone-binary path reads
-                // the embedded blob via `readFileSync(import.meta.path)`
-                // (resolved through the `/$bunfs/` virtual root).
-                const SQLITE_MODULE_SOURCE_STANDALONE: &[u8] = b"\
+        if matches!(file.loader, Loader::Sqlite | Loader::SqliteEmbedded) {
+            // Distinct from
+            // [`SQLITE_MODULE_SOURCE`]: the standalone-binary path reads
+            // the embedded blob via `readFileSync(import.meta.path)`
+            // (resolved through the `/$bunfs/` virtual root).
+            const SQLITE_MODULE_SOURCE_STANDALONE: &[u8] = b"\
 /* Generated code */
 import {Database} from 'bun:sqlite';
 import {readFileSync} from 'node:fs';
@@ -3779,48 +3759,56 @@ export const db = new Database(readFileSync(import.meta.path));
 export const __esModule = true;
 export default db;
 ";
-                return Some(ResolvedSource {
-                    source_code: bun_core::String::static_(SQLITE_MODULE_SOURCE_STANDALONE),
-                    source_url: specifier.clone(),
-                    ..ResolvedSource::default()
-                });
-            }
-
-            if file.is_text_module() {
-                // The bytes are already a string body (`encode_text_module`):
-                // the default export is a JSString over the section, no copy.
-                // Only a `Dead` string throws; `to_wtf_string` never yields one.
-                let value = file
-                    .to_wtf_string()
-                    .into_js(global)
-                    .expect("embedded text module string is never dead");
-                return Some(ResolvedSource {
-                    jsvalue_for_export: value,
-                    tag: bun_jsc::resolved_source::Tag::ExportDefaultObject,
-                    ..ResolvedSource::default()
-                });
-            }
-
-            // SAFETY: `file.module_info`/`file.bytecode` are live subranges of
-            // the embedded section (set in `Graph::from_bytes`);
-            // `create_from_cached_record` copies out of it before returning.
-            let (module_info, bytecode) = unsafe { (&*file.module_info, &*file.bytecode) };
             return Some(ResolvedSource {
-                source_code: file.to_wtf_string(),
+                source_code: bun_core::String::static_(SQLITE_MODULE_SOURCE_STANDALONE),
                 source_url: specifier.clone(),
-                bytecode_origin_path: bun_core::String::from_bytes(file.bytecode_origin_path),
-                bytecode_cache: Bytecode::persistent(bytecode),
-                source_code_hash: file.source_hash,
-                module_info: if !module_info.is_empty() {
-                    bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized
-                        ::create_from_cached_record(module_info)
-                } else {
-                    None
-                },
-                is_commonjs_module: file.module_format == ModuleFormat::Cjs,
                 ..ResolvedSource::default()
             });
         }
+
+        if file.is_text_module() {
+            // The bytes are already a string body (`encode_text_module`):
+            // the default export is a JSString over the section, no copy.
+            // Only a `Dead` string throws; `to_wtf_string` never yields one.
+            let value = file
+                .to_wtf_string()
+                .into_js(global)
+                .expect("embedded text module string is never dead");
+            return Some(ResolvedSource {
+                jsvalue_for_export: value,
+                tag: bun_jsc::resolved_source::Tag::ExportDefaultObject,
+                ..ResolvedSource::default()
+            });
+        }
+
+        // SAFETY: `file.module_info`/`file.bytecode` are live subranges of
+        // the embedded section (set in `Graph::from_bytes`).
+        let (module_info, bytecode) = unsafe { (&*file.module_info, &*file.bytecode) };
+        let module_info_strings: &'static [u8] = bun_standalone_graph::Graph::get_ref()
+            .map_or(&[], |graph| graph.module_info_string_table);
+        return Some(ResolvedSource {
+            source_code: file.to_wtf_string(),
+            source_url: specifier.clone(),
+            bytecode_origin_path: bun_core::String::from_bytes(file.bytecode_origin_path),
+            bytecode_cache: Bytecode::persistent(bytecode),
+            source_code_hash: file.source_hash,
+            module_info: if !module_info.is_empty() {
+                let decoded = bun_bundler::analyze_transpiled_module::ModuleInfoStringTable::parse(
+                    module_info_strings,
+                )
+                .ok()
+                .and_then(|table| {
+                    bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized
+                            ::create_with_table(&table, module_info)
+                });
+                debug_assert!(decoded.is_some(), "embedded module_info does not decode");
+                decoded
+            } else {
+                None
+            },
+            is_commonjs_module: file.module_format == ModuleFormat::Cjs,
+            ..ResolvedSource::default()
+        });
     }
 
     None
@@ -3996,7 +3984,8 @@ unsafe fn get_loader_and_virtual_source<'a>(
     // `blob:` ObjectURL → in-memory virtual source.
     if crate::webcore::object_url_registry::is_blob_url(specifier) {
         match crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
-            .resolve_and_dupe(&specifier[b"blob:".len()..])
+            // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+            .resolve_and_dupe(&specifier[b"blob:".len()..], unsafe { &*jsc_vm }.global())
         {
             Some(blob) => {
                 *blob_to_deinit = Some(blob);
@@ -4009,7 +3998,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
                 loader = blob.get_loader(unsafe { &*jsc_vm });
 
                 // "file:" loader makes no sense for blobs, so default to tsx.
-                if let Some(filename) = blob.get_file_name() {
+                if let Some(filename) = blob.store_path() {
                     // Only treat it as a file if it is a `Bun.file()`.
                     if blob.needs_to_read_file() {
                         // Note: borrowck — `Fs::Path<'a>` borrows
@@ -4480,7 +4469,7 @@ fn transpile_error_value(
     err: crate::Error,
 ) -> Option<JSValue> {
     match err {
-        crate::Error::PluginError | crate::Error::Bundler(bun_bundler::Error::Plugin) => None,
+        crate::Error::Bundler(bun_bundler::Error::Plugin) => None,
         // `take_error` unwraps the JSC::Exception to its inner value; the C++
         // caller re-wraps via `JSC::Exception::create`, so storing the raw
         // Exception here would double-wrap and trip
@@ -4832,8 +4821,8 @@ pub(crate) fn parse_http_date(value: &[u8]) -> Option<u64> {
 #[unsafe(no_mangle)]
 fn __bun_stdio_blob_store_new(fd: bun_sys::Fd, is_atty: bool, mode: bun_sys::Mode) -> *mut () {
     use bun_jsc::node_path::PathOrFileDescriptor;
-    use bun_jsc::webcore_types::store::{Data, File, Store};
-    let store: Box<Store> = Store::new(Store {
+    use bun_jsc::webcore_types::store::{Data, File, IsAllAscii, Store};
+    bun_core::heap::into_raw(Box::new(Store {
         data: Data::File(File {
             pathlike: PathOrFileDescriptor::Fd(fd),
             is_atty: Some(is_atty),
@@ -4842,13 +4831,13 @@ fn __bun_stdio_blob_store_new(fd: bun_sys::Fd, is_atty: bool, mode: bun_sys::Mod
         }),
         mime_type: bun_http_types::MimeType::NONE,
         ref_count: bun_ptr::ThreadSafeRefCount::init_exact_refs(2),
-        is_all_ascii: None,
-    });
-    bun_core::heap::into_raw(store).cast()
+        is_all_ascii: IsAllAscii::default(),
+    }))
+    .cast()
 }
 
 /// Releases both refs from [`__bun_stdio_blob_store_new`]'s `+2` (one owner ref + one
-/// dead immortality sentinel). Live retained `StoreRef`s keep their own `+1`, so safe.
+/// dead immortality sentinel). Live retained `RefPtr<Store>`s keep their own `+1`, so safe.
 #[unsafe(no_mangle)]
 fn __bun_stdio_blob_store_deinit(ptr: *mut ()) {
     use bun_jsc::webcore_types::store::Store;

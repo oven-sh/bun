@@ -1586,6 +1586,23 @@ impl<'a> PackageInstaller<'a> {
             {
                 debug_assert!(resolution.can_enqueue_install_task());
 
+                // Re-enqueueing would dedupe against the finished download and never call back.
+                if !needs_verify {
+                    if log_level != Options::LogLevel::Silent {
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r>: failed to install <b>{}<r>: the downloaded package was not found in the cache",
+                            bstr::BStr::new(alias.slice(string_buf!())),
+                        );
+                    }
+                    self.summary.fail += 1;
+                    self.increment_tree_install_count(
+                        !is_pending_package_install,
+                        self.current_tree_id,
+                        log_level,
+                    );
+                    return;
+                }
+
                 let context =
                     TaskCallbackContext::DependencyInstallContext(DependencyInstallContext {
                         tree_id: self.current_tree_id,

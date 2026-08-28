@@ -6,13 +6,14 @@ use crate::Error;
 use crate::http_thread::InitOpts as HTTPThreadInitOpts;
 use crate::ssl_config::{self, SSLConfig};
 use crate::{
-    self as http, AlpnOffer, HTTPCertError, HTTPClient, InitError, get_cert_error_from_no, h2,
+    self as http, AlpnOffer, HTTPCertError, HTTPClient, InitError, ProxyTunnel,
+    get_cert_error_from_no, h2,
 };
 use bun_boringssl::ssl_ctx_setup;
-use bun_boringssl_sys::SSL_CTX;
+use bun_boringssl_sys::{OwnedSslCtx, SSL_CTX};
 use bun_collections::{HiveArray, TaggedPtrUnion};
 use bun_core::strings;
-use bun_core::{self, FeatureFlags};
+use bun_ptr::RefPtr;
 use bun_uws as uws;
 
 bun_core::declare_scope!(HTTPContext, hidden);
@@ -37,15 +38,12 @@ pub struct HTTPContext<const SSL: bool> {
     /// struct is either a `http_thread.{http,https}_context` static or a
     /// `bun.default_allocator.create()` for custom-SSL entries.
     pub(crate) group: uws::SocketGroup,
-    /// `SSL_CTX*` built from this context's SSLConfig (or the default
-    /// `request_cert=1` opts). One owned ref; `SSL_CTX_free` on deinit.
-    /// Only meaningful when `SSL`.
-    pub(crate) secure: Option<*mut SSL_CTX>,
+    /// Built from this context's SSLConfig (or the default `request_cert=1`
+    /// opts). Only meaningful when `SSL`.
+    pub(crate) secure: Option<OwnedSslCtx>,
     /// HTTP/2 sessions with at least one active stream, available for
-    /// concurrent attachment if `hasHeadroom()`.
-    // Raw pointers; the intrusive refcount (bumped on insert, dropped on
-    // removal) is what keeps each session alive while listed here.
-    pub(crate) active_h2_sessions: Vec<*mut h2::ClientSession>,
+    /// concurrent attachment if `hasHeadroom()`. Each entry holds a ref.
+    pub(crate) active_h2_sessions: Vec<RefPtr<h2::ClientSession>>,
     /// HTTPClients whose fresh TLS connect is in flight and whose request
     /// is h2-capable. Subsequent h2-capable requests to the same origin
     /// coalesce onto the first one's session once ALPN resolves rather
@@ -58,13 +56,6 @@ pub struct HTTPContext<const SSL: bool> {
     /// Client-side TLS session cache; populated only when `SSL`.
     pub(crate) session_cache: crate::session_cache::SessionCache,
 }
-
-// Intrusive refcount:
-// `*T` crosses FFI (group.ext) and is recovered from socket ext, so per
-// PORTING.md this stays intrusive rather than `Rc<T>`. Derived via
-// `#[derive(CellRefCounted)]` above; default `destroy` (`heap::take`) applies
-// (this struct is Box-allocated for custom-SSL entries; statics never hit 0).
-pub(crate) type HTTPContextRc<const SSL: bool> = bun_ptr::IntrusiveRc<HTTPContext<SSL>>;
 
 pub(crate) type PooledSocketHiveAllocator<const SSL: bool> =
     HiveArray<PooledSocket<SSL>, POOL_SIZE>;
@@ -205,7 +196,7 @@ pub struct PooledSocket<const SSL: bool> {
     /// an HTTP proxy), the tunnel is preserved here. The pool owns one
     /// strong ref while the socket is parked (the `RefPtr` *is* that ref).
     /// None for direct connections.
-    pub(crate) proxy_tunnel: Option<crate::proxy_tunnel::RefPtr>,
+    pub(crate) proxy_tunnel: Option<RefPtr<ProxyTunnel>>,
     /// Target (origin) hostname the tunnel connects to. `hostname_buf`
     /// above holds the PROXY hostname; this is the upstream we CONNECTed
     /// to. Heap-allocated only when proxy_tunnel is set; empty otherwise.
@@ -217,27 +208,23 @@ pub struct PooledSocket<const SSL: bool> {
     pub(crate) proxy_auth_hash: u64,
     /// HTTP/2 connection state (HPACK tables, server SETTINGS) when
     /// this socket negotiated "h2". Owned by the pool while parked.
-    pub(crate) h2_session: Option<NonNull<h2::ClientSession>>,
+    pub(crate) h2_session: Option<RefPtr<h2::ClientSession>>,
 }
 
-/// Upgrade an `Option<NonNull<h2::ClientSession>>` held by a pool / found-slot
-/// entry to `Option<&'a mut h2::ClientSession>`, for the field writes and
-/// idle-frame handling that cannot release the session. Anything that can
-/// (`adopt`, the socket events) goes through a [`h2::SessionPtr`] instead.
+/// `&mut` access to a pooled / found-slot HTTP/2 session, for the field
+/// writes and idle-frame handling that cannot release the session. Anything
+/// that can (`adopt`, the socket events) goes through a [`h2::SessionPtr`]
+/// instead.
 ///
-/// INVARIANT: while the holder stores `Some`, it owns one strong intrusive ref
-/// on the session (taken in `release_socket`, released in
-/// `add_memory_back_to_pool` or handed to the socket ext by `existing_socket` /
-/// `connect`); the session is a distinct heap allocation that outlives the
-/// holder. HTTP-thread-only, so no concurrent `&mut`. Centralises the SAFETY
-/// argument shared by `PooledSocket::h2_session_mut` and
-/// `ExistingSocket::h2_session_mut`.
+/// INVARIANT: the holder owns one ref on the session, a distinct heap
+/// allocation; HTTP-thread-only, so no concurrent `&mut`. Each call re-derives
+/// a fresh `&mut`, so callers may interleave raw `as_ptr()` reads (e.g.
+/// `register_h2`) without a spanning Unique tag.
 #[inline]
-fn h2_session_as_mut<'a>(
-    s: Option<NonNull<h2::ClientSession>>,
-) -> Option<&'a mut h2::ClientSession> {
+#[allow(clippy::mut_from_ref)]
+fn h2_session_mut(s: &RefPtr<h2::ClientSession>) -> &mut h2::ClientSession {
     // SAFETY: see INVARIANT above.
-    s.map(|mut s| unsafe { s.as_mut() })
+    unsafe { &mut *s.as_ptr() }
 }
 
 /// Upgrade a `*mut PooledSocket<SSL>` returned by `HiveArray::at` to `&mut`.
@@ -256,16 +243,6 @@ fn pooled_socket_mut<'a, const SSL: bool>(p: *mut PooledSocket<SSL>) -> &'a mut 
 }
 
 impl<const SSL: bool> PooledSocket<SSL> {
-    /// Mutable access to the parked HTTP/2 session.
-    ///
-    /// INVARIANT: the pool owns one strong ref on the session while parked
-    /// (taken in `release_socket`, released in `add_memory_back_to_pool` /
-    /// `existing_socket`); the pointee outlives `self`.
-    #[inline]
-    fn h2_session_mut(&mut self) -> Option<&mut h2::ClientSession> {
-        h2_session_as_mut(self.h2_session)
-    }
-
     /// Drop the strong refs the pool holds while a socket is parked
     /// (proxy_tunnel / h2_session / ssl_config) and clear the heap-owned
     /// `target_hostname`. Called from `Drop` and `add_memory_back_to_pool`
@@ -279,14 +256,8 @@ impl<const SSL: bool> PooledSocket<SSL> {
         // pool-key matching.
         self.ssl_config = None;
         self.target_hostname = Box::default();
-        if let Some(rp) = self.proxy_tunnel.take() {
-            // The pool's strong ref *is* this `RefPtr`; release it.
-            rp.deref();
-        }
-        if let Some(s) = self.h2_session.take() {
-            // SAFETY: pool owns one strong ref while parked.
-            unsafe { h2::ClientSession::deref(s.as_ptr()) };
-        }
+        self.proxy_tunnel = None;
+        self.h2_session = None;
     }
 }
 
@@ -294,24 +265,10 @@ struct ExistingSocket<const SSL: bool> {
     socket: HTTPSocket<SSL>,
     /// Present if the socket carries an established CONNECT tunnel.
     /// Ownership (one strong ref) is transferred to the caller.
-    tunnel: Option<crate::proxy_tunnel::RefPtr>,
-    /// Non-null if the socket negotiated "h2"; ownership transferred.
-    h2_session: Option<NonNull<h2::ClientSession>>,
+    tunnel: Option<RefPtr<ProxyTunnel>>,
+    /// Present if the socket negotiated "h2"; ownership transferred.
+    h2_session: Option<RefPtr<h2::ClientSession>>,
     verification: PeerVerification,
-}
-
-impl<const SSL: bool> ExistingSocket<SSL> {
-    /// Mutable access to the transferred HTTP/2 session.
-    ///
-    /// INVARIANT: `h2_session` carries one strong ref moved out of the pool by
-    /// `existing_socket`; the pointee is a distinct heap allocation that
-    /// outlives `self`. HTTP-thread-only. Each call re-derives a fresh `&mut`
-    /// from the raw `NonNull`, so callers may interleave calls with raw
-    /// `as_ptr()` reads (e.g. `register_h2`) without a spanning Unique tag.
-    #[inline]
-    fn h2_session_mut(&mut self) -> Option<&mut h2::ClientSession> {
-        h2_session_as_mut(self.h2_session)
-    }
 }
 
 impl<const SSL: bool> HTTPContext<SSL> {
@@ -391,7 +348,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
     /// Shared-borrow a live `*const ClientSession` to read/set its
     /// `Cell<u32>` registry index. Module-private — callers guarantee the
     /// session is live (registry holds a strong ref while indexed).
-    /// `registry_index`/`set_registry_index`/`ref_` only touch `Cell` fields,
+    /// `registry_index`/`set_registry_index` only touch `Cell` fields,
     /// so a shared borrow is sound regardless of other raw aliases on this
     /// single thread.
     ///
@@ -410,24 +367,21 @@ impl<const SSL: bool> HTTPContext<SSL> {
     /// taken in [`Self::register_h2`] through the pointer the registry held.
     /// `session` only identifies the entry being removed.
     fn h2_swap_remove_and_deref(
-        list: &mut Vec<*mut h2::ClientSession>,
+        list: &mut Vec<RefPtr<h2::ClientSession>>,
         idx: u32,
         session: *const h2::ClientSession,
     ) {
         debug_assert!(
-            (idx as usize) < list.len() && core::ptr::eq(list[idx as usize].cast_const(), session)
+            (idx as usize) < list.len()
+                && core::ptr::eq(list[idx as usize].as_ptr().cast_const(), session)
         );
-        let entry = list.swap_remove(idx as usize);
+        let _removed = list.swap_remove(idx as usize);
         if (idx as usize) < list.len() {
             // The swapped-in entry is a distinct allocation from `session`
             // (the entry at `idx` was just removed); `set_registry_index`
             // only touches a `Cell<u32>`.
-            Self::h2_session_ref(list[idx as usize]).set_registry_index(idx);
+            list[idx as usize].set_registry_index(idx);
         }
-        // SAFETY: `entry` is the pointer `register_h2` took the registry's ref
-        // through; the session is live because a listed session always also
-        // has a socket-ext or pool holder, so this is never the last ref.
-        unsafe { h2::ClientSession::deref(entry) };
     }
 
     pub(crate) fn register_h2(&mut self, session: *mut h2::ClientSession) {
@@ -438,10 +392,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
         if s.registry_index() != u32::MAX {
             return;
         }
-        // Note: `session.ref()` — intrusive refcount bump.
-        s.ref_();
         s.set_registry_index(u32::try_from(self.active_h2_sessions.len()).expect("int cast"));
-        self.active_h2_sessions.push(session);
+        // SAFETY: `session` is live (caller contract).
+        self.active_h2_sessions
+            .push(unsafe { RefPtr::init_ref(session) });
     }
 
     /// Called from drainQueuedShutdowns when the abort-tracker lookup
@@ -513,7 +467,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         if !SSL {
             unreachable!();
         }
-        self.secure.unwrap()
+        self.secure.as_ref().unwrap().as_ptr()
     }
 
     pub(crate) fn init_with_client_config(
@@ -627,11 +581,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
         hostname: &[u8],
         port: u16,
         ssl_config: Option<&ssl_config::SharedPtr>,
-        tunnel: Option<crate::proxy_tunnel::RefPtr>,
+        tunnel: Option<RefPtr<ProxyTunnel>>,
         target_hostname: &[u8],
         target_port: u16,
         proxy_auth_hash: u64,
-        h2_session: Option<NonNull<h2::ClientSession>>,
+        h2_session: Option<RefPtr<h2::ClientSession>>,
     ) {
         // log("releaseSocket(0x{f})", .{bun.fmt.hexIntUpper(@intFromPtr(socket.socket))});
 
@@ -707,17 +661,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
         }
         bun_core::scoped_log!(HTTPContext, "close socket");
         if let Some(t) = tunnel {
-            crate::proxy_tunnel::ProxyTunnel::shutdown(t.data);
-            // `t` is the strong ref the caller transferred; releasing it
-            // through the handle (usually the last ref) mirrors
-            // `HTTPClient::close_proxy_tunnel`.
+            ProxyTunnel::shutdown(t.as_non_null());
             crate::proxy_tunnel::raw_as_mut(t.as_ptr()).detach_socket();
-            t.deref();
-        }
-        if let Some(s) = h2_session {
-            // SAFETY: live intrusive-refcounted ClientSession; deref releases
-            // the strong ref the caller transferred.
-            unsafe { h2::ClientSession::deref(s.as_ptr()) };
         }
         Self::close_socket(socket);
     }
@@ -778,8 +723,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 continue;
             }
 
-            // The hash covers the Host-header SNI override that the handshake
-            // was verified against (see get_tls_hostname / connect()).
             if socket.proxy_auth_hash != proxy_auth_hash {
                 continue;
             }
@@ -820,7 +763,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 // Release the pool's strong ref (caller has its own via tls_props)
                 socket.ssl_config = None;
                 // Transfer tunnel ownership (the parked strong ref) to the caller.
-                let tunnel: Option<crate::proxy_tunnel::RefPtr> = socket.proxy_tunnel.take();
+                let tunnel: Option<RefPtr<ProxyTunnel>> = socket.proxy_tunnel.take();
                 socket.target_hostname = Box::default();
                 let h2_session = socket.h2_session.take();
                 let verification = socket.verification;
@@ -865,7 +808,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
         let socket = HTTPSocket::<SSL>::connect_unix_group(
             &mut self.group,
             Self::KIND,
-            if SSL { self.secure } else { None },
+            if SSL {
+                self.secure.as_ref().map(OwnedSslCtx::as_ptr)
+            } else {
+                None
+            },
             socket_path,
             ActiveSocket::<SSL>::init(
                 client
@@ -883,16 +830,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
     pub(crate) fn connect(
         &mut self,
         client: &mut HTTPClient,
-        hostname_: &[u8],
+        hostname: &[u8],
         port: u16,
     ) -> Result<Option<HTTPSocket<SSL>>, Error> {
-        let hostname: &[u8] =
-            if FeatureFlags::HARDCODE_LOCALHOST_TO_127_0_0_1 && hostname_ == b"localhost" {
-                b"127.0.0.1"
-            } else {
-                hostname_
-            };
-
         client.connected_url = client
             .http_proxy
             .clone()
@@ -900,15 +840,14 @@ impl<const SSL: bool> HTTPContext<SSL> {
         // URL.hostname is a borrowed slice — assigning a local would not
         // satisfy the field's lifetime, so this uses raw lifetime erasure.
         client.connected_url.hostname =
-            // SAFETY: hostname borrows either a static literal or `client.url`/
-            // `client.http_proxy` which outlive `connected_url` for the
-            // duration of the connect attempt.
+            // SAFETY: hostname borrows `client.url` or `client.http_proxy`,
+            // which outlive `connected_url` for the duration of the connect
+            // attempt.
             unsafe { bun_ptr::detach_lifetime(hostname) };
 
         if SSL {
             if client.can_offer_h2() {
                 let cfg = SSLConfig::raw_ptr(client.tls_props.as_ref());
-                let host_header_hash = client.proxy_auth_hash();
                 // Listed sessions are kept alive by the registry's ref. The
                 // scan only reads; `adopt` runs after the iteration is over
                 // because it may end by unregistering the session it was
@@ -916,14 +855,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 let reusable = self
                     .active_h2_sessions
                     .iter()
-                    .map(|&session| {
-                        h2::ClientSession::this_ptr(
-                            NonNull::new(session).expect("h2 registry entries are non-null"),
-                        )
-                    })
+                    .map(|session| session.this_ptr())
                     .find(|s| {
                         s.has_headroom()
-                            && s.matches(hostname, port, cfg, host_header_hash)
+                            && s.matches(hostname, port, cfg)
                             // Same guard as the pool path (`existing_socket`).
                             && client.socket_verification().admits(s.verification)
                     });
@@ -935,7 +870,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 for pc in &mut self.pending_h2_connects {
                     // Same guard as the active-session loop above, applied to
                     // an in-flight connect before its session exists.
-                    if pc.matches(hostname, port, cfg_nn, host_header_hash)
+                    if pc.matches(hostname, port, cfg_nn)
                         && client.socket_verification().admits(pc.verification)
                     {
                         // client outlives the pending connect (resolved before
@@ -950,8 +885,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         client.flags.reused_socket_verification = PeerVerification::None;
         if client.is_keep_alive_possible() {
             let want_tunnel = client.http_proxy.is_some() && client.url.is_https();
-            // CONNECT TCP target (writeProxyConnect line 346). The SNI
-            // override (client.hostname) is hashed into proxyAuthHash.
+            // CONNECT TCP target (writeProxyConnect line 346).
             let target_hostname: &[u8] = if want_tunnel {
                 client.url.hostname
             } else {
@@ -962,13 +896,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             } else {
                 0
             };
-            // For a direct TLS connection the handshake verifies the peer
-            // against get_tls_hostname() — which prefers the Host-header
-            // override (client.hostname) over url.hostname — so the override
-            // must discriminate the pool key there too, not just for CONNECT
-            // tunnels. proxy_auth_hash() reduces to exactly the override hash
-            // (or 0) for a non-proxied request.
-            let proxy_auth_hash: u64 = if want_tunnel || (SSL && client.http_proxy.is_none()) {
+            let proxy_auth_hash: u64 = if want_tunnel {
                 client.proxy_auth_hash()
             } else {
                 0
@@ -1001,24 +929,17 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     ),
                 );
                 client.allow_retry = true;
-                if let Some(session) = found.h2_session {
-                    if SSL {
-                        // Note: `session.socket = sock` — direct field
-                        // write; ClientSession.socket is `HTTPSocket<true>`.
-                        // The `&mut` ends with the statement: `register_h2`
-                        // forms a fresh `&*session`, which under Stacked
-                        // Borrows would invalidate a spanning Unique.
-                        found.h2_session_mut().unwrap().socket = sock.assume_ssl();
-                        // The pool's ref (carried by `found`) becomes the
-                        // socket ext's; `adopt` goes through that handle and
-                        // may release it again if the session turns out to be
-                        // unusable, so nothing touches `session` afterwards.
-                        Self::tag_as_h2(sock, session.as_ptr());
-                        self.register_h2(session.as_ptr());
-                        h2::ClientSession::adopt(h2::ClientSession::this_ptr(session), client);
-                    } else {
-                        unreachable!();
-                    }
+                if let Some(session) = found.h2_session.take() {
+                    debug_assert!(SSL);
+                    h2_session_mut(&session).socket = sock.assume_ssl();
+                    // The pool's ref becomes the socket ext's; `adopt` goes
+                    // through that handle and may release it again if the
+                    // session turns out to be unusable, so nothing touches
+                    // `session` afterwards.
+                    let session = session.into_this_ptr();
+                    Self::tag_as_h2(sock, session.as_ptr());
+                    self.register_h2(session.as_ptr());
+                    h2::ClientSession::adopt(session, client);
                     return Ok(None);
                 }
                 if let Some(tunnel) = found.tunnel {
@@ -1045,7 +966,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
         let socket = HTTPSocket::<SSL>::connect_group(
             &mut self.group,
             Self::KIND,
-            if SSL { self.secure } else { None },
+            if SSL {
+                self.secure.as_ref().map(OwnedSslCtx::as_ptr)
+            } else {
+                None
+            },
             hostname,
             port as c_int,
             ActiveSocket::<SSL>::init(
@@ -1067,7 +992,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     port,
                     ssl_config: cfg,
                     verification: client.socket_verification(),
-                    host_header_hash: client.proxy_auth_hash(),
                     ..Default::default()
                 });
                 // `client.pending_h2 = pc` stores a *borrowed* backref into the
@@ -1126,14 +1050,6 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
             // SAFETY: group was init()'d in `init`/`init_with_opts`; HTTP-thread-only.
             unsafe { uws::SocketGroup::destroy(&raw mut self.group) };
         }
-        if SSL {
-            if let Some(c) = self.secure {
-                // SAFETY: we own one ref on the SSL_CTX.
-                unsafe { bun_boringssl_sys::SSL_CTX_free(c) };
-            }
-        }
-        // Note: `bun.default_allocator.destroy(this)` is the Box drop
-        // performed by IntrusiveRc when refcount hits 0; not repeated here.
     }
 }
 
@@ -1295,7 +1211,7 @@ impl<const SSL: bool> Handler<SSL> {
                 return;
             }
 
-            if let Some(session) = pooled.h2_session_mut() {
+            if let Some(session) = pooled.h2_session.as_ref().map(h2_session_mut) {
                 session.on_idle_data(buf);
                 if !session.can_pool() {
                     HTTPContext::<SSL>::terminate_socket(socket);

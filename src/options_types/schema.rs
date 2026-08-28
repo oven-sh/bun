@@ -129,6 +129,8 @@ pub mod api {
 
         /// from `--no-addons`. `None` == `true`.
         pub allow_addons: Option<bool>,
+        /// from `--no-ffi-cc`. `None` == `true`.
+        pub allow_ffi_cc: Option<bool>,
         /// from `--unhandled-rejections`; default is `Bun`.
         pub unhandled_rejections: Option<UnhandledRejections>,
 

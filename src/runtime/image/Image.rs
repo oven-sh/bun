@@ -307,15 +307,6 @@ impl Image {
         Ok(img.to_js(global))
     }
 
-    // Codegen's `host_fn_finalize` calls this via `|b| Image::finalize(b)`
-    // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
-    // false positive on that contract.
-    #[allow(clippy::boxed_local)]
-    pub fn finalize(self: Box<Self>) {
-        self.this_ref.with_mut(|r| r.finalize());
-        // `source` is dropped by Box drop.
-    }
-
     pub(crate) fn estimated_size(&self) -> usize {
         // Only the bytes WE own. .js_buffer is the caller's ArrayBuffer (already
         // counted via the cached value slot); the worker's RGBA scratch is

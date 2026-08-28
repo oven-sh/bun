@@ -421,7 +421,7 @@ CPP_DECL JSC::EncodedJSValue ArrayBufferSink__createObject(JSC::JSGlobalObject* 
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC::EncodedJSValue ArrayBufferSink__close(JSC::JSGlobalObject* arg0, void* arg1);
+ZIG_DECL JSC::EncodedJSValue ArrayBufferSink__close(JSC::JSGlobalObject* arg0, void* arg1, JSC::EncodedJSValue arg2);
 BUN_DECLARE_HOST_FUNCTION(ArrayBufferSink__construct);
 BUN_DECLARE_HOST_FUNCTION(ArrayBufferSink__end);
 ZIG_DECL JSC::EncodedJSValue SYSV_ABI ArrayBufferSink__endWithSink(void* arg0, JSC::JSGlobalObject* arg1);
@@ -436,7 +436,7 @@ CPP_DECL JSC::EncodedJSValue HTTPSResponseSink__createObject(JSC::JSGlobalObject
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC::EncodedJSValue HTTPSResponseSink__close(JSC::JSGlobalObject* arg0, void* arg1);
+ZIG_DECL JSC::EncodedJSValue HTTPSResponseSink__close(JSC::JSGlobalObject* arg0, void* arg1, JSC::EncodedJSValue arg2);
 BUN_DECLARE_HOST_FUNCTION(HTTPSResponseSink__construct);
 BUN_DECLARE_HOST_FUNCTION(HTTPSResponseSink__end);
 ZIG_DECL JSC::EncodedJSValue SYSV_ABI HTTPSResponseSink__endWithSink(void* arg0, JSC::JSGlobalObject* arg1);
@@ -451,7 +451,7 @@ CPP_DECL JSC::EncodedJSValue HTTPResponseSink__createObject(JSC::JSGlobalObject*
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC::EncodedJSValue HTTPResponseSink__close(JSC::JSGlobalObject* arg0, void* arg1);
+ZIG_DECL JSC::EncodedJSValue HTTPResponseSink__close(JSC::JSGlobalObject* arg0, void* arg1, JSC::EncodedJSValue arg2);
 BUN_DECLARE_HOST_FUNCTION(HTTPResponseSink__construct);
 BUN_DECLARE_HOST_FUNCTION(HTTPResponseSink__end);
 ZIG_DECL JSC::EncodedJSValue SYSV_ABI SYSV_ABI HTTPResponseSink__endWithSink(void* arg0, JSC::JSGlobalObject* arg1);
@@ -466,7 +466,7 @@ CPP_DECL JSC::EncodedJSValue FileSink__createObject(JSC::JSGlobalObject* arg0, v
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC::EncodedJSValue FileSink__close(JSC::JSGlobalObject* arg0, void* arg1);
+ZIG_DECL JSC::EncodedJSValue FileSink__close(JSC::JSGlobalObject* arg0, void* arg1, JSC::EncodedJSValue arg2);
 BUN_DECLARE_HOST_FUNCTION(FileSink__construct);
 BUN_DECLARE_HOST_FUNCTION(FileSink__end);
 ZIG_DECL JSC::EncodedJSValue SYSV_ABI FileSink__endWithSink(void* arg0, JSC::JSGlobalObject* arg1);
@@ -482,7 +482,7 @@ CPP_DECL JSC::EncodedJSValue FileSink__createObject(JSC::JSGlobalObject* arg0, v
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC::EncodedJSValue FileSink__close(JSC::JSGlobalObject* arg0, void* arg1);
+ZIG_DECL JSC::EncodedJSValue FileSink__close(JSC::JSGlobalObject* arg0, void* arg1, JSC::EncodedJSValue arg2);
 BUN_DECLARE_HOST_FUNCTION(FileSink__construct);
 BUN_DECLARE_HOST_FUNCTION(FileSink__end);
 ZIG_DECL JSC::EncodedJSValue SYSV_ABI FileSink__endWithSink(void* arg0, JSC::JSGlobalObject* arg1);
@@ -498,7 +498,7 @@ CPP_DECL void* NetworkSink__fromJS(JSC::EncodedJSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC::EncodedJSValue NetworkSink__close(JSC::JSGlobalObject* arg0, void* arg1);
+ZIG_DECL JSC::EncodedJSValue NetworkSink__close(JSC::JSGlobalObject* arg0, void* arg1, JSC::EncodedJSValue arg2);
 BUN_DECLARE_HOST_FUNCTION(NetworkSink__construct);
 BUN_DECLARE_HOST_FUNCTION(NetworkSink__end);
 ZIG_DECL JSC::EncodedJSValue SYSV_ABI SYSV_ABI NetworkSink__endWithSink(void* arg0, JSC::JSGlobalObject* arg1);
@@ -509,28 +509,12 @@ ZIG_DECL void NetworkSink__updateRef(void* arg0, bool arg1);
 BUN_DECLARE_HOST_FUNCTION(NetworkSink__write);
 #endif
 
-CPP_DECL JSC::EncodedJSValue H3ResponseSink__createObject(JSC::JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
-CPP_DECL void* H3ResponseSink__fromJS(JSC::EncodedJSValue JSValue1);
-
-#ifdef __cplusplus
-
-ZIG_DECL JSC::EncodedJSValue H3ResponseSink__close(JSC::JSGlobalObject* arg0, void* arg1);
-BUN_DECLARE_HOST_FUNCTION(H3ResponseSink__construct);
-BUN_DECLARE_HOST_FUNCTION(H3ResponseSink__end);
-ZIG_DECL JSC::EncodedJSValue SYSV_ABI SYSV_ABI H3ResponseSink__endWithSink(void* arg0, JSC::JSGlobalObject* arg1);
-ZIG_DECL void H3ResponseSink__finalize(void* arg0);
-BUN_DECLARE_HOST_FUNCTION(H3ResponseSink__flush);
-BUN_DECLARE_HOST_FUNCTION(H3ResponseSink__start);
-ZIG_DECL void H3ResponseSink__updateRef(void* arg0, bool arg1);
-BUN_DECLARE_HOST_FUNCTION(H3ResponseSink__write);
-#endif
-
 CPP_DECL JSC::EncodedJSValue FetchRequestBodySink__createObject(JSC::JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
 CPP_DECL void* FetchRequestBodySink__fromJS(JSC::EncodedJSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC::EncodedJSValue FetchRequestBodySink__close(JSC::JSGlobalObject* arg0, void* arg1);
+ZIG_DECL JSC::EncodedJSValue FetchRequestBodySink__close(JSC::JSGlobalObject* arg0, void* arg1, JSC::EncodedJSValue arg2);
 BUN_DECLARE_HOST_FUNCTION(FetchRequestBodySink__construct);
 BUN_DECLARE_HOST_FUNCTION(FetchRequestBodySink__end);
 ZIG_DECL JSC::EncodedJSValue SYSV_ABI SYSV_ABI FetchRequestBodySink__endWithSink(void* arg0, JSC::JSGlobalObject* arg1);
@@ -546,7 +530,7 @@ CPP_DECL void* HTMLRewriterSink__fromJS(JSC::EncodedJSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC::EncodedJSValue HTMLRewriterSink__close(JSC::JSGlobalObject* arg0, void* arg1);
+ZIG_DECL JSC::EncodedJSValue HTMLRewriterSink__close(JSC::JSGlobalObject* arg0, void* arg1, JSC::EncodedJSValue arg2);
 BUN_DECLARE_HOST_FUNCTION(HTMLRewriterSink__construct);
 BUN_DECLARE_HOST_FUNCTION(HTMLRewriterSink__end);
 ZIG_DECL JSC::EncodedJSValue SYSV_ABI HTMLRewriterSink__endWithSink(void* arg0, JSC::JSGlobalObject* arg1);
@@ -599,6 +583,9 @@ ZIG_DECL void Bun__WebSocket__freeSSLConfig(void* sslConfig);
 #ifdef __cplusplus
 
 ZIG_DECL void Bun__WebSocketClient__cancel(WebSocketClient* arg0);
+ZIG_DECL size_t Bun__WebSocketClient__bufferedAmount(WebSocketClient* arg0);
+ZIG_DECL bool Bun__WebSocketClient__pause(WebSocketClient* arg0);
+ZIG_DECL bool Bun__WebSocketClient__resume(WebSocketClient* arg0);
 ZIG_DECL void Bun__WebSocketClient__close(WebSocketClient* arg0, uint16_t arg1, const EncodedSlice* arg2);
 ZIG_DECL void Bun__WebSocketClient__finalize(WebSocketClient* arg0);
 ZIG_DECL void Bun__WebSocketClient__dropConnectionWithoutCallback(WebSocketClient* arg0);
@@ -612,6 +599,9 @@ ZIG_DECL size_t Bun__WebSocketClient__memoryCost(WebSocketClient* arg0);
 #ifdef __cplusplus
 
 ZIG_DECL void Bun__WebSocketClientTLS__cancel(WebSocketClientTLS* arg0);
+ZIG_DECL size_t Bun__WebSocketClientTLS__bufferedAmount(WebSocketClientTLS* arg0);
+ZIG_DECL bool Bun__WebSocketClientTLS__pause(WebSocketClientTLS* arg0);
+ZIG_DECL bool Bun__WebSocketClientTLS__resume(WebSocketClientTLS* arg0);
 ZIG_DECL void Bun__WebSocketClientTLS__close(WebSocketClientTLS* arg0, uint16_t arg1, const EncodedSlice* arg2);
 ZIG_DECL void Bun__WebSocketClientTLS__finalize(WebSocketClientTLS* arg0);
 ZIG_DECL void Bun__WebSocketClientTLS__dropConnectionWithoutCallback(WebSocketClientTLS* arg0);
@@ -692,14 +682,22 @@ BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onResolveStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPRequest__onResolve);
 BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPRequest__onReject);
 
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextH3__onResolve);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextH3__onReject);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextH3__onResolveStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextH3__onRejectStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugH3__onResolve);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugH3__onReject);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugH3__onResolveStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugH3__onRejectStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextMux__onResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextMux__onReject);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextMux__onResolveStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextMux__onRejectStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextMuxTLS__onResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextMuxTLS__onReject);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextMuxTLS__onResolveStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextMuxTLS__onRejectStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugMux__onResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugMux__onReject);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugMux__onResolveStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugMux__onRejectStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugMuxTLS__onResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugMuxTLS__onReject);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugMuxTLS__onResolveStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugMuxTLS__onRejectStream);
 
 BUN_DECLARE_HOST_FUNCTION(Bun__FileSink__onResolveStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__FileSink__onRejectStream);

@@ -91,24 +91,33 @@ pub(crate) fn parse_raw(header: &[u8]) -> Raw {
     let end_s = strings::trim(&rest[dash + 1..], b" \t");
 
     if start_s.is_empty() {
-        let Some(n) = bun_core::fmt::parse_decimal::<u64>(end_s) else {
+        let Some(n) = parse_range_pos(end_s) else {
             return Raw::None;
         };
         return Raw::Suffix(n);
     }
 
-    let Some(start) = bun_core::fmt::parse_decimal::<u64>(start_s) else {
+    let Some(start) = parse_range_pos(start_s) else {
         return Raw::None;
     };
     let end: Option<u64> = if end_s.is_empty() {
         None
     } else {
-        match bun_core::fmt::parse_decimal::<u64>(end_s) {
+        match parse_range_pos(end_s) {
             Some(v) => Some(v),
             None => return Raw::None,
         }
     };
     Raw::Bounded { start, end }
+}
+
+/// RFC 9110 §14.1.2: `first-pos`, `last-pos` and `suffix-length` are
+/// `1*DIGIT`. `parse_unsigned` alone would still accept `_` separators.
+fn parse_range_pos(s: &[u8]) -> Option<u64> {
+    if s.is_empty() || !s.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    bun_core::fmt::parse_unsigned::<u64>(s, 10).ok()
 }
 
 pub(crate) fn parse(header: &[u8], total: u64) -> Result {

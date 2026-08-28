@@ -8,6 +8,7 @@
 #include "JavaScriptCore/ParserError.h"
 #include "JavaScriptCore/SyntheticModuleRecord.h"
 #include <wtf/text/MakeString.h>
+#include "BunClientData.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/ExceptionScope.h"
 #include "ZigSourceProvider.h"
@@ -42,22 +43,41 @@ Identifier getFromIdentifierArray(VM& vm, Identifier* identifierArray, uint32_t 
 extern "C" JSModuleRecord* zig__ModuleInfoDeserialized__toJSModuleRecord(JSGlobalObject* globalObject, VM& vm, const Identifier& module_key, const SourceCode& source_code, bun_ModuleInfoDeserialized* module_info);
 extern "C" void zig__renderDiff(const char* expected_ptr, size_t expected_len, const char* received_ptr, size_t received_len, JSGlobalObject* globalObject);
 
-extern "C" Identifier* JSC__IdentifierArray__create(size_t len)
-{
-    return new Identifier[len];
-}
-extern "C" void JSC__IdentifierArray__destroy(Identifier* identifier)
-{
-    delete[] identifier;
-}
 extern "C" void JSC__IdentifierArray__setFromUtf8(Identifier* identifierArray, size_t n, VM& vm, char* str, size_t len)
 {
     identifierArray[n] = Identifier::fromString(vm, AtomString::fromUTF8(std::span<const char>(str, len)));
 }
+extern "C" bool JSC__IdentifierArray__isNull(Identifier* identifierArray, size_t n)
+{
+    return identifierArray[n].isNull();
+}
+// Slots for the executable's shared module-info string table (`count`
+// strings): null until first use, then kept for every later module.
+extern "C" Identifier* Bun__VM__sharedModuleInfoIdentifiers(VM& vm, size_t count)
+{
+    auto& identifiers = WebCore::clientData(vm)->sharedModuleInfoIdentifiers;
+    if (identifiers.size() < count)
+        identifiers.grow(count);
+    return identifiers.mutableSpan().data();
+}
+// `count` null slots for a record that carries its own strings, freed by
+// JSC__IdentifierArray__destroy once the JSModuleRecord is built.
+extern "C" Identifier* JSC__IdentifierArray__create(size_t count)
+{
+    static_assert(VectorTraits<Identifier>::canInitializeWithMemset);
+    return static_cast<Identifier*>(WTF::fastZeroedMalloc(count * sizeof(Identifier)));
+}
+extern "C" void JSC__IdentifierArray__destroy(Identifier* identifiers, size_t count)
+{
+    for (size_t i = 0; i < count; ++i)
+        identifiers[i].~Identifier();
+    WTF::fastFree(identifiers);
+}
 
-extern "C" JSModuleRecord* JSC_JSModuleRecord__create(JSGlobalObject* globalObject, VM& vm, const Identifier* moduleKey, const SourceCode& sourceCode, bool hasImportMeta, bool isTypescript, bool hasTLA)
+extern "C" JSModuleRecord* JSC_JSModuleRecord__create(JSGlobalObject* globalObject, VM& vm, const Identifier* moduleKey, const SourceCode& sourceCode, bool hasImportMeta, bool isTypescript, bool hasTLA, uint32_t requestedModuleCount, uint32_t importCount, uint32_t exportCount)
 {
     JSModuleRecord* result = JSModuleRecord::create(globalObject, vm, globalObject->moduleRecordStructure(), *moduleKey, sourceCode, hasImportMeta ? ImportMetaFeature : 0);
+    result->reserveCapacity(requestedModuleCount, importCount, exportCount);
     result->m_isTypeScript = isTypescript;
     result->setHasTLA(hasTLA);
     return result;

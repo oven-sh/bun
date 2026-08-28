@@ -245,7 +245,9 @@ export var __privateWrapper = (obj, member, setter, getter) => ({
 });
 // `super.key` in code moved out of the class: `cls` is the home object.
 export var __superGet = (cls, obj, key) => __reflectGet(__getProtoOf(cls), key, obj);
-export var __superSet = (cls, obj, key, val) => (__reflectSet(__getProtoOf(cls), key, val, obj), val);
+// Class bodies are strict mode code: a failed [[Set]] throws, as `super.key = val` does.
+export var __superSet = (cls, obj, key, val) =>
+  __reflectSet(__getProtoOf(cls), key, val, obj) ? val : __typeError("Attempted to assign to readonly property.");
 export var __superWrapper = (cls, obj, key) => ({
   get _() {
     return __superGet(cls, obj, key);

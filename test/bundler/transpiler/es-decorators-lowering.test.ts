@@ -13,14 +13,6 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // .cts, with `useDefineForClassFields` on and off, directly and through
 // `bun build`.
 
-function filterStderr(stderr: string) {
-  return stderr
-    .split("\n")
-    .filter(line => !line.startsWith("WARNING: ASAN"))
-    .join("\n")
-    .trim();
-}
-
 async function run(cwd: string, args: string[]) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
@@ -28,8 +20,16 @@ async function run(cwd: string, args: string[]) {
     cwd,
     stderr: "pipe",
   });
-  const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr: filterStderr(rawStderr), exitCode };
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+// A single-file case: the source goes straight to `bun -e`. The cwd is an empty
+// directory because `-e` reads the cwd's tsconfig.json, and the repository's
+// root tsconfig enables experimentalDecorators.
+async function runInline(code: string) {
+  using dir = tempDir("es-dec-inline", {});
+  return await run(String(dir), ["-e", code]);
 }
 
 const kinds = ["field", "method", "getter", "setter", "accessor"] as const;
@@ -446,6 +446,13 @@ const extraSections = `
       for (super.key in { a: 1 }) seen.push(SC.key);
       return seen;
     })();
+    static {
+      try {
+        SC.fail = (super.g = 1);
+      } catch (e) {
+        SC.readonlyError = e.constructor.name + ": " + e.message;
+      }
+    }
     #pm() { return super.greet() + "/" + super.sm?.() + "/" + super.missing?.(); }
     static #spm() { return super.sm() + "/" + super.g; }
     #tag(s, ...vals) { return this.n + ":" + s.raw.join("|") + vals.join(","); }
@@ -459,7 +466,7 @@ const extraSections = `
     }
     call() { return [this.#pm(), SC.#spm(), this.#tag\`q\${1}\`]; }
   }
-  out.superForms = [SC.y, SC.opt1, SC.opt2, SC.tagged, SC.destructured, SC.loop];
+  out.superForms = [SC.y, SC.opt1, SC.opt2, SC.tagged, SC.destructured, SC.loop, SC.readonlyError];
   out.privateForms = [new SC().call(), new SC().swap()];
 }
 
@@ -545,7 +552,15 @@ const extraExpected = {
   relocated: [1, true, [1, 1], 2, 1, [1, 1]],
   relocatedAsync: 1,
   namedExprNested: [3, "k", true, 3, 3, [3, 3], true, 6],
-  superForms: [1, null, "sm:SC", "SC:a|b|1,2", [5, 9, [6, 7]], [1, 2, "a"]],
+  superForms: [
+    1,
+    null,
+    "sm:SC",
+    "SC:a|b|1,2",
+    [5, 9, [6, 7]],
+    [1, 2, "a"],
+    "TypeError: Attempted to assign to readonly property.",
+  ],
   privateForms: [
     ["hi:7/undefined/undefined", "sm:SC/g", "7:q|1"],
     [10, 30],
@@ -643,9 +658,11 @@ describe("ES decorators lowering matrix", () => {
   for (const mode of modes) {
     describe(mode.name, () => {
       let results: Record<string, unknown>;
+      // The eleven fixtures (and four bundles) run at once; on a loaded debug
+      // or ASAN machine the first hook waits well past the default 5 s.
       beforeAll(async () => {
         results = await runs.get(mode.name)!;
-      });
+      }, 120_000);
 
       const expected = buildExpected(!mode.useDefine);
       for (const key of Object.keys(expected)) {
@@ -664,57 +681,45 @@ describe("ES decorators lowering matrix", () => {
 
 describe("ES decorators lowering", () => {
   test.concurrent("undecorated fields initialize in source order next to decorated fields", async () => {
-    using dir = tempDir("es-dec-order", {
-      "test.js": `
-        const dec = (v, ctx) => {}; const log = (s) => (console.log("init", s), s);
-        class Foo { @dec a = log("a"); b = log(this.a === "a" ? "b (a set)" : "b (a NOT set)"); @dec c = log("c"); }
-        new Foo();
-      `,
-    });
-    const { stdout, stderr, exitCode } = await run(String(dir), ["test.js"]);
+    const { stdout, stderr, exitCode } = await runInline(`
+      const dec = (v, ctx) => {}; const log = (s) => (console.log("init", s), s);
+      class Foo { @dec a = log("a"); b = log(this.a === "a" ? "b (a set)" : "b (a NOT set)"); @dec c = log("c"); }
+      new Foo();
+    `);
     expect(stderr).toBe("");
     expect(stdout).toBe("init a\ninit b (a set)\ninit c\n");
     expect(exitCode).toBe(0);
   });
 
   test.concurrent("decorated fields are defined, not assigned", async () => {
-    using dir = tempDir("es-dec-define", {
-      "test.js": `
-        const dec = (v, ctx) => {};
-        class Base { set a(v) { console.log("BASE SETTER", v) } }
-        class Bar extends Base { @dec a = 1 }
-        console.log(JSON.stringify(Object.getOwnPropertyDescriptor(new Bar(), "a")));
-      `,
-    });
-    const { stdout, stderr, exitCode } = await run(String(dir), ["test.js"]);
+    const { stdout, stderr, exitCode } = await runInline(`
+      const dec = (v, ctx) => {};
+      class Base { set a(v) { console.log("BASE SETTER", v) } }
+      class Bar extends Base { @dec a = 1 }
+      console.log(JSON.stringify(Object.getOwnPropertyDescriptor(new Bar(), "a")));
+    `);
     expect(stderr).toBe("");
     expect(stdout).toBe('{"value":1,"writable":true,"enumerable":true,"configurable":true}\n');
     expect(exitCode).toBe(0);
   });
 
   test.concurrent("static fields and static blocks keep their order next to decorated members", async () => {
-    using dir = tempDir("es-dec-static-order", {
-      "test.js": `
-        const dec = (v, ctx) => {};
-        class S { @dec static x = console.log(1); static { console.log(2) } static y = console.log(3) }
-        class T { static { console.log(1) } static x = console.log(2); @dec m() {} }
-      `,
-    });
-    const { stdout, stderr, exitCode } = await run(String(dir), ["test.js"]);
+    const { stdout, stderr, exitCode } = await runInline(`
+      const dec = (v, ctx) => {};
+      class S { @dec static x = console.log(1); static { console.log(2) } static y = console.log(3) }
+      class T { static { console.log(1) } static x = console.log(2); @dec m() {} }
+    `);
     expect(stderr).toBe("");
     expect(stdout).toBe("1\n2\n3\n1\n2\n");
     expect(exitCode).toBe(0);
   });
 
   test.concurrent("private names in undecorated field initializers are lowered with the rest", async () => {
-    using dir = tempDir("es-dec-private-siblings", {
-      "test.js": `
-        function d(t, k) {}
-        class D { static #p = 5; static a = D.#p; static b = this.#p; #q = 6; d = this.#q; e() { return D.#p + this.#q } @d m() {} }
-        console.log(D.a, D.b, new D().d, new D().e());
-      `,
-    });
-    const { stdout, stderr, exitCode } = await run(String(dir), ["test.js"]);
+    const { stdout, stderr, exitCode } = await runInline(`
+      function d(t, k) {}
+      class D { static #p = 5; static a = D.#p; static b = this.#p; #q = 6; d = this.#q; e() { return D.#p + this.#q } @d m() {} }
+      console.log(D.a, D.b, new D().d, new D().e());
+    `);
     expect(stderr).toBe("");
     expect(stdout).toBe("5 5 6 11\n");
     expect(exitCode).toBe(0);
@@ -1086,20 +1091,18 @@ describe("ES decorators lowering output", () => {
 
 describe("ES decorators in invalid positions", () => {
   test.concurrent("a decorated static block is a syntax error", async () => {
-    using dir = tempDir("es-dec-static-block", {
-      "test.js": `
-        const x = () => {};
-        class X { @x static {} }
-        console.log("loaded");
-      `,
-    });
-    const { stdout, stderr, exitCode } = await run(String(dir), ["test.js"]);
+    const { stdout, stderr, exitCode } = await runInline(`
+      const x = () => {};
+      class X { @x static {} }
+      console.log("loaded");
+    `);
     expect(stdout).toBe("");
     expect(stderr).toContain('Expected ";" but found "{"');
     expect(exitCode).toBe(1);
   });
 
   test.concurrent("a parameter decorator in JavaScript is a syntax error", async () => {
+    // `-e` parses as TypeScript and reports the TypeScript message; this is the JavaScript one.
     using dir = tempDir("es-dec-param-js", {
       "test.js": `
         const y = () => {};

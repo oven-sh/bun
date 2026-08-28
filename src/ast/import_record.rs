@@ -117,8 +117,7 @@ impl ImportRecord {
             .map(|attr| attr.value)
     }
 
-    /// The module-graph key: the path alone, or the path plus the attributes sorted by key.
-    /// `bunBakeGraph` only routes the import to the SSR graph, which has its own map.
+    /// The module-graph key: the path, plus the attributes sorted by key (`bunBakeGraph` only routes).
     pub fn module_graph_key<'k>(
         path_text: &'k [u8],
         attributes: &[ImportAttribute],

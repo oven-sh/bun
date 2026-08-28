@@ -345,7 +345,8 @@ describe("bundler", () => {
   });
 
   // The directive inside the wrapper keeps its location, so it maps back to
-  // the source like any other statement.
+  // the source like any other statement: the `EAAA` segment on generated
+  // line 5 is `"use strict"` (column 2) mapped to a.cjs line 1, column 0.
   itBundled("directive/WrappedDirectiveSourceMap", {
     files: {
       "/entry.js": /* js */ `
@@ -362,10 +363,8 @@ describe("bundler", () => {
     snapshotSourceMap: {
       "entry.js.map": {
         files: ["../a.cjs", "../entry.js"],
-        mappings: [
-          ["a.cjs:1:'\"use strict\"'", '5:2:"use strict"'],
-          ["a.cjs:2:'module.exports'", "6:2:module2.exports"],
-        ],
+        mappingsExactMatch:
+          ";;;;EAAA;AAAA,EACA,QAAO,UAAW,QAAS,GAAG;AAAA,IAAE,OAAO,OAAO;AAAA,IAAQ;AAAA;;;ACDtD,QAAQ,eAAsB;",
       },
     },
   });

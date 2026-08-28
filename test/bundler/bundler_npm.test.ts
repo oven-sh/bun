@@ -59,7 +59,7 @@ describe("bundler", () => {
           ["react.development.js:2495:'actScopeDepth'", "23:4082:or++"],
           ["react.development.js:696:''Component'", '1:7698:\'Component "%s"'],
           ["entry.tsx:6:'\"Content-Type\"'", '100:18806:"Content-Type"'],
-          ["entry.tsx:11:'<html>'", "100:18863:{children"],
+          ["entry.tsx:11:'<html>'", "100:19060:void"],
           ["entry.tsx:23:'await'", "100:19159:await"],
         ],
       },

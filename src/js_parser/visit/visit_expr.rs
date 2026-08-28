@@ -249,8 +249,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.symbols[result.r#ref.inner_index() as usize].set_has_been_assigned_to(true);
         }
 
-        let mut original_name: Option<&[u8]> = None;
-
         // Substitute user-specified defines for unbound symbols
         if p.symbols[e_.ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound
             && !result.is_inside_with_scope
@@ -274,8 +272,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         *e = newvalue;
                         return;
                     }
-
-                    original_name = def.original_name();
                 }
 
                 // Copy the side effect flags over in case this expression is unused
@@ -320,7 +316,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         *e = p.handle_identifier(
             expr.loc,
             e_,
-            original_name,
+            None,
             IdentifierOpts::default()
                 .with_assign_target(in_.assign_target)
                 .with_is_delete_target(is_delete_target)

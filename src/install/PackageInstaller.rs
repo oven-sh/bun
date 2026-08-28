@@ -2035,10 +2035,8 @@ impl<'a> PackageInstaller<'a> {
                             // these will never be blocked
                         }
                         _ => {
-                            // `hasInstallScript` is not stored in bun.lock, so it reads false
-                            // on every install from a lockfile. A default-trusted package
-                            // whose grant was denied is checked regardless, so the user
-                            // learns why its scripts did not run.
+                            // `hasInstallScript` is not stored in bun.lock, so it reads
+                            // false on installs from a lockfile.
                             let default_trust_denied = if is_trusted {
                                 None
                             } else {

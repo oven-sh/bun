@@ -3252,21 +3252,16 @@ impl Lockfile {
             && self.npm_tarball_is_from_configured_registry(pkg_name, resolution)
     }
 
-    /// `true` when the default trusted dependencies list applies to this
-    /// package: it resolves to npm and its real name is on the list. The
-    /// dependency alias is not consulted, so an `npm:`-aliased package cannot
-    /// inherit trust from a default-trusted name.
+    /// The default list applies to npm resolutions only, keyed on the real
+    /// package name, never on the dependency alias.
     fn is_default_trusted_name(&self, pkg_name: &[u8], resolution: &Resolution) -> bool {
         resolution.tag == ResolutionTag::Npm && default_trusted_dependencies::has(pkg_name)
     }
 
-    /// `true` when the tarball URL recorded for an npm package has the same
-    /// origin as the registry configured for its scope. Default trust is keyed
-    /// on the package name, and a lockfile can pair a default-trusted name
-    /// with a tarball on any host, so the grant only applies when the tarball
-    /// comes from the configured registry. Only the origin is compared:
-    /// registries such as Artifactory serve tarballs from a path that differs
-    /// from `<registry>/<name>/-/<name>-<version>.tgz`.
+    /// Default trust requires the tarball to come from the registry configured
+    /// for the package's scope. Only the origin is compared: registries such as
+    /// Artifactory serve tarballs from another path than
+    /// `<registry>/<name>/-/<name>-<version>.tgz`.
     fn npm_tarball_is_from_configured_registry(
         &self,
         pkg_name: &[u8],
@@ -3283,11 +3278,8 @@ impl Lockfile {
         URL::parse(url).has_same_origin(&registry.url())
     }
 
-    /// When `has_trusted_dependency` denies `pkg_name` only because its tarball
-    /// is not on the configured registry (`package.json` has no
-    /// `trustedDependencies` list, the name is on the default trusted list, and
-    /// the lockfile tarball URL has another origin), the warning that tells the
-    /// user why the lifecycle scripts did not run.
+    /// The warning for a package that `has_trusted_dependency` denies only
+    /// because its tarball is not on the configured registry.
     pub fn default_trust_denied_by_registry<'a>(
         &'a self,
         pkg_name: &'a [u8],

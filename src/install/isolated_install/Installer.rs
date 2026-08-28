@@ -1579,40 +1579,21 @@ impl Task {
                     }
 
                     let string_buf = lockfile.buffers.string_bytes.as_slice();
-
                     let dep = &lockfile.buffers.dependencies[dep_id as usize];
-                    let truncated_dep_name_hash: TruncatedPackageNameHash =
-                        dep.name_hash as TruncatedPackageNameHash;
-
-                    let (is_trusted, is_trusted_through_update_request) = 'brk: {
-                        if installer
-                            .trusted_dependencies_from_update_requests
-                            .contains(&pkg_id)
-                        {
-                            break 'brk (true, true);
-                        }
-                        if lockfile.has_trusted_dependency(
-                            dep.name.slice(string_buf),
-                            pkg_name.slice(string_buf),
-                            &pkg_res,
-                        ) {
-                            break 'brk (true, false);
-                        }
-                        break 'brk (false, false);
-                    };
 
                     let mut pkg_cwd = AutoAbsPath::init_top_level_dir();
                     installer.append_store_path(&mut pkg_cwd, self.entry_id);
 
-                    let default_trust_denied = if is_trusted {
+                    let default_trust_denied = if installer
+                        .trusted_dependencies_from_update_requests
+                        .contains(&pkg_id)
+                    {
                         None
                     } else {
                         lockfile
                             .default_trust_denied_by_registry(pkg_name.slice(string_buf), &pkg_res)
                     };
                     if let Some(warning) = default_trust_denied {
-                        // A default-trusted package lost its grant. Read its
-                        // scripts so the user learns why they did not run.
                         let mut pkg_scripts: package::scripts::Scripts =
                             pkg_script_lists[pkg_id as usize];
                         let mut log = Log::init();
@@ -1642,6 +1623,26 @@ impl Task {
                         step = self.next_step(current_step);
                         continue;
                     }
+
+                    let truncated_dep_name_hash: TruncatedPackageNameHash =
+                        dep.name_hash as TruncatedPackageNameHash;
+
+                    let (is_trusted, is_trusted_through_update_request) = 'brk: {
+                        if installer
+                            .trusted_dependencies_from_update_requests
+                            .contains(&pkg_id)
+                        {
+                            break 'brk (true, true);
+                        }
+                        if lockfile.has_trusted_dependency(
+                            dep.name.slice(string_buf),
+                            pkg_name.slice(string_buf),
+                            &pkg_res,
+                        ) {
+                            break 'brk (true, false);
+                        }
+                        break 'brk (false, false);
+                    };
 
                     'enqueue_lifecycle_scripts: {
                         if !(pkg_res.tag != ResolutionTag::Root

@@ -484,10 +484,8 @@ impl<'a> URL<'a> {
         self.is_http() || self.is_https()
     }
 
-    /// `true` when both URLs have a host and share the scheme, the host, and
-    /// the effective port. The scheme and the host compare case-insensitively
-    /// (RFC 3986 §3.1, §3.2.2). A missing port counts as the scheme's default
-    /// port, so `https://host:443/a` and `https://host/b` have the same origin.
+    /// Same scheme and host (both case-insensitive) and same effective port,
+    /// where a missing port is the scheme's default. `false` without a host.
     pub fn has_same_origin(&self, other: &URL<'_>) -> bool {
         !self.hostname.is_empty()
             && strings::eql_case_insensitive_ascii(self.protocol, other.protocol, true)

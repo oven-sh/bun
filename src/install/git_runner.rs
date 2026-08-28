@@ -1,14 +1,7 @@
-//! The `git` commands of an install run here, as child processes on the
-//! install thread's event loop, the way `lifecycle_script_runner` runs package
-//! scripts. One [`GitSubprocess`] drives one task (`Tag::GitClone`,
-//! `Tag::GitCommit` or `Tag::GitCheckout`): it spawns a command, collects the
-//! child's stdout and stderr, and when the child has exited either spawns the
-//! next command or fills in the task's result and pushes the task onto
-//! `resolve_tasks`, where `run_tasks` consumes it like any other finished task.
-//!
-//! [`PackageManager::enqueue_git_task`] queues a task and counts it as pending.
-//! [`PackageManager::start_git_tasks`] (called from `schedule_tasks`) starts
-//! the queued tasks, at most `bun_core::get_thread_count()` at a time.
+//! Runs the `git` commands of the install's git tasks as child processes on
+//! the install thread's event loop, like `lifecycle_script_runner`. One
+//! [`GitSubprocess`] drives one task and pushes it onto `resolve_tasks` when
+//! its last command has exited.
 
 use core::ffi::{CStr, c_void};
 use core::ptr::NonNull;
@@ -33,16 +26,14 @@ use crate::repository::{GitEnv, Repository, RepositoryExt as _, is_safe_resolved
 use crate::{Error, PackageManager};
 
 impl PackageManager {
-    /// Queues a git task. It counts as pending from now on; `start_git_tasks`
-    /// spawns it when a slot is free.
+    /// Queues a git task; it counts as pending from now on.
     pub(crate) fn enqueue_git_task(&mut self, task: NonNull<Task::Task<'static>>) {
         self.increment_pending_tasks(1);
         self.git_tasks.push_back(task);
     }
 
-    /// Starts queued git tasks while fewer than `get_thread_count()` run. A
-    /// finished task does not start the next one itself: `run_tasks` consumes
-    /// it and then calls `schedule_tasks`, which lands here.
+    /// A finished task does not start the next one: `run_tasks` consumes it,
+    /// then `schedule_tasks` lands here.
     pub(crate) fn start_git_tasks(&mut self) {
         let max = u32::from(bun_core::get_thread_count());
         while self.running_git_tasks < max {
@@ -79,8 +70,7 @@ enum Done {
     Checkout(ExtractData),
 }
 
-/// A cache folder is built under a temporary sibling name and renamed onto
-/// its final name once complete.
+/// A cache folder, built under a temporary name and renamed once complete.
 struct CacheStaging {
     cache_dir: Fd,
     tmp_name: Vec<u8>,
@@ -154,19 +144,15 @@ fn bare_repo_folder_name(clone_id: Task::Id) -> Vec<u8> {
 
 pub(crate) struct GitSubprocess {
     manager: bun_ptr::BackRef<PackageManager, bun_ptr::Mut>,
-    /// The task this runner completes. Owned by `preallocated_resolve_tasks`;
-    /// handed to `resolve_tasks` in `finish`.
+    /// Owned by `preallocated_resolve_tasks`; handed to `resolve_tasks` in `finish`.
     task: NonNull<Task::Task<'static>>,
     step: Step,
-    /// Clone task: the clone URLs still to try, last first. `try_https` is
-    /// tried before `try_ssh`; a URL in neither form is cloned as written.
+    /// Clone URLs still to try, last first (https before ssh).
     urls: Vec<Vec<u8>>,
-    /// Clone task: the cached bare repository that `Step::Fetch` refreshes.
+    /// The cached bare repository that `Step::Fetch` refreshes.
     repo_dir: Option<bun_sys::Dir>,
-    /// The cache folder under construction. `finish` publishes it on success;
-    /// `Drop` discards whatever is left.
+    /// Discarded by `Drop` unless published first.
     staging: Option<CacheStaging>,
-    /// The first error a stdout/stderr reader reported for the running command.
     read_error: Option<bun_sys::Error>,
 
     process: Option<ProcessHandle>,
@@ -177,8 +163,7 @@ pub(crate) struct GitSubprocess {
 }
 
 impl GitSubprocess {
-    /// Starts `task` (a `GitClone`, `GitCommit` or `GitCheckout` task). The
-    /// runner frees itself once the task is complete.
+    /// The runner frees itself once the task is complete.
     fn start(manager: &mut PackageManager, task: NonNull<Task::Task<'static>>) {
         let this = bun_core::heap::into_raw(Box::new(GitSubprocess {
             manager: bun_ptr::BackRef::new_mut(manager),
@@ -203,10 +188,9 @@ impl GitSubprocess {
                 _ => unreachable!("not a git task"),
             }
         };
-        // Every step fn either spawned a child, completed the task (freeing
-        // `this`), or returns the error with `this` untouched.
+        // An `Err` leaves `this` untouched; an `Ok` may already have freed it.
         if let Err(err) = result {
-            // SAFETY: `this` is live: see above.
+            // SAFETY: see above.
             unsafe { Self::finish(this, Err(err)) };
         }
     }
@@ -245,10 +229,7 @@ impl GitSubprocess {
                 .open_dir_z(&bun_core::ZBox::from_bytes(&folder_name))
             {
                 Ok(dir) => {
-                    // --offline: use the cached clone as is (--prefer-offline
-                    // still fetches: git dependencies pin exact commits, so a
-                    // stale clone would fail to find a newly referenced one
-                    // rather than "resolve older")
+                    // --prefer-offline still fetches: a stale clone may lack the pinned commit.
                     if offline {
                         Self::finish(this, Ok(Done::Clone(dir.into_raw())));
                         return Ok(());
@@ -281,8 +262,6 @@ impl GitSubprocess {
         }
     }
 
-    /// Clones the next candidate URL into a fresh staging folder.
-    ///
     /// # Safety
     /// `this` is live and not running a child; `urls` is not empty.
     unsafe fn spawn_clone(this: *mut Self) -> Result<(), Error> {
@@ -417,9 +396,6 @@ impl GitSubprocess {
             .to_vec()
     }
 
-    /// The checked-out tree is complete in the staging folder: strip it, tag
-    /// it, move it to its cache folder and read its package.json.
-    ///
     /// # Safety
     /// `this` is live; `staging` is set.
     unsafe fn finish_checkout(this: *mut Self) -> Result<ExtractData, Error> {
@@ -445,8 +421,7 @@ impl GitSubprocess {
             // Unlinks a `node_modules` link only; directories are kept (bundleDependencies).
             let _ = dir.delete_file_z(bun_core::zstr!("node_modules"));
 
-            // `.bun-tag` is the cache-hit marker, so anything the repository
-            // checked in under that name is replaced.
+            // `.bun-tag` is the cache-hit marker; a checked-in one is replaced.
             let _ = dir.delete_tree(b".bun-tag");
             let tagged = bun_sys::File::openat(
                 dir.fd(),
@@ -567,14 +542,10 @@ impl GitSubprocess {
     /// Spawns `git <args>` with stdout and stderr captured.
     ///
     /// # Safety
-    /// `this` is live, allocation-rooted, and not running a child. The child
-    /// may already have exited when this returns, in which case the task is
-    /// complete and `this` is freed: the caller must not touch `this` after
-    /// an `Ok`.
+    /// `this` is live, allocation-rooted, and not running a child. On `Ok`
+    /// the child may already have exited and freed `this`.
     unsafe fn spawn(this: *mut Self, args: &[&[u8]]) -> Result<(), Error> {
-        // SAFETY: caller contract. `this` is dereferenced field by field; no
-        // whole-struct borrow spans a call that can re-enter through the
-        // backrefs stored in the readers and the process.
+        // SAFETY: caller contract; no whole-struct borrow spans a re-entrant call.
         unsafe {
             let manager = (*this).manager.as_ptr();
             let task = (*this).task.as_ptr();
@@ -605,9 +576,7 @@ impl GitSubprocess {
             (*this).stdout.set_parent(this.cast::<c_void>());
             (*this).stderr.set_parent(this.cast::<c_void>());
 
-            // OWNERSHIP (Windows): the raw `uv::Pipe` allocations in
-            // `Stdio::Buffer` pass to `spawn_process_windows` on success; on
-            // failure they stay ours and are freed below.
+            // Windows: the `uv::Pipe` allocations are ours until the spawn succeeds.
             let spawn_options = SpawnOptions {
                 stdin: bun_spawn::Stdio::Ignore,
                 #[cfg(unix)]
@@ -655,8 +624,7 @@ impl GitSubprocess {
 
             #[cfg(unix)]
             {
-                // Counted before `start` because a failed poll registration
-                // reports `on_reader_error` synchronously.
+                // Counted before `start`: a failed registration reports synchronously.
                 if let Some(stdout) = spawned.stdout {
                     if !spawned.memfds[1] {
                         let _ = bun_sys::set_nonblocking(stdout);
@@ -710,8 +678,7 @@ impl GitSubprocess {
             // SAFETY: `this` is allocation-rooted and outlives `process`.
             (*process).set_exit_handler(ProcessExit::of(this));
 
-            // May run the exit handler synchronously (the child already
-            // exited), which can complete the task and free `this`.
+            // An already-exited child runs the exit handler here and may free `this`.
             if let Err(err) = (*process).watch_or_reap() {
                 if !(*process).has_exited() {
                     (*process).on_exit(Status::Err(err), &bun_core::ffi::zeroed::<Rusage>());
@@ -733,9 +700,6 @@ impl GitSubprocess {
         let _ = fd;
     }
 
-    /// Releases the finished child and its readers so `spawn` can run the
-    /// next command.
-    ///
     /// # Safety
     /// `this` is live; the child has exited and both readers are done.
     unsafe fn reset_polls(this: *mut Self) {
@@ -807,9 +771,6 @@ impl GitSubprocess {
         }
     }
 
-    /// The running command is over: continue with the next one or complete
-    /// the task.
-    ///
     /// # Safety
     /// `this` is live; the child has exited and its output is collected. May
     /// free `this`.
@@ -827,8 +788,6 @@ impl GitSubprocess {
                     && strings::contains(stderr, b"not")
                     && strings::contains(stderr, b"found"))
                     || strings::contains(stderr, b"does not exist"));
-            // A missing repository is reported as such; every other failure
-            // shows git's own diagnostics.
             if !ok && !not_found {
                 Self::report_failure(this, status, stderr);
             }
@@ -903,8 +862,7 @@ impl GitSubprocess {
                         let resolved = (*task).request_git_checkout().resolved.slice();
                         (*this).step = Step::Checkout;
                         Self::reset_polls(this);
-                        // `is_safe_resolved_tag` rejected a leading `-`, so
-                        // `resolved` cannot be parsed as a git option.
+                        // `is_safe_resolved_tag` rejected a leading `-`: not a git option.
                         Self::spawn(this, &[b"-C", &tmp_path, b"checkout", b"--quiet", resolved])
                     } else {
                         (*task).log.add_error_fmt(
@@ -940,9 +898,7 @@ impl GitSubprocess {
         }
     }
 
-    /// Mirrors git's own diagnostics to our stderr and reports the
-    /// termination kind, so the cause (auth, ssh, signal) is visible next to
-    /// the "git clone failed" messages that only name the package.
+    /// Mirrors git's stderr and termination kind, which name the cause.
     ///
     /// # Safety
     /// `this` is live.
@@ -992,24 +948,19 @@ impl GitSubprocess {
         }
     }
 
-    /// Records the result in the task, hands the task to `resolve_tasks`, and
-    /// frees `this`.
+    /// Hands the finished task to `resolve_tasks` and frees `this`.
     ///
     /// # Safety
     /// `this` is live and allocation-rooted (from `start`). Nothing may touch
     /// `this` afterwards.
     unsafe fn finish(this: *mut Self, result: Result<Done, Error>) {
-        // SAFETY: caller contract. `heap::take` reclaims the `Box` from `start`;
-        // dropping it releases the readers and the process handle.
+        // SAFETY: caller contract.
         let this = unsafe { bun_core::heap::take(this) };
         let task = this.task.as_ptr();
         let manager = this.manager.as_ptr();
-        // SAFETY: the task is live (owned by `preallocated_resolve_tasks` until
-        // `run_tasks` recycles it, which happens only after the push below);
-        // `manager` is the live singleton.
+        // SAFETY: `run_tasks` recycles the task only after the push below.
         unsafe {
-            // `data` is a union without drop glue here: `deinit_payload` drops
-            // the active arm, so every path writes a valid value.
+            // `deinit_payload` drops the active `data` arm, so every path writes one.
             match result {
                 Ok(done) => {
                     (*task).status = Task::Status::Success;

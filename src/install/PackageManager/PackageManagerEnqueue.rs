@@ -1396,9 +1396,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 let resolved = match pinned {
                     Some(resolved) => resolved,
                     None => {
-                        // A `git log` task resolves the committish. The
-                        // dependency waits on it; when it finishes, `run_tasks`
-                        // stores the SHA in `git_commits` and re-enters here.
+                        // The dependency waits on a `git log` task; `run_tasks`
+                        // fills `git_commits` and re-enters here.
                         let committish = this.lockfile.str_detached(&dep.committish);
                         let commit_id = Task::Id::for_git_commit(url, committish);
                         match this.git_commits.get(&commit_id) {
@@ -1988,8 +1987,7 @@ fn enqueue_git_clone(
     this.preallocated_resolve_tasks.get_init(value)
 }
 
-/// `git log`: the task that resolves `committish` of the repository that the
-/// clone task `clone_id` fetched to a commit SHA.
+/// `git log`: resolves `committish` in the bare repository of `clone_id`.
 fn enqueue_git_commit(
     this: &mut PackageManager,
     task_id: Task::Id,

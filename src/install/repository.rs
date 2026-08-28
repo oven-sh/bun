@@ -183,7 +183,7 @@ impl GitEnv {
 
             // Spawns exec the path as given (no `PATH` search), and the child
             // runs with `map`, so resolve `git` on that `PATH`.
-            let mut git_buf = PathBuffer::uninit();
+            let mut git_buf = bun_paths::path_buffer_pool::get();
             let git = bun_which::which(&mut git_buf, map.get(b"PATH").unwrap_or(b""), b"", b"git")
                 .map(|git| ZBox::from_bytes(git.as_bytes()));
 
@@ -381,10 +381,6 @@ impl RepositoryExt for Repository {
             return Some(url.to_vec());
         }
 
-        if url.len() + b"ssh://git@".len() + b".org".len() > bun_paths::MAX_PATH_BYTES {
-            return None;
-        }
-
         if url.starts_with(b"ssh://") {
             // Fix malformed ssh:// URLs with colons using hosted_git_info.correctUrl
             // ssh://git@github.com:user/repo -> ssh://git@github.com/user/repo
@@ -412,10 +408,6 @@ impl RepositoryExt for Repository {
     fn try_https(url: &[u8]) -> Option<Vec<u8>> {
         if url.starts_with(b"http") {
             return Some(url.to_vec());
-        }
-
-        if url.len() + b"https://".len() + b".org".len() > bun_paths::MAX_PATH_BYTES {
-            return None;
         }
 
         if url.starts_with(b"ssh://") {

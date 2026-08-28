@@ -664,18 +664,20 @@ exit 1
       stdout: "pipe",
       stderr: "pipe",
     });
+    const stdout = proc.stdout.text();
+    const stderr = proc.stderr.text();
     try {
       const deadline = Date.now() + 20_000;
       const runningGits = () => (existsSync(running) ? readFileSync(running, "utf8").split("\n").length - 1 : 0);
       while (runningGits() < 2) {
         if (proc.exitCode !== null || proc.signalCode !== null) {
-          throw new Error(`install exited before it ran git:\n${await proc.stderr.text()}`);
+          throw new Error(`install exited before it ran git:\n${await stderr}`);
         }
         if (Date.now() > deadline) throw new Error(`install ran ${runningGits()} of 2 clones`);
         await Bun.sleep(10);
       }
       proc.kill("SIGINT");
-      await proc.exited;
+      await Promise.all([stdout, stderr, proc.exited]);
       expect({ signalCode: proc.signalCode, gitGotSigint: existsSync(gotSigint) }).toEqual({
         signalCode: "SIGINT",
         gitGotSigint: false,

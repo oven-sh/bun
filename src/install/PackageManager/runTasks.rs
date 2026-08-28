@@ -1537,15 +1537,11 @@ fn run_tasks_erased(
                 let commit = task.request_git_commit();
                 let name = commit.name.slice();
                 let url = commit.url.slice();
-                // A commit lookup counted as pending while it ran, but it is
-                // not one of the downloads that "Resolved, downloaded and
-                // extracted [N]" counts.
+                // Pending while it ran, but not one of the N downloads the summary prints.
                 manager.total_tasks -= 1;
 
                 if task.status == Task::Status::Fail {
                     let err = task.err.unwrap_or(crate::Error::Failed);
-                    // The dependencies that waited on this commit stay
-                    // unresolved; the error below fails the install.
                     let _ = manager.task_queue.remove(&task.id);
                     if cb.has_on_package_manifest_error {
                         (cb.on_package_manifest_error)(extract_ctx, name, err, url);
@@ -1567,8 +1563,7 @@ fn run_tasks_erased(
                     .git_commits
                     .insert(task.id, task.data_git_commit().clone());
 
-                // Resolving: each waiter re-enters the enqueue path, which now
-                // finds the commit and moves on to the checkout.
+                // Each waiter re-enters the enqueue path and now finds the commit.
                 let dependency_list = manager
                     .task_queue
                     .remove(&task.id)

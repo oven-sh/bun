@@ -261,9 +261,7 @@ type PreallocatedNetworkTasks = HiveArrayFallback<NetworkTask, 128>;
 type ResolveTaskQueue = UnboundedQueue<Task::Task<'static> /* , .next */>;
 
 type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>;
-/// Git-commit task id (`Task::Id::for_git_commit`) -> the commit SHA the task
-/// resolved. Like `git_repositories`, it lets the dependencies that waited on
-/// the task re-enter the enqueue path and find the answer.
+/// Git-commit task id -> the SHA it resolved, for the waiters that re-enter.
 type GitCommitMap = HashMap<Task::Id, Vec<u8> /* , IdentityContext<Task::Id>, 80 */>;
 /// Resolve-task id (git checkout / tarball extract) -> the package that task
 /// appended during the resolve phase. A task's callback queue is drained

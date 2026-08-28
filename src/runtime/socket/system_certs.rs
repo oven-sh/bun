@@ -1,23 +1,16 @@
-//! The system certificate store on Linux, read the way Node's `--use-system-ca` reads it
-//! (`GetOpenSSLSystemCertificates` in Node's `src/crypto/crypto_context.cc`): the file `$SSL_CERT_FILE`,
-//! else OpenSSL's default (`/etc/ssl/cert.pem`), then every regular file in `$SSL_CERT_DIR`, else OpenSSL's
-//! default (`/etc/ssl/certs`). Both are always read. A variable that is set but empty turns its source off.
-//! Symbolic links are followed, names are not filtered, subdirectories are not entered, entries are read in
-//! name order.
+//! The Linux system certificate store, read from the same places as Node's `--use-system-ca`
+//! (`GetOpenSSLSystemCertificates` in Node's `src/crypto/crypto_context.cc`): `$SSL_CERT_FILE` or
+//! `/etc/ssl/cert.pem`, plus every regular file in `$SSL_CERT_DIR` or `/etc/ssl/certs`.
 //!
-//! Distros alias these paths heavily. Debian's `/etc/ssl/certs` holds a `<hash>.0` and a `<name>.pem` link
-//! to every root plus the `ca-certificates.crt` bundle, so Node reports each root three times there. Here a
-//! file is read once per inode and a certificate is handed out once per DER encoding, so BoringSSL parses
-//! each root once. The C++ side (`packages/bun-usockets/src/crypto/root_certs_linux.cpp`) turns the DER into
-//! `X509` objects.
+//! Distros link every root several times under `/etc/ssl/certs` next to the bundle, so a file is read once
+//! per inode and a certificate is handed out once per DER encoding. `root_certs_linux.cpp` parses the DER.
 
 use core::ffi::{c_char, c_void};
 
 use bun_core::{ZBox, ZStr, env_var, strings};
 use bun_sys::O;
 
-/// Receives one DER-encoded certificate. Returns false when the bytes are not a certificate, which ends
-/// the file they came from, as a failed `PEM_read_bio_X509` would.
+/// Returns false when the bytes are not a certificate, which ends the file they came from.
 type AddCertificate = unsafe extern "C" fn(ctx: *mut c_void, der: *const u8, len: usize) -> bool;
 
 struct Loader {
@@ -37,8 +30,7 @@ impl Loader {
             .is_none()
     }
 
-    /// The file `$SSL_CERT_FILE` names, or OpenSSL's default file. Opened without a type check, as Node
-    /// does, so a pipe (`SSL_CERT_FILE=<(...)`) works.
+    /// No file type check, as in Node, so `SSL_CERT_FILE` can name a pipe.
     fn load_named_file(&mut self, path: &ZStr) {
         if let Ok(st) = bun_sys::stat(path)
             && !self.first_visit(&st)
@@ -81,11 +73,8 @@ impl Loader {
         }
     }
 
-    /// Hands every certificate block of a PEM file to `add`, with the rules of BoringSSL's PEM reader: a
-    /// block is `-----BEGIN <name>-----`, optional header lines closed by a blank line, base64 lines, and
-    /// `-----END <name>-----`. Blocks with another name are skipped. Reading stops, as `PEM_read_bio_X509`
-    /// would fail, at a bad END line, at a block with headers (an encrypted block), at bad base64, and at
-    /// bytes `add` rejects.
+    /// Follows BoringSSL's `PEM_read_bio_X509`: other block names are skipped, and the file ends at the
+    /// first block that would not parse (bad END line, headers, bad base64, rejected DER).
     fn load_pem(&mut self, bytes: &[u8]) {
         let mut lines = strings::split(bytes, b"\n").map(trim_trailing_space);
         loop {
@@ -161,8 +150,7 @@ fn trim_trailing_space(mut line: &[u8]) -> &[u8] {
 }
 
 /// # Safety
-/// `default_cert_file` and `default_cert_dir` must be valid NUL-terminated C strings. `add` is called with
-/// `ctx` for every distinct certificate, during this call only.
+/// `default_cert_file` and `default_cert_dir` must be valid NUL-terminated C strings.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__forEachSystemCertificate(
     default_cert_file: *const c_char,
@@ -188,8 +176,7 @@ unsafe extern "C" fn Bun__forEachSystemCertificate(
         None => {
             #[cfg(target_os = "android")]
             {
-                // Android has no OpenSSL layout. The system CAs are one hashed PEM file each in these
-                // directories: the updatable mainline store (API 30+), the base system store, and the
+                // Android has no OpenSSL layout: the mainline store (API 30+), the base store, then the
                 // user-installed store.
                 let _ = default_cert_dir;
                 for dir in [

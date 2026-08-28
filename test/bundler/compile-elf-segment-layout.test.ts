@@ -16,8 +16,8 @@
 // https://github.com/oven-sh/bun/issues/40752
 
 import { expect, test } from "bun:test";
-import { closeSync, openSync, readSync } from "node:fs";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { closeSync, openSync, readSync } from "node:fs";
 import { join } from "node:path";
 
 /** Read `len` bytes from `fd` at absolute `offset`. */
@@ -122,11 +122,7 @@ test.skipIf(!isLinux)(
     expectNoOverlap(out);
 
     await using run = Bun.spawn({ cmd: [out], env: bunEnv, cwd, stderr: "pipe", stdout: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      run.stdout.text(),
-      run.stderr.text(),
-      run.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("hello from compiled\n");
     expect(exitCode).toBe(0);

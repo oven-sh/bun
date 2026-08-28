@@ -35,10 +35,11 @@ pub mod posix_spawn {
         pub use crate::process::{WindowsSpawnOptions, WindowsSpawnResult};
         pub use bun_spawn_sys::posix_spawn::bun_spawn::*;
     }
-    pub use bun_spawn as BunSpawn;
-    pub use bun_spawn_sys::posix_spawn::posix_spawn as PosixSpawn;
 }
 
+/// Ctrl+C handling for a process acting as a shell for foreground children.
+#[path = "ctrl_c.rs"]
+pub mod ctrl_c;
 /// `Process` / `Poller` / `WaiterThread` / `spawn_process` / `sync` /
 /// `Status` / `SpawnOptions` / `SpawnResult`.
 #[path = "process.rs"]
@@ -62,8 +63,9 @@ pub use bun_spawn_sys::{Argv, CStrPtr, Envp, ffi};
 
 pub use bun_spawn_sys::RusageFields;
 pub use process::{
-    Dup2, Exited, ExtraPipe, PidT, Poller, Process, Rusage, SignalCodeExt, SpawnOptions,
-    SpawnProcessResult, SpawnResultExt, Status, StdioKind, WaiterThread, spawn_process,
+    Dup2, Exited, ExtraPipe, PidT, Poller, Process, ProcessHandle, Rusage, SignalCodeExt, SpawnEnv,
+    SpawnOptions, SpawnProcessResult, SpawnResultExt, Status, StdioKind, WaiterThread,
+    spawn_process, spawn_process_cstr,
 };
 
 // Variant types live in `bun_runtime`/`bun_install`; each provides its body
@@ -110,18 +112,10 @@ link_impl_ProcessExit! {
             unreachable!("SyncWindows exit handler is Windows-only"),
     }
 }
-/// Compat re-export: the `process::spawn_sys` shim module was dissolved into
-/// `bun_sys` (LAYERING — moved down so non-spawn callers don't depend on
-/// `bun_spawn`). Downstream `runtime/api/bun/*` still spells the old path.
-pub use bun_sys as spawn_sys;
-
 #[cfg(unix)]
 pub use process::{PosixSpawnOptions, PosixSpawnResult, PosixStdio as Stdio, WaitPidResult};
 #[cfg(unix)]
 pub type SpawnResult = process::PosixSpawnResult;
-/// Alias for the per-extra-fd Stdio entry passed in `SpawnOptions::extra_fds`.
-#[cfg(unix)]
-pub type ExtraFd = process::PosixStdio;
 
 #[cfg(windows)]
 pub use process::{
@@ -130,8 +124,6 @@ pub use process::{
 };
 #[cfg(windows)]
 pub type SpawnResult = process::WindowsSpawnResult;
-#[cfg(windows)]
-pub type ExtraFd = process::WindowsStdio;
 #[cfg(windows)]
 pub mod windows {
     /// `bun.windows.libuv.Pipe` raw pointer payload of `Stdio::Buffer` /
@@ -145,8 +137,6 @@ pub mod sync {
     #[cfg(windows)]
     pub use crate::process::WindowsOptions;
     pub use crate::process::sync::{Options, Result, SyncStdio as Stdio, spawn, spawn_with_argv};
-    #[cfg(not(windows))]
-    pub type WindowsOptions = ();
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -161,6 +151,7 @@ pub mod sync {
 // crate naming `bun_jsc`/`bun_runtime`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod subprocess {
+    #[cfg(not(windows))]
     use bun_sys::Fd;
 
     pub use crate::process::StdioKind;
@@ -177,11 +168,6 @@ pub mod subprocess {
     pub fn stdio_result_from_fd(fd: Fd) -> StdioResult {
         Some(fd)
     }
-    #[cfg(windows)]
-    #[inline]
-    pub fn stdio_result_from_fd(fd: Fd) -> StdioResult {
-        crate::process::WindowsStdioResult::BufferFd(fd)
-    }
 
     /// The in-memory payload that a
     /// `StaticPipeWriter` drains into the child's stdin/extra-fd.
@@ -196,9 +182,8 @@ pub mod subprocess {
         Detached,
     }
 
-    /// Type-erased payload for [`Source::Any`]. JSC-tier callers wrap
-    /// `webcore::AnyBlob` / `jsc::ArrayBufferStrong` in a thin adaptor that
-    /// implements this trait. The vtable travels with the value, so no global
+    /// Type-erased payload for [`Source::Any`]. JSC-tier callers implement it
+    /// for `webcore::AnyBlob`. The vtable travels with the value, so no global
     /// hook registration is needed.
     pub trait SourceData {
         fn slice(&self) -> &[u8];
@@ -214,7 +199,7 @@ pub mod subprocess {
             Self::OwnedBytes(bytes)
         }
 
-        pub fn slice(&self) -> &[u8] {
+        pub(crate) fn slice(&self) -> &[u8] {
             match self {
                 Source::OwnedBytes(b) => b,
                 Source::Any(s) => s.slice(),
@@ -232,7 +217,7 @@ pub mod subprocess {
             *self = Source::Detached;
         }
 
-        pub fn memory_cost(&self) -> usize {
+        pub(crate) fn memory_cost(&self) -> usize {
             match self {
                 Source::OwnedBytes(b) => b.len(),
                 Source::Any(s) => s.memory_cost(),
@@ -252,7 +237,6 @@ pub mod subprocess {
 pub enum Term {
     Exited(u32),
     Signal(u32),
-    Stopped(u32),
     Unknown(u32),
 }
 
@@ -346,11 +330,11 @@ pub fn run(opts: RunOptions<'_>) -> crate::Result<RunResult> {
             break 'argv0;
         };
         // Only PATH-search bare names (no separator present).
-        if first.contains(&b'/') {
+        if bun_core::strings::contains_char(first, b'/') {
             break 'argv0;
         }
         #[cfg(windows)]
-        if first.iter().any(|&b| b == b'\\') {
+        if bun_core::strings::contains_char(first, b'\\') {
             break 'argv0;
         }
         let path = opts

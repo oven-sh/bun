@@ -30,7 +30,7 @@ pub fn add(global: &JSGlobalObject, a: i32, b: i32) -> JsResult<i32> {
             // Binding functions can propagate out-of-memory and JS exceptions
             // directly; other failures (like this integer overflow) must be
             // converted into a thrown error. Remember to be descriptive.
-            Err(global.throw_pretty(format_args!("Integer overflow while adding")))
+            Err(global.throw(format_args!("Integer overflow while adding")))
         }
     }
 }
@@ -63,9 +63,13 @@ declare function add(a: number, b: number = -1): number;
 ```
 
 The code generator emits a C++ thunk that validates and coerces the JS
-arguments, then calls the Rust implementation. On the Rust side the generated
-module is reachable as `crate::r#gen::<basename>` (for `bindgen_test.bind.ts`,
-that's `crate::r#gen::bindgen_test`). To construct a `JSFunction` wrapping the
+arguments, then calls the Rust implementation. On the Rust side bindgen emits
+nothing; both the dispatch shim the thunk calls
+(`bindgen_Bindgen_test_dispatchAdd1` in `src/runtime/hw_exports.rs`, which
+calls `add`) and the `create_*_callback` module in
+`src/jsc/bindings/GeneratedBindings.rs` are hand-written. The module is
+reachable as `crate::r#gen::<basename>` (for `bindgen_test.bind.ts`, that's
+`crate::r#gen::bindgen_test`). To construct a `JSFunction` wrapping the
 native implementation, use `generated::create_add_callback(global)`:
 
 ```rust
@@ -75,10 +79,11 @@ let js_fn: JSValue = generated::create_add_callback(global);
 ```
 
 In JS files in `src/js/`, `$bindgenFn("bindgen_test.bind.ts", "add")` returns
-a handle to the implementation.
+a handle to the implementation, through a hand-written
+`js2native_bindgen_<basename>_<fn>` export in `src/runtime/hw_exports.rs`.
 
 Exported bindgen functions are snake_cased on the Rust side
-(`requiredAndOptionalArg` → `required_and_optional_arg`), and the generated
+(`requiredAndOptionalArg` → `required_and_optional_arg`). The hand-written
 callback constructor follows the same convention
 (`create_required_and_optional_arg_callback`).
 
@@ -149,7 +154,6 @@ An example of `stringEnum` from `fmt_jsc.bind.ts` / `bun:internal-for-testing`:
 export const Formatter = t.stringEnum("highlight-javascript", "highlight-javascript-redacted", "escape-powershell");
 
 export const fmtString = fn({
-  implNamespace: "js_bindings",
   args: {
     global: t.globalObject,
     code: t.UTF8String,
@@ -165,32 +169,24 @@ On the Rust side, the enum is mirrored as a `#[repr(u8)]` enum. Bindgen
 the `.bind.ts` declaration order:
 
 ```rust
-pub mod js_bindings {
-    #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq)]
-    pub enum Formatter {
-        EscapePowershell = 0,
-        HighlightJavascript = 1,
-        HighlightJavascriptRedacted = 2,
-    }
+#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum Formatter {
+    EscapePowershell = 0,
+    HighlightJavascript = 1,
+    HighlightJavascriptRedacted = 2,
+}
 
-    pub fn fmt_string(
-        global: &JSGlobalObject,
-        code: &[u8],
-        formatter_id: Formatter,
-    ) -> JsResult<bun_core::String> {
-        // ...
-    }
+pub fn fmt_string(
+    global: &JSGlobalObject,
+    code: &[u8],
+    formatter_id: Formatter,
+) -> JsResult<bun_core::String> {
+    // ...
 }
 ```
 
 WebIDL strongly encourages kebab-case for enumeration values, to be consistent with existing Web APIs.
-
-## `implNamespace`
-
-Setting `implNamespace: "foo"` on a `fn({...})` routes the generated call to
-`crate::<basename>::foo::fn_name` instead of `crate::<basename>::fn_name`. Use
-this to group related binding implementations under a submodule.
 
 ## `t.oneOf`
 
@@ -199,7 +195,7 @@ A `oneOf` is a union of two or more types. It is represented as a Rust
 
 ## Attributes
 
-Attributes can be chained onto `t.*` types. On all types:
+You can chain attributes onto `t.*` types. On all types:
 
 - `.required`, in dictionary parameters only
 - `.optional`, in function arguments only
@@ -226,8 +222,8 @@ pub fn required_and_optional_arg(a: bool, b: Option<usize>, c: i32, d: Option<u8
 ```
 
 Depending on the type, more attributes are available. See the type definitions
-in auto-complete for details. Only one of these three attributes can be
-applied, and it must be applied last.
+in auto-complete for details. You can apply only one of these three attributes,
+and you must apply it last.
 
 ### Integer Attributes
 

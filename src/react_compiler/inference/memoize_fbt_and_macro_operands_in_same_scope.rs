@@ -93,7 +93,7 @@ fn fbt_tags() -> HashMap<Vec<u8>, MacroDefinition> {
 }
 
 /// Main entry point. Returns the set of identifier IDs that are fbt/macro operands.
-pub fn memoize_fbt_and_macro_operands_in_same_scope(
+pub(crate) fn memoize_fbt_and_macro_operands_in_same_scope(
     func: &HirFunction,
     env: &mut Environment,
 ) -> HashSet<IdentifierId> {

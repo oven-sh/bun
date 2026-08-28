@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("import.meta properties are NOT inlined without bake framework", async () => {
-  const dir = tempDirWithFiles("import-meta-no-inline", {
+  await using dir = tempDir("import-meta-no-inline", {
     "index.ts": `
       console.log("dir:", import.meta.dir);
       console.log("dirname:", import.meta.dirname);  

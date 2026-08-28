@@ -20,9 +20,6 @@ pub const MAX_FRAME_SIZE_UPPER: u32 = 16_777_215; // 2^24 - 1
 pub const DEFAULT_WINDOW_SIZE: u32 = 65_535; // 2^16 - 1
 pub const MAX_WINDOW_SIZE: u32 = 2_147_483_647; // 2^31 - 1
 
-/// §6.5.2 SETTINGS_HEADER_TABLE_SIZE default.
-pub const DEFAULT_HEADER_TABLE_SIZE: u32 = 4_096;
-
 /// Highest valid stream identifier (§5.1.1): 2^31 - 1.
 pub const MAX_STREAM_ID: u32 = 2_147_483_647;
 

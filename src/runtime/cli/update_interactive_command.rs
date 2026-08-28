@@ -6,16 +6,18 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_alloc::Arena as Bump;
-use bun_collections::StringHashMap;
+use bun_collections::{StringHashMap, index_sort};
 use bun_core::{Global, Output};
-use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
+use bun_install::package_manager::options::Do;
 use bun_install::package_manager::{
-    LogLevel, ManifestLoad, ROOT_PACKAGE_JSON_PATH, Subcommand, WorkspaceFilter,
-    install_with_manager, populate_manifest_cache,
+    LogLevel, Subcommand, WorkspaceFilter, populate_manifest_cache,
+    update_package_json_and_install_with_manager,
 };
+use bun_install::package_manager_real::command_line_arguments::UpdateGroups;
+use bun_install::update_scope::selects;
 use bun_install::{
     CommandLineArguments, GetJsonOptions, GetJsonResult, INVALID_PACKAGE_ID, PackageID,
     PackageManager, WorkspacePackageJsonCacheEntry, resolution,
@@ -44,7 +46,7 @@ pub(crate) struct TerminalHyperlink<'a> {
 }
 
 impl<'a> TerminalHyperlink<'a> {
-    pub(crate) fn new(link: &'a [u8], text: &'a [u8], enabled: bool) -> TerminalHyperlink<'a> {
+    fn new(link: &'a [u8], text: &'a [u8], enabled: bool) -> TerminalHyperlink<'a> {
         TerminalHyperlink {
             link,
             text,
@@ -110,12 +112,20 @@ struct PackageUpdate {
     workspace_path: Box<[u8]>,
 }
 
-pub(crate) struct CatalogUpdateRequest {
+struct CatalogUpdateRequest {
     // Owned copies keep the type lifetime-free (a few small allocations in
     // an interactive UI).
     package_name: Box<[u8]>,
     new_version: Box<[u8]>,
     catalog_name: Option<Box<[u8]>>,
+}
+
+/// How risky an update looks from its semver distance.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CheckboxColor {
+    Green,
+    Yellow,
+    Red,
 }
 
 struct ColumnWidths {
@@ -250,8 +260,30 @@ impl UpdateInteractiveCommand {
         );
         Output::flush();
 
+        // The multi-select reads single keystrokes from raw-mode stdin. On a
+        // pipe (CI, spawn with stdio:'pipe') that either blocks forever or
+        // silently selects nothing on EOF while spraying cursor-control
+        // escapes into a non-TTY log. Refuse early, before resolving
+        // manifests. Tests that drive the UI via piped keystrokes set
+        // BUN_INTERNAL_INTERACTIVE_ASSUME_TTY=1 to bypass this.
+        if !Output::is_stdin_tty()
+            && !bun_core::env_var::feature_flag::BUN_INTERNAL_INTERACTIVE_ASSUME_TTY
+                .get()
+                .unwrap_or(false)
+        {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: <b>bun update --interactive<r> requires an interactive terminal."
+            );
+            bun_core::note!(
+                "Use <cyan>bun update<r> to update non-interactively, or <cyan>bun outdated<r> to list available updates."
+            );
+            Output::flush();
+            Global::exit(1);
+        }
+
         let cli = CommandLineArguments::parse(Subcommand::Update)?;
-        let silent = cli.silent;
+        let groups = cli.update_groups;
+        let silent = cli.log_level.is_silent();
 
         let (manager, original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Update)
         {
@@ -259,7 +291,7 @@ impl UpdateInteractiveCommand {
             Err(err) => {
                 if !silent {
                     if err == bun_install::Error::MissingPackageJSON {
-                        Output::err_generic("missing package.json, nothing outdated", ());
+                        Output::err_generic("missing package.json, nothing to update", ());
                     }
                     Output::err_generic("failed to initialize bun install: {s}", (err.name(),));
                 }
@@ -269,7 +301,7 @@ impl UpdateInteractiveCommand {
         // `original_cwd: Box<[u8]>` — `defer ctx.allocator.free(original_cwd)`
         // is implicit via Drop at scope exit.
 
-        Self::update_interactive(ctx, &original_cwd, manager)
+        Self::update_interactive(ctx, &original_cwd, manager, groups)
     }
 
     fn update_package_json_files_from_updates(
@@ -460,8 +492,11 @@ impl UpdateInteractiveCommand {
                     GetJsonResult::Entry(entry) => entry,
                 };
 
-            // Use the PackageJSONEditor to update catalogs
-            edit_catalog_definitions(&mut updates_for_workspace[..], &mut package_json.root)?;
+            edit_catalog_definitions(
+                &mut updates_for_workspace[..],
+                &mut package_json.root,
+                &package_json.json_arena,
+            )?;
 
             // Save the updated package.json
             Self::save_package_json(package_json, package_json_path)?;
@@ -473,6 +508,7 @@ impl UpdateInteractiveCommand {
         ctx: Command::Context,
         original_cwd: &[u8],
         manager: &mut PackageManager,
+        groups: UpdateGroups,
     ) -> crate::Result<()> {
         // Reshaped for borrowck — capture `log_level` / `ctx.log`
         // before borrowing `&mut manager.lockfile`.
@@ -482,12 +518,15 @@ impl UpdateInteractiveCommand {
         match manager.load_lockfile_from_cwd::<true>() {
             LoadResult::NotFound => {
                 if not_silent {
-                    Output::err_generic("missing lockfile, nothing outdated", ());
+                    Output::err_generic("missing lockfile, nothing to update", ());
+                    bun_core::note!("run 'bun install' first");
                 }
                 Global::crash();
             }
             LoadResult::Err(cause) => {
-                if not_silent {
+                if not_silent
+                    && !bun_install::migration::reported_unsupported_lockfile_version(&cause)
+                {
                     match cause.step {
                         LoadStep::OpenFile => Output::err_generic(
                             "failed to open lockfile: {s}",
@@ -523,34 +562,54 @@ impl UpdateInteractiveCommand {
             }
         }
 
-        let workspace_pkg_ids: Vec<PackageID> = if !manager.options.filter_patterns.is_empty() {
-            let filters = manager.options.filter_patterns;
-            Self::find_matching_workspaces(original_cwd, manager, filters)
-        } else if manager.options.do_.recursive() {
-            Self::get_all_workspaces(manager)
-        } else {
-            let root_pkg_id = manager
-                .root_package_id
-                .get(&manager.lockfile, manager.workspace_name_hash);
-            if root_pkg_id == INVALID_PACKAGE_ID {
-                return Ok(());
-            }
-            vec![root_pkg_id]
-        };
+        let workspace_pkg_ids: Vec<PackageID> =
+            if !manager.options.filter_patterns.is_empty() || manager.options.do_.recursive() {
+                WorkspaceFilter::select_workspaces(
+                    &manager.lockfile,
+                    manager.options.filter_patterns,
+                    original_cwd,
+                )
+            } else {
+                let root_pkg_id = manager
+                    .root_package_id
+                    .get(&manager.lockfile, manager.workspace_name_hash);
+                if root_pkg_id == INVALID_PACKAGE_ID {
+                    return Ok(());
+                }
+                vec![root_pkg_id]
+            };
 
         populate_manifest_cache::populate_manifest_cache(
             manager,
             populate_manifest_cache::Packages::Ids(&workspace_pkg_ids),
         )?;
+        if populate_manifest_cache::print_fetch_failures(manager)? {
+            Global::crash();
+        }
 
         // Get outdated packages
-        let mut outdated_packages = Self::get_outdated_packages(manager, &workspace_pkg_ids)?;
-        // `defer { allocator.free(...) }` is implicit via Drop on
-        // `Vec<OutdatedPackage>` (Box<[u8]> fields).
+        let (mut outdated_packages, checked) =
+            Self::get_outdated_packages(manager, &workspace_pkg_ids, groups)?;
 
         if outdated_packages.is_empty() {
-            // No packages need updating - just exit silently
-            bun_core::prettyln!("<r><green>✓<r> All packages are up to date!");
+            if not_silent {
+                bun_core::pretty!(
+                    "\nChecked <green>{}<r> dependenc{}, ",
+                    checked,
+                    if checked == 1 { "y" } else { "ies" }
+                );
+                if groups.is_default() {
+                    bun_core::pretty!("nothing to update ");
+                } else {
+                    bun_core::pretty!(
+                        "none selected by {} <d>(no changes)<r> ",
+                        GroupFlags(groups)
+                    );
+                }
+                Output::print_start_end_stdout(ctx.start_time, bun_core::time::nano_timestamp());
+                bun_core::pretty!("\n");
+                Output::flush();
+            }
             return Ok(());
         }
 
@@ -562,6 +621,11 @@ impl UpdateInteractiveCommand {
 
         // Collect all package updates with full information
         let mut package_updates: Vec<PackageUpdate> = Vec::new();
+
+        // Becomes `options.positionals` so the install runs as `bun update <selected...>`.
+        let mut positionals: Vec<&'static [u8]> = vec![&b"update"[..]];
+
+        let mut dry_run_rows: Vec<DryRunRow> = Vec::new();
 
         // Process selected packages
         debug_assert_eq!(outdated_packages.len(), selected.len());
@@ -579,6 +643,21 @@ impl UpdateInteractiveCommand {
 
             if strings::eql(&pkg.current_version, target_version) {
                 continue;
+            }
+
+            if !positionals[1..]
+                .iter()
+                .any(|name| strings::eql(name, &pkg.name))
+            {
+                positionals.push(crate::cli::cli_dupe(&pkg.name));
+            }
+
+            if manager.options.dry_run {
+                dry_run_rows.push((
+                    pkg.name.clone(),
+                    pkg.current_version.clone(),
+                    Box::from(target_version),
+                ));
             }
 
             // For catalog dependencies, we need to collect them separately
@@ -644,36 +723,9 @@ impl UpdateInteractiveCommand {
         // Actually update the selected packages
         if has_package_updates || has_catalog_updates {
             if manager.options.dry_run {
-                bun_core::prettyln!("\n<r><yellow>Dry run mode: showing what would be updated<r>");
-
-                // In dry-run mode, just show what would be updated without modifying files
-                for update in &package_updates {
-                    let workspace_display: &[u8] = if !update.workspace_path.is_empty() {
-                        &update.workspace_path
-                    } else {
-                        b"root"
-                    };
-                    bun_core::prettyln!(
-                        "→ Would update {} to {} in {} ({})",
-                        BStr::new(&update.name),
-                        BStr::new(&update.target_version),
-                        BStr::new(workspace_display),
-                        BStr::new(&update.dep_type)
-                    );
+                if not_silent {
+                    print_dry_run_rows(&mut dry_run_rows, ctx.start_time);
                 }
-
-                if has_catalog_updates {
-                    let mut it = catalog_updates.iter();
-                    while let Some((catalog_key, catalog_update)) = it.next() {
-                        bun_core::prettyln!(
-                            "→ Would update catalog {} to {}",
-                            BStr::new(catalog_key),
-                            BStr::new(&catalog_update.version)
-                        );
-                    }
-                }
-
-                bun_core::prettyln!("\n<r><yellow>Dry run complete - no changes made<r>");
             } else {
                 bun_core::prettyln!("\n<r><cyan>Installing updates...<r>");
                 Output::flush();
@@ -688,133 +740,17 @@ impl UpdateInteractiveCommand {
                     Self::update_package_json_files_from_updates(manager, &package_updates)?;
                 }
 
-                manager.to_update = true;
-
                 // Reset the timer to show actual install time instead of total command time
                 ctx.start_time = bun_core::time::nano_timestamp();
 
-                // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set once during
-                // `PackageManager::init` (single-threaded CLI startup).
-                let root_pkg_json = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
-                // `install_with_manager` takes the original cwd path slice.
-                // Snapshot before the `&mut manager` borrow.
-                let root_dir_path: &'static [u8] = manager.root_dir.dir;
-                install_with_manager::install_with_manager(
-                    manager,
-                    &mut *ctx,
-                    root_pkg_json,
-                    root_dir_path,
-                )?;
+                // The chosen versions are already in package.json; the flag would re-pin every selection to `latest`, ignoring per-package `l` toggles.
+                manager.options.do_.remove(Do::UPDATE_TO_LATEST);
+                manager.options.positionals =
+                    crate::cli::cli_arena().alloc_slice_copy(&positionals);
+                update_package_json_and_install_with_manager(manager, &mut *ctx, original_cwd)?;
             }
         }
         Ok(())
-    }
-
-    fn get_all_workspaces(manager: &PackageManager) -> Vec<PackageID> {
-        let lockfile = &manager.lockfile;
-        let packages = lockfile.packages.slice();
-        let pkg_resolutions = packages.items_resolution();
-
-        let mut workspace_pkg_ids: Vec<PackageID> = Vec::new();
-        for (pkg_id, resolution) in pkg_resolutions.iter().enumerate() {
-            if resolution.tag != resolution::Tag::Workspace
-                && resolution.tag != resolution::Tag::Root
-            {
-                continue;
-            }
-            workspace_pkg_ids.push(pkg_id as PackageID);
-        }
-        workspace_pkg_ids
-    }
-
-    fn find_matching_workspaces(
-        original_cwd: &[u8],
-        manager: &PackageManager,
-        filters: &[&[u8]],
-    ) -> Vec<PackageID> {
-        let lockfile = &manager.lockfile;
-        let packages = lockfile.packages.slice();
-        let pkg_names = packages.items_name();
-        let pkg_resolutions = packages.items_resolution();
-        let string_buf = lockfile.buffers.string_bytes.as_slice();
-
-        let mut workspace_pkg_ids: Vec<PackageID> = Vec::new();
-        for (pkg_id, resolution) in pkg_resolutions.iter().enumerate() {
-            if resolution.tag != resolution::Tag::Workspace
-                && resolution.tag != resolution::Tag::Root
-            {
-                continue;
-            }
-            workspace_pkg_ids.push(pkg_id as PackageID);
-        }
-
-        let mut path_buf = PathBuffer::uninit();
-
-        let converted_filters: Vec<WorkspaceFilter> = filters
-            .iter()
-            .map(|filter| {
-                WorkspaceFilter::init(filter, original_cwd, &mut path_buf.0).expect("OOM")
-            })
-            .collect();
-        // `defer { filter.deinit(allocator); allocator.free(...) }` — implicit via Drop.
-
-        // SAFETY: `FileSystem::init` ran during `PackageManager::init`.
-        let top_level_dir = FileSystem::get().top_level_dir;
-
-        // move all matched workspaces to front of array
-        let mut i: usize = 0;
-        while i < workspace_pkg_ids.len() {
-            let workspace_pkg_id = workspace_pkg_ids[i];
-
-            let matched = 'matched: {
-                for filter in &converted_filters {
-                    match filter {
-                        WorkspaceFilter::Path(pattern) => {
-                            if pattern.is_empty() {
-                                continue;
-                            }
-                            let res = &pkg_resolutions[workspace_pkg_id as usize];
-                            let res_path: &[u8] = match res.tag {
-                                resolution::Tag::Workspace => res.workspace().slice(string_buf),
-                                resolution::Tag::Root => top_level_dir,
-                                _ => unreachable!(),
-                            };
-
-                            let abs_res_path = path::resolve_path::join_abs_string_buf::<
-                                path::platform::Posix,
-                            >(
-                                top_level_dir, &mut path_buf.0, &[res_path]
-                            );
-
-                            if !glob::r#match(
-                                pattern,
-                                strings::without_trailing_slash(abs_res_path),
-                            )
-                            .matches()
-                            {
-                                break 'matched false;
-                            }
-                        }
-                        WorkspaceFilter::Name(pattern) => {
-                            let name = pkg_names[workspace_pkg_id as usize].slice(string_buf);
-                            if !glob::r#match(pattern, name).matches() {
-                                break 'matched false;
-                            }
-                        }
-                        WorkspaceFilter::All => {}
-                    }
-                }
-                true
-            };
-
-            if matched {
-                i += 1;
-            } else {
-                workspace_pkg_ids.swap_remove(i);
-            }
-        }
-
-        workspace_pkg_ids
     }
 
     fn group_catalog_dependencies(
@@ -887,7 +823,8 @@ impl UpdateInteractiveCommand {
     fn get_outdated_packages(
         manager: &mut PackageManager,
         workspace_pkg_ids: &[PackageID],
-    ) -> crate::Result<Vec<OutdatedPackage>> {
+        groups: UpdateGroups,
+    ) -> crate::Result<(Vec<OutdatedPackage>, usize)> {
         // Reshaped for borrowck —
         // hoist the four scalars the manifest-lookup path reads into a by-value
         // `DiskCacheCtx` so the loop body holds only disjoint field borrows
@@ -903,6 +840,7 @@ impl UpdateInteractiveCommand {
         let global_uses_default_registry = manager.options.scope.url_hash == default_url_hash;
 
         let mut outdated_packages: Vec<OutdatedPackage> = Vec::new();
+        let mut checked: usize = 0;
 
         let mut version_buf: String = String::new();
 
@@ -914,8 +852,12 @@ impl UpdateInteractiveCommand {
                 if package_id == INVALID_PACKAGE_ID {
                     continue;
                 }
+                checked += 1;
                 let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
                 let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
+                if !selects(groups, dep.behavior) {
+                    continue;
+                }
                 let Some(resolved_version) = manager.lockfile.resolve_catalog_dependency(dep)
                 else {
                     continue;
@@ -947,7 +889,6 @@ impl UpdateInteractiveCommand {
                     &scope,
                     package_name,
                     Some(&mut expired),
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
                     needs_extended,
                 ) else {
                     continue;
@@ -1070,7 +1011,7 @@ impl UpdateInteractiveCommand {
         let mut grouped_result = Self::group_catalog_dependencies(outdated_packages)?;
 
         // Sort packages: dependencies first, then devDependencies, etc.
-        grouped_result.sort_by(|a, b| {
+        index_sort::sort_slice_by(&mut grouped_result, |a, b| {
             // First sort by dependency type
             let a_priority = dep_type_priority(a.dependency_type);
             let b_priority = dep_type_priority(b.dependency_type);
@@ -1081,7 +1022,7 @@ impl UpdateInteractiveCommand {
             strings::order(&a.name, &b.name)
         });
 
-        Ok(grouped_result)
+        Ok((grouped_result, checked))
     }
 
     fn calculate_column_widths(packages: &[OutdatedPackage]) -> ColumnWidths {
@@ -1311,11 +1252,7 @@ impl UpdateInteractiveCommand {
         } else if state.cursor >= state.viewport_start + state.viewport_height {
             // Cursor is below viewport - put it at the end of viewport
             if !state.packages.is_empty() {
-                let max_cursor = if state.packages.len() > 1 {
-                    state.packages.len() - 1
-                } else {
-                    0
-                };
+                let max_cursor = state.packages.len() - 1;
                 let viewport_end = state.viewport_start + state.viewport_height;
                 state.cursor = (viewport_end - 1).min(max_cursor);
             }
@@ -1368,11 +1305,7 @@ impl UpdateInteractiveCommand {
             } else {
                 0
             };
-            let desired_start = if state.viewport_height > context_below {
-                state.cursor - (state.viewport_height - context_below)
-            } else {
-                state.cursor
-            };
+            let desired_start = state.cursor - (state.viewport_height - context_below);
             state.viewport_start = desired_start.min(max_start);
         }
         // If cursor is near top of viewport, adjust to maintain context
@@ -1419,6 +1352,7 @@ impl UpdateInteractiveCommand {
             ($reprint:expr) => {{
                 if !initial_draw {
                     Output::up(total_lines);
+                    Output::print(format_args!("\x1B[1G"));
                 }
                 Output::clear_to_end();
                 if $reprint {
@@ -1471,7 +1405,9 @@ impl UpdateInteractiveCommand {
                 let help_text: &[u8] = b"Space to toggle, Enter to confirm, a to select all, n to select none, i to invert, l to toggle latest";
                 let elipsised_help_text = Self::truncate_with_ellipsis(
                     help_text,
-                    current_size.width - b"? Select packages to update - ".len(),
+                    current_size
+                        .width
+                        .saturating_sub(b"? Select packages to update - ".len()),
                     true,
                 );
                 bun_core::prettyln!(
@@ -1633,7 +1569,7 @@ impl UpdateInteractiveCommand {
                         ))
                     };
 
-                    let mut checkbox_color: &str = "green"; // default
+                    let mut checkbox_color = CheckboxColor::Green;
                     if current_ver_parsed.valid && update_ver_parsed.valid {
                         let current_full = semver::Version {
                             major: current_ver_parsed.version.major.unwrap_or(0),
@@ -1663,22 +1599,24 @@ impl UpdateInteractiveCommand {
                         );
                         if let Some(d) = diff {
                             match d {
-                                semver::version::ChangedVersion::Major => checkbox_color = "red",
+                                semver::version::ChangedVersion::Major => {
+                                    checkbox_color = CheckboxColor::Red
+                                }
                                 semver::version::ChangedVersion::Minor => {
                                     if current_full.major == 0 {
-                                        checkbox_color = "red"; // 0.x.y minor changes are breaking
+                                        checkbox_color = CheckboxColor::Red; // 0.x.y minor changes are breaking
                                     } else {
-                                        checkbox_color = "yellow";
+                                        checkbox_color = CheckboxColor::Yellow;
                                     }
                                 }
                                 semver::version::ChangedVersion::Patch => {
                                     if current_full.major == 0 && current_full.minor == 0 {
-                                        checkbox_color = "red"; // 0.0.x patch changes are breaking
+                                        checkbox_color = CheckboxColor::Red; // 0.0.x patch changes are breaking
                                     } else {
-                                        checkbox_color = "green";
+                                        checkbox_color = CheckboxColor::Green;
                                     }
                                 }
-                                _ => checkbox_color = "green",
+                                _ => checkbox_color = CheckboxColor::Green,
                             }
                         }
                     }
@@ -1692,9 +1630,9 @@ impl UpdateInteractiveCommand {
 
                     // Checkbox with appropriate color
                     if selected {
-                        if checkbox_color == "red" {
+                        if checkbox_color == CheckboxColor::Red {
                             bun_core::pretty!("<r><red>{}<r> ", checkbox);
-                        } else if checkbox_color == "yellow" {
+                        } else if checkbox_color == CheckboxColor::Yellow {
                             bun_core::pretty!("<r><yellow>{}<r> ", checkbox);
                         } else {
                             bun_core::pretty!("<r><green>{}<r> ", checkbox);
@@ -1746,9 +1684,9 @@ impl UpdateInteractiveCommand {
                     );
 
                     if selected {
-                        if checkbox_color == "red" {
+                        if checkbox_color == CheckboxColor::Red {
                             bun_core::pretty!("<r><red>{}<r>", hyperlink);
-                        } else if checkbox_color == "yellow" {
+                        } else if checkbox_color == CheckboxColor::Yellow {
                             bun_core::pretty!("<r><yellow>{}<r>", hyperlink);
                         } else {
                             bun_core::pretty!("<r><green>{}<r>", hyperlink);
@@ -1969,7 +1907,7 @@ impl UpdateInteractiveCommand {
                 // Show bottom scroll indicator if needed
                 if show_bottom_indicator {
                     bun_core::pretty!(
-                        "  <d>↓ {} more package{} below<r>",
+                        "  <d>↓ {} more package{} below<r>\x1B[0K\n",
                         state.packages.len() - viewport_end,
                         if state.packages.len() - viewport_end == 1 {
                             ""
@@ -2155,9 +2093,8 @@ impl UpdateInteractiveCommand {
                                     if c == b'M' || c == b'm' {
                                         // Parse SGR mouse event: ESC[<button;col;row(M or m)
                                         // button: 64 = scroll up, 65 = scroll down
-                                        let mut parts = buffer[0..buf_idx]
-                                            .split(|b| *b == b';')
-                                            .filter(|s| !s.is_empty());
+                                        let mut parts =
+                                            strings::tokenize(&buffer[0..buf_idx], b";");
                                         if let Some(button_str) = parts.next() {
                                             let button: u32 =
                                                 strings::parse_int(button_str, 10).unwrap_or(0);
@@ -2205,6 +2142,62 @@ impl UpdateInteractiveCommand {
     }
 }
 
+/// (name, from, to)
+type DryRunRow = (Box<[u8]>, Box<[u8]>, Box<[u8]>);
+
+fn print_dry_run_rows(rows: &mut Vec<DryRunRow>, start_time: i128) {
+    index_sort::sort_vec_unstable_by(rows, |a, b| a.cmp(b));
+    rows.dedup();
+    let (glyph, arrow) = if Output::enable_ansi_colors_stdout() {
+        ("↑", "→")
+    } else {
+        ("^", "->")
+    };
+    bun_core::pretty!("\n");
+    for (name, from, to) in rows.iter() {
+        bun_core::prettyln!(
+            "<cyan>{}<r> <b>{}<r> <d>{} {}<r> <b><cyan>{}<r>",
+            glyph,
+            BStr::new(name),
+            BStr::new(from),
+            arrow,
+            BStr::new(to)
+        );
+    }
+    let n = rows.len();
+    bun_core::pretty!(
+        "\n<green>{}<r> package{} would be updated ",
+        n,
+        if n == 1 { "" } else { "s" }
+    );
+    Output::print_start_end_stdout(start_time, bun_core::time::nano_timestamp());
+    bun_core::pretty!("\n");
+    Output::flush();
+}
+
+struct GroupFlags(UpdateGroups);
+
+impl fmt::Display for GroupFlags {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut first = true;
+        for (set, flag) in [
+            (self.0.dev, "--dev"),
+            (self.0.prod, "--prod"),
+            (self.0.no_optional, "--no-optional"),
+        ] {
+            if !set {
+                continue;
+            }
+            if !first {
+                f.write_str(" ")?;
+            }
+            first = false;
+            f.write_str(flag)?;
+        }
+        Ok(())
+    }
+}
+
 fn dep_type_priority(dep_type: &[u8]) -> u8 {
     // caller-specific UI sort order; not baked into canonical
     match DependencyGroup::from_prop(dep_type) {
@@ -2224,27 +2217,16 @@ fn leak_dup(bytes: &[u8]) -> &'static [u8] {
     crate::cli::cli_dupe(bytes)
 }
 
-/// Edit catalog definitions in package.json
-// No `manager` parameter: a local `Bump` is used instead
-// (`E::Object::put` ignores its allocator arg), which keeps
-// `update_catalog_definitions` borrowck-clean.
-pub(crate) fn edit_catalog_definitions(
+// `bump` is the cache entry's `json_arena`: nodes spliced into the cached `root` must outlive the `initialize_store()` reset that install performs.
+fn edit_catalog_definitions(
     updates: &mut [CatalogUpdateRequest],
     current_package_json: &mut Expr,
+    bump: &Bump,
 ) -> crate::Result<()> {
-    // using data store is going to result in undefined memory issues as
-    // the store is cleared in some workspace situations. the solution
-    // is to always avoid the store
-    // `Expr.Disabler` is a debug-only guard around the T4
-    // `bun_js_parser` Store; the lower-tier `bun_ast::js_ast` `Expr` used
-    // here boxes via its own thread-local `DATA_STORE` (see js_ast.rs), so
-    // toggling the parser-tier disabler is a no-op for these allocations.
-    let bump = Bump::new();
-
     for update in updates.iter() {
         if let Some(catalog_name) = &update.catalog_name {
             update_named_catalog(
-                &bump,
+                bump,
                 current_package_json,
                 catalog_name,
                 &update.package_name,
@@ -2252,7 +2234,7 @@ pub(crate) fn edit_catalog_definitions(
             )?;
         } else {
             update_default_catalog(
-                &bump,
+                bump,
                 current_package_json,
                 &update.package_name,
                 &update.new_version,
@@ -2335,7 +2317,7 @@ fn update_default_catalog(
         }
 
         // Update or add the package version
-        let new_expr = Expr::init(E::EString::init(version_with_prefix), Loc::EMPTY);
+        let new_expr = Expr::allocate(bump, E::EString::init(version_with_prefix), Loc::EMPTY);
         catalog_obj
             .put(bump, leak_dup(package_name), new_expr)
             .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
@@ -2358,7 +2340,7 @@ fn update_default_catalog(
                         loc: Loc::EMPTY,
                         data: js_expr::Data::EObject(o),
                     },
-                    None => Expr::init(fresh_obj, Loc::EMPTY),
+                    None => Expr::allocate(bump, fresh_obj, Loc::EMPTY),
                 };
                 ws_obj
                     .put(bump, b"catalog", expr)
@@ -2377,7 +2359,11 @@ fn update_default_catalog(
     // `workspaces.catalog` key exists.
     if let Some(root_obj) = package_json.data.e_object_mut() {
         root_obj
-            .put(bump, b"catalog", Expr::init(fresh_obj, Loc::EMPTY))
+            .put(
+                bump,
+                b"catalog",
+                Expr::allocate(bump, fresh_obj, Loc::EMPTY),
+            )
             .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
     }
     Ok(())
@@ -2429,7 +2415,7 @@ fn update_named_catalog(
         }
 
         // Update or add the package version
-        let new_expr = Expr::init(E::EString::init(version_with_prefix), Loc::EMPTY);
+        let new_expr = Expr::allocate(bump, E::EString::init(version_with_prefix), Loc::EMPTY);
         catalog_obj
             .put(bump, leak_dup(package_name), new_expr)
             .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
@@ -2440,7 +2426,7 @@ fn update_named_catalog(
                 .put(
                     bump,
                     leak_dup(catalog_name),
-                    Expr::init(fresh_catalog, Loc::EMPTY),
+                    Expr::allocate(bump, fresh_catalog, Loc::EMPTY),
                 )
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
         }
@@ -2460,7 +2446,7 @@ fn update_named_catalog(
                         loc: Loc::EMPTY,
                         data: js_expr::Data::EObject(o),
                     },
-                    None => Expr::init(fresh_catalogs, Loc::EMPTY),
+                    None => Expr::allocate(bump, fresh_catalogs, Loc::EMPTY),
                 };
                 ws_obj
                     .put(bump, b"catalogs", expr)
@@ -2477,7 +2463,11 @@ fn update_named_catalog(
     }
     if let Some(root_obj) = package_json.data.e_object_mut() {
         root_obj
-            .put(bump, b"catalogs", Expr::init(fresh_catalogs, Loc::EMPTY))
+            .put(
+                bump,
+                b"catalogs",
+                Expr::allocate(bump, fresh_catalogs, Loc::EMPTY),
+            )
             .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
     }
     Ok(())

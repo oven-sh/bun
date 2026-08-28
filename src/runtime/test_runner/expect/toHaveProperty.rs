@@ -1,5 +1,4 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::ZigString;
 
 use super::throw;
 use super::DiffFormatter;
@@ -14,8 +13,7 @@ pub(crate) fn to_have_property(
     let this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
-    let _arguments = frame.arguments_old::<2>();
-    let arguments: &[JSValue] = _arguments.slice();
+    let arguments = frame.arguments();
 
     if arguments.len() < 1 {
         return Err(global.throw_invalid_arguments(format_args!(
@@ -44,8 +42,6 @@ pub(crate) fn to_have_property(
     }
 
     let not = this.flags.get().not();
-    let mut path_string = ZigString::EMPTY;
-    expected_property_path.to_zig_string(&mut path_string, global)?;
 
     let mut pass = !value.is_undefined_or_null();
     let mut received_property: JSValue = JSValue::ZERO;

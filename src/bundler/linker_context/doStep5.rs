@@ -45,7 +45,7 @@ impl LinkerContext<'_> {
     /// `source_index` row of the `graph.{ast,meta}` SoA columns via raw
     /// per-row pointers obtained from `split_raw()` (root provenance, no
     /// `&mut [T]` intermediate). Disjoint rows ⇒ no overlapping `&mut`.
-    pub unsafe fn do_step5(this: *mut LinkerContext<'_>, source_index_: Index, _: usize) {
+    pub(crate) unsafe fn do_step5(this: *mut LinkerContext<'_>, source_index_: Index, _: usize) {
         let source_index = source_index_.get();
         let _trace = perf::trace("Bundler.CreateNamespaceExports");
 
@@ -61,7 +61,7 @@ impl LinkerContext<'_> {
         }
 
         // SAFETY: `this` points to `BundleV2.linker` (caller is the worker-pool
-        // dispatch from `scanImportsAndExports`); `container_of` shape.
+        // dispatch from `scan_imports_and_exports`); `container_of` shape.
         // `Worker::get` only needs `&BundleV2`, so derive a shared ref — never
         // form `&mut BundleV2` here (concurrent tasks would alias it).
         let bundle_v2: &BundleV2<'_> = unsafe { &*LinkerContext::bundle_v2_ptr(this) };
@@ -163,7 +163,7 @@ impl LinkerContext<'_> {
         // TODO: can this be u32 instead of a string?
         // if yes, we could just move all the hidden exports to the end of the array
         // and only store a count instead of an array
-        strings::sort_desc(aliases.as_mut_slice());
+        strings::sort_asc(aliases.as_mut_slice());
         let export_aliases = aliases.into_bump_slice();
         *row_mut!(
             meta.sorted_and_filtered_export_aliases,
@@ -242,7 +242,7 @@ impl LinkerContext<'_> {
 
         let our_imports_to_bind: &RefImportData = &imports_to_bind[id as usize];
         // SAFETY: see above.
-        'outer: for (part_index, part) in unsafe { (*parts_slice).iter_mut().enumerate() } {
+        for (part_index, part) in unsafe { (*parts_slice).iter_mut().enumerate() } {
             // Now that all files have been parsed, determine which property
             // accesses off of imported symbols are inlined enum values and
             // which ones aren't
@@ -305,9 +305,6 @@ impl LinkerContext<'_> {
             // TODO: inline function calls here
 
             // TODO: Inline cross-module constants
-            if false {
-                break 'outer;
-            } // this `if` preserves the otherwise-unused block label.
 
             // Now that we know this, we can determine cross-part dependencies
             // PERF: iterate the keys slice directly (the index-based
@@ -369,7 +366,7 @@ impl LinkerContext<'_> {
     /// mutates as explicit `&mut` params, so the parallel `do_step5` dispatch
     /// never forms a concurrent `&mut LinkerContext` / whole-column `&mut [T]`.
     #[allow(clippy::too_many_arguments)]
-    pub fn create_exports_for_file(
+    pub(crate) fn create_exports_for_file(
         &self,
         arena: &Bump,
         id: u32,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 
 const ext = isWindows ? ".exe" : "";
 
@@ -161,7 +161,7 @@ describe("import not found", () => {
     ],
   ] as const)
     test.concurrent(`${name}`, async () => {
-      const dir = tempDirWithFiles("type-export", {
+      await using dir = tempDir("type-export", {
         "a.ts": ccase,
         "b.ts": /*js*/ `
           import { not_found } from "./a";
@@ -184,7 +184,7 @@ describe("import not found", () => {
 });
 
 test.concurrent("js file type export", async () => {
-  const dir = tempDirWithFiles("type-export", {
+  await using dir = tempDir("type-export", {
     "a.js": "export {not_found};",
   });
 
@@ -195,7 +195,7 @@ test.concurrent("js file type export", async () => {
 });
 
 test.concurrent("js file type import", async () => {
-  const dir = tempDirWithFiles("type-import", {
+  await using dir = tempDir("type-import", {
     "b.js": "import {type_only} from './ts.ts';",
     "ts.ts": "export type type_only = 'type_only';",
   });
@@ -208,7 +208,7 @@ test.concurrent("js file type import", async () => {
 });
 
 test.concurrent("js file type import with default export", async () => {
-  const dir = tempDirWithFiles("type-import", {
+  await using dir = tempDir("type-import", {
     "b.js": "import {type_only} from './ts.ts';",
     "ts.ts": "export type type_only = 'type_only'; export default function type_only() {};",
   });
@@ -221,7 +221,7 @@ test.concurrent("js file type import with default export", async () => {
 });
 
 test.concurrent("js file with through export", async () => {
-  const dir = tempDirWithFiles("type-import", {
+  await using dir = tempDir("type-import", {
     "b.js": "export {type_only} from './ts.ts';",
     "ts.ts": "export type type_only = 'type_only'; export default function type_only() {};",
   });
@@ -233,7 +233,7 @@ test.concurrent("js file with through export", async () => {
 });
 
 test.concurrent("js file with through export 2", async () => {
-  const dir = tempDirWithFiles("type-import", {
+  await using dir = tempDir("type-import", {
     "b.js": "import {type_only} from './ts.ts'; export {type_only};",
     "ts.ts": "export type type_only = 'type_only'; export default function type_only() {};",
   });
@@ -262,15 +262,14 @@ describe("through export merge", () => {
             ["c." + fmt]: "export const value = 'c';",
           });
 
+          // Both the entry point and a file it imports report the parser's
+          // error. The import path used to hand the file to JSC, which
+          // reported "Cannot export a duplicate name 'value'." instead.
           for (const file of ["main." + fmt, "a." + fmt]) {
             test.concurrent(file, async () => {
               const result = await run([bunExe(), file], dir);
 
-              expect(result.stderr.trim()).toInclude(
-                file === "a." + fmt
-                  ? 'error: Multiple exports with the same name "value"\n' // bun's syntax error
-                  : "SyntaxError: Cannot export a duplicate name 'value'.\n", // jsc's syntax error
-              );
+              expect(result.stderr.trim()).toInclude('error: Multiple exports with the same name "value"\n');
 
               expect(result.exitCode).toBe(1);
             });
@@ -319,7 +318,7 @@ describe("check ownkeys from a star import", () => {
 });
 
 test.concurrent("check commonjs", async () => {
-  const dir = tempDirWithFiles("commonjs", {
+  await using dir = tempDir("commonjs", {
     ["main.ts"]: "const {my_value, my_type} = require('./a'); console.log(my_value, my_type);",
     ["a.ts"]: "module.exports = require('./b');",
     ["b.ts"]: "export const my_value = 'my_value'; export type my_type = 'my_type';",
@@ -331,7 +330,7 @@ test.concurrent("check commonjs", async () => {
 });
 
 test.concurrent("check merge", async () => {
-  const dir = tempDirWithFiles("merge", {
+  await using dir = tempDir("merge", {
     ["main.ts"]: "import {value} from './a'; console.log(value);",
     ["a.ts"]: "export * from './b'; export * from './c';",
     ["b.ts"]: "export const value = 'b';",

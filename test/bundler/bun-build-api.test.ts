@@ -1,7 +1,18 @@
 import assert from "assert";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isASAN,
+  isDebug,
+  isMacOS,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+  tempDirWithFilesAnon,
+} from "harness";
 import path, { join } from "path";
 import { SourceMapConsumer } from "source-map";
 import { buildNoThrow } from "./buildNoThrow";
@@ -58,7 +69,195 @@ describe("Bun.build", () => {
     expect(build.outputs).toHaveLength(2);
     expect(build.outputs[0].kind).toBe("entry-point");
     expect(build.outputs[1].kind).toBe("bytecode");
-    expect([build.outputs[0].path]).toRun("world\n");
+    expect(await bunRun(build.outputs[0].path)).toSpawn("world");
+  });
+
+  const nestedSource = `
+    export function outer() {
+      function middle() {
+        function inner() {
+          return "world";
+        }
+        return inner();
+      }
+      return middle();
+    }
+
+    console.log(outer());
+  `;
+
+  async function bytecodeSize(dir: string, depth: number | undefined) {
+    const outdir = join(dir, depth === undefined ? "all" : `depth-${depth}`);
+    const build = await Bun.build({
+      entrypoints: [join(dir, "index.ts")],
+      outdir,
+      target: "bun",
+      bytecode: true,
+      bytecodeDepth: depth,
+    });
+    expect(build.outputs.map(o => o.kind)).toStrictEqual(["entry-point", "bytecode"]);
+    expect(await bunRun(build.outputs[0].path)).toSpawn("world");
+    return build.outputs[1].size;
+  }
+
+  test("bytecodeDepth bounds nested function bytecode", async () => {
+    const dir = tempDirWithFiles("bun-build-api-bytecode-depth", {
+      "package.json": `{}`,
+      "index.ts": nestedSource,
+    });
+
+    const depth0 = await bytecodeSize(dir, 0);
+    const depth1 = await bytecodeSize(dir, 1);
+    const depth2 = await bytecodeSize(dir, 2);
+    const all = await bytecodeSize(dir, undefined);
+
+    expect(depth0).toBeLessThan(depth1);
+    expect(depth1).toBeLessThan(depth2);
+    expect(depth2).toBeLessThan(all);
+    expect(await bytecodeSize(dir, 3)).toBe(all);
+  });
+
+  test("bytecodeDepth rejects invalid values", async () => {
+    const dir = tempDirWithFiles("bun-build-api-bytecode-depth-invalid", {
+      "package.json": `{}`,
+      "index.ts": nestedSource,
+    });
+    for (const bytecodeDepth of [-1, 1.5, "abc", Infinity, NaN]) {
+      expect(() =>
+        Bun.build({
+          entrypoints: [join(dir, "index.ts")],
+          outdir: join(dir, "out"),
+          target: "bun",
+          bytecode: true,
+          // @ts-expect-error
+          bytecodeDepth,
+        }),
+      ).toThrow(/bytecodeDepth/);
+    }
+  });
+
+  test("--bytecode-depth on the CLI", async () => {
+    const dir = tempDirWithFiles("bun-build-cli-bytecode-depth", {
+      "package.json": `{}`,
+      "index.ts": nestedSource,
+    });
+
+    async function cliBytecodeSize(args: string[]) {
+      const outdir = join(dir, "out-" + args.join("").replace(/[^a-z0-9]/g, ""));
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", join(dir, "index.ts"), "--target=bun", "--bytecode", "--outdir", outdir, ...args],
+        env: bunEnv,
+        cwd: dir,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toContain("index.js.jsc");
+      expect(exitCode).toBe(0);
+      expect(await bunRun(join(outdir, "index.js"))).toSpawn("world");
+      return Bun.file(join(outdir, "index.js.jsc")).size;
+    }
+
+    const depth0 = await cliBytecodeSize(["--bytecode-depth=0"]);
+    const depth1 = await cliBytecodeSize(["--bytecode-depth", "1"]);
+    const all = await cliBytecodeSize([]);
+    expect(depth0).toBeLessThan(depth1);
+    expect(depth1).toBeLessThan(all);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", join(dir, "index.ts"), "--target=bun", "--bytecode", "--bytecode-depth=nope"],
+      env: bunEnv,
+      cwd: dir,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('Invalid value for --bytecode-depth: "nope"');
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  // A function's record stores its own offset as a varint, so its size depends on where it lands. Sweep the payload
+  // size across the encoder's first page boundary (64 KB) with a few tail shapes so a record lands exactly on it.
+  test("bytecode: function record on an encoder page boundary", async () => {
+    using dir = tempDir("bun-build-api-bytecode-page-boundary", {
+      "sweep-fixture.ts": /* ts */ `
+        import { writeFileSync } from "fs";
+        const variant = Number(process.argv[2]);
+        const params = variant & 1 ? Array.from({ length: 130 }, (_, i) => "a" + i).join(",") : "";
+        const consts = variant & 2 ? "var c = " + Array.from({ length: 130 }, (_, i) => i + ".5").join("+") + ";" : "";
+        async function bytecodeSize(n: number) {
+          const file = "in" + variant + ".js";
+          writeFileSync(file, 'function p(){ return "' + Buffer.alloc(n, "p").toString() + '"; }\\n'
+            + "function t(" + params + "){ " + consts + ' return "' + Buffer.alloc(200, "t").toString() + '"; }\\n'
+            + "module.exports = [p, t];\\n");
+          const build = await Bun.build({ entrypoints: ["./" + file], outdir: "./out" + variant, target: "bun", format: "cjs", bytecode: true });
+          if (!build.success) throw new AggregateError(build.logs);
+          return build.outputs.find(o => o.kind === "bytecode")!.size;
+        }
+        const pageEnd = 64 * 1024;
+        const n0 = 60000;
+        const target = n0 + (pageEnd - (await bytecodeSize(n0)));
+        for (let n = target - 24; n < target + 104; n++) await bytecodeSize(n);
+        console.log("ok");
+      `,
+    });
+    await Promise.all(
+      [0, 1, 2, 3].map(async variant => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "sweep-fixture.ts", String(variant)],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        expect(stdout).toBe("ok\n");
+        expect(exitCode).toBe(0);
+      }),
+    );
+  });
+
+  test("bytecode: repeated builds don't retain the generated code", async () => {
+    using dir = tempDir("bun-build-api-bytecode-retained", {
+      "retained-fixture.ts": /* ts */ `
+        import { writeFileSync } from "fs";
+        const [functions, limit] = process.argv.slice(2).map(Number);
+        let source = "";
+        for (let i = 0; i < functions; i++)
+          source += "export function f" + i + "(a, b) { if (a > " + i + ") { return a * b + " + i + "; } for (let j = 0; j < b; j++) a += j ^ " + i + '; return { a, b, name: "f' + i + '" }; }\\n';
+        writeFileSync("in.js", source);
+        const build = (bytecode: boolean) => Bun.build({ entrypoints: ["./in.js"], outdir: "./out", target: "bun", format: "cjs", bytecode });
+        const rss = () => Math.round(process.memoryUsage.rss() / 1024 / 1024);
+        if (!(await build(false)).success) throw new Error("build failed");
+        Bun.gc(true);
+        const base = rss();
+        for (let i = 0; i < 3; i++) if (!(await build(true)).success) throw new Error("build failed");
+        // The bundle thread frees its bytecode VM once it goes idle.
+        const deadline = Date.now() + 5000;
+        let after = rss();
+        while ((Bun.gc(true), (after = rss())) - base > limit && Date.now() < deadline) await Bun.sleep(20);
+        console.log(JSON.stringify({ base, after }));
+      `,
+    });
+    // Linux/Windows release, 20k functions: ~+65 MB without freeing the VM, about level with the baseline with it.
+    // Debug/ASAN parse far slower and hold freed pages in quarantine, so they get a smaller module and only guard against
+    // gross retention. macOS reports +230-280 MB here even with the VM freed (the pages leave RSS lazily), so same there.
+    const slow = isASAN || isDebug;
+    const [functions, limit] = slow ? [3000, 400] : [20000, isMacOS ? 400 : 40];
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "retained-fixture.ts", String(functions), String(limit)],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toStartWith("{");
+    expect(exitCode).toBe(0);
+    const { base, after } = JSON.parse(stdout);
+    expect(after - base).toBeLessThanOrEqual(limit);
   });
 
   test("passing undefined doesnt segfault", () => {
@@ -204,6 +403,94 @@ describe("Bun.build", () => {
     }
   });
 
+  // Runs in a child because the unfixed behavior was a process abort: the
+  // disabled entry point was dropped without an error and the linker ran with
+  // zero entry points.
+  test.concurrent("an entry point disabled by the package.json browser field is a build error", async () => {
+    using dir = tempDir("build-entry-point-disabled-by-browser-field", {
+      "package.json": JSON.stringify({ name: "app", browser: { "./entry.js": false } }),
+      "entry.js": `console.log("entry");`,
+      "build.mjs": `
+        const returned = await Bun.build({ entrypoints: ["./entry.js"], target: "browser", throw: false });
+        let thrown;
+        try {
+          await Bun.build({ entrypoints: ["./entry.js"], target: "browser" });
+        } catch (e) {
+          thrown = {
+            isAggregateError: e instanceof AggregateError,
+            errors: e.errors.map(error => ({ name: error.name, level: error.level, position: error.position, message: error.message })),
+          };
+        }
+        console.log(JSON.stringify({
+          returned: {
+            success: returned.success,
+            outputs: returned.outputs.length,
+            logs: returned.logs.map(log => ({ name: log.name, level: log.level, position: log.position, message: log.message })),
+          },
+          thrown,
+        }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const message = {
+      name: "BuildMessage",
+      level: "error",
+      position: null,
+      message: '"./entry.js" is disabled due to "browser" field in package.json (entry point)',
+    };
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      returned: { success: false, outputs: 0, logs: [message] },
+      thrown: { isAggregateError: true, errors: [message] },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("an entry point too long for a path buffer is reported like any other missing one", async () => {
+    // Resolving it failed without logging anything, so the build went on
+    // with the entry point silently dropped: a successful build when another
+    // entry point was given, a crash in the linker when it was the only one.
+    // Runs in a child so the crash shows up as a failed assertion.
+    using dir = tempDir("build-api-long-entrypoint", { "valid.js": "console.log(1);" });
+    const fixture = /* ts */ `
+      // Longer than the path buffer on every platform, Windows included.
+      const long = Buffer.alloc(100_000, "a").toString();
+      const report = async (entrypoints: string[]) => {
+        const { success, outputs, logs } = await Bun.build({ entrypoints, throw: false });
+        return { success, outputs: outputs.length, logs: logs.map(log => [log.name, log.message]) };
+      };
+      console.log(JSON.stringify({
+        alone: await report([long]),
+        withValidEntryPoint: await report(["./valid.js", long]),
+      }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const notFound = {
+      success: false,
+      outputs: 0,
+      logs: [["BuildMessage", `ModuleNotFound resolving "${Buffer.alloc(100_000, "a").toString()}" (entry point)`]],
+    };
+    expect(JSON.parse(stdout)).toEqual({ alone: notFound, withValidEntryPoint: notFound });
+    expect(exitCode).toBe(0);
+  });
+
   test("returns output files", async () => {
     Bun.gc(true);
     const build = await Bun.build({
@@ -317,6 +604,44 @@ describe("Bun.build", () => {
     expect(map.loader).toBe("file");
     expect(map.sourcemap).toBe(null);
     Bun.gc(true);
+  });
+
+  test("BuildArtifact sourcemap is traced from the owner, not rooted separately", async () => {
+    // `.sourcemap` is the wrapper's `m_sourcemap` WriteBarrier slot (visited in
+    // visitChildren); it must not also be held by a Strong root.
+    using dir = tempDir("build-artifact-sourcemap-gc", {
+      "index.js": "export const x = 1;\n",
+      "run.js": `
+        const { heapStats } = require("bun:jsc");
+        const result = await Bun.build({
+          entrypoints: ["./index.js"],
+          sourcemap: "external",
+          outdir: ".",
+        });
+        const entry = result.outputs[0];
+        const map = result.outputs[1];
+        console.log(JSON.stringify({
+          sourcemapIsMap: entry.sourcemap === map,
+          inspectShowsSourcemap: Bun.inspect(entry).includes("sourcemap: BuildArtifact (sourcemap)"),
+          protectedBuildArtifact: heapStats().protectedObjectTypeCounts.BuildArtifact ?? 0,
+        }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      sourcemapIsMap: true,
+      inspectShowsSourcemap: true,
+      protectedBuildArtifact: 0,
+    });
+    expect(exitCode).toBe(0);
   });
 
   // test("BuildArtifact properties splitting", async () => {
@@ -499,6 +824,42 @@ describe("Bun.build", () => {
     expect(x.logs[0].message).toMatch(/ModuleNotFound/);
     expect(x.logs[0].name).toBe("BuildMessage");
     expect(x.logs[0].position).toEqual(null);
+  });
+
+  test.concurrent("fails instead of truncating when a module is too deeply nested to print", async () => {
+    // A TOML dotted header builds an object nested arbitrarily deep without
+    // recursing in the parser, so the printer's recursion guard is the first
+    // thing to hit it. The printed part used to be silently dropped, leaving
+    // a corrupt bundle and success: true.
+    using dir = tempDir("build-api-deep-toml", {
+      "deep.toml": "[" + Buffer.alloc(200_000, "a.").toString() + "a]\nd = 1\n",
+    });
+    const x = await buildNoThrow({
+      entrypoints: [join(String(dir), "deep.toml")],
+      outdir: join(String(dir), "out"),
+    });
+    expect(x.success).toBe(false);
+    expect(x.outputs).toHaveLength(0);
+    expect(x.logs).toHaveLength(1);
+    expect(x.logs[0].message).toContain("Maximum call stack size exceeded while generating code for this file");
+    expect(x.logs[0].name).toBe("BuildMessage");
+  });
+
+  test.concurrent("reports a module that fails to print once across entrypoints", async () => {
+    // Without code splitting the failing file is printed once per entry
+    // chunk; the error is still per-file, like parse errors.
+    using dir = tempDir("build-api-deep-toml-multi", {
+      "deep.toml": "[" + Buffer.alloc(200_000, "a.").toString() + "a]\nd = 1\n",
+      "a.js": `import d from "./deep.toml"; console.log(d);`,
+      "b.js": `import d from "./deep.toml"; console.log(Object.keys(d));`,
+    });
+    const x = await buildNoThrow({
+      entrypoints: [join(String(dir), "a.js"), join(String(dir), "b.js")],
+      outdir: join(String(dir), "out"),
+    });
+    expect(x.success).toBe(false);
+    expect(x.logs).toHaveLength(1);
+    expect(x.logs[0].message).toContain("Maximum call stack size exceeded while generating code for this file");
   });
 
   test.concurrent("warnings do not fail a build", async () => {
@@ -1296,6 +1657,7 @@ test.skipIf(!isDebug && !isASAN)(
     const dir = tempDirWithFiles("bun-build-inline-sourcemap-leak", {
       "entry.ts": "export const a = 1;\n/* " + Buffer.alloc(30 * 1024 * 1024, "x").toString() + " */\n",
       "run.ts": `
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const entry = process.argv[2];
         async function build() {
           const res = await Bun.build({ entrypoints: [entry], sourcemap: "inline" });
@@ -1306,10 +1668,10 @@ test.skipIf(!isDebug && !isASAN)(
         }
         for (let i = 0; i < 2; i++) await build();
         await settle();
-        const before = process.memoryUsage.rss();
+        const before = rss();
         for (let i = 0; i < 8; i++) await build();
         await settle();
-        const after = process.memoryUsage.rss();
+        const after = rss();
         console.log(JSON.stringify({ before, after, growth: after - before }));
       `,
     });
@@ -1374,6 +1736,7 @@ test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_c
   const dir = tempDirWithFiles("bun-build-number-renamer-leak", {
     "entry.js": entry,
     "run.ts": `
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const entry = process.argv[2];
         async function build() {
           // No identifier minification → NumberRenamer path (not MinifyRenamer).
@@ -1387,10 +1750,10 @@ test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_c
         // steady-state so the measured window only reflects per-build retention.
         for (let i = 0; i < 2; i++) await build();
         await settle();
-        const before = process.memoryUsage.rss();
+        const before = rss();
         for (let i = 0; i < 20; i++) await build();
         await settle();
-        const after = process.memoryUsage.rss();
+        const after = rss();
         console.log(JSON.stringify({ before, after, growth: after - before }));
       `,
   });
@@ -1475,3 +1838,157 @@ test("Bun.build can be called thousands of times in one process without crashing
   expect(stdout.trim()).toBe("OK 400");
   expect(exitCode).toBe(0);
 }, 180_000);
+
+// A module shared by several entry points is printed once per chunk, and those
+// prints run in parallel on the thread pool against the same AST. The printer
+// used to flatten `"a" + "b" + "c"` ropes in place, through the `StoreRef`, so
+// one thread's write of `data` / `next = None` raced every other thread's read
+// of the same node. Observed results on the unfixed printer: the tail printed
+// twice ("abcbc"), the tail dropped ("a"), or a crash on a torn `next` pointer
+// (a `Bus error` / `Segmentation fault` at a 4 GiB aligned address).
+//
+// The race needs many chunks printing many ropes at the same time, so this
+// builds 64 entry points over one module with 400 folded ropes, twice, and
+// checks every folded string in every output. With the in-place flatten the
+// first build corrupts hundreds of strings on a 16 core machine.
+//
+// Needs an explicit timeout: two real 64-entry bundles on a debug build take
+// well over bun:test's 5s default.
+test("Bun.build does not corrupt folded string ropes shared across chunks", async () => {
+  const ENTRIES = 64;
+  const ROPES = 400;
+  const ROUNDS = 2;
+  let shared = "export function helper(...a) { return a; }\n";
+  for (let i = 0; i < ROPES; i++) {
+    // The rope is a call argument inside an arrow body, the shape the printer
+    // crashed on in the field. It folds only with `minify.syntax`.
+    shared +=
+      `export const fn${i} = helper("first${i}", () => { const q = ${i}; ` +
+      `helper(q, "alpha-${i}-" + "beta-" + "gamma-" + "delta-${i}"); return q; });\n`;
+  }
+  const files: Record<string, string> = { "shared.js": shared };
+  for (let i = 0; i < ENTRIES; i++) {
+    files[`entry${i}.js`] = `import * as s from "./shared.js";\nconsole.log(s, ${i});\n`;
+  }
+  files["run.ts"] = `
+    import { join } from "node:path";
+    const dir = process.argv[2];
+    const entrypoints = Array.from({ length: ${ENTRIES} }, (_, i) => join(dir, "entry" + i + ".js"));
+    let bad = 0;
+    for (let round = 0; round < ${ROUNDS}; round++) {
+      const res = await Bun.build({ entrypoints, minify: { syntax: true }, target: "bun" });
+      if (!res.success) throw new AggregateError(res.logs, "build failed");
+      for (const output of res.outputs) {
+        const text = await output.text();
+        for (let i = 0; i < ${ROPES}; i++) {
+          const expected = '"alpha-' + i + '-beta-gamma-delta-' + i + '"';
+          if (!text.includes(expected)) {
+            bad++;
+            if (bad <= 5) {
+              const actual = text.match(new RegExp('"alpha-' + i + '-[^"]*"'));
+              console.log("BAD round " + round + " " + output.path + " expected " + expected + " got " + actual?.[0]);
+            }
+          }
+        }
+      }
+    }
+    console.log("DONE " + bad);
+  `;
+  const dir = tempDirWithFiles("bun-build-rope-print-race", files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(dir, "run.ts"), dir],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("DONE 0");
+  expect(exitCode).toBe(0);
+}, 180_000);
+
+test("sourcemap sourcesContent is valid JSON when source contains C0 control chars", async () => {
+  // RFC 8259 only allows \" \\ \/ \b \f \n \r \t and six-char \u escapes; \v
+  // and \xNN are JavaScript-only. A VT (0x0B) or BEL (0x07) in the input used
+  // to leak through as \v / \x07 and break JSON.parse on the .map file.
+  const controls = Array.from({ length: 0x20 }, (_, i) => String.fromCharCode(i)).join("");
+  const source = `/* ctrl: [${controls}] */\nexport const x = 1;\n`;
+  using dir = tempDir("sourcemap-json-ctrl", { "in.js": source });
+
+  const res = await Bun.build({
+    entrypoints: [join(String(dir), "in.js")],
+    sourcemap: "external",
+    outdir: String(dir),
+  });
+  expect(res.success).toBe(true);
+
+  const map = res.outputs.find(o => o.kind === "sourcemap")!;
+  const text = await map.text();
+  expect(text).not.toMatch(/\\v|\\x[0-9A-Fa-f]{2}/);
+  const parsed = JSON.parse(text);
+  expect(parsed.sourcesContent[0]).toBe(source);
+});
+
+// Bun.build's link step waited for the shared thread pool to go *idle* rather than for its
+// own tasks, so any unrelated pool work extended the build by its full duration — a
+// node:fs read parked on a FIFO nobody writes made every later build hang forever.
+test.skipIf(isWindows)(
+  "Bun.build does not wait for unrelated thread-pool work",
+  async () => {
+    using dir = tempDir("build-pool-wait", {
+      "a.ts": `import { b } from "./b"; import "./s.css"; console.log(b);`,
+      "b.ts": `export const b = 1;`,
+      "s.css": `body { color: red }`,
+      "run.js": `
+      const { join } = require("path");
+      const dir = process.argv[2];
+      const fs = require("fs");
+      const fifo = join(dir, "fifo");
+      require("child_process").execFileSync("mkfifo", [fifo]);
+      await Bun.build({ entrypoints: [join(dir, "a.ts")], outdir: join(dir, "out") });
+      let readDone = false, readErr;
+      // a pool thread blocks opening/reading the FIFO
+      const readFinished = new Promise((resolve) => fs.readFile(fifo, (err) => { readErr = err; readDone = true; resolve(); }));
+      // A non-blocking write-open of a FIFO only succeeds once a reader has it open, so this both
+      // waits for the pool thread to be in there and, by staying open without writing, keeps it
+      // parked in read() until we close it below.
+      let writer;
+      for (const deadline = Date.now() + 10_000; ; ) {
+        try { writer = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK); break; } catch (e) {
+          if (e.code !== "ENXIO" || Date.now() > deadline) throw e;
+          await Bun.sleep(5);
+        }
+      }
+      // Release the pool thread after 5 s regardless, so a regression shows up as readDone
+      // being true below rather than as the whole test hanging until its timeout.
+      let closed = false;
+      const closeWriter = () => { if (!closed) { closed = true; fs.closeSync(writer); } };
+      setTimeout(closeWriter, 5000).unref();
+      const t = performance.now();
+      const result = await Bun.build({ entrypoints: [join(dir, "a.ts")], outdir: join(dir, "out") });
+      const elapsed = performance.now() - t;
+      // readDone must still be false: the build finished before the release of the FIFO reader,
+      // i.e. it did not wait for that unrelated pool task. elapsed is diagnostic only.
+      console.error("second build took " + Math.round(elapsed) + " ms");
+      console.log(result.success, result.outputs.length > 0, readDone);
+      closeWriter(); // EOF for the reader: let the pool thread go before exiting
+      await readFinished;
+      console.log(readDone, readErr ? readErr.code : "ok");
+      process.exit(0);
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.js", String(dir)],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toStartWith("second build took ");
+    expect(stdout).toBe("true true false\ntrue ok\n");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);

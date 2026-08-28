@@ -76,9 +76,10 @@ class JSNativeStreamSourceAdapter;
 class JSDirectSinkCloseState;
 class JSAsyncIteratorSourceOperation;
 class JSReadStreamIntoSinkOperation;
-class JSResumableSinkPumpOperation;
 class JSTextEncoderStream;
 class JSTextDecoderStream;
+class JSCompressionStream;
+class JSDecompressionStream;
 
 } // namespace WebCore
 
@@ -116,6 +117,9 @@ enum class SourceKind : uint8_t {
     CrossRealm, // receiving end of a postMessage transfer (context = JSCrossRealmTransformState)
     Native, // Bun: lazily-materialized native source on a DEFAULT controller
             // (context = JSNativeStreamSourceAdapter)
+    TextDecode, // Body.textStream() reading from an existing byte stream
+                // (algorithmContext = source JSReadableStreamDefaultReader;
+                // decode state inline on m_algorithms.textDecodeState)
 };
 
 // Which arm runs a writable controller's write/close/abort algorithms.
@@ -133,6 +137,18 @@ enum class TransformerKind : uint8_t {
     Identity, // new TransformStream() with no `transform` member: enqueue the chunk unchanged
     TextEncoder, // TextEncoderStream (context = the JSTextEncoderStream cell)
     TextDecoder, // TextDecoderStream (context = the JSTextDecoderStream cell)
+    Compression, // CompressionStream   (context = the JSCompressionStream cell)
+    Decompression, // DecompressionStream (context = the JSDecompressionStream cell)
+};
+
+// CompressionStream / DecompressionStream format. Matches the `Format` enum in
+// CompressionStreamCoder.rs.
+enum class CompressionFormat : uint8_t {
+    Deflate = 0,
+    DeflateRaw = 1,
+    Gzip = 2,
+    Brotli = 3,
+    Zstd = 4,
 };
 
 // JSReadableStream Bun-mode members
@@ -173,7 +189,9 @@ enum class ReadRequestKind : uint8_t {
     ByteTee, // context = the JSStreamTeeState (byte tee's default-reader read request)
     AsyncIterator, // context = InternalFieldTuple{asyncIterator, the next() result promise}
     ReadStreamIntoSink, // Bun: readStreamIntoSink pump read (context = JSReadStreamIntoSinkOperation)
-    ResumableSinkPump, // Bun: ResumableSink pump read (context = JSResumableSinkPumpOperation)
+    TextDecode, // Body.textStream()'s per-pull read: context = the output
+                // JSReadableStreamDefaultController (its algorithmContext is the
+                // source reader; decode state inline on m_algorithms.textDecodeState)
 };
 
 // JSReadIntoRequest::m_kind (the BYOB parallel of ReadRequestKind).
@@ -191,6 +209,26 @@ enum class DirectSinkKind : uint8_t {
     Array, // chunks pushed into a JSArray
 };
 
+// Body.textStream() streaming UTF-8 decode state: the partial trailing sequence carried
+// across chunk boundaries plus the once-per-stream BOM decision. Held-back bytes are
+// always [lead(>=0xC0), cont*(0x80..0xBF)], never zero, so pendingLen is the index of
+// the first zero in `pending` (0..3). Embedded inline on JSNativeStreamSourceAdapter and
+// on SourceAlgorithmSlots (for SourceKind::TextDecode).
+struct StreamingUTF8DecodeState {
+    uint8_t pending[3] { 0, 0, 0 };
+    bool bomSeen { false };
+
+    unsigned pendingLen() const { return (pending[0] != 0) + (pending[0] != 0 && pending[1] != 0) + (pending[0] != 0 && pending[1] != 0 && pending[2] != 0); }
+    void clearPending() { pending[0] = pending[1] = pending[2] = 0; }
+    void setPending(const uint8_t* src, unsigned len)
+    {
+        clearPending();
+        for (unsigned i = 0; i < len; ++i)
+            pending[i] = src[i];
+    }
+};
+static_assert(sizeof(StreamingUTF8DecodeState) == 4);
+
 // WebIDL enums & small closed sets
 
 // WebIDL `enum ReadableStreamType { "bytes" }`; an unknown string throws TypeError during
@@ -200,12 +238,6 @@ enum class ReadableStreamType : uint8_t { Bytes };
 // WebIDL `enum ReadableStreamReaderMode { "byob" }` (getReader(options).mode)
 enum class ReadableStreamReaderMode : uint8_t { Byob };
 
-// Cross-realm transform protocol message `type`: "chunk" | "pull" | "error" | "close".
-enum class CrossRealmMessageType : uint8_t { Chunk,
-    Pull,
-    Error,
-    Close };
-
 } // namespace WebStreams
 } // namespace Bun
 
@@ -214,7 +246,6 @@ enum class CrossRealmMessageType : uint8_t { Chunk,
 namespace WebCore {
 using Bun::WebStreams::BunStreamMode;
 using Bun::WebStreams::ControllerKind;
-using Bun::WebStreams::CrossRealmMessageType;
 using Bun::WebStreams::DirectSinkKind;
 using Bun::WebStreams::ReadableStreamReaderMode;
 using Bun::WebStreams::ReadableStreamState;

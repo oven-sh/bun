@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as COMMON_CERT, gc, isASAN, isCI, isDebug } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
+import net from "node:net";
 import { join } from "node:path";
 
 describe("fetch doesn't leak", () => {
@@ -205,6 +206,7 @@ test("fetch(data:) with percent-encoding does not leak", async () => {
   // base64 output buffer on decode error). Each fetch of a percent-encoded
   // data: URL leaked ~len(url.data) bytes from bun.default_allocator.
   const script = `
+    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
     // ~240KB of percent-encoded payload; the intermediate percent-decoded
     // buffer is allocated at url.data.len bytes and was previously leaked.
     const plain = "data:text/plain," + Buffer.alloc(240000, "%41").toString();
@@ -223,11 +225,11 @@ test("fetch(data:) with percent-encoding does not leak", async () => {
 
     for (let i = 0; i < 40; i++) await hit();
     Bun.gc(true);
-    const baseline = process.memoryUsage.rss();
+    const baseline = rss();
 
     for (let i = 0; i < 200; i++) await hit();
     Bun.gc(true);
-    const final = process.memoryUsage.rss();
+    const final = rss();
 
     const deltaMB = (final - baseline) / 1024 / 1024;
     console.log(JSON.stringify({ baselineMB: (baseline / 1024 / 1024) | 0, finalMB: (final / 1024 / 1024) | 0, deltaMB: Math.round(deltaMB) }));
@@ -275,6 +277,7 @@ test("fetch() compress option does not leak bodies or compressor state", async (
     // > 512 KiB shared buffer → slow path; large enough that the compressed
     // output also spans multiple socket writes.
     const big = Buffer.alloc(700 * 1024, "abcdefghij");
+    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
     const opts = [
       { compress: "gzip" },
       { compress: "deflate" },
@@ -297,11 +300,11 @@ test("fetch() compress option does not leak bodies or compressor state", async (
     // shared_buffer) is allocated once here and stays for the process.
     for (let i = 0; i < 10; i++) await round();
     Bun.gc(true);
-    const baseline = process.memoryUsage.rss();
+    const baseline = rss();
 
     for (let i = 0; i < 80; i++) await round();
     Bun.gc(true);
-    const final = process.memoryUsage.rss();
+    const final = rss();
 
     const deltaMB = (final - baseline) / 1024 / 1024;
     console.log(JSON.stringify({ baselineMB: (baseline / 1024 / 1024) | 0, finalMB: (final / 1024 / 1024) | 0, deltaMB: Math.round(deltaMB) }));
@@ -334,6 +337,7 @@ test("fetch() does not leak streaming decompressor state across fragmented compr
   const script = /* js */ `
     import { createServer } from "node:net";
     import { gzipSync, brotliCompressSync, zstdCompressSync } from "node:zlib";
+    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
 
     const plain = Buffer.alloc(64 * 1024, "abcdefghij");
     const bodies = {
@@ -404,11 +408,11 @@ test("fetch() does not leak streaming decompressor state across fragmented compr
 
     for (let i = 0; i < 10; i++) await round();
     Bun.gc(true);
-    const baseline = process.memoryUsage.rss();
+    const baseline = rss();
 
     for (let i = 0; i < 60; i++) await round();
     Bun.gc(true);
-    const final = process.memoryUsage.rss();
+    const final = rss();
 
     server.close();
     const deltaMB = (final - baseline) / 1024 / 1024;
@@ -451,6 +455,7 @@ describe.each(["string", "object"])("fetch({proxy}) %s form does not leak the pr
         // JS string would make href_from_js return the same StringImpl every
         // call (only the refcount grows, RSS stays flat) and hide the leak.
         const pad = Buffer.alloc(256 * 1024, "a").toString();
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
 
         async function hit(i) {
           const proxyUrl = "http://127.0.0.1:1/" + i + "/" + pad;
@@ -463,12 +468,12 @@ describe.each(["string", "object"])("fetch({proxy}) %s form does not leak the pr
         // Warm up (JIT, allocator page commit).
         for (let i = 0; i < 20; i++) await hit(-i);
         Bun.gc(true);
-        const baseline = process.memoryUsage.rss();
+        const baseline = rss();
 
         const ITERS = 150;
         for (let i = 0; i < ITERS; i++) await hit(i);
         Bun.gc(true);
-        const final = process.memoryUsage.rss();
+        const final = rss();
 
         const deltaMB = (final - baseline) / 1024 / 1024;
         console.log(JSON.stringify({
@@ -529,6 +534,7 @@ test.concurrent(
     // Windows strips the leading "/" then asserts is_absolute_windows() in
     // PosixToWinNormalizer under debug_assertions, which needs a drive letter.
     const prefix = process.platform === "win32" ? "file:///C:/" : "file:///";
+    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
     async function hit(i) {
       // Fresh path per iteration so each leaked ref pins a distinct impl.
       // The file does not exist; the Response is created (with url_string set)
@@ -537,7 +543,7 @@ test.concurrent(
     }
     for (let i = 0; i < 200; i++) { try { await hit(-i); } catch {} }
     Bun.gc(true);
-    const baseline = process.memoryUsage.rss();
+    const baseline = rss();
 
     const ITERS = 20000;
     for (let i = 0; i < ITERS; i++) {
@@ -545,7 +551,7 @@ test.concurrent(
       if ((i & 1023) === 0) Bun.gc(true);
     }
     Bun.gc(true);
-    const final = process.memoryUsage.rss();
+    const final = rss();
 
     const deltaMB = (final - baseline) / 1024 / 1024;
     console.log(JSON.stringify({
@@ -663,15 +669,14 @@ test("fetch() promise Strong handle is consumed on resolve/reject (FetchTasklet 
 // in-hive slot path and the fallback-allocator path.
 describe("Request body HiveRef pool returns slot via Body.Value.deinit (does not leak)", () => {
   for (const kind of ["String"] as const) {
-    // TODO(zig-rust-divergence): Rust port skips Body.Value.deinit() on pool
-    // return; see docs/ZIG_RUST_DIVERGENCE_AUDIT.md.
-    test.todo(
+    test(
       kind,
       async () => {
         const script = `
         const payload = Buffer.alloc(128 * 1024, 0x61); // 128 KiB of 'a'
         const str = payload.toString("latin1");
         const sharedBlob = new Blob([payload]);
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
 
         function makeBody() {
           ${
@@ -692,11 +697,11 @@ describe("Request body HiveRef pool returns slot via Body.Value.deinit (does not
 
         for (let i = 0; i < 8; i++) cycle();
         Bun.gc(true);
-        const baseline = process.memoryUsage.rss();
+        const baseline = rss();
 
         for (let i = 0; i < 32; i++) cycle();
         Bun.gc(true);
-        const final = process.memoryUsage.rss();
+        const final = rss();
 
         const deltaMB = (final - baseline) / 1024 / 1024;
         console.log(JSON.stringify({ kind: "${kind}", baselineMB: (baseline / 1024 / 1024) | 0, finalMB: (final / 1024 / 1024) | 0, deltaMB: Math.round(deltaMB) }));
@@ -819,3 +824,205 @@ test(
   },
   isASAN ? 30_000 : 5_000,
 );
+
+// The Response's abort listener takes a +1 on the AbortSignal; Response::destroy
+// must release it. Run in a subprocess so heapStats is not polluted by the
+// suite's other concurrent tests, and so the destruct-on-exit teardown of a
+// timeout signal with the listener still attached is exercised.
+// https://github.com/oven-sh/bun/issues/32659
+test.concurrent(
+  "fetch Response's abort-signal listener does not leak the AbortSignal",
+  async () => {
+    const script = `
+    const { heapStats } = require("bun:jsc");
+    const server = Bun.serve({ port: 0, fetch: () => new Response(new Uint8Array(8)) });
+    // Response::destroy releases the signal ref from its finalizer, so the
+    // signal becomes collectable only on the *next* GC.
+    const count = async () => {
+      Bun.gc(true);
+      await new Promise(r => setImmediate(r));
+      Bun.gc(true);
+      return heapStats().objectTypeCounts.AbortSignal || 0;
+    };
+    async function once() {
+      const ac = new AbortController();
+      const res = await fetch(server.url, { signal: ac.signal });
+      await res.arrayBuffer().catch(() => {});
+    }
+    for (let i = 0; i < 8; i++) await once();
+    const baseline = await count();
+    for (let i = 0; i < 64; i++) await once();
+    const after = await count();
+    // One more with a pending AbortSignal.timeout() so exit teardown runs
+    // BodyAbortListener::drop on a signal whose m_timeout is still set.
+    const res = await fetch(server.url, { signal: AbortSignal.timeout(60_000) });
+    await res.arrayBuffer().catch(() => {});
+    server.stop(true);
+    console.log(JSON.stringify({ baseline, after }));
+    process.exit(after > baseline + 4 ? 1 : 0);
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain('"after"');
+    expect(exitCode).toBe(0);
+  },
+  isASAN ? 30_000 : 5_000,
+);
+
+// https://github.com/oven-sh/bun/issues/32659
+test("aborting an in-flight streaming fetch() discards the buffered body and errors the reader", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const CHUNK = new Uint8Array(256 * 1024);
+        let sent = 0;
+        let serverAbort;
+        using server = Bun.serve({
+          port: 0,
+          idleTimeout: 0,
+          fetch(req) {
+            serverAbort = new Promise(r => req.signal.addEventListener("abort", () => r()));
+            return new Response(
+              new ReadableStream({ pull(c) { c.enqueue(CHUNK); sent++; } }),
+            );
+          },
+        });
+        const ac = new AbortController();
+        const res = await fetch(server.url, { signal: ac.signal });
+        const reader = res.body.getReader();
+        await reader.read();
+        // Wait for the server's pull to stop advancing: the transport and
+        // the client's response buffer are full, so the abort lands on a
+        // body with buffered-but-unread bytes. Bounded so a backpressure
+        // regression fails the assertions instead of hanging here.
+        for (let last = sent, p = 0; p < 200; last = sent, p++) {
+          await Bun.sleep(5);
+          if (sent === last && sent > 2) break;
+        }
+        ac.abort();
+        // Once the server observes the abort the client socket is closed,
+        // so the client-side error callback has run.
+        await serverAbort;
+        for (let i = 0; i < 5; i++) await Bun.sleep(1);
+        let drained = 0, result;
+        try {
+          for (;;) {
+            const r = await reader.read();
+            if (r.done) { result = { done: true }; break; }
+            drained += r.value.length;
+          }
+        } catch (e) { result = { error: e.name }; }
+        console.log(JSON.stringify({ drained, result }));
+        process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    // ASAN/debug builds may emit benign stderr noise; stdout carries the result.
+    stderr: "ignore",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const { drained, result } = JSON.parse(stdout.trim());
+  // Before the fix the reader drained the retained native buffer then saw
+  // { done: true }; now the buffer is released and the stored error is
+  // surfaced to the next pull.
+  expect(result).toEqual({ error: "AbortError" });
+  // Only what was already in the JS-side stream queue remains readable.
+  expect(drained).toBeLessThan(2 * 1024 * 1024);
+  expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/32659
+test("aborting in-flight streaming fetch() responses does not retain the buffered body off-heap", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "fetch-abort-stream-leak-fixture.ts")],
+    env: {
+      ...bunEnv,
+      ITERATIONS: "60",
+      // Unfixed, every held iteration retains its multi-MB buffered body
+      // (>100MB total); 55 absorbs allocator noise (Windows release measured
+      // 32.8MB of it) while staying far below the leak.
+      MAX_GROWTH_MB: "55",
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+        .filter(Boolean)
+        .join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("held=60");
+  expect(stderr).not.toContain("LEAK");
+  expect(exitCode).toBe(0);
+});
+
+test("fetch().arrayBuffer() of a large Content-Length body peaks at ~1x the payload", async () => {
+  // The per-packet handoff in FetchTasklet::callback appended each socket read
+  // into scheduled_response_buffer via extend_from_slice, so the Vec grew by
+  // amortized doubling. For a body just past a doubling step that left the
+  // allocation the ArrayBuffer adopts at ~2x the payload, and the intermediate
+  // reallocations spiked ru_maxrss well past 2x. Reserving Content-Length
+  // exactly up front keeps it to a single allocation that is moved through to
+  // the ArrayBuffer.
+  //
+  // Body size is 128 MiB + 1 MiB so the old doubling growth would have crossed
+  // the 128 -> 256 step, making the unfixed peak reliably > 2x body.
+  const bodyBytes = 129 * 1024 * 1024;
+  const chunk = Buffer.alloc(256 * 1024, "abcdefghij");
+  const server = net.createServer(socket => {
+    socket.once("data", () => {
+      socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${bodyBytes}\r\nConnection: close\r\n\r\n`);
+      let sent = 0;
+      const pump = () => {
+        while (sent < bodyBytes) {
+          const n = Math.min(chunk.length, bodyBytes - sent);
+          sent += n;
+          if (!socket.write(n === chunk.length ? chunk : chunk.subarray(0, n))) {
+            socket.once("drain", pump);
+            return;
+          }
+        }
+        socket.end();
+      };
+      pump();
+    });
+    socket.on("error", () => {});
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address();
+
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", join(import.meta.dir, "fetch-buffer-peak-fixture.ts")],
+      env: {
+        ...bunEnv,
+        SERVER: `http://127.0.0.1:${port}/`,
+        BODY_BYTES: String(bodyBytes),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    console.log(stdout.trim());
+    expect(stderr).toBe("");
+    const { bodyMB, rssBeforeMB, rssAfterMB } = JSON.parse(stdout.trim());
+    expect(bodyMB).toBe(129);
+    // Unfixed: the doubling reallocations (retained by ASAN quarantine / mimalloc
+    //          page cache) leave RSS at >= 2x body over the pre-fetch resident
+    //          set (release linux ~2.9x, debug+ASAN default quarantine ~2.7x).
+    // Fixed:   a single exact allocation, ~1.0x body.
+    const delta = rssAfterMB - rssBeforeMB;
+    expect(delta).toBeLessThan(1.5 * bodyMB);
+    expect(exitCode).toBe(0);
+  } finally {
+    server.close();
+  }
+}, 60000);

@@ -24,6 +24,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  canTraceOrderFile,
   downloadArtifacts,
   inheritOrderFile,
   isCI,
@@ -34,6 +35,7 @@ import {
   printEnvironment,
   regenerateOrderFile,
   reportOrderFileBootstrap,
+  reportOrderFileCannotTrace,
   reportOrderFileFailure,
   shouldGenerateOrderFile,
   spawnWithAnnotations,
@@ -123,19 +125,39 @@ async function main(): Promise<void> {
       await startGroup("Download artifacts", () => downloadArtifacts(result.cfg));
     }
 
-    // The order file is a link input, so it must land before ninja.
+    // The order file is a link input, so it must land before the linking ninja
+    // pass. In rust-and-link mode it runs between cargo and the build-cpp
+    // poll (whose sleep loop yields cleanly) so it doesn't stall cargo.
     const orderCtx = orderFileContext();
+    const runInherit = () =>
+      (orderFileEligible(result.cfg, orderCtx) && !shouldGenerateOrderFile(result.cfg, orderCtx)
+        ? inheritOrderFile(result.cfg, orderCtx)
+        : Promise.resolve(false)
+      ).catch(e => {
+        console.log(`~ symbol order: inherit failed (${(e as Error)?.message ?? e}); linking unordered`);
+        return false;
+      });
     let inherited = false;
-    if (orderFileEligible(result.cfg, orderCtx) && !shouldGenerateOrderFile(result.cfg, orderCtx)) {
-      inherited = (await startGroup("Inherit symbol order file", () =>
-        inheritOrderFile(result.cfg, orderCtx),
-      )) as boolean;
+
+    const runNinja = (targets: string[] = args.ninjaTargets) =>
+      spawnWithAnnotations("ninja", ["-C", result.cfg.buildDir, ...args.ninjaArgs, ...targets], {
+        label: "ninja",
+        env: ninjaEnv(result.cfg, result.env),
+      });
+
+    // rust-and-link: build libbun_runtime.a first so cargo overlaps with the
+    // sibling build-cpp job, THEN poll for build-cpp's outcome + download
+    // its archive, THEN link. link-only skips straight to the full build
+    // (its artifacts were downloaded above).
+    if (result.cfg.buildkite && result.cfg.mode === "rust-and-link") {
+      await startGroup("Build Rust", () => runNinja(["bun-rust"]));
+      inherited = (await startGroup("Inherit symbol order file", runInherit)) as boolean;
+      await startGroup("Wait for build-cpp & download artifacts", () => downloadArtifacts(result.cfg));
+    } else {
+      inherited = (await startGroup("Inherit symbol order file", runInherit)) as boolean;
     }
 
-    const runNinja = () =>
-      spawnWithAnnotations("ninja", ninjaArgv(result.cfg), { label: "ninja", env: ninjaEnv(result.cfg, result.env) });
-
-    await startGroup("Build", runNinja);
+    await startGroup("Build", () => runNinja());
 
     // Trace and relink when we are a release, when a commit asked for it, or when
     // there was nothing to inherit. A failed trace is not fatal: the order file is
@@ -158,16 +180,21 @@ async function main(): Promise<void> {
       }
     } else if (orderFileEligible(result.cfg, orderCtx) && result.output.exe) {
       // Inherited: a stale file is a slower binary, not a broken one.
+      if (!inherited && !canTraceOrderFile(result.cfg)) reportOrderFileCannotTrace(result.cfg);
       verifyOrderFileApplied(result.cfg, orderCtx, result.output.exe, { strict: false });
     }
 
     // cpp-only/rust-only: upload build outputs for downstream link-only.
-    // link-only: package + upload zips for downstream test steps.
+    // link-only/rust-and-link: package + upload zips for downstream test steps.
     if (result.cfg.buildkite) {
       if (result.cfg.mode === "cpp-only" || result.cfg.mode === "rust-only") {
         await startGroup("Upload artifacts", () => uploadArtifacts(result.cfg, result.output));
       }
-      if (result.cfg.mode === "link-only") {
+      if (
+        result.cfg.mode === "link-only" ||
+        result.cfg.mode === "rust-and-link" ||
+        result.cfg.mode === "archive-link"
+      ) {
         await startGroup("Package and upload", () => packageAndUpload(result.cfg, result.output));
       }
     }
@@ -432,6 +459,7 @@ function parseArgs(argv: string[]): CliArgs {
     "buildType",
     "mode",
     "webkit",
+    "localDeps",
     "buildDir",
     "cacheDir",
     "nodejsVersion",
@@ -443,6 +471,8 @@ function parseArgs(argv: string[]): CliArgs {
     "macosSdk",
     "osxDeploymentTarget",
     "winsysroot",
+    "linuxSysroot",
+    "freebsdSysroot",
   ]);
 
   for (let i = 0; i < argv.length; i++) {
@@ -559,6 +589,8 @@ Options:
                           on/off/true/false/yes/no/1/0.
                           Fields: asan, lto, assertions, logs, baseline,
                                   canary, valgrind, webkit (prebuilt|local),
+                                  local-deps (name=path[,name=path] — build a
+                                  vendored dep from a local checkout),
                                   buildDir, mode (full|cpp-only|link-only),
                                   unifiedSources, timeTrace, os, arch, abi,
                                   winsysroot (Windows cross-compile SDK root)
@@ -576,6 +608,7 @@ Examples:
   bun scripts/build.ts --profile=release --lto=off
   bun scripts/build.ts test foo.test.ts
   bun scripts/build.ts --profile=debug-local run script.ts
+  bun scripts/build.ts --local-deps=mimalloc=~/code/mimalloc test foo.test.ts
   bun scripts/build.ts --target=bun-rust
   bun scripts/build.ts --configure-only
 `;

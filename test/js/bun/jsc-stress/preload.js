@@ -24,3 +24,11 @@ globalThis.callerIsBBQOrOMGCompiled = function () {
 };
 if (!globalThis.$) globalThis.$ = {};
 if (!$.agent) $.agent = { report: function () {} };
+
+// GC + tier-control helpers used by the ffi stress fixtures.
+const jsc = require("bun:jsc");
+globalThis.gc = () => Bun.gc(true);
+globalThis.fullGC = jsc.fullGC;
+globalThis.edenGC = jsc.edenGC;
+globalThis.numberOfDFGCompiles = jsc.numberOfDFGCompiles;
+globalThis.noDFG = jsc.noFTL;

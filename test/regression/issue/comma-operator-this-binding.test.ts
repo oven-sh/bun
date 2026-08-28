@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("comma operator should strip 'this' binding in function calls", async () => {
-  const dir = tempDirWithFiles("comma-operator-test", {
+  await using dir = tempDir("comma-operator-test", {
     "test.js": `
 const doThing = () => {};
 

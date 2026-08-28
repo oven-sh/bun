@@ -8,13 +8,13 @@ import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { chmodSync, mkdirSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
-import { bunExe, isPosix, isWindows, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunExe, isPosix, isWindows, rss, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
 
-afterAll(() => console.error("After all RSS", process.memoryUsage.rss() / 1024 / 1024));
-beforeAll(() => console.error("Before all RSS", process.memoryUsage.rss() / 1024 / 1024));
+afterAll(() => console.error("After all RSS", rss() / 1024 / 1024));
+beforeAll(() => console.error("Before all RSS", rss() / 1024 / 1024));
 
 export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,
@@ -221,6 +221,30 @@ describe("bunshell", () => {
       TestBuilder.command`FOO=bar && echo "${shellvar}"`.stdout(`$FOO\n`).runAsTest("double quotes");
       TestBuilder.command`FOO=bar && echo '${shellvar}'`.stdout(`$FOO\n`).runAsTest("single quotes");
       TestBuilder.command`FOO=bar && echo ${shellvar}`.stdout(`$FOO\n`).runAsTest("no quotes");
+    });
+
+    describe("interpolated value after a literal $ stays literal", async () => {
+      const name = "FOO";
+      TestBuilder.command`FOO=bar && echo $${name}`.stdout(`$FOO\n`).runAsTest("no quotes");
+      TestBuilder.command`FOO=bar && echo "$${name}"`.stdout(`$FOO\n`).runAsTest("double quotes");
+      TestBuilder.command`FOO=bar && echo a$${name}b`.stdout(`a$FOOb\n`).runAsTest("inside a word");
+
+      test("does not extend a preceding variable name", async () => {
+        const { stdout, stderr, exitCode } = await $`FOOBAR=long && FOO=short && echo $FOO${"BAR"}`.env({ ...bunEnv });
+        expect(stderr.toString()).toBe("");
+        expect(stdout.toString()).toBe("shortBAR\n");
+        expect(exitCode).toBe(0);
+      });
+
+      test("does not name a variable from the environment", async () => {
+        const { stdout, stderr, exitCode } = await $`echo $${"SHELL_TEST_SECRET"}`.env({
+          ...bunEnv,
+          SHELL_TEST_SECRET: "hunter2",
+        });
+        expect(stderr.toString()).toBe("");
+        expect(stdout.toString()).toBe("$SHELL_TEST_SECRET\n");
+        expect(exitCode).toBe(0);
+      });
     });
 
     test("can't escape a js string/obj ref", async () => {
@@ -502,6 +526,52 @@ describe("bunshell", () => {
     const { stdout } = await $`echo "LMAO" | cat`;
 
     expect(stdout.toString()).toEqual("LMAO\n");
+  });
+
+  // The builtin cat is only on by default on Windows; the flag turns it on
+  // everywhere. Captured output finishes the command from the reader side,
+  // output on a real fd also goes through the writer completions, and the
+  // missing-file case with stderr on a fd finishes from the writer side alone.
+  test("builtin cat finishes from its reader and writer completions", async () => {
+    using dir = tempDir("builtin-cat", {});
+    const script = /* ts */ `
+      import { $ } from "bun";
+      $.nothrow();
+      const results = {};
+      for (const [name, run] of Object.entries({
+        "captured": () => $\`echo hi | cat\`,
+        "stdout to fd": () => $\`echo hi | cat > out.txt\`,
+        "missing file, stderr captured": () => $\`cat missing.txt\`,
+        "missing file, stderr to fd": () => $\`cat missing.txt 2> err.txt\`,
+      })) {
+        const r = await run().quiet();
+        results[name] = { stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode };
+      }
+      results["out.txt"] = await Bun.file("out.txt").text();
+      results["err.txt"] = await Bun.file("err.txt").text();
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // On Windows the message carries the absolute path (shell_openat only
+    // re-tags the error with the argument as written on POSIX).
+    const missingFileError = expect.stringMatching(/^cat: (.*[\\/])?missing\.txt: No such file or directory\n$/);
+    expect(JSON.parse(stdout)).toEqual({
+      "captured": { stdout: "hi\n", stderr: "", exitCode: 0 },
+      "stdout to fd": { stdout: "", stderr: "", exitCode: 0 },
+      "missing file, stderr captured": { stdout: "", stderr: missingFileError, exitCode: 1 },
+      "missing file, stderr to fd": { stdout: "", stderr: "", exitCode: 1 },
+      "out.txt": "hi\n",
+      "err.txt": missingFileError,
+    });
+    expect(exitCode).toBe(0);
   });
 
   describe("operators no spaces", async () => {
@@ -915,7 +985,7 @@ booga"
     });
 
     test.if(isPosix && !isRoot)("glob over an unreadable directory reports the real error", async () => {
-      const dir = tempDirWithFiles("glob-eacces", { "placeholder.txt": "" });
+      await using dir = tempDir("glob-eacces", { "placeholder.txt": "" });
       const noaccess = join(dir, "noaccess").replaceAll("\\", "/");
       mkdirSync(noaccess);
       chmodSync(noaccess, 0o000);
@@ -963,7 +1033,7 @@ booga"
 
       doTest(
         `{1,{2,{3,{4,{5,{6,{7,{8,{9,{10,{11,{12,{13,{14,{15,{16,{17}}}}}}}}}}}}}}}}}`,
-        "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17",
+        "1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 {17}",
       );
     });
 
@@ -1051,6 +1121,25 @@ booga"
       expect(stdout.toString()).toEqual(`${temp_dir}\n${process.cwd().replaceAll("\\", "/")}\n`);
     });
 
+    test("cd with no args goes to $HOME", async () => {
+      const { stdout, stderr, exitCode } = await $`pwd && cd && pwd`
+        .env({ ...bunEnv, HOME: temp_dir, USERPROFILE: temp_dir })
+        .quiet()
+        .nothrow();
+      expect(stderr.toString()).toBe("");
+      expect(stdout.toString()).toBe(`${process.cwd().replaceAll("\\", "/")}\n${temp_dir}\n`);
+      expect(exitCode).toBe(0);
+    });
+
+    test("cd with no args and HOME unset errors", async () => {
+      const env: Record<string, string | undefined> = { ...bunEnv, HOME: "", USERPROFILE: "" };
+      delete env.HOME;
+      delete env.USERPROFILE;
+      const { stderr, exitCode } = await $`cd`.env(env).quiet().nothrow();
+      expect(stderr.toString()).toBe("cd: HOME not set\n");
+      expect(exitCode).toBe(1);
+    });
+
     // Overflowing the 4096-byte threadlocal join_buf used by changeCwdImpl would
     // corrupt adjacent TLS (ReleaseFast) or trip bounds checks (debug). These must
     // now return ENAMETOOLONG instead. Spawned in a subprocess so a regression
@@ -1123,7 +1212,7 @@ booga"
     // to stderr or calling done(), so any errno other than NOTDIR/NOENT/NAMETOOLONG
     // (e.g. EACCES, ELOOP) left the shell promise unresolved forever.
     test.if(isPosix && !isRoot)("cd with EACCES fails with exit code 1 instead of hanging", async () => {
-      const dir = tempDirWithFiles("cd-eacces", { "placeholder.txt": "" });
+      await using dir = tempDir("cd-eacces", { "placeholder.txt": "" });
       const noaccess = join(dir, "noaccess");
       mkdirSync(noaccess);
       chmodSync(noaccess, 0o000);
@@ -3066,6 +3155,30 @@ test("stdin redirect from a Uint8Array sends the bytes captured when the command
   expect(result.exitCode).toBe(0);
 }, 60_000);
 
+describe("stdin redirect from a zero-length buffer delivers EOF to the spawned command", () => {
+  // A spawned command reading stdin (cat) must see EOF when the redirect
+  // source is an empty ArrayBuffer/TypedArray, same as an empty Blob.
+  const cases: Array<[string, ArrayBufferLike | ArrayBufferView | Blob]> = [
+    ["ArrayBuffer(0)", new ArrayBuffer(0)],
+    ["Uint8Array(0)", new Uint8Array(0)],
+    ["Buffer.alloc(0)", Buffer.alloc(0)],
+    ["DataView(0)", new DataView(new ArrayBuffer(0))],
+    ["SharedArrayBuffer(0)", new SharedArrayBuffer(0)],
+    ["Uint8Array(64).subarray(3, 3)", new Uint8Array(64).subarray(3, 3)],
+    ["Blob([])", new Blob([])],
+  ];
+  test.concurrent.each(cases)("%s", async (_name, input) => {
+    const result = await $`${BUN} -e ${"process.stdout.write(await Bun.stdin.text())"} < ${input}`
+      .env(bunEnv)
+      .nothrow();
+    expect({
+      stdout: result.stdout.toString(),
+      stderr: result.stderr.toString(),
+      exitCode: result.exitCode,
+    }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+});
+
 test("output redirect buffer for an external command stays attached until the command finishes", async () => {
   // `> ${buf}` for an external (non-builtin) command stores the buffer and
   // copies the child's stdout into it as chunks arrive across event-loop
@@ -3127,5 +3240,49 @@ test("cd treats interpolated arguments starting with tilde or dash as literal di
     expect(stderr.toString()).toContain("~does-not-exist");
     expect(stdout.toString()).toBe("");
     expect(exitCode).toBe(1);
+  }
+});
+
+describe("literal digits after an interpolated value", () => {
+  TestBuilder.command`echo ${"a b"}0`
+    .stdout("a b0\n")
+    .runAsTest("a literal digit after an interpolated string is preserved");
+
+  TestBuilder.command`echo ${5}0`.stdout("50\n").runAsTest("a literal digit after an interpolated number is preserved");
+
+  TestBuilder.command`echo ${"a b"}1 ${"c d"}`
+    .stdout("a b1 c d\n")
+    .runAsTest("each interpolated value keeps its own slot when followed by a literal digit");
+});
+
+test.skipIf(isWindows)("external command resolution uses the PATH from the shell environment", async () => {
+  using dir = tempDir("shell-argv0-path", {
+    "onlyintool": "#!/bin/sh\necho from-onlyintool\n",
+  });
+  chmodSync(join(String(dir), "onlyintool"), 0o755);
+  const toolDir = String(dir).replaceAll("\\", "/");
+
+  {
+    const { stdout, stderr, exitCode } = await $`onlyintool`
+      .env({ ...bunEnv, PATH: toolDir })
+      .quiet()
+      .nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString()).toBe("from-onlyintool\n");
+    expect(exitCode).toBe(0);
+  }
+
+  {
+    const { stdout, stderr, exitCode } = await $`PATH=${toolDir} onlyintool`.quiet().nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString()).toBe("from-onlyintool\n");
+    expect(exitCode).toBe(0);
+  }
+
+  {
+    const { stdout, stderr, exitCode } = await $`export PATH=${toolDir}; onlyintool`.quiet().nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString()).toBe("from-onlyintool\n");
+    expect(exitCode).toBe(0);
   }
 });

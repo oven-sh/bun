@@ -220,13 +220,13 @@ test("--retry with nested describe blocks", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("--retry past MAX_FLAKY_ATTEMPTS (16) still retries correctly", async () => {
+test("--retry with a large retry count still retries correctly", async () => {
   using dir = tempDir("retry-max", {
     "max.test.ts": `
       import { test, expect } from "bun:test";
       let count = 0;
 
-      // Fails 19 times, passes on attempt 20 -- well past the 16-entry buffer
+      // Fails 19 times, passes on attempt 20
       test("fails many times", { retry: 20 }, () => {
         count++;
         if (count < 20) throw new Error("fail attempt " + count);

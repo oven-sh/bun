@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 test("Request with streaming body can be cloned", async () => {
   const stream = new ReadableStream({
@@ -520,11 +520,11 @@ test("ReadableStream with mixed content (starting with ArrayBuffer) can be conve
   expect(text).toContain("Здравствуй, мир!");
 });
 
-// The tee behind Request/Response.clone() structured-clones every chunk for the
-// second branch. That clone must copy only the bytes the view covers: cloning the
-// whole backing ArrayBuffer retains the larger shared buffer fetch() slices from.
+// The tee behind Request/Response.clone() enqueues the same chunk object into both
+// branches (cloneForBranch2 = false, matching Node and browsers). The cloned branch
+// must not hold a copy of the chunk at all.
 test.each(["Request", "Response"])(
-  "%s.clone() chunk clones do not retain the chunk's whole backing buffer",
+  "%s.clone(): the cloned branch receives the same chunk object, not a copy",
   async kind => {
     const backing = new Uint8Array(1 << 20);
     const chunk = backing.subarray(17, 17 + 64);
@@ -544,12 +544,12 @@ test.each(["Request", "Response"])(
     const clonedChunk = clonedRead.value as Uint8Array<ArrayBuffer>;
 
     expect(originalBytes).toEqual(chunk);
-    expect(clonedChunk).toEqual(chunk);
-    expect(clonedChunk.buffer.byteLength).toBe(64);
+    expect(clonedChunk).toBe(chunk);
+    expect(clonedChunk.buffer).toBe(backing.buffer);
   },
 );
 
-test("fetch().clone(): chunks buffered for the unread clone own exactly their bytes", async () => {
+test("fetch().clone(): chunks buffered for the unread clone share the original branch's buffers", async () => {
   const total = 8 * 1024 * 1024;
   const chunk = new Uint8Array(64 * 1024).fill(42);
   await using server = Bun.serve({
@@ -571,20 +571,21 @@ test("fetch().clone(): chunks buffered for the unread clone own exactly their by
   const response = await fetch(server.url);
   const clone = response.clone();
 
-  // Read the original to completion: the cache-a-copy pattern. Everything the
-  // clone will ever emit is now sitting in its queue.
-  const original = await response.bytes();
-  expect(original.byteLength).toBe(total);
-
+  // Drain both branches in lockstep: the clone must receive the exact same chunk
+  // object the original branch does (no per-chunk copy).
+  const r0 = response.body!.getReader();
+  const r1 = clone.body!.getReader();
   let bytes = 0;
-  let backing = 0;
-  for await (const teed of clone.body!) {
-    bytes += teed.byteLength;
-    backing += teed.buffer.byteLength;
+  while (true) {
+    const [a, b] = await Promise.all([r0.read(), r1.read()]);
+    if (a.done) {
+      expect(b.done).toBe(true);
+      break;
+    }
+    expect(b.value).toBe(a.value);
+    bytes += a.value!.byteLength;
   }
-  // fetch() delivers chunks as views into a larger shared receive buffer; the
-  // clones queued for the second branch must not each retain a copy of it.
-  expect({ bytes, backing }).toEqual({ bytes: total, backing: total });
+  expect(bytes).toBe(total);
 });
 
 // clone() on a locked-stream body must throw a single catchable TypeError.
@@ -1100,4 +1101,47 @@ test("Blob type from a consumed Response keeps the original content-type after c
 
   expect(stdout.trim().split("\n")).toEqual(["application/x-original-type-0000000000000001", "clone-ok", "churn-ok"]);
   expect(exitCode).toBe(0);
+});
+
+describe("Response.clone() of a stream body shares chunk references between tee branches", () => {
+  // Node, Chrome, and Firefox enqueue the same chunk object into both tee branches when cloning
+  // a body (cloneForBranch2 = false). Deep-copying every chunk per branch turns an N-deep clone
+  // chain into O(N * body bytes) of retained memory.
+  test("deep clone chain does not retain O(depth * bytes)", async () => {
+    // A 4 MB streaming body cloned 50 deep previously retained ~50 separate copies of every
+    // 64 KB chunk (~200 MB). With shared chunk references only one copy of the body bytes is
+    // live at a time.
+    const script = `
+      const MB = 1 << 20, DEPTH = 50, SIZE = 4 * MB;
+      let pulled = 0;
+      const src = new ReadableStream({
+        pull(c) {
+          if (pulled >= SIZE) { c.close(); return; }
+          c.enqueue(new Uint8Array(65536));
+          pulled += 65536;
+        },
+      });
+      const base = process.memoryUsage().rss;
+      let cur = new Response(src);
+      const chain = [cur];
+      for (let i = 0; i < DEPTH; i++) { cur = cur.clone(); chain.push(cur); }
+      const read = (await chain.at(-1).arrayBuffer()).byteLength;
+      const rssDeltaMB = (process.memoryUsage().rss - base) / MB;
+      console.log(JSON.stringify({ read, rssDeltaMB }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { read, rssDeltaMB } = JSON.parse(stdout);
+    expect(read).toBe(4 << 20);
+    // Before the fix: ~200 MB. After: well under 50 MB even on debug+ASAN builds.
+    const threshold = isASAN || isDebug ? 120 : 80;
+    expect(rssDeltaMB).toBeLessThan(threshold);
+    expect(exitCode).toBe(0);
+  });
 });

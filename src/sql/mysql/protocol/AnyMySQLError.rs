@@ -20,7 +20,6 @@ pub enum Error {
 
     LocalInfileNotSupported,
     JSError,
-    JSTerminated,
     OutOfMemory,
     Overflow,
 
@@ -44,7 +43,6 @@ pub enum Error {
     UnexpectedPacket,
     ShortRead,
     UnknownError,
-    InvalidState,
 }
 
 bun_core::impl_tag_error!(Error);

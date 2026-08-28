@@ -31,7 +31,7 @@
 #pragma once
 
 #include "WebSocketDeflate.h"
-#include "ContextDestructionObserver.h"
+#include "ActiveDOMObject.h"
 #include "EventTarget.h"
 #include "ExceptionOr.h"
 #include <wtf/URL.h>
@@ -107,17 +107,21 @@ private:
     void* m_ptr { nullptr };
 };
 
-class WebSocket final : public RefCounted<WebSocket>, public EventTargetWithInlineData, public ContextDestructionObserver {
+class WebSocket final : public RefCounted<WebSocket>, public EventTargetWithInlineData, public ActiveDOMObject {
     WTF_MAKE_TZONE_ALLOCATED(WebSocket);
 
 public:
+    // ActiveDOMObject.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+    USING_CAN_MAKE_WEAKPTR(EventTargetWithInlineData);
+
     static ASCIILiteral subprotocolSeparator();
 
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const String& protocol);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
-    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized);
     // With proxy support
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate);
@@ -153,9 +157,6 @@ public:
         ProxyTLS // ws:// or wss:// through HTTPS proxy (TLS socket to proxy)
     };
 
-    ExceptionOr<void> connect(const String& url);
-    ExceptionOr<void> connect(const String& url, const String& protocol);
-    ExceptionOr<void> connect(const String& url, const Vector<String>& protocols);
     ExceptionOr<void> connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
     // Internal connect with proxy config (used by create() with proxy support)
     ExceptionOr<void> connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, std::optional<struct ProxyConfig>&&);
@@ -179,6 +180,12 @@ public:
 
     ExceptionOr<void> close(std::optional<unsigned short> code, const String& reason);
     ExceptionOr<void> terminate();
+    // Receive-side flow control (non-standard; mirrors Bun.Socket). pause()
+    // stops kernel reads so TCP backpressure reaches the peer; frames already
+    // decoded still dispatch. Before OPEN it latches and applies on connect.
+    bool pause();
+    bool resume();
+    bool isPaused() const { return m_paused; }
 
     void setProtocol(const String& protocol);
 
@@ -194,25 +201,34 @@ public:
 
     ScriptExecutionContext* scriptExecutionContext() const final;
 
-    using RefCounted::deref;
-    using RefCounted::ref;
     void didConnect();
-    void disablePendingActivity();
     void didStartClosingHandshake();
     void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);
-    void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params, void* customSSLCtx);
-    void didConnectWithTunnel(void* tunnel, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params);
+    void didConnect(us_socket_t* socket, void* bufferedData, const PerMessageDeflateParams* deflate_params, void* customSSLCtx);
+    void didConnectWithTunnel(void* tunnel, void* bufferedData, const PerMessageDeflateParams* deflate_params);
     void didFailWithErrorCode(Bun::WebSocketErrorCode code);
 
     void didReceiveMessage(String&& message);
-    void didReceiveData(const char* data, size_t length);
     void didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData);
+    /// `bun_core::ffi::FfiSlice` — a borrowed `&[u8]` passed by value.
+    struct FfiSlice {
+        const uint8_t* ptr;
+        size_t len;
+        std::span<const uint8_t> span() const { return { ptr, len }; }
+    };
+    struct HandshakeRawHeader {
+        FfiSlice name;
+        FfiSlice value;
+    };
+    void didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, std::span<const uint8_t> body);
 
-    void updateHasPendingActivity();
-    bool hasPendingActivity() const
+    // A single claim the native client holds while it has queued work that will call back in.
+    void holdPendingActivityForClient()
     {
-        return m_hasPendingActivity.load();
+        ASSERT(!m_pendingActivityForClient);
+        m_pendingActivityForClient = makePendingActivity(*this);
     }
+    void releasePendingActivityForClient() { m_pendingActivityForClient = nullptr; }
 
     void setRejectUnauthorized(bool rejectUnauthorized)
     {
@@ -226,11 +242,6 @@ public:
     void setOfferPerMessageDeflate(bool offer)
     {
         m_offerPerMessageDeflate = offer;
-    }
-
-    bool offerPerMessageDeflate() const
-    {
-        return m_offerPerMessageDeflate;
     }
 
     // C++-only callback mode. When set, didConnect/didReceiveMessage/
@@ -253,7 +264,6 @@ public:
         void (*onClose)(void* ctx, unsigned short code) = nullptr;
     };
     void setNativeCallbacks(NativeCallbacks cb) { m_native = cb; }
-    bool hasNativeCallbacks() const { return m_native.onMessage != nullptr; }
 
     // Public wrapper for the native-callback consumer to send text frames.
     // Bypasses the ExceptionOr<> wrapping — the caller has already checked
@@ -270,22 +280,6 @@ public:
         return m_rejectUnauthorized;
     }
 
-    void incPendingActivityCount()
-    {
-        ASSERT(m_pendingActivityCount < std::numeric_limits<size_t>::max());
-        m_pendingActivityCount++;
-        ref();
-        updateHasPendingActivity();
-    }
-
-    void decPendingActivityCount()
-    {
-        ASSERT(m_pendingActivityCount > 0);
-        m_pendingActivityCount--;
-        updateHasPendingActivity();
-        deref();
-    }
-
     size_t memoryCost() const;
 
 private:
@@ -299,10 +293,12 @@ private:
         ClientSSL,
     };
 
-    std::atomic<bool> m_hasPendingActivity { true };
+    // ActiveDOMObject. Read from the GC thread; a stale answer keeps or drops the wrapper one
+    // cycle early or late, as upstream tolerates.
+    void stop() final;
+    bool virtualHasPendingActivity() const final { return m_state != CLOSED; }
 
     explicit WebSocket(ScriptExecutionContext&);
-    explicit WebSocket(ScriptExecutionContext&, const String& url);
 
     EventTargetInterface eventTargetInterface() const final;
 
@@ -310,7 +306,6 @@ private:
     void derefEventTarget() final { deref(); }
 
     void didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, bool isConnectionError = false);
-    void didUpdateBufferedAmount(unsigned bufferedAmount);
     void failConnectingWebSocket();
 
     void sendWebSocketString(const String& message, const Opcode opcode);
@@ -336,22 +331,28 @@ private:
     String m_extensions;
     void* m_upgradeClient { nullptr };
     ConnectionType m_connectionType { ConnectionType::Plain };
+    // Drop the in-flight upgrade / the connected client without a closing handshake. Neither
+    // dispatches anything itself; the native side may call back synchronously.
+    void cancelUpgradeClient();
+    bool applyPauseToConnectedClient();
+    void cancelConnectedClient();
     bool m_rejectUnauthorized { false };
+    bool m_paused { false };
     // Default matches pre-existing behavior: advertise permessage-deflate in the upgrade
     // request. Set to false by ws.WebSocket callers passing `perMessageDeflate: false`.
     bool m_offerPerMessageDeflate { true };
     AnyWebSocket m_connectedWebSocket { nullptr };
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };
-    size_t m_pendingActivityCount { 0 };
+    // connect()'s claim on the wrapper: held from connect() until the socket reaches CLOSED (or
+    // stop()). Posted event tasks keep it alive through queueTaskKeepingObjectAlive().
+    RefPtr<PendingActivity<WebSocket>> m_pendingActivity;
+    RefPtr<PendingActivity<WebSocket>> m_pendingActivityForClient;
 
     // TLS options (native heap SSLConfig — ownership is released to the
     // upgrade client in connect(); freed by ~WebSocketSSLConfigPtr otherwise).
     WebSocketSSLConfigPtr m_sslConfig;
 
-    bool m_dispatchedErrorEvent { false };
-
     NativeCallbacks m_native;
-    // RefPtr<PendingActivity<WebSocket>> m_pendingActivity;
 };
 
 } // namespace WebCore

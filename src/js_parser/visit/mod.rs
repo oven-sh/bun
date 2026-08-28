@@ -3,15 +3,15 @@
 //! classes, and declarations. This is the second pass after parsing.
 
 pub mod visit_binary;
-pub mod visit_expr;
-pub mod visit_stmt;
+pub(crate) mod visit_expr;
+pub(crate) mod visit_stmt;
 
 use crate::lexer as js_lexer;
 use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
     ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
-    Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, TempRef,
-    VisitArgsOpts, is_eval_or_arguments,
+    Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, VisitArgsOpts,
+    VisitDeclOpts, is_eval_or_arguments,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast as js_ast;
@@ -44,7 +44,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.current_scope_mut()
     }
 
-    pub fn visit_stmts_and_prepend_temp_refs(
+    pub(crate) fn visit_stmts_and_prepend_temp_refs(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
         opts: &mut PrependTempRefsOpts,
@@ -58,22 +58,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.temp_refs_to_declare = BumpVec::new_in(self.arena);
 
         self.visit_stmts(stmts, opts.kind)?;
-
-        // Prepend values for "this" and "arguments"
-        if let Some(fn_body_loc) = opts.fn_body_loc {
-            // Capture "this"
-            if let Some(ref_) = self.fn_only_data_visit.this_capture_ref {
-                let value = self.new_expr(E::This {}, fn_body_loc);
-                self.temp_refs_to_declare.push(TempRef {
-                    r#ref: ref_,
-                    value: Some(value),
-                });
-            }
-        }
         Ok(())
     }
 
-    pub fn record_declared_symbol(&mut self, r#ref: Ref) {
+    pub(crate) fn record_declared_symbol(&mut self, r#ref: Ref) {
         debug_assert!(r#ref.is_symbol());
         self.declared_symbols
             .append(bun_ast::DeclaredSymbol {
@@ -83,23 +71,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .expect("oom");
     }
 
-    pub fn visit_func(&mut self, mut func: G::Fn, open_parens_loc: bun_ast::Loc) -> G::Fn {
+    pub(crate) fn visit_func(&mut self, mut func: G::Fn, open_parens_loc: bun_ast::Loc) -> G::Fn {
         debug_assert!(
             !SCAN_ONLY,
             "only_scan_imports_and_do_not_visit must not run this."
         );
 
-        // FnOnlyDataVisit holds `Option<&'a Cell<Ref>>`; save/restore via
-        // `take` so the old value is moved out before we overwrite the field.
         let old_fn_or_arrow_data = self.fn_or_arrow_data_visit;
         let old_fn_only_data = core::mem::take(&mut self.fn_only_data_visit);
         self.fn_or_arrow_data_visit = FnOrArrowDataVisit {
-            is_async: func.flags.contains(flags::Function::IsAsync),
             ..Default::default()
         };
         self.fn_only_data_visit = FnOnlyDataVisit {
             is_this_nested: true,
-            arguments_ref: func.arguments_ref.to_nullable(),
             ..Default::default()
         };
 
@@ -140,7 +124,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmts.extend_from_slice(body_stmts);
         let mut temp_opts = PrependTempRefsOpts {
             kind: StmtsKind::FnBody,
-            fn_body_loc: Some(body_loc),
         };
         let rc_binding = self.react_compiler_candidate_name.take();
         if rc_binding.is_some() {
@@ -199,7 +182,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         func
     }
 
-    pub fn visit_args(&mut self, args: &mut [G::Arg], opts: &VisitArgsOpts) {
+    pub(crate) fn visit_args(&mut self, args: &mut [G::Arg], opts: &VisitArgsOpts) {
         let strict_loc = fn_body_contains_use_strict(opts.body);
         let has_simple_args = Self::is_simple_parameter_list(args, opts.has_rest_arg);
         // StringVoidMap::get returns a pool guard; Drop releases.
@@ -248,13 +231,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // `Vec<Expr>` is not `Copy`; mutate in place.
-    pub fn visit_ts_decorators(&mut self, decs: &mut ExprNodeList) {
+    pub(crate) fn visit_ts_decorators(&mut self, decs: &mut ExprNodeList) {
         for dec in decs.slice_mut() {
             self.visit_expr(dec);
         }
     }
 
-    pub fn visit_decls<const IS_POSSIBLY_DECL_TO_REMOVE: bool>(
+    pub(crate) fn visit_decls<const IS_POSSIBLY_DECL_TO_REMOVE: bool>(
         &mut self,
         decls: &mut [G::Decl],
         was_const: bool,
@@ -373,11 +356,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let ref_ = id.r#ref;
                             if let Some(value) = decl.value {
                                 if let ExprData::ERequireString(req) = value.data {
-                                    if req.unwrapped_id != u32::MAX {
-                                        self.imports_to_convert_from_require
-                                            [req.unwrapped_id as usize]
-                                            .namespace
-                                            .ref_ = ref_;
+                                    if let Some(unwrapped_id) = req.unwrapped_id.get() {
+                                        let deferred = &mut self.imports_to_convert_from_require
+                                            [unwrapped_id.get_usize()];
+                                        deferred.namespace.ref_ = ref_;
                                         self.import_items_for_namespace
                                             .insert(ref_, ImportItemForNamespaceMap::default());
                                         continue 'outer;
@@ -405,12 +387,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let is_after = self.vis_scope().is_after_const_local_prefix;
                 self.visit_decl(
                     decl,
-                    was_anonymous_named_expr,
-                    was_const && !is_after,
-                    if Self::ALLOW_MACROS {
-                        prev_macro_call_count != self.macro_call_count
-                    } else {
-                        false
+                    VisitDeclOpts {
+                        was_anonymous_named_expr,
+                        could_be_const_value: was_const && !is_after,
+                        could_be_macro: if Self::ALLOW_MACROS {
+                            prev_macro_call_count != self.macro_call_count
+                        } else {
+                            false
+                        },
                     },
                 );
             } else if IS_POSSIBLY_DECL_TO_REMOVE {
@@ -429,7 +413,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let replacer = _ptr.get();
                         if !self.replace_decl_and_possibly_remove(decl, replacer) {
                             let is_after = self.vis_scope().is_after_const_local_prefix;
-                            self.visit_decl(decl, false, was_const && !is_after, false);
+                            self.visit_decl(
+                                decl,
+                                VisitDeclOpts {
+                                    was_anonymous_named_expr: false,
+                                    could_be_const_value: was_const && !is_after,
+                                    could_be_macro: false,
+                                },
+                            );
                         } else {
                             continue 'outer;
                         }
@@ -454,7 +445,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         j
     }
 
-    pub fn visit_binding_and_expr_for_macro(&mut self, binding: Binding, expr: Expr) {
+    pub(crate) fn visit_binding_and_expr_for_macro(&mut self, binding: Binding, expr: Expr) {
         match binding.data {
             BData::BObject(bound_object) => {
                 let bound_object = bound_object.get();
@@ -487,18 +478,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             }
                                         }
                                     }
-                                    // output_properties[end] = output_properties[query.i]
-                                    // SAFETY: both indices < object.properties.len; G::Property
-                                    // has no Drop; src/dst may alias when end == query.i.
-                                    unsafe {
-                                        let props_ptr = object.properties.slice_mut().as_mut_ptr();
-                                        core::ptr::copy(
-                                            props_ptr.add(query.i as usize),
-                                            props_ptr.add(end as usize),
-                                            1,
-                                        );
+                                    let i = query.i as usize;
+                                    if i >= end as usize {
+                                        object.properties.slice_mut().swap(i, end as usize);
+                                        end += 1;
                                     }
-                                    end += 1;
                                 }
                             }
                         }
@@ -536,13 +520,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn visit_decl(
-        &mut self,
-        decl: &mut G::Decl,
-        was_anonymous_named_expr: bool,
-        could_be_const_value: bool,
-        could_be_macro: bool,
-    ) {
+    pub(crate) fn visit_decl(&mut self, decl: &mut G::Decl, opts: VisitDeclOpts) {
+        let VisitDeclOpts {
+            was_anonymous_named_expr,
+            could_be_const_value,
+            could_be_macro,
+        } = opts;
         // Optionally preserve the name
         match decl.binding.data {
             BData::BIdentifier(id) => {
@@ -577,7 +560,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn visit_for_loop_init(&mut self, stmt: Stmt, is_in_or_of: bool) -> Stmt {
+    pub(crate) fn visit_for_loop_init(&mut self, stmt: Stmt, is_in_or_of: bool) -> Stmt {
         match stmt.data {
             StmtData::SExpr(mut st) => {
                 let assign_target = if is_in_or_of {
@@ -611,7 +594,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt
     }
 
-    pub fn visit_binding(
+    pub(crate) fn visit_binding(
         &mut self,
         binding: BindingNodeIndex,
         mut duplicate_arg_check: Option<&mut StringVoidMap>,
@@ -727,7 +710,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub fn visit_loop_body(&mut self, stmt: Stmt) -> Stmt {
+    pub(crate) fn visit_loop_body(&mut self, stmt: Stmt) -> Stmt {
         let old_is_inside_loop = self.fn_or_arrow_data_visit.is_inside_loop;
         self.fn_or_arrow_data_visit.is_inside_loop = true;
         self.loop_body = stmt.data;
@@ -736,7 +719,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         res
     }
 
-    pub fn visit_single_stmt_block(&mut self, stmt: Stmt, kind: StmtsKind) -> Stmt {
+    pub(crate) fn visit_single_stmt_block(&mut self, stmt: Stmt, kind: StmtsKind) -> Stmt {
         let mut new_stmt = stmt;
         self.push_scope_for_visit_pass(ScopeKind::Block, stmt.loc)
             .expect("unreachable");
@@ -761,7 +744,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         new_stmt
     }
 
-    pub fn visit_single_stmt(&mut self, stmt: Stmt, kind: StmtsKind) -> Stmt {
+    pub(crate) fn visit_single_stmt(&mut self, stmt: Stmt, kind: StmtsKind) -> Stmt {
         if matches!(stmt.data, StmtData::SBlock(_)) {
             return self.visit_single_stmt_block(stmt, kind);
         }
@@ -777,9 +760,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .expect("unreachable");
         }
 
+        let old_is_inside_single_stmt_body = self.is_inside_single_stmt_body;
+        self.is_inside_single_stmt_body = true;
+
         let mut stmts = BumpVec::with_capacity_in(1, self.arena);
         stmts.push(stmt);
         self.visit_stmts(&mut stmts, kind).expect("unreachable");
+
+        self.is_inside_single_stmt_body = old_is_inside_single_stmt_body;
 
         if has_if_scope {
             self.pop_scope();
@@ -788,7 +776,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.stmts_to_single_stmt(stmt.loc, stmts.into_bump_slice_mut())
     }
 
-    pub fn visit_class(
+    pub(crate) fn visit_class(
         &mut self,
         name_scope_loc: bun_ast::Loc,
         class: &mut G::Class,
@@ -811,12 +799,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.enclosing_class_keyword = class.class_keyword;
         self.vis_scope()
             .recursive_set_strict_mode(StrictModeKind::ImplicitStrictModeClass);
-        // `FnOnlyDataVisit::class_name_ref` is `Option<&'a Cell<Ref>>`, so the
-        // shadow ref must outlive the parser borrow. Allocate it in the bump arena.
-        // `Cell` lets us hand out a shared `&'a Cell<Ref>` to nested frames while
-        // still reading/writing it here, with no raw-pointer `unsafe`.
-        let shadow_ref: &'a core::cell::Cell<Ref> =
-            core::cell::Cell::from_mut(self.arena.alloc(Ref::NONE));
 
         // Insert a shadowing name that spans the whole class, which matches
         // JavaScript's semantics. The class body (and extends clause) "captures" the
@@ -825,9 +807,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // must be the original value of the name, not the re-assigned value.
         // Use "const" for this symbol to match JavaScript run-time semantics. You
         // are not allowed to assign to this symbol (it throws a TypeError).
-        if let Some(name) = class.class_name {
+        let mut shadow_ref = if let Some(name) = class.class_name {
             let name_ref = name.ref_;
-            shadow_ref.set(name_ref);
             let original_name: &'a [u8] = self.symbols[name_ref.inner_index() as usize]
                 .original_name
                 .slice();
@@ -841,19 +822,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                 )
                 .expect("oom");
+            name_ref
         } else {
             let name_str: &'a [u8] = if default_name_ref.is_empty() {
                 b"_this"
             } else {
                 b"_default"
             };
-            let new_ref = self
-                .new_symbol(SymbolKind::Constant, name_str)
-                .expect("unreachable");
-            shadow_ref.set(new_ref);
-        }
+            self.new_symbol(SymbolKind::Constant, name_str)
+        };
 
-        self.record_declared_symbol(shadow_ref.get());
+        self.record_declared_symbol(shadow_ref);
 
         if let Some(extends) = class.extends.as_mut() {
             self.visit_expr(extends);
@@ -862,8 +841,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             self.push_scope_for_visit_pass(ScopeKind::ClassBody, class.body_loc)
                 .expect("unreachable");
-            // defer { p.pop_scope(); p.enclosing_class_keyword = old_enclosing_class_keyword; }
-            // — manual restore at block end below; no early returns in this block.
 
             let mut constructor_function: Option<bun_ast::StoreRef<E::Function>> = None;
             let properties: &mut [G::Property] = class.properties.slice_mut();
@@ -874,11 +851,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.fn_or_arrow_data_visit = FnOrArrowDataVisit::default();
                     self.fn_only_data_visit = FnOnlyDataVisit {
                         is_this_nested: true,
-                        is_new_target_allowed: true,
-                        class_name_ref: Some(shadow_ref),
-
-                        // TODO: down transpilation
-                        should_replace_this_with_class_name_ref: false,
                         ..Default::default()
                     };
                     // PropertyKind::ClassStaticBlock guarantees `Some`; arena-owned for 'a.
@@ -924,17 +896,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // Make it an error to use "arguments" in a class body
                 self.vis_scope().forbid_arguments = true;
-                // defer p.current_scope.forbid_arguments = false;
 
                 // The value of "this" is shadowed inside property values
                 let old_is_this_captured = self.fn_only_data_visit.is_this_nested;
-                let old_class_name_ref = self.fn_only_data_visit.class_name_ref.take();
                 self.fn_only_data_visit.is_this_nested = true;
-                self.fn_only_data_visit.is_new_target_allowed = true;
-                self.fn_only_data_visit.class_name_ref = Some(shadow_ref);
-                // defer p.fn_only_data_visit.is_this_nested = old_is_this_captured;
-                // defer p.fn_only_data_visit.class_name_ref = old_class_name_ref;
-                // — manual restore at end of loop body; no `continue` after this point.
 
                 // We need to explicitly assign the name to the property initializer if it
                 // will be transformed such that it is no longer an inline initializer.
@@ -953,7 +918,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                 } else if property.flags.contains(flags::Property::IsMethod) {
-                    if Self::IS_TYPESCRIPT_ENABLED {
+                    if Self::IS_TYPESCRIPT_ENABLED
+                        && !property.flags.contains(flags::Property::IsStatic)
+                        && !property.flags.contains(flags::Property::IsComputed)
+                    {
                         if let (Some(value), Some(key)) = (property.value, property.key) {
                             if let (ExprData::EFunction(e_func), ExprData::EString(e_str)) =
                                 (value.data, key.data)
@@ -1023,149 +991,245 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                // manual restore for the three `defer`s above
+                // manual restore for the two `defer`s above
                 self.vis_scope().forbid_arguments = false;
                 self.fn_only_data_visit.is_this_nested = old_is_this_captured;
-                self.fn_only_data_visit.class_name_ref = old_class_name_ref;
             }
 
-            // note: our version assumes useDefineForClassFields is true
             if Self::IS_TYPESCRIPT_ENABLED {
-                if let Some(mut constructor) = constructor_function {
-                    // `constructor` is a `StoreRef<E::Function>` arena slot captured from
-                    // `class.properties[i].value.data` above; arena-owned for 'a, and the
-                    // per-property `&mut [Property]` borrow has been released. Moving the
-                    // `Property` structs below does not invalidate this pointer (it points to
-                    // a separate Store allocation, not into the Property slice itself).
-                    let func_args: bun_ast::StoreSlice<G::Arg> = constructor.func.args;
-                    let mut to_add: usize = 0;
+                // `lower_standard_decorators_stmt` owns field placement for such classes.
+                let use_define = self.options.use_define_for_class_fields
+                    || class.should_lower_standard_decorators;
+
+                let (func_args, param_props): (bun_ast::StoreSlice<G::Arg>, usize) =
+                    match constructor_function {
+                        Some(cf) => {
+                            let args = cf.func.args;
+                            let n = args
+                                .iter()
+                                .filter(|a| {
+                                    a.is_typescript_ctor_field
+                                        && matches!(a.binding.data, BData::BIdentifier(_))
+                                })
+                                .count();
+                            (args, n)
+                        }
+                        None => (bun_ast::StoreSlice::EMPTY, 0),
+                    };
+
+                // useDefineForClassFields: false => instance field -> `this.x = init` in ctor.
+                let is_instance_field = |p: &G::Property| {
+                    p.kind == PropertyKind::Normal
+                        && !p.flags.contains(flags::Property::IsMethod)
+                        && !p.flags.contains(flags::Property::IsStatic)
+                        && p.value.is_none()
+                        && p.key.is_some()
+                };
+                // A `[K]` / `[K] = init` field can't be lowered without hoisting the key.
+                let lower_fields = !use_define
+                    && !class.properties.slice().iter().any(|p| {
+                        is_instance_field(p)
+                            && p.flags.contains(flags::Property::IsComputed)
+                            && !matches!(
+                                p.key.map(|k| k.data),
+                                Some(ExprData::EString(_) | ExprData::ENumber(_))
+                            )
+                    });
+
+                let fields_to_lower = if lower_fields {
+                    class
+                        .properties
+                        .slice()
+                        .iter()
+                        .filter(|p| is_instance_field(p))
+                        .count()
+                } else {
+                    0
+                };
+
+                if param_props > 0 || fields_to_lower > 0 {
+                    let mut injected = BumpVec::<Stmt>::with_capacity_in(
+                        param_props + fields_to_lower,
+                        self.arena,
+                    );
+                    let mut class_body = BumpVec::<G::Property>::with_capacity_in(
+                        class.properties.len() + param_props,
+                        self.arena,
+                    );
+
                     for arg in func_args.iter() {
-                        if arg.is_typescript_ctor_field
-                            && matches!(arg.binding.data, BData::BIdentifier(_))
-                        {
-                            to_add += 1;
+                        let BData::BIdentifier(id) = arg.binding.data else {
+                            continue;
+                        };
+                        if !arg.is_typescript_ctor_field {
+                            continue;
                         }
-                    }
-
-                    // if this is an expression, we can move statements after super() because there will be 0 decorators
-                    let mut super_index: Option<usize> = None;
-                    if class.extends.is_some() {
-                        let body_stmts = constructor.func.body.stmts.slice();
-                        for (index, stmt) in body_stmts.iter().enumerate() {
-                            let is_super = match &stmt.data {
-                                StmtData::SExpr(se) => match &se.value.data {
-                                    ExprData::ECall(call) => {
-                                        matches!(call.target.data, ExprData::ESuper(_))
-                                    }
-                                    _ => false,
-                                },
-                                _ => false,
-                            };
-                            if !is_super {
-                                continue;
-                            }
-                            super_index = Some(index);
-                            break;
-                        }
-                    }
-
-                    if to_add > 0 {
-                        // to match typescript behavior, we also must prepend to the class body
-                        let old_body: &[Stmt] = constructor.func.body.stmts.slice();
-                        let mut stmts =
-                            BumpVec::<Stmt>::with_capacity_in(old_body.len() + to_add, self.arena);
-                        stmts.extend_from_slice(old_body);
-
-                        let old_props: bun_ast::StoreSlice<G::Property> = class.properties;
-                        let old_props_len = old_props.len();
-                        let mut class_body = BumpVec::<G::Property>::with_capacity_in(
-                            old_props_len + to_add,
-                            self.arena,
+                        let (id_ref, bind_loc) = (id.r#ref, arg.binding.loc);
+                        let name: &'a [u8] = self.symbols[id_ref.inner_index() as usize]
+                            .original_name
+                            .slice();
+                        let arg_ident = self.new_expr(E::Identifier::init(id_ref), bind_loc);
+                        let this_target = self.new_expr(E::This {}, bind_loc);
+                        let dot = self.new_expr(
+                            E::Dot {
+                                target: this_target,
+                                name: name.into(),
+                                name_loc: bind_loc,
+                                ..Default::default()
+                            },
+                            bind_loc,
                         );
-                        // BumpVec can't adopt a foreign arena slice, so move each element
-                        // out by `ptr::read` (G::Property has no Drop; old slice becomes dead
-                        // arena bytes).
-                        for i in 0..old_props_len {
-                            // SAFETY: in-bounds; arena-owned; no Drop on Property.
-                            unsafe {
-                                class_body.push(core::ptr::read(old_props.as_ptr().add(i)));
-                            }
-                        }
-                        let mut j: usize = 0;
+                        injected.push(Stmt::assign(dot, arg_ident));
 
-                        let args_len = func_args.len();
-                        for arg_idx in 0..args_len {
-                            // reshaped for borrowck — copy the scalars we need
-                            // (id_ref, bind_loc) out of the arg before calling `&mut self`
-                            // helpers, so no live `&Arg` overlaps `self.new_expr`/`declare_symbol`.
-                            let (id_ref, bind_loc) = {
-                                let arg = &func_args[arg_idx];
-                                if !arg.is_typescript_ctor_field {
-                                    continue;
-                                }
-                                match arg.binding.data {
-                                    BData::BIdentifier(id) => (id.r#ref, arg.binding.loc),
-                                    _ => continue,
-                                }
-                            };
-
-                            // SAFETY: original_name is an arena-owned slice valid for 'a.
-                            let name: &'a [u8] = self.symbols[id_ref.inner_index() as usize]
-                                .original_name
-                                .slice();
-                            let arg_ident = self.new_expr(
-                                E::Identifier {
-                                    ref_: id_ref,
-                                    ..Default::default()
-                                },
-                                bind_loc,
-                            );
-                            let this_target = self.new_expr(E::This {}, bind_loc);
-                            let dot = self.new_expr(
-                                E::Dot {
-                                    target: this_target,
-                                    name: name.into(),
-                                    name_loc: bind_loc,
-                                    ..Default::default()
-                                },
-                                bind_loc,
-                            );
-                            let insert_at = match super_index {
-                                Some(k) => j + k + 1,
-                                None => j,
-                            };
-                            stmts.insert(insert_at, Stmt::assign(dot, arg_ident));
-
-                            // O(N)
-                            // `Vec::insert` opens a 1-slot gap at j and writes the
-                            // new field (memmove + write).
-                            // Copy the argument name symbol to prevent the class field
-                            // declaration from being renamed but not the constructor argument.
+                        if use_define {
+                            // New symbol so renaming can't desync the field from the arg.
                             let field_symbol_ref = self
                                 .declare_symbol(SymbolKind::Other, bind_loc, name)
                                 .unwrap_or(id_ref);
                             self.symbols[field_symbol_ref.inner_index() as usize]
                                 .set_must_not_be_renamed(true);
-                            let field_ident = self.new_expr(
-                                E::Identifier {
-                                    ref_: field_symbol_ref,
-                                    ..Default::default()
-                                },
-                                bind_loc,
-                            );
-                            class_body.insert(
-                                j,
-                                G::Property {
-                                    key: Some(field_ident),
-                                    ..Default::default()
-                                },
-                            );
-                            j += 1;
+                            let field_ident =
+                                self.new_expr(E::Identifier::init(field_symbol_ref), bind_loc);
+                            class_body.push(G::Property {
+                                key: Some(field_ident),
+                                ..Default::default()
+                            });
                         }
-
-                        class.properties = bun_ast::StoreSlice::from_bump(class_body);
-                        constructor.func.body.stmts = bun_ast::StoreSlice::from_bump(stmts);
                     }
+
+                    for slot in class.properties.slice_mut().iter_mut() {
+                        let prop = core::mem::take(slot);
+                        if !lower_fields || !is_instance_field(&prop) {
+                            class_body.push(prop);
+                            continue;
+                        }
+                        let key = prop.key.expect("infallible: lowerable field has key");
+                        let is_private = matches!(key.data, ExprData::EPrivateIdentifier(_));
+                        if let Some(init) = prop.initializer {
+                            let this_target = self.new_expr(E::This {}, key.loc);
+                            let target = match &key.data {
+                                ExprData::EString(s)
+                                    if s.is_utf8()
+                                        && !prop.flags.contains(flags::Property::IsComputed) =>
+                                {
+                                    self.new_expr(
+                                        E::Dot {
+                                            target: this_target,
+                                            name: s.data,
+                                            name_loc: key.loc,
+                                            ..Default::default()
+                                        },
+                                        key.loc,
+                                    )
+                                }
+                                _ => self.new_expr(
+                                    E::Index {
+                                        target: this_target,
+                                        index: key,
+                                        optional_chain: None,
+                                    },
+                                    key.loc,
+                                ),
+                            };
+                            injected.push(Stmt::assign(target, init));
+                        }
+                        // Keep `#x;` for brand; keep decorated props for `lower_class`.
+                        if is_private || prop.ts_decorators.len_u32() > 0 {
+                            class_body.push(G::Property {
+                                initializer: None,
+                                ..prop
+                            });
+                        }
+                    }
+
+                    if let Some(mut cf) = constructor_function {
+                        let old_body: &[Stmt] = cf.func.body.stmts.slice();
+                        let super_end = if class.extends.is_some() {
+                            old_body
+                                .iter()
+                                .position(|s| {
+                                    matches!(&s.data, StmtData::SExpr(se)
+                                        if matches!(&se.value.data, ExprData::ECall(c)
+                                            if matches!(c.target.data, ExprData::ESuper(_))))
+                                })
+                                .map_or(0, |i| i + 1)
+                        } else {
+                            0
+                        };
+                        let mut stmts = BumpVec::<Stmt>::with_capacity_in(
+                            old_body.len() + injected.len(),
+                            self.arena,
+                        );
+                        stmts.extend_from_slice(&old_body[..super_end]);
+                        stmts.extend_from_slice(&injected);
+                        stmts.extend_from_slice(&old_body[super_end..]);
+                        cf.func.body.stmts = bun_ast::StoreSlice::from_bump(stmts);
+                    } else {
+                        let loc = class.body_loc;
+                        let mut ctor_stmts = BumpVec::<Stmt>::with_capacity_in(
+                            injected.len() + usize::from(class.extends.is_some()),
+                            self.arena,
+                        );
+                        if class.extends.is_some() {
+                            let target = self.new_expr(E::Super {}, loc);
+                            let arguments_ref =
+                                self.new_symbol(SymbolKind::Unbound, crate::parser::ARGUMENTS_STR);
+                            VecExt::append(&mut self.current_scope_mut().generated, arguments_ref);
+                            let spread_inner =
+                                self.new_expr(E::Identifier::init(arguments_ref), loc);
+                            let spread = self.new_expr(
+                                E::Spread {
+                                    value: spread_inner,
+                                },
+                                loc,
+                            );
+                            let args = ExprNodeList::init_one(spread);
+                            let call = self.new_expr(
+                                E::Call {
+                                    target,
+                                    args,
+                                    ..Default::default()
+                                },
+                                loc,
+                            );
+                            ctor_stmts.push(self.s(
+                                S::SExpr {
+                                    value: call,
+                                    ..Default::default()
+                                },
+                                loc,
+                            ));
+                        }
+                        ctor_stmts.extend_from_slice(&injected);
+                        let key_expr = self.new_expr(E::EString::from_static(b"constructor"), loc);
+                        let value_expr = self.new_expr(
+                            E::Function {
+                                func: G::Fn {
+                                    name: None,
+                                    open_parens_loc: bun_ast::Loc::EMPTY,
+                                    args: bun_ast::StoreSlice::EMPTY,
+                                    body: G::FnBody {
+                                        loc,
+                                        stmts: bun_ast::StoreSlice::from_bump(ctor_stmts),
+                                    },
+                                    flags: flags::FUNCTION_NONE,
+                                    ..Default::default()
+                                },
+                            },
+                            loc,
+                        );
+                        class_body.insert(
+                            0,
+                            G::Property {
+                                flags: flags::Property::IsMethod.into(),
+                                key: Some(key_expr),
+                                value: Some(value_expr),
+                                ..Default::default()
+                            },
+                        );
+                    }
+
+                    class.properties = bun_ast::StoreSlice::from_bump(class_body);
                 }
             }
 
@@ -1174,28 +1238,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.enclosing_class_keyword = old_enclosing_class_keyword;
         }
 
-        if self.symbols[shadow_ref.get().inner_index() as usize].use_count_estimate == 0 {
+        if self.symbols[shadow_ref.inner_index() as usize].use_count_estimate == 0 {
             // If there was originally no class name but something inside needed one
             // (e.g. there was a static property initializer that referenced "this"),
             // store our generated name so the class expression ends up with a name.
-            shadow_ref.set(Ref::NONE);
+            shadow_ref = Ref::NONE;
         } else if class.class_name.is_none() {
-            let sr = shadow_ref.get();
             class.class_name = Some(LocRef {
-                ref_: sr,
+                ref_: shadow_ref,
                 loc: name_scope_loc,
             });
-            self.record_declared_symbol(sr);
+            self.record_declared_symbol(shadow_ref);
         }
 
         // class name scope
         self.pop_scope();
 
-        shadow_ref.get()
+        shadow_ref
     }
 
     // Try separating the list for appending, so that it's not a pointer.
-    pub fn visit_stmts(
+    pub(crate) fn visit_stmts(
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
         kind: StmtsKind,
@@ -1256,9 +1319,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
             }
-
-            // `p.macro.prepend_stmts` is write-only (nothing ever reads it),
-            // so the backref is intentionally not wired here.
 
             // visit all statements first
             let mut visited: ListManaged<'a, Stmt> =
@@ -1540,7 +1600,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if local.kind.is_using() {
                                 continue;
                             }
-                            if !local.is_export && !local.was_commonjs_export {
+                            if !local.is_export && !local.origin.is_commonjs_export() {
                                 let mut any_decl_in_const_values = local.kind == LocalKind::KConst;
                                 let decls: &mut [Decl] = local.decls.slice_mut();
                                 let mut end: usize = 0;
@@ -1790,8 +1850,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_stmt = output[prev_idx];
                         if let StmtData::SExpr(prev_expr) = prev_stmt.data {
                             if !prev_stmt.is_super_call() {
-                                s_switch.test_ =
-                                    Expr::join_with_comma(prev_expr.value, s_switch.test_);
+                                s_switch.test =
+                                    Expr::join_with_comma(prev_expr.value, s_switch.test);
                                 output.truncate(prev_idx);
                             }
                         }
@@ -1805,7 +1865,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_stmt = output[prev_idx];
                         if let StmtData::SExpr(prev_expr) = prev_stmt.data {
                             if !prev_stmt.is_super_call() {
-                                s_if.test_ = Expr::join_with_comma(prev_expr.value, s_if.test_);
+                                s_if.test = Expr::join_with_comma(prev_expr.value, s_if.test);
                                 output.truncate(prev_idx);
                             }
                         }
@@ -1887,7 +1947,7 @@ fn scopes_for_enum_at<'a>(
         .expect("scopes_in_order_for_enum miss for enum stmt loc")
 }
 
-pub(crate) fn fn_body_contains_use_strict(body: &[Stmt]) -> Option<bun_ast::Loc> {
+fn fn_body_contains_use_strict(body: &[Stmt]) -> Option<bun_ast::Loc> {
     use bun_ast::stmt::Data as StmtData;
     for stmt in body {
         // "use strict" has to appear at the top of the function body

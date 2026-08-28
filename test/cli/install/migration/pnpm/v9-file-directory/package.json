@@ -1,0 +1,7 @@
+{
+  "name": "v9-file-directory",
+  "version": "1.0.0",
+  "dependencies": {
+    "sub-dep": "file:./sub-dep"
+  }
+}

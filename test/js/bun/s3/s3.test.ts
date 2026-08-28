@@ -2,8 +2,8 @@ import type { S3Options } from "bun";
 import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
 import { describe, expect, it } from "bun:test";
 import child_process from "child_process";
-import { randomUUID } from "crypto";
-import { bunEnv, bunExe, dockerExe, getSecret, isCI, isDockerEnabled, tempDirWithFiles } from "harness";
+import { createHash, createHmac, randomUUID } from "crypto";
+import { bunEnv, bunExe, dockerExe, getSecret, isCI, isDockerEnabled, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
@@ -1028,7 +1028,7 @@ for (let credentials of allCredentials) {
         });
 
         it("Bun.write(s3file, file) should work with empty file", async () => {
-          const dir = tempDirWithFiles("fsr", {
+          await using dir = tempDir("fsr", {
             "hello.txt": "",
           });
           const tmp_filename = `${randomUUID()}.txt`;
@@ -1800,4 +1800,321 @@ describe("s3 multipart upload id validation", () => {
     expect(stdout).toContain("valid-id: resolved");
     expect(exitCode).toBe(0);
   }, 60_000);
+});
+
+describe("s3 upload stream body error", () => {
+  // The readStreamIntoSink abrupt path dispatches a single-file PUT before
+  // the pump promise rejects; the PUT's response callback must not read a
+  // freed MultiPartUpload when fail() runs from the reject handler.
+  it("does not UAF when a ReadableStream body errors after enqueue", async () => {
+    const fixture = `
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          await req.arrayBuffer();
+          return new Response(undefined, { status: 200, headers: { ETag: '"etag"' } });
+        },
+      });
+      const client = new Bun.S3Client({
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        region: "eu-west-3",
+        bucket: "my_bucket",
+        endpoint: \`http://127.0.0.1:\${server.port}\`,
+        virtualHostedStyle: false,
+      });
+      for (let i = 0; i < 5; i++) {
+        const rs = new ReadableStream({
+          async pull(controller) {
+            controller.enqueue(new Uint8Array(1024));
+            await Bun.sleep(1);
+            controller.error(new Error("boom"));
+          },
+        });
+        let caught = "none";
+        try {
+          await client.write("obj", new Request("https://example.com", { method: "PUT", body: rs }));
+        } catch (e) { caught = e.message; }
+        console.log("iter", i, caught);
+        Bun.gc(true);
+        await Bun.sleep(5);
+      }
+      server.stop(true);
+      console.log("done");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: "iter 0 boom\niter 1 boom\niter 2 boom\niter 3 boom\niter 4 boom\ndone",
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // A JS ReadableStream body that errors after some chunks. The pump closes the
+  // sink with the error before the write() promise rejects; that close used to
+  // be a clean end, which committed the buffered chunks as a complete
+  // single-file PUT while the caller saw the rejection. The upload must be
+  // aborted instead: no PUT for the object, and the promise rejects with the
+  // source's own error.
+  it.each([
+    [
+      "async pull",
+      "await Bun.sleep(1); if (n++ < 2) controller.enqueue(new Uint8Array(1024)); else controller.error(new Error('boom'));",
+      "rejected boom",
+    ],
+    [
+      "sync pull",
+      "if (n++ < 2) controller.enqueue(new Uint8Array(1024)); else controller.error(new Error('boom'));",
+      "rejected boom",
+    ],
+    // error() with no reason still errors the stream; the sink must not read
+    // the undefined reason as a clean close.
+    [
+      "error() without a reason",
+      "if (n++ < 2) controller.enqueue(new Uint8Array(1024)); else controller.error();",
+      "rejected ReadableStream ended with an error",
+    ],
+  ])("does not commit a PUT when a ReadableStream body errors after enqueue (%s)", async (_, pullBody, expected) => {
+    const fixture = `
+      const puts = {};
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const key = new URL(req.url).pathname;
+          puts[key] = (puts[key] ?? 0) + (await req.arrayBuffer()).byteLength;
+          return new Response(undefined, { status: 200, headers: { ETag: '"etag"' } });
+        },
+      });
+      const client = new Bun.S3Client({
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        region: "eu-west-3",
+        bucket: "my_bucket",
+        endpoint: \`http://127.0.0.1:\${server.port}\`,
+        virtualHostedStyle: false,
+      });
+      let n = 0;
+      const rs = new ReadableStream({
+        async pull(controller) { ${pullBody} },
+      });
+      const outcome = await client.write("obj", rs).then(
+        bytes => "resolved " + bytes,
+        e => "rejected " + e.message,
+      );
+      // A healthy upload afterwards proves the client still works and, having
+      // round-tripped through the same server, that no earlier PUT is pending.
+      const after = await client.write("ok", "x");
+      server.stop(true);
+      console.log(JSON.stringify({ outcome, after, puts }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      // The S3 client honors the proxy environment; the stub is on loopback.
+      env: { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, http_proxy: undefined, https_proxy: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({
+      outcome: expected,
+      after: 1,
+      puts: { "/my_bucket/ok": 1 },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // A native ByteStream source (fetch response body) that errors mid-stream must
+  // reject the s3.write() promise with the original JS error, not commit a
+  // truncated PUT or reject with a generic UnknownError.
+  it("rejects with the upstream error when a native ByteStream body fails mid-upload", async () => {
+    const fixture = `
+      const net = require("node:net");
+      let putBytes = 0;
+      const s3srv = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          if (req.method === "PUT") {
+            putBytes += (await req.arrayBuffer()).byteLength;
+          }
+          return new Response(undefined, { status: 200, headers: { ETag: '"etag"' } });
+        },
+      });
+      // Raw-socket source so we can drop the connection mid-body; the client's
+      // fetch Response body is a native ByteStream that then errors with
+      // ECONNRESET as a JS error.
+      const source = net.createServer(sock => {
+        sock.write(
+          "HTTP/1.1 200 OK\\r\\nContent-Length: 65536\\r\\n\\r\\n" +
+            Buffer.alloc(1024, 0x41).toString("latin1"),
+        );
+        setTimeout(() => sock.destroy(), 10);
+      });
+      await new Promise(r => source.listen(0, "127.0.0.1", r));
+      const client = new Bun.S3Client({
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        region: "eu-west-3",
+        bucket: "my_bucket",
+        endpoint: \`http://127.0.0.1:\${s3srv.port}\`,
+        virtualHostedStyle: false,
+      });
+      const upstream = await fetch(\`http://127.0.0.1:\${source.address().port}\`);
+      let caught = null;
+      try {
+        await client.write("obj", upstream);
+      } catch (e) {
+        caught = { code: e.code, name: e.name };
+      }
+      s3srv.stop(true);
+      source.close();
+      console.log(JSON.stringify({ caught, putBytes }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { caught, putBytes } = JSON.parse(stdout.trim());
+    // The upstream connection reset surfaces as the original error, not a
+    // generic "UnknownError", and the upload is aborted rather than committed.
+    expect(caught?.code).toBe("ECONNRESET");
+    expect(putBytes).toBe(0);
+    expect(exitCode).toBe(0);
+  });
+
+  // A fetch response body is a native ByteStream; passing it to s3.write must pipe it
+  // into the S3 NetworkSink without buffering the whole object and without spinning.
+  it("uploads a fetch response body via the native ByteStream -> NetworkSink path", async () => {
+    const fixture = `
+      const chunkSize = 64 * 1024;
+      const chunkCount = 160; // ~10 MB
+      const totalBytes = chunkSize * chunkCount;
+      let received = 0;
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const url = new URL(req.url);
+          if (url.pathname === "/big") {
+            let sent = 0;
+            return new Response(
+              new ReadableStream({
+                type: "direct",
+                async pull(controller) {
+                  while (sent < chunkCount) {
+                    controller.write(Buffer.alloc(chunkSize, 0x42));
+                    sent++;
+                    await controller.flush();
+                  }
+                  controller.close();
+                },
+              }),
+            );
+          }
+          if (req.method === "POST" && url.search.includes("uploads")) {
+            return new Response(
+              '<?xml version="1.0"?><InitiateMultipartUploadResult><Bucket>my_bucket</Bucket><Key>obj</Key><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>',
+              { headers: { "content-type": "application/xml" } },
+            );
+          }
+          if (req.method === "PUT") {
+            const { byteLength } = await req.arrayBuffer();
+            received += byteLength;
+            return new Response(undefined, { status: 200, headers: { ETag: '"etag"' } });
+          }
+          if (req.method === "POST" && url.search.includes("uploadId")) {
+            await req.arrayBuffer();
+            return new Response(
+              '<?xml version="1.0"?><CompleteMultipartUploadResult><ETag>"etag"</ETag></CompleteMultipartUploadResult>',
+              { headers: { "content-type": "application/xml" } },
+            );
+          }
+          return new Response(undefined, { status: 200, headers: { ETag: '"etag"' } });
+        },
+      });
+      const client = new Bun.S3Client({
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        region: "eu-west-3",
+        bucket: "my_bucket",
+        endpoint: \`http://127.0.0.1:\${server.port}\`,
+        virtualHostedStyle: false,
+      });
+      const upstream = await fetch(\`http://127.0.0.1:\${server.port}/big\`);
+      // S3Client.write() does not accept a bare ReadableStream; passing the Response
+      // routes BodyValue::Locked -> upload_stream(), which matches the native
+      // ByteStream -> NetworkSink fast-path this test exercises.
+      await client.write("obj", upstream);
+      server.stop(true);
+      console.log(JSON.stringify({ received, totalBytes }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { received, totalBytes } = JSON.parse(stdout.trim());
+    expect(received).toBe(totalBytes);
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("presigned url signature", () => {
+  function verifyPresignedUrl(presigned: string, credentials: { secretAccessKey: string; region: string }) {
+    const url = new URL(presigned);
+    const params = presigned.split("?")[1].split("&");
+    const signature = params.find(p => p.startsWith("X-Amz-Signature="))!.slice("X-Amz-Signature=".length);
+    const canonicalQuery = params.filter(p => !p.startsWith("X-Amz-Signature=")).join("&");
+    const amzDate = params.find(p => p.startsWith("X-Amz-Date="))!.slice("X-Amz-Date=".length);
+    const day = amzDate.slice(0, 8);
+    const canonicalRequest = [
+      "GET",
+      url.pathname,
+      canonicalQuery,
+      `host:${url.host}\n`,
+      "host",
+      "UNSIGNED-PAYLOAD",
+    ].join("\n");
+    const stringToSign = [
+      "AWS4-HMAC-SHA256",
+      amzDate,
+      `${day}/${credentials.region}/s3/aws4_request`,
+      createHash("sha256").update(canonicalRequest).digest("hex"),
+    ].join("\n");
+    const hmac = (key: string | Buffer, data: string) => createHmac("sha256", key).update(data).digest();
+    const signingKey = hmac(
+      hmac(hmac(hmac("AWS4" + credentials.secretAccessKey, day), credentials.region), "s3"),
+      "aws4_request",
+    );
+    const expected = createHmac("sha256", signingKey).update(stringToSign).digest("hex");
+    return { signature, expected };
+  }
+
+  it("derives the signing key from each credential's own region and secret", () => {
+    const commonOptions = {
+      accessKeyId: "test-access-key",
+      bucket: "bucket",
+      endpoint: "https://s3.example.com",
+    };
+    const credentialsA = { ...commonOptions, region: "us-east-1", secretAccessKey: "collides3keys" };
+    const credentialsB = { ...commonOptions, region: "us-east-1s3collide", secretAccessKey: "keys" };
+    for (const credentials of [credentialsA, credentialsB, credentialsA, credentialsB]) {
+      const client = new Bun.S3Client(credentials);
+      const presigned = client.presign("credentials-test");
+      const { signature, expected } = verifyPresignedUrl(presigned, credentials);
+      expect(signature).toBe(expected);
+    }
+  });
 });

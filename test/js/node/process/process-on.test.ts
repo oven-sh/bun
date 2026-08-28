@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
 describe("process.on", () => {
@@ -16,7 +16,7 @@ describe("process.on", () => {
   });
 
   it("should work inside --compile", () => {
-    const dir = tempDirWithFiles("process-on-test", {
+    using dir = tempDir("process-on-test", {
       "process-on-fixture.ts": require("fs").readFileSync(require.resolve("./process-on-fixture.ts"), "utf-8"),
       "package.json": `{
         "name": "process-on-test",
@@ -49,7 +49,7 @@ describe("process.on", () => {
   });
 
   it("should work inside a macro", () => {
-    const dir = tempDirWithFiles("process-on-test", {
+    using dir = tempDir("process-on-test", {
       "process-on-fixture.ts": require("fs").readFileSync(require.resolve("./process-on-fixture.ts"), "utf-8"),
       "entry.ts": `import { initialize } from "./process-on-fixture.ts" with {type: "macro"};
       initialize();`,

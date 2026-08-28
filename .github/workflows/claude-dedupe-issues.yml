@@ -1,4 +1,7 @@
 name: Claude Issue Dedupe
+permissions:
+  contents: read
+
 on:
   issues:
     types: [opened]
@@ -22,12 +25,14 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Run Claude Code slash command
-        uses: anthropics/claude-code-base-action@98d41f9809750c4c96f2cd285746ecef889f14bc
+        uses: anthropics/claude-code-action/base-action@3f854a8fb5146b39d5cbf8b57f70d80810e1366f # v1.0.198
         env:
-          ANTHROPIC_MODEL: claude-opus-4-6[1m]
+          ANTHROPIC_MODEL: claude-opus-5
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           prompt: "/dedupe ${{ github.repository }}/issues/${{ github.event.issue.number || inputs.issue_number }}"

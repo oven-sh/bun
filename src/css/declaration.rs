@@ -1,7 +1,6 @@
 use crate::css_parser as css;
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
-pub use css::Error;
 use css::{CssResult as Result, PrintErr, Printer};
 
 use crate::css_properties::align::AlignHandler;
@@ -20,7 +19,6 @@ use crate::css_properties::text::Direction;
 use crate::css_properties::transform::TransformHandler;
 use crate::css_properties::transition::TransitionHandler;
 use crate::css_properties::ui::ColorSchemeHandler;
-// const GridHandler = css.css_properties.g
 
 pub type DeclarationList<'bump> = bun_alloc::ArenaVec<'bump, css::Property>;
 
@@ -34,63 +32,28 @@ pub type DeclarationList<'bump> = bun_alloc::ArenaVec<'bump, css::Property>;
 /// instead of two.
 pub struct DeclarationBlock<'bump> {
     /// A list of `!important` declarations in the block.
-    pub important_declarations: DeclarationList<'bump>,
+    pub(crate) important_declarations: DeclarationList<'bump>,
     /// A list of normal declarations in the block.
-    pub declarations: DeclarationList<'bump>,
-}
-
-pub struct DebugFmt<'a, 'bump>(&'a DeclarationBlock<'bump>);
-
-impl<'a, 'bump> core::fmt::Display for DebugFmt<'a, 'bump> {
-    fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // Debug formatter: uses a throwaway local arena for the printer's
-        // scratch buffers.
-        let bump = Bump::new();
-        let mut arraylist: Vec<u8> = Vec::new();
-        let symbols = bun_ast::symbol::Map::init_list(Default::default());
-        let mut printer = css::Printer::new(
-            &bump,
-            bun_alloc::ArenaVec::<u8>::new_in(&bump),
-            &mut arraylist,
-            &css::PrinterOptions::default(),
-            None,
-            None,
-            &symbols,
-        );
-        let res = self.0.to_css(&mut printer);
-        // Release the printer's `&mut arraylist` borrow before reading it back.
-        drop(printer);
-        match res {
-            Ok(()) => {}
-            Err(e) => {
-                return writeln!(writer, "<error writing declaration block: {}>", e.name());
-            }
-        }
-        write!(writer, "{}", bstr::BStr::new(&arraylist))
-    }
+    pub(crate) declarations: DeclarationList<'bump>,
 }
 
 impl<'bump> DeclarationBlock<'bump> {
-    pub fn debug(&self) -> DebugFmt<'_, 'bump> {
-        DebugFmt(self)
-    }
-
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.declarations.is_empty() && self.important_declarations.is_empty()
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.declarations.len() + self.important_declarations.len()
     }
 
-    pub fn new_in(bump: &'bump Bump) -> Self {
+    pub(crate) fn new_in(bump: &'bump Bump) -> Self {
         Self {
             important_declarations: DeclarationList::new_in(bump),
             declarations: DeclarationList::new_in(bump),
         }
     }
 
-    pub fn minify(
+    pub(crate) fn minify(
         &mut self,
         handler: &mut DeclarationHandler<'bump>,
         important_handler: &mut DeclarationHandler<'bump>,
@@ -175,37 +138,6 @@ impl<'bump> DeclarationBlock<'bump> {
 
         Ok(())
     }
-
-    /// Writes the declarations to a CSS block, including starting and ending braces.
-    pub fn to_css_block(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        dest.whitespace()?;
-        dest.write_char(b'{')?;
-        dest.indent();
-
-        let mut i: usize = 0;
-        let length = self.len();
-
-        for decl in self.declarations.iter() {
-            dest.newline()?;
-            decl.to_css(dest, false)?;
-            if i != length - 1 || !dest.minify {
-                dest.write_char(b';')?;
-            }
-            i += 1;
-        }
-        for decl in self.important_declarations.iter() {
-            dest.newline()?;
-            decl.to_css(dest, true)?;
-            if i != length - 1 || !dest.minify {
-                dest.write_char(b';')?;
-            }
-            i += 1;
-        }
-
-        dest.dedent();
-        dest.newline()?;
-        dest.write_char(b'}')
-    }
 }
 
 // ─── parse ────────────────────────────────────────────────────────────────
@@ -258,16 +190,6 @@ impl DeclarationBlock<'static> {
 // ─── hash / eql / deep_clone ──────────────────────────────────────────────
 
 impl<'bump> DeclarationBlock<'bump> {
-    pub fn hash_property_ids(&self, hasher: &mut bun_wyhash::Wyhash) {
-        use std::hash::Hash;
-        for decl in self.declarations.iter() {
-            decl.property_id().hash(hasher);
-        }
-        for decl in self.important_declarations.iter() {
-            decl.property_id().hash(hasher);
-        }
-    }
-
     pub fn eql(&self, other: &Self) -> bool {
         if self.declarations.len() != other.declarations.len()
             || self.important_declarations.len() != other.important_declarations.len()
@@ -283,21 +205,6 @@ impl<'bump> DeclarationBlock<'bump> {
                 .iter()
                 .zip(other.important_declarations.iter())
                 .all(|(a, b)| a.eql(b))
-    }
-
-    pub fn deep_clone(&self, bump: &'bump Bump) -> Self {
-        Self {
-            important_declarations: bun_alloc::vec_from_iter_in(
-                self.important_declarations
-                    .iter()
-                    .map(|p| p.deep_clone(bump)),
-                bump,
-            ),
-            declarations: bun_alloc::vec_from_iter_in(
-                self.declarations.iter().map(|p| p.deep_clone(bump)),
-                bump,
-            ),
-        }
     }
 }
 
@@ -387,7 +294,7 @@ impl<'a, 'bump> css::RuleBodyItemParser for PropertyDeclarationParser<'a, 'bump>
 
 // ─── parse_declaration ────────────────────────────────────────────────────
 
-pub fn parse_declaration<'bump>(
+pub(crate) fn parse_declaration<'bump>(
     name: &[u8],
     input: &mut css::Parser,
     declarations: &mut DeclarationList<'bump>,
@@ -408,7 +315,7 @@ pub fn parse_declaration<'bump>(
 // trait (defined in `css_parser.rs`); `NoComposesCtx` returns
 // `DisallowEntirely` so the no-tracking fast-path collapses into the match's
 // no-op arm.
-pub fn parse_declaration_impl<'bump, C>(
+pub(crate) fn parse_declaration_impl<'bump, C>(
     name: &[u8],
     input: &mut css::Parser,
     declarations: &mut DeclarationList<'bump>,
@@ -481,34 +388,30 @@ where
 
 /// Per-shorthand-group handler state used by `DeclarationBlock::minify`.
 pub struct DeclarationHandler<'bump> {
-    pub background: BackgroundHandler,
-    pub border: BorderHandler,
-    pub flex: FlexHandler,
-    pub align: AlignHandler,
-    pub size: SizeHandler,
-    pub margin: MarginHandler,
-    pub padding: PaddingHandler,
-    pub scroll_margin: ScrollMarginHandler,
-    pub transition: TransitionHandler,
-    pub font: FontHandler,
-    pub inset: InsetHandler,
-    pub transform: TransformHandler,
-    pub box_shadow: BoxShadowHandler,
-    pub color_scheme: ColorSchemeHandler,
+    pub(crate) background: BackgroundHandler,
+    pub(crate) border: BorderHandler,
+    pub(crate) flex: FlexHandler,
+    pub(crate) align: AlignHandler,
+    pub(crate) size: SizeHandler,
+    pub(crate) margin: MarginHandler,
+    pub(crate) padding: PaddingHandler,
+    pub(crate) scroll_margin: ScrollMarginHandler,
+    pub(crate) transition: TransitionHandler,
+    pub(crate) font: FontHandler,
+    pub(crate) inset: InsetHandler,
+    pub(crate) transform: TransformHandler,
+    pub(crate) box_shadow: BoxShadowHandler,
+    pub(crate) color_scheme: ColorSchemeHandler,
     pub fallback: FallbackHandler,
-    pub direction: Option<Direction>,
-    pub decls: DeclarationList<'bump>,
+    pub(crate) direction: Option<Direction>,
+    pub(crate) decls: DeclarationList<'bump>,
 }
 
 impl<'bump> DeclarationHandler<'bump> {
-    pub fn finalize(&mut self, context: &mut css::PropertyHandlerContext) {
+    pub(crate) fn finalize(&mut self, context: &mut css::PropertyHandlerContext) {
         if let Some(direction) = self.direction.take() {
             self.decls.push(css::Property::Direction(direction));
         }
-        // if (this.unicode_bidi) |unicode_bidi| {
-        //     this.unicode_bidi = null;
-        //     this.decls.append(context.arena, css.Property{ .unicode_bidi = unicode_bidi }) catch |err| bun.handleOom(err);
-        // }
 
         self.background.finalize(&mut self.decls, context);
         self.border.finalize(&mut self.decls, context);
@@ -527,7 +430,7 @@ impl<'bump> DeclarationHandler<'bump> {
         self.fallback.finalize(&mut self.decls, context);
     }
 
-    pub fn handle_property(
+    pub(crate) fn handle_property(
         &mut self,
         property: &css::Property,
         context: &mut css::PropertyHandlerContext,
@@ -579,7 +482,7 @@ impl<'bump> DeclarationHandler<'bump> {
                 .handle_property(property, &mut self.decls, context)
     }
 
-    pub fn new(bump: &'bump Bump) -> Self {
+    pub(crate) fn new(bump: &'bump Bump) -> Self {
         Self {
             background: Default::default(),
             border: Default::default(),

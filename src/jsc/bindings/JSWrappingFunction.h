@@ -41,12 +41,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSWrappingFunction, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForWrappingFunction.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWrappingFunction = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForWrappingFunction.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForWrappingFunction = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<JSWrappingFunction, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForWrappingFunction, m_subspaceForWrappingFunction));
     }
 
     DECLARE_EXPORT_INFO;
@@ -55,7 +50,7 @@ public:
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
         ASSERT(globalObject);
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::JSFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::JSFunctionType, StructureFlags), info());
     }
 
 private:

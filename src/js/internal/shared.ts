@@ -1,5 +1,3 @@
-const { SafeArrayIterator } = require("internal/primordials");
-
 const ObjectFreeze = Object.freeze;
 
 class NotImplementedError extends Error {
@@ -57,7 +55,7 @@ class ExceptionWithHostPort extends Error {
   port?: number;
   address: string;
 
-  constructor(err: number, syscall: string, address: string, port?: number) {
+  constructor(err: number, syscall: string, address: string, port?: number, additional?: string) {
     // TODO(joyeecheung): We have to use the type-checked
     // getSystemErrorName(err) to guard against invalid arguments from users.
     // This can be replaced with [ code ] = errmap.get(err) when this method
@@ -69,6 +67,9 @@ class ExceptionWithHostPort extends Error {
       details = ` ${address}:${port}`;
     } else if (address) {
       details = ` ${address}`;
+    }
+    if (additional) {
+      details += ` - Local (${additional})`;
     }
 
     super(`${syscall} ${code}${details}`);
@@ -88,7 +89,7 @@ class ExceptionWithHostPort extends Error {
 
 class NodeAggregateError extends AggregateError {
   constructor(errors, message) {
-    super(new SafeArrayIterator(errors), message);
+    super(new (require("internal/primordials").SafeArrayIterator)(errors), message);
     this.code = errors[0]?.code;
   }
   get ["constructor"]() {
@@ -144,6 +145,89 @@ function once(callback, { preserveReturnValue = false } = kEmptyObject) {
 
 const kEmptyObject = ObjectFreeze(Object.create(null));
 
+// process.send() options marking cluster-internal traffic; the flag is a private name so user code cannot set it.
+const kInternalSendOptions: any = Object.create(null);
+$putByIdDirectPrivate(kInternalSendOptions, "internal", true);
+ObjectFreeze(kInternalSendOptions);
+
+// Node invokes fs/dns callbacks via InternalMakeCallback, so a throw becomes uncaughtException
+// (not unhandledRejection); Bun runs them from a promise reaction so we reroute the throw.
+// https://github.com/nodejs/node/blob/main/src/api/callback.cc
+const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
+
+// Wrap a node-style callback so a throw inside it takes the uncaught path. The
+// callback keeps its place in the event loop; only the throw is rerouted. The
+// arity switch avoids materializing `arguments` for the shapes fs and dns use.
+function guardCallback(callback) {
+  return function guarded(a, b, c) {
+    try {
+      switch (arguments.length) {
+        case 0:
+          return callback();
+        case 1:
+          return callback(a);
+        case 2:
+          return callback(a, b);
+        case 3:
+          return callback(a, b, c);
+        default:
+          return callback.$apply(undefined, arguments);
+      }
+    } catch (e) {
+      reportUncaughtException(e);
+    }
+  };
+}
+
+const nodeModulesRE = /[\\/]node_modules[\\/]/;
+const ErrorCaptureStackTrace = Error.captureStackTrace;
+function returnStackFrames(_err: unknown, frames: unknown[]) {
+  return frames;
+}
+
+// Port of node's IsInsideNodeModules: first real user frame inside node_modules?
+// Guarded so a tampered Error.* never escapes to callers like url.parse.
+// https://github.com/nodejs/node/blob/main/src/node_util.cc
+function isInsideNodeModules(frameLimit: number): boolean {
+  let prevLimit: unknown, prevPrepare: unknown;
+  let frames: { getFileName(): string | null }[] | undefined;
+  try {
+    prevLimit = Error.stackTraceLimit;
+    prevPrepare = Error.prepareStackTrace;
+    Error.stackTraceLimit = frameLimit;
+    Error.prepareStackTrace = returnStackFrames;
+    const target: { stack?: unknown } = {};
+    ErrorCaptureStackTrace(target, isInsideNodeModules);
+    frames = target.stack as typeof frames;
+  } catch {
+  } finally {
+    try {
+      Error.stackTraceLimit = prevLimit;
+      Error.prepareStackTrace = prevPrepare;
+    } catch {}
+  }
+  if (!$isJSArray(frames)) return false;
+  try {
+    for (const frame of frames) {
+      const filename = frame.getFileName();
+      if (!filename || filename.startsWith("node:") || filename.startsWith("internal:") || filename === "native") {
+        continue;
+      }
+      return nodeModulesRE.test(filename);
+    }
+  } catch {}
+  return false;
+}
+
+// Marks an addEventListener() options object so that dispatch still invokes the
+// listener after an unrelated listener called event.stopImmediatePropagation().
+// `$kResistStopPropagation` is a private symbol the native EventTarget reads, so
+// only these internal modules can reach it.
+function resistStopPropagation<T extends object>(options: T): T {
+  (options as AddEventListenerOptions).$kResistStopPropagation = true;
+  return options;
+}
+
 function getLazy<T>(initializer: () => T) {
   let value: T;
   let initialized = false;
@@ -167,7 +251,7 @@ const observerCounts = new Map();
 const kObservers = new Set();
 
 /** Entry types routed through this JS-side registry instead of the native observer. */
-const kNodeEntryTypes = new Set(["net", "dns", "http", "function"]);
+const kNodeEntryTypes = new Set(["net", "dns", "http", "http2", "function", "quic"]);
 
 function hasObserver(type) {
   return (observerCounts.get(type) ?? 0) > 0;
@@ -308,10 +392,16 @@ function makeNodeEntryList(entries) {
   };
 }
 
+// Node's ERR_INTERNAL_ASSERTION constructor appends this automatically; bun's
+// $ERR_INTERNAL_ASSERTION takes the full message, so call sites share it here.
+const kInternalAssertionSuffix =
+  "\nThis is caused by either a bug in Node.js or incorrect usage of Node.js internals.\n" +
+  "Please open an issue with this stack trace at https://github.com/nodejs/node/issues\n";
+
 //
 
 export default {
-  NotImplementedError,
+  kInternalAssertionSuffix,
   throwNotImplemented,
   hideFromStack,
   warnNotImplementedOnce,
@@ -321,6 +411,10 @@ export default {
   ErrnoException,
   once,
   getLazy,
+  guardCallback,
+  isInsideNodeModules,
+  reportUncaughtException,
+  resistStopPropagation,
 
   hasObserver,
   startPerf,
@@ -331,9 +425,10 @@ export default {
   PerformanceNodeEntry,
 
   kHandle: Symbol("kHandle"),
+  kClusterOwner: Symbol("kClusterOwner"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),
-  kResistStopPropagation: Symbol("kResistStopPropagation"),
   kWeakHandler: Symbol("kWeak"),
-  kGetNativeReadableProto: Symbol("kGetNativeReadableProto"),
+  kCustomPromisifyArgsSymbol: Symbol("customPromisifyArgs"),
   kEmptyObject,
+  kInternalSendOptions,
 };

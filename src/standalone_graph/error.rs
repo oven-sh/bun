@@ -10,8 +10,6 @@ pub enum Error {
     InvalidResponse,
     #[error("ExtractionFailed")]
     ExtractionFailed,
-    #[error("UnsupportedTarget")]
-    UnsupportedTarget,
     #[error("InvalidSourceMap")]
     InvalidSourceMap,
     #[error("SourceMapTooLarge")]
@@ -45,7 +43,6 @@ impl Error {
             Self::NetworkError => "NetworkError",
             Self::InvalidResponse => "InvalidResponse",
             Self::ExtractionFailed => "ExtractionFailed",
-            Self::UnsupportedTarget => "UnsupportedTarget",
             Self::InvalidSourceMap => "InvalidSourceMap",
             Self::SourceMapTooLarge => "SourceMapTooLarge",
             Self::Sys(e) => <&'static str>::from(e),

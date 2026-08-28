@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include "JSCallbackArgs.h"
 #include "helpers.h"
 #include "ncrypto.h"
 
@@ -11,23 +12,21 @@ struct CheckPrimeJobCtx {
     ~CheckPrimeJobCtx();
 
     void runTask(JSC::JSGlobalObject* lexicalGlobalObject);
-    void runFromJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue callback);
+    JSCallbackArgs runFromJS(JSC::JSGlobalObject* lexicalGlobalObject);
     void deinit();
 
     int32_t m_checks;
     ncrypto::BignumPointer m_candidate;
 
     bool m_result { false };
+    bool m_failed { false };
 
     WTF_MAKE_TZONE_ALLOCATED(CheckPrimeJobCtx);
 };
 
 // Opaque struct created zig land
 struct CheckPrimeJob {
-    static CheckPrimeJob* create(JSC::JSGlobalObject*, ncrypto::BignumPointer candidate, int32_t checks, JSC::JSValue callback);
     static void createAndSchedule(JSC::JSGlobalObject* globalObject, ncrypto::BignumPointer candidate, int32_t checks, JSC::JSValue callback);
-
-    void schedule();
 };
 
 struct GeneratePrimeJobCtx {
@@ -35,7 +34,7 @@ struct GeneratePrimeJobCtx {
     ~GeneratePrimeJobCtx();
 
     void runTask(JSC::JSGlobalObject* lexicalGlobalObject);
-    void runFromJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue callback);
+    JSCallbackArgs runFromJS(JSC::JSGlobalObject* lexicalGlobalObject);
     void deinit();
 
     int32_t m_size;
@@ -44,18 +43,16 @@ struct GeneratePrimeJobCtx {
     ncrypto::BignumPointer m_add;
     ncrypto::BignumPointer m_rem;
     ncrypto::BignumPointer m_prime;
+    bool m_failed { false };
 
     WTF_MAKE_TZONE_ALLOCATED(GeneratePrimeJobCtx);
 };
 
 // Opaque struct created zig land
 struct GeneratePrimeJob {
-    static GeneratePrimeJob* create(JSC::JSGlobalObject*, int32_t size, bool safe, ncrypto::BignumPointer prime, ncrypto::BignumPointer add, ncrypto::BignumPointer rem, bool bigint, JSC::JSValue callback);
     static void createAndSchedule(JSC::JSGlobalObject*, int32_t size, bool safe, ncrypto::BignumPointer prime, ncrypto::BignumPointer add, ncrypto::BignumPointer rem, bool bigint, JSC::JSValue callback);
 
     static JSC::JSValue result(JSC::JSGlobalObject*, JSC::ThrowScope&, const ncrypto::BignumPointer& prime, bool bigint);
-
-    void schedule();
 };
 
 JSC_DECLARE_HOST_FUNCTION(jsCheckPrime);

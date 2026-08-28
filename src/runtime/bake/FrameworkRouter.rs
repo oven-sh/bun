@@ -11,6 +11,7 @@ use bun_alloc::{AllocError, Arena, ArenaVec};
 use bun_collections::array_hash_map::ArrayHashContext;
 use bun_collections::{ArrayHashMap, BoundedArray, StringArrayHashMap};
 use bun_core::Output;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc, Strong, StrongOptional,
 };
@@ -30,12 +31,12 @@ pub type OpaqueFileIdOptional = Option<OpaqueFileId>;
 
 pub struct FrameworkRouter {
     /// Absolute path to root directory of the router.
-    pub root: Box<[u8]>,
-    pub types: Box<[Type]>,
-    pub routes: Vec<Route>,
+    pub(crate) root: Box<[u8]>,
+    pub(crate) types: Box<[Type]>,
+    pub(crate) routes: Vec<Route>,
     /// Keys are full URL, with leading /, no trailing /
     /// Value is Route Index
-    pub static_routes: StaticRouteMap,
+    pub(crate) static_routes: StaticRouteMap,
     /// A flat list of all dynamic patterns.
     ///
     /// Used to detect routes that have the same effective URL. Examples:
@@ -50,7 +51,7 @@ pub struct FrameworkRouter {
     /// Root files are not caught using this technique, since every route tree has a
     /// root. This check is special cased.
     // TODO: no code to sort this data structure
-    pub dynamic_routes: DynamicRouteMap,
+    pub(crate) dynamic_routes: DynamicRouteMap,
 
     /// Arena allocator for pattern strings.
     ///
@@ -67,36 +68,32 @@ pub struct FrameworkRouter {
     ///    In this process it's too easy to lose the original base pointer and
     ///    length of the entire allocation. So we'll just allocate everything in
     ///    this arena to ensure that everything gets freed.
-    pub pattern_string_arena: Arena,
-
-    pub edges: Vec<RouteEdge>,
-    pub freed_edges: Vec<RouteEdgeIndex>,
+    pub(crate) pattern_string_arena: Arena,
 }
 
-pub type StaticRouteMap = StringArrayHashMap<RouteIndex>;
-pub type DynamicRouteMap = ArrayHashMap<EncodedPattern, RouteIndex, EffectiveUrlContext>;
+pub(crate) type StaticRouteMap = StringArrayHashMap<RouteIndex>;
+pub(crate) type DynamicRouteMap = ArrayHashMap<EncodedPattern, RouteIndex, EffectiveUrlContext>;
 
 /// A logical route, for which layouts are looked up on after resolving a route.
-pub struct Route {
+pub(crate) struct Route {
     // Payload bytes borrow from the sibling `pattern_string_arena` field — a
     // self-referential borrow Rust lifetimes cannot express, so it is detached
     // to `'static` via `to_owned_part()` at insertion. See `to_owned_part` for
     // the safety invariant (arena outlives every `Route`).
-    pub part: Part<'static>,
+    pub(crate) part: Part<'static>,
     pub r#type: TypeIndex,
 
-    pub parent: Option<RouteIndex>,
-    pub first_child: Option<RouteIndex>,
-    pub prev_sibling: Option<RouteIndex>,
-    pub next_sibling: Option<RouteIndex>,
+    pub(crate) parent: Option<RouteIndex>,
+    pub(crate) first_child: Option<RouteIndex>,
+    pub(crate) next_sibling: Option<RouteIndex>,
 
     // Note: A route may be associated with no files, in which it is just a
     // construct for building the tree.
-    pub file_page: OpaqueFileIdOptional,
-    pub file_layout: OpaqueFileIdOptional,
+    pub(crate) file_page: OpaqueFileIdOptional,
+    pub(crate) file_layout: OpaqueFileIdOptional,
     // pub file_not_found: OpaqueFileIdOptional,
     /// Only used by DevServer, if this route is 1. navigatable & 2. has been requested at least once
-    pub bundle: RouteBundleIndexOptional,
+    pub(crate) bundle: RouteBundleIndexOptional,
 }
 
 impl Route {
@@ -120,38 +117,39 @@ pub enum FileKind {
     // NotFound,
 }
 
+impl FileKind {
+    /// The noun in "Multiple {} matching the same route pattern is ambiguous".
+    pub(crate) fn collision_noun(self) -> &'static str {
+        match self {
+            FileKind::Page => "pages",
+            FileKind::Layout => "layout",
+        }
+    }
+}
+
 pub enum RouteMarker {}
 pub type RouteIndex = bun_core::GenericIndex<u32, RouteMarker>;
 
-/// Referenced only by the dead `new_edge` free-list helper.
-#[derive(Copy, Clone, Debug, Default)]
-pub struct RouteEdge;
-
-pub enum RouteEdgeMarker {}
-pub(crate) type RouteEdgeIndex = bun_core::GenericIndex<u32, RouteEdgeMarker>;
-
 /// Native code for `FrameworkFileSystemRouterType`
 pub struct Type {
-    pub abs_root: Box<[u8]>,
-    pub prefix: Box<[u8]>,
-    pub ignore_underscores: bool,
-    pub ignore_dirs: Box<[Box<[u8]>]>,
-    pub extensions: Box<[Box<[u8]>]>,
-    pub style: Style,
-    pub allow_layouts: bool,
+    pub(crate) abs_root: Box<[u8]>,
+    pub(crate) ignore_underscores: bool,
+    pub(crate) ignore_dirs: Box<[Box<[u8]>]>,
+    pub(crate) extensions: Box<[Box<[u8]>]>,
+    pub(crate) style: Style,
+    pub(crate) allow_layouts: bool,
     /// `FrameworkRouter` itself does not use this value.
-    pub client_file: OpaqueFileIdOptional,
+    pub(crate) client_file: OpaqueFileIdOptional,
     /// `FrameworkRouter` itself does not use this value.
-    pub server_file: OpaqueFileId,
+    pub(crate) server_file: OpaqueFileId,
     /// `FrameworkRouter` itself does not use this value.
-    pub server_file_string: StrongOptional,
+    pub(crate) server_file_string: StrongOptional,
 }
 
 impl Default for Type {
     fn default() -> Self {
         Self {
             abs_root: Box::default(),
-            prefix: Box::<[u8]>::from(b"/".as_slice()),
             ignore_underscores: false,
             ignore_dirs: Box::new([
                 Box::<[u8]>::from(b".git".as_slice()),
@@ -168,7 +166,7 @@ impl Default for Type {
 }
 
 impl Type {
-    pub fn root_route_index(type_index: TypeIndex) -> RouteIndex {
+    pub(crate) fn root_route_index(type_index: TypeIndex) -> RouteIndex {
         RouteIndex::init(type_index.get() as u32)
     }
 }
@@ -177,7 +175,10 @@ pub enum TypeMarker {}
 pub type TypeIndex = bun_core::GenericIndex<u8, TypeMarker>;
 
 impl FrameworkRouter {
-    pub fn init_empty(root: &[u8], mut types: Box<[Type]>) -> Result<FrameworkRouter, AllocError> {
+    pub(crate) fn init_empty(
+        root: &[u8],
+        mut types: Box<[Type]>,
+    ) -> Result<FrameworkRouter, AllocError> {
         debug_assert!(paths::is_absolute(root));
 
         let mut routes: Vec<Route> = Vec::with_capacity(types.len());
@@ -191,7 +192,6 @@ impl FrameworkRouter {
                 part: Part::Text(b""),
                 r#type: TypeIndex::init(u8::try_from(type_index).expect("int cast")),
                 parent: None,
-                prev_sibling: None,
                 next_sibling: None,
                 first_child: None,
                 file_page: None,
@@ -207,14 +207,12 @@ impl FrameworkRouter {
             dynamic_routes: DynamicRouteMap::default(),
             static_routes: StaticRouteMap::default(),
             pattern_string_arena: Arena::new(),
-            edges: Vec::new(),
-            freed_edges: Vec::new(),
         })
     }
 }
 
 impl FrameworkRouter {
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = size_of::<FrameworkRouter>();
         cost += self.routes.capacity() * size_of::<Route>();
         // The `ArrayHashMap` stores three column `Vec`s (keys, values, 32-bit
@@ -226,7 +224,7 @@ impl FrameworkRouter {
         cost
     }
 
-    pub fn scan_all(
+    pub(crate) fn scan_all(
         &mut self,
         r: &mut Resolver,
         ctx: &mut dyn InsertionHandler,
@@ -242,24 +240,19 @@ impl FrameworkRouter {
 /// as a string, while easily decodable as []Part.
 // Copy: bitwise OK — `data` borrows from `pattern_string_arena`; the arena owns it.
 #[derive(Copy, Clone)]
-pub struct EncodedPattern {
+pub(crate) struct EncodedPattern {
     // ARENA: backed by `pattern_string_arena` (arena owns the bytes; outlives
     // every `EncodedPattern` — see `RawSlice` invariant in `bun_ptr`).
-    pub data: bun_ptr::RawSlice<u8>,
+    pub(crate) data: bun_ptr::RawSlice<u8>,
 }
 
 impl EncodedPattern {
-    /// `/` is represented by zero bytes
-    pub const ROOT: EncodedPattern = EncodedPattern {
-        data: bun_ptr::RawSlice::EMPTY,
-    };
-
     #[inline]
     fn data(&self) -> &[u8] {
         self.data.slice()
     }
 
-    pub fn pattern_serialized_length(parts: &[Part]) -> usize {
+    pub(crate) fn pattern_serialized_length(parts: &[Part]) -> usize {
         let mut size: usize = 0;
         for part in parts {
             size += size_of::<u32>() + part.payload().len();
@@ -267,7 +260,10 @@ impl EncodedPattern {
         size
     }
 
-    pub fn init_from_parts(parts: &[Part], arena: &Arena) -> Result<EncodedPattern, AllocError> {
+    pub(crate) fn init_from_parts(
+        parts: &[Part],
+        arena: &Arena,
+    ) -> Result<EncodedPattern, AllocError> {
         let len = Self::pattern_serialized_length(parts);
         let slice = arena.alloc_slice_fill_default::<u8>(len);
         {
@@ -283,22 +279,14 @@ impl EncodedPattern {
         })
     }
 
-    pub fn iterate(&self) -> EncodedPatternIterator<'_> {
+    pub(crate) fn iterate(&self) -> EncodedPatternIterator<'_> {
         EncodedPatternIterator {
             pattern: self.data(),
             offset: 0,
         }
     }
 
-    pub fn part_at(&self, byte_offset: usize) -> Option<Part<'_>> {
-        EncodedPatternIterator {
-            pattern: self.data(),
-            offset: byte_offset,
-        }
-        .peek()
-    }
-
-    pub fn effective_url_hash(&self) -> usize {
+    pub(crate) fn effective_url_hash(&self) -> usize {
         // The strategy is to write all bytes, then hash them. Avoiding
         // multiple hash calls on small chunks. Allocation is not needed
         // since the upper bound is known (file path limits)
@@ -402,13 +390,13 @@ impl EncodedPattern {
     }
 }
 
-pub struct EncodedPatternIterator<'a> {
+pub(crate) struct EncodedPatternIterator<'a> {
     pattern: &'a [u8],
     offset: usize,
 }
 
 impl<'a> EncodedPatternIterator<'a> {
-    pub(crate) fn read_with_size(&self) -> (Part<'a>, usize) {
+    fn read_with_size(&self) -> (Part<'a>, usize) {
         let header = SerializedHeader(u32::from_le_bytes(
             self.pattern[self.offset..self.offset + size_of::<u32>()]
                 .try_into()
@@ -424,13 +412,6 @@ impl<'a> EncodedPatternIterator<'a> {
             PartTag::Group => Part::Group(payload),
         };
         (part, size_of::<u32>() + header.len())
-    }
-
-    pub(crate) fn peek(&self) -> Option<Part<'a>> {
-        if self.offset >= self.pattern.len() {
-            return None;
-        }
-        Some(self.read_with_size().0)
     }
 }
 
@@ -448,7 +429,7 @@ impl<'a> Iterator for EncodedPatternIterator<'a> {
 
 /// Hash context for DynamicRouteMap — hashes/compares by effective URL.
 #[derive(Default, Clone, Copy)]
-pub struct EffectiveUrlContext;
+pub(crate) struct EffectiveUrlContext;
 impl ArrayHashContext<EncodedPattern> for EffectiveUrlContext {
     fn hash(&self, p: &EncodedPattern) -> u32 {
         p.effective_url_hash() as u32 // @truncate
@@ -461,7 +442,7 @@ impl ArrayHashContext<EncodedPattern> for EffectiveUrlContext {
 /// Wrapper around a slice to provide same interface to be used in `insert`
 /// but with the allocation being backed by a plain string, which each
 /// part separated by slashes.
-pub struct StaticPattern {
+pub(crate) struct StaticPattern {
     // ARENA: backed by `pattern_string_arena` (arena owns the bytes; outlives
     // every `StaticPattern` — see `RawSlice` invariant in `bun_ptr`).
     pub route_path: bun_ptr::RawSlice<u8>,
@@ -473,7 +454,7 @@ impl StaticPattern {
         self.route_path.slice()
     }
 
-    pub(crate) fn iterate(&self) -> StaticPatternIterator<'_> {
+    fn iterate(&self) -> StaticPatternIterator<'_> {
         StaticPatternIterator {
             pattern: self.route_path(),
             offset: 0,
@@ -487,7 +468,7 @@ pub(crate) struct StaticPatternIterator<'a> {
 }
 
 impl<'a> StaticPatternIterator<'a> {
-    pub(crate) fn read_with_size(&self) -> (Part<'a>, usize) {
+    fn read_with_size(&self) -> (Part<'a>, usize) {
         let next_i = strings::index_of_char_pos(self.pattern, b'/', self.offset + 1)
             .unwrap_or(self.pattern.len());
         let text = &self.pattern[self.offset + 1..next_i];
@@ -573,7 +554,7 @@ impl<'a> Part<'a> {
         }
     }
 
-    pub fn write_as_serialized(&self, writer: &mut impl bun_io::Write) -> crate::Result<()> {
+    pub(crate) fn write_as_serialized(&self, writer: &mut impl bun_io::Write) -> crate::Result<()> {
         if let Part::Text(text) = self {
             debug_assert!(!text.is_empty());
             debug_assert!(strings::index_of_char(text, b'/').is_none());
@@ -586,7 +567,7 @@ impl<'a> Part<'a> {
         Ok(())
     }
 
-    pub fn eql(&self, b: &Part<'_>) -> bool {
+    pub(crate) fn eql(&self, b: &Part<'_>) -> bool {
         if self.tag() != b.tag() {
             return false;
         }
@@ -612,7 +593,7 @@ impl fmt::Display for Part<'_> {
     }
 }
 
-pub struct ParsedPattern<'a> {
+pub(crate) struct ParsedPattern<'a> {
     pub parts: &'a [Part<'a>],
     pub kind: ParsedPatternKind,
 }
@@ -664,12 +645,12 @@ bun_core::comptime_string_map! {
     };
 }
 
-pub(crate) const STYLE_ERROR_MESSAGE: &str = "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", \"nextjs-app-routes\", or a function.";
+const STYLE_ERROR_MESSAGE: &str = "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", \"nextjs-app-routes\", or a function.";
 
 impl Style {
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Style> {
         if value.is_string() {
-            let bun_string = bun_core::OwnedString::new(value.to_bun_string(global)?);
+            let bun_string = value.to_bun_string(global)?;
             let utf8 = bun_string.to_utf8();
             if let Some(style) = STYLE_MAP.get(utf8.slice()) {
                 return Ok(style());
@@ -683,7 +664,7 @@ impl Style {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, core::marker::ConstParamTy)]
-pub enum UiOrRoutes {
+pub(crate) enum UiOrRoutes {
     Ui,
     Routes,
 }
@@ -695,7 +676,7 @@ enum NextRoutingConvention {
 }
 
 impl Style {
-    pub fn parse<'bump>(
+    pub(crate) fn parse<'bump>(
         &self,
         file_path: &'bump [u8],
         ext: &[u8],
@@ -733,7 +714,7 @@ impl Style {
 
     /// Implements the pages router parser from Next.js:
     /// https://nextjs.org/docs/getting-started/project-structure#pages-routing-conventions
-    pub fn parse_nextjs_pages<'bump>(
+    pub(crate) fn parse_nextjs_pages<'bump>(
         file_path_raw: &'bump [u8],
         ext: &[u8],
         log: &mut TinyLog,
@@ -762,7 +743,7 @@ impl Style {
 
     /// Implements the app router parser from Next.js:
     /// https://nextjs.org/docs/getting-started/project-structure#app-routing-conventions
-    pub fn parse_nextjs_app<'bump, const EXTRACT: UiOrRoutes>(
+    pub(crate) fn parse_nextjs_app<'bump, const EXTRACT: UiOrRoutes>(
         file_path_raw: &'bump [u8],
         ext: &[u8],
         log: &mut TinyLog,
@@ -832,7 +813,7 @@ impl Style {
             NextRoutingConvention::Pages => b"[",
             NextRoutingConvention::App => b"[(@",
         };
-        while let Some(start) = strings::index_of_any_pos_comptime(route_segment, stop_chars, i) {
+        while let Some(start) = strings::index_of_any_pos(route_segment, stop_chars, i) {
             if matches!(CONVENTIONS, NextRoutingConvention::Pages) || route_segment[start] == b'[' {
                 let mut end = match strings::index_of_char_pos(route_segment, b']', start + 1) {
                     Some(e) => e,
@@ -944,7 +925,7 @@ impl Style {
                 }
 
                 let between = &route_segment[i..start];
-                for part in between.split(|b| *b == b'/').filter(|s| !s.is_empty()) {
+                for part in strings::tokenize(between, b"/") {
                     parts.push(Part::Text(part));
                 }
                 parts.push(if is_optional {
@@ -998,7 +979,7 @@ impl Style {
                 }
 
                 let between = &route_segment[i..start];
-                for part in between.split(|b| *b == b'/').filter(|s| !s.is_empty()) {
+                for part in strings::tokenize(between, b"/") {
                     parts.push(Part::Text(part));
                 }
                 parts.push(Part::Group(group_name));
@@ -1020,10 +1001,7 @@ impl Style {
             }
         }
         if !route_segment[i..].is_empty() {
-            for part in route_segment[i..]
-                .split(|b| *b == b'/')
-                .filter(|s| !s.is_empty())
-            {
+            for part in strings::tokenize(&route_segment[i..], b"/") {
                 parts.push(Part::Text(part));
             }
         }
@@ -1041,7 +1019,7 @@ pub enum InsertError {
 bun_core::oom_from_alloc!(InsertError);
 
 // Runtime enum carrying both pattern shapes; profile if hot.
-pub enum InsertPattern {
+pub(crate) enum InsertPattern {
     Static(StaticPattern),
     Dynamic(EncodedPattern),
 }
@@ -1053,7 +1031,7 @@ impl FrameworkRouter {
     /// This function is designed so that any insertion order will create an
     /// equivalent routing tree, but it does not guarantee that route indices
     /// would match up if a different insertion order was picked.
-    pub fn insert(
+    pub(crate) fn insert(
         &mut self,
         ty: TypeIndex,
         pattern: InsertPattern,
@@ -1116,7 +1094,6 @@ impl FrameworkRouter {
                     r#type: ty,
                     parent: Some(route_index),
                     first_child: None,
-                    prev_sibling: next,
                     next_sibling: None,
                     file_page: None,
                     file_layout: None,
@@ -1140,7 +1117,6 @@ impl FrameworkRouter {
                         r#type: ty,
                         parent: Some(new_route_index),
                         first_child: None,
-                        prev_sibling: next,
                         next_sibling: None,
                         file_page: None,
                         file_layout: None,
@@ -1229,11 +1205,11 @@ impl<'a> Part<'a> {
 /// An enforced upper bound of 64 unique patterns allows routing to use no heap allocation
 #[derive(Default)]
 pub struct MatchedParams {
-    pub params: BoundedArray<MatchedParamEntry, { MatchedParams::MAX_COUNT }>,
+    pub(crate) params: BoundedArray<MatchedParamEntry, { MatchedParams::MAX_COUNT }>,
 }
 
 #[derive(Copy, Clone)]
-pub struct MatchedParamEntry {
+pub(crate) struct MatchedParamEntry {
     // Borrow from the input `path`/`pattern` buffers; both outlive the
     // `MatchedParams` stack frame. See `RawSlice` invariant.
     pub key: bun_ptr::RawSlice<u8>,
@@ -1241,7 +1217,7 @@ pub struct MatchedParamEntry {
 }
 
 impl MatchedParams {
-    pub const MAX_COUNT: usize = 64;
+    pub(crate) const MAX_COUNT: usize = 64;
 
     /// Convert the matched params to a JavaScript object
     /// Returns null if there are no params
@@ -1261,7 +1237,7 @@ impl MatchedParams {
             obj.put_bun_string_one_or_array(
                 global,
                 &key_str,
-                value_str.to_js(global).expect("unreachable"),
+                value_str.into_js(global).expect("unreachable"),
             )
             .expect("unreachable");
         }
@@ -1273,7 +1249,7 @@ impl FrameworkRouter {
     /// Fast enough for development to be seamless, but avoids building a
     /// complicated data structure that production uses to efficiently map
     /// urls to routes instead of this tree-traversal algorithm.
-    pub fn match_slow(&self, path: &[u8], params: &mut MatchedParams) -> Option<RouteIndex> {
+    pub(crate) fn match_slow(&self, path: &[u8], params: &mut MatchedParams) -> Option<RouteIndex> {
         params.params = BoundedArray::default();
 
         debug_assert!(path[0] == b'/');
@@ -1290,19 +1266,19 @@ impl FrameworkRouter {
         None
     }
 
-    pub fn route_ptr(&self, i: RouteIndex) -> &Route {
+    pub(crate) fn route_ptr(&self, i: RouteIndex) -> &Route {
         &self.routes[i.get() as usize]
     }
 
-    pub fn route_ptr_mut(&mut self, i: RouteIndex) -> &mut Route {
+    pub(crate) fn route_ptr_mut(&mut self, i: RouteIndex) -> &mut Route {
         &mut self.routes[i.get() as usize]
     }
 
-    pub fn type_ptr(&mut self, i: TypeIndex) -> &mut Type {
+    pub(crate) fn type_ptr(&mut self, i: TypeIndex) -> &mut Type {
         &mut self.types[i.get() as usize]
     }
 
-    pub fn type_ptr_const(&self, i: TypeIndex) -> &Type {
+    pub(crate) fn type_ptr_const(&self, i: TypeIndex) -> &Type {
         &self.types[i.get() as usize]
     }
 
@@ -1337,13 +1313,13 @@ const TINY_LOG_CAP: usize = 512
 /// Non-allocating single message log, specialized for the messages from the route pattern parsers.
 /// DevServer uses this to special-case the printing of these messages to highlight the offending part of the filename
 pub struct TinyLog {
-    pub msg: BoundedArray<u8, TINY_LOG_CAP>,
-    pub cursor_at: u32,
-    pub cursor_len: u32,
+    pub(crate) msg: BoundedArray<u8, TINY_LOG_CAP>,
+    pub(crate) cursor_at: u32,
+    pub(crate) cursor_len: u32,
 }
 
 impl TinyLog {
-    pub fn empty() -> TinyLog {
+    pub(crate) fn empty() -> TinyLog {
         TinyLog {
             cursor_at: u32::MAX,
             cursor_len: 0,
@@ -1351,7 +1327,7 @@ impl TinyLog {
         }
     }
 
-    pub fn fail(
+    pub(crate) fn fail(
         &mut self,
         args: fmt::Arguments<'_>,
         cursor_at: usize,
@@ -1382,7 +1358,7 @@ impl TinyLog {
         self.msg.slice().copy_from_slice(&buf[..len]);
     }
 
-    pub fn print(&self, rel_path: &[u8]) {
+    pub(crate) fn print(&self, rel_path: &[u8]) {
         let cursor_at = self.cursor_at as usize;
         let cursor_len = self.cursor_len as usize;
         let after = &rel_path[cursor_at..];
@@ -1497,7 +1473,7 @@ impl bun_collections::zig_hash_map::HashContext<Box<[u8]>> for ZigStringHashCont
 }
 
 impl FrameworkRouter {
-    pub fn scan(
+    pub(crate) fn scan(
         &mut self,
         ty: TypeIndex,
         r: &mut Resolver,
@@ -1768,19 +1744,19 @@ impl FrameworkRouter {
 /// creation. A production-grade JS api would be able to re-use objects.
 #[bun_jsc::JsClass(name = "FrameworkFileSystemRouter")]
 pub struct JSFrameworkRouter {
-    pub files: Vec<bun_core::String>,
-    pub router: FrameworkRouter,
-    pub stored_parse_errors: Vec<StoredParseError>,
+    pub(crate) files: Vec<bun_core::String>,
+    pub(crate) router: FrameworkRouter,
+    pub(crate) stored_parse_errors: Vec<StoredParseError>,
 }
 
-pub struct StoredParseError {
+pub(crate) struct StoredParseError {
     /// Owned by global allocator
     pub rel_path: Box<[u8]>,
     pub log: TinyLog,
 }
 
 impl JSFrameworkRouter {
-    pub fn get_bindings(global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_bindings(global: &JSGlobalObject) -> JsResult<JSValue> {
         let obj = JSValue::create_empty_object(global, 2);
         obj.put(
             global,
@@ -1799,7 +1775,7 @@ impl JSFrameworkRouter {
 
     // Note: no `#[bun_jsc::host_fn]` — `#[bun_jsc::JsClass]` on the struct
     // emits the construct shim that calls `<Self>::constructor(__g, __f)` directly.
-    pub fn constructor(
+    pub(crate) fn constructor(
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<Box<JSFrameworkRouter>> {
@@ -1810,8 +1786,8 @@ impl JSFrameworkRouter {
             )));
         }
 
-        let root: bun_core::zig_string::Slice = match opts.get(global, "root")? {
-            Some(v) if !v.is_undefined_or_null() => v.to_slice(global)?,
+        let root: bun_core::Utf8Bytes = match opts.get(global, "root")? {
+            Some(v) if !v.is_undefined_or_null() => v.to_utf8(global)?,
             _ => return Err(global.throw_invalid_arguments(format_args!("Missing options.root"))),
         };
 
@@ -1881,8 +1857,8 @@ impl JSFrameworkRouter {
                     )))
                 })?;
             return Err(global.throw_value(global.create_aggregate_error_with_array(
-                bun_core::String::static_str("Errors scanning routes"),
                 arr,
+                format_args!("Errors scanning routes"),
             )?));
         }
 
@@ -1892,7 +1868,7 @@ impl JSFrameworkRouter {
     #[bun_jsc::host_fn(method)]
     pub fn r#match(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let path_value = callframe.arguments_as_array::<1>()[0];
-        let path = path_value.to_slice(global)?;
+        let path = path_value.to_utf8(global)?;
 
         let mut params_out = MatchedParams {
             params: BoundedArray::default(),
@@ -1907,8 +1883,11 @@ impl JSFrameworkRouter {
                         JSValue::create_empty_object(global, params_out.params.len() as usize);
                     for param in params_out.params.slice() {
                         // key/value borrow from `path`/pattern, both live here (RawSlice invariant)
-                        let value_str = bun_core::String::clone_utf8(param.value.slice());
-                        params_obj.put(global, param.key.slice(), value_str.to_js(global)?);
+                        params_obj.put(
+                            global,
+                            param.key.slice(),
+                            bun_string_jsc::create_utf8_for_js(global, param.value.slice())?,
+                        );
                     }
                     params_obj
                 } else {
@@ -1923,7 +1902,11 @@ impl JSFrameworkRouter {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn to_json(&self, global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn to_json(
+        &self,
+        global: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
         self.route_to_json(global, RouteIndex::init(0))
     }
 
@@ -1998,7 +1981,10 @@ impl JSFrameworkRouter {
         // files, router, stored_parse_errors freed by Drop.
     }
 
-    pub fn parse_route_pattern(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn parse_route_pattern(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let arena = Arena::new();
 
         if frame.arguments_count() < 2 {
@@ -2007,7 +1993,7 @@ impl JSFrameworkRouter {
         }
 
         let [style_js, filepath_js] = frame.arguments_as_array::<2>();
-        let filepath = filepath_js.to_slice(global)?;
+        let filepath = filepath_js.to_utf8(global)?;
         let style = Style::from_js(style_js, global)?;
         // errdefer style.deinit() — Drop handles this
 
@@ -2038,14 +2024,14 @@ impl JSFrameworkRouter {
                 .expect("ByteFmtWriter is infallible");
         }
 
-        let mut out = bun_core::String::clone_utf8(&rendered);
+        let out = bun_core::String::clone_utf8(&rendered);
         let obj = JSValue::create_empty_object(global, 2);
         obj.put(
             global,
             b"kind",
-            bun_core::String::static_str(<&'static str>::from(parsed.kind)).to_js(global)?,
+            bun_core::String::static_(<&'static str>::from(parsed.kind)).to_js(global)?,
         );
-        obj.put(global, b"pattern", out.transfer_to_js(global)?);
+        obj.put(global, b"pattern", out.into_js(global)?);
         Ok(obj)
     }
 
@@ -2053,11 +2039,10 @@ impl JSFrameworkRouter {
         let mut rendered: Vec<u8> = Vec::new();
         part.to_string_for_internal_use(&mut ByteFmtWriter::new(&mut rendered))
             .expect("ByteFmtWriter is infallible");
-        let mut str = bun_core::String::clone_utf8(&rendered);
-        str.transfer_to_js(global)
+        bun_string_jsc::create_utf8_for_js(global, &rendered)
     }
 
-    pub fn file_id_to_js(
+    pub(crate) fn file_id_to_js(
         &self,
         global: &JSGlobalObject,
         id: OpaqueFileIdOptional,
@@ -2072,7 +2057,7 @@ impl JSFrameworkRouter {
 // Note: free-function host-fn shim — `#[bun_jsc::host_fn]` (Free kind) emits a
 // shim that calls the bare ident, so this cannot live inside the `impl` block.
 #[bun_jsc::host_fn]
-pub(crate) fn parse_route_pattern(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn parse_route_pattern(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     JSFrameworkRouter::parse_route_pattern(global, frame)
 }
 

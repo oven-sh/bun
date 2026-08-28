@@ -7,7 +7,7 @@ use crate::bake::dev_server::{
 use bun_collections::ArrayHashMap;
 
 #[derive(Clone, Copy, Default)]
-pub struct MemoryCost {
+pub(crate) struct MemoryCost {
     pub incremental_graph_client: usize,
     pub incremental_graph_server: usize,
     pub js_code: usize,
@@ -44,6 +44,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             inspector_server_id: _,
             configuration_hash_key: _,
             vm: _,
+            vm_handle: _,
             server: _,
             router: _,
             route_bundles: _,
@@ -80,11 +81,9 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             next_bundle: _,
             deferred_request_pool: _,
             active_websocket_connections: _,
-            dump_dir: _,
             emit_incremental_visualizer_events: _,
             emit_memory_visualizer_events: _,
             memory_visualizer_timer: _,
-            has_pre_crash_handler: _,
             assume_perfect_incremental_bundling: _,
             broadcast_console_log_from_browser_to_server: _,
         } = dev;
@@ -97,13 +96,11 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .configuration_hash_key
     //   .inspector_server_id
     //   .deferred_request_pool
-    //   .dump_dir
     //   .emit_incremental_visualizer_events
     //   .emit_memory_visualizer_events
     //   .frontend_only
     //   .generation
     //   .graph_safety_lock
-    //   .has_pre_crash_handler
     //   .magic
     //   .memory_visualizer_timer
     //   .plugin_state
@@ -270,7 +267,7 @@ pub(crate) fn memory_cost_array_list<T>(slice: &Vec<T>) -> usize {
     slice.capacity() * size_of::<T>()
 }
 
-pub(crate) fn memory_cost_slice<T>(slice: &[T]) -> usize {
+fn memory_cost_slice<T>(slice: &[T]) -> usize {
     std::mem::size_of_val(slice)
 }
 

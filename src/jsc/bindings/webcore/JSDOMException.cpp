@@ -22,7 +22,6 @@
 
 #include "JSDOMException.h"
 
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMAttribute.h"
@@ -61,7 +60,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSDOMExceptionPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSDOMExceptionPrototype* ptr = new (NotNull, JSC::allocateCell<JSDOMExceptionPrototype>(vm)) JSDOMExceptionPrototype(vm, globalObject, structure);
+        JSDOMExceptionPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSDOMExceptionPrototype))) JSDOMExceptionPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -75,7 +74,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -179,12 +178,8 @@ template<> JSValue JSDOMExceptionDOMConstructor::prototypeForStructure(JSC::VM& 
 
 template<> void JSDOMExceptionDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "DOMException"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSDOMException::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
-    reifyStaticProperties(vm, JSDOMException::info(), JSDOMExceptionConstructorTableValues, *this);
+    initializeBaseProperties(vm, 0, "DOMException"_s, JSDOMException::prototype(vm, globalObject));
+    Bun::reifyStaticPropertyTable(vm, JSDOMException::info(), JSDOMExceptionConstructorTableValues, *this);
 }
 
 /* Hash table for prototype */
@@ -226,8 +221,8 @@ const ClassInfo JSDOMExceptionPrototype::s_info = { "DOMException"_s, &Base::s_i
 void JSDOMExceptionPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSDOMException::info(), JSDOMExceptionPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSDOMException::info(), JSDOMExceptionPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSDOMException::s_info = { "DOMException"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDOMException) };
@@ -317,12 +312,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsDOMException_message, (JSGlobalObject * lexicalGlobal
 
 JSC::GCClient::IsoSubspace* JSDOMException::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSDOMException, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForDOMException.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDOMException = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForDOMException.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForDOMException = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSDOMException, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForDOMException, m_subspaceForDOMException));
 }
 
 void JSDOMException::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -334,53 +324,8 @@ void JSDOMException::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSDOMExceptionOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    UNUSED_PARAM(handle);
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
-    return false;
-}
-
-void JSDOMExceptionOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsDOMException = static_cast<JSDOMException*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsDOMException->wrapped(), jsDOMException);
-}
-
-// #if ENABLE(BINDING_INTEGRITY)
-// #if PLATFORM(WIN)
-// #pragma warning(disable : 4483)
-// extern "C" {
-// extern void (*const __identifier("??_7DOMException@WebCore@@6B@")[])();
-// }
-// #else
-// extern "C" {
-// extern void* _ZTVN7WebCore12DOMExceptionE[];
-// }
-// #endif
-// #endif
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<DOMException>&& impl)
 {
-
-    // if constexpr (std::is_polymorphic_v<DOMException>) {
-    // #if ENABLE(BINDING_INTEGRITY)
-    //         // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-    // #if PLATFORM(WIN)
-    //         void* expectedVTablePointer = __identifier("??_7DOMException@WebCore@@6B@");
-    // #else
-    //         // void* expectedVTablePointer = &_ZTVN7WebCore12DOMExceptionE[2];
-    // #endif
-
-    //         // If you hit this assertion you either have a use after free bug, or
-    //         // DOMException has subclasses. If DOMException has subclasses that get passed
-    //         // to toJS() we currently require DOMException you to opt out of binding hardening
-    //         // by adding the SkipVTableValidation attribute to the interface IDL definition
-    //         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-    // #endif
-    // }
     return createWrapper<DOMException>(globalObject, WTF::move(impl));
 }
 
@@ -394,12 +339,6 @@ DOMException* JSDOMException::toWrapped(JSC::VM& vm, JSC::JSValue value)
     if (auto* wrapper = dynamicDowncast<JSDOMException>(value))
         return &wrapper->wrapped();
     return nullptr;
-}
-
-inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, DOMException*)
-{
-    static NeverDestroyed<JSDOMExceptionOwner> owner;
-    return &owner.get();
 }
 
 }

@@ -47,10 +47,7 @@ pub mod jsc {
     /// nominal type.
     pub(crate) use crate::api::js_bundler::Plugin;
     pub(crate) use crate::jsc::*;
-    pub(crate) use bun_jsc::debugger::DebuggerId;
 }
-
-pub const API_NAME: &str = "app";
 
 // ══════════════════════════════════════════════════════════════════════════
 // Top-level types
@@ -78,39 +75,19 @@ pub enum Mode {
 /// `Cow<'static, [u8]>` covers both without leaking.
 #[derive(Clone)]
 pub struct ServerComponents {
-    pub separate_ssr_graph: bool,
+    pub(crate) separate_ssr_graph: bool,
     /// REQUIRED — `fromJS` throws if `serverRuntimeImportSource` is absent.
-    pub server_runtime_import: Cow<'static, [u8]>,
-    pub server_register_client_reference: Cow<'static, [u8]>,
-    pub server_register_server_reference: Cow<'static, [u8]>,
-    pub client_register_server_reference: Cow<'static, [u8]>,
+    pub(crate) server_runtime_import: Cow<'static, [u8]>,
+    pub(crate) server_register_client_reference: Cow<'static, [u8]>,
+    pub(crate) server_register_server_reference: Cow<'static, [u8]>,
+    pub(crate) client_register_server_reference: Cow<'static, [u8]>,
 }
 // No `Default` impl — `server_runtime_import` is a required field. Callers must
 // supply it explicitly (`Framework::react()` sets `"react-server-dom-bun/server"`).
-impl ServerComponents {
-    /// Construct with the defaults for the three `register*` exports;
-    /// `server_runtime_import` must be supplied.
-    pub fn new(server_runtime_import: Cow<'static, [u8]>) -> Self {
-        Self {
-            separate_ssr_graph: false,
-            server_runtime_import,
-            server_register_client_reference: Cow::Borrowed(b"registerClientReference"),
-            server_register_server_reference: Cow::Borrowed(b"registerServerReference"),
-            client_register_server_reference: Cow::Borrowed(b"registerServerReference"),
-        }
-    }
-}
 
 #[derive(Clone)]
 pub struct ReactFastRefresh {
-    pub import_source: Cow<'static, [u8]>,
-}
-impl Default for ReactFastRefresh {
-    fn default() -> Self {
-        Self {
-            import_source: Cow::Borrowed(b"react-refresh/runtime"),
-        }
-    }
+    pub(crate) import_source: Cow<'static, [u8]>,
 }
 
 /// `bake.Framework.FileSystemRouterType`. Full body (with `Style` enum and
@@ -119,17 +96,17 @@ impl Default for ReactFastRefresh {
 // Deliberately not `Clone` — `framework_router::Style` is the
 // body enum (carries `JavascriptDefined(jsc::Strong)`, not `Clone`).
 pub struct FileSystemRouterType {
-    pub root: Cow<'static, [u8]>,
-    pub prefix: Cow<'static, [u8]>,
-    pub entry_client: Option<Cow<'static, [u8]>>,
+    pub(crate) root: Cow<'static, [u8]>,
+    pub(crate) prefix: Cow<'static, [u8]>,
+    pub(crate) entry_client: Option<Cow<'static, [u8]>>,
     /// REQUIRED — `fromJS` throws if missing; `Framework.resolve`
     /// dereferences unconditionally.
-    pub entry_server: Cow<'static, [u8]>,
-    pub ignore_underscores: bool,
-    pub ignore_dirs: Vec<Cow<'static, [u8]>>,
-    pub extensions: Vec<Cow<'static, [u8]>>,
-    pub style: framework_router::Style,
-    pub allow_layouts: bool,
+    pub(crate) entry_server: Cow<'static, [u8]>,
+    pub(crate) ignore_underscores: bool,
+    pub(crate) ignore_dirs: Vec<Cow<'static, [u8]>>,
+    pub(crate) extensions: Vec<Cow<'static, [u8]>>,
+    pub(crate) style: framework_router::Style,
+    pub(crate) allow_layouts: bool,
 }
 
 /// A "Framework" is simply a set of bundler options that a framework author
@@ -137,24 +114,13 @@ pub struct FileSystemRouterType {
 /// have default values which may point to static memory, this structure is
 /// always arena-allocated, usually owned by the arena in `UserOptions`.
 pub struct Framework {
-    pub is_built_in_react: bool,
+    pub(crate) is_built_in_react: bool,
     /// Owned `Vec` so `resolve()` can take `&mut` and rewrite entries in
     /// place; freed by `Vec::drop`.
-    pub file_system_router_types: Vec<FileSystemRouterType>,
-    pub server_components: Option<ServerComponents>,
-    pub react_fast_refresh: Option<ReactFastRefresh>,
-    pub built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
-}
-impl Default for Framework {
-    fn default() -> Self {
-        Self {
-            is_built_in_react: false,
-            file_system_router_types: Vec::new(),
-            server_components: None,
-            react_fast_refresh: None,
-            built_in_modules: bun_collections::StringArrayHashMap::new(),
-        }
-    }
+    pub(crate) file_system_router_types: Vec<FileSystemRouterType>,
+    pub(crate) server_components: Option<ServerComponents>,
+    pub(crate) react_fast_refresh: Option<ReactFastRefresh>,
+    pub(crate) built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
 }
 
 impl Framework {
@@ -163,7 +129,7 @@ impl Framework {
     /// lower-tier crate and cannot name `bun_runtime::bake::Framework`; this is
     /// the value `init_transpiler` arena-allocates and hands to
     /// `out.options.framework`.
-    pub(crate) fn as_bundler_view(&self) -> bun_bundler::bake_types::Framework {
+    fn as_bundler_view(&self) -> bun_bundler::bake_types::Framework {
         use bun_bundler::bake_types as bt;
         let mut built_in_modules = bun_collections::StringArrayHashMap::new();
         for (k, v) in self.built_in_modules.iter() {
@@ -213,7 +179,7 @@ impl Framework {
     /// `conditions`/`env`/`define`/`drop` until the schema types are
     /// const-constructible — those paths default).
     /// Returns the arena slot for the `bake_types::Framework` projection; caller must `drop_in_place` it.
-    pub fn init_transpiler<'a>(
+    pub(crate) fn init_transpiler<'a>(
         &mut self,
         arena: &'a bun_alloc::Arena,
         log: &mut bun_ast::Log,
@@ -368,7 +334,7 @@ impl Framework {
     /// Resolves built-in module
     /// specifiers and entry points against the resolvers; returns a clone
     /// with resolved paths. Errors written into `r.log`.
-    pub fn resolve(
+    pub(crate) fn resolve(
         &mut self,
         server: &mut bun_resolver::Resolver,
         client: &mut bun_resolver::Resolver,
@@ -462,9 +428,7 @@ impl Framework {
         }
     }
 
-    pub const REACT_INSTALL_COMMAND: &str = "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental";
-
-    pub fn add_react_install_command_note(log: &mut bun_ast::Log) {
+    pub(crate) fn add_react_install_command_note(log: &mut bun_ast::Log) {
         log.add_msg(bun_ast::Msg {
             kind: bun_ast::Kind::Note,
             data: bun_ast::range_data(
@@ -486,10 +450,10 @@ impl Framework {
 pub struct SplitBundlerOptions {
     /// FFI: `jsc.API.JSBundler.Plugin` (`JSBundlerPlugin__create`); deinit
     /// goes through the C++ side. See LIFETIMES.tsv.
-    pub plugin: Option<NonNull<jsc::Plugin>>,
-    pub client: BuildConfigSubset,
-    pub server: BuildConfigSubset,
-    pub ssr: BuildConfigSubset,
+    pub(crate) plugin: Option<NonNull<jsc::Plugin>>,
+    pub(crate) client: BuildConfigSubset,
+    pub(crate) server: BuildConfigSubset,
+    pub(crate) ssr: BuildConfigSubset,
 }
 
 // ─── bake_body → keystone bridges ────────────────────────────────────────────
@@ -564,8 +528,8 @@ impl From<bake_body::Framework> for Framework {
 impl From<bake_body::BuildConfigSubset> for BuildConfigSubset {
     fn from(src: bake_body::BuildConfigSubset) -> Self {
         // `BuildConfigSubset` mirrors the field-set
-        // `Framework::init_transpiler` reads (everything except `loader` /
-        // `source_map`, which only `init_transpiler_with_options` honours).
+        // `Framework::init_transpiler` reads (everything except `source_map`,
+        // which only `init_transpiler_with_options` honours).
         Self {
             ignore_dce_annotations: src.ignore_dce_annotations,
             conditions: src.conditions,
@@ -573,9 +537,6 @@ impl From<bake_body::BuildConfigSubset> for BuildConfigSubset {
             env: src.env,
             env_prefix: src.env_prefix,
             define: src.define,
-            minify_syntax: src.minify_syntax,
-            minify_identifiers: src.minify_identifiers,
-            minify_whitespace: src.minify_whitespace,
         }
     }
 }
@@ -598,17 +559,14 @@ impl From<bake_body::SplitBundlerOptions> for SplitBundlerOptions {
 /// per-graph transpilers see bunfig `[serve.static]` define/env/conditions.
 #[derive(Default)]
 pub struct BuildConfigSubset {
-    pub ignore_dce_annotations: Option<bool>,
-    pub conditions: bun_collections::ArrayHashMap<&'static [u8], ()>,
-    pub drop: bun_collections::ArrayHashMap<&'static [u8], ()>,
-    pub env: bun_options_types::schema::api::DotEnvBehavior,
-    pub env_prefix: Option<&'static [u8]>,
-    pub define: bun_options_types::schema::api::StringMap,
-    pub minify_syntax: Option<bool>,
-    pub minify_identifiers: Option<bool>,
-    pub minify_whitespace: Option<bool>,
-    // `loader`/`source_map` intentionally omitted — only
-    // `init_transpiler_with_options` (bake_body) honours those, and DevServer
+    pub(crate) ignore_dce_annotations: Option<bool>,
+    pub(crate) conditions: bun_collections::ArrayHashMap<&'static [u8], ()>,
+    pub(crate) drop: bun_collections::ArrayHashMap<&'static [u8], ()>,
+    pub(crate) env: bun_options_types::schema::api::DotEnvBehavior,
+    pub(crate) env_prefix: Option<&'static [u8]>,
+    pub(crate) define: bun_options_types::schema::api::StringMap,
+    // `source_map` intentionally omitted — only
+    // `init_transpiler_with_options` (bake_body) honours it, and DevServer
     // never calls that path.
 }
 
@@ -616,13 +574,13 @@ pub struct BuildConfigSubset {
 /// Canonical definition; `bake_body::HmrRuntime` re-exports this
 /// (`pub use super::HmrRuntime;`) so `bake_body::get_hmr_runtime` returns the
 /// same nominal type IncrementalGraph names via `crate::bake::HmrRuntime`.
-pub struct HmrRuntime {
+pub(crate) struct HmrRuntime {
     /// NUL-terminated; the sentinel is
     /// load-bearing where this buffer is handed to JSC/C++ as a C string.
-    pub code: &'static bun_core::ZStr,
-    pub line_count: u32,
+    pub(crate) code: &'static bun_core::ZStr,
+    pub(crate) line_count: u32,
 }
-pub use bake_body::get_hmr_runtime;
+pub(crate) use bake_body::get_hmr_runtime;
 // (Former `__bun_bake_get_hmr_runtime` link-time bridge deleted —
 // `bun_bundler::bake_types::get_hmr_runtime` now loads the codegen bytes
 // itself via `bun_core::runtime_embed_file!`, so the storage moved DOWN and
@@ -644,9 +602,8 @@ pub mod framework_router {
     /// the associated-fn path resolves.
     pub use super::framework_router_body::JSFrameworkRouter as js_framework_router;
     pub use super::framework_router_body::{
-        DynamicRouteMap, EncodedPattern, FileKind, FrameworkRouter, InsertionHandler,
-        JSFrameworkRouter, MatchedParams, OpaqueFileId, OpaqueFileIdOptional, Part, Route,
-        RouteIndex, StaticRouteMap, Style, TinyLog, Type, TypeIndex,
+        FileKind, FrameworkRouter, InsertionHandler, JSFrameworkRouter, MatchedParams,
+        OpaqueFileId, OpaqueFileIdOptional, Part, RouteIndex, Style, TinyLog, Type, TypeIndex,
     };
 
     /// `wrap` shim over the trait-object form (`&mut dyn InsertionHandler`),
@@ -660,15 +617,12 @@ pub mod framework_router {
         }
     }
 }
-pub use framework_router as FrameworkRouter;
 
 // ══════════════════════════════════════════════════════════════════════════
 // production
 // ══════════════════════════════════════════════════════════════════════════
 pub mod production {
-    pub use super::production_body::{
-        EntryPointHashMap, EntryPointMap, InputFile, PerThread, TypeAndFlags, build_command,
-    };
+    pub use super::production_body::{PerThread, build_command};
 }
 
 // ══════════════════════════════════════════════════════════════════════════

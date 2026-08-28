@@ -24,7 +24,7 @@ use crate::hir_vec;
 /// Outline JSX expressions in inner functions into separate outlined components.
 ///
 /// Ported from TS `outlineJSX` in `Optimization/OutlineJsx.ts`.
-pub fn outline_jsx(func: &mut HirFunction, env: &mut Environment) {
+pub(crate) fn outline_jsx(func: &mut HirFunction, env: &mut Environment) {
     let mut outlined_fns: Vec<HirFunction> = Vec::new();
     outline_jsx_impl(func, env, &mut outlined_fns);
 
@@ -44,18 +44,6 @@ struct OutlinedJsxAttribute {
     original_name: StoreStr,
     new_name: StoreStr,
     place: Place,
-}
-
-fn promoted_name(kind: u8, n: u32) -> IdentifierName {
-    let mut itoa = bun_core::fmt::ItoaBuf::new();
-    let digits = itoa.format(n).as_bytes();
-    let mut buf = [0u8; 16];
-    buf[0] = b'#';
-    buf[1] = kind;
-    buf[2..2 + digits.len()].copy_from_slice(digits);
-    IdentifierName::Promoted(StoreStr::new(bun_ast::data_store_dupe_str(
-        &buf[..2 + digits.len()],
-    )))
 }
 
 struct OutlinedResult {
@@ -326,12 +314,12 @@ fn collect_props(
                     let decl_id = env.identifiers[child_id.0 as usize].declaration_id;
                     if env.identifiers[child_id.0 as usize].name.is_none() {
                         env.identifiers[child_id.0 as usize].name =
-                            Some(promoted_name(b't', decl_id.0));
+                            Some(IdentifierName::promoted(b't', decl_id.0));
                     }
 
                     let child_name = match &env.identifiers[child_id.0 as usize].name {
                         Some(IdentifierName::Named(n)) | Some(IdentifierName::Promoted(n)) => *n,
-                        None => match promoted_name(b't', decl_id.0) {
+                        None => match IdentifierName::promoted(b't', decl_id.0) {
                             IdentifierName::Promoted(s) => s,
                             _ => unreachable!(),
                         },
@@ -366,7 +354,7 @@ fn emit_outlined_jsx(
     let load_id = env.next_identifier_id();
     // Promote it as a JSX tag temporary
     let decl_id = env.identifiers[load_id.0 as usize].declaration_id;
-    env.identifiers[load_id.0 as usize].name = Some(promoted_name(b'T', decl_id.0));
+    env.identifiers[load_id.0 as usize].name = Some(IdentifierName::promoted(b'T', decl_id.0));
 
     let load_place = Place {
         identifier: load_id,
@@ -422,7 +410,7 @@ fn emit_outlined_fn(
     // Create props parameter
     let props_obj_id = env.next_identifier_id();
     let decl_id = env.identifiers[props_obj_id.0 as usize].declaration_id;
-    env.identifiers[props_obj_id.0 as usize].name = Some(promoted_name(b't', decl_id.0));
+    env.identifiers[props_obj_id.0 as usize].name = Some(IdentifierName::promoted(b't', decl_id.0));
     let props_obj = Place {
         identifier: props_obj_id,
         effect: crate::hir::Effect::Unknown,

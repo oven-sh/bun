@@ -1,8 +1,8 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, rmScope, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
-import { unlinkSync } from "node:fs";
+import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -469,6 +469,98 @@ describe("Bun.file in serve routes", () => {
       expect(await res.text()).toBe("Hello, World!");
     });
 
+    // RFC 9110 §13.2.2 steps 1–2: If-Match / If-Unmodified-Since evaluate
+    // first and short-circuit with 412 before If-None-Match / If-Modified-Since.
+    describe.each(["GET", "HEAD"])("If-Match / If-Unmodified-Since (%s)", method => {
+      it("If-Match: non-matching tag on a file route with ETag → 412", async () => {
+        const res = await fetch(new URL(`/with-etag.txt`, server.url), {
+          method,
+          headers: { "If-Match": '"zz"' },
+        });
+        expect(res.status).toBe(412);
+        expect(await res.text()).toBe("");
+      });
+
+      it("If-Match: matching tag on a file route with ETag → 200", async () => {
+        const res = await fetch(new URL(`/with-etag.txt`, server.url), {
+          method,
+          headers: { "If-Match": '"custom-etag"' },
+        });
+        expect(res.status).toBe(200);
+        if (method === "GET") expect(await res.text()).toBe("Hello, World!");
+      });
+
+      it("If-Match: * on a file route without a stored ETag → 200", async () => {
+        const res = await fetch(new URL(`/hello-blob.txt`, server.url), {
+          method,
+          headers: { "If-Match": "*" },
+        });
+        expect(res.status).toBe(200);
+      });
+
+      it("If-Match: tag list on a file route without a stored ETag → 412", async () => {
+        const res = await fetch(new URL(`/hello-blob.txt`, server.url), {
+          method,
+          headers: { "If-Match": '"anything"' },
+        });
+        expect(res.status).toBe(412);
+        expect(await res.text()).toBe("");
+      });
+
+      it('If-Match: W/"custom-etag" uses strong compare → 412', async () => {
+        const res = await fetch(new URL(`/with-etag.txt`, server.url), {
+          method,
+          headers: { "If-Match": 'W/"custom-etag"' },
+        });
+        expect(res.status).toBe(412);
+      });
+
+      it("If-Unmodified-Since earlier than mtime → 412", async () => {
+        const res = await fetch(new URL(`/hello-blob.txt`, server.url), {
+          method,
+          headers: { "If-Unmodified-Since": "Mon, 01 Jan 2001 00:00:00 GMT" },
+        });
+        expect(res.status).toBe(412);
+        expect(await res.text()).toBe("");
+      });
+
+      it("If-Unmodified-Since at or after mtime → 200", async () => {
+        const lm = (await fetch(new URL(`/hello-blob.txt`, server.url))).headers.get("Last-Modified");
+        expect(lm).not.toBeEmpty();
+        const res = await fetch(new URL(`/hello-blob.txt`, server.url), {
+          method,
+          headers: { "If-Unmodified-Since": lm! },
+        });
+        expect(res.status).toBe(200);
+      });
+
+      it("If-Match failure + If-None-Match match → 412 (not 304)", async () => {
+        const res = await fetch(new URL(`/with-etag.txt`, server.url), {
+          method,
+          headers: { "If-Match": '"zz"', "If-None-Match": '"custom-etag"' },
+        });
+        expect(res.status).toBe(412);
+      });
+
+      it("If-Match failure + Range → 412 (no Content-Range)", async () => {
+        const res = await fetch(new URL(`/with-etag.txt`, server.url), {
+          method,
+          headers: { "If-Match": '"zz"', "Range": "bytes=0-3" },
+        });
+        expect(res.status).toBe(412);
+        expect(res.headers.get("content-range")).toBeNull();
+        expect(await res.text()).toBe("");
+      });
+
+      it("If-Match present suppresses If-Unmodified-Since", async () => {
+        const res = await fetch(new URL(`/with-etag.txt`, server.url), {
+          method,
+          headers: { "If-Match": '"custom-etag"', "If-Unmodified-Since": "Mon, 01 Jan 2001 00:00:00 GMT" },
+        });
+        expect(res.status).toBe(200);
+      });
+    });
+
     it.todo("handles ETag", async () => {
       const res1 = await fetch(new URL(`/hello.txt`, server.url));
       const etag = res1.headers.get("ETag");
@@ -527,7 +619,7 @@ describe("Bun.file in serve routes", () => {
       }
 
       Bun.gc(true);
-      const baseline = (process.memoryUsage.rss() / 1024 / 1024) | 0;
+      const baseline = (rss() / 1024 / 1024) | 0;
 
       // Make many requests to large file
       for (let i = 0; i < 50; i++) {
@@ -537,7 +629,7 @@ describe("Bun.file in serve routes", () => {
       }
 
       Bun.gc(true);
-      const final = (process.memoryUsage.rss() / 1024 / 1024) | 0;
+      const final = (rss() / 1024 / 1024) | 0;
       const delta = final - baseline;
 
       // ASAN's quarantine retains freed allocations (default 256 MB) so RSS
@@ -619,6 +711,22 @@ describe("Bun.file in serve routes", () => {
       expect(res.status).toBe(200);
       expect(await res.text()).toBe("56789");
       expect(res.headers.get("Content-Length")).toBe("5");
+    });
+
+    // The slice is shorter than the file, so the byte budget runs out before
+    // the reader reports EOF: the response completes inline while a deferred
+    // completion still hops through the event loop. Repeated requests must
+    // each deliver exactly the slice and recycle the request context cleanly.
+    it("truncated-length EOF path completes cleanly across repeated requests", async () => {
+      for (let i = 0; i < 32; i++) {
+        const res = await fetch(new URL(`/partial-slice.txt`, server.url));
+        expect(res.status).toBe(200);
+        expect(await res.text()).toBe("56789");
+        expect(res.headers.get("Content-Length")).toBe("5");
+      }
+      // The pool is still healthy afterwards: an unrelated route responds.
+      const check = await fetch(new URL(`/hello-blob.txt`, server.url));
+      expect(check.status).toBe(200);
     });
   });
 
@@ -977,6 +1085,83 @@ process.exit(0);
   30_000,
 );
 
+// A FIFO's stat size is 0, but the body length is unknown until EOF. Writing
+// Content-Length from the stat size and then streaming the pipe to EOF puts
+// body bytes on the wire past the declared length; on a keep-alive connection
+// those bytes land where the client parses the next response's status line
+// (RFC 9112 6.3). The response must be chunk-framed instead.
+test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not Content-Length: 0", async () => {
+  using dir = tempDir("serve-fifo-framing", {});
+  const fifoPath = join(String(dir), "body.fifo");
+  mkfifo(fifoPath);
+
+  // Hold the FIFO open read+write so the server's O_RDONLY|O_NONBLOCK open
+  // always finds a writer (its reads EAGAIN instead of reporting EOF before we
+  // write). The fd is released in `finally`; we do not close it mid-test to
+  // signal EOF because the server's FIFO-EOF handling is platform-dependent
+  // and not what this test is about.
+  const writerFd = openSync(fifoPath, "r+");
+  try {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response(Bun.file(fifoPath));
+      },
+    });
+
+    const { promise: wireDone, resolve: resolveWire } = Promise.withResolvers<string>();
+    let wire = "";
+    const client = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open(s) {
+          s.write("GET /fifo HTTP/1.1\r\nHost: x\r\n\r\n");
+        },
+        data(_s, d) {
+          wire += Buffer.from(d).toString("latin1");
+          if (wire.includes("PIPEBYTES!")) resolveWire(wire);
+        },
+        close() {
+          resolveWire(wire);
+        },
+        error() {
+          resolveWire(wire);
+        },
+      },
+    });
+
+    // The payload sits in the FIFO buffer (kept alive by writerFd) until the
+    // server opens its read end; the server's first body write then carries it
+    // to the wire together with whatever framing the head declared.
+    writeSync(writerFd, "PIPEBYTES!");
+    const captured = await wireDone;
+    client.end();
+
+    const head = captured.split("\r\n\r\n")[0];
+    // The broken build wrote `content-length: 0` from the FIFO's stat size and
+    // then emitted the pipe bytes raw after the head (body past the declared
+    // length). With the fix the head carries no Content-Length and the first
+    // body write enters chunked mode.
+    expect({
+      status: head.split("\r\n")[0],
+      hasContentLength: /^content-length:/im.test(head),
+      isChunked: /^transfer-encoding:\s*chunked/im.test(head),
+      bodyDelivered: captured.includes("PIPEBYTES!"),
+      bodyBytesPastContentLengthZero: /^content-length:\s*0$/im.test(head) && captured.includes("PIPEBYTES!"),
+    }).toEqual({
+      status: "HTTP/1.1 200 OK",
+      hasContentLength: false,
+      isChunked: true,
+      bodyDelivered: true,
+      bodyBytesPastContentLengthZero: false,
+    });
+  } finally {
+    closeSync(writerFd);
+  }
+});
+
 // A request that declares a body arms the request-body (onData) callback on
 // the uWS response before the fetch handler runs. uWS keeps a single shared
 // userdata slot per response, so when the handler returns a file response
@@ -1138,3 +1323,52 @@ console.log("OK");
   },
   60_000,
 );
+
+// FileRoute borrows the blob store's path slice for the duration of the
+// request (no per-request copy). A burst of concurrent requests under ASAN
+// would surface a use-after-free if that borrow were unsound.
+test("file route serves a burst of concurrent requests after reloads", async () => {
+  using dir = tempDir("file-route-path-borrow", {
+    "hello.txt": "hello from file route",
+  });
+  const body = "hello from file route";
+  const file = () => new Response(Bun.file(join(String(dir), "hello.txt")));
+
+  await using server = Bun.serve({
+    port: 0,
+    routes: { "/f": file() },
+    fetch: () => new Response("fallback", { status: 404 }),
+  });
+
+  // Reload a few times so the file route's blob store is replaced between
+  // bursts; the last config wins.
+  for (let i = 0; i < 3; i++) {
+    server.reload({
+      routes: { "/a": new Response("a-old"), "/f": file(), "/b": new Response("b") },
+      fetch: () => new Response("fallback", { status: 404 }),
+    });
+    server.reload({
+      routes: { "/a": new Response("a-new"), "/f": file(), "/b": new Response("b") },
+      fetch: () => new Response("fallback", { status: 404 }),
+    });
+  }
+
+  const N = 64;
+  const bodies = await Promise.all(Array.from({ length: N }, () => fetch(`${server.url}f`).then(r => r.text())));
+  expect(bodies).toEqual(Array(N).fill(body));
+
+  // HEAD goes through FileRoute::on with the same borrowed path.
+  const headBodies = await Promise.all(
+    Array.from({ length: N }, () =>
+      fetch(`${server.url}f`, { method: "HEAD" }).then(async r => ({
+        status: r.status,
+        len: r.headers.get("content-length"),
+        body: await r.text(),
+      })),
+    ),
+  );
+  expect(headBodies).toEqual(Array(N).fill({ status: 200, len: String(body.length), body: "" }));
+
+  const a = await fetch(`${server.url}a`).then(r => r.text());
+  expect(a).toBe("a-new");
+});

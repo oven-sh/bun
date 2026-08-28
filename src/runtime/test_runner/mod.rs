@@ -14,10 +14,10 @@
 // ─── pure-Rust leaf (no JSC) — always compiles ───────────────────────────
 pub mod diff {
     // mod-rs path rule: inline `mod diff` + `#[path]` → test_runner/diff/<file>
-    #[path = "diff_match_patch.rs"]
-    pub mod diff_match_patch;
     #[path = "printDiff.rs"]
     pub mod print_diff;
+    #[path = "text_diff.rs"]
+    pub mod text_diff;
 }
 
 // ─── JSC-heavy core ──────────────────────────────────────────────────────
@@ -158,14 +158,8 @@ cfg_jsc! {
 }
 
 cfg_jsc! {
-    pub mod harness {
-        #[path = "fixtures.rs"] pub mod fixtures;
-        #[path = "recover.rs"]  pub mod recover;
-    }
-
     pub mod timers {
         #[path = "FakeTimers.rs"] pub mod fake_timers;
-        pub use fake_timers::FakeTimers;
     }
 }
 
@@ -174,7 +168,7 @@ pub mod expect {
     // Re-export the umbrella surface so every matcher can `use super::*`.
     pub use super::expect_core::*;
     pub use super::expect_core::mock;
-    pub use super::diff_format::DiffFormatter;
+    pub(crate) use super::diff_format::DiffFormatter;
 
     /// `Expect.js.*GetCached` / `*SetCached` accessors (generate-classes.ts
     /// `cache: true` slots from jest.classes.ts). Exposed as a
@@ -189,7 +183,7 @@ pub mod expect {
     /// which Rust does not allow for associated fns. Thin shim keeps those
     /// modules unmodified.
     #[inline]
-    pub fn get_signature(
+    pub(crate) fn get_signature(
         matcher_name: &'static str,
         args: &'static str,
         not: bool,
@@ -207,35 +201,13 @@ pub mod expect {
     // traits / aliases here that forward to the now-landed inherents — no
     // local FFI re-decls, no semantic divergence.
 
-    use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult};
+    use bun_jsc::{JSGlobalObject, JSValue, JsResult};
     use bun_jsc::console_object::Formatter;
-    use bun_jsc::console_object::formatter::ZigFormatter;
 
-    /// `value.to_fmt(&mut formatter)` → `Display` adapter. Returns the
-    /// `ZigFormatter` wrapper.
     pub trait JSValueTestExt {
-        fn to_fmt<'a, 'b>(self, f: &'a mut Formatter<'b>) -> ZigFormatter<'a, 'b>;
-        fn jest_deep_equals(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool>;
-        fn jest_strict_deep_equals(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool>;
-        fn jest_deep_match(self, other: JSValue, global: &JSGlobalObject, replace_props: bool) -> JsResult<bool>;
         fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()>;
         fn is_reg_exp(self) -> bool;
         fn as_big_int_compare(self, other: JSValue, global: &JSGlobalObject) -> BigIntCompare;
-        // ── forwarders to `bun_jsc::JSValue` inherents (kept on the trait so
-        //    matcher drafts importing `JSValueTestExt` resolve them in scope) ──
-        fn values(self, global: &JSGlobalObject) -> JsResult<JSValue>;
-        fn keys(self, global: &JSGlobalObject) -> JsResult<JSValue>;
-        fn is_instance_of(self, global: &JSGlobalObject, constructor: JSValue) -> JsResult<bool>;
-        fn has_own_property_value(self, global: &JSGlobalObject, key: JSValue) -> JsResult<bool>;
-        fn is_uint32_as_any_int(self) -> bool;
-        fn is_big_int32(self) -> bool;
-        fn is_constructor(self) -> bool;
-        fn is_object_empty(self, global: &JSGlobalObject) -> JsResult<bool>;
-        fn get_length_if_property_exists_internal(self, global: &JSGlobalObject) -> JsResult<f64>;
-        fn get_if_property_exists_from_path(self, global: &JSGlobalObject, path: JSValue) -> JsResult<JSValue>;
-        fn string_includes(self, global: &JSGlobalObject, needle: JSValue) -> JsResult<bool>;
-        fn to_match(self, global: &JSGlobalObject, value: JSValue) -> JsResult<bool>;
-        fn to_u32(self) -> u32;
         fn bind(
             self,
             global: &JSGlobalObject,
@@ -246,22 +218,6 @@ pub mod expect {
         ) -> JsResult<JSValue>;
     }
     impl JSValueTestExt for JSValue {
-        #[inline]
-        fn to_fmt<'a, 'b>(self, f: &'a mut Formatter<'b>) -> ZigFormatter<'a, 'b> {
-            ZigFormatter::new(f, self)
-        }
-        #[inline]
-        fn jest_deep_equals(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
-            JSValue::jest_deep_equals(self, other, global)
-        }
-        #[inline]
-        fn jest_strict_deep_equals(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
-            JSValue::jest_strict_deep_equals(self, other, global)
-        }
-        #[inline]
-        fn jest_deep_match(self, other: JSValue, global: &JSGlobalObject, replace_props: bool) -> JsResult<bool> {
-            JSValue::jest_deep_match(self, other, global, replace_props)
-        }
         #[inline]
         fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()> {
             use super::pretty_format::{JestPrettyFormat, FormatOptions, MessageLevel};
@@ -306,61 +262,6 @@ pub mod expect {
             }
         }
         #[inline]
-        fn values(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-            JSValue::values(self, global)
-        }
-        #[inline]
-        fn keys(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-            JSValue::keys(self, global)
-        }
-        #[inline]
-        fn is_instance_of(self, global: &JSGlobalObject, constructor: JSValue) -> JsResult<bool> {
-            JSValue::is_instance_of(self, global, constructor)
-        }
-        #[inline]
-        fn has_own_property_value(self, global: &JSGlobalObject, key: JSValue) -> JsResult<bool> {
-            JSValue::has_own_property_value(self, global, key)
-        }
-        #[inline]
-        fn is_uint32_as_any_int(self) -> bool {
-            JSValue::is_uint32_as_any_int(self)
-        }
-        #[inline]
-        fn is_big_int32(self) -> bool {
-            // Inherent FFI predicate (`JSC__JSValue__isBigInt32`) — JSC packs
-            // small BigInts as immediates; toBeOdd/toBeEven branch on this
-            // before the heap-BigInt arm.
-            JSValue::is_big_int32(self)
-        }
-        #[inline]
-        fn is_constructor(self) -> bool {
-            JSValue::is_constructor(self)
-        }
-        #[inline]
-        fn is_object_empty(self, global: &JSGlobalObject) -> JsResult<bool> {
-            JSValue::is_object_empty(self, global)
-        }
-        #[inline]
-        fn get_length_if_property_exists_internal(self, global: &JSGlobalObject) -> JsResult<f64> {
-            JSValue::get_length_if_property_exists_internal(self, global)
-        }
-        #[inline]
-        fn get_if_property_exists_from_path(self, global: &JSGlobalObject, path: JSValue) -> JsResult<JSValue> {
-            JSValue::get_if_property_exists_from_path(self, global, path)
-        }
-        #[inline]
-        fn string_includes(self, global: &JSGlobalObject, needle: JSValue) -> JsResult<bool> {
-            JSValue::string_includes(self, global, needle)
-        }
-        #[inline]
-        fn to_match(self, global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
-            JSValue::to_match(self, global, value)
-        }
-        #[inline]
-        fn to_u32(self) -> u32 {
-            JSValue::to_u32(self)
-        }
-        #[inline]
         fn bind(
             self,
             global: &JSGlobalObject,
@@ -377,32 +278,12 @@ pub mod expect {
     #[derive(Copy, Clone, PartialEq, Eq)]
     pub enum BigIntCompare { LessThan, Equal, GreaterThan, Undefined }
 
-    /// Two-argument `throw_*` adapters — matcher modules call
-    /// `global.throw2(FMT, format_args!(FMT, ..))`.
-    /// Rust's `Arguments<'_>` already encloses the format string,
-    /// so the leading `&str` is redundant; these shims drop it and forward to
-    /// the bun_jsc inherents.
-    pub trait JSGlobalObjectTestExt {
-        fn throw2(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError;
-        fn throw_invalid_arguments2(&self, fmt: &str, args: core::fmt::Arguments<'_>) -> JsError;
-    }
-    impl JSGlobalObjectTestExt for JSGlobalObject {
-        #[inline]
-        fn throw2(&self, _fmt: &str, args: core::fmt::Arguments<'_>) -> JsError {
-            self.throw(args)
-        }
-        #[inline]
-        fn throw_invalid_arguments2(&self, _fmt: &str, args: core::fmt::Arguments<'_>) -> JsError {
-            self.throw_invalid_arguments(args)
-        }
-    }
-
     /// `super::make_formatter(global_this)`
     /// is the universal matcher pattern; `Formatter` has no `Default` (it
     /// borrows `global_this`), so provide the constructor every matcher
     /// expected.
     #[inline]
-    pub fn make_formatter(global: &JSGlobalObject) -> Formatter<'_> {
+    pub(crate) fn make_formatter(global: &JSGlobalObject) -> Formatter<'_> {
         let mut f = Formatter::new(global);
         f.quote_strings = true;
         f
@@ -467,7 +348,7 @@ pub mod expect {
         /// `toBeLessThan` / `toBeLessThanOrEqual`. The four matchers
         /// differ only in `name`, the `>`/`>=`/`<`/`<=` operator, and which
         /// `BigIntCompare` arms count as a pass — all of which `rel` encodes.
-        pub(super) fn numeric_ordering_matcher(
+        fn numeric_ordering_matcher(
             &self,
             global: &JSGlobalObject,
             frame: &bun_jsc::CallFrame,
@@ -478,8 +359,7 @@ pub mod expect {
             let this = scopeguard::guard(self, |this| this.post_match(global));
 
             let this_value = frame.this();
-            let args_buf = frame.arguments_old::<1>();
-            let arguments: &[JSValue] = args_buf.slice();
+            let arguments: &[JSValue] = frame.arguments();
 
             if arguments.is_empty() {
                 return Err(global.throw_invalid_arguments(format_args!(
@@ -596,7 +476,6 @@ pub mod expect {
         "toHaveNthReturnedWith.rs"              => to_have_nth_returned_with,
         "toHaveProperty.rs"                     => to_have_property,
         "toHaveReturned.rs"                     => to_have_returned,
-        "toHaveReturnedTimes.rs"                => to_have_returned_times,
         "toHaveReturnedWith.rs"                 => to_have_returned_with,
         "toIncludeRepeated.rs"                  => to_include_repeated,
         "toMatch.rs"                            => to_match,
@@ -614,17 +493,11 @@ pub mod expect {
 
 // public surface for `crate::test_runner::*` consumers
 cfg_jsc! {
-    pub use bun_test::BunTest;
-    pub use diff_format::DiffFormatter;
     pub use done_callback::DoneCallback;
-    pub use execution::Execution;
     pub use expect::{
         Expect, ExpectAny, ExpectAnything, ExpectArrayContaining, ExpectCloseTo,
         ExpectCustomAsymmetricMatcher, ExpectMatcherContext, ExpectMatcherUtils,
         ExpectObjectContaining, ExpectStatic, ExpectStringContaining, ExpectStringMatching,
-        ExpectTypeOf, Flags as ExpectFlags,
+        ExpectTypeOf,
     };
-    pub use jest::Jest;
-    pub use pretty_format::JestPrettyFormat;
-    pub use snapshot::Snapshots;
 }

@@ -1,6 +1,40 @@
 import { describe, expect, test } from "bun:test";
 
 import { $ } from "bun";
+import { bunEnv, bunExe } from "harness";
+
+test("new $.Shell() inherits process.env and throws on non-zero exit by default", async () => {
+  // Run in a subprocess so other tests mutating $.env / $.throws don't interfere.
+  const src = `
+    import { $ } from "bun";
+    const inst = new $.Shell();
+
+    const fromDefault = (await $\`echo \$BUN_SHELL_INSTANCE_MARKER\`.quiet()).stdout.toString().trim();
+    const fromFresh = (await inst\`echo \$BUN_SHELL_INSTANCE_MARKER\`.quiet()).stdout.toString().trim();
+
+    let threwDefault, threwFresh;
+    try { await $\`false\`.quiet(); } catch (e) { threwDefault = { isShellError: e instanceof $.ShellError, exitCode: e.exitCode }; }
+    try { await inst\`false\`.quiet(); } catch (e) { threwFresh = { isShellError: e instanceof $.ShellError, exitCode: e.exitCode }; }
+
+    console.log(JSON.stringify({ fromDefault, fromFresh, threwDefault, threwFresh }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: { ...bunEnv, BUN_SHELL_INSTANCE_MARKER: "hello" },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    fromDefault: "hello",
+    fromFresh: "hello",
+    threwDefault: { isShellError: true, exitCode: 1 },
+    threwFresh: { isShellError: true, exitCode: 1 },
+  });
+  expect(exitCode).toBe(0);
+});
 
 test("$$", async () => {
   const $$ = new $.Shell();

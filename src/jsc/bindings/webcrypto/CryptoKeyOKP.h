@@ -48,10 +48,11 @@ public:
 
     WEBCORE_EXPORT static ExceptionOr<CryptoKeyPair> generatePair(CryptoAlgorithmIdentifier, NamedCurve, bool extractable, CryptoKeyUsageBitmap);
     WEBCORE_EXPORT static RefPtr<CryptoKeyOKP> importRaw(CryptoAlgorithmIdentifier, NamedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap);
-    static RefPtr<CryptoKeyOKP> importPublicJwk(CryptoAlgorithmIdentifier, NamedCurve, JsonWebKey&&, bool extractable, CryptoKeyUsageBitmap);
     static RefPtr<CryptoKeyOKP> importJwk(CryptoAlgorithmIdentifier, NamedCurve, JsonWebKey&&, bool extractable, CryptoKeyUsageBitmap);
-    static RefPtr<CryptoKeyOKP> importSpki(CryptoAlgorithmIdentifier, NamedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap);
-    static RefPtr<CryptoKeyOKP> importPkcs8(CryptoAlgorithmIdentifier, NamedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap);
+    // On failure, `keyTypeMismatch` (when given) reports whether the data held a
+    // well-formed key of another type, surfaced as "Invalid key type".
+    static RefPtr<CryptoKeyOKP> importSpki(CryptoAlgorithmIdentifier, NamedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap, bool* keyTypeMismatch = nullptr);
+    static RefPtr<CryptoKeyOKP> importPkcs8(CryptoAlgorithmIdentifier, NamedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap, bool* keyTypeMismatch = nullptr);
 
     WEBCORE_EXPORT ExceptionOr<Vector<uint8_t>> exportRaw() const;
     ExceptionOr<JsonWebKey> exportJwk() const;
@@ -59,8 +60,6 @@ public:
     ExceptionOr<Vector<uint8_t>> exportPkcs8() const;
 
     NamedCurve namedCurve() const { return m_curve; }
-    String namedCurveString() const;
-    bool isEd25519PrivateKey() { return namedCurve() == NamedCurve::Ed25519 && type() == CryptoKeyType::Private; };
 
     static bool isValidOKPAlgorithm(CryptoAlgorithmIdentifier);
     static KeyMaterial ed25519PublicFromPrivate(const KeyMaterial& privateKey);
@@ -71,7 +70,6 @@ public:
     size_t keySizeInBytes() const { return platformKey().size(); }
     const KeyMaterial& platformKey() const { return m_data; }
 
-    size_t exportKeySizeInBits() const { return exportKey().size() * 8; }
     size_t exportKeySizeInBytes() const { return exportKey().size(); }
     const KeyMaterial& exportKey() const { return !m_exportKey ? m_data : *m_exportKey; };
 
@@ -87,9 +85,6 @@ private:
     static bool isPlatformSupportedCurve(NamedCurve);
     static std::optional<CryptoKeyPair> platformGeneratePair(CryptoAlgorithmIdentifier, NamedCurve, bool extractable, CryptoKeyUsageBitmap);
     Vector<uint8_t> platformExportRaw() const;
-    Vector<uint8_t> platformExportSpki() const;
-    Vector<uint8_t> platformExportPkcs8() const;
-    static RefPtr<CryptoKeyOKP> importJwkInternal(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, JsonWebKey&& keyData, bool extractable, CryptoKeyUsageBitmap usages, bool onlyPublic);
 
     NamedCurve m_curve;
     KeyMaterial m_data;

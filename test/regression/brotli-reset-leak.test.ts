@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { isASAN } from "harness";
+import { isASAN, rss } from "harness";
 import { createBrotliCompress, createBrotliDecompress } from "zlib";
 
 // ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
@@ -16,7 +16,7 @@ test("Brotli reset() should not leak memory", { timeout: 30_000 }, async () => {
   // Get baseline memory
   Bun.gc(true);
   await Bun.sleep(10);
-  const baselineMemory = process.memoryUsage.rss();
+  const baselineMemory = rss();
 
   const compressor = createBrotliCompress();
 
@@ -30,7 +30,7 @@ test("Brotli reset() should not leak memory", { timeout: 30_000 }, async () => {
   // Force GC and measure
   Bun.gc(true);
   await Bun.sleep(10);
-  const finalMemory = process.memoryUsage.rss();
+  const finalMemory = rss();
 
   const memoryGrowth = finalMemory - baselineMemory;
   const memoryGrowthMB = memoryGrowth / 1024 / 1024;
@@ -47,7 +47,7 @@ test("BrotliDecompress reset() should not leak memory", { timeout: 30_000 }, asy
 
   Bun.gc(true);
   await Bun.sleep(10);
-  const baselineMemory = process.memoryUsage.rss();
+  const baselineMemory = rss();
 
   const decompressor = createBrotliDecompress();
 
@@ -59,7 +59,7 @@ test("BrotliDecompress reset() should not leak memory", { timeout: 30_000 }, asy
 
   Bun.gc(true);
   await Bun.sleep(10);
-  const finalMemory = process.memoryUsage.rss();
+  const finalMemory = rss();
 
   const memoryGrowth = finalMemory - baselineMemory;
   const memoryGrowthMB = memoryGrowth / 1024 / 1024;

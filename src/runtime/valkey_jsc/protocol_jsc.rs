@@ -11,7 +11,7 @@ use bun_valkey::valkey_protocol::{RESPValue, RedisError};
 /// All callers always provide a message, so the parameter
 /// is `impl AsRef<[u8]>` to accept `&str`, `&[u8]`, `&[u8; N]`, `&Box<[u8]>`
 /// uniformly without forcing `Some(..)` at every call site.
-pub fn valkey_error_to_js(
+pub(crate) fn valkey_error_to_js(
     global: &JSGlobalObject,
     message: impl AsRef<[u8]>,
     err: RedisError,
@@ -43,12 +43,12 @@ pub fn valkey_error_to_js(
         RedisError::IdleTimeout => JscError::REDIS_IDLE_TIMEOUT,
         RedisError::NestingDepthExceeded => JscError::REDIS_INVALID_RESPONSE,
         RedisError::LineTooLong => JscError::REDIS_INVALID_RESPONSE,
+        RedisError::ServerError => JscError::REDIS_SERVER_ERROR,
         RedisError::JSError => return global.take_exception(JsError::Thrown),
         RedisError::OutOfMemory => {
             let _ = global.throw_out_of_memory();
             return global.take_exception(JsError::Thrown);
         }
-        RedisError::JSTerminated => return global.take_exception(JsError::Terminated),
     };
 
     let msg = message.as_ref();
@@ -61,13 +61,13 @@ pub fn valkey_error_to_js(
     )
 }
 
-pub fn resp_value_to_js(this: &mut RESPValue, global: &JSGlobalObject) -> JsResult<JSValue> {
+pub(crate) fn resp_value_to_js(this: &mut RESPValue, global: &JSGlobalObject) -> JsResult<JSValue> {
     resp_value_to_js_with_options(this, global, ToJSOptions::default())
 }
 
 #[derive(Clone, Copy, Default)]
 pub struct ToJSOptions {
-    pub return_as_buffer: bool,
+    pub(crate) return_as_buffer: bool,
 }
 
 fn valkey_str_to_js_value(
@@ -79,27 +79,20 @@ fn valkey_str_to_js_value(
         // The parser's payload is an owned allocation that is only converted
         // once; adopt it as the Buffer backing store instead of copying it
         // into a fresh ArrayBuffer.
-        Ok(JSValue::create_buffer_from_box(
-            global,
-            core::mem::take(str),
-        ))
+        JSValue::create_buffer_from_box(global, core::mem::take(str))
     } else {
         bun_string_jsc::create_utf8_for_js(global, str)
     }
 }
 
-pub fn resp_value_to_js_with_options(
+pub(crate) fn resp_value_to_js_with_options(
     this: &mut RESPValue,
     global: &JSGlobalObject,
     options: ToJSOptions,
 ) -> JsResult<JSValue> {
     match this {
         RESPValue::SimpleString(str) => valkey_str_to_js_value(global, str, options),
-        RESPValue::Error(str) => Ok(valkey_error_to_js(
-            global,
-            &**str,
-            RedisError::InvalidResponse,
-        )),
+        RESPValue::Error(str) => Ok(valkey_error_to_js(global, &**str, RedisError::ServerError)),
         RESPValue::Integer(int) => Ok(JSValue::js_number(*int as f64)),
         RESPValue::BulkString(maybe_str) => {
             if let Some(str) = maybe_str {
@@ -116,11 +109,6 @@ pub fn resp_value_to_js_with_options(
         RESPValue::Null => Ok(JSValue::NULL),
         RESPValue::Double(d) => Ok(JSValue::js_number(*d)),
         RESPValue::Boolean(b) => Ok(JSValue::from(*b)),
-        RESPValue::BlobError(str) => Ok(valkey_error_to_js(
-            global,
-            &**str,
-            RedisError::InvalidBlobError,
-        )),
         RESPValue::VerbatimString(verbatim) => {
             valkey_str_to_js_value(global, &mut verbatim.content, options)
         }
@@ -129,9 +117,6 @@ pub fn resp_value_to_js_with_options(
             for entry in entries.iter_mut() {
                 let js_key =
                     resp_value_to_js_with_options(&mut entry.key, global, ToJSOptions::default())?;
-                // Route through `put_to_property_key`, which performs
-                // index-vs-string property dispatch on the JSValue key.
-                let _ = js_key.to_bun_string(global)?; // preserve toString side-effect/exception path
                 let js_value = resp_value_to_js_with_options(&mut entry.value, global, options)?;
 
                 JSValue::put_to_property_key(js_obj, global, js_key, js_value)?;
@@ -162,14 +147,15 @@ pub fn resp_value_to_js_with_options(
 
             Ok(js_obj)
         }
+        // BigInt when the payload is an integer literal; modules and Lua can
+        // put anything after `(`, so other text stays a string.
         RESPValue::BigNumber(str) => {
-            // Try to parse as number if possible
-            if let Ok(int) = bun_core::fmt::parse_int::<i64>(str, 10) {
-                Ok(JSValue::js_number(int as f64))
-            } else {
-                // If it doesn't fit in an i64, return as string
-                bun_string_jsc::create_utf8_for_js(global, str)
+            if !options.return_as_buffer
+                && let Some(big) = JSValue::big_int_from_decimal(global, str)?
+            {
+                return Ok(big);
             }
+            valkey_str_to_js_value(global, str, options)
         }
     }
 }

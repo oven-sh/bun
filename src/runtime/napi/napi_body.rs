@@ -10,6 +10,7 @@ use bun_event_loop::ConcurrentTask::AutoDeinit;
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_io::KeepAlive;
 use bun_jsc::StringJsc;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -43,12 +44,32 @@ impl JSValueNapiExt for JSValue {
 // `Taskable` impls for the napi heap tasks dispatched through the JS event loop.
 impl Taskable for napi_async_work {
     const TAG: TaskTag = task_tag::NapiAsyncWork;
+    /// Work the pool handed back during teardown: its `complete` callback is
+    /// how the addon learns the outcome and frees the work (Node calls it from
+    /// environment cleanup too); script it tries to run is refused at the boundary.
+    unsafe fn release_unrun(this: *mut Self) {
+        let global = VirtualMachine::get().global();
+        // `Err` is left pending for the release dispatcher's fold.
+        // SAFETY: fn contract — the addon's live work object the pool posted.
+        let _ = unsafe { (*this).run_from_js(global) };
+    }
 }
 impl Taskable for ThreadSafeFunction {
     const TAG: TaskTag = task_tag::ThreadSafeFunction;
+    /// `this` is the TSFN itself, which the env's cleanup hook (`env_teardown`,
+    /// run with the exit handlers before the queue is released) already
+    /// neutralised or freed. Nothing to do, and `this` must not be dereferenced.
+    unsafe fn release_unrun(_: *mut Self) {}
 }
 impl Taskable for NapiFinalizerTask {
     const TAG: TaskTag = task_tag::NapiFinalizerTask;
+    /// A finalizer queued before the loop stopped: Node runs an addon's
+    /// finalizers during environment cleanup (script already forbidden), and
+    /// an addon counts on them (external buffers freed when a Worker exits).
+    unsafe fn release_unrun(this: *mut Self) {
+        // `Err` is left pending for the release dispatcher's fold.
+        let _ = NapiFinalizerTask::run_on_js_thread(this);
+    }
 }
 
 bun_output::declare_scope!(napi, visible);
@@ -67,73 +88,77 @@ bun_opaque::opaque_ffi! {
     pub struct NapiEnv;
 }
 
+#[allow(improper_ctypes)] // `vm_handle::Shared` is opaque to C++ (`BunVmHandleRef`)
 unsafe extern "C" {
     fn NapiEnv__globalObject(env: *mut NapiEnv) -> *mut JSGlobalObject;
     fn NapiEnv__getAndClearPendingException(env: *mut NapiEnv, out: *mut JSValue) -> bool;
     fn NapiEnv__hasPendingException(env: *mut NapiEnv) -> bool;
-    fn napi_internal_get_version(env: *mut NapiEnv) -> u32;
     fn NapiEnv__deref(env: *mut NapiEnv);
     fn NapiEnv__ref(env: *mut NapiEnv);
+    /// The reference to its VM's handle the env holds (`BunVmHandleRef`).
+    fn NapiEnv__vmHandle(env: *mut NapiEnv) -> *const bun_jsc::vm_handle::Shared;
     fn napi_set_last_error(env: napi_env, status: NapiStatus) -> napi_status;
+    fn NapiUngatedScope__construct(storage: *mut c_void, env: *mut NapiEnv);
+    fn NapiUngatedScope__destruct(storage: *mut c_void);
 }
 
 impl NapiEnv {
-    pub fn to_js(&self) -> &JSGlobalObject {
+    pub(crate) fn to_js(&self) -> &JSGlobalObject {
         // SAFETY: NapiEnv__globalObject always returns a valid non-null pointer.
         unsafe { &*NapiEnv__globalObject(self.as_mut_ptr()) }
     }
 
+    /// Any thread holding an env ref: the env's VM handle.
+    pub(crate) fn vm_handle(&self) -> bun_jsc::vm_handle::BorrowedRef {
+        // SAFETY: the env holds a reference for its whole lifetime.
+        unsafe { bun_jsc::VmHandle::borrow_ref(NapiEnv__vmHandle(self.as_mut_ptr())) }
+    }
+
     /// Convert err to an extern napi_status, and store the error code in env so that it can be
     /// accessed by napi_get_last_error_info
-    pub fn set_last_error(self_: Option<&Self>, err: NapiStatus) -> napi_status {
+    pub(crate) fn set_last_error(self_: Option<&Self>, err: NapiStatus) -> napi_status {
         // SAFETY: napi_set_last_error accepts null env.
         unsafe { napi_set_last_error(self_.map(Self::as_mut_ptr).unwrap_or(ptr::null_mut()), err) }
     }
 
     /// Convenience wrapper for set_last_error(.ok)
-    pub fn ok(&self) -> napi_status {
+    pub(crate) fn ok(&self) -> napi_status {
         Self::set_last_error(Some(self), NapiStatus::ok)
     }
 
     /// These wrappers exist for convenience and so we can set a breakpoint in lldb
-    pub fn invalid_arg(&self) -> napi_status {
+    pub(crate) fn invalid_arg(&self) -> napi_status {
         if cfg!(debug_assertions) {
             bun_output::scoped_log!(napi, "invalid arg");
         }
         Self::set_last_error(Some(self), NapiStatus::invalid_arg)
     }
 
-    pub fn generic_failure(&self) -> napi_status {
+    pub(crate) fn generic_failure(&self) -> napi_status {
         if cfg!(debug_assertions) {
             bun_output::scoped_log!(napi, "generic failure");
         }
         Self::set_last_error(Some(self), NapiStatus::generic_failure)
     }
 
-    pub fn pending_exception(&self) -> napi_status {
+    pub(crate) fn pending_exception(&self) -> napi_status {
         Self::set_last_error(Some(self), NapiStatus::pending_exception)
     }
 
     /// Checks both `env->m_pendingException` (set by `napi_throw*`) and the JSC
     /// VM exception slot. This is the gate Node.js's `NAPI_PREAMBLE` enforces.
-    pub fn has_pending_exception(&self) -> bool {
+    pub(crate) fn has_pending_exception(&self) -> bool {
         // SAFETY: env is non-null; C++ side is read-only here.
         unsafe { NapiEnv__hasPendingException(self.as_mut_ptr()) }
     }
 
     /// Assert that we're not currently performing garbage collection
-    pub fn check_gc(&self) {
+    pub(crate) fn check_gc(&self) {
         // SAFETY: env is non-null; C++ side is read-only here.
         unsafe { napi_internal_check_gc(self.as_mut_ptr()) };
     }
 
-    /// Return the Node-API version number declared by the module we are running code from
-    pub fn get_version(&self) -> u32 {
-        // SAFETY: env is non-null; C++ side is read-only here.
-        unsafe { napi_internal_get_version(self.as_mut_ptr()) }
-    }
-
-    pub fn get_and_clear_pending_exception(&self) -> Option<JSValue> {
+    pub(crate) fn get_and_clear_pending_exception(&self) -> Option<JSValue> {
         let mut exception = JSValue::ZERO;
         // SAFETY: out-param is a valid stack location; interior mutability via
         // `as_mut_ptr` permits C++ to clear the pending exception.
@@ -141,6 +166,22 @@ impl NapiEnv {
             return Some(exception);
         }
         None
+    }
+
+    /// After a native addon callback (a `complete`, a finalizer, a `call_js`):
+    /// what it raised through Node-API — latched on the env — or left on the VM
+    /// is that call's exception, surfaced as `Err` with it pending on the VM.
+    /// If both exist the VM's own wins and the latched one is discarded (it
+    /// cannot be reported without running JS over the pending one).
+    pub(crate) fn surface_exception(&self, global: &JSGlobalObject) -> JsResult<()> {
+        let latched = self.get_and_clear_pending_exception();
+        if global.has_exception() {
+            return Err(jsc::JsError::Thrown);
+        }
+        match latched {
+            Some(exception) => Err(global.throw_value(exception)),
+            None => Ok(()),
+        }
     }
 }
 
@@ -176,7 +217,7 @@ bun_opaque::opaque_ffi! {
     pub struct Ref;
 }
 
-pub(super) type napi_ref = *mut Ref;
+type napi_ref = *mut Ref;
 
 // ──────────────────────────────────────────────────────────────────────────
 // NapiHandleScope
@@ -202,28 +243,22 @@ unsafe extern "C" {
 }
 
 #[derive(Debug, thiserror::Error, strum::IntoStaticStr)]
-pub enum EscapeError {
+enum EscapeError {
     #[error("escape called twice")]
     EscapeCalledTwice,
-}
-
-impl From<EscapeError> for crate::Error {
-    fn from(_: EscapeError) -> Self {
-        crate::Error::EscapeCalledTwice
-    }
 }
 
 impl NapiHandleScope {
     /// Create a new handle scope in the given environment, or return null if creating one now is
     /// unsafe (i.e. inside a finalizer)
-    pub(super) fn open(env: &NapiEnv, escapable: bool) -> *mut NapiHandleScope {
+    fn open(env: &NapiEnv, escapable: bool) -> *mut NapiHandleScope {
         // SAFETY: env is valid; C++ mutates env's scope stack (interior mutability).
         unsafe { NapiHandleScope__open(env.as_mut_ptr(), escapable) }
     }
 
     /// Closes the given handle scope, releasing all values inside it, if it is safe to do so.
     /// Asserts that self is the current handle scope in env.
-    pub(super) fn close(self_: *mut NapiHandleScope, env: &NapiEnv) {
+    fn close(self_: *mut NapiHandleScope, env: &NapiEnv) {
         // SAFETY: NapiHandleScope__close handles null `current`.
         unsafe { NapiHandleScope__close(env.as_mut_ptr(), self_) }
     }
@@ -231,7 +266,7 @@ impl NapiHandleScope {
     /// Place a value in the handle scope. Must be done while returning any JS value into NAPI
     /// callbacks, as the value must remain alive as long as the handle scope is active, even if the
     /// native module doesn't keep it visible on the stack.
-    pub(super) fn append(env: &NapiEnv, value: JSValue) {
+    fn append(env: &NapiEnv, value: JSValue) {
         // SAFETY: env is valid; C++ appends to the current scope (interior mutability).
         unsafe { NapiHandleScope__append(env.as_mut_ptr(), value.encoded()) }
     }
@@ -239,7 +274,7 @@ impl NapiHandleScope {
     /// Move a value from the current handle scope (which must be escapable) to the reserved escape
     /// slot in the parent handle scope, allowing that value to outlive the current handle scope.
     /// Returns an error if escape() has already been called on this handle scope.
-    pub(super) fn escape(&self, value: JSValue) -> Result<(), EscapeError> {
+    fn escape(&self, value: JSValue) -> Result<(), EscapeError> {
         // SAFETY: self is a valid handle scope; C++ writes the escape slot
         // (interior mutability via `as_mut_ptr`).
         if !unsafe { NapiHandleScope__escape(self.as_mut_ptr(), value.encoded()) } {
@@ -260,7 +295,7 @@ impl NapiHandleScope {
     /// it on `Drop`. If opening returns null (inside a finalizer), the guard's
     /// `Drop` is a no-op.
     #[must_use]
-    pub(super) fn open_scoped(env: &NapiEnv) -> NapiHandleScopeGuard<'_> {
+    fn open_scoped(env: &NapiEnv) -> NapiHandleScopeGuard<'_> {
         NapiHandleScopeGuard {
             scope: Self::open(env, false),
             env,
@@ -276,10 +311,10 @@ impl Drop for NapiHandleScopeGuard<'_> {
     }
 }
 
-pub(super) type napi_handle_scope = *mut NapiHandleScope;
-pub(super) type napi_escapable_handle_scope = *mut NapiHandleScope;
+type napi_handle_scope = *mut NapiHandleScope;
+type napi_escapable_handle_scope = *mut NapiHandleScope;
 pub(super) type napi_callback_info = *mut CallFrame;
-pub(super) type napi_deferred = *mut JSPromiseStrong;
+type napi_deferred = *mut JSPromiseStrong;
 
 // ──────────────────────────────────────────────────────────────────────────
 // napi_value
@@ -289,19 +324,19 @@ pub(super) type napi_deferred = *mut JSPromiseStrong;
 /// you must use these functions rather than convert between napi_value and jsc::JSValue directly
 #[repr(transparent)]
 #[derive(Copy, Clone)]
-pub struct napi_value(i64);
+pub(crate) struct napi_value(i64);
 
 impl napi_value {
-    pub fn set(&mut self, env: &NapiEnv, val: JSValue) {
+    pub(crate) fn set(&mut self, env: &NapiEnv, val: JSValue) {
         NapiHandleScope::append(env, val);
         self.0 = val.encoded() as i64;
     }
 
-    pub fn get(self) -> JSValue {
+    pub(crate) fn get(self) -> JSValue {
         JSValue::from_encoded(self.0 as usize)
     }
 
-    pub fn create(env: &NapiEnv, val: JSValue) -> napi_value {
+    pub(crate) fn create(env: &NapiEnv, val: JSValue) -> napi_value {
         NapiHandleScope::append(env, val);
         napi_value(val.encoded() as i64)
     }
@@ -312,7 +347,7 @@ pub(super) type napi_property_attributes = c_uint;
 
 // Only used as `*mut napi_valuetype` out-param written by C++; Rust never
 // constructs or matches variants.
-pub(super) type napi_valuetype = u32;
+type napi_valuetype = u32;
 
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -332,7 +367,7 @@ pub(super) enum napi_typedarray_type {
 }
 
 impl napi_typedarray_type {
-    pub(super) fn from_js_type(this: jsc::JSType) -> Option<napi_typedarray_type> {
+    fn from_js_type(this: jsc::JSType) -> Option<napi_typedarray_type> {
         // Note: jsc::JSType is a newtype struct with associated consts (not an enum),
         // so glob-import is unavailable; match on the qualified const paths instead.
         Some(match this {
@@ -378,6 +413,8 @@ pub enum NapiStatus {
     arraybuffer_expected = 19,
     detachable_arraybuffer_expected = 20,
     would_deadlock = 21,
+    no_external_buffers_allowed = 22,
+    cannot_run_js = 23,
 }
 
 /// This is not an `enum` so that the enum values cannot be trivially returned from NAPI functions,
@@ -448,6 +485,43 @@ macro_rules! preamble {
     }};
 }
 
+/// napi.cpp's `NapiUngatedScope` (see the comment there), constructed in place in this storage.
+#[repr(C, align(8))]
+struct UngatedScope([core::mem::MaybeUninit<u8>; 80]);
+
+struct UngatedScopeGuard<'a>(&'a mut UngatedScope);
+
+impl UngatedScope {
+    #[inline]
+    fn enter<'a>(
+        storage: &'a mut core::mem::MaybeUninit<UngatedScope>,
+        env: &NapiEnv,
+    ) -> UngatedScopeGuard<'a> {
+        let this = storage.write(UngatedScope([core::mem::MaybeUninit::uninit(); 80]));
+        // SAFETY: storage is 80 bytes, 8-aligned, and stays put until the guard drops; napi.cpp
+        // static_asserts that NapiUngatedScope fits.
+        unsafe { NapiUngatedScope__construct(this.0.as_mut_ptr().cast(), env.as_mut_ptr()) };
+        UngatedScopeGuard(this)
+    }
+}
+
+impl Drop for UngatedScopeGuard<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: constructed by `enter`, destroyed exactly once here.
+        unsafe { NapiUngatedScope__destruct(self.0.0.as_mut_ptr().cast()) };
+    }
+}
+
+/// `get_env!`, then the rest of the function runs under napi.cpp's `NapiUngatedScope` (which see): no JS or addon code.
+macro_rules! ungated {
+    ($env:ident, $raw:expr) => {
+        let $env = get_env!($raw);
+        let mut napi_ungated_storage = ::core::mem::MaybeUninit::<UngatedScope>::uninit();
+        let _napi_ungated_scope = UngatedScope::enter(&mut napi_ungated_storage, $env);
+    };
+}
+
 macro_rules! get_out {
     ($env:expr, $ptr:expr) => {
         // SAFETY: caller passes raw out pointer; we treat non-null as &mut borrow.
@@ -474,7 +548,7 @@ macro_rules! get_out {
 /// These are exactly the N-API ABI guarantees for out-params, so call sites in
 /// `extern "C" fn napi_*` bodies need no additional justification.
 #[inline]
-pub(crate) fn write_out<T>(p: *mut T, v: T) {
+fn write_out<T>(p: *mut T, v: T) {
     // SAFETY: see doc comment — `p` is either null (skipped) or a valid,
     // exclusively-owned out-param per the N-API contract.
     if let Some(r) = unsafe { p.as_mut() } {
@@ -495,12 +569,9 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_get_undefined(
-    env_: napi_env,
-    result_: *mut napi_value,
-) -> napi_status {
+extern "C" fn napi_get_undefined(env_: napi_env, result_: *mut napi_value) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_undefined");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
     result.set(env, JSValue::UNDEFINED);
@@ -508,9 +579,9 @@ pub(super) extern "C" fn napi_get_undefined(
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_get_null(env_: napi_env, result_: *mut napi_value) -> napi_status {
+extern "C" fn napi_get_null(env_: napi_env, result_: *mut napi_value) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_null");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
     result.set(env, JSValue::NULL);
@@ -522,13 +593,13 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_get_boolean(
+extern "C" fn napi_get_boolean(
     env_: napi_env,
     value: bool,
     result_: *mut napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_boolean");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
     result.set(env, JSValue::from(value));
@@ -536,12 +607,9 @@ pub(super) extern "C" fn napi_get_boolean(
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_create_array(
-    env_: napi_env,
-    result_: *mut napi_value,
-) -> napi_status {
+extern "C" fn napi_create_array(env_: napi_env, result_: *mut napi_value) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_array");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
     let arr = match JSValue::create_empty_array(env.to_js(), 0) {
@@ -553,13 +621,13 @@ pub(super) extern "C" fn napi_create_array(
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_create_array_with_length(
+extern "C" fn napi_create_array_with_length(
     env_: napi_env,
     length: usize,
     result_: *mut napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_array_with_length");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
 
@@ -588,13 +656,13 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_create_int32(
+extern "C" fn napi_create_int32(
     env_: napi_env,
     value: i32,
     result_: *mut napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_int32");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
     result.set(env, JSValue::js_number(value as f64));
@@ -602,13 +670,13 @@ pub(super) extern "C" fn napi_create_int32(
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_create_uint32(
+extern "C" fn napi_create_uint32(
     env_: napi_env,
     value: u32,
     result_: *mut napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_uint32");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
     result.set(env, JSValue::js_number(value as f64));
@@ -616,13 +684,13 @@ pub(super) extern "C" fn napi_create_uint32(
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_create_int64(
+extern "C" fn napi_create_int64(
     env_: napi_env,
     value: i64,
     result_: *mut napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_int64");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
     result.set(env, JSValue::js_number(value as f64));
@@ -630,13 +698,13 @@ pub(super) extern "C" fn napi_create_int64(
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_create_string_latin1(
+extern "C" fn napi_create_string_latin1(
     env_: napi_env,
     str_: *const u8,
     length: usize,
     result_: *mut napi_value,
 ) -> napi_status {
-    let env = get_env!(env_);
+    ungated!(env, env_);
     let result = get_out!(env, result_);
 
     let slice: &[u8] = 'brk: {
@@ -666,18 +734,14 @@ pub(super) extern "C" fn napi_create_string_latin1(
     );
 
     if slice.is_empty() {
-        let js = match bun_core::String::empty().to_js(env.to_js()) {
-            Ok(v) => v,
-            Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
-        };
-        result.set(env, js);
+        result.set(env, JSValue::js_empty_string(env.to_js()));
         return env.ok();
     }
 
-    let (mut string, bytes) = bun_core::String::create_uninitialized_latin1(slice.len());
+    let (string, bytes) = bun_core::String::create_uninitialized_latin1(slice.len());
     bytes.copy_from_slice(slice);
 
-    let js = match string.transfer_to_js(env.to_js()) {
+    let js = match string.into_js(env.to_js()) {
         Ok(v) => v,
         Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
     };
@@ -686,13 +750,13 @@ pub(super) extern "C" fn napi_create_string_latin1(
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_create_string_utf8(
+extern "C" fn napi_create_string_utf8(
     env_: napi_env,
     str_: *const u8,
     length: usize,
     result_: *mut napi_value,
 ) -> napi_status {
-    let env = get_env!(env_);
+    ungated!(env, env_);
     let result = get_out!(env, result_);
 
     let slice: &[u8] = 'brk: {
@@ -718,22 +782,22 @@ pub(super) extern "C" fn napi_create_string_utf8(
     bun_output::scoped_log!(napi, "napi_create_string_utf8: {}", bstr::BStr::new(slice));
 
     let global_object = env.to_js();
-    let string = match jsc::bun_string_jsc::create_utf8_for_js(global_object, slice) {
+    let string = match bun_string_jsc::create_utf8_for_js(global_object, slice) {
         Ok(v) => v,
-        Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception),
+        Err(_) => return env.generic_failure(),
     };
     result.set(env, string);
     env.ok()
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_create_string_utf16(
+extern "C" fn napi_create_string_utf16(
     env_: napi_env,
     str_: *const char16_t,
     length: usize,
     result_: *mut napi_value,
 ) -> napi_status {
-    let env = get_env!(env_);
+    ungated!(env, env_);
     let result = get_out!(env, result_);
 
     let slice: &[u16] = 'brk: {
@@ -767,18 +831,14 @@ pub(super) extern "C" fn napi_create_string_utf16(
     }
 
     if slice.is_empty() {
-        let js = match bun_core::String::empty().to_js(env.to_js()) {
-            Ok(v) => v,
-            Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
-        };
-        result.set(env, js);
+        result.set(env, JSValue::js_empty_string(env.to_js()));
         return env.ok();
     }
 
-    let (mut string, chars) = bun_core::String::create_uninitialized_utf16(slice.len());
+    let (string, chars) = bun_core::String::create_uninitialized_utf16(slice.len());
     chars.copy_from_slice(slice);
 
-    let js = match string.transfer_to_js(env.to_js()) {
+    let js = match string.into_js(env.to_js()) {
         Ok(v) => v,
         Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::generic_failure),
     };
@@ -888,7 +948,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_get_prototype(
+extern "C" fn napi_get_prototype(
     env_: napi_env,
     object_: napi_value,
     result_: *mut napi_value,
@@ -909,7 +969,16 @@ pub(super) extern "C" fn napi_get_prototype(
         return NapiEnv::set_last_error(Some(env), NapiStatus::object_expected);
     }
 
-    result.set(env, object.get_prototype(env.to_js()));
+    // Like V8's Object::GetPrototype: a Proxy yields null and its trap never runs.
+    if object.js_type() == jsc::JSType::ProxyObject {
+        result.set(env, JSValue::NULL);
+        return env.ok();
+    }
+    let prototype = match object.get_prototype(env.to_js()) {
+        Ok(prototype) => prototype,
+        Err(_) => return env.pending_exception(),
+    };
+    result.set(env, prototype);
     env.ok()
 }
 
@@ -956,13 +1025,9 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_is_array(
-    env_: napi_env,
-    value_: napi_value,
-    result_: *mut bool,
-) -> napi_status {
+extern "C" fn napi_is_array(env_: napi_env, value_: napi_value, result_: *mut bool) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_array");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
     let value = value_.get();
@@ -974,7 +1039,7 @@ pub(super) extern "C" fn napi_is_array(
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_get_array_length(
+extern "C" fn napi_get_array_length(
     env_: napi_env,
     value_: napi_value,
     result_: *mut u32,
@@ -999,7 +1064,7 @@ pub(super) extern "C" fn napi_get_array_length(
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_strict_equals(
+extern "C" fn napi_strict_equals(
     env_: napi_env,
     lhs_: napi_value,
     rhs_: napi_value,
@@ -1120,12 +1185,12 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_open_handle_scope(
+extern "C" fn napi_open_handle_scope(
     env_: napi_env,
     result_: *mut napi_handle_scope,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_open_handle_scope");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
     *result = NapiHandleScope::open(env, false);
@@ -1133,12 +1198,12 @@ pub(super) extern "C" fn napi_open_handle_scope(
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_close_handle_scope(
+extern "C" fn napi_close_handle_scope(
     env_: napi_env,
     handle_scope: napi_handle_scope,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_close_handle_scope");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     if !handle_scope.is_null() {
         NapiHandleScope::close(handle_scope, env);
@@ -1148,27 +1213,22 @@ pub(super) extern "C" fn napi_close_handle_scope(
 
 // we don't support async contexts
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_async_init(
+extern "C" fn napi_async_init(
     env_: napi_env,
     _async_resource: napi_value,
     _async_resource_name: napi_value,
-    async_ctx: *mut *mut c_void,
+    async_ctx_: *mut *mut c_void,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_async_init");
     let env = get_env!(env_);
-    // SAFETY: async_ctx is a valid out-pointer per N-API contract. We store the
-    // original `*mut NapiEnv` (preserving write provenance) rather than deriving
-    // it from the `&NapiEnv` borrow.
-    unsafe { *async_ctx = env_.cast::<c_void>() };
+    let async_ctx = get_out!(env, async_ctx_);
+    *async_ctx = env_.cast::<c_void>();
     env.ok()
 }
 
 // we don't support async contexts
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_async_destroy(
-    env_: napi_env,
-    _async_ctx: *mut c_void,
-) -> napi_status {
+extern "C" fn napi_async_destroy(env_: napi_env, _async_ctx: *mut c_void) -> napi_status {
     bun_output::scoped_log!(napi, "napi_async_destroy");
     let env = get_env!(env_);
     env.ok()
@@ -1176,7 +1236,7 @@ pub(super) extern "C" fn napi_async_destroy(
 
 // this is just a regular function call
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_make_callback(
+extern "C" fn napi_make_callback(
     env_: napi_env,
     _async_ctx: *mut c_void,
     recv_: napi_value,
@@ -1188,29 +1248,35 @@ pub(super) extern "C" fn napi_make_callback(
     bun_output::scoped_log!(napi, "napi_make_callback");
     let env = preamble!(env_);
     let (recv, func) = (recv_.get(), func_.get());
+    if recv.is_empty() {
+        return env.invalid_arg();
+    }
+    if arg_count > 0 && args.is_null() {
+        return env.invalid_arg();
+    }
     if func.is_empty_or_undefined_or_null()
         || (!func.is_callable() && !func.is_async_context_frame())
     {
-        return NapiEnv::set_last_error(Some(env), NapiStatus::function_expected);
+        return env.invalid_arg();
     }
 
-    let this_value = if !recv.is_empty() {
-        recv
-    } else {
-        JSValue::UNDEFINED
-    };
-    let args_slice: &[JSValue] = if arg_count > 0 && !args.is_null() {
-        // SAFETY: napi_value is repr(transparent) over i64, same as JSValue; caller guarantees
-        // [args, args+arg_count) is valid.
+    let this_value = recv;
+    let args_slice: &[JSValue] = if arg_count > 0 {
+        // SAFETY: napi_value is repr(transparent) over i64, same as JSValue; the
+        // arg_count > 0 && args.is_null() case returned napi_invalid_arg above,
+        // and caller guarantees [args, args+arg_count) is valid.
         unsafe { bun_core::ffi::slice(args.cast::<JSValue>(), arg_count) }
     } else {
         &[]
     };
 
+    // Node.js returns napi_pending_exception iff the callback threw, leaves the
+    // exception pending for napi_is_exception_pending / napi_get_and_clear_last_exception,
+    // and does not write *result in that case. A callback that *returns* an Error
+    // without throwing is napi_ok.
     let res = match func.call(env.to_js(), this_value, args_slice) {
         Ok(v) => v,
-        // TODO: handle errors correctly
-        Err(err) => env.to_js().take_exception(err),
+        Err(_) => return env.pending_exception(),
     };
 
     // SAFETY: `maybe_result` is null or a valid exclusive out-param per N-API contract.
@@ -1218,21 +1284,16 @@ pub(super) extern "C" fn napi_make_callback(
         result.set(env, res);
     }
 
-    // TODO: this is likely incorrect
-    if res.is_any_error() {
-        return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception);
-    }
-
     env.ok()
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_open_escapable_handle_scope(
+extern "C" fn napi_open_escapable_handle_scope(
     env_: napi_env,
     result_: *mut napi_escapable_handle_scope,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_open_escapable_handle_scope");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
     *result = NapiHandleScope::open(env, true);
@@ -1240,12 +1301,12 @@ pub(super) extern "C" fn napi_open_escapable_handle_scope(
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_close_escapable_handle_scope(
+extern "C" fn napi_close_escapable_handle_scope(
     env_: napi_env,
     scope: napi_escapable_handle_scope,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_close_escapable_handle_scope");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     if !scope.is_null() {
         NapiHandleScope::close(scope, env);
@@ -1254,14 +1315,14 @@ pub(super) extern "C" fn napi_close_escapable_handle_scope(
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_escape_handle(
+extern "C" fn napi_escape_handle(
     env_: napi_env,
     scope_: napi_escapable_handle_scope,
     escapee: napi_value,
     result_: *mut napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_escape_handle");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
     // SAFETY: scope_ is a raw NAPI handle; non-null is treated as &NapiHandleScope.
@@ -1291,7 +1352,7 @@ unsafe extern "C" {
 
 // do nothing for both of these
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_open_callback_scope(
+extern "C" fn napi_open_callback_scope(
     _env: napi_env,
     _resource: napi_value,
     _context: *mut c_void,
@@ -1302,10 +1363,7 @@ pub(super) extern "C" fn napi_open_callback_scope(
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_close_callback_scope(
-    _env: napi_env,
-    _scope: *mut c_void,
-) -> napi_status {
+extern "C" fn napi_close_callback_scope(_env: napi_env, _scope: *mut c_void) -> napi_status {
     bun_output::scoped_log!(napi, "napi_close_callback_scope");
     NapiStatus::ok as napi_status
 }
@@ -1330,20 +1388,16 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_is_error(
-    env_: napi_env,
-    value_: napi_value,
-    result: *mut bool,
-) -> napi_status {
+extern "C" fn napi_is_error(env_: napi_env, value_: napi_value, result_: *mut bool) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_error");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let value = value_.get();
     if value.is_empty() {
         return env.invalid_arg();
     }
-    // SAFETY: result is a valid out-pointer per N-API contract.
-    unsafe { *result = value.is_any_error() };
+    let result = get_out!(env, result_);
+    *result = value.is_any_error();
     env.ok()
 }
 
@@ -1356,13 +1410,13 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_is_arraybuffer(
+extern "C" fn napi_is_arraybuffer(
     env_: napi_env,
     value_: napi_value,
     result_: *mut bool,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_arraybuffer");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let result = get_out!(env, result_);
     let value = value_.get();
@@ -1400,14 +1454,14 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_get_arraybuffer_info(
+extern "C" fn napi_get_arraybuffer_info(
     env_: napi_env,
     arraybuffer_: napi_value,
     data: *mut *mut u8,
     byte_length: *mut usize,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_arraybuffer_info");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let arraybuffer = arraybuffer_.get();
     let Some(array_buffer) = arraybuffer.as_array_buffer(env.to_js()) else {
@@ -1431,7 +1485,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_get_typedarray_info(
+extern "C" fn napi_get_typedarray_info(
     env_: napi_env,
     typedarray_: napi_value,
     maybe_type: *mut napi_typedarray_type,
@@ -1441,13 +1495,19 @@ pub(super) extern "C" fn napi_get_typedarray_info(
     maybe_byte_offset: *mut usize,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_typedarray_info");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let typedarray = typedarray_.get();
     if typedarray.is_empty_or_undefined_or_null() {
         return env.invalid_arg();
     }
     let _keep = jsc::EnsureStillAlive(typedarray);
+
+    // Keep the pointer valid for the view's lifetime, as in Node: the
+    // arraybuffer out-param below would otherwise invalidate it.
+    if !maybe_data.is_null() && !typedarray.materialize_array_buffer_view_buffer() {
+        return env.generic_failure();
+    }
 
     let Some(array_buffer) = typedarray.as_array_buffer(env.to_js()) else {
         return env.invalid_arg();
@@ -1490,13 +1550,13 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_is_dataview(
+extern "C" fn napi_is_dataview(
     env_: napi_env,
     value_: napi_value,
     result_: *mut bool,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_dataview");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     let result = get_out!(env, result_);
     let value = value_.get();
     if value.is_empty() {
@@ -1508,7 +1568,7 @@ pub(super) extern "C" fn napi_is_dataview(
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_get_dataview_info(
+extern "C" fn napi_get_dataview_info(
     env_: napi_env,
     dataview_: napi_value,
     maybe_bytelength: *mut usize,
@@ -1517,7 +1577,7 @@ pub(super) extern "C" fn napi_get_dataview_info(
     maybe_byte_offset: *mut usize,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_dataview_info");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let dataview = dataview_.get();
     if dataview.is_empty() {
@@ -1541,7 +1601,7 @@ pub(super) extern "C" fn napi_get_dataview_info(
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_get_version(env_: napi_env, result_: *mut u32) -> napi_status {
+extern "C" fn napi_get_version(env_: napi_env, result_: *mut u32) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_version");
     let env = get_env!(env_);
     let result = get_out!(env, result_);
@@ -1552,7 +1612,7 @@ pub(super) extern "C" fn napi_get_version(env_: napi_env, result_: *mut u32) -> 
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_create_promise(
+extern "C" fn napi_create_promise(
     env_: napi_env,
     deferred_: *mut napi_deferred,
     promise_: *mut napi_value,
@@ -1571,7 +1631,7 @@ pub(super) extern "C" fn napi_create_promise(
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_resolve_deferred(
+extern "C" fn napi_resolve_deferred(
     env_: napi_env,
     deferred: napi_deferred,
     resolution_: napi_value,
@@ -1584,13 +1644,13 @@ pub(super) extern "C" fn napi_resolve_deferred(
     let resolution = resolution_.get();
     let prom = deferred_box.get();
     if prom.resolve(env.to_js(), resolution).is_err() {
-        return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception);
+        return env.generic_failure();
     }
     env.ok()
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_reject_deferred(
+extern "C" fn napi_reject_deferred(
     env_: napi_env,
     deferred: napi_deferred,
     rejection_: napi_value,
@@ -1602,19 +1662,19 @@ pub(super) extern "C" fn napi_reject_deferred(
     let rejection = rejection_.get();
     let prom = deferred_box.get();
     if prom.reject(env.to_js(), Ok(rejection)).is_err() {
-        return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception);
+        return env.generic_failure();
     }
     env.ok()
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_is_promise(
+extern "C" fn napi_is_promise(
     env_: napi_env,
     value_: napi_value,
     is_promise_: *mut bool,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_promise");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let value = value_.get();
     let is_promise = get_out!(env, is_promise_);
@@ -1641,11 +1701,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_create_date(
-    env_: napi_env,
-    time: f64,
-    result_: *mut napi_value,
-) -> napi_status {
+extern "C" fn napi_create_date(env_: napi_env, time: f64, result_: *mut napi_value) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_date");
     let env = preamble!(env_);
     let result = get_out!(env, result_);
@@ -1657,13 +1713,9 @@ pub(super) extern "C" fn napi_create_date(
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_is_date(
-    env_: napi_env,
-    value_: napi_value,
-    is_date_: *mut bool,
-) -> napi_status {
+extern "C" fn napi_is_date(env_: napi_env, value_: napi_value, is_date_: *mut bool) -> napi_status {
     bun_output::scoped_log!(napi, "napi_is_date");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     env.check_gc();
     let is_date = get_out!(env, is_date_);
     let value = value_.get();
@@ -1761,25 +1813,28 @@ pub(super) enum AsyncWorkStatus {
 }
 
 /// must be globally allocated
-pub struct napi_async_work {
+pub(crate) struct napi_async_work {
     pub task: WorkPoolTask,
-    pub concurrent_task: ConcurrentTask,
-    // Note: BackRef — `enqueue_task` needs `&mut EventLoop`; reborrowed at use sites.
-    pub event_loop: bun_ptr::BackRef<EventLoop>,
-    pub global: GlobalRef, // JSC_BORROW (lives for vm lifetime)
-    pub env: NapiEnvRef,
-    pub execute: napi_async_execute_callback,
-    pub complete: Option<napi_async_complete_callback>,
-    pub data: *mut c_void,
-    pub status: AtomicU32, // AsyncWorkStatus
-    pub scheduled: bool,
+    pub(crate) concurrent_task: ConcurrentTask,
+    /// Held while the work is out on the pool (`schedule` until it is posted
+    /// back): how the pool thread delivers completion / cancellation, and what
+    /// makes the VM wait for it.
+    pub(crate) ticket: Option<bun_jsc::Ticket>,
+    /// JS thread only.
+    pub global: GlobalRef,
+    pub(crate) env: NapiEnvRef,
+    pub(crate) execute: napi_async_execute_callback,
+    pub(crate) complete: Option<napi_async_complete_callback>,
+    pub(crate) data: *mut c_void,
+    pub(crate) status: AtomicU32, // AsyncWorkStatus
+    pub(crate) scheduled: bool,
     pub poll_ref: KeepAlive,
 }
 
 bun_threading::intrusive_work_task!(napi_async_work, task);
 
 impl napi_async_work {
-    pub fn new(
+    pub(crate) fn new(
         env: &NapiEnv,
         execute: napi_async_execute_callback,
         complete: Option<napi_async_complete_callback>,
@@ -1797,10 +1852,7 @@ impl napi_async_work {
             // SAFETY: env outlives the async work; clone bumps the C++ refcount.
             env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
             execute,
-            // SAFETY: bun_vm() never null for a Bun-owned global.
-            // SAFETY: `event_loop()` is the live JS-thread loop (non-null,
-            // stable address) and outlives every napi_async_work.
-            event_loop: unsafe { bun_ptr::BackRef::from_raw(global.bun_vm().event_loop()) },
+            ticket: None,
             complete,
             data,
             status: AtomicU32::new(AsyncWorkStatus::Pending as u32),
@@ -1812,60 +1864,74 @@ impl napi_async_work {
     // Forwards `this` to `heap::take` without dereferencing it here;
     // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn destroy(this: *mut napi_async_work) {
+    pub(crate) fn destroy(this: *mut napi_async_work) {
         // SAFETY: `this` was created by heap::alloc in `new`.
         // env.deinit() runs via Drop on NapiEnvRef.
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    pub fn schedule(&mut self) {
+    pub(crate) fn schedule(&mut self) {
         if self.scheduled {
             return;
         }
         self.scheduled = true;
         self.poll_ref.ref_(bun_io::js_vm_ctx());
+        // The work object belongs to the addon and `execute` receives this
+        // env, so the VM waits for it (Node likewise settles its threadpool
+        // requests before an environment is freed).
+        self.ticket = Some(self.global.bun_vm().ticket());
         WorkPool::schedule(&raw mut self.task);
     }
 
-    pub unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
-        // SAFETY: task points to napi_async_work.task.
-        let this = unsafe { &mut *napi_async_work::from_task_ptr(task) };
-        this.run();
+    pub(crate) unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
+        // SAFETY: `task` is the `task` field of a live heap `napi_async_work`,
+        // exclusively owned by the work pool for this callback's duration.
+        unsafe { (*napi_async_work::from_task_ptr(task)).run() };
     }
 
     fn run(&mut self) {
         let self_ptr: *mut Self = self;
-        if let Err(state) = self.status.compare_exchange(
-            AsyncWorkStatus::Pending as u32,
-            AsyncWorkStatus::Started as u32,
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-        ) {
-            if state == AsyncWorkStatus::Cancelled as u32 {
-                // `concurrent_task` is the live inline field of this heap work;
-                // the queue takes ownership of its `next` link.
-                self.event_loop
-                    .enqueue_task_concurrent(core::ptr::NonNull::from(
-                        self.concurrent_task
-                            .from(self_ptr, AutoDeinit::ManualDeinit),
-                    ));
-                return;
-            }
+        // Moved out: the JS thread may free `self` the moment it is posted back.
+        let ticket = self
+            .ticket
+            .take()
+            .expect("scheduled napi async work holds a ticket");
+        // A VM that is already stopping cancels work it has not started, as
+        // Node's environment cleanup does (uv_cancel).
+        let started = ticket.script_allowed()
+            && match self.status.compare_exchange(
+                AsyncWorkStatus::Pending as u32,
+                AsyncWorkStatus::Started as u32,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => true,
+                Err(state) => state != AsyncWorkStatus::Cancelled as u32,
+            };
+        if started {
+            (self.execute)(self.env.get(), self.data);
+            self.status
+                .store(AsyncWorkStatus::Completed as u32, Ordering::SeqCst);
+        } else {
+            let _ = self.cancel();
         }
-        (self.execute)(self.env.get(), self.data);
-        self.status
-            .store(AsyncWorkStatus::Completed as u32, Ordering::SeqCst);
-
-        // `concurrent_task` is the live inline field of this heap work; the
-        // queue takes ownership of its `next` link.
-        self.event_loop
-            .enqueue_task_concurrent(core::ptr::NonNull::from(
-                self.concurrent_task
-                    .from(self_ptr, AutoDeinit::ManualDeinit),
-            ));
+        self.post_to_js_thread(self_ptr, &ticket);
     }
 
-    pub fn cancel(&mut self) -> bool {
+    /// Pool thread → JS thread: run `complete` there. `concurrent_task` is the
+    /// live inline field of this heap work; the queue takes ownership of its
+    /// `next` link. A VM tearing down runs `complete` from its queue release
+    /// (status cancelled if `execute` never ran), as Node does at environment
+    /// cleanup.
+    fn post_to_js_thread(&mut self, self_ptr: *mut Self, ticket: &bun_jsc::Ticket) {
+        let ct = core::ptr::NonNull::from(
+            self.concurrent_task
+                .from(self_ptr, AutoDeinit::ManualDeinit),
+        );
+        ticket.post(ct);
+    }
+
+    pub(crate) fn cancel(&mut self) -> bool {
         self.status
             .compare_exchange(
                 AsyncWorkStatus::Pending as u32,
@@ -1876,7 +1942,7 @@ impl napi_async_work {
             .is_ok()
     }
 
-    pub fn run_from_js(&mut self, vm: &mut VirtualMachine, global: &JSGlobalObject) {
+    pub(crate) fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         // Note: the "this" value here may already be freed by the user in `complete`
         // Note: KeepAlive is not `Copy`, so move it out (the original slot may
         // be freed under us by `complete`).
@@ -1887,7 +1953,7 @@ impl napi_async_work {
 
         // https://github.com/nodejs/node/blob/a2de5b9150da60c77144bb5333371eaca3fab936/src/node_api.cc#L1201
         let Some(complete) = self.complete else {
-            return;
+            return Ok(());
         };
 
         let env = self.env.get();
@@ -1905,33 +1971,28 @@ impl napi_async_work {
         complete(env, status as napi_status, self.data);
 
         // SAFETY: env is valid for the duration of this call.
-        let env_ref = unsafe { &*env };
-        if let Some(exception) = env_ref.get_and_clear_pending_exception() {
-            let _ = vm.uncaught_exception(global, exception, false);
-        } else if global.has_exception() {
-            global.report_active_exception_as_unhandled(jsc::JsError::Thrown);
-        }
+        unsafe { &*env }.surface_exception(global)
     }
 }
 
-pub(super) type napi_threadsafe_function = *mut ThreadSafeFunction;
+type napi_threadsafe_function = *mut ThreadSafeFunction;
 
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum napi_threadsafe_function_release_mode {
+pub(crate) enum napi_threadsafe_function_release_mode {
     release = 0,
     abort = 1,
 }
 
-pub(super) const NAPI_TSFN_BLOCKING: c_uint = 1;
-pub(super) type napi_threadsafe_function_call_mode = c_uint;
+const NAPI_TSFN_BLOCKING: c_uint = 1;
+type napi_threadsafe_function_call_mode = c_uint;
 pub(super) type napi_async_execute_callback = extern "C" fn(napi_env, *mut c_void);
 pub(super) type napi_async_complete_callback = extern "C" fn(napi_env, napi_status, *mut c_void);
 pub(super) type napi_threadsafe_function_call_js =
     extern "C" fn(napi_env, napi_value, *mut c_void, *mut c_void);
 
 #[repr(C)]
-pub(super) struct napi_node_version {
+struct napi_node_version {
     pub major: u32,
     pub minor: u32,
     pub patch: u32,
@@ -1962,7 +2023,7 @@ const fn parse_semver_component(s: &str, idx: usize) -> u32 {
     n
 }
 
-pub(super) static NAPI_NODE_VERSION_GLOBAL: napi_node_version = napi_node_version {
+static NAPI_NODE_VERSION_GLOBAL: napi_node_version = napi_node_version {
     major: parse_semver_component(bun_core::Environment::REPORTED_NODEJS_VERSION, 0),
     minor: parse_semver_component(bun_core::Environment::REPORTED_NODEJS_VERSION, 1),
     patch: parse_semver_component(bun_core::Environment::REPORTED_NODEJS_VERSION, 2),
@@ -1970,9 +2031,8 @@ pub(super) static NAPI_NODE_VERSION_GLOBAL: napi_node_version = napi_node_versio
 };
 
 bun_opaque::opaque_ffi! { pub struct struct_napi_async_cleanup_hook_handle__; }
-pub(super) type napi_async_cleanup_hook_handle = *mut struct_napi_async_cleanup_hook_handle__;
-pub(super) type napi_async_cleanup_hook =
-    Option<extern "C" fn(napi_async_cleanup_hook_handle, *mut c_void)>;
+type napi_async_cleanup_hook_handle = *mut struct_napi_async_cleanup_hook_handle__;
+type napi_async_cleanup_hook = Option<extern "C" fn(napi_async_cleanup_hook_handle, *mut c_void)>;
 
 fn napi_span(ptr: *const u8, len: usize) -> &'static [u8] {
     // SAFETY: caller-supplied C string region; lifetime is the duration of the NAPI call.
@@ -1991,7 +2051,7 @@ fn napi_span(ptr: *const u8, len: usize) -> &'static [u8] {
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_fatal_error(
+extern "C" fn napi_fatal_error(
     location_ptr: *const u8,
     location_len: usize,
     message_ptr: *const u8,
@@ -2031,42 +2091,13 @@ unsafe extern "C" {
         finalize_hint: *mut c_void,
         result: *mut napi_value,
     ) -> napi_status;
-}
-
-#[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_create_buffer_copy(
-    env_: napi_env,
-    length: usize,
-    data: *const u8,
-    result_data: *mut *mut c_void,
-    result_: *mut napi_value,
-) -> napi_status {
-    bun_output::scoped_log!(napi, "napi_create_buffer_copy: {}", length);
-    let env = preamble!(env_);
-    let result = get_out!(env, result_);
-    let buffer: JSValue = match JSValue::create_buffer_from_length(env.to_js(), length) {
-        Ok(b) => b,
-        Err(_) => return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception),
-    };
-    if let Some(mut array_buf) = buffer.as_array_buffer(env.to_js()) {
-        if length > 0 {
-            // SAFETY: caller guarantees `data` points to at least `length` bytes.
-            let src = unsafe { bun_core::ffi::slice(data, length) };
-            array_buf.slice_mut()[..length].copy_from_slice(src);
-        }
-        write_out(
-            result_data,
-            if length > 0 {
-                array_buf.ptr.cast::<c_void>()
-            } else {
-                ptr::null_mut()
-            },
-        );
-    }
-
-    result.set(env, buffer);
-
-    env.ok()
+    pub(super) fn napi_create_buffer_copy(
+        env: napi_env,
+        length: usize,
+        data: *const c_void,
+        result_data: *mut *mut c_void,
+        result: *mut napi_value,
+    ) -> napi_status;
 }
 
 unsafe extern "C" {
@@ -2074,18 +2105,26 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_get_buffer_info(
+extern "C" fn napi_get_buffer_info(
     env_: napi_env,
     value_: napi_value,
     data: *mut *mut u8,
     length: *mut usize,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_buffer_info");
-    let env = get_env!(env_);
+    ungated!(env, env_);
     let value = value_.get();
+    // Keep the pointer valid for the buffer's lifetime, as in Node.
+    if !data.is_null() && !value.materialize_array_buffer_view_buffer() {
+        return env.generic_failure();
+    }
     let Some(array_buf) = value.as_array_buffer(env.to_js()) else {
         return NapiEnv::set_last_error(Some(env), NapiStatus::invalid_arg);
     };
+    // node::Buffer::HasInstance is IsArrayBufferView: reject a bare ArrayBuffer.
+    if array_buf.typed_array_type == jsc::JSType::ArrayBuffer {
+        return NapiEnv::set_last_error(Some(env), NapiStatus::invalid_arg);
+    }
 
     write_out(data, array_buf.ptr);
     write_out(length, array_buf.byte_len);
@@ -2160,7 +2199,7 @@ unsafe extern "C" {
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_create_async_work(
+extern "C" fn napi_create_async_work(
     env_: napi_env,
     _async_resource: napi_value,
     _async_resource_name: *const c_char,
@@ -2181,55 +2220,40 @@ pub(super) extern "C" fn napi_create_async_work(
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_delete_async_work(
-    env_: napi_env,
-    work_: *mut napi_async_work,
-) -> napi_status {
+extern "C" fn napi_delete_async_work(env_: napi_env, work_: *mut napi_async_work) -> napi_status {
     bun_output::scoped_log!(napi, "napi_delete_async_work");
     let env = get_env!(env_);
     // SAFETY: `work_` is null or the `napi_async_work` we allocated in `napi_create_async_work`.
     let Some(work) = (unsafe { work_.as_mut() }) else {
         return env.invalid_arg();
     };
-    if cfg!(debug_assertions) {
-        debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
-    }
+    debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
     napi_async_work::destroy(work_);
     env.ok()
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_queue_async_work(
-    env_: napi_env,
-    work_: *mut napi_async_work,
-) -> napi_status {
+extern "C" fn napi_queue_async_work(env_: napi_env, work_: *mut napi_async_work) -> napi_status {
     bun_output::scoped_log!(napi, "napi_queue_async_work");
     let env = get_env!(env_);
     // SAFETY: `work_` is null or the `napi_async_work` we allocated in `napi_create_async_work`.
     let Some(work) = (unsafe { work_.as_mut() }) else {
         return env.invalid_arg();
     };
-    if cfg!(debug_assertions) {
-        debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
-    }
+    debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
     work.schedule();
     env.ok()
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_cancel_async_work(
-    env_: napi_env,
-    work_: *mut napi_async_work,
-) -> napi_status {
+extern "C" fn napi_cancel_async_work(env_: napi_env, work_: *mut napi_async_work) -> napi_status {
     bun_output::scoped_log!(napi, "napi_cancel_async_work");
     let env = get_env!(env_);
     // SAFETY: `work_` is null or the `napi_async_work` we allocated in `napi_create_async_work`.
     let Some(work) = (unsafe { work_.as_mut() }) else {
         return env.invalid_arg();
     };
-    if cfg!(debug_assertions) {
-        debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
-    }
+    debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
     if work.cancel() {
         return env.ok();
     }
@@ -2238,7 +2262,7 @@ pub(super) extern "C" fn napi_cancel_async_work(
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_get_node_version(
+extern "C" fn napi_get_node_version(
     env_: napi_env,
     version_: *mut *const napi_node_version,
 ) -> napi_status {
@@ -2255,10 +2279,7 @@ type napi_event_loop = *mut bun_sys::windows::libuv::Loop;
 type napi_event_loop = *mut EventLoop;
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_get_uv_event_loop(
-    env_: napi_env,
-    loop_: *mut napi_event_loop,
-) -> napi_status {
+extern "C" fn napi_get_uv_event_loop(env_: napi_env, loop_: *mut napi_event_loop) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_uv_event_loop");
     let env = get_env!(env_);
     let loop_out = get_out!(env, loop_);
@@ -2323,7 +2344,7 @@ extern "C" fn napi_internal_register_cleanup_callback(data: *mut c_void) {
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_internal_register_cleanup_zig(env_: napi_env) {
+extern "C" fn napi_internal_register_cleanup_zig(env_: napi_env) {
     // SAFETY: caller guarantees env_ is non-null.
     let env = unsafe { &*env_ };
     env.to_js().bun_vm().as_mut().rare_data().push_cleanup_hook(
@@ -2334,7 +2355,7 @@ pub(super) extern "C" fn napi_internal_register_cleanup_zig(env_: napi_env) {
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_internal_suppress_crash_on_abort_if_desired() {
+extern "C" fn napi_internal_suppress_crash_on_abort_if_desired() {
     if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT
         .get()
         .unwrap_or(false)
@@ -2356,7 +2377,7 @@ unsafe extern "C" {
 // Finalizer
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct Finalizer {
+pub(crate) struct Finalizer {
     pub env: NapiEnvRef,
     pub fun: NapiFinalizeFunction,
     pub data: *mut c_void,
@@ -2364,7 +2385,9 @@ pub struct Finalizer {
 }
 
 impl Finalizer {
-    pub fn run(&mut self) {
+    /// Run the addon's finalizer. What it raised through napi (latched on the
+    /// env) or left on the VM is the `Err`, for the caller's dispatcher to fold.
+    pub(crate) fn run(&mut self) -> JsResult<()> {
         let env = self.env.get();
         // SAFETY: env is valid for the duration of this call.
         let env_ref = unsafe { &*env };
@@ -2374,27 +2397,13 @@ impl Finalizer {
         // SAFETY: env is valid; passes the C finalizer back for bookkeeping.
         unsafe { napi_internal_remove_finalizer(env, Some(self.fun), self.hint, self.data) };
 
-        if let Some(exception) = env_ref.to_js().try_take_exception() {
-            let _ = env_ref.to_js().bun_vm().as_mut().uncaught_exception(
-                env_ref.to_js(),
-                exception,
-                false,
-            );
-        }
-
-        if let Some(exception) = env_ref.get_and_clear_pending_exception() {
-            let _ = env_ref.to_js().bun_vm().as_mut().uncaught_exception(
-                env_ref.to_js(),
-                exception,
-                false,
-            );
-        }
+        env_ref.surface_exception(env_ref.to_js())
     }
 
     // `deinit` is handled by Drop on NapiEnvRef.
 
     /// Takes ownership of `this`.
-    pub fn enqueue(self) {
+    pub(crate) fn enqueue(self) {
         NapiFinalizerTask::init(self).schedule();
     }
 }
@@ -2403,7 +2412,7 @@ impl Finalizer {
 /// immediate task queue instead of run immediately. This lets finalizers perform allocations,
 /// which they couldn't if they ran immediately while the garbage collector is still running.
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_internal_enqueue_finalizer(
+extern "C" fn napi_internal_enqueue_finalizer(
     env: napi_env,
     fun: napi_finalize,
     data: *mut c_void,
@@ -2433,7 +2442,7 @@ pub(super) extern "C" fn napi_internal_enqueue_finalizer(
 /// it in `destroy`; from `env_teardown_done` on it belongs to the remaining
 /// `thread_count` references, and whoever drops the last one frees it.
 // TODO: generate a compile-time version of this instead of runtime checking
-pub struct ThreadSafeFunction {
+pub(crate) struct ThreadSafeFunction {
     /// thread-safe functions can be "referenced" and "unreferenced". A
     /// "referenced" thread-safe function will cause the event loop on the thread
     /// on which it is created to remain alive until the thread-safe function is
@@ -2447,44 +2456,50 @@ pub struct ThreadSafeFunction {
     pub poll_ref: KeepAlive,
 
     // User implementation error can cause this number to go negative.
-    pub thread_count: AtomicI64,
+    pub(crate) thread_count: AtomicI64,
     // for std.condvar
-    pub lock: Mutex,
+    pub(crate) lock: Mutex,
 
     // Note: BackRef — `enqueue_task`/`drain_microtasks` need `&mut
     // EventLoop`; reborrowed at use sites (single JS thread). `None` once the
     // owning env is torn down: the loop lives inside a VirtualMachine that a
     // worker's shutdown frees, while addon threads outlive it.
-    pub event_loop: Option<bun_ptr::BackRef<EventLoop>>,
-    pub tracker: Debugger::AsyncTaskTracker,
+    /// JS-thread uses; `None` once the env has been torn down.
+    pub(crate) event_loop: Option<bun_ptr::BackRef<EventLoop, bun_ptr::Mut>>,
+    /// How addon threads (`napi_call_threadsafe_function`) schedule a
+    /// dispatch on the VM. Weak: addon threads hold this function for as long
+    /// as they like (Node: calls after env cleanup get `napi_closing`), so it
+    /// cannot be something the VM waits for.
+    pub(crate) handle: bun_jsc::VmHandle,
+    pub(crate) loop_kind: bun_jsc::LoopKind,
+    pub(crate) tracker: Debugger::AsyncTaskTracker,
 
     /// Dropped on the JS thread by `env_teardown`; `None` afterwards.
-    pub env: Option<NapiEnvRef>,
-    pub finalizer_fun: napi_finalize,
-    pub finalizer_data: *mut c_void,
+    pub(crate) env: Option<NapiEnvRef>,
+    pub(crate) finalizer_fun: napi_finalize,
+    pub(crate) finalizer_data: *mut c_void,
 
-    pub has_queued_finalizer: bool,
-    pub queue: TsfnQueue,
+    pub(crate) has_queued_finalizer: bool,
+    pub(crate) queue: TsfnQueue,
 
     pub ctx: *mut c_void,
 
     pub callback: TsfnCallback,
-    pub dispatch_state: AtomicU8, // DispatchState
-    pub blocking_condvar: Condvar,
-    pub closing: AtomicU8, // ClosingState
-    pub aborted: AtomicBool,
+    pub(crate) dispatch_state: AtomicU8, // DispatchState
+    pub(crate) blocking_condvar: Condvar,
+    pub(crate) closing: AtomicU8, // ClosingState
     /// Written under `lock` by `env_teardown` on the JS thread. Every path
     /// that would reach `event_loop` from another thread reads it under the
     /// same lock, so teardown cannot land between the check and the enqueue.
-    pub env_dead: AtomicBool,
+    pub(crate) env_dead: AtomicBool,
     /// Also written under `lock`, once `env_teardown` has released every
     /// JS-thread-owned resource. Until then teardown still owns this object,
     /// so a thread that drops the last `thread_count` reference must not free
     /// it (Node's `kClosed`).
-    pub env_teardown_done: AtomicBool,
+    pub(crate) env_teardown_done: AtomicBool,
 }
 
-pub enum TsfnCallback {
+pub(crate) enum TsfnCallback {
     Js(StrongOptional),
     C {
         js: StrongOptional,
@@ -2508,7 +2523,7 @@ pub(super) enum DispatchState {
     Pending,
 }
 
-pub struct TsfnQueue {
+pub(crate) struct TsfnQueue {
     pub data: LinearFifo<*mut c_void, DynamicBuffer<*mut c_void>>,
     /// This value will never change after initialization. Zero means the size is unlimited.
     pub max_queue_size: usize,
@@ -2516,7 +2531,7 @@ pub struct TsfnQueue {
 }
 
 impl TsfnQueue {
-    pub fn init(max_queue_size: usize) -> TsfnQueue {
+    pub(crate) fn init(max_queue_size: usize) -> TsfnQueue {
         TsfnQueue {
             data: LinearFifo::<*mut c_void, DynamicBuffer<*mut c_void>>::init(),
             max_queue_size,
@@ -2524,7 +2539,7 @@ impl TsfnQueue {
         }
     }
 
-    pub fn is_blocked(&self) -> bool {
+    pub(crate) fn is_blocked(&self) -> bool {
         self.max_queue_size > 0 && self.count.load(Ordering::SeqCst) as usize >= self.max_queue_size
     }
 }
@@ -2553,7 +2568,7 @@ impl Drop for ThreadSafeFunction {
 }
 
 impl ThreadSafeFunction {
-    pub fn new(init: ThreadSafeFunction) -> *mut ThreadSafeFunction {
+    pub(crate) fn new(init: ThreadSafeFunction) -> *mut ThreadSafeFunction {
         let _ = THREADSAFE_FUNCTION_LIVE_COUNT.fetch_add(1, Ordering::SeqCst);
         bun_core::heap::into_raw(Box::new(init))
     }
@@ -2564,16 +2579,20 @@ impl ThreadSafeFunction {
     //
     // Dispatched via the event-loop task table (`dispatch.rs`), which hands us
     // a `*mut ThreadSafeFunction`; the signature is fixed by that registry.
+    /// The threadsafe function's queue drain is a dispatcher: each queued call
+    /// is a JS entry of its own, so what one leaves pending is folded per call
+    /// (`dispatch_one`) and the drain goes on; the VM's termination ends it.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn on_dispatch(this: *mut ThreadSafeFunction) {
-        // SAFETY: `this` is a live heap allocation owned by the event loop dispatch.
-        let self_ = unsafe { &mut *this };
-        if self_.env_dead.load(Ordering::SeqCst) {
+    pub(crate) fn on_dispatch(this: *mut ThreadSafeFunction) {
+        // SAFETY: `this` is a live heap allocation owned by the event loop
+        // dispatch; `env_dead` is atomic so a shared reborrow suffices.
+        if unsafe { (*this).env_dead.load(Ordering::SeqCst) } {
             // `env_teardown` already released everything and owns the free
             // decision. The loop this task came from is being destroyed.
             return;
         }
-        if self_.closing.load(Ordering::SeqCst) == ClosingState::Closed as u8 {
+        // SAFETY: as above.
+        if unsafe { (*this).closing.load(Ordering::SeqCst) } == ClosingState::Closed as u8 {
             // Finalize the ThreadSafeFunction.
             // SAFETY: `this` is the live heap allocation we own; closed state guarantees no other thread will touch it.
             unsafe { ThreadSafeFunction::destroy(this) };
@@ -2584,14 +2603,24 @@ impl ThreadSafeFunction {
 
         // Run the tasks.
         loop {
-            self_
-                .dispatch_state
-                .store(DispatchState::Running as u8, Ordering::SeqCst);
-            if self_.dispatch_one(is_first) {
-                is_first = false;
-                self_
+            // SAFETY: as above.
+            unsafe {
+                (*this)
                     .dispatch_state
-                    .store(DispatchState::Pending as u8, Ordering::SeqCst);
+                    .store(DispatchState::Running as u8, Ordering::SeqCst)
+            };
+            // SAFETY: as above. `dispatch_one` runs JS that can re-enter other
+            // TSFN entry points, so the exclusive borrow is scoped to this call.
+            // A stopping VM ends the drain like an empty queue does.
+            let more = unsafe { (*this).dispatch_one(is_first) }.unwrap_or(false);
+            if more {
+                is_first = false;
+                // SAFETY: as above.
+                unsafe {
+                    (*this)
+                        .dispatch_state
+                        .store(DispatchState::Pending as u8, Ordering::SeqCst)
+                };
             } else {
                 // We're done running tasks, for now. Transition Running → Idle
                 // via CAS instead of an unconditional store: between
@@ -2603,15 +2632,16 @@ impl ThreadSafeFunction {
                 // up. If we blindly stored Idle we'd overwrite that Pending
                 // and the callback would be dropped (flaky lost-wakeup under
                 // load). On CAS failure, loop and re-drain.
-                if self_
-                    .dispatch_state
-                    .compare_exchange(
+                // SAFETY: as above.
+                if unsafe {
+                    (*this).dispatch_state.compare_exchange(
                         DispatchState::Running as u8,
                         DispatchState::Idle as u8,
                         Ordering::SeqCst,
                         Ordering::SeqCst,
                     )
-                    .is_ok()
+                }
+                .is_ok()
                 {
                     break;
                 }
@@ -2625,7 +2655,7 @@ impl ThreadSafeFunction {
         // not add unnecessary event loop ticks.
     }
 
-    pub fn is_closing(&self) -> bool {
+    pub(crate) fn is_closing(&self) -> bool {
         self.closing.load(Ordering::SeqCst) != ClosingState::NotClosing as u8
     }
 
@@ -2668,12 +2698,33 @@ impl ThreadSafeFunction {
         }
     }
 
-    pub fn dispatch_one(&mut self, is_first: bool) -> bool {
+    /// `Ok(true)`: a queued call ran (what it threw has been reported), keep
+    /// draining. `Err`: the VM is stopping.
+    ///
+    /// This can run several times in one tick of the event loop, so the
+    /// microtasks one call queued are drained before the next call
+    /// (https://github.com/nodejs/node/pull/38506), but not before the first.
+    pub(crate) fn dispatch_one(&mut self, is_first: bool) -> Result<bool, bun_jsc::Stopped> {
         let mut queue_finalizer_after_call = false;
         let task = 'brk: {
             // `MutexGuard` holds the lock by raw pointer, so it does not borrow
             // `*self` across the `&mut self` calls below.
             let _g = self.lock.lock_guard();
+            if self.is_closing() {
+                // Closing (napi_tsfn_abort, or the last call already ran):
+                // nothing still queued runs any more, as in Node's DispatchOne.
+                // An abort's leftovers go back to the addon, with no lock held
+                // since that re-enters it; the function finalizes once the last
+                // thread reference is gone.
+                let leftovers = self.take_queue();
+                drop(_g);
+                self.hand_back(leftovers);
+                let _g = self.lock.lock_guard();
+                if self.thread_count.load(Ordering::SeqCst) == 0 {
+                    self.maybe_queue_finalizer();
+                }
+                return Ok(false);
+            }
             let was_blocked = self.queue.is_blocked();
             let Some(t) = self.queue.data.read_item() else {
                 // When there are no tasks and the number of threads that have
@@ -2685,7 +2736,7 @@ impl ThreadSafeFunction {
                     }
                     self.maybe_queue_finalizer();
                 }
-                return false;
+                return Ok(false);
             };
 
             if self.queue.count.fetch_sub(1, Ordering::SeqCst) == 1
@@ -2704,36 +2755,43 @@ impl ThreadSafeFunction {
             break 'brk t;
         };
 
-        if self.call(task, is_first).is_err() {
-            return false;
+        let called = match self.loop_mut() {
+            Some(loop_) if !is_first => loop_.drain_microtasks(),
+            _ => Ok(()),
         }
+        .and_then(|()| self.call(task));
 
+        // The last queued call finalizes even when the VM is stopping.
         if queue_finalizer_after_call {
             self.maybe_queue_finalizer();
         }
+        called?;
 
         // An item was dequeued: keep on_dispatch looping so remaining queued
         // items drain and the empty-queue thread_count==0 path can finalize.
-        true
+        Ok(true)
     }
 
-    /// This function can be called multiple times in one tick of the event loop.
-    /// See: https://github.com/nodejs/node/pull/38506
-    /// In that case, we need to drain microtasks.
-    fn call(&mut self, task: *mut c_void, is_first: bool) -> Result<(), bun_jsc::JsTerminated> {
+    /// One queued call from the drain, which is its landing frame: what it
+    /// left pending is folded here. `Err`: the VM is stopping.
+    fn call(&mut self, task: *mut c_void) -> Result<(), bun_jsc::Stopped> {
         let Some(env) = self.env.as_ref().map(NapiEnvRef::get) else {
             // env torn down; nothing to call into.
             return Ok(());
         };
-        if !is_first {
-            let Some(loop_) = self.loop_mut() else {
-                return Ok(());
-            };
-            loop_.drain_microtasks()?;
-        }
         // SAFETY: env is valid while the TSF is live.
-        let global_object = unsafe { &*env }.to_js();
+        let env = unsafe { &*env };
+        match self.deliver(env, task) {
+            Ok(()) => Ok(()),
+            Err(err) => bun_jsc::task::report_error_or_terminate(env.to_js(), err),
+        }
+    }
 
+    /// One queued call: a JS entry of its own, so what it leaves pending is
+    /// the `Err`, for the caller's landing frame to fold. `env` is this
+    /// function's own, which `self.env` still holds.
+    fn deliver(&mut self, env: &NapiEnv, task: *mut c_void) -> JsResult<()> {
+        let global_object = env.to_js();
         let _dispatch = self.tracker.dispatch(global_object);
 
         match &self.callback {
@@ -2743,28 +2801,52 @@ impl ThreadSafeFunction {
                     return Ok(());
                 }
 
-                let _ = js
-                    .call(global_object, JSValue::UNDEFINED, &[])
-                    .map_err(|err| global_object.report_active_exception_as_unhandled(err));
+                js.call(global_object, JSValue::UNDEFINED, &[]).map(drop)
             }
             TsfnCallback::C {
                 js: cb_js,
                 napi_threadsafe_function_call_js,
             } => {
-                let js: JSValue = cb_js.get().unwrap_or(JSValue::UNDEFINED);
-
-                // SAFETY: `env` is held alive by `self.env` (`NapiEnvRef`) for the TSF's lifetime.
-                let env_ref = unsafe { &*env };
-                let _hs = NapiHandleScope::open_scoped(env_ref);
-                napi_threadsafe_function_call_js(
-                    env,
-                    napi_value::create(env_ref, js),
-                    self.ctx,
-                    task,
-                );
+                let _hs = NapiHandleScope::open_scoped(env);
+                // No func at creation => null js_callback (Node), not encoded undefined.
+                let js = match cb_js.get() {
+                    Some(v) => napi_value::create(env, v),
+                    None => napi_value(0),
+                };
+                napi_threadsafe_function_call_js(env.as_mut_ptr(), js, self.ctx, task);
+                env.surface_exception(global_object)
             }
         }
-        Ok(())
+    }
+
+    /// Caller holds `lock`. Empties the queue; the items are the caller's to
+    /// give back to the addon once the lock is dropped.
+    fn take_queue(&mut self) -> Vec<*mut c_void> {
+        let mut items = Vec::new();
+        while let Some(item) = self.queue.data.read_item() {
+            items.push(item);
+        }
+        self.queue.count.store(0, Ordering::SeqCst);
+        items
+    }
+
+    /// What a closing function does with items it will never run: each goes
+    /// back to the addon's call_js_cb with a null env and js_callback, which is
+    /// the signal napi_threadsafe_function_call_js documents for "free this,
+    /// JS is no longer reachable" (Node's ThreadSafeFunction::EmptyQueue). A
+    /// function created without a call_js_cb has nothing to give back.
+    fn hand_back(&self, items: Vec<*mut c_void>) {
+        let TsfnCallback::C {
+            napi_threadsafe_function_call_js,
+            ..
+        } = &self.callback
+        else {
+            return;
+        };
+        let call_js = *napi_threadsafe_function_call_js;
+        for item in items {
+            call_js(ptr::null_mut(), napi_value(0), self.ctx, item);
+        }
     }
 
     /// Runs on an addon thread. A call that reports `napi_closing` consumes the
@@ -2773,16 +2855,14 @@ impl ThreadSafeFunction {
     ///
     /// SAFETY: `this` is a live threadsafe function and the caller holds no
     /// reference into it.
-    pub unsafe fn push(
+    pub(crate) unsafe fn push(
         this: *mut ThreadSafeFunction,
         ctx: *mut c_void,
         block: bool,
     ) -> napi_status {
-        let (status, orphaned) = {
-            // SAFETY: live allocation; the borrow ends before the free below.
-            let self_ = unsafe { &mut *this };
-            self_.enqueue(ctx, block)
-        };
+        // SAFETY: live allocation; the borrow is scoped to this call and ends
+        // before the free below.
+        let (status, orphaned) = unsafe { (*this).enqueue(ctx, block) };
 
         if orphaned {
             // SAFETY: the lock is dropped, we dropped the last thread reference
@@ -2829,8 +2909,7 @@ impl ThreadSafeFunction {
     }
 
     /// Caller must hold `lock`. Reached from addon threads (`enqueue`,
-    /// `release_locked`), so it may only take a shared `&EventLoop`: the JS
-    /// thread can be inside `tick()` with its own `&mut` at the same time.
+    /// `release_locked`); the VM is reached only through its handle.
     fn schedule_dispatch(&mut self) {
         let prev = self
             .dispatch_state
@@ -2838,11 +2917,22 @@ impl ThreadSafeFunction {
         match prev {
             x if x == DispatchState::Idle as u8 => {
                 let self_ptr: *mut Self = self;
-                let Some(event_loop) = self.event_loop.as_ref() else {
+                if self.event_loop.is_none() {
                     // env torn down: the loop is gone, nothing to schedule onto.
                     return;
-                };
-                event_loop.enqueue_task_concurrent(ConcurrentTask::create_from(self_ptr));
+                }
+                let ct = ConcurrentTask::create_from(self_ptr);
+                if let bun_jsc::vm_handle::Posted::Refused(ct) =
+                    self.handle.post(self.loop_kind, ct)
+                {
+                    // VM closed before the env cleanup hook ran here: no
+                    // dispatch will happen; the queued calls are released by the
+                    // teardown path. Free the task and fall back to Idle.
+                    // SAFETY: refused ⇒ we own the task box.
+                    unsafe { drop(bun_core::heap::take(ct.as_ptr())) };
+                    self.dispatch_state
+                        .store(DispatchState::Idle as u8, Ordering::SeqCst);
+                }
             }
             x if x == DispatchState::Running as u8 => {
                 // it will check if it has more work to do
@@ -2856,14 +2946,17 @@ impl ThreadSafeFunction {
     /// Consumes and frees a heap-allocated ThreadSafeFunction (allocated by `new`).
     /// SAFETY: `this` must be a live `*mut ThreadSafeFunction` returned from `heap::alloc`
     /// and not aliased; caller transfers ownership.
-    pub unsafe fn destroy(this: *mut ThreadSafeFunction) {
-        // SAFETY: caller contract — `this` is a live heap allocation; we consume it here.
-        let self_ = unsafe { &mut *this };
+    pub(crate) unsafe fn destroy(this: *mut ThreadSafeFunction) {
+        // SAFETY: caller contract — `this` is a live heap allocation and we are
+        // the sole owner; reclaim the Box up front so the body works on owned
+        // state and the drop at scope end frees it.
+        let mut self_ = unsafe { bun_core::heap::take(this) };
         self_.unref();
 
         if let Some(env) = self_.env.as_ref() {
             // SAFETY: env is live (we hold a ref); drops our registry entry so
-            // teardown cannot hand this pointer out after we free it.
+            // teardown cannot hand this pointer out after we free it. `this` is
+            // passed as an opaque registry key only, never dereferenced.
             unsafe { NapiEnv__unregisterThreadSafeFunction(env.get(), this.cast()) };
         }
 
@@ -2879,11 +2972,6 @@ impl ThreadSafeFunction {
             };
             finalizer.enqueue();
         }
-        // else-branch: `env` drops with the Box below.
-
-        // callback.deinit() and queue.deinit() run via Drop.
-        // SAFETY: `this` was allocated by heap::alloc in `new`.
-        drop(unsafe { bun_core::heap::take(this) });
     }
 
     /// Frees the allocation and nothing else: no finalizer, no registry entry,
@@ -2907,10 +2995,11 @@ impl ThreadSafeFunction {
         // Phase 1: publish "the loop is going away". From here no other thread
         // schedules onto it, but none may free us either -- the JS resources
         // below are still live and only this thread may touch them.
-        let drained: Vec<*mut c_void> = {
+        let (was_closing, queued) = {
             let _g = self.lock.lock_guard();
             self.env_dead.store(true, Ordering::SeqCst);
-            if self.closing.load(Ordering::SeqCst) == ClosingState::NotClosing as u8 {
+            let was_closing = self.is_closing();
+            if !was_closing {
                 self.closing
                     .store(ClosingState::Closing as u8, Ordering::SeqCst);
             }
@@ -2919,25 +3008,35 @@ impl ThreadSafeFunction {
                 // is_closing and release.
                 self.blocking_condvar.broadcast();
             }
-            let mut drained = Vec::new();
-            while let Some(item) = self.queue.data.read_item() {
-                drained.push(item);
-            }
-            self.queue.count.store(0, Ordering::SeqCst);
-            drained
+            (was_closing, self.take_queue())
         };
 
-        // Phase 2: addon callbacks, so no lock is held. Node hands queued items
-        // back with a null env (ThreadSafeFunction::EmptyQueue) so the addon can
-        // free them, then runs the finalizer.
-        if let TsfnCallback::C {
-            napi_threadsafe_function_call_js,
-            ..
-        } = &self.callback
+        // Phase 2: addon callbacks, so no lock is held.
+        //
+        // What is still queued goes back to the addon only when a worker's env
+        // dies under it. On the main thread this is process exit, where Node
+        // runs nothing of a threadsafe function; most call_js_cbs cannot take
+        // the null env a hand-back would give them (they abort), and a
+        // process.exit() from inside one of them would re-enter it. The queue
+        // dies with the process. In a worker the items arrive as Node's last
+        // turn of the loop (CleanupHandles) delivers them: the normal call,
+        // live env and js_callback, with script refused if the worker was
+        // stopped. A function already closing (napi_tsfn_abort) keeps the
+        // abort contract. The finalizer runs either way.
+        //
+        // SAFETY: `env` is live; phase 3 below is what drops our reference.
+        let env = self.env.as_ref().map(|env| unsafe { &*env.get() });
+        if let Some(env) = env
+            && env.to_js().bun_vm().worker_ref().is_some()
         {
-            let call_js = *napi_threadsafe_function_call_js;
-            for item in drained {
-                call_js(ptr::null_mut(), napi_value(0), self.ctx, item);
+            if was_closing {
+                self.hand_back(queued);
+            } else if matches!(self.callback, TsfnCallback::C { .. }) {
+                for item in queued {
+                    // The env's cleanup hook is each delivery's landing frame,
+                    // as it is the finalizer's below.
+                    crate::dispatch::fold(self.deliver(env, item));
+                }
             }
         }
         let finalizer = self
@@ -2951,7 +3050,9 @@ impl ThreadSafeFunction {
                 hint: self.ctx,
             });
         if let Some(mut finalizer) = finalizer {
-            finalizer.run();
+            // The env's cleanup hook is this finalizer's landing frame: what it
+            // leaves is folded here so the next function's teardown starts clean.
+            crate::dispatch::fold(finalizer.run());
         }
 
         // Phase 3: release what only the JS thread may release, then hand the
@@ -2965,23 +3066,23 @@ impl ThreadSafeFunction {
         drop(self.env.take());
         self.env_teardown_done.store(true, Ordering::SeqCst);
         // Cleanup hooks are the loop's last tick: a task still queued for this
-        // TSFN will never run (no tag arm in `__bun_release_task_at_shutdown`
-        // dereferences it either). With no thread_count reference left, nobody
-        // else can reach this, so free it here.
+        // TSFN will never run (and its `release_unrun` does not dereference it).
+        // With no thread_count reference left, nobody else can reach this, so
+        // free it here.
         self.thread_count.load(Ordering::SeqCst) <= 0
     }
 
-    pub fn ref_(&mut self) {
-        self.poll_ref
-            .ref_concurrently_from_event_loop(bun_io::js_vm_ctx());
+    /// `napi_ref_threadsafe_function` — JS thread only (as in Node).
+    pub(crate) fn ref_(&mut self) {
+        self.poll_ref.ref_(bun_io::js_vm_ctx());
     }
 
-    pub fn unref(&mut self) {
-        self.poll_ref
-            .unref_concurrently_from_event_loop(bun_io::js_vm_ctx());
+    /// `napi_unref_threadsafe_function` — JS thread only (as in Node).
+    pub(crate) fn unref(&mut self) {
+        self.poll_ref.unref(bun_io::js_vm_ctx());
     }
 
-    pub fn acquire(&mut self) -> napi_status {
+    pub(crate) fn acquire(&mut self) -> napi_status {
         let _g = self.lock.lock_guard();
         if self.is_closing() {
             return NapiStatus::closing as napi_status;
@@ -2996,15 +3097,17 @@ impl ThreadSafeFunction {
     ///
     /// SAFETY: `this` is a live threadsafe function and the caller holds no
     /// reference into it.
-    pub unsafe fn release(
+    pub(crate) unsafe fn release(
         this: *mut ThreadSafeFunction,
         mode: napi_threadsafe_function_release_mode,
     ) -> napi_status {
         let (status, orphaned) = {
-            // SAFETY: live allocation; the borrow ends before the free below.
-            let self_ = unsafe { &mut *this };
-            let _g = self_.lock.lock_guard();
-            self_.release_locked(mode)
+            // SAFETY: live allocation. `MutexGuard` holds the lock by raw
+            // pointer, so it does not keep `*this` borrowed across the call
+            // below; both borrows are scoped and end before the free.
+            let _g = unsafe { (*this).lock.lock_guard() };
+            // SAFETY: as above.
+            unsafe { (*this).release_locked(mode) }
         };
 
         if orphaned {
@@ -3042,7 +3145,6 @@ impl ThreadSafeFunction {
                 if mode == napi_threadsafe_function_release_mode::abort {
                     self.closing
                         .store(ClosingState::Closing as u8, Ordering::SeqCst);
-                    self.aborted.store(true, Ordering::SeqCst);
                     if self.queue.max_queue_size > 0 {
                         // Wake all producers blocked in enqueue()'s bounded
                         // queue wait so they observe is_closing and release.
@@ -3065,12 +3167,12 @@ impl ThreadSafeFunction {
 /// Called from `NapiEnv::cleanup()` (JS thread) for every threadsafe function
 /// still registered with the env that is being torn down.
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_internal_threadsafe_function_env_teardown(tsfn: *mut c_void) {
+extern "C" fn napi_internal_threadsafe_function_env_teardown(tsfn: *mut c_void) {
     let this = tsfn.cast::<ThreadSafeFunction>();
     // SAFETY: the registry only holds live TSFN pointers — `destroy` and
-    // `env_teardown` both remove the entry before freeing.
-    let self_ = unsafe { &mut *this };
-    if self_.env_teardown() {
+    // `env_teardown` both remove the entry before freeing. Exclusive borrow
+    // scoped to this call.
+    if unsafe { (*this).env_teardown() } {
         // SAFETY: no other thread holds a reference (thread_count == 0) and no
         // event-loop task will run again.
         unsafe { ThreadSafeFunction::free_orphaned(this) };
@@ -3078,7 +3180,7 @@ pub(super) extern "C" fn napi_internal_threadsafe_function_env_teardown(tsfn: *m
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_create_threadsafe_function(
+extern "C" fn napi_create_threadsafe_function(
     env_: napi_env,
     func_: napi_value,
     _async_resource: napi_value,
@@ -3124,7 +3226,9 @@ pub(super) extern "C" fn napi_create_threadsafe_function(
     let function = ThreadSafeFunction::new(ThreadSafeFunction {
         // SAFETY: the loop is live now; `NapiEnv::cleanup()` clears this field
         // (via `env_teardown`) before the VirtualMachine holding it is freed.
-        event_loop: Some(unsafe { bun_ptr::BackRef::from_raw(vm.event_loop()) }),
+        event_loop: Some(unsafe { bun_ptr::BackRef::from_raw_mut(vm.event_loop()) }),
+        handle: vm.handle(),
+        loop_kind: vm.current_loop_kind(),
         // SAFETY: env is a live C++-owned napi_env.
         env: Some(unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) }),
         callback,
@@ -3140,7 +3244,6 @@ pub(super) extern "C" fn napi_create_threadsafe_function(
         dispatch_state: AtomicU8::new(DispatchState::Idle as u8),
         blocking_condvar: Condvar::default(),
         closing: AtomicU8::new(ClosingState::NotClosing as u8),
-        aborted: AtomicBool::new(true),
         env_dead: AtomicBool::new(false),
         env_teardown_done: AtomicBool::new(false),
     });
@@ -3160,18 +3263,18 @@ pub(super) extern "C" fn napi_create_threadsafe_function(
         return env.generic_failure();
     }
 
-    // SAFETY: function is non-null (just allocated).
-    let function_ref = unsafe { &mut *function };
     // nodejs by default keeps the event loop alive until the thread-safe function is unref'd
-    function_ref.ref_();
-    function_ref.tracker.did_schedule(vm.global());
+    // SAFETY: function is non-null (just allocated) and not yet handed out.
+    unsafe { (*function).ref_() };
+    // SAFETY: as above.
+    unsafe { (*function).tracker.did_schedule(vm.global()) };
 
     *result = function;
     env.ok()
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_get_threadsafe_function_context(
+extern "C" fn napi_get_threadsafe_function_context(
     func: napi_threadsafe_function,
     result: *mut *mut c_void,
 ) -> napi_status {
@@ -3182,7 +3285,7 @@ pub(super) extern "C" fn napi_get_threadsafe_function_context(
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_call_threadsafe_function(
+extern "C" fn napi_call_threadsafe_function(
     func: napi_threadsafe_function,
     data: *mut c_void,
     is_blocking: napi_threadsafe_function_call_mode,
@@ -3195,16 +3298,14 @@ pub(super) extern "C" fn napi_call_threadsafe_function(
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_acquire_threadsafe_function(
-    func: napi_threadsafe_function,
-) -> napi_status {
+extern "C" fn napi_acquire_threadsafe_function(func: napi_threadsafe_function) -> napi_status {
     bun_output::scoped_log!(napi, "napi_acquire_threadsafe_function");
     // SAFETY: func is non-null per N-API contract.
     unsafe { &mut *func }.acquire()
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_release_threadsafe_function(
+extern "C" fn napi_release_threadsafe_function(
     func: napi_threadsafe_function,
     mode: napi_threadsafe_function_release_mode,
 ) -> napi_status {
@@ -3215,35 +3316,55 @@ pub(super) extern "C" fn napi_release_threadsafe_function(
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_unref_threadsafe_function(
+extern "C" fn napi_unref_threadsafe_function(
     env_: napi_env,
     func: napi_threadsafe_function,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_unref_threadsafe_function");
-    let env = get_env!(env_);
-    // SAFETY: func is non-null per N-API contract.
-    let func = unsafe { &mut *func };
-    if let Some(loop_) = func.event_loop.as_ref() {
-        debug_assert!(core::ptr::eq(loop_.global.unwrap().as_ptr(), env.to_js()));
+    if func.is_null() {
+        return NapiStatus::invalid_arg as napi_status;
     }
-    func.unref();
-    env.ok()
+    #[cfg(debug_assertions)]
+    {
+        // SAFETY: `func` was null-checked above; JS thread, shared read.
+        let loop_ = unsafe { (*func).event_loop.as_ref() };
+        // SAFETY: `env_` is either null or a valid napi_env per N-API contract.
+        let env = unsafe { env_.as_ref() };
+        if let (Some(loop_), Some(env)) = (loop_, env) {
+            debug_assert!(core::ptr::eq(loop_.global.unwrap().as_ptr(), env.to_js()));
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    let _ = env_;
+    // SAFETY: `func` was null-checked above; exclusive borrow scoped to this call.
+    unsafe { (*func).unref() };
+    NapiStatus::ok as napi_status
 }
 
 #[unsafe(no_mangle)]
-pub(super) extern "C" fn napi_ref_threadsafe_function(
+extern "C" fn napi_ref_threadsafe_function(
     env_: napi_env,
     func: napi_threadsafe_function,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_ref_threadsafe_function");
-    let env = get_env!(env_);
-    // SAFETY: func is non-null per N-API contract.
-    let func = unsafe { &mut *func };
-    if let Some(loop_) = func.event_loop.as_ref() {
-        debug_assert!(core::ptr::eq(loop_.global.unwrap().as_ptr(), env.to_js()));
+    if func.is_null() {
+        return NapiStatus::invalid_arg as napi_status;
     }
-    func.ref_();
-    env.ok()
+    #[cfg(debug_assertions)]
+    {
+        // SAFETY: `func` was null-checked above; JS thread, shared read.
+        let loop_ = unsafe { (*func).event_loop.as_ref() };
+        // SAFETY: `env_` is either null or a valid napi_env per N-API contract.
+        let env = unsafe { env_.as_ref() };
+        if let (Some(loop_), Some(env)) = (loop_, env) {
+            debug_assert!(core::ptr::eq(loop_.global.unwrap().as_ptr(), env.to_js()));
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    let _ = env_;
+    // SAFETY: `func` was null-checked above; exclusive borrow scoped to this call.
+    unsafe { (*func).ref_() };
+    NapiStatus::ok as napi_status
 }
 
 const NAPI_AUTO_LENGTH: usize = usize::MAX;
@@ -3265,8 +3386,45 @@ mod v8_api {
         pub(super) fn _ZN2v87Isolate10GetCurrentEv() -> *mut c_void;
         pub(super) fn _ZN2v87Isolate13TryGetCurrentEv() -> *mut c_void;
         pub(super) fn _ZN2v87Isolate17GetCurrentContextEv() -> *mut c_void;
+        pub(super) fn _ZN2v87Isolate28GetEnteredOrMicrotaskContextEv() -> *mut c_void;
+        pub(super) fn _ZN2v87Isolate36GetContinuationPreservedEmbedderDataEv() -> *mut c_void;
+        pub(super) fn _ZN2v87Isolate7IsInUseEv() -> *mut c_void;
+        pub(super) fn _ZN2v87Isolate21LowMemoryNotificationEv() -> *mut c_void;
+        pub(super) fn _ZN2v87Isolate36AutomaticallyRestoreInitialHeapLimitEd() -> *mut c_void;
+        pub(super) fn _ZN2v87Isolate30NumberOfTrackedHeapObjectTypesEv() -> *mut c_void;
+        pub(super) fn _ZN2v87Isolate31GetHeapObjectStatisticsAtLastGCEPNS_20HeapObjectStatisticsEm()
+        -> *mut c_void;
+        pub(super) fn _ZN2v87Isolate21AddGCPrologueCallbackEPFvPS0_NS_6GCTypeENS_15GCCallbackFlagsEPvES4_S2_()
+        -> *mut c_void;
+        pub(super) fn _ZN2v87Isolate24RemoveGCPrologueCallbackEPFvPS0_NS_6GCTypeENS_15GCCallbackFlagsEPvES4_()
+        -> *mut c_void;
+        pub(super) fn _ZN2v87Isolate21AddGCEpilogueCallbackEPFvPS0_NS_6GCTypeENS_15GCCallbackFlagsEPvES4_S2_()
+        -> *mut c_void;
+        pub(super) fn _ZN2v87Isolate24RemoveGCEpilogueCallbackEPFvPS0_NS_6GCTypeENS_15GCCallbackFlagsEPvES4_()
+        -> *mut c_void;
+        pub(super) fn _ZN2v87Isolate24AddNearHeapLimitCallbackEPFmPvmmES1_() -> *mut c_void;
+        pub(super) fn _ZN2v87Isolate27RemoveNearHeapLimitCallbackEPFmPvmmEm() -> *mut c_void;
+        pub(super) fn _ZN2v87Isolate16RequestInterruptEPFvPS0_PvES2_() -> *mut c_void;
+        pub(super) fn _ZN2v87Isolate14ThrowExceptionENS_5LocalINS_5ValueEEE() -> *mut c_void;
+        pub(super) fn _ZN2v87Isolate10ThrowErrorENS_5LocalINS_6StringEEE() -> *mut c_void;
+        pub(super) fn _ZN2v89Exception5ErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v89Exception9TypeErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v87Isolate15GetHeapProfilerEv() -> *mut c_void;
+        pub(super) fn _ZN2v812HeapProfiler24StopSamplingHeapProfilerEv() -> *mut c_void;
+        pub(super) fn _ZN2v812HeapProfiler20GetAllocationProfileEv() -> *mut c_void;
         pub(super) fn _ZN4node25AddEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_() -> *mut c_void;
         pub(super) fn _ZN4node28RemoveEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_() -> *mut c_void;
+        pub(super) fn _ZN4node19GetCurrentEventLoopEPN2v87IsolateE() -> *mut c_void;
+        pub(super) fn _ZN4node29AsyncHooksGetExecutionAsyncIdEN2v85LocalINS0_7ContextEEE()
+        -> *mut c_void;
+        pub(super) fn _ZN4node13EmitAsyncInitEPN2v87IsolateENS0_5LocalINS0_6ObjectEEENS3_INS0_6StringEEEd()
+        -> *mut c_void;
+        pub(super) fn _ZN4node16EmitAsyncDestroyEPN2v87IsolateENS_13async_contextE() -> *mut c_void;
+        pub(super) fn _ZN4node12MakeCallbackEPN2v87IsolateENS0_5LocalINS0_6ObjectEEENS3_INS0_8FunctionEEEiPNS3_INS0_5ValueEEENS_13async_contextE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v84base9TimeTicks3NowEv() -> *mut c_void;
         pub(super) fn _ZN2v86Number3NewEPNS_7IsolateEd() -> *mut c_void;
         pub(super) fn _ZNK2v86Number5ValueEv() -> *mut c_void;
         pub(super) fn _ZN2v86Number12NewFromInt32EPNS_7IsolateEi() -> *mut c_void;
@@ -3285,6 +3443,8 @@ mod v8_api {
         pub(super) fn _ZN2v86Object3SetENS_5LocalINS_7ContextEEEjNS1_INS_5ValueEEE() -> *mut c_void;
         pub(super) fn _ZN2v86Object16SetInternalFieldEiNS_5LocalINS_4DataEEE() -> *mut c_void;
         pub(super) fn _ZN2v86Object20SlowGetInternalFieldEi() -> *mut c_void;
+        pub(super) fn _ZN2v86Object32SetAlignedPointerInInternalFieldEiPvt() -> *mut c_void;
+        pub(super) fn _ZN2v86Object38SlowGetAlignedPointerFromInternalFieldEit() -> *mut c_void;
         pub(super) fn _ZN2v86Object3GetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE() -> *mut c_void;
         pub(super) fn _ZN2v86Object3GetENS_5LocalINS_7ContextEEEj() -> *mut c_void;
         pub(super) fn _ZN2v811HandleScope12CreateHandleEPNS_8internal7IsolateEm() -> *mut c_void;
@@ -3300,12 +3460,21 @@ mod v8_api {
         pub(super) fn _ZN2v811HandleScopeD1Ev() -> *mut c_void;
         pub(super) fn _ZN2v811HandleScopeD2Ev() -> *mut c_void;
         pub(super) fn _ZN2v816FunctionTemplate11GetFunctionENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZN2v816FunctionTemplate12SetClassNameENS_5LocalINS_6StringEEE() -> *mut c_void;
         pub(super) fn _ZN2v816FunctionTemplate3NewEPNS_7IsolateEPFvRKNS_20FunctionCallbackInfoINS_5ValueEEEENS_5LocalIS4_EENSA_INS_9SignatureEEEiNS_19ConstructorBehaviorENS_14SideEffectTypeEPKNS_9CFunctionEttt()
         -> *mut c_void;
         pub(super) fn _ZN2v814ObjectTemplate11NewInstanceENS_5LocalINS_7ContextEEE() -> *mut c_void;
         pub(super) fn _ZN2v814ObjectTemplate21SetInternalFieldCountEi() -> *mut c_void;
         pub(super) fn _ZNK2v814ObjectTemplate18InternalFieldCountEv() -> *mut c_void;
         pub(super) fn _ZN2v814ObjectTemplate3NewEPNS_7IsolateENS_5LocalINS_16FunctionTemplateEEE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v816FunctionTemplate16InstanceTemplateEv() -> *mut c_void;
+        pub(super) fn _ZN2v816FunctionTemplate17PrototypeTemplateEv() -> *mut c_void;
+        pub(super) fn _ZN2v88Template3SetENS_5LocalINS_4NameEEENS1_INS_4DataEEENS_17PropertyAttributeE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v88Template21SetNativeDataPropertyENS_5LocalINS_4NameEEEPFvS3_RKNS_20PropertyCallbackInfoINS_5ValueEEEEPFvS3_NS1_IS5_EERKNS4_IvEEESB_NS_17PropertyAttributeENS_14SideEffectTypeESI_()
+        -> *mut c_void;
+        pub(super) fn _ZN2v89Signature3NewEPNS_7IsolateENS_5LocalINS_16FunctionTemplateEEE()
         -> *mut c_void;
         pub(super) fn _ZN2v824EscapableHandleScopeBase10EscapeSlotEPm() -> *mut c_void;
         pub(super) fn _ZN2v824EscapableHandleScopeBaseC2EPNS_7IsolateE() -> *mut c_void;
@@ -3317,6 +3486,10 @@ mod v8_api {
         -> *mut c_void;
         pub(super) fn _ZN2v85Array9CheckCastEPNS_5ValueE() -> *mut c_void;
         pub(super) fn _ZN2v88Function7SetNameENS_5LocalINS_6StringEEE() -> *mut c_void;
+        pub(super) fn _ZN2v88Function4CallENS_5LocalINS_7ContextEEENS1_INS_5ValueEEEiPS5_()
+        -> *mut c_void;
+        pub(super) fn _ZNK2v88Function11NewInstanceENS_5LocalINS_7ContextEEEiPNS1_INS_5ValueEEE()
+        -> *mut c_void;
         pub(super) fn _ZNK2v85Value9IsBooleanEv() -> *mut c_void;
         pub(super) fn _ZNK2v87Boolean5ValueEv() -> *mut c_void;
         pub(super) fn _ZNK2v85Value10FullIsTrueEv() -> *mut c_void;
@@ -3337,6 +3510,15 @@ mod v8_api {
         pub(super) fn _ZNK2v85Value8IsStringEv() -> *mut c_void;
         pub(super) fn _ZNK2v85Value12StrictEqualsENS_5LocalIS0_EE() -> *mut c_void;
         pub(super) fn _ZN2v87Boolean3NewEPNS_7IsolateEb() -> *mut c_void;
+        pub(super) fn _ZN2v811ArrayBuffer3NewEPNS_7IsolateEmNS_30BackingStoreInitializationModeE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v811ArrayBuffer15GetBackingStoreEv() -> *mut c_void;
+        pub(super) fn _ZNK2v812BackingStore4DataEv() -> *mut c_void;
+        pub(super) fn _ZN2v815ArrayBufferView6BufferEv() -> *mut c_void;
+        pub(super) fn _ZN2v815ArrayBufferView10ByteLengthEv() -> *mut c_void;
+        pub(super) fn _ZN2v815ArrayBufferView10ByteOffsetEv() -> *mut c_void;
+        pub(super) fn _ZN2v810Uint8Array3NewENS_5LocalINS_11ArrayBufferEEEmm() -> *mut c_void;
+        pub(super) fn _ZN2v811Uint32Array3NewENS_5LocalINS_11ArrayBufferEEEmm() -> *mut c_void;
         pub(super) fn _ZN2v86Object16GetInternalFieldEi() -> *mut c_void;
         pub(super) fn _ZN2v87Context10GetIsolateEv() -> *mut c_void;
         pub(super) fn _ZN2v86String14NewFromOneByteEPNS_7IsolateEPKhNS_13NewStringTypeEi()
@@ -3354,6 +3536,10 @@ mod v8_api {
         pub(super) fn _ZN2v812api_internal18GlobalizeReferenceEPNS_8internal7IsolateEm()
         -> *mut c_void;
         pub(super) fn _ZN2v812api_internal13DisposeGlobalEPm() -> *mut c_void;
+        pub(super) fn _ZN2v812api_internal8MakeWeakEPmPvPFvRKNS_16WeakCallbackInfoIvEEENS_16WeakCallbackTypeE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v812api_internal9ClearWeakEPm() -> *mut c_void;
+        pub(super) fn _ZN2v812api_internal19MoveGlobalReferenceEPPmS2_() -> *mut c_void;
         pub(super) fn _ZN2v812api_internal23GetFunctionTemplateDataEPNS_7IsolateENS_5LocalINS_4DataEEE()
         -> *mut c_void;
         pub(super) fn _ZNK2v88Function7GetNameEv() -> *mut c_void;
@@ -3363,6 +3549,54 @@ mod v8_api {
         pub(super) fn _ZNK2v85Value7IsInt32Ev() -> *mut c_void;
         pub(super) fn _ZNK2v85Value8IsBigIntEv() -> *mut c_void;
         pub(super) fn _ZN2v812api_internal17FromJustIsNothingEv() -> *mut c_void;
+        pub(super) fn _ZN2v87Integer3NewEPNS_7IsolateEi() -> *mut c_void;
+        pub(super) fn _ZN2v87Integer15NewFromUnsignedEPNS_7IsolateEj() -> *mut c_void;
+        pub(super) fn _ZNK2v87Integer5ValueEv() -> *mut c_void;
+        pub(super) fn _ZN2v86String18NewFromUtf8LiteralEPNS_7IsolateEPKcNS_13NewStringTypeEi()
+        -> *mut c_void;
+        pub(super) fn _ZNK2v85Value12IsUint8ArrayEv() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value8ToStringENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZNK2v85Value9ToIntegerENS_5LocalINS_7ContextEEE() -> *mut c_void;
+        pub(super) fn _ZN2v87Context6GlobalEv() -> *mut c_void;
+        pub(super) fn _ZNK2v86Object18InternalFieldCountEv() -> *mut c_void;
+        pub(super) fn _ZN2v86Object15GetIdentityHashEv() -> *mut c_void;
+        pub(super) fn _ZN2v86Object17DefineOwnPropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEENS1_INS_5ValueEEENS_17PropertyAttributeE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v820ToExternalPointerTagEt() -> *mut c_void;
+        pub(super) fn _ZN2v88internal9Internals17GetCurrentIsolateEv() -> *mut c_void;
+        pub(super) fn _ZN2v820HeapObjectStatisticsC1Ev() -> *mut c_void;
+        pub(super) fn _ZN2v811CpuProfiler3NewEPNS_7IsolateENS_22CpuProfilingNamingModeENS_23CpuProfilingLoggingModeE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v811CpuProfiler7DisposeEv() -> *mut c_void;
+        pub(super) fn _ZN2v811CpuProfiler19SetSamplingIntervalEi() -> *mut c_void;
+        pub(super) fn _ZN2v811CpuProfiler5StartENS_5LocalINS_6StringEEENS_16CpuProfilingModeEbj()
+        -> *mut c_void;
+        pub(super) fn _ZN2v811CpuProfiler4StopEj() -> *mut c_void;
+        pub(super) fn _ZN2v811CpuProfiler14StartProfilingENS_5LocalINS_6StringEEENS_16CpuProfilingModeEbj()
+        -> *mut c_void;
+        pub(super) fn _ZN2v811CpuProfiler14StartProfilingENS_5LocalINS_6StringEEEb() -> *mut c_void;
+        pub(super) fn _ZN2v811CpuProfiler13StopProfilingENS_5LocalINS_6StringEEE() -> *mut c_void;
+        pub(super) fn _ZN2v810CpuProfile6DeleteEv() -> *mut c_void;
+        pub(super) fn _ZNK2v810CpuProfile8GetTitleEv() -> *mut c_void;
+        pub(super) fn _ZNK2v810CpuProfile10GetEndTimeEv() -> *mut c_void;
+        pub(super) fn _ZNK2v810CpuProfile12GetStartTimeEv() -> *mut c_void;
+        pub(super) fn _ZNK2v810CpuProfile14GetTopDownRootEv() -> *mut c_void;
+        pub(super) fn _ZNK2v810CpuProfile15GetSamplesCountEv() -> *mut c_void;
+        pub(super) fn _ZNK2v810CpuProfile18GetSampleTimestampEi() -> *mut c_void;
+        pub(super) fn _ZNK2v810CpuProfile9GetSampleEi() -> *mut c_void;
+        pub(super) fn _ZNK2v814CpuProfileNode11GetHitCountEv() -> *mut c_void;
+        pub(super) fn _ZNK2v814CpuProfileNode11GetScriptIdEv() -> *mut c_void;
+        pub(super) fn _ZNK2v814CpuProfileNode12GetLineTicksEPNS0_8LineTickEj() -> *mut c_void;
+        pub(super) fn _ZNK2v814CpuProfileNode13GetLineNumberEv() -> *mut c_void;
+        pub(super) fn _ZNK2v814CpuProfileNode15GetColumnNumberEv() -> *mut c_void;
+        pub(super) fn _ZNK2v814CpuProfileNode15GetFunctionNameEv() -> *mut c_void;
+        pub(super) fn _ZNK2v814CpuProfileNode15GetHitLineCountEv() -> *mut c_void;
+        pub(super) fn _ZNK2v814CpuProfileNode16GetChildrenCountEv() -> *mut c_void;
+        pub(super) fn _ZNK2v814CpuProfileNode18GetFunctionNameStrEv() -> *mut c_void;
+        pub(super) fn _ZNK2v814CpuProfileNode21GetScriptResourceNameEv() -> *mut c_void;
+        pub(super) fn _ZNK2v814CpuProfileNode8GetChildEi() -> *mut c_void;
+        pub(super) fn _ZN2v83Map3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_() -> *mut c_void;
+        pub(super) fn _ZN2v83Map6DeleteENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE() -> *mut c_void;
         // NOTE: return type omitted to match the `uv_functions_to_export` declarations
         // below (avoids `clashing_extern_declarations`); only the symbol address is used.
         pub(super) fn uv_os_getpid();
@@ -3390,10 +3624,66 @@ mod v8_api {
         pub(super) fn v8_Isolate_GetCurrent() -> *mut c_void;
         #[link_name = "?GetCurrentContext@Isolate@v8@@QEAA?AV?$Local@VContext@v8@@@2@XZ"]
         pub(super) fn v8_Isolate_GetCurrentContext() -> *mut c_void;
+        #[link_name = "?GetEnteredOrMicrotaskContext@Isolate@v8@@QEAA?AV?$Local@VContext@v8@@@2@XZ"]
+        pub(super) fn v8_Isolate_GetEnteredOrMicrotaskContext() -> *mut c_void;
+        #[link_name = "?GetContinuationPreservedEmbedderData@Isolate@v8@@QEAA?AV?$Local@VValue@v8@@@2@XZ"]
+        pub(super) fn v8_Isolate_GetContinuationPreservedEmbedderData() -> *mut c_void;
+        #[link_name = "?IsInUse@Isolate@v8@@QEAA_NXZ"]
+        pub(super) fn v8_Isolate_IsInUse() -> *mut c_void;
+        #[link_name = "?LowMemoryNotification@Isolate@v8@@QEAAXXZ"]
+        pub(super) fn v8_Isolate_LowMemoryNotification() -> *mut c_void;
+        #[link_name = "?AutomaticallyRestoreInitialHeapLimit@Isolate@v8@@QEAAXN@Z"]
+        pub(super) fn v8_Isolate_AutomaticallyRestoreInitialHeapLimit() -> *mut c_void;
+        #[link_name = "?NumberOfTrackedHeapObjectTypes@Isolate@v8@@QEAA_KXZ"]
+        pub(super) fn v8_Isolate_NumberOfTrackedHeapObjectTypes() -> *mut c_void;
+        #[link_name = "?GetHeapObjectStatisticsAtLastGC@Isolate@v8@@QEAA_NPEAVHeapObjectStatistics@2@_K@Z"]
+        pub(super) fn v8_Isolate_GetHeapObjectStatisticsAtLastGC() -> *mut c_void;
+        #[link_name = "?AddGCPrologueCallback@Isolate@v8@@QEAAXP6AXPEAV12@W4GCType@2@W4GCCallbackFlags@2@PEAX@Z31@Z"]
+        pub(super) fn v8_Isolate_AddGCPrologueCallback() -> *mut c_void;
+        #[link_name = "?RemoveGCPrologueCallback@Isolate@v8@@QEAAXP6AXPEAV12@W4GCType@2@W4GCCallbackFlags@2@PEAX@Z3@Z"]
+        pub(super) fn v8_Isolate_RemoveGCPrologueCallback() -> *mut c_void;
+        #[link_name = "?AddGCEpilogueCallback@Isolate@v8@@QEAAXP6AXPEAV12@W4GCType@2@W4GCCallbackFlags@2@PEAX@Z31@Z"]
+        pub(super) fn v8_Isolate_AddGCEpilogueCallback() -> *mut c_void;
+        #[link_name = "?RemoveGCEpilogueCallback@Isolate@v8@@QEAAXP6AXPEAV12@W4GCType@2@W4GCCallbackFlags@2@PEAX@Z3@Z"]
+        pub(super) fn v8_Isolate_RemoveGCEpilogueCallback() -> *mut c_void;
+        #[link_name = "?AddNearHeapLimitCallback@Isolate@v8@@QEAAXP6A_KPEAX_K1@Z0@Z"]
+        pub(super) fn v8_Isolate_AddNearHeapLimitCallback() -> *mut c_void;
+        #[link_name = "?RemoveNearHeapLimitCallback@Isolate@v8@@QEAAXP6A_KPEAX_K1@Z1@Z"]
+        pub(super) fn v8_Isolate_RemoveNearHeapLimitCallback() -> *mut c_void;
+        #[link_name = "?RequestInterrupt@Isolate@v8@@QEAAXP6AXPEAV12@PEAX@Z1@Z"]
+        pub(super) fn v8_Isolate_RequestInterrupt() -> *mut c_void;
+        #[link_name = "?ThrowException@Isolate@v8@@QEAA?AV?$Local@VValue@v8@@@2@V32@@Z"]
+        pub(super) fn v8_Isolate_ThrowException() -> *mut c_void;
+        #[link_name = "?ThrowError@Isolate@v8@@QEAA?AV?$Local@VValue@v8@@@2@V?$Local@VString@v8@@@2@@Z"]
+        pub(super) fn v8_Isolate_ThrowError() -> *mut c_void;
+        #[link_name = "?Error@Exception@v8@@SA?AV?$Local@VValue@v8@@@2@V?$Local@VString@v8@@@2@V32@@Z"]
+        pub(super) fn v8_Exception_Error() -> *mut c_void;
+        #[link_name = "?TypeError@Exception@v8@@SA?AV?$Local@VValue@v8@@@2@V?$Local@VString@v8@@@2@V32@@Z"]
+        pub(super) fn v8_Exception_TypeError() -> *mut c_void;
+        #[link_name = "?GetHeapProfiler@Isolate@v8@@QEAAPEAVHeapProfiler@2@XZ"]
+        pub(super) fn v8_Isolate_GetHeapProfiler() -> *mut c_void;
+        #[link_name = "?StartSamplingHeapProfiler@HeapProfiler@v8@@QEAA_N_KHW4SamplingFlags@12@@Z"]
+        pub(super) fn v8_HeapProfiler_StartSamplingHeapProfiler() -> *mut c_void;
+        #[link_name = "?StopSamplingHeapProfiler@HeapProfiler@v8@@QEAAXXZ"]
+        pub(super) fn v8_HeapProfiler_StopSamplingHeapProfiler() -> *mut c_void;
+        #[link_name = "?GetAllocationProfile@HeapProfiler@v8@@QEAAPEAVAllocationProfile@2@XZ"]
+        pub(super) fn v8_HeapProfiler_GetAllocationProfile() -> *mut c_void;
         #[link_name = "?AddEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@P6AXPEAX@Z1@Z"]
         pub(super) fn node_AddEnvironmentCleanupHook() -> *mut c_void;
         #[link_name = "?RemoveEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@P6AXPEAX@Z1@Z"]
         pub(super) fn node_RemoveEnvironmentCleanupHook() -> *mut c_void;
+        #[link_name = "?GetCurrentEventLoop@node@@YAPEAUuv_loop_s@@PEAVIsolate@v8@@@Z"]
+        pub(super) fn node_GetCurrentEventLoop() -> *mut c_void;
+        #[link_name = "?AsyncHooksGetExecutionAsyncId@node@@YANV?$Local@VContext@v8@@@v8@@@Z"]
+        pub(super) fn node_AsyncHooksGetExecutionAsyncId() -> *mut c_void;
+        #[link_name = "?EmitAsyncInit@node@@YA?AUasync_context@1@PEAVIsolate@v8@@V?$Local@VObject@v8@@@4@V?$Local@VString@v8@@@4@N@Z"]
+        pub(super) fn node_EmitAsyncInit() -> *mut c_void;
+        #[link_name = "?EmitAsyncDestroy@node@@YAXPEAVIsolate@v8@@Uasync_context@1@@Z"]
+        pub(super) fn node_EmitAsyncDestroy() -> *mut c_void;
+        #[link_name = "?MakeCallback@node@@YA?AV?$MaybeLocal@VValue@v8@@@v8@@PEAVIsolate@3@V?$Local@VObject@v8@@@3@V?$Local@VFunction@v8@@@3@HPEAV?$Local@VValue@v8@@@3@Uasync_context@1@@Z"]
+        pub(super) fn node_MakeCallback() -> *mut c_void;
+        #[link_name = "?Now@TimeTicks@base@v8@@SA?AV123@XZ"]
+        pub(super) fn v8_base_TimeTicks_Now() -> *mut c_void;
         #[link_name = "?New@Number@v8@@SA?AV?$Local@VNumber@v8@@@2@PEAVIsolate@2@N@Z"]
         pub(super) fn v8_Number_New() -> *mut c_void;
         #[link_name = "?Value@Number@v8@@QEBANXZ"]
@@ -3428,6 +3718,10 @@ mod v8_api {
         pub(super) fn v8_Object_SetInternalField() -> *mut c_void;
         #[link_name = "?SlowGetInternalField@Object@v8@@AEAA?AV?$Local@VData@v8@@@2@H@Z"]
         pub(super) fn v8_Object_SlowGetInternalField() -> *mut c_void;
+        #[link_name = "?SetAlignedPointerInInternalField@Object@v8@@QEAAXHPEAXG@Z"]
+        pub(super) fn v8_Object_SetAlignedPointerInInternalField() -> *mut c_void;
+        #[link_name = "?SlowGetAlignedPointerFromInternalField@Object@v8@@AEAAPEAXHG@Z"]
+        pub(super) fn v8_Object_SlowGetAlignedPointerFromInternalField() -> *mut c_void;
         #[link_name = "?Get@Object@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@I@Z"]
         pub(super) fn v8_Object_Get_index() -> *mut c_void;
         #[link_name = "?Get@Object@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@@Z"]
@@ -3444,6 +3738,8 @@ mod v8_api {
         pub(super) fn v8_HandleScope_dtor() -> *mut c_void;
         #[link_name = "?GetFunction@FunctionTemplate@v8@@QEAA?AV?$MaybeLocal@VFunction@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
         pub(super) fn v8_FunctionTemplate_GetFunction() -> *mut c_void;
+        #[link_name = "?SetClassName@FunctionTemplate@v8@@QEAAXV?$Local@VString@v8@@@2@@Z"]
+        pub(super) fn v8_FunctionTemplate_SetClassName() -> *mut c_void;
         #[link_name = "?New@FunctionTemplate@v8@@SA?AV?$Local@VFunctionTemplate@v8@@@2@PEAVIsolate@2@P6AXAEBV?$FunctionCallbackInfo@VValue@v8@@@2@@ZV?$Local@VValue@v8@@@2@V?$Local@VSignature@v8@@@2@HW4ConstructorBehavior@2@W4SideEffectType@2@PEBVCFunction@2@GGG@Z"]
         pub(super) fn v8_FunctionTemplate_New() -> *mut c_void;
         #[link_name = "?NewInstance@ObjectTemplate@v8@@QEAA?AV?$MaybeLocal@VObject@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
@@ -3454,6 +3750,16 @@ mod v8_api {
         pub(super) fn v8_ObjectTemplate_InternalFieldCount() -> *mut c_void;
         #[link_name = "?New@ObjectTemplate@v8@@SA?AV?$Local@VObjectTemplate@v8@@@2@PEAVIsolate@2@V?$Local@VFunctionTemplate@v8@@@2@@Z"]
         pub(super) fn v8_ObjectTemplate_New() -> *mut c_void;
+        #[link_name = "?InstanceTemplate@FunctionTemplate@v8@@QEAA?AV?$Local@VObjectTemplate@v8@@@2@XZ"]
+        pub(super) fn v8_FunctionTemplate_InstanceTemplate() -> *mut c_void;
+        #[link_name = "?PrototypeTemplate@FunctionTemplate@v8@@QEAA?AV?$Local@VObjectTemplate@v8@@@2@XZ"]
+        pub(super) fn v8_FunctionTemplate_PrototypeTemplate() -> *mut c_void;
+        #[link_name = "?Set@Template@v8@@QEAAXV?$Local@VName@v8@@@2@V?$Local@VData@v8@@@2@W4PropertyAttribute@2@@Z"]
+        pub(super) fn v8_Template_Set() -> *mut c_void;
+        #[link_name = "?SetNativeDataProperty@Template@v8@@QEAAXV?$Local@VName@v8@@@2@P6AX0AEBV?$PropertyCallbackInfo@VValue@v8@@@2@@ZP6AX0V?$Local@VValue@v8@@@2@AEBV?$PropertyCallbackInfo@X@2@@Z3W4PropertyAttribute@2@W4SideEffectType@2@7@Z"]
+        pub(super) fn v8_Template_SetNativeDataProperty() -> *mut c_void;
+        #[link_name = "?New@Signature@v8@@SA?AV?$Local@VSignature@v8@@@2@PEAVIsolate@2@V?$Local@VFunctionTemplate@v8@@@2@@Z"]
+        pub(super) fn v8_Signature_New() -> *mut c_void;
         #[link_name = "?EscapeSlot@EscapableHandleScopeBase@v8@@IEAAPEA_KPEA_K@Z"]
         pub(super) fn v8_EscapableHandleScopeBase_EscapeSlot() -> *mut c_void;
         #[link_name = "??0EscapableHandleScopeBase@v8@@QEAA@PEAVIsolate@1@@Z"]
@@ -3474,6 +3780,14 @@ mod v8_api {
         pub(super) fn v8_Array_CheckCast() -> *mut c_void;
         #[link_name = "?SetName@Function@v8@@QEAAXV?$Local@VString@v8@@@2@@Z"]
         pub(super) fn v8_Function_SetName() -> *mut c_void;
+        #[link_name = "?Call@Function@v8@@QEAA?AV?$MaybeLocal@VValue@v8@@@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@HQEAV52@@Z"]
+        pub(super) fn v8_Function_Call() -> *mut c_void;
+        #[link_name = "?NewInstance@Function@v8@@QEBA?AV?$MaybeLocal@VObject@v8@@@2@V?$Local@VContext@v8@@@2@HQEAV?$Local@VValue@v8@@@2@@Z"]
+        pub(super) fn v8_Function_NewInstance() -> *mut c_void;
+        #[link_name = "?NewInstance@Function@v8@@QEBA?AV?$MaybeLocal@VObject@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Function_NewInstance_noargs() -> *mut c_void;
+        #[link_name = "?GetAlignedPointerFromInternalField@Object@v8@@QEAAPEAXHG@Z"]
+        pub(super) fn v8_Object_GetAlignedPointerFromInternalField() -> *mut c_void;
         #[link_name = "?IsBoolean@Value@v8@@QEBA_NXZ"]
         pub(super) fn v8_Value_IsBoolean() -> *mut c_void;
         #[link_name = "?Value@Boolean@v8@@QEBA_NXZ"]
@@ -3540,6 +3854,12 @@ mod v8_api {
         pub(super) fn v8_api_internal_GlobalizeReference() -> *mut c_void;
         #[link_name = "?DisposeGlobal@api_internal@v8@@YAXPEA_K@Z"]
         pub(super) fn v8_api_internal_DisposeGlobal() -> *mut c_void;
+        #[link_name = "?MakeWeak@api_internal@v8@@YAXPEA_KPEAXP6AXAEBV?$WeakCallbackInfo@X@2@@ZW4WeakCallbackType@2@@Z"]
+        pub(super) fn v8_api_internal_MakeWeak() -> *mut c_void;
+        #[link_name = "?ClearWeak@api_internal@v8@@YAPEAXPEA_K@Z"]
+        pub(super) fn v8_api_internal_ClearWeak() -> *mut c_void;
+        #[link_name = "?MoveGlobalReference@api_internal@v8@@YAXPEAPEA_K0@Z"]
+        pub(super) fn v8_api_internal_MoveGlobalReference() -> *mut c_void;
         #[link_name = "?GetFunctionTemplateData@api_internal@v8@@YA?AV?$Local@VValue@v8@@@2@PEAVIsolate@2@V?$Local@VData@v8@@@2@@Z"]
         pub(super) fn v8_api_internal_GetFunctionTemplateData() -> *mut c_void;
         #[link_name = "?GetName@Function@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ"]
@@ -3556,11 +3876,118 @@ mod v8_api {
         pub(super) fn v8_Value_IsBigInt() -> *mut c_void;
         #[link_name = "?FromJustIsNothing@api_internal@v8@@YAXXZ"]
         pub(super) fn v8_api_internal_FromJustIsNothing() -> *mut c_void;
+        #[link_name = "?New@Integer@v8@@SA?AV?$Local@VInteger@v8@@@2@PEAVIsolate@2@H@Z"]
+        pub(super) fn v8_Integer_New() -> *mut c_void;
+        #[link_name = "?NewFromUnsigned@Integer@v8@@SA?AV?$Local@VInteger@v8@@@2@PEAVIsolate@2@I@Z"]
+        pub(super) fn v8_Integer_NewFromUnsigned() -> *mut c_void;
+        #[link_name = "?Value@Integer@v8@@QEBA_JXZ"]
+        pub(super) fn v8_Integer_Value() -> *mut c_void;
+        #[link_name = "?New@BigInt@v8@@SA?AV?$Local@VBigInt@v8@@@2@PEAVIsolate@2@_J@Z"]
+        pub(super) fn v8_BigInt_New() -> *mut c_void;
+        #[link_name = "?NewFromUtf8Literal@String@v8@@CA?AV?$Local@VString@v8@@@2@PEAVIsolate@2@PEBDW4NewStringType@2@H@Z"]
+        pub(super) fn v8_String_NewFromUtf8Literal() -> *mut c_void;
+        #[link_name = "?IsUint8Array@Value@v8@@QEBA_NXZ"]
+        pub(super) fn v8_Value_IsUint8Array() -> *mut c_void;
+        #[link_name = "?ToString@Value@v8@@QEBA?AV?$MaybeLocal@VString@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Value_ToString() -> *mut c_void;
+        #[link_name = "?ToInteger@Value@v8@@QEBA?AV?$MaybeLocal@VInteger@v8@@@2@V?$Local@VContext@v8@@@2@@Z"]
+        pub(super) fn v8_Value_ToInteger() -> *mut c_void;
+        #[link_name = "?Global@Context@v8@@QEAA?AV?$Local@VObject@v8@@@2@XZ"]
+        pub(super) fn v8_Context_Global() -> *mut c_void;
+        #[link_name = "?InternalFieldCount@Object@v8@@QEBAHXZ"]
+        pub(super) fn v8_Object_InternalFieldCount() -> *mut c_void;
+        #[link_name = "?GetIdentityHash@Object@v8@@QEAAHXZ"]
+        pub(super) fn v8_Object_GetIdentityHash() -> *mut c_void;
+        #[link_name = "?DefineOwnProperty@Object@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@V?$Local@VName@v8@@@2@V?$Local@VValue@v8@@@2@W4PropertyAttribute@2@@Z"]
+        pub(super) fn v8_Object_DefineOwnProperty() -> *mut c_void;
+        #[link_name = "?ToExternalPointerTag@v8@@YA?AW4ExternalPointerTag@internal@1@G@Z"]
+        pub(super) fn v8_ToExternalPointerTag() -> *mut c_void;
+        #[link_name = "?GetCurrentIsolate@Internals@internal@v8@@SAPEAVIsolate@3@XZ"]
+        pub(super) fn v8_internal_Internals_GetCurrentIsolate() -> *mut c_void;
+        #[link_name = "??0HeapObjectStatistics@v8@@QEAA@XZ"]
+        pub(super) fn v8_HeapObjectStatistics_ctor() -> *mut c_void;
+        #[link_name = "?New@ArrayBuffer@v8@@SA?AV?$Local@VArrayBuffer@v8@@@2@PEAVIsolate@2@_KW4BackingStoreInitializationMode@2@@Z"]
+        pub(super) fn v8_ArrayBuffer_New() -> *mut c_void;
+        #[link_name = "?GetBackingStore@ArrayBuffer@v8@@QEAA?AV?$shared_ptr@VBackingStore@v8@@@std@@XZ"]
+        pub(super) fn v8_ArrayBuffer_GetBackingStore() -> *mut c_void;
+        #[link_name = "?Data@BackingStore@v8@@QEBAPEAXXZ"]
+        pub(super) fn v8_BackingStore_Data() -> *mut c_void;
+        #[link_name = "?Buffer@ArrayBufferView@v8@@QEAA?AV?$Local@VArrayBuffer@v8@@@2@XZ"]
+        pub(super) fn v8_ArrayBufferView_Buffer() -> *mut c_void;
+        #[link_name = "?ByteLength@ArrayBufferView@v8@@QEAA_KXZ"]
+        pub(super) fn v8_ArrayBufferView_ByteLength() -> *mut c_void;
+        #[link_name = "?ByteOffset@ArrayBufferView@v8@@QEAA_KXZ"]
+        pub(super) fn v8_ArrayBufferView_ByteOffset() -> *mut c_void;
+        #[link_name = "?New@Uint8Array@v8@@SA?AV?$Local@VUint8Array@v8@@@2@V?$Local@VArrayBuffer@v8@@@2@_K1@Z"]
+        pub(super) fn v8_Uint8Array_New() -> *mut c_void;
+        #[link_name = "?New@Uint32Array@v8@@SA?AV?$Local@VUint32Array@v8@@@2@V?$Local@VArrayBuffer@v8@@@2@_K1@Z"]
+        pub(super) fn v8_Uint32Array_New() -> *mut c_void;
+        #[link_name = "?New@CpuProfiler@v8@@SAPEAV12@PEAVIsolate@2@W4CpuProfilingNamingMode@2@W4CpuProfilingLoggingMode@2@@Z"]
+        pub(super) fn v8_CpuProfiler_New() -> *mut c_void;
+        #[link_name = "?Dispose@CpuProfiler@v8@@QEAAXXZ"]
+        pub(super) fn v8_CpuProfiler_Dispose() -> *mut c_void;
+        #[link_name = "?SetSamplingInterval@CpuProfiler@v8@@QEAAXH@Z"]
+        pub(super) fn v8_CpuProfiler_SetSamplingInterval() -> *mut c_void;
+        #[link_name = "?Start@CpuProfiler@v8@@QEAA?AUCpuProfilingResult@2@V?$Local@VString@v8@@@2@W4CpuProfilingMode@2@_NI@Z"]
+        pub(super) fn v8_CpuProfiler_Start() -> *mut c_void;
+        #[link_name = "?Stop@CpuProfiler@v8@@QEAAPEAVCpuProfile@2@I@Z"]
+        pub(super) fn v8_CpuProfiler_Stop() -> *mut c_void;
+        #[link_name = "?StartProfiling@CpuProfiler@v8@@QEAA?AW4CpuProfilingStatus@2@V?$Local@VString@v8@@@2@W4CpuProfilingMode@2@_NI@Z"]
+        pub(super) fn v8_CpuProfiler_StartProfiling_mode() -> *mut c_void;
+        #[link_name = "?StartProfiling@CpuProfiler@v8@@QEAA?AW4CpuProfilingStatus@2@V?$Local@VString@v8@@@2@_N@Z"]
+        pub(super) fn v8_CpuProfiler_StartProfiling() -> *mut c_void;
+        #[link_name = "?StopProfiling@CpuProfiler@v8@@QEAAPEAVCpuProfile@2@V?$Local@VString@v8@@@2@@Z"]
+        pub(super) fn v8_CpuProfiler_StopProfiling() -> *mut c_void;
+        #[link_name = "?CollectSample@CpuProfiler@v8@@SAXPEAVIsolate@2@V?$optional@_K@std@@@Z"]
+        pub(super) fn v8_CpuProfiler_CollectSample() -> *mut c_void;
+        #[link_name = "?Delete@CpuProfile@v8@@QEAAXXZ"]
+        pub(super) fn v8_CpuProfile_Delete() -> *mut c_void;
+        #[link_name = "?GetTitle@CpuProfile@v8@@QEBA?AV?$Local@VString@v8@@@2@XZ"]
+        pub(super) fn v8_CpuProfile_GetTitle() -> *mut c_void;
+        #[link_name = "?GetEndTime@CpuProfile@v8@@QEBA_JXZ"]
+        pub(super) fn v8_CpuProfile_GetEndTime() -> *mut c_void;
+        #[link_name = "?GetStartTime@CpuProfile@v8@@QEBA_JXZ"]
+        pub(super) fn v8_CpuProfile_GetStartTime() -> *mut c_void;
+        #[link_name = "?GetTopDownRoot@CpuProfile@v8@@QEBAPEBVCpuProfileNode@2@XZ"]
+        pub(super) fn v8_CpuProfile_GetTopDownRoot() -> *mut c_void;
+        #[link_name = "?GetSamplesCount@CpuProfile@v8@@QEBAHXZ"]
+        pub(super) fn v8_CpuProfile_GetSamplesCount() -> *mut c_void;
+        #[link_name = "?GetSampleTimestamp@CpuProfile@v8@@QEBA_JH@Z"]
+        pub(super) fn v8_CpuProfile_GetSampleTimestamp() -> *mut c_void;
+        #[link_name = "?GetSample@CpuProfile@v8@@QEBAPEBVCpuProfileNode@2@H@Z"]
+        pub(super) fn v8_CpuProfile_GetSample() -> *mut c_void;
+        #[link_name = "?GetHitCount@CpuProfileNode@v8@@QEBAIXZ"]
+        pub(super) fn v8_CpuProfileNode_GetHitCount() -> *mut c_void;
+        #[link_name = "?GetScriptId@CpuProfileNode@v8@@QEBAHXZ"]
+        pub(super) fn v8_CpuProfileNode_GetScriptId() -> *mut c_void;
+        #[link_name = "?GetLineTicks@CpuProfileNode@v8@@QEBA_NPEAULineTick@12@I@Z"]
+        pub(super) fn v8_CpuProfileNode_GetLineTicks() -> *mut c_void;
+        #[link_name = "?GetLineNumber@CpuProfileNode@v8@@QEBAHXZ"]
+        pub(super) fn v8_CpuProfileNode_GetLineNumber() -> *mut c_void;
+        #[link_name = "?GetColumnNumber@CpuProfileNode@v8@@QEBAHXZ"]
+        pub(super) fn v8_CpuProfileNode_GetColumnNumber() -> *mut c_void;
+        #[link_name = "?GetFunctionName@CpuProfileNode@v8@@QEBA?AV?$Local@VString@v8@@@2@XZ"]
+        pub(super) fn v8_CpuProfileNode_GetFunctionName() -> *mut c_void;
+        #[link_name = "?GetHitLineCount@CpuProfileNode@v8@@QEBAIXZ"]
+        pub(super) fn v8_CpuProfileNode_GetHitLineCount() -> *mut c_void;
+        #[link_name = "?GetChildrenCount@CpuProfileNode@v8@@QEBAHXZ"]
+        pub(super) fn v8_CpuProfileNode_GetChildrenCount() -> *mut c_void;
+        #[link_name = "?GetFunctionNameStr@CpuProfileNode@v8@@QEBAPEBDXZ"]
+        pub(super) fn v8_CpuProfileNode_GetFunctionNameStr() -> *mut c_void;
+        #[link_name = "?GetScriptResourceName@CpuProfileNode@v8@@QEBA?AV?$Local@VString@v8@@@2@XZ"]
+        pub(super) fn v8_CpuProfileNode_GetScriptResourceName() -> *mut c_void;
+        #[link_name = "?GetChild@CpuProfileNode@v8@@QEBAPEBV12@H@Z"]
+        pub(super) fn v8_CpuProfileNode_GetChild() -> *mut c_void;
+        #[link_name = "?Set@Map@v8@@QEAA?AV?$MaybeLocal@VMap@v8@@@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@1@Z"]
+        pub(super) fn v8_Map_Set() -> *mut c_void;
+        #[link_name = "?Delete@Map@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@@Z"]
+        pub(super) fn v8_Map_Delete() -> *mut c_void;
     }
 }
 
-/// V8 API functions whose mangled name differs by C++ stdlib namespace:
-/// libstdc++ = std::, Apple libc++ = std::__1::, NDK libc++ = std::__ndk1::.
+/// V8 API functions whose Itanium mangled name is platform-dependent: the C++
+/// stdlib inline namespace (std:: vs std::__1:: vs std::__ndk1::) and the
+/// int64_t/uint64_t underlying type (long `l`/`m` vs long long `x`/`y`).
 #[cfg(windows)]
 mod posix_platform_specific_v8_apis {}
 #[cfg(all(not(windows), target_os = "android"))]
@@ -3569,14 +3996,38 @@ mod posix_platform_specific_v8_apis {
     unsafe extern "C" {
         pub(super) fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt6__ndk18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE()
         -> *mut c_void;
+        pub(super) fn _ZN2v811CpuProfiler13CollectSampleEPNS_7IsolateENSt6__ndk18optionalImEE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v86BigInt3NewEPNS_7IsolateEl() -> *mut c_void;
+        pub(super) fn _ZN2v812HeapProfiler25StartSamplingHeapProfilerEmiNS0_13SamplingFlagsE()
+        -> *mut c_void;
     }
 }
-#[cfg(all(not(windows), any(target_os = "macos", target_os = "freebsd")))]
+#[cfg(all(not(windows), target_os = "macos"))]
 mod posix_platform_specific_v8_apis {
     use core::ffi::c_void;
-    // FreeBSD's base libc++ uses the same `std::__1::` inline namespace as Apple's.
     unsafe extern "C" {
         pub(super) fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt3__18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v811CpuProfiler13CollectSampleEPNS_7IsolateENSt3__18optionalIyEE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v86BigInt3NewEPNS_7IsolateEx() -> *mut c_void;
+        pub(super) fn _ZN2v812HeapProfiler25StartSamplingHeapProfilerEyiNS0_13SamplingFlagsE()
+        -> *mut c_void;
+    }
+}
+#[cfg(all(not(windows), target_os = "freebsd"))]
+mod posix_platform_specific_v8_apis {
+    use core::ffi::c_void;
+    // FreeBSD's base libc++ uses the same `std::__1::` inline namespace as Apple's,
+    // but uint64_t/int64_t are `unsigned long`/`long` (m/l) like Linux, not `long long` (y/x).
+    unsafe extern "C" {
+        pub(super) fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt3__18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v811CpuProfiler13CollectSampleEPNS_7IsolateENSt3__18optionalImEE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v86BigInt3NewEPNS_7IsolateEl() -> *mut c_void;
+        pub(super) fn _ZN2v812HeapProfiler25StartSamplingHeapProfilerEmiNS0_13SamplingFlagsE()
         -> *mut c_void;
     }
 }
@@ -3590,6 +4041,10 @@ mod posix_platform_specific_v8_apis {
     use core::ffi::c_void;
     unsafe extern "C" {
         pub(super) fn _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmSt8functionIFNS_10MaybeLocalINS_5ValueEEEvEE()
+        -> *mut c_void;
+        pub(super) fn _ZN2v811CpuProfiler13CollectSampleEPNS_7IsolateESt8optionalImE() -> *mut c_void;
+        pub(super) fn _ZN2v86BigInt3NewEPNS_7IsolateEl() -> *mut c_void;
+        pub(super) fn _ZN2v812HeapProfiler25StartSamplingHeapProfilerEmiNS0_13SamplingFlagsE()
         -> *mut c_void;
     }
 }
@@ -3931,7 +4386,7 @@ mod uv_functions_to_export {}
 /// - pub export fn napi_
 use bun_core::keep_symbols;
 
-pub fn fix_dead_code_elimination() {
+pub(crate) fn fix_dead_code_elimination() {
     jsc::mark_binding();
 
     // napi_functions_to_export
@@ -4415,8 +4870,34 @@ pub fn fix_dead_code_elimination() {
         keep_symbols!(
             _ZN2v87Isolate10GetCurrentEv, _ZN2v87Isolate13TryGetCurrentEv,
             _ZN2v87Isolate17GetCurrentContextEv,
+            _ZN2v87Isolate28GetEnteredOrMicrotaskContextEv,
+            _ZN2v87Isolate36GetContinuationPreservedEmbedderDataEv,
+            _ZN2v87Isolate7IsInUseEv, _ZN2v87Isolate21LowMemoryNotificationEv,
+            _ZN2v87Isolate36AutomaticallyRestoreInitialHeapLimitEd,
+            _ZN2v87Isolate30NumberOfTrackedHeapObjectTypesEv,
+            _ZN2v87Isolate31GetHeapObjectStatisticsAtLastGCEPNS_20HeapObjectStatisticsEm,
+            _ZN2v87Isolate21AddGCPrologueCallbackEPFvPS0_NS_6GCTypeENS_15GCCallbackFlagsEPvES4_S2_,
+            _ZN2v87Isolate24RemoveGCPrologueCallbackEPFvPS0_NS_6GCTypeENS_15GCCallbackFlagsEPvES4_,
+            _ZN2v87Isolate21AddGCEpilogueCallbackEPFvPS0_NS_6GCTypeENS_15GCCallbackFlagsEPvES4_S2_,
+            _ZN2v87Isolate24RemoveGCEpilogueCallbackEPFvPS0_NS_6GCTypeENS_15GCCallbackFlagsEPvES4_,
+            _ZN2v87Isolate24AddNearHeapLimitCallbackEPFmPvmmES1_,
+            _ZN2v87Isolate27RemoveNearHeapLimitCallbackEPFmPvmmEm,
+            _ZN2v87Isolate16RequestInterruptEPFvPS0_PvES2_,
+            _ZN2v87Isolate14ThrowExceptionENS_5LocalINS_5ValueEEE,
+            _ZN2v87Isolate10ThrowErrorENS_5LocalINS_6StringEEE,
+            _ZN2v89Exception5ErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE,
+            _ZN2v89Exception9TypeErrorENS_5LocalINS_6StringEEENS1_INS_5ValueEEE,
+            _ZN2v87Isolate15GetHeapProfilerEv,
+            _ZN2v812HeapProfiler24StopSamplingHeapProfilerEv,
+            _ZN2v812HeapProfiler20GetAllocationProfileEv,
             _ZN4node25AddEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_,
             _ZN4node28RemoveEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_,
+            _ZN4node19GetCurrentEventLoopEPN2v87IsolateE,
+            _ZN4node29AsyncHooksGetExecutionAsyncIdEN2v85LocalINS0_7ContextEEE,
+            _ZN4node13EmitAsyncInitEPN2v87IsolateENS0_5LocalINS0_6ObjectEEENS3_INS0_6StringEEEd,
+            _ZN4node16EmitAsyncDestroyEPN2v87IsolateENS_13async_contextE,
+            _ZN4node12MakeCallbackEPN2v87IsolateENS0_5LocalINS0_6ObjectEEENS3_INS0_8FunctionEEEiPNS3_INS0_5ValueEEENS_13async_contextE,
+            _ZN2v84base9TimeTicks3NowEv,
             _ZN2v86Number3NewEPNS_7IsolateEd, _ZNK2v86Number5ValueEv,
             _ZN2v86Number12NewFromInt32EPNS_7IsolateEi,
             _ZN2v86Number13NewFromUint32EPNS_7IsolateEj,
@@ -4429,6 +4910,8 @@ pub fn fix_dead_code_elimination() {
             _ZN2v86Object3SetENS_5LocalINS_7ContextEEEjNS1_INS_5ValueEEE,
             _ZN2v86Object16SetInternalFieldEiNS_5LocalINS_4DataEEE,
             _ZN2v86Object20SlowGetInternalFieldEi,
+            _ZN2v86Object32SetAlignedPointerInInternalFieldEiPvt,
+            _ZN2v86Object38SlowGetAlignedPointerFromInternalFieldEit,
             _ZN2v86Object3GetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE,
             _ZN2v86Object3GetENS_5LocalINS_7ContextEEEj,
             _ZN2v811HandleScope12CreateHandleEPNS_8internal7IsolateEm,
@@ -4443,11 +4926,17 @@ pub fn fix_dead_code_elimination() {
             _ZN2v811HandleScopeC1EPNS_7IsolateE, _ZN2v811HandleScopeD1Ev,
             _ZN2v811HandleScopeD2Ev,
             _ZN2v816FunctionTemplate11GetFunctionENS_5LocalINS_7ContextEEE,
+            _ZN2v816FunctionTemplate12SetClassNameENS_5LocalINS_6StringEEE,
             _ZN2v816FunctionTemplate3NewEPNS_7IsolateEPFvRKNS_20FunctionCallbackInfoINS_5ValueEEEENS_5LocalIS4_EENSA_INS_9SignatureEEEiNS_19ConstructorBehaviorENS_14SideEffectTypeEPKNS_9CFunctionEttt,
             _ZN2v814ObjectTemplate11NewInstanceENS_5LocalINS_7ContextEEE,
             _ZN2v814ObjectTemplate21SetInternalFieldCountEi,
             _ZNK2v814ObjectTemplate18InternalFieldCountEv,
             _ZN2v814ObjectTemplate3NewEPNS_7IsolateENS_5LocalINS_16FunctionTemplateEEE,
+            _ZN2v816FunctionTemplate16InstanceTemplateEv,
+            _ZN2v816FunctionTemplate17PrototypeTemplateEv,
+            _ZN2v88Template3SetENS_5LocalINS_4NameEEENS1_INS_4DataEEENS_17PropertyAttributeE,
+            _ZN2v88Template21SetNativeDataPropertyENS_5LocalINS_4NameEEEPFvS3_RKNS_20PropertyCallbackInfoINS_5ValueEEEEPFvS3_NS1_IS5_EERKNS4_IvEEESB_NS_17PropertyAttributeENS_14SideEffectTypeESI_,
+            _ZN2v89Signature3NewEPNS_7IsolateENS_5LocalINS_16FunctionTemplateEEE,
             _ZN2v824EscapableHandleScopeBase10EscapeSlotEPm,
             _ZN2v824EscapableHandleScopeBaseC2EPNS_7IsolateE,
             _ZN2v88internal35IsolateFromNeverReadOnlySpaceObjectEm,
@@ -4455,7 +4944,10 @@ pub fn fix_dead_code_elimination() {
             _ZN2v85Array3NewEPNS_7IsolateEi,
             _ZN2v85Array7IterateENS_5LocalINS_7ContextEEEPFNS0_14CallbackResultEjNS1_INS_5ValueEEEPvES7_,
             _ZN2v85Array9CheckCastEPNS_5ValueE,
-            _ZN2v88Function7SetNameENS_5LocalINS_6StringEEE, _ZNK2v85Value9IsBooleanEv,
+            _ZN2v88Function7SetNameENS_5LocalINS_6StringEEE,
+            _ZN2v88Function4CallENS_5LocalINS_7ContextEEENS1_INS_5ValueEEEiPS5_,
+            _ZNK2v88Function11NewInstanceENS_5LocalINS_7ContextEEEiPNS1_INS_5ValueEEE,
+            _ZNK2v85Value9IsBooleanEv,
             _ZNK2v87Boolean5ValueEv, _ZNK2v85Value10FullIsTrueEv, _ZNK2v85Value11FullIsFalseEv,
             _ZN2v820EscapableHandleScopeC1EPNS_7IsolateE,
             _ZN2v820EscapableHandleScopeC2EPNS_7IsolateE, _ZN2v820EscapableHandleScopeD1Ev,
@@ -4465,6 +4957,12 @@ pub fn fix_dead_code_elimination() {
             _ZNK2v85Value6IsNullEv, _ZNK2v85Value17IsNullOrUndefinedEv, _ZNK2v85Value6IsTrueEv,
             _ZNK2v85Value7IsFalseEv, _ZNK2v85Value8IsStringEv,
             _ZNK2v85Value12StrictEqualsENS_5LocalIS0_EE, _ZN2v87Boolean3NewEPNS_7IsolateEb,
+            _ZN2v811ArrayBuffer3NewEPNS_7IsolateEmNS_30BackingStoreInitializationModeE,
+            _ZN2v811ArrayBuffer15GetBackingStoreEv, _ZNK2v812BackingStore4DataEv,
+            _ZN2v815ArrayBufferView6BufferEv, _ZN2v815ArrayBufferView10ByteLengthEv,
+            _ZN2v815ArrayBufferView10ByteOffsetEv,
+            _ZN2v810Uint8Array3NewENS_5LocalINS_11ArrayBufferEEEmm,
+            _ZN2v811Uint32Array3NewENS_5LocalINS_11ArrayBufferEEEmm,
             _ZN2v86Object16GetInternalFieldEi, _ZN2v87Context10GetIsolateEv,
             _ZN2v86String14NewFromOneByteEPNS_7IsolateEPKhNS_13NewStringTypeEi,
             _ZNK2v86String10Utf8LengthEPNS_7IsolateE, _ZNK2v86String10IsExternalEv,
@@ -4476,10 +4974,56 @@ pub fn fix_dead_code_elimination() {
             _ZNK2v86String12Utf8LengthV2EPNS_7IsolateE,
             _ZN2v812api_internal18GlobalizeReferenceEPNS_8internal7IsolateEm,
             _ZN2v812api_internal13DisposeGlobalEPm,
+            _ZN2v812api_internal8MakeWeakEPmPvPFvRKNS_16WeakCallbackInfoIvEEENS_16WeakCallbackTypeE,
+            _ZN2v812api_internal9ClearWeakEPm,
+            _ZN2v812api_internal19MoveGlobalReferenceEPPmS2_,
             _ZN2v812api_internal23GetFunctionTemplateDataEPNS_7IsolateENS_5LocalINS_4DataEEE,
             _ZNK2v88Function7GetNameEv, _ZNK2v85Value10IsFunctionEv, _ZNK2v85Value5IsMapEv,
             _ZNK2v85Value7IsArrayEv, _ZNK2v85Value7IsInt32Ev, _ZNK2v85Value8IsBigIntEv,
             _ZN2v812api_internal17FromJustIsNothingEv, uv_os_getpid, uv_os_getppid,
+            _ZN2v87Integer3NewEPNS_7IsolateEi,
+            _ZN2v87Integer15NewFromUnsignedEPNS_7IsolateEj,
+            _ZNK2v87Integer5ValueEv,
+            _ZN2v86String18NewFromUtf8LiteralEPNS_7IsolateEPKcNS_13NewStringTypeEi,
+            _ZNK2v85Value12IsUint8ArrayEv,
+            _ZNK2v85Value8ToStringENS_5LocalINS_7ContextEEE,
+            _ZNK2v85Value9ToIntegerENS_5LocalINS_7ContextEEE,
+            _ZN2v87Context6GlobalEv,
+            _ZNK2v86Object18InternalFieldCountEv,
+            _ZN2v86Object15GetIdentityHashEv,
+            _ZN2v86Object17DefineOwnPropertyENS_5LocalINS_7ContextEEENS1_INS_4NameEEENS1_INS_5ValueEEENS_17PropertyAttributeE,
+            _ZN2v820ToExternalPointerTagEt,
+            _ZN2v88internal9Internals17GetCurrentIsolateEv,
+            _ZN2v820HeapObjectStatisticsC1Ev,
+            _ZN2v811CpuProfiler3NewEPNS_7IsolateENS_22CpuProfilingNamingModeENS_23CpuProfilingLoggingModeE,
+            _ZN2v811CpuProfiler7DisposeEv,
+            _ZN2v811CpuProfiler19SetSamplingIntervalEi,
+            _ZN2v811CpuProfiler5StartENS_5LocalINS_6StringEEENS_16CpuProfilingModeEbj,
+            _ZN2v811CpuProfiler4StopEj,
+            _ZN2v811CpuProfiler14StartProfilingENS_5LocalINS_6StringEEENS_16CpuProfilingModeEbj,
+            _ZN2v811CpuProfiler14StartProfilingENS_5LocalINS_6StringEEEb,
+            _ZN2v811CpuProfiler13StopProfilingENS_5LocalINS_6StringEEE,
+            _ZN2v810CpuProfile6DeleteEv,
+            _ZNK2v810CpuProfile8GetTitleEv,
+            _ZNK2v810CpuProfile10GetEndTimeEv,
+            _ZNK2v810CpuProfile12GetStartTimeEv,
+            _ZNK2v810CpuProfile14GetTopDownRootEv,
+            _ZNK2v810CpuProfile15GetSamplesCountEv,
+            _ZNK2v810CpuProfile18GetSampleTimestampEi,
+            _ZNK2v810CpuProfile9GetSampleEi,
+            _ZNK2v814CpuProfileNode11GetHitCountEv,
+            _ZNK2v814CpuProfileNode11GetScriptIdEv,
+            _ZNK2v814CpuProfileNode12GetLineTicksEPNS0_8LineTickEj,
+            _ZNK2v814CpuProfileNode13GetLineNumberEv,
+            _ZNK2v814CpuProfileNode15GetColumnNumberEv,
+            _ZNK2v814CpuProfileNode15GetFunctionNameEv,
+            _ZNK2v814CpuProfileNode15GetHitLineCountEv,
+            _ZNK2v814CpuProfileNode16GetChildrenCountEv,
+            _ZNK2v814CpuProfileNode18GetFunctionNameStrEv,
+            _ZNK2v814CpuProfileNode21GetScriptResourceNameEv,
+            _ZNK2v814CpuProfileNode8GetChildEi,
+            _ZN2v83Map3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_,
+            _ZN2v83Map6DeleteENS_5LocalINS_7ContextEEENS1_INS_5ValueEEE,
         );
     }
     #[cfg(windows)]
@@ -4489,8 +5033,36 @@ pub fn fix_dead_code_elimination() {
             v8_Isolate_TryGetCurrent,
             v8_Isolate_GetCurrent,
             v8_Isolate_GetCurrentContext,
+            v8_Isolate_GetEnteredOrMicrotaskContext,
+            v8_Isolate_GetContinuationPreservedEmbedderData,
+            v8_Isolate_IsInUse,
+            v8_Isolate_LowMemoryNotification,
+            v8_Isolate_AutomaticallyRestoreInitialHeapLimit,
+            v8_Isolate_NumberOfTrackedHeapObjectTypes,
+            v8_Isolate_GetHeapObjectStatisticsAtLastGC,
+            v8_Isolate_AddGCPrologueCallback,
+            v8_Isolate_RemoveGCPrologueCallback,
+            v8_Isolate_AddGCEpilogueCallback,
+            v8_Isolate_RemoveGCEpilogueCallback,
+            v8_Isolate_AddNearHeapLimitCallback,
+            v8_Isolate_RemoveNearHeapLimitCallback,
+            v8_Isolate_RequestInterrupt,
+            v8_Isolate_ThrowException,
+            v8_Isolate_ThrowError,
+            v8_Exception_Error,
+            v8_Exception_TypeError,
+            v8_Isolate_GetHeapProfiler,
+            v8_HeapProfiler_StartSamplingHeapProfiler,
+            v8_HeapProfiler_StopSamplingHeapProfiler,
+            v8_HeapProfiler_GetAllocationProfile,
             node_AddEnvironmentCleanupHook,
             node_RemoveEnvironmentCleanupHook,
+            node_GetCurrentEventLoop,
+            node_AsyncHooksGetExecutionAsyncId,
+            node_EmitAsyncInit,
+            node_EmitAsyncDestroy,
+            node_MakeCallback,
+            v8_base_TimeTicks_Now,
             v8_Number_New,
             v8_Number_Value,
             v8_Number_NewFromInt32,
@@ -4508,6 +5080,8 @@ pub fn fix_dead_code_elimination() {
             v8_Object_Set_index,
             v8_Object_SetInternalField,
             v8_Object_SlowGetInternalField,
+            v8_Object_SetAlignedPointerInInternalField,
+            v8_Object_SlowGetAlignedPointerFromInternalField,
             v8_Object_Get_index,
             v8_Object_Get_key,
             v8_HandleScope_CreateHandle,
@@ -4516,11 +5090,17 @@ pub fn fix_dead_code_elimination() {
             v8_HandleScope_ctor,
             v8_HandleScope_dtor,
             v8_FunctionTemplate_GetFunction,
+            v8_FunctionTemplate_SetClassName,
             v8_FunctionTemplate_New,
             v8_ObjectTemplate_NewInstance,
             v8_ObjectTemplate_SetInternalFieldCount,
             v8_ObjectTemplate_InternalFieldCount,
             v8_ObjectTemplate_New,
+            v8_FunctionTemplate_InstanceTemplate,
+            v8_FunctionTemplate_PrototypeTemplate,
+            v8_Template_Set,
+            v8_Template_SetNativeDataProperty,
+            v8_Signature_New,
             v8_EscapableHandleScopeBase_EscapeSlot,
             v8_EscapableHandleScopeBase_ctor,
             v8_internal_IsolateFromNeverReadOnlySpaceObject,
@@ -4531,6 +5111,10 @@ pub fn fix_dead_code_elimination() {
             v8_Array_Iterate,
             v8_Array_CheckCast,
             v8_Function_SetName,
+            v8_Function_Call,
+            v8_Function_NewInstance,
+            v8_Function_NewInstance_noargs,
+            v8_Object_GetAlignedPointerFromInternalField,
             v8_Value_IsBoolean,
             v8_Boolean_Value,
             v8_Value_FullIsTrue,
@@ -4564,6 +5148,9 @@ pub fn fix_dead_code_elimination() {
             v8_String_Utf8LengthV2,
             v8_api_internal_GlobalizeReference,
             v8_api_internal_DisposeGlobal,
+            v8_api_internal_MakeWeak,
+            v8_api_internal_ClearWeak,
+            v8_api_internal_MoveGlobalReference,
             v8_api_internal_GetFunctionTemplateData,
             v8_Function_GetName,
             v8_Value_IsFunction,
@@ -4572,21 +5159,96 @@ pub fn fix_dead_code_elimination() {
             v8_Value_IsInt32,
             v8_Value_IsBigInt,
             v8_api_internal_FromJustIsNothing,
+            v8_Integer_New,
+            v8_Integer_NewFromUnsigned,
+            v8_Integer_Value,
+            v8_BigInt_New,
+            v8_String_NewFromUtf8Literal,
+            v8_Value_IsUint8Array,
+            v8_Value_ToString,
+            v8_Value_ToInteger,
+            v8_Context_Global,
+            v8_Object_InternalFieldCount,
+            v8_Object_GetIdentityHash,
+            v8_Object_DefineOwnProperty,
+            v8_ToExternalPointerTag,
+            v8_internal_Internals_GetCurrentIsolate,
+            v8_HeapObjectStatistics_ctor,
+            v8_ArrayBuffer_New,
+            v8_ArrayBuffer_GetBackingStore,
+            v8_BackingStore_Data,
+            v8_ArrayBufferView_Buffer,
+            v8_ArrayBufferView_ByteLength,
+            v8_ArrayBufferView_ByteOffset,
+            v8_Uint8Array_New,
+            v8_Uint32Array_New,
+            v8_CpuProfiler_New,
+            v8_CpuProfiler_Dispose,
+            v8_CpuProfiler_SetSamplingInterval,
+            v8_CpuProfiler_Start,
+            v8_CpuProfiler_Stop,
+            v8_CpuProfiler_StartProfiling_mode,
+            v8_CpuProfiler_StartProfiling,
+            v8_CpuProfiler_StopProfiling,
+            v8_CpuProfiler_CollectSample,
+            v8_CpuProfile_Delete,
+            v8_CpuProfile_GetTitle,
+            v8_CpuProfile_GetEndTime,
+            v8_CpuProfile_GetStartTime,
+            v8_CpuProfile_GetTopDownRoot,
+            v8_CpuProfile_GetSamplesCount,
+            v8_CpuProfile_GetSampleTimestamp,
+            v8_CpuProfile_GetSample,
+            v8_CpuProfileNode_GetHitCount,
+            v8_CpuProfileNode_GetScriptId,
+            v8_CpuProfileNode_GetLineTicks,
+            v8_CpuProfileNode_GetLineNumber,
+            v8_CpuProfileNode_GetColumnNumber,
+            v8_CpuProfileNode_GetFunctionName,
+            v8_CpuProfileNode_GetHitLineCount,
+            v8_CpuProfileNode_GetChildrenCount,
+            v8_CpuProfileNode_GetFunctionNameStr,
+            v8_CpuProfileNode_GetScriptResourceName,
+            v8_CpuProfileNode_GetChild,
+            v8_Map_Set,
+            v8_Map_Delete,
         );
     }
 
     // posix_platform_specific_v8_apis
     #[cfg(all(not(windows), target_os = "android"))]
-    keep_symbols!(posix_platform_specific_v8_apis::_ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt6__ndk18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE);
-    #[cfg(all(not(windows), any(target_os = "macos", target_os = "freebsd")))]
-    keep_symbols!(posix_platform_specific_v8_apis::_ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt3__18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE);
+    keep_symbols!(
+        posix_platform_specific_v8_apis::_ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt6__ndk18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE,
+        posix_platform_specific_v8_apis::_ZN2v811CpuProfiler13CollectSampleEPNS_7IsolateENSt6__ndk18optionalImEE,
+        posix_platform_specific_v8_apis::_ZN2v86BigInt3NewEPNS_7IsolateEl,
+        posix_platform_specific_v8_apis::_ZN2v812HeapProfiler25StartSamplingHeapProfilerEmiNS0_13SamplingFlagsE,
+    );
+    #[cfg(all(not(windows), target_os = "macos"))]
+    keep_symbols!(
+        posix_platform_specific_v8_apis::_ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt3__18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE,
+        posix_platform_specific_v8_apis::_ZN2v811CpuProfiler13CollectSampleEPNS_7IsolateENSt3__18optionalIyEE,
+        posix_platform_specific_v8_apis::_ZN2v86BigInt3NewEPNS_7IsolateEx,
+        posix_platform_specific_v8_apis::_ZN2v812HeapProfiler25StartSamplingHeapProfilerEyiNS0_13SamplingFlagsE,
+    );
+    #[cfg(all(not(windows), target_os = "freebsd"))]
+    keep_symbols!(
+        posix_platform_specific_v8_apis::_ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt3__18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE,
+        posix_platform_specific_v8_apis::_ZN2v811CpuProfiler13CollectSampleEPNS_7IsolateENSt3__18optionalImEE,
+        posix_platform_specific_v8_apis::_ZN2v86BigInt3NewEPNS_7IsolateEl,
+        posix_platform_specific_v8_apis::_ZN2v812HeapProfiler25StartSamplingHeapProfilerEmiNS0_13SamplingFlagsE,
+    );
     #[cfg(all(
         not(windows),
         not(target_os = "android"),
         not(target_os = "macos"),
         not(target_os = "freebsd")
     ))]
-    keep_symbols!(posix_platform_specific_v8_apis::_ZN2v85Array3NewENS_5LocalINS_7ContextEEEmSt8functionIFNS_10MaybeLocalINS_5ValueEEEvEE);
+    keep_symbols!(
+        posix_platform_specific_v8_apis::_ZN2v85Array3NewENS_5LocalINS_7ContextEEEmSt8functionIFNS_10MaybeLocalINS_5ValueEEEvEE,
+        posix_platform_specific_v8_apis::_ZN2v811CpuProfiler13CollectSampleEPNS_7IsolateESt8optionalImE,
+        posix_platform_specific_v8_apis::_ZN2v86BigInt3NewEPNS_7IsolateEl,
+        posix_platform_specific_v8_apis::_ZN2v812HeapProfiler25StartSamplingHeapProfilerEmiNS0_13SamplingFlagsE,
+    );
 
     keep_symbols!(crate::node::buffer::BufferVectorized::fill);
 }
@@ -4595,16 +5257,16 @@ pub fn fix_dead_code_elimination() {
 // NapiFinalizerTask
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct NapiFinalizerTask {
-    pub finalizer: Finalizer,
+pub(crate) struct NapiFinalizerTask {
+    pub(crate) finalizer: Finalizer,
 }
 
 impl NapiFinalizerTask {
-    pub fn init(finalizer: Finalizer) -> Box<NapiFinalizerTask> {
+    pub(crate) fn init(finalizer: Finalizer) -> Box<NapiFinalizerTask> {
         Box::new(NapiFinalizerTask { finalizer })
     }
 
-    pub fn schedule(self: Box<Self>) {
+    pub(crate) fn schedule(self: Box<Self>) {
         // SAFETY: env is valid (held by NapiEnvRef).
         let global_this = unsafe { &*self.finalizer.env.get() }.to_js();
 
@@ -4617,10 +5279,25 @@ impl NapiFinalizerTask {
         let is_main_thread = VirtualMachine::get_or_null().is_some();
 
         if !is_main_thread {
-            // TODO(@heimskr): do we need to handle the case where the vm is shutting down?
+            // Off the JS thread (e.g. an external buffer finalized from a GC
+            // helper thread): post through the env's VM handle. If the VM is
+            // already torn down the finalizer can never run; free the task but
+            // not the env ref — the env's count is not atomic and the env goes
+            // with its VM — as the cleanup-hooks-already-ran case below does.
+            // SAFETY: env is valid (held by NapiEnvRef).
+            let handle = unsafe { &*self.finalizer.env.get() }.vm_handle().clone();
             let this = bun_core::heap::into_raw(self);
-            vm.event_loop_ref()
-                .enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)));
+            let ct = ConcurrentTask::create(Task::init(this));
+            if let bun_jsc::vm_handle::Posted::Refused(ct) =
+                handle.post(bun_jsc::LoopKind::Regular, ct)
+            {
+                // SAFETY: refused ⇒ we own both boxes.
+                unsafe {
+                    drop(bun_core::heap::take(ct.as_ptr()));
+                    let task = bun_core::heap::take(this);
+                    let _ = core::mem::ManuallyDrop::new(task.finalizer.env);
+                }
+            }
             return;
         }
 
@@ -4653,16 +5330,18 @@ impl NapiFinalizerTask {
     // Forwards `this` to `heap::take` without dereferencing it here;
     // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn run_on_js_thread(this: *mut NapiFinalizerTask) {
+    pub(crate) fn run_on_js_thread(this: *mut NapiFinalizerTask) -> JsResult<()> {
         // SAFETY: `this` was created by heap::alloc in `schedule`.
         let mut this_box = unsafe { bun_core::heap::take(this) };
-        this_box.finalizer.run();
+        this_box.finalizer.run()
         // finalizer.deinit() runs via Drop on NapiEnvRef when this_box drops.
     }
 
     extern "C" fn run_as_cleanup_hook(opaque_this: *mut c_void) {
         // SAFETY: opaque_this is the *mut NapiFinalizerTask we registered above (non-null).
         let this: *mut NapiFinalizerTask = opaque_this.cast();
-        Self::run_on_js_thread(this);
+        // A cleanup hook returns nothing: `Err` is left pending for the hook
+        // runner's fold.
+        let _ = Self::run_on_js_thread(this);
     }
 }

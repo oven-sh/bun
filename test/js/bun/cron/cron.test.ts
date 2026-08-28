@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 
@@ -1388,6 +1388,14 @@ function nextN(expr: string, from: number, n: number): number[] {
 }
 
 describe("Bun.cron.parse", () => {
+  // parse() walks the system's local time zone; pin it so the Date.UTC(...)
+  // fixtures below are host-independent. `delete process.env.TZ` would remove
+  // the accessor without clearing the WTF::setTimeZoneOverride, so restore via
+  // assignment (empty string reverts to the system zone).
+  const oldTZ = process.env.TZ;
+  beforeAll(() => void (process.env.TZ = "Etc/UTC"));
+  afterAll(() => void (process.env.TZ = oldTZ ?? ""));
+
   test("is a function that returns a Date", () => {
     expect(typeof Bun.cron.parse).toBe("function");
     const result = Bun.cron.parse("* * * * *", Date.UTC(2025, 0, 15, 10, 30, 0));

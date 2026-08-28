@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
@@ -20,7 +20,7 @@ describe("bundler", () => {
         console.log("Hello, world!");
       `,
     },
-    run: { stdout: "Hello, world!" },
+    run: { stdout: "Hello, world!", stderr: "" },
   });
   // --footer/--banner are concatenated verbatim (UTF-8). Guard against the
   // standalone module graph treating those bytes as Latin-1, which would
@@ -253,6 +253,59 @@ describe("bundler", () => {
       },
       stdout: "a b",
     },
+    {
+      // When the re-exporting file is inlined into the chunk, `export * as ns from`
+      // and `export { x } from` an external module are rewritten into imports. The
+      // chunk's module record is built by the bundler (JSC does not parse bytecode
+      // modules), so it must list these imports too; otherwise `fs` hits a TDZ
+      // ReferenceError and `rfs` is undefined.
+      name: "ReExportExternalFromInlinedModule",
+      files: {
+        "/entry.ts": `
+          import { fs, rfs } from "./reexports.ts";
+          console.log(typeof fs.readFileSync, typeof rfs);
+        `,
+        "/reexports.ts": `
+          export * as fs from "node:fs";
+          export { readFileSync as rfs } from "node:fs";
+        `,
+      },
+      stdout: "function function",
+    },
+    {
+      // Same re-exports on the entry point itself: `export * from` is printed
+      // verbatim and needs a star export entry, the other two become imports that
+      // the entry's `export { ... }` tail must resolve back to. The debug build
+      // cross-checks the record against JSC's parser and refuses to start the
+      // binary when they differ.
+      name: "ReExportExternalFromEntryPoint",
+      files: {
+        "/entry.ts": `
+          export * from "node:path";
+          export * as fs from "node:fs";
+          export { readFileSync as rfs } from "node:fs";
+          console.log("entry ran");
+        `,
+      },
+      stdout: "entry ran",
+    },
+    {
+      // A file mixing `import` with `module.exports` is wrapped in __commonJS();
+      // its external imports are hoisted out of the wrapper and still have to be
+      // in the module record, otherwise `join` is not defined at runtime.
+      name: "ExternalImportInCommonJSWrapper",
+      files: {
+        "/entry.ts": `
+          import mixed from "./mixed.js";
+          console.log(typeof mixed.join);
+        `,
+        "/mixed.js": `
+          import { join } from "node:path";
+          module.exports = { join };
+        `,
+      },
+      stdout: "function",
+    },
   ];
 
   for (const scenario of esmBytecodeScenarios) {
@@ -300,6 +353,40 @@ describe("bundler", () => {
       setCwd: true,
     },
   });
+  // A second CommonJS entry point that is only reached through a runtime
+  // require() must load from the embedded module graph (with its bytecode,
+  // when built with --bytecode) rather than the filesystem.
+  for (const bytecode of [false, true]) {
+    itBundled("compile/RuntimeRequireEmbeddedCJS" + (bytecode ? "+bytecode" : ""), {
+      backend: "cli",
+      compile: true,
+      bytecode,
+      format: "cjs",
+      files: {
+        "/entry.js": /* js */ `
+          const { rmSync } = require("fs");
+          rmSync("./second.js", { force: true });
+          const specifier = "./second" + ".js";
+          const second = require(specifier);
+          console.log(second.greeting, require(specifier) === second);
+        `,
+        "/second.js": /* js */ `
+          module.exports = { greeting: "hello from second" };
+        `,
+      },
+      entryPointsRaw: ["./entry.js", "./second.js"],
+      outfile: "dist/out",
+      run: {
+        stdout: "hello from second true",
+        stderr: bytecode
+          ? "[Disk Cache] Cache hit for sourceCode\n[Disk Cache] Cache hit for sourceCode\n[Disk Cache] Cache miss for sourceCode\n"
+          : undefined,
+        env: bytecode ? { BUN_JSC_verboseDiskCache: "1" } : undefined,
+        file: "dist/out",
+        setCwd: true,
+      },
+    });
+  }
   // https://github.com/oven-sh/bun/issues/8697
   itBundled("compile/EmbeddedFileOutfile", {
     compile: true,
@@ -448,6 +535,36 @@ describe("bundler", () => {
     },
     outfile: "dist/out",
     run: { stdout: "Hello, world!", setCwd: true },
+  });
+  itBundled("compile/EmbeddedFileNamesPerThread", {
+    compile: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import { isMainThread, Worker } from "node:worker_threads";
+        import "./asset.file";
+        import txt from "./t.txt" with { type: "text" };
+        function probe() {
+          const f = [...Bun.embeddedFiles][0];
+          const p = {};
+          p[f.name] = 1;
+          const o = {};
+          o[txt] = 1;
+          return p[f.name.split("").join("")] + " " + o[["embedded", "text", "module"].join("-")];
+        }
+        console.log(probe());
+        if (isMainThread) {
+          const w = new Worker(new URL(import.meta.url));
+          await new Promise(resolve => w.on("exit", resolve));
+          Bun.gc(true);
+          console.log(probe());
+        }
+      `,
+      "/asset.file": "abcd",
+      "/t.txt": "embedded-text-module",
+    },
+    outfile: "dist/out",
+    run: { stdout: "1 1\n1 1\n1 1", setCwd: true },
   });
   itBundled("compile/Bun.isStandaloneExecutable", {
     compile: true,
@@ -825,6 +942,150 @@ describe("bundler", () => {
     },
     run: { stdout: "Hello, world!", setCwd: true },
   });
+
+  // A text import in a compiled executable is embedded as a string body
+  // (8-bit when ASCII, UTF-16LE otherwise) that the runtime hands back without
+  // a parse or a copy, instead of a JS module with a string literal. The same source also checks `require()`, `import()`, and that
+  // `Bun.embeddedFiles` keeps listing only real assets.
+  // Buffers: `files` strings go through dedent(), which would trim them.
+  const textImportFiles = {
+    "/ascii.txt": Buffer.from("hello world\nline 2\n"),
+    "/latin1.txt": Buffer.from("caf\u00e9 na\u00efve\n"),
+    "/wide.txt": Buffer.from("em \u2014 dash \u{1F600} emoji \u65e5\u672c\n"),
+    "/empty.txt": Buffer.alloc(0),
+    "/invalid.txt": Buffer.from([0x62, 0x61, 0x64, 0x20, 0xff, 0xfe, 0x20, 0xc3, 0x28, 0x0a]),
+    "/doc.md": Buffer.from("# Title\n\nsome *markdown* \u2014 with dash\n"),
+    "/asset.file": "abcd",
+  };
+  const textImportEntry = /* js */ `
+    import ascii from "./ascii.txt";
+    import latin1 from "./latin1.txt";
+    import wide from "./wide.txt";
+    import empty from "./empty.txt";
+    import invalid from "./invalid.txt";
+    import doc from "./doc.md";
+    import asset from "./asset.file" with { type: "file" };
+    import { readdirSync, readFileSync } from "node:fs";
+    import { dirname, join } from "node:path";
+
+    // No top-level await: the bytecode variant is CommonJS output.
+    async function main() {
+      // The embedded root. \`import.meta.dir\` is inlined at build time in CommonJS output.
+      const root = dirname(Bun.main);
+      const expected = {
+        ascii: "hello world\\nline 2\\n",
+        latin1: "caf\\u00e9 na\\u00efve\\n",
+        wide: "em \\u2014 dash \\u{1F600} emoji \\u65e5\\u672c\\n",
+        empty: "",
+        // Invalid UTF-8 decodes like TextDecoder: one U+FFFD per bad byte.
+        invalid: "bad \\ufffd\\ufffd \\ufffd(\\n",
+        doc: "# Title\\n\\nsome *markdown* \\u2014 with dash\\n",
+      };
+      const actual = { ascii, latin1, wide, empty, invalid, doc };
+      for (const [name, value] of Object.entries(actual)) {
+        if (typeof value !== "string") throw new Error(name + " is a " + typeof value);
+        if (value !== expected[name]) throw new Error(name + " mismatch: " + JSON.stringify(value));
+      }
+      if (require("./ascii.txt") !== ascii) throw new Error("require() returned " + JSON.stringify(require("./ascii.txt")));
+      if ((await import("./wide.txt")).default !== wide) throw new Error("import() mismatch");
+
+      // Text modules are not assets; only the file loader import is listed.
+      const embedded = Bun.embeddedFiles.map(blob => blob.name);
+      if (embedded.length !== 1 || !embedded[0].startsWith("asset-")) throw new Error("embeddedFiles: " + embedded);
+      if ((await Bun.file(asset).text()) !== "abcd") throw new Error("asset: " + asset);
+
+      // The embedded bytes are the string body itself.
+      const encoded = {
+        "ascii.txt": Buffer.from(expected.ascii, "latin1"),
+        "latin1.txt": Buffer.from(expected.latin1, "utf16le"),
+        "wide.txt": Buffer.from(expected.wide, "utf16le"),
+        "empty.txt": Buffer.alloc(0),
+        "invalid.txt": Buffer.from(expected.invalid, "utf16le"),
+        "doc.md": Buffer.from(expected.doc, "utf16le"),
+      };
+      const embeddedNames = readdirSync(root);
+      for (const [name, bytes] of Object.entries(encoded)) {
+        const [base, ext] = name.split(".");
+        const file = embeddedNames.find(entry => entry.startsWith(base + "-") && entry.endsWith("." + ext));
+        if (!file) throw new Error("no embedded module for " + name + " in " + JSON.stringify(embeddedNames));
+        const got = readFileSync(join(root, file));
+        if (!got.equals(bytes)) throw new Error(name + ": " + got.toString("hex") + " != " + bytes.toString("hex"));
+      }
+      console.log("PASS");
+    }
+    main();
+  `;
+  for (const [suffix, options] of [
+    ["", {}],
+    ["Bytecode", { bytecode: true }],
+    ["BytecodeESM", { bytecode: true, format: "esm" }],
+  ] as const) {
+    itBundled(`compile/TextImport${suffix}`, {
+      compile: true,
+      ...options,
+      loader: { ".md": "text" },
+      files: { "/entry.ts": textImportEntry, ...textImportFiles },
+      run: { stdout: "PASS" },
+    });
+  }
+
+  // Text modules keep their own `[name]-[hash]` path: a user `--asset-naming`
+  // without `[hash]` must not make two same-named text files share one path.
+  itBundled("compile/TextImportSameBasename", {
+    compile: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import a from "./a/readme.txt";
+        import b from "./b/readme.txt";
+        import sameA from "./a/same.txt";
+        import sameB from "./b/same.txt";
+        import icon from "./a/icon.file" with { type: "file" };
+        console.log(JSON.stringify({ a, b, sameA, sameB, icon: await Bun.file(icon).text() }));
+      `,
+      "/a/readme.txt": "from a",
+      "/b/readme.txt": "from b",
+      "/a/same.txt": "same",
+      "/b/same.txt": "same",
+      "/a/icon.file": "icon",
+    },
+    run: { stdout: JSON.stringify({ a: "from a", b: "from b", sameA: "same", sameB: "same", icon: "icon" }) },
+  });
+
+  // A browser chunk of a full-stack executable cannot reach the embedded
+  // module graph, so its text imports stay inline string literals.
+  itBundled("compile/TextImportClientChunkStaysInline", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import index from "./index.html";
+        import note from "./note.txt";
+        using server = Bun.serve({ port: 0, routes: { "/": index } });
+        const html = await (await fetch(server.url)).text();
+        const src = html.match(/<script[^>]*src="([^"]+)"/)[1];
+        const js = await (await fetch(new URL(src, server.url))).text();
+        console.log(JSON.stringify({
+          server: note,
+          clientHasLiteral: js.includes("client sees the text"),
+          clientHasBunfs: js.includes("$bunfs"),
+        }));
+      `,
+      "/index.html": /* html */ `
+        <!DOCTYPE html>
+        <html>
+          <body>
+            <script type="module" src="./app.ts"></script>
+          </body>
+        </html>
+      `,
+      "/app.ts": /* js */ `
+        import note from "./note.txt";
+        document.body.textContent = note;
+      `,
+      "/note.txt": "client sees the text",
+    },
+    run: { stdout: JSON.stringify({ server: "client sees the text", clientHasLiteral: true, clientHasBunfs: false }) },
+  });
   itBundled("compile/Utf8", {
     compile: true,
     files: {
@@ -958,7 +1219,7 @@ error: Hello World`,
   });
 
   test("does not crash", async () => {
-    const dir = tempDirWithFiles("bundler-compile-shadcn", {
+    await using dir = tempDir("bundler-compile-shadcn", {
       "frontend.tsx": `console.log("Hello, world!");`,
       "index.html": `<!doctype html>
 <html lang="en">
@@ -1073,7 +1334,7 @@ const server = serve({
 
   // When compiling with 8+ entry points, the main entry point should still run correctly.
   test("compile with 8+ entry points runs main entry correctly", async () => {
-    const dir = tempDirWithFiles("compile-many-entries", {
+    await using dir = tempDir("compile-many-entries", {
       "app.js": `console.log("IT WORKS");`,
       "assets/file-1": "",
       "assets/file-2": "",
@@ -1229,5 +1490,79 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
     const outBytes = Buffer.from(await Bun.file(outGood).arrayBuffer());
     expect(outBytes.includes("compiled-from-template")).toBe(true);
     expect(exitCode).toBe(0);
+  }
+}, 60_000);
+
+test("compile --compile-executable-path rejects a template shorter than the executable-format header", async () => {
+  // `--compile-executable-path` accepts an arbitrary file. A file shorter than the target
+  // format's fixed header (or one whose header advertises more load-command bytes than the
+  // file contains) must surface as a clean error instead of a slice-index panic.
+  using dir = tempDir("compile-template-short-header", {
+    "entry.js": `console.log(1);`,
+    // 19 bytes: shorter than mach_header_64 (32), Elf64_Ehdr (64), IMAGE_DOS_HEADER (64).
+    "tiny": "WRONG-STUB-FALLBACK",
+  });
+  const cwd = String(dir);
+
+  const machHeader = (ncmds: number, sizeofcmds: number) => {
+    const b = Buffer.alloc(32);
+    b.writeUInt32LE(0xfeedfacf, 0); // MH_MAGIC_64
+    b.writeInt32LE(0x01000007, 4); // CPU_TYPE_X86_64
+    b.writeInt32LE(3, 8); // cpusubtype
+    b.writeUInt32LE(2, 12); // filetype = MH_EXECUTE
+    b.writeUInt32LE(ncmds, 16);
+    b.writeUInt32LE(sizeofcmds, 20);
+    return b;
+  };
+
+  // mach_header_64 with ncmds=2 sizeofcmds=10000 but only 8 trailing bytes — exercises the
+  // load-command-table bounds check in MachoFile::init (iterator() would otherwise slice OOB).
+  await Bun.write(join(cwd, "badcmds"), Buffer.concat([machHeader(2, 10000), Buffer.alloc(8)]));
+
+  // mach_header_64 + one LC_SEGMENT_64 whose cmdsize (8) is smaller than sizeof(segment_command_64)
+  // (72) — exercises the cast-site guard in write_section().
+  const lc = Buffer.alloc(8);
+  lc.writeUInt32LE(0x19, 0); // LC_SEGMENT_64
+  lc.writeUInt32LE(8, 4); // cmdsize
+  await Bun.write(join(cwd, "shortseg"), Buffer.concat([machHeader(1, 8), lc]));
+
+  const run = async (target: string, template: string) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        `--target=${target}`,
+        "--compile-executable-path",
+        join(cwd, template),
+        join(cwd, "entry.js"),
+        "--outfile",
+        join(cwd, `out-${template}`),
+      ],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+
+  for (const [target, template, wantErr, outName] of [
+    ["bun-darwin-x64", "tiny", "InvalidObject", "out-tiny"],
+    ["bun-darwin-x64", "badcmds", "InvalidObject", "out-badcmds"],
+    ["bun-darwin-x64", "shortseg", "InvalidObject", "out-shortseg"],
+    ["bun-linux-x64", "tiny", "InvalidElfFile", "out-tiny"],
+    // build_command.rs appends .exe to the outfile for Windows targets.
+    ["bun-windows-x64", "tiny", "InvalidPEFile", "out-tiny.exe"],
+  ] as const) {
+    const { stderr, exitCode } = await run(target, template);
+    expect({ target, template, stderr }).toEqual({
+      target,
+      template,
+      stderr: expect.stringContaining(wantErr),
+    });
+    expect(await Bun.file(join(cwd, outName)).exists()).toBe(false);
+    expect(exitCode).toBe(1);
   }
 }, 60_000);

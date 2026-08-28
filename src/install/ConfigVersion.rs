@@ -11,9 +11,9 @@ pub enum ConfigVersion {
 }
 
 impl ConfigVersion {
-    pub const CURRENT: ConfigVersion = ConfigVersion::V1;
+    pub(crate) const CURRENT: ConfigVersion = ConfigVersion::V1;
 
-    pub fn from_expr(expr: &Expr) -> Option<ConfigVersion> {
+    pub(crate) fn from_expr(expr: &Expr) -> Option<ConfigVersion> {
         let ExprData::ENumber(e_number) = &expr.data else {
             return None;
         };
@@ -36,7 +36,7 @@ impl ConfigVersion {
         None
     }
 
-    pub fn from_int(int: u64) -> Option<ConfigVersion> {
+    pub(crate) fn from_int(int: u64) -> Option<ConfigVersion> {
         match int {
             0 => Some(ConfigVersion::V0),
             1 => Some(ConfigVersion::V1),

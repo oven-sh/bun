@@ -3,6 +3,14 @@
   "private": true,
   "type": "module",
   "devDependencies": {
-    "vitest": "^4.1.4"
+    "@swc/core": "^1.15.47",
+    "@swc/jest": "^0.2.39",
+    "@types/jest": "^30.0.0",
+    "@types/lodash": "^4.17.25",
+    "date-fns": "^4.4.0",
+    "jest": "^30.4.2",
+    "lodash": "^4.18.1",
+    "vitest": "^4.1.10",
+    "zod": "^4.4.3"
   }
 }

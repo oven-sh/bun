@@ -26,9 +26,7 @@ public:
 };
 
 struct DsaKeyPairJob {
-    static DsaKeyPairJob* create(JSC::JSGlobalObject*, DsaKeyPairJobCtx&&, JSC::JSValue callback);
     static void createAndSchedule(JSC::JSGlobalObject*, DsaKeyPairJobCtx&&, JSC::JSValue callback);
-    void schedule();
 };
 
 } // namespace Bun

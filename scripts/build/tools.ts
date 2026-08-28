@@ -396,6 +396,7 @@ export function resolveLlvmToolchain(
   | "rustHostTriple"
   | "strip"
   | "llvmStrip"
+  | "nm"
   | "dsymutil"
   | "ccache"
   | "rc"
@@ -510,6 +511,12 @@ export function resolveLlvmToolchain(
     llvmStrip = strip;
   }
 
+  // llvm-nm: reads ELF, Mach-O, COFF and LTO bitcode objects alike, which is
+  // what the per-dep undefined-symbol checks need. Same package as llvm-ar,
+  // so it is only ever missing from a partial LLVM install; then the checks
+  // are skipped rather than the build refused.
+  const nm = findLlvmTool("llvm-nm", paths, os, { checkVersion: false, required: false })?.path;
+
   // dsymutil: required on darwin; optional elsewhere (needed only when
   // cross-compiling a darwin release from a non-darwin host).
   let dsymutil: string | undefined;
@@ -533,25 +540,15 @@ export function resolveLlvmToolchain(
     mt = findLlvmTool("llvm-mt", paths, os, { checkVersion: false, required: false })?.path;
   }
 
-  // nasm: windows-x64 targets only. BoringSSL's win-x64 assembly is NASM
-  // syntax (perlasm emits gas .S everywhere else, including win-aarch64).
-  // clang's integrated assembler can't read NASM, and OPENSSL_NO_ASM is a
-  // 5-10× crypto perf hit, so this is required when targeting win-x64.
-  let nasm: string | undefined;
-  if (msvcTarget) {
-    nasm = findTool({
-      names: ["nasm"],
-      // boringssl's win-x64 .asm needs nasm; win-aarch64 uses gas .S.
-      // `arch` here is the HOST arch — the target isn't known yet inside
-      // resolveToolchain(). compile.ts:nasm() asserts at the use site
-      // with the same hint, so a missing nasm still fails clearly.
-      required: false,
-      hint:
-        os === "windows"
-          ? "Install from https://nasm.us or `winget install NASM.NASM`"
-          : "Install nasm from your distro (apt install nasm) or https://nasm.us",
-    })?.path;
-  }
+  // nasm: BoringSSL win-x64 and libjpeg-turbo x86_64 SIMD; compile.ts:nasm() asserts at the use site.
+  const nasm = findTool({
+    names: ["nasm"],
+    required: false,
+    hint:
+      os === "windows"
+        ? "Install from https://nasm.us or `winget install NASM.NASM`"
+        : "Install nasm from your distro (apt/dnf/brew install nasm) or https://nasm.us",
+  })?.path;
 
   // rust-lld: optional alternative linker for cross-language LTO when
   // rustc's bundled LLVM is newer than clang's. See findRustLld().
@@ -586,6 +583,7 @@ export function resolveLlvmToolchain(
     rustHostTriple,
     strip,
     llvmStrip,
+    nm,
     dsymutil,
     ccache,
     rc,
@@ -652,38 +650,65 @@ export function findRustLld(os: OS): {
   if (rustc === undefined) return none;
 
   // The link-only CI mode runs `findRustLld()` on an agent that downloads
-  // `libbun_rust.a` rather than building it, so the pinned nightly may not be
+  // `libbun_runtime.a` rather than building it, so the pinned nightly may not be
   // installed there yet. `rustc --print sysroot` (a rustup proxy invocation)
   // would auto-install — but the download blows past a short spawnSync timeout
   // and the silent failure leaves `rustLld` undefined, which falls back to the
   // system lld. With cross-language LTO that means lld 21 reading rust-emitted
   // LLVM 22 bitcode → `Invalid record`. Pre-flight a `rustup toolchain
-  // install` so the proxy resolves instantly: idempotent ~70ms when already
-  // installed, downloads on a stale agent. Skip when there's no pinned channel
-  // or no rustup — the `rustc` queries below will just use whatever's there.
+  // install` so the proxy resolves instantly: idempotent (~0.5s, it re-checks
+  // the channel manifest) when already installed, downloads on a stale agent.
+  // `-q` also hides the download progress, so say how long it took whenever
+  // it evidently did more than that check: every build job of CI build 91391
+  // spent 34-36s in here without a line of output. Skip when there's no
+  // pinned channel or no rustup — the `rustc` queries below will just use
+  // whatever's there.
   const rustup = findTool({ names: ["rustup"], paths: [join(cargoHome, "bin")], required: false })?.path;
   const channel = readRustToolchainChannel();
   if (rustup !== undefined && channel !== undefined) {
-    spawnSync(rustup, ["toolchain", "install", channel, "--force", "--profile", "minimal", "--component", "rust-src"], {
-      encoding: "utf8",
-      timeout: 300_000,
-      stdio: ["ignore", "ignore", "inherit"], // surface download/error output
-    });
+    const started = performance.now();
+    spawnSync(
+      rustup,
+      ["-q", "toolchain", "install", channel, "--no-self-update", "--profile", "minimal", "--component", "rust-src"],
+      {
+        encoding: "utf8",
+        timeout: 300_000,
+        stdio: ["ignore", "ignore", "inherit"], // surface error output; `-q` hides `info:` noise
+      },
+    );
+    const seconds = (performance.now() - started) / 1000;
+    if (seconds >= 5) {
+      console.log(
+        `rustup spent ${seconds.toFixed(0)}s installing the pinned toolchain (${channel}); it was missing or incomplete on this machine`,
+      );
+    }
   }
 
   // One spawn for both sysroot and host triple / LLVM version. `-vV` prints
   // `host: <triple>` and `LLVM version: X.Y.Z`; sysroot needs its own query.
-  // Generous timeout: if the toolchain install above was skipped (no rustup),
-  // this proxy invocation may still be the one that auto-installs.
+  //
+  // RUSTUP_TOOLCHAIN pins the proxy to the channel the pre-flight just
+  // ensured. Without it the proxy, running in the repo root, applies
+  // rust-toolchain.toml in full: besides selecting the channel it installs
+  // every entry of its `components` and `targets` lists that is missing
+  // (rustfmt, clippy, miri, llvm-tools and the std of 11 targets — ~2.4 GB),
+  // with its output piped into nowhere here. The build itself installs what
+  // it needs (rust-src above, the target's std in the rust_build_cross rule),
+  // and the toml still applies to anyone running cargo directly. Generous
+  // timeout: without rustup there is no pre-flight and this proxy invocation
+  // may still be the one that auto-installs the channel.
+  const env = channel !== undefined ? { ...process.env, RUSTUP_TOOLCHAIN: channel } : process.env;
   const sysroot = spawnSync(rustc, ["--print", "sysroot"], {
     encoding: "utf8",
     timeout: 300_000,
     stdio: ["ignore", "pipe", "pipe"],
+    env,
   }).stdout?.trim();
   const vv = spawnSync(rustc, ["-vV"], {
     encoding: "utf8",
     timeout: 30_000,
     stdio: ["ignore", "pipe", "pipe"],
+    env,
   }).stdout;
   if (!sysroot || !vv) return none;
 

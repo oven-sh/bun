@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import fs from "fs";
-import { tempDirWithFiles } from "harness";
+import { tempDir } from "harness";
 
 // Test cases that verify Bun's UTF-16le behavior matches Node.js exactly
 const testCases = [
@@ -35,7 +35,7 @@ test("fs.readFile with utf16le encoding matches Node.js behavior for all byte le
     files[`test-${i}.bin`] = Buffer.from(testCase.bytes);
   });
 
-  const dir = tempDirWithFiles("utf16-node-compatibility", files);
+  using dir = tempDir("utf16-node-compatibility", files);
 
   testCases.forEach((testCase, i) => {
     const filePath = `${dir}/test-${i}.bin`;
@@ -53,7 +53,7 @@ test("fs.readFile with utf16le encoding matches Node.js behavior for all byte le
 });
 
 test("fs.readFile with ucs2 encoding matches utf16le behavior", () => {
-  const dir = tempDirWithFiles("ucs2-compatibility", {
+  using dir = tempDir("ucs2-compatibility", {
     "test.bin": Buffer.from([0x41, 0x42, 0x43]), // 3 bytes
   });
 

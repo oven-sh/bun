@@ -6,11 +6,12 @@ use core::ffi::c_short;
 use core::ffi::{c_char, c_int};
 #[cfg(unix)]
 use core::ptr;
+#[cfg(unix)]
 use std::ffi::{CStr, CString};
 
-use crate::Error;
 #[cfg(unix)]
 use bun_sys as sys;
+#[cfg(unix)]
 use bun_sys::Fd;
 
 // `bun_sys::c` only re-exports a thin slice of libc
@@ -44,17 +45,21 @@ mod darwin_spawn_np {
 // MOVE_DOWN stub from `bun_errno`). Shim the remainder locally so this file
 // is self-contained; delete in favour of `bun_sys::posix::*` once that module
 // widens.
+use self::posix_compat::pid_t;
 #[cfg(unix)]
 use self::posix_compat::{Errno, errno};
 #[cfg(target_os = "macos")]
 use self::posix_compat::{errno_from_posix_spawn, mode_t};
-use self::posix_compat::{fd_t, pid_t, to_posix_path};
+#[cfg(unix)]
+use self::posix_compat::{fd_t, to_posix_path};
 
 #[allow(non_camel_case_types)]
 mod posix_compat {
+    #[cfg(unix)]
     use crate::Error;
     #[cfg(unix)]
     use core::ffi::c_int;
+    #[cfg(unix)]
     use std::ffi::CString;
 
     /// Native fd backing int.
@@ -62,6 +67,7 @@ mod posix_compat {
     // (`posix_spawn_bun.cpp`). On POSIX `FdNative == c_int`; on Windows
     // `FdNative` is HANDLE, but this code path is unreachable there — keep
     // the C-ABI type so the struct compiles unchanged.
+    #[cfg(unix)]
     pub(super) type fd_t = core::ffi::c_int;
     /// Native process id type.
     #[cfg(unix)]
@@ -107,6 +113,7 @@ mod posix_compat {
     }
 
     /// Copy a path into a NUL-terminated buffer.
+    #[cfg(unix)]
     pub(super) fn to_posix_path(path: &[u8]) -> Result<CString, Error> {
         CString::new(path).map_err(|_| crate::Error::Unexpected)
     }
@@ -117,7 +124,9 @@ mod posix_compat {
 // `bun_runtime::api::bun_spawn` and is not declared here.
 
 pub mod bun_spawn {
+    #[cfg(unix)]
     use super::*;
+    use crate::Error;
 
     // The #[repr(C)] FFI mirrors (`FileActionType`, `Action`) live in
     // `bun_core::spawn_ffi` — the single source of truth for bun-spawn.cpp's
@@ -133,38 +142,46 @@ pub mod bun_spawn {
     fn fd_int(fd: Fd) -> fd_t {
         fd.native()
     }
-    #[cfg(windows)]
-    #[inline(always)]
-    fn fd_int(_fd: Fd) -> fd_t {
-        unreachable!("posix_spawn file actions are unix-only")
-    }
 
     #[derive(Default)]
+    #[cfg(unix)]
     pub struct Actions {
-        pub chdir_buf: Option<CString>,
-        pub actions: Vec<Action>,
+        pub(crate) chdir_buf: Option<CString>,
+        pub(crate) actions: Vec<Action>,
         /// Owns the C strings pointed to by `Action.path` for `.Open` actions.
         /// `CString`'s heap buffer does not move when this Vec reallocates, so
         /// raw pointers stored in `actions[i].path` remain valid for the life
         /// of `Actions`.
-        pub paths: Vec<CString>,
-        pub detached: bool,
+        pub(crate) paths: Vec<CString>,
     }
 
+    #[cfg(unix)]
     impl Actions {
-        pub fn init() -> Result<Actions, Error> {
+        pub(crate) fn init() -> Result<Actions, Error> {
             Ok(Actions::default())
         }
 
         // deinit: freed chdir_buf, each action.path, and the actions list — all owned
         // types now, so Drop is automatic.
 
-        pub fn open(&mut self, fd: Fd, path: &[u8], flags: u32, mode: i32) -> Result<(), Error> {
+        pub(crate) fn open(
+            &mut self,
+            fd: Fd,
+            path: &[u8],
+            flags: u32,
+            mode: i32,
+        ) -> Result<(), Error> {
             let posix_path = to_posix_path(path)?;
             self.open_z(fd, &posix_path, flags, mode)
         }
 
-        pub fn open_z(&mut self, fd: Fd, path: &CStr, flags: u32, mode: i32) -> Result<(), Error> {
+        pub(crate) fn open_z(
+            &mut self,
+            fd: Fd,
+            path: &CStr,
+            flags: u32,
+            mode: i32,
+        ) -> Result<(), Error> {
             self.paths.push(path.to_owned());
             // SAFETY: CString's heap buffer is stable across Vec<CString> reallocs;
             // pointer outlives this Action because both are owned by `self`.
@@ -179,7 +196,7 @@ pub mod bun_spawn {
             Ok(())
         }
 
-        pub fn close(&mut self, fd: Fd) -> Result<(), Error> {
+        pub(crate) fn close(&mut self, fd: Fd) -> Result<(), Error> {
             self.actions.push(Action {
                 kind: FileActionType::Close,
                 fds: [fd_int(fd), 0],
@@ -188,7 +205,7 @@ pub mod bun_spawn {
             Ok(())
         }
 
-        pub fn dup2(&mut self, fd: Fd, newfd: Fd) -> Result<(), Error> {
+        pub(crate) fn dup2(&mut self, fd: Fd, newfd: Fd) -> Result<(), Error> {
             self.actions.push(Action {
                 kind: FileActionType::Dup2,
                 fds: [fd_int(fd), fd_int(newfd)],
@@ -197,11 +214,11 @@ pub mod bun_spawn {
             Ok(())
         }
 
-        pub fn inherit(&mut self, fd: Fd) -> Result<(), Error> {
+        pub(crate) fn inherit(&mut self, fd: Fd) -> Result<(), Error> {
             self.dup2(fd, fd)
         }
 
-        pub fn chdir(&mut self, path: &[u8]) -> Result<(), Error> {
+        pub(crate) fn chdir(&mut self, path: &[u8]) -> Result<(), Error> {
             // previous buffer (if any) is dropped by assignment.
             // CString::new errors on interior NUL.
             self.chdir_buf = Some(CString::new(path).map_err(|_| crate::Error::Unexpected)?);
@@ -220,6 +237,7 @@ pub mod bun_spawn {
         pub linux_pdeathsig: i32,
         pub uid: Option<u32>,
         pub gid: Option<u32>,
+        pub cgroup_fd: i32,
     }
 
     impl Default for Attr {
@@ -236,6 +254,7 @@ pub mod bun_spawn {
                 linux_pdeathsig: 0,
                 uid: None,
                 gid: None,
+                cgroup_fd: -1,
             }
         }
     }
@@ -317,14 +336,12 @@ pub mod posix_spawn {
     // never reaches them either.
     #[cfg(target_os = "macos")]
     pub struct PosixSpawnAttr {
-        pub attr: system::posix_spawnattr_t,
-        pub detached: bool,
-        pub pty_slave_fd: i32,
+        pub(crate) attr: system::posix_spawnattr_t,
     }
 
     #[cfg(target_os = "macos")]
     impl PosixSpawnAttr {
-        pub fn init() -> sys::Result<PosixSpawnAttr> {
+        pub(crate) fn init() -> sys::Result<PosixSpawnAttr> {
             let mut attr = core::mem::MaybeUninit::<system::posix_spawnattr_t>::uninit();
             // SAFETY: posix_spawnattr_init writes into attr on SUCCESS
             spawn_errno(errno_from_posix_spawn(unsafe {
@@ -333,12 +350,10 @@ pub mod posix_spawn {
             Ok(PosixSpawnAttr {
                 // SAFETY: spawn_errno returned Ok ⇒ SUCCESS ⇒ initialized
                 attr: unsafe { attr.assume_init() },
-                detached: false,
-                pty_slave_fd: -1,
             })
         }
 
-        pub fn set(&mut self, flags: u16) -> sys::Result<()> {
+        pub(crate) fn set(&mut self, flags: u16) -> sys::Result<()> {
             // `as` between same-width signed/unsigned is a bitcast.
             let flags_s: c_short = flags as c_short;
             // SAFETY: self.attr is a live posix_spawnattr_t
@@ -347,7 +362,7 @@ pub mod posix_spawn {
             }))
         }
 
-        pub fn reset_signals(&mut self) -> sys::Result<()> {
+        pub(crate) fn reset_signals(&mut self) -> sys::Result<()> {
             // SAFETY: self.attr is a live posix_spawnattr_t
             if unsafe { posix_spawnattr_reset_signals(&raw mut self.attr) } != 0 {
                 // posix_spawnattr_setsigdefault/setsigmask only fail on an
@@ -379,7 +394,7 @@ pub mod posix_spawn {
 
     #[cfg(target_os = "macos")]
     impl PosixSpawnActions {
-        pub(crate) fn init() -> sys::Result<PosixSpawnActions> {
+        fn init() -> sys::Result<PosixSpawnActions> {
             let mut actions =
                 core::mem::MaybeUninit::<system::posix_spawn_file_actions_t>::uninit();
             // SAFETY: posix_spawn_file_actions_init writes into actions on SUCCESS
@@ -392,13 +407,7 @@ pub mod posix_spawn {
             })
         }
 
-        pub(crate) fn open_z(
-            &mut self,
-            fd: Fd,
-            path: &CStr,
-            flags: u32,
-            mode: mode_t,
-        ) -> sys::Result<()> {
+        fn open_z(&mut self, fd: Fd, path: &CStr, flags: u32, mode: mode_t) -> sys::Result<()> {
             let flags_c: c_int = flags as c_int;
             // SAFETY: self.actions is live; path is NUL-terminated
             spawn_errno(errno_from_posix_spawn(unsafe {
@@ -412,7 +421,7 @@ pub mod posix_spawn {
             }))
         }
 
-        pub(crate) fn dup2(&mut self, fd: Fd, newfd: Fd) -> sys::Result<()> {
+        fn dup2(&mut self, fd: Fd, newfd: Fd) -> sys::Result<()> {
             if fd == newfd {
                 return self.inherit(fd);
             }
@@ -427,7 +436,7 @@ pub mod posix_spawn {
             }))
         }
 
-        pub(crate) fn inherit(&mut self, fd: Fd) -> sys::Result<()> {
+        fn inherit(&mut self, fd: Fd) -> sys::Result<()> {
             // SAFETY: self.actions is live
             spawn_errno(errno_from_posix_spawn(unsafe {
                 super::darwin_spawn_np::posix_spawn_file_actions_addinherit_np(
@@ -474,7 +483,7 @@ pub mod posix_spawn {
     pub(super) use bun_core::spawn_ffi::{ActionsList, BunSpawnRequest, posix_spawn_bun};
 
     #[cfg(unix)]
-    pub(super) fn spawn_bun(
+    fn spawn_bun(
         path: &CStr,
         req_: BunSpawnRequest,
         argv: *const *const c_char,
@@ -508,6 +517,12 @@ pub mod posix_spawn {
 
         if rc == 0 {
             return sys::Result::Ok(pid_t::try_from(pid).expect("int cast"));
+        }
+
+        // Negative: the child could not be placed in `cgroup_fd`. The caller
+        // knows the cgroup's path; don't blame argv[0].
+        if rc < 0 {
+            return sys::Result::Err(sys::Error::from_code_int((-rc) as _, sys::Tag::clone3));
         }
 
         // SAFETY: argv has at least one element (the NULL terminator)
@@ -646,6 +661,7 @@ pub mod posix_spawn {
                     gid: gid.unwrap_or(0),
                     set_uid: uid.is_some(),
                     set_gid: gid.is_some(),
+                    cgroup_fd: attr.map_or(-1, |a| a.cgroup_fd),
                 },
                 argv,
                 envp,

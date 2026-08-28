@@ -31,7 +31,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // `Expr -> Expr` shape moved 24B in + 24B out per frame; the in-place form moves 8B
     // and only writes back when the visitor produces a *different* node.
     #[inline]
-    pub fn visit_expr(&mut self, e: &mut Expr) {
+    pub(crate) fn visit_expr(&mut self, e: &mut Expr) {
         // SCAN_ONLY monomorphizations must never reach the visit pass.
         debug_assert!(
             !SCAN_ONLY,
@@ -40,7 +40,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.visit_expr_in_out(e, ExprIn::default())
     }
 
-    pub fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
+    pub(crate) fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
             self.report_stack_overflow(e.loc);
             return;
@@ -64,7 +64,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Tag::EIdentifier => Self::e_identifier(self, e, in_),
             Tag::EJsxElement => Self::e_jsx_element(self, e, in_),
             Tag::ETemplate => Self::e_template(self, e, in_),
-            Tag::EBinary => Self::e_binary(self, e, in_),
+            Tag::EBinary => Self::e_binary(self, e),
             Tag::EIndex => Self::e_index(self, e, in_),
             Tag::EUnary => Self::e_unary(self, e, in_),
             Tag::EDot => Self::e_dot(self, e, in_),
@@ -106,12 +106,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             *e = exp;
             return;
         }
-
-        //                 // Capture "this" inside arrow functions that will be lowered into normal
-        // // function expressions for older language environments
-        // if p.fnOrArrowDataVisit.isArrow && p.options.unsupportedJSFeatures.Has(compat.Arrow) && p.fnOnlyDataVisit.isThisNested {
-        //     return js_ast.Expr{Loc: expr.Loc, Data: &js_ast.EIdentifier{Ref: p.captureThis()}}, exprOut{}
-        // }
     }
 
     fn e_spread(p: &mut Self, e: &mut Expr, _: ExprIn) {
@@ -804,7 +798,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
     }
-    fn e_binary(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_binary(p: &mut Self, e: &mut Expr) {
         let expr = *e;
         use crate::visit::visit_binary::BinaryExpressionVisitor;
         let e_ = expr.data.e_binary().expect("infallible: variant checked");
@@ -819,9 +813,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut v: BinaryExpressionVisitor = BinaryExpressionVisitor {
             e: e_,
             loc: expr.loc,
-            in_,
             left_in: ExprIn::default(),
-            is_stmt_expr: false,
         };
 
         // Everything uses a single stack to reduce allocation overhead. This stack
@@ -868,9 +860,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             v = BinaryExpressionVisitor {
                 e: left_binary.unwrap(),
                 loc: left.loc,
-                in_: left_in,
                 left_in: ExprIn::default(),
-                is_stmt_expr: false,
             };
         }
 
@@ -920,14 +910,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        let has_chain_parent = e_.optional_chain == Some(js_ast::OptionalChain::Continuation);
-        p.visit_expr_in_out(
-            &mut e_.target,
-            ExprIn {
-                has_chain_parent,
-                ..Default::default()
-            },
-        );
+        p.visit_expr_in_out(&mut e_.target, ExprIn::default());
 
         match e_.index.data {
             Data::EPrivateIdentifier(mut private) => {
@@ -1068,7 +1051,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let target = e_.target.unwrap_inlined();
         let index = e_.index.unwrap_inlined();
 
-        if p.options.features.minify_syntax {
+        // `[x][0] = v` writes into the temporary, not `x`.
+        if p.options.features.minify_syntax && in_.assign_target == js_ast::AssignTarget::None {
             if let Some(number) = index.data.as_e_number() {
                 if number.value() >= 0.0
                     && number.value() < (usize::MAX as f64)
@@ -1083,9 +1067,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .e_number()
                                 .expect("infallible: variant checked")
                                 .to_usize();
-                            if cfg!(debug_assertions) {
-                                debug_assert!(strings::is_all_ascii(&literal));
-                            }
+                            debug_assert!(strings::is_all_ascii(&literal));
                             if num < literal.len() {
                                 *e = p.new_expr(
                                     E::String {
@@ -1098,31 +1080,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                         }
                     } else if let Some(array) = target.data.as_e_array() {
-                        // [x][0] -> x
-                        if array.items.len_u32() == 1 && number.value() == 0.0 {
-                            let inlined = *array.items.at(0);
-                            if inlined.can_be_inlined_from_property_access() {
-                                *e = inlined;
-                                return;
-                            }
-                        }
-
-                        // ['a', 'b', 'c'][1] -> 'b'
                         let int: usize = number.value() as usize;
-                        if int < array.items.len_u32() as usize
+                        // [x][0] -> x
+                        // ['a', 'b', 'c'][1] -> 'b'
+                        let inlined = if array.items.len_u32() == 1 && int == 0 {
+                            Some(*array.items.at(0))
+                        } else if int < array.items.len_u32() as usize
                             && p.expr_can_be_removed_if_unused(&target)
                         {
-                            let inlined = *array.items.at(int);
+                            Some(*array.items.at(int))
+                        } else {
+                            None
+                        };
+                        if let Some(inlined) = inlined {
                             // ['a', , 'c'][1] -> undefined
                             if matches!(inlined.data, Data::EMissing(..)) {
                                 *e = p.new_expr(E::Undefined {}, inlined.loc);
                                 return;
                             }
-                            if cfg!(debug_assertions) {
-                                debug_assert!(inlined.can_be_inlined_from_property_access());
+                            if inlined.can_be_inlined_from_property_access() {
+                                // "[obj.m][0]()" => "(0, obj.m)()"
+                                *e = if is_call_target && inlined.has_value_for_this_in_call() {
+                                    p.new_expr(E::Number::new(0.0), expr.loc)
+                                        .join_with_comma(inlined)
+                                } else {
+                                    inlined
+                                };
+                                return;
                             }
-                            *e = inlined;
-                            return;
                         }
                     }
                 }
@@ -1133,7 +1118,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // though this is a run-time error, we make it a compile-time error when
         // bundling because scope hoisting means these will no longer be run-time
         // errors.
-        if (in_.assign_target != js_ast::AssignTarget::None || is_delete_target)
+        if p.options.bundle
+            && (in_.assign_target != js_ast::AssignTarget::None || is_delete_target)
             && matches!(e_.target.data.tag(), Tag::EIdentifier)
             && p.symbols[e_
                 .target
@@ -1232,13 +1218,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             Op::UnDelete => {
-                p.visit_expr_in_out(
-                    &mut e_.value,
-                    ExprIn {
-                        has_chain_parent: true,
-                        ..Default::default()
-                    },
-                );
+                p.visit_expr_in_out(&mut e_.value, ExprIn::default());
             }
             _ => {
                 let assign_target = Op::unary_assign_target(e_.op);
@@ -1257,18 +1237,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             e_.value = SideEffects::simplify_boolean(p, e_.value);
                         }
 
-                        let side_effects = SideEffects::to_boolean(p, &e_.value.data);
-                        if side_effects.ok
-                            && (side_effects.side_effects == SideEffects::NoSideEffects
-                                || p.expr_can_be_removed_if_unused(&e_.value))
-                        {
-                            *e = p.new_expr(
-                                E::Boolean {
-                                    value: !side_effects.value,
-                                },
-                                expr.loc,
-                            );
-                            return;
+                        if let Some(side_effects) = SideEffects::to_boolean(p, &e_.value.data) {
+                            if side_effects.side_effects == SideEffects::NoSideEffects
+                                || p.expr_can_be_removed_if_unused(&e_.value)
+                            {
+                                *e = p.new_expr(
+                                    E::Boolean {
+                                        value: !side_effects.value,
+                                    },
+                                    expr.loc,
+                                );
+                                return;
+                            }
                         }
 
                         if p.options.features.minify_syntax {
@@ -1483,73 +1463,70 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let prev_in_branch = p.in_branch_condition;
         p.in_branch_condition = true;
-        p.visit_expr(&mut e_.test_);
+        p.visit_expr(&mut e_.test);
         p.in_branch_condition = prev_in_branch;
 
-        e_.test_ = SideEffects::simplify_boolean(p, e_.test_);
+        e_.test = SideEffects::simplify_boolean(p, e_.test);
 
-        let side_effects = SideEffects::to_boolean(p, &e_.test_.data);
-
-        if !side_effects.ok {
+        let Some(side_effects) = SideEffects::to_boolean(p, &e_.test.data) else {
             p.visit_expr(&mut e_.yes);
             p.visit_expr(&mut e_.no);
-        } else {
-            // Mark the control flow as dead if the branch is never taken
-            if side_effects.value {
-                // "true ? live : dead"
-                p.visit_expr(&mut e_.yes);
-                let old = p.is_control_flow_dead;
-                p.is_control_flow_dead = true;
-                p.visit_expr(&mut e_.no);
-                p.is_control_flow_dead = old;
+            return;
+        };
 
-                if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                    *e = SideEffects::simplify_unused_expr(p, e_.test_)
-                        .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test_.loc))
-                        .join_with_comma(e_.yes);
-                    return;
-                }
+        // Mark the control flow as dead if the branch is never taken
+        if side_effects.value {
+            // "true ? live : dead"
+            p.visit_expr(&mut e_.yes);
+            let old = p.is_control_flow_dead;
+            p.is_control_flow_dead = true;
+            p.visit_expr(&mut e_.no);
+            p.is_control_flow_dead = old;
 
-                // "(1 ? fn : 2)()" => "fn()"
-                // "(1 ? this.fn : 2)" => "this.fn"
-                // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-                if is_call_target && e_.yes.has_value_for_this_in_call() {
-                    *e = p
-                        .new_expr(E::Number::new(0.0), e_.test_.loc)
-                        .join_with_comma(e_.yes);
-                    return;
-                }
-
-                *e = e_.yes;
-                return;
-            } else {
-                // "false ? dead : live"
-                let old = p.is_control_flow_dead;
-                p.is_control_flow_dead = true;
-                p.visit_expr(&mut e_.yes);
-                p.is_control_flow_dead = old;
-                p.visit_expr(&mut e_.no);
-
-                // "(a, false) ? b : c" => "a, c"
-                if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
-                    *e = SideEffects::simplify_unused_expr(p, e_.test_)
-                        .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test_.loc))
-                        .join_with_comma(e_.no);
-                    return;
-                }
-
-                // "(1 ? fn : 2)()" => "fn()"
-                // "(1 ? this.fn : 2)" => "this.fn"
-                // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-                if is_call_target && e_.no.has_value_for_this_in_call() {
-                    *e = p
-                        .new_expr(E::Number::new(0.0), e_.test_.loc)
-                        .join_with_comma(e_.no);
-                    return;
-                }
-                *e = e_.no;
+            if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
+                *e = SideEffects::simplify_unused_expr(p, e_.test)
+                    .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
+                    .join_with_comma(e_.yes);
                 return;
             }
+
+            // "(1 ? fn : 2)()" => "fn()"
+            // "(1 ? this.fn : 2)" => "this.fn"
+            // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
+            if is_call_target && e_.yes.has_value_for_this_in_call() {
+                *e = p
+                    .new_expr(E::Number::new(0.0), e_.test.loc)
+                    .join_with_comma(e_.yes);
+                return;
+            }
+
+            *e = e_.yes;
+        } else {
+            // "false ? dead : live"
+            let old = p.is_control_flow_dead;
+            p.is_control_flow_dead = true;
+            p.visit_expr(&mut e_.yes);
+            p.is_control_flow_dead = old;
+            p.visit_expr(&mut e_.no);
+
+            // "(a, false) ? b : c" => "a, c"
+            if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
+                *e = SideEffects::simplify_unused_expr(p, e_.test)
+                    .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test.loc))
+                    .join_with_comma(e_.no);
+                return;
+            }
+
+            // "(1 ? fn : 2)()" => "fn()"
+            // "(1 ? this.fn : 2)" => "this.fn"
+            // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
+            if is_call_target && e_.no.has_value_for_this_in_call() {
+                *e = p
+                    .new_expr(E::Number::new(0.0), e_.test.loc)
+                    .join_with_comma(e_.no);
+                return;
+            }
+            *e = e_.no;
         }
     }
 
@@ -1871,11 +1848,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
 
         let target_was_identifier_before_visit = matches!(e_.target.data, Data::EIdentifier(..));
-        let has_chain_parent = e_.optional_chain == Some(js_ast::OptionalChain::Continuation);
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
-                has_chain_parent,
                 property_access_for_method_call_maybe_should_replace_with_undefined: true,
                 ..Default::default()
             },
@@ -2445,18 +2420,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // The struct is `Copy`, so save/restore is a plain copy.
         let old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
         p.fn_or_arrow_data_visit = FnOrArrowDataVisit {
-            is_arrow: true,
-            is_async: e_.is_async,
             ..Default::default()
         };
-
-        // Mark if we're inside an async arrow function. This value should be true
-        // even if we're inside multiple arrow functions and the closest inclosing
-        // arrow function isn't async, as long as at least one enclosing arrow
-        // function within the current enclosing function is async.
-        let old_inside_async_arrow_fn = p.fn_only_data_visit.is_inside_async_arrow_fn;
-        p.fn_only_data_visit.is_inside_async_arrow_fn =
-            e_.is_async || p.fn_only_data_visit.is_inside_async_arrow_fn;
 
         p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionArgs, expr.loc)
             .expect("unreachable");
@@ -2523,7 +2488,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.pop_scope();
         p.pop_scope();
 
-        p.fn_only_data_visit.is_inside_async_arrow_fn = old_inside_async_arrow_fn;
         p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
 
         // Restore before any further `p.*` call so the stack-local pointer

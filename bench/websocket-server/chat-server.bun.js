@@ -2,7 +2,7 @@
 const CLIENTS_TO_WAIT_FOR = parseInt(process.env.CLIENTS_COUNT || "", 10) || 32;
 var remainingClients = CLIENTS_TO_WAIT_FOR;
 const COMPRESS = process.env.COMPRESS === "1";
-const port = process.PORT || 4001;
+const port = process.env.PORT || 4001;
 
 const server = Bun.serve({
   port: port,
@@ -23,7 +23,8 @@ const server = Bun.serve({
     },
     message(ws, msg) {
       const out = `${ws.data.name}: ${msg}`;
-      if (ws.publishText("room", out) !== out.length) {
+      // publishText returns -1 when the message is queued behind backpressure, 0 when it is dropped.
+      if (ws.publishText("room", out) === 0) {
         throw new Error("Failed to publish message");
       }
     },

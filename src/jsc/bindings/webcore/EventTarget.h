@@ -99,11 +99,6 @@ public:
     virtual EventTargetInterface eventTargetInterface() const = 0;
     virtual ScriptExecutionContext* scriptExecutionContext() const = 0;
 
-    WEBCORE_EXPORT virtual bool isNode() const;
-    WEBCORE_EXPORT virtual bool isPaymentRequest() const;
-
-    bool isContextStopped() const;
-
     using AddEventListenerOptionsOrBoolean = std::variant<AddEventListenerOptions, bool>;
     WEBCORE_EXPORT void addEventListenerForBindings(const AtomString& eventType, RefPtr<EventListener>&&, AddEventListenerOptionsOrBoolean&&);
     using EventListenerOptionsOrBoolean = std::variant<EventListenerOptions, bool>;
@@ -124,7 +119,6 @@ public:
 
     bool hasEventListeners() const;
     bool hasEventListeners(const AtomString& eventType) const;
-    bool hasCapturingEventListeners(const AtomString& eventType);
     bool hasActiveEventListeners(const AtomString& eventType) const;
 
     Vector<AtomString> eventTypes();
@@ -136,7 +130,6 @@ public:
     bool isFiringEventListeners() const;
 
     template<typename Visitor> void visitJSEventListeners(Visitor&);
-    void invalidateJSEventListeners(JSC::JSObject*);
 
     const EventTargetData* eventTargetData() const;
 
@@ -231,12 +224,6 @@ inline bool EventTarget::hasEventListeners(const AtomString& eventType) const
 {
     auto* data = eventTargetData();
     return data && data->eventListenerMap.contains(eventType);
-}
-
-inline bool EventTarget::hasCapturingEventListeners(const AtomString& eventType)
-{
-    auto* data = eventTargetData();
-    return data && data->eventListenerMap.containsCapturing(eventType);
 }
 
 template<typename Visitor>

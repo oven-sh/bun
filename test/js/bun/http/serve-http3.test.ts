@@ -1,6 +1,9 @@
+import type { ServerWebSocket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { createHash, randomBytes } from "crypto";
-import { bunEnv, bunExe, tempDir, tls } from "harness";
+import { createHash, createPrivateKey, randomBytes } from "crypto";
+import { readFileSync } from "fs";
+import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
+import { connect, QuicEndpoint } from "node:quic";
 import { join } from "path";
 
 // Native HTTP/3 fetch wrapper. Every request in this file forces
@@ -49,9 +52,14 @@ const server = serve({
       headers: { "content-type": "text/plain", etag: '"v1"' },
     }),
     "/file-route": Bun.file(process.env.BIG_FILE),
+    "/static-hop": new Response("hop", { headers: { connection: "keep-alive", "keep-alive": "timeout=5", te: "gzip", "x-kept": "1" } }),
+    "/file-hop": new Response(Bun.file(process.env.BIG_FILE), { headers: { connection: "close", upgrade: "x", "x-kept": "1" } }),
   },
   async fetch(req) {
     const url = new URL(req.url);
+    if (url.pathname === "/hop-headers") {
+      return new Response("hi", { headers: { "transfer-encoding": "chunked", connection: "close", "keep-alive": "timeout=5", upgrade: "websocket", "proxy-connection": "x", te: "gzip", "x-kept": "1" } });
+    }
     if (url.pathname === "/hello") {
       return new Response("hello over h3", {
         headers: { "x-proto": "h3", "content-type": "text/plain" },
@@ -437,6 +445,20 @@ describe("Bun.serve HTTP/3", () => {
     expect(exitCode).not.toBe(0);
   });
 
+  test("connection-specific response headers are dropped on fetch, static and file routes", async () => {
+    await withServer(async port => {
+      for (const path of ["/hop-headers", "/static-hop", "/file-hop"]) {
+        const res = await fetchH3(port, path);
+        expect(res.status).toBe(200);
+        expect(res.headers.get("x-kept")).toBe("1");
+        for (const h of ["connection", "keep-alive", "upgrade", "proxy-connection", "transfer-encoding", "te"]) {
+          expect([path, h, res.headers.get(h)]).toEqual([path, h, null]);
+        }
+        await res.arrayBuffer();
+      }
+    });
+  });
+
   test("static route (Response value) is mirrored onto H3", async () => {
     await withServer(async port => {
       const res = await fetchH3(port, "/static");
@@ -549,7 +571,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
     await withServer(async port => {
       // Body is tiny ("one two three"); the point is the server sees
       // backpressure from the QUIC flow-control window and the
-      // H3ResponseSink onWritable path completes instead of hanging.
+      // HTTPSResponseSink onWritable path completes instead of hanging.
       // Throttle by reading via getReader() with a delay between chunks.
       const res = await fetchH3(port, "/stream");
       const reader = res.body!.getReader();
@@ -621,7 +643,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
   // The big one: every concurrent stream gets back exactly its own bytes,
   // transformed. Catches shared-buffer reuse in quic.c read_buf, response
   // backpressure aliasing in Http3ResponseData, and partial-write offset
-  // bugs in H3ResponseSink. Bodies are crypto-random so any cross-stream
+  // bugs in HTTPSResponseSink. Bodies are crypto-random so any cross-stream
   // leak shows up as an md5 mismatch, not just an offset shift.
   const isolationRound = async (port: number, count: number, size: number) => {
     const transform = (input: Uint8Array) => {
@@ -738,7 +760,7 @@ describe("Bun.serve HTTP/3 adversarial", () => {
     });
   });
 
-  test("Response(Bun.file().stream()) goes through H3ResponseSink", async () => {
+  test("Response(Bun.file().stream()) goes through HTTPSResponseSink", async () => {
     await withServer(async (port, dir) => {
       const raw = await fetchH3(port, "/file-stream").then(r => r.bytes());
       expect(raw.length).toBe(200 * 1024);
@@ -994,6 +1016,102 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     });
   });
 
+  // end_stream()/end()/end_without_body()/force_close() captured a local
+  // copy of `resp`, cleared onAborted via detach_response(), then called
+  // end_request_streaming_and_drain() (whose drain_microtasks() can re-enter
+  // lsquic via drain_quic_if_necessary and free the H3 stream when a client
+  // RESET is queued) before the final resp.state() read.
+  // Only detectable under ASAN; release builds corrupt memory silently.
+  test.skipIf(!isASAN)(
+    "client abort during streaming response + pending request body does not UAF",
+    async () => {
+      const script = `
+      const tls = ${JSON.stringify(tls)};
+      const server = Bun.serve({
+        port: 0, tls, http3: true, http1: false,
+        fetch(req) {
+          // Do NOT consume req.body: for H3 body-bearing methods the
+          // RequestContext's request_body stays Locked until FIN, and the
+          // client aborts before sending FIN. That Locked body is what makes
+          // end_request_streaming_and_drain() actually drain microtasks.
+          return new Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(ctrl) {
+                ctrl.write("a");
+                ctrl.flush?.();
+                // Yield to a macro-task so the sink's resolve microtask runs
+                // with ctx->processing == 0 (outside lsquic), letting the
+                // drain_quic_if_necessary() re-entry reach process_conns.
+                await new Promise(r => setTimeout(r, 1));
+                ctrl.write("b");
+                ctrl.flush?.();
+                await new Promise(r => setTimeout(r, 1));
+                ctrl.write("c");
+                await ctrl.end();
+              },
+            }),
+            { headers: { "content-type": "text/plain" } },
+          );
+        },
+      });
+      const base = "https://127.0.0.1:" + server.port;
+      async function once(i) {
+        const ctrl = new AbortController();
+        let bodyCtrl;
+        const body = new ReadableStream({
+          start(c) { c.enqueue(new TextEncoder().encode("req")); bodyCtrl = c; },
+        });
+        try {
+          const res = await fetch(base + "/", {
+            method: "POST", body, duplex: "half",
+            protocol: "http3", tls: { rejectUnauthorized: false },
+            signal: ctrl.signal,
+            headers: { "content-type": "application/octet-stream" },
+          });
+          // Read one chunk so the server is definitely mid-stream, then
+          // abort. The client's RESET lands while the server's next
+          // setTimeout tick is queued in the same epoll iteration.
+          const rdr = res.body.getReader();
+          await rdr.read().catch(() => {});
+          if (i & 1) await new Promise(r => setTimeout(r, 0));
+          ctrl.abort();
+          await rdr.read().catch(() => {});
+          try { rdr.releaseLock(); } catch {}
+        } catch {}
+        try { bodyCtrl?.error(new Error("done")); } catch {}
+      }
+      const ITERS = 200, CONC = 16;
+      for (let b = 0; b * CONC < ITERS; b++) {
+        await Promise.all(Array.from({ length: CONC }, (_, k) => once(b * CONC + k)));
+      }
+      // Proof of life: one clean request after the abort storm.
+      const res = await fetch(base + "/", {
+        method: "POST", body: "done",
+        protocol: "http3", tls: { rejectUnauthorized: false },
+      });
+      const txt = await res.text();
+      console.log(JSON.stringify({ status: res.status, body: txt }));
+      server.stop(true);
+      process.exit(0);
+    `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // Surface the ASAN report when it fires so the failing test is diagnosable.
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({ status: 200, body: "abc" }) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    30_000,
+  );
+
   // B: server.stop() (graceful) sends GOAWAY and lets in-flight H3 requests
   // finish before the engine tears down. lsquic_engine_cooldown drops mini
   // (still-handshaking) conns immediately, so we wait until the server has
@@ -1125,6 +1243,40 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
 });
 
 describe("Bun.serve HTTP/3 production", () => {
+  // RFC 9110 §6.6.1: an origin server with a clock MUST send Date.
+  // H1 writes it via HttpResponse::writeMark(); H3 must too.
+  test("Date header is sent on every response shape", async () => {
+    await withServer(async port => {
+      // Cover every Http3Response header-send path: internalEnd (string/buffer
+      // body, 404, static route), flushHeaders (ReadableStream, Bun.file,
+      // file route), endWithoutBody (204, HEAD).
+      const cases: Array<{ path: string; method?: string }> = [
+        { path: "/hello" },
+        { path: "/big" },
+        { path: "/status" },
+        { path: "/nope" },
+        { path: "/stream" },
+        { path: "/file" },
+        { path: "/static" },
+        { path: "/file-route" },
+        { path: "/big", method: "HEAD" },
+      ];
+      const httpDate = /^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/;
+      const results: Array<{ req: string; date: string | null }> = [];
+      for (const c of cases) {
+        const res = await fetchH3(port, c.path, c.method ? { method: c.method } : {});
+        await res.arrayBuffer();
+        results.push({ req: `${c.method ?? "GET"} ${c.path}`, date: res.headers.get("date") });
+      }
+      expect(results).toEqual(
+        cases.map(c => ({
+          req: `${c.method ?? "GET"} ${c.path}`,
+          date: expect.stringMatching(httpDate),
+        })),
+      );
+    });
+  });
+
   // E: H1 responses advertise the H3 endpoint so browsers can discover it.
   test("Alt-Svc emitted on HTTP/1.1 responses when http3 is enabled", async () => {
     await withServer(async port => {
@@ -1170,4 +1322,215 @@ describe("Bun.serve HTTP/3 production", () => {
   // Expect: 100-continue is handled at the uWS layer for both transports
   // (HttpContext.h / Http3Context.h call writeContinue before routing); a
   // curl --expect100-timeout assertion was flaky enough to drop here.
+});
+
+async function h3Exchange(
+  port: number,
+  headers: Record<string, string>,
+  options: Record<string, unknown> = {},
+): Promise<string> {
+  await using endpoint = new QuicEndpoint();
+  const client = await connect(`127.0.0.1:${port}`, {
+    endpoint,
+    servername: "localhost",
+    verifyPeer: "manual",
+    transportParams: { maxIdleTimeout: 5 },
+    onerror() {},
+    ...options,
+  });
+  const outcome = Promise.withResolvers<string>();
+  client.closed.then(
+    () => outcome.resolve("closed"),
+    (err: Error & { code?: string; errorCode?: bigint }) =>
+      outcome.resolve(err?.code === "ERR_QUIC_APPLICATION_ERROR" ? `closed ${err.code} ${err.errorCode}` : "closed"),
+  );
+  client.opened
+    .then(async () => {
+      let status = "";
+      const stream = await client.createBidirectionalStream({
+        headers,
+        onheaders(received: Record<string, string>) {
+          status = received[":status"];
+        },
+      });
+      stream.closed.catch(() => {});
+      let body = "";
+      for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+        for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+      }
+      if (status) outcome.resolve(`${status} ${body}`);
+    })
+    .catch(() => {});
+  const result = await outcome.promise;
+  if (!client.destroyed) client.close().catch(() => {});
+  return result;
+}
+
+const requestHeaders = (path: string, extra: Record<string, string> = {}) => ({
+  ":method": "GET",
+  ":path": path,
+  ":scheme": "https",
+  ":authority": "localhost",
+  ...extra,
+});
+
+describe("Bun.serve HTTP/3 request validation", () => {
+  test("rejects a request whose field value contains CR or LF before the fetch handler runs", async () => {
+    let reachedWithProbe = 0;
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      fetch(req) {
+        if (req.headers.has("x-probe")) reachedWithProbe++;
+        return new Response(String(reachedWithProbe));
+      },
+    });
+
+    const results: Record<string, string> = {};
+    for (const value of ["a\r\nb: c", "a\nb", "a\rb"]) {
+      results[JSON.stringify(value)] = await h3Exchange(server.port, requestHeaders("/", { "x-probe": value }));
+    }
+    results.wellFormed = await h3Exchange(server.port, requestHeaders("/", { "x-probe": "plain" }));
+    results.after = await h3Exchange(server.port, requestHeaders("/"));
+
+    expect(results).toEqual({
+      [JSON.stringify("a\r\nb: c")]: "closed ERR_QUIC_APPLICATION_ERROR 270",
+      [JSON.stringify("a\nb")]: "closed ERR_QUIC_APPLICATION_ERROR 270",
+      [JSON.stringify("a\rb")]: "closed ERR_QUIC_APPLICATION_ERROR 270",
+      wellFormed: "200 1",
+      after: "200 1",
+    });
+  });
+
+  test("request.url falls back to the :path when :authority is not a valid host", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      fetch(req) {
+        return new Response(req.url);
+      },
+    });
+
+    const authorities = [
+      "example.com/other",
+      "user@example.com",
+      "example.com#frag",
+      "example.com\\other:8080",
+      "[::1]:3000?q",
+    ];
+    const results: Record<string, string> = {};
+    for (const authority of authorities) {
+      results[authority] = await h3Exchange(server.port, { ...requestHeaders("/index"), ":authority": authority });
+    }
+    results["example.com:8443"] = await h3Exchange(server.port, {
+      ...requestHeaders("/index"),
+      ":authority": "example.com:8443",
+    });
+
+    expect(results).toEqual({
+      "example.com/other": "200 /index",
+      "user@example.com": "200 /index",
+      "example.com#frag": "200 /index",
+      "example.com\\other:8080": "200 /index",
+      "[::1]:3000?q": "200 /index",
+      "example.com:8443": "200 https://example.com:8443/index",
+    });
+  });
+
+  test("requestCert with rejectUnauthorized only serves QUIC clients whose certificate chains to the configured CA", async () => {
+    const keysDir = join(import.meta.dir, "..", "..", "node", "test", "fixtures", "keys");
+    const pem = (name: string) => readFileSync(join(keysDir, name), "utf8");
+    let handled = 0;
+    await using server = Bun.serve({
+      port: 0,
+      tls: {
+        key: pem("agent1-key.pem"),
+        cert: pem("agent1-cert.pem"),
+        ca: pem("ca1-cert.pem"),
+        requestCert: true,
+        rejectUnauthorized: true,
+      },
+      http3: true,
+      fetch() {
+        handled++;
+        return new Response(String(handled));
+      },
+    });
+
+    const clientIdentity = (name: string) => ({
+      keys: [createPrivateKey(pem(`${name}-key.pem`))],
+      certs: [readFileSync(join(keysDir, `${name}-cert.pem`))],
+    });
+    const selfSigned = await h3Exchange(server.port, requestHeaders("/"), clientIdentity("agent2"));
+    const chained = await h3Exchange(server.port, requestHeaders("/"), clientIdentity("agent1"));
+
+    expect({ selfSigned, chained }).toEqual({ selfSigned: "closed", chained: "200 1" });
+  });
+});
+
+// The HTTP/3 twin of the HTTP/1 cases in websocket-server.test.ts: ws.close()
+// runs close() before it returns, and a request handler that calls it must still
+// run to completion before the nextTick and promise callbacks it queued. The
+// socket being closed lives on a plain HTTP/1 server, since HTTP/3 carries no
+// WebSockets; any handler can close it.
+describe("Bun.serve HTTP/3 request handlers run to completion before the callbacks they queued", () => {
+  async function openHeldSocket() {
+    const order: string[] = [];
+    const opened = Promise.withResolvers<ServerWebSocket<unknown>>();
+    const closed = Promise.withResolvers<void>();
+    const wsServer = Bun.serve({
+      port: 0,
+      fetch: (req, srv) => (srv.upgrade(req) ? undefined : new Response("upgrade() failed", { status: 500 })),
+      websocket: {
+        open: ws => opened.resolve(ws),
+        message() {},
+        close() {
+          order.push("close()");
+        },
+      },
+    });
+    const client = new WebSocket(wsServer.url.href.replace(/^http/, "ws"));
+    client.onerror = () => closed.resolve();
+    client.onclose = () => closed.resolve();
+    const held = await opened.promise;
+    return {
+      order,
+      closed: closed.promise,
+      handler() {
+        process.nextTick(() => order.push("nextTick"));
+        Promise.resolve().then(() => order.push("microtask"));
+        held.close();
+        order.push("rest of handler");
+        return new Response("ok");
+      },
+      [Symbol.dispose]: () => wsServer.stop(true),
+    };
+  }
+
+  test("fetch() and a route handler closing an open ServerWebSocket", async () => {
+    using viaFetch = await openHeldSocket();
+    using viaRoute = await openHeldSocket();
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      routes: { "/route": viaRoute.handler },
+      fetch: viaFetch.handler,
+    });
+
+    const responses = {
+      fetch: await h3Exchange(server.port, requestHeaders("/")),
+      route: await h3Exchange(server.port, requestHeaders("/route")),
+    };
+    await Promise.all([viaFetch.closed, viaRoute.closed]);
+
+    const expectedOrder = ["close()", "rest of handler", "nextTick", "microtask"];
+    expect({ responses, fetch: viaFetch.order, route: viaRoute.order }).toEqual({
+      responses: { fetch: "200 ok", route: "200 ok" },
+      fetch: expectedOrder,
+      route: expectedOrder,
+    });
+  });
 });

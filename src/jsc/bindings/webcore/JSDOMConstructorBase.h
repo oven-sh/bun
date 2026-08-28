@@ -28,6 +28,10 @@
 namespace WebCore {
 
 JSC_DECLARE_HOST_FUNCTION(callThrowTypeErrorForJSDOMConstructor);
+// Interfaces that cannot be constructed at all report "Illegal constructor" for
+// both call and construct; the message above only makes sense for a constructable
+// interface invoked without `new`.
+JSC_DECLARE_HOST_FUNCTION(throwTypeErrorForJSDOMConstructorNotConstructable);
 
 // Base class for all callable constructor objects in the JSC bindings.
 class JSDOMConstructorBase : public JSC::InternalFunction {
@@ -51,6 +55,9 @@ public:
     JSDOMGlobalObject* globalObject() const { return uncheckedDowncast<JSDOMGlobalObject>(Base::globalObject()); }
     ScriptExecutionContext* scriptExecutionContext() const { return globalObject()->scriptExecutionContext(); }
     Bun::ErrorCode errorCode() const { return m_errorCode; }
+
+    // The `length` / `name` / `prototype` prologue shared by every `initializeProperties`.
+    void initializeBaseProperties(JSC::VM&, unsigned length, ASCIILiteral name, JSC::JSObject* prototype);
 
 protected:
     JSDOMConstructorBase(JSC::VM& vm, JSC::Structure* structure,

@@ -12,7 +12,7 @@
 
 import type { Dependency, DirectBuild } from "../source.ts";
 
-const MIMALLOC_COMMIT = "acd9924a0af3ba7c341910b48815106f2944ffa0";
+const MIMALLOC_COMMIT = "942b8342575bdece649438ca76f32276a019c51e";
 
 export const mimalloc: Dependency = {
   name: "mimalloc",
@@ -33,7 +33,11 @@ export const mimalloc: Dependency = {
     //            including WebKit's bmalloc when it falls back to system malloc.
     //   Windows: OFF — Bun links the static CRT and calls mi_* directly;
     //            alloc-override.c emits _expand/_msize/free which duplicate
-    //            against libucrt(d) at link time.
+    //            against libucrt(d) at link time. The C deps that would
+    //            otherwise sit on the uCRT heap are pointed at mimalloc one
+    //            by one instead (ICU and libuv in bun_runtime::bin_entry's
+    //            use_mimalloc_in_dependencies, BoringSSL via the hooks in
+    //            boringssl.ts, c-ares via ares_library_init_mem).
     const override = cfg.linux && !cfg.asan;
 
     const defines: Record<string, string | number | true> = {
@@ -54,21 +58,16 @@ export const mimalloc: Dependency = {
       ...(cfg.release && { MI_BUILD_RELEASE: true }),
     };
 
-    // Disable Transparent Huge Pages. Measured impact:
-    //   bun --eval 1:  THP off = 30MB peak,  THP on = 52MB peak
-    //   http-hello.js: THP off = 52MB peak,  THP on = 74MB peak
-    // THP trades memory for (sometimes) latency; for a JS runtime the
-    // memory cost isn't worth it. The cmake option only applies on Linux.
+    // Opt mimalloc's arenas out of Transparent Huge Pages. Only matters when
+    // /sys/kernel/mm/transparent_hugepage/enabled is `always` (RHEL, Amazon
+    // Linux, Arch); under `madvise` nothing in bun asks for huge pages anyway.
+    // Measured on an `always` box (release, x64):
+    //   bun -e 1:           THP off = 30MB peak,  THP on = 54MB peak
+    //   Bun.serve hello:    THP off = 46MB rss,   THP on = 68MB rss
+    // mimalloc does this per mapping (MADV_NOHUGEPAGE), not per process, so
+    // spawned children keep the system THP policy. JSC's reservations and
+    // bun_alloc's lazy arena opt out the same way on their side.
     if (cfg.linux) defines.MI_DEFAULT_ALLOW_THP = 0;
-
-    // Skip prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, ...) after each mmap.
-    // It needs CONFIG_ANON_VMA_NAME (5.17+); on kernels without it every
-    // call returns EINVAL — pure syscall overhead on the startup path.
-    // Whether the call is even compiled depends on whether the build
-    // toolchain's <sys/prctl.h> defines PR_SET_VMA, which made strace
-    // output diverge between toolchains. Disable it outright; the VMA
-    // label is debugging sugar we don't rely on.
-    if (cfg.linux) defines.MI_NO_SET_VMA_NAME = 1;
 
     if (cfg.abi === "musl") defines.MI_LIBC_MUSL = 1;
     if (override) defines.MI_MALLOC_OVERRIDE = true;

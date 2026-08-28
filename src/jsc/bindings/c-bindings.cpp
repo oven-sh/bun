@@ -3,6 +3,7 @@
 #include <cstdio>
 
 #if !OS(WINDOWS)
+#include <wtf/WTFConfig.h>
 #include <sys/resource.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -19,27 +20,11 @@
 #include <uv.h>
 #include <windows.h>
 #include <corecrt_io.h>
+#include <atomic>
+#include <new>
+#include <wtf/Threading.h>
 #endif // !OS(WINDOWS)
 #include <lshpack.h>
-
-#if CPU(X86_64) && !OS(WINDOWS)
-extern "C" void bun_warn_avx_missing(const char* url)
-{
-    __builtin_cpu_init();
-    if (__builtin_cpu_supports("avx")) {
-        return;
-    }
-
-    static constexpr const char* str = "warn: CPU lacks AVX support, strange crashes may occur. Reinstall Bun or use *-baseline build:\n  ";
-    const size_t len = strlen(str);
-
-    char buf[512];
-    strcpy(buf, str);
-    strcpy(buf + len, url);
-    strcpy(buf + len + strlen(url), "\n\0");
-    [[maybe_unused]] auto _ = write(STDERR_FILENO, buf, strlen(buf));
-}
-#endif
 
 // Error condition is encoded as max int32_t.
 // The only error in this function is ESRCH (no process found)
@@ -226,32 +211,25 @@ extern "C" size_t Bun__memoryFootprint()
 #if OS(WINDOWS)
 #define MS_PER_SEC 1000ULL // MS = milliseconds
 #define US_PER_MS 1000ULL // US = microseconds
-#define HNS_PER_US 10ULL // HNS = hundred-nanoseconds (e.g., 1 hns = 100 ns)
-#define NS_PER_US 1000ULL
+#define NS_PER_US 1000ULL // NS = nanoseconds
 
-#define HNS_PER_SEC (MS_PER_SEC * US_PER_MS * HNS_PER_US)
-#define NS_PER_HNS (100ULL) // NS = nanoseconds
 #define NS_PER_SEC (MS_PER_SEC * US_PER_MS * NS_PER_US)
 
-extern "C" int clock_gettime_monotonic(int64_t* tv_sec, int64_t* tv_nsec)
+extern "C" void clock_gettime_monotonic(int64_t* tv_sec, int64_t* tv_nsec)
 {
-    static LARGE_INTEGER ticksPerSec;
+    // C++11 thread-safe static init: Timespec::now() runs on multiple threads.
+    // QueryPerformanceFrequency is documented to always succeed on Windows XP+.
+    static const LARGE_INTEGER ticksPerSec = [] {
+        LARGE_INTEGER f;
+        QueryPerformanceFrequency(&f);
+        return f;
+    }();
+
     LARGE_INTEGER ticks;
-
-    if (!ticksPerSec.QuadPart) {
-        QueryPerformanceFrequency(&ticksPerSec);
-        if (!ticksPerSec.QuadPart) {
-            errno = ENOTSUP;
-            return -1;
-        }
-    }
-
     QueryPerformanceCounter(&ticks);
 
     *tv_sec = (int64_t)(ticks.QuadPart / ticksPerSec.QuadPart);
     *tv_nsec = (int64_t)(((ticks.QuadPart % ticksPerSec.QuadPart) * NS_PER_SEC) / ticksPerSec.QuadPart);
-
-    return 0;
 }
 
 extern "C" void windows_enable_stdio_inheritance()
@@ -306,6 +284,10 @@ extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigne
 }
 #endif
 
+#endif // OS(LINUX) || OS(FREEBSD)
+
+#if !OS(WINDOWS)
+
 static void unset_cloexec(int fd)
 {
     int flags = fcntl(fd, F_GETFD, 0);
@@ -316,24 +298,60 @@ static void unset_cloexec(int fd)
     fcntl(fd, F_SETFD, flags);
 }
 
-extern "C" void on_before_reload_process_linux()
+extern "C" void on_before_reload_process_posix()
 {
     unset_cloexec(STDIN_FILENO);
     unset_cloexec(STDOUT_FILENO);
     unset_cloexec(STDERR_FILENO);
 
+#if OS(LINUX) || OS(FREEBSD)
     // close all file descriptors except stdin, stdout, stderr and possibly IPC.
     // if you're passing additional file descriptors to Bun, you're probably not passing more than 8.
     // If this fails, it's ultimately okay, we're just trying our best to avoid leaking file descriptors.
     bun_close_range(3, ~0U, CLOSE_RANGE_CLOEXEC);
+#endif
 
-    // reset all signals to default
+    // Preserve the IPC channel to the parent across the execve: NODE_CHANNEL_FD survives in
+    // environ and the reloaded image re-attaches to it; CLOEXEC'd, the parent stops receiving
+    // 'message' events after the first reload.
+    if (const char* s = getenv("NODE_CHANNEL_FD")) {
+        char* end = nullptr;
+        long fd = strtol(s, &end, 10);
+        if (end != s && *end == '\0' && fd >= 3 && fd <= INT_MAX)
+            unset_cloexec(static_cast<int>(fd));
+    }
+
+    // Reset caught dispositions so a SIGTERM arriving between here and execve isn't queued-then-
+    // lost. Inherited SIG_IGN is left alone. SIGSEGV/SIGBUS/RT/sigThreadSuspendResume are left
+    // for execve to reset atomically — resetting them here races JSC's sampler/GC threads fatally.
+    struct sigaction sa {};
+    sa.sa_handler = SIG_DFL;
+    sigemptyset(&sa.sa_mask);
+    for (int s = 1; s < NSIG; s++) {
+        if (s == SIGKILL || s == SIGSTOP || s == SIGSEGV || s == SIGBUS)
+            continue;
+#if OS(LINUX)
+        if (s == g_wtfConfig.sigThreadSuspendResume)
+            continue;
+#endif
+#ifdef SIGRTMIN
+        if (s >= SIGRTMIN)
+            break;
+#endif
+        struct sigaction old {};
+        if (sigaction(s, nullptr, &old) != 0)
+            continue;
+        if (old.sa_handler == SIG_IGN || old.sa_handler == SIG_DFL)
+            continue;
+        sigaction(s, &sa, nullptr);
+    }
+
     sigset_t signal_set;
     sigemptyset(&signal_set);
     sigprocmask(SIG_SETMASK, &signal_set, nullptr);
 }
 
-#endif
+#endif // !OS(WINDOWS)
 
 #define LSHPACK_MAX_HEADER_SIZE 65536
 
@@ -590,6 +608,25 @@ BOOL WINAPI Ctrlhandler(DWORD signal)
 extern "C" void Bun__setCTRLHandler(BOOL add)
 {
     SetConsoleCtrlHandler(Ctrlhandler, add);
+}
+
+// Held, never released, across ExitProcess: a WTF suspender it kills between
+// SuspendThread and ResumeThread of this thread would leave it suspended forever.
+extern "C" void Bun__lockThreadSuspensionForExit()
+{
+    static std::atomic<DWORD> owner { 0 };
+    DWORD self = GetCurrentThreadId();
+    DWORD expected = 0;
+    if (!owner.compare_exchange_strong(expected, self, std::memory_order_acq_rel)) {
+        // Re-entered on the thread that already holds the lock.
+        if (expected == self)
+            return;
+        // Another thread's exit holds it and is about to terminate this thread.
+        for (;;)
+            SleepEx(INFINITE, FALSE);
+    }
+    alignas(WTF::ThreadSuspendLocker) static unsigned char storage[sizeof(WTF::ThreadSuspendLocker)];
+    new (storage) WTF::ThreadSuspendLocker();
 }
 #endif
 
@@ -925,7 +962,7 @@ extern "C" int64_t Bun__currentSyncPID = 0;
 static int Bun__pendingSignalToSend = 0;
 static struct sigaction previous_actions[NSIG];
 
-// This list of signals is copied from npm.
+// npm's signal list minus SIGIOT/SIGPOLL (aliases of SIGABRT/SIGIO; listing both would overwrite previous_actions[N]).
 // https://github.com/npm/cli/blob/fefd509992a05c2dfddbe7bc46931c42f1da69d7/workspaces/arborist/lib/signals.js#L26-L57
 #define FOR_EACH_POSIX_SIGNAL(M) \
     M(SIGABRT);                  \
@@ -940,16 +977,12 @@ static struct sigaction previous_actions[NSIG];
     M(SIGTRAP);                  \
     M(SIGSYS);                   \
     M(SIGQUIT);                  \
-    M(SIGIOT);                   \
     M(SIGIO);
 
 #if OS(LINUX)
 // SIGPWR is intentionally excluded: JSC uses it for GC thread suspend/resume
-// (see wtf/posix/ThreadingPOSIX.cpp). Overriding it here breaks GC and the
-// SA_RESETHAND disposition leaves it at SIG_DFL after one delivery, which
-// kills the process on the next collection.
+// (see wtf/posix/ThreadingPOSIX.cpp); overriding it here breaks GC.
 #define FOR_EACH_LINUX_ONLY_SIGNAL(M) \
-    M(SIGPOLL);                       \
     M(SIGSTKFLT);
 
 #endif
@@ -994,7 +1027,8 @@ extern "C" void Bun__registerSignalsForForwarding()
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESETHAND;
+    // Not SA_RESETHAND: a nested runner sees the signal more than once and must not die on a repeat delivery.
+    sa.sa_flags = 0;
     sa.sa_handler = [](int sig) {
         if (Bun__currentSyncPID == 0) {
             Bun__pendingSignalToSend = sig;
@@ -1120,7 +1154,7 @@ static bool initializePESection()
     PIMAGE_SECTION_HEADER sectionHeader = IMAGE_FIRST_SECTION(ntHeaders);
 
     for (int i = 0; i < ntHeaders->FileHeader.NumberOfSections; i++) {
-        if (strncmp((char*)sectionHeader->Name, ".bun", 4) == 0) {
+        if (memcmp(sectionHeader->Name, ".bun\0\0\0\0", 8) == 0) {
             // Found the .bun section
             // Section format: 8 bytes size (uint64_t) + data
             BYTE* sectionData = (BYTE*)hModule + sectionHeader->VirtualAddress;

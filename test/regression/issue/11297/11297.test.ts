@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
-import "harness";
+import { bunRun } from "harness";
 import { join } from "path";
 
-test("issue #11297", async () => {
-  expect([join(import.meta.dir, "./11297.fixture.ts")]).toRun();
+test.concurrent("issue #11297", async () => {
+  const { stderr, exitCode } = await bunRun(join(import.meta.dir, "./11297.fixture.ts"));
+  if (exitCode !== 0) console.error(stderr);
+  expect(exitCode).toBe(0);
 });

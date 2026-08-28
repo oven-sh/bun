@@ -1,6 +1,5 @@
 use crate::css_parser as css;
 use crate::css_parser::{CssResult as Result, Maybe, PrintErr, Printer, Token};
-use crate::values::angle::Angle;
 use crate::values::calc::Calc;
 use crate::values::number::{CSSNumber, CSSNumberFns};
 
@@ -26,27 +25,9 @@ pub enum Time {
     Milliseconds(CSSNumber) = 2,
 }
 
-const TAG_SECONDS: u16 = 1;
-const TAG_MILLISECONDS: u16 = 2;
-
 impl Time {
-    #[inline]
-    fn tag(self) -> u16 {
-        match self {
-            Time::Seconds(_) => TAG_SECONDS,
-            Time::Milliseconds(_) => TAG_MILLISECONDS,
-        }
-    }
-
     // css.implementDeepClone / css.implementEql / css.implementHash — provided
     // by `#[derive(DeepClone, CssEql, CssHash)]` above (POD f32 payload).
-    // Kept as an inherent assoc fn for `protocol::CalcValue` callers that
-    // forward via UFCS (`Time::eql(a, b)`) — does not conflict with the
-    // derived trait method (that one has a `&self` receiver).
-    #[inline]
-    pub fn eql(lhs: Self, rhs: Self) -> bool {
-        lhs == rhs
-    }
 
     pub fn parse(input: &mut css::Parser) -> Result<Time> {
         match input.try_parse(Calc::<Time>::parse) {
@@ -62,7 +43,7 @@ impl Time {
         }
 
         let location = input.current_source_location();
-        let token = input.next()?.clone();
+        let token = *input.next()?;
         match &token {
             Token::Dimension(dim) => {
                 if bun_core::strings::eql_case_insensitive_ascii_check_length(b"s", dim.unit) {
@@ -105,7 +86,7 @@ impl Time {
         Ok(())
     }
 
-    pub fn is_zero(self) -> bool {
+    pub(crate) fn is_zero(self) -> bool {
         match self {
             Time::Seconds(s) => s == 0.0,
             Time::Milliseconds(ms) => ms == 0.0,
@@ -113,14 +94,14 @@ impl Time {
     }
 
     /// Returns the time in milliseconds.
-    pub fn to_ms(self) -> CSSNumber {
+    pub(crate) fn to_ms(self) -> CSSNumber {
         match self {
             Time::Seconds(v) => v * 1000.0,
             Time::Milliseconds(v) => v,
         }
     }
 
-    pub fn try_from_token(token: &Token) -> Maybe<Time, ()> {
+    pub(crate) fn try_from_token(token: &Token) -> Maybe<Time, ()> {
         match token {
             Token::Dimension(dim) => crate::match_ignore_ascii_case! { dim.unit, {
                 b"s" => Ok(Time::Seconds(dim.num.value)),
@@ -131,63 +112,45 @@ impl Time {
         }
     }
 
-    pub fn try_from_angle(_: Angle) -> Option<Self> {
-        None
-    }
-
-    pub fn mul_f32(self, other: f32) -> Time {
+    pub(crate) fn mul_f32(self, other: f32) -> Time {
         match self {
             Time::Seconds(s) => Time::Seconds(s * other),
             Time::Milliseconds(ms) => Time::Milliseconds(ms * other),
         }
     }
 
-    pub fn add_internal(self, other: Time) -> Time {
+    pub(crate) fn add_internal(self, other: Time) -> Time {
         self.add(other)
     }
 
-    pub fn into_calc(self) -> Calc<Time> {
-        Calc::Value(Box::new(self))
-    }
-
-    pub fn add(self, other: Self) -> Time {
+    pub(crate) fn add(self, other: Self) -> Time {
         self.op(other, |a, b| a + b)
     }
 
-    pub fn partial_cmp(self, other: Time) -> Option<core::cmp::Ordering> {
+    pub(crate) fn partial_cmp(self, other: Time) -> Option<core::cmp::Ordering> {
         crate::generic::partial_cmp_f32(self.to_ms(), other.to_ms())
     }
 
-    pub fn map(self, map_fn: impl Fn(f32) -> f32) -> Time {
+    pub(crate) fn map(self, map_fn: impl Fn(f32) -> f32) -> Time {
         match self {
             Time::Seconds(s) => Time::Seconds(map_fn(s)),
             Time::Milliseconds(ms) => Time::Milliseconds(map_fn(ms)),
         }
     }
 
-    pub fn sign(self) -> f32 {
+    pub(crate) fn sign(self) -> f32 {
         match self {
             Time::Seconds(v) => CSSNumberFns::sign(v),
             Time::Milliseconds(v) => CSSNumberFns::sign(v),
         }
     }
 
-    pub fn op(self, other: Time, op_fn: impl Fn(f32, f32) -> f32) -> Time {
-        let _ = (self.tag(), TAG_SECONDS, TAG_MILLISECONDS); // keep tag consts referenced
+    pub(crate) fn op(self, other: Time, op_fn: impl Fn(f32, f32) -> f32) -> Time {
         match (self, other) {
             (Time::Seconds(a), Time::Seconds(b)) => Time::Seconds(op_fn(a, b)),
             (Time::Milliseconds(a), Time::Milliseconds(b)) => Time::Milliseconds(op_fn(a, b)),
             (Time::Seconds(a), Time::Milliseconds(b)) => Time::Seconds(op_fn(a, b / 1000.0)),
             (Time::Milliseconds(a), Time::Seconds(b)) => Time::Milliseconds(op_fn(a, b * 1000.0)),
-        }
-    }
-
-    pub fn op_to<R>(self, other: Time, op_fn: impl Fn(f32, f32) -> R) -> R {
-        match (self, other) {
-            (Time::Seconds(a), Time::Seconds(b)) => op_fn(a, b),
-            (Time::Milliseconds(a), Time::Milliseconds(b)) => op_fn(a, b),
-            (Time::Seconds(a), Time::Milliseconds(b)) => op_fn(a, b / 1000.0),
-            (Time::Milliseconds(a), Time::Seconds(b)) => op_fn(a, b * 1000.0),
         }
     }
 }

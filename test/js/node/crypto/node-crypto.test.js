@@ -661,6 +661,127 @@ describe("DiffieHellman", () => {
     expect(() => crypto.createDiffieHellman(p, Buffer.from([0x01]))).toThrow(/bad.generator/i);
     expect(() => crypto.createDiffieHellman(p, Buffer.from([0x02]))).not.toThrow();
   });
+
+  it("throws (not returns) validation errors from the constructor", () => {
+    // toThrow() accepts a *returned* Error instance as a throw, so it cannot
+    // distinguish the two here; capture the control-flow outcome explicitly.
+    function outcome(fn) {
+      try {
+        return { threw: false, value: fn() };
+      } catch (e) {
+        return { threw: true, value: e };
+      }
+    }
+
+    // DHPointer::New rejects a 2-bit modulus; that must surface as a thrown error.
+    expect(outcome(() => crypto.createDiffieHellman(2))).toEqual({
+      threw: true,
+      value: expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE", message: "Invalid DH parameters" }),
+    });
+    // Numeric sizeOrKey with a non-numeric generator reaches the int32-only guard.
+    expect(outcome(() => crypto.createDiffieHellman(1024, "abc"))).toEqual({
+      threw: true,
+      value: expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message: "Second argument must be an int32" }),
+    });
+    // `new DiffieHellman(...)` must behave identically to the factory.
+    expect(outcome(() => new crypto.DiffieHellman(2))).toEqual({
+      threw: true,
+      value: expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    });
+  });
+});
+
+// An integer-valued Number is not always an int32 JSValue. An element of an array that
+// also holds a non-int32 number, or anything read out of a Float64Array, is stored as a
+// double. Node validates these arguments by value, so every case below works there.
+describe("integer arguments whose JSValue is a double", () => {
+  const asDouble = n => new Float64Array([n])[0];
+  const [, twentyFromJson] = JSON.parse("[1e10, 20]");
+
+  function errorCode(fn) {
+    try {
+      fn();
+      return "no error";
+    } catch (e) {
+      return e.code;
+    }
+  }
+
+  it("sign() and verify() accept padding and saltLength by value", () => {
+    const { privateKey, publicKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 1024 });
+    const data = Buffer.from("msg");
+    const pss = crypto.constants.RSA_PKCS1_PSS_PADDING;
+    const signature = crypto.sign("sha256", data, { key: privateKey, padding: pss, saltLength: 20 });
+    const verifyWith = (options, sig = signature) =>
+      crypto.verify("sha256", data, { key: publicKey, padding: pss, ...options }, sig);
+
+    expect({
+      doubleSaltLength: verifyWith({ saltLength: asDouble(20) }),
+      saltLengthFromJsonArray: verifyWith({ saltLength: twentyFromJson }),
+      doublePadding: verifyWith({ padding: asDouble(pss), saltLength: 20 }),
+      createVerifyDoubleSaltLength: crypto
+        .createVerify("sha256")
+        .update(data)
+        .verify({ key: publicKey, padding: pss, saltLength: asDouble(20) }, signature),
+      signDoubleSaltLength: verifyWith(
+        { saltLength: 20 },
+        crypto.sign("sha256", data, { key: privateKey, padding: pss, saltLength: asDouble(20) }),
+      ),
+      createSignDoubleSaltLength: verifyWith(
+        { saltLength: 20 },
+        crypto
+          .createSign("sha256")
+          .update(data)
+          .sign({ key: privateKey, padding: pss, saltLength: asDouble(20) }),
+      ),
+      // Node's check is `value === value >> 0`, which accepts -0 as 0.
+      negativeZeroSaltLength: verifyWith(
+        { saltLength: -0 },
+        crypto.sign("sha256", data, { key: privateKey, padding: pss, saltLength: 0 }),
+      ),
+      fractionalSaltLength: errorCode(() => verifyWith({ saltLength: 20.5 })),
+      saltLengthPastInt32: errorCode(() => verifyWith({ saltLength: 2 ** 31 })),
+      stringSaltLength: errorCode(() => verifyWith({ saltLength: "20" })),
+    }).toEqual({
+      doubleSaltLength: true,
+      saltLengthFromJsonArray: true,
+      doublePadding: true,
+      createVerifyDoubleSaltLength: true,
+      signDoubleSaltLength: true,
+      createSignDoubleSaltLength: true,
+      negativeZeroSaltLength: true,
+      fractionalSaltLength: "ERR_INVALID_ARG_VALUE",
+      saltLengthPastInt32: "ERR_INVALID_ARG_VALUE",
+      stringSaltLength: "ERR_INVALID_ARG_VALUE",
+    });
+  });
+
+  it("generateKeySync('aes') accepts the length by value", () => {
+    expect({
+      double128: crypto.generateKeySync("aes", { length: asDouble(128) }).symmetricKeySize,
+      double256: crypto.generateKeySync("aes", { length: asDouble(256) }).symmetricKeySize,
+    }).toEqual({ double128: 16, double256: 32 });
+    for (const length of [128.5, 64, "128"]) {
+      expect(() => crypto.generateKeySync("aes", { length })).toThrow(
+        "The property 'options.length' must be one of: 128, 192, 256",
+      );
+    }
+  });
+
+  it("createDiffieHellman(prime, generator) reads a double generator", () => {
+    const prime = crypto.getDiffieHellman("modp5").getPrime();
+    const generatorOf = generator => crypto.createDiffieHellman(prime, generator).getGenerator().toString("hex");
+    // Before the fix the double was read as 0 and rejected as a bad generator.
+    expect({ double2: generatorOf(asDouble(2)), double5: generatorOf(asDouble(5)) }).toEqual({
+      double2: "02",
+      double5: "05",
+    });
+  });
+
+  it("getCipherInfo(nid) reads a double nid", () => {
+    const info = crypto.getCipherInfo("aes-128-cbc");
+    expect(crypto.getCipherInfo(asDouble(info.nid))).toEqual(info);
+  });
 });
 
 describe("ECDH", () => {
@@ -1152,5 +1273,46 @@ describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
       ct,
     );
     expect(pt.toString()).toBe("hello");
+  });
+});
+
+// Certificate.{verifySpkac,exportPublicKey,exportChallenge} share getArrayBufferOrView,
+// which previously threw "ReferenceError: key is not defined" for public/private
+// KeyObjects and silently accepted secret ones. Node rejects every KeyObject here.
+describe("Certificate spkac argument validation", () => {
+  const argTypeMessage =
+    'The "spkac" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView.';
+  const keys = () => {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+    return [publicKey, privateKey, crypto.createSecretKey(Buffer.from("secret"))];
+  };
+
+  for (const fn of ["verifySpkac", "exportPublicKey", "exportChallenge"]) {
+    it(`Certificate.${fn} rejects KeyObject input with ERR_INVALID_ARG_TYPE`, () => {
+      for (const key of keys()) {
+        expect(() => crypto.Certificate[fn](key)).toThrow(
+          expect.objectContaining({
+            name: "TypeError",
+            code: "ERR_INVALID_ARG_TYPE",
+            message: expect.stringContaining(argTypeMessage),
+          }),
+        );
+      }
+    });
+  }
+
+  it("Certificate.verifySpkac rejects non-buffer input with node's message", () => {
+    expect(() => crypto.Certificate.verifySpkac(42)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `${argTypeMessage} Received type number (42)`,
+      }),
+    );
+  });
+
+  it("Certificate.verifySpkac still returns false for a well-typed but invalid spkac", () => {
+    expect(crypto.Certificate.verifySpkac(Buffer.from("not a spkac"))).toBe(false);
+    expect(new crypto.Certificate().verifySpkac("not a spkac", "utf8")).toBe(false);
   });
 });

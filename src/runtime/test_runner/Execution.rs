@@ -83,34 +83,34 @@ fn nn(p: Option<*mut ExecutionEntry>) -> Option<NonNull<ExecutionEntry>> {
 bun_core::declare_scope!(jest, visible);
 
 pub struct Execution {
-    pub groups: Box<[ConcurrentGroup]>,
+    pub(crate) groups: Box<[ConcurrentGroup]>,
     // was `pub(self)`; widened so `RefDataValue::sequence` can
     // split-borrow `groups`/`sequences` without re-entering `sequences_mut`.
     /// the entries themselves are owned by BunTest, which owns Execution.
-    pub sequences: Box<[ExecutionSequence]>,
-    pub group_index: usize,
+    pub(crate) sequences: Box<[ExecutionSequence]>,
+    pub(crate) group_index: usize,
     /// The entry whose callback is synchronously on the stack right now. Set
     /// around `run_test_callback` so code re-entered from a test body (e.g.
     /// spawnSync's wait loop) can read the calling entry's own deadline.
-    pub on_stack_entry: core::cell::Cell<Option<NonNull<ExecutionEntry>>>,
+    pub(crate) on_stack_entry: core::cell::Cell<Option<NonNull<ExecutionEntry>>>,
     /// The (group_index, sequence_index, entry, repeat) for `on_stack_entry`,
     /// set/restored alongside it. `get_current_state_data()` can't name a
     /// sequence inside a concurrent group; this can, for code re-entered from
     /// the microtask drain inside `run_test_callback` (node:test's runtime
     /// `t.skip()`/`t.todo()` mark lands there before the DoneCallback is
     /// stamped).
-    pub on_stack_entry_data: core::cell::Cell<Option<super::bun_test::EntryData>>,
+    pub(crate) on_stack_entry_data: core::cell::Cell<Option<super::bun_test::EntryData>>,
 }
 
 pub struct ConcurrentGroup {
-    pub sequence_start: usize,
-    pub sequence_end: usize,
+    pub(crate) sequence_start: usize,
+    pub(crate) sequence_end: usize,
     /// Index of the next sequence that has not been started yet
-    pub next_sequence_index: usize,
-    pub executing: bool,
-    pub remaining_incomplete_entries: usize,
+    pub(crate) next_sequence_index: usize,
+    pub(crate) executing: bool,
+    pub(crate) remaining_incomplete_entries: usize,
     /// used by beforeAll to skip directly to afterAll if it fails
-    pub failure_skip_to: usize,
+    pub(crate) failure_skip_to: usize,
 }
 
 impl ConcurrentGroup {
@@ -153,33 +153,23 @@ pub enum ExpectAssertions {
 }
 
 pub struct ExecutionSequence {
-    pub first_entry: Option<NonNull<ExecutionEntry>>,
+    pub(crate) first_entry: Option<NonNull<ExecutionEntry>>,
     /// Index into ExecutionSequence.entries() for the entry that is not started or currently running
-    pub active_entry: Option<NonNull<ExecutionEntry>>,
-    pub test_entry: Option<NonNull<ExecutionEntry>>,
-    pub remaining_repeat_count: u32,
-    pub remaining_retry_count: u32,
-    pub flaky_attempt_count: usize,
-    pub flaky_attempts_buf: [FlakyAttempt; ExecutionSequence::MAX_FLAKY_ATTEMPTS],
-    pub result: Result,
-    pub executing: bool,
-    pub started_at: Timespec,
+    pub(crate) active_entry: Option<NonNull<ExecutionEntry>>,
+    pub(crate) test_entry: Option<NonNull<ExecutionEntry>>,
+    pub(crate) remaining_repeat_count: u32,
+    pub(crate) remaining_retry_count: u32,
+    pub(crate) result: Result,
+    pub(crate) executing: bool,
+    pub(crate) started_at: Timespec,
     /// Number of expect() calls observed in this sequence.
-    pub expect_call_count: u32,
+    pub(crate) expect_call_count: u32,
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
-    pub expect_assertions: ExpectAssertions,
-    pub maybe_skip: bool,
-}
-
-#[derive(Clone, Copy, Default)]
-pub struct FlakyAttempt {
-    pub result: Result,
-    pub elapsed_ns: u64,
+    pub(crate) expect_assertions: ExpectAssertions,
+    pub(crate) maybe_skip: bool,
 }
 
 impl ExecutionSequence {
-    pub(crate) const MAX_FLAKY_ATTEMPTS: usize = 16;
-
     pub(crate) fn init(
         first_entry: Option<NonNull<ExecutionEntry>>,
         test_entry: Option<NonNull<ExecutionEntry>>,
@@ -193,8 +183,6 @@ impl ExecutionSequence {
             remaining_repeat_count: repeat_count,
             remaining_retry_count: retry_count,
             // defaults:
-            flaky_attempt_count: 0,
-            flaky_attempts_buf: [FlakyAttempt::default(); Self::MAX_FLAKY_ATTEMPTS],
             result: Result::Pending,
             executing: false,
             started_at: Timespec::EPOCH,
@@ -202,10 +190,6 @@ impl ExecutionSequence {
             expect_assertions: ExpectAssertions::NotSet,
             maybe_skip: false,
         }
-    }
-
-    pub(crate) fn flaky_attempts(&self) -> &[FlakyAttempt] {
-        &self.flaky_attempts_buf[0..self.flaky_attempt_count]
     }
 
     fn entry_mode(&self) -> ScopeMode {
@@ -253,7 +237,7 @@ pub enum PendingIs {
 }
 
 impl Result {
-    pub fn basic_result(self) -> Basic {
+    pub(crate) fn basic_result(self) -> Basic {
         match self {
             Result::Pending => Basic::Pending,
             Result::Pass => Basic::Pass,
@@ -271,7 +255,7 @@ impl Result {
         }
     }
 
-    pub fn is_pass(self, pending_is: PendingIs) -> bool {
+    pub(crate) fn is_pass(self, pending_is: PendingIs) -> bool {
         match self.basic_result() {
             Basic::Pass | Basic::Skip | Basic::Todo => true,
             Basic::Fail => false,
@@ -279,19 +263,19 @@ impl Result {
         }
     }
 
-    pub fn is_fail(self) -> bool {
+    pub(crate) fn is_fail(self) -> bool {
         !self.is_pass(PendingIs::PendingIsPass)
     }
 }
 
-// Recover the parent `BunTest` from `&mut self`. Returns `NonNull` (not
+// Recover the parent `BunTest` from `&mut self`. Returns `*mut BunTest` (not
 // `&mut BunTest`) because `self` *is* `BunTest.execution`, so materializing a
 // `&mut BunTest` while `&mut self` is live would be aliased-`&mut` UB. Callers
 // must dereference at point-of-use into disjoint fields only.
-bun_core::impl_field_parent! { Execution => BunTest.execution; fn nonnull bun_test; }
+bun_core::impl_field_parent! { Execution => BunTest.execution; fn mut bun_test; }
 
 impl Execution {
-    pub fn init() -> Execution {
+    pub(crate) fn init() -> Execution {
         Execution {
             groups: Box::default(),
             sequences: Box::default(),
@@ -304,16 +288,24 @@ impl Execution {
     // `groups` / `sequences` are `Box<[T]>` and drop automatically — no explicit Drop impl needed.
 
     /// Infallible: the `Vec` → `Box<[T]>` conversion cannot fail.
-    pub fn load_from_order(&mut self, order: &mut Order::Order) {
+    pub(crate) fn load_from_order(&mut self, order: &mut Order::Order) {
         debug_assert!(self.groups.is_empty());
         debug_assert!(self.sequences.is_empty());
         self.groups = core::mem::take(&mut order.groups).into_boxed_slice();
         self.sequences = core::mem::take(&mut order.sequences).into_boxed_slice();
     }
 
-    pub fn handle_timeout(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
+    pub(crate) fn handle_timeout(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
         let _g = group_begin!();
+        self.kill_dangling_processes_on_timeout(global_this);
+        let buntest = self.bun_test();
+        // SAFETY: deref parent at point-of-use; `self` is not accessed while this `&mut BunTest` is live.
+        unsafe { (*buntest).add_result(RefDataValue::Start) };
+        Ok(())
+    }
 
+    /// The kill-only half of [`handle_timeout`]: reaps a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.
+    pub(crate) fn kill_dangling_processes_on_timeout(&mut self, global_this: &JSGlobalObject) {
         // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
         //   kill any dangling processes
         // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
@@ -342,14 +334,9 @@ impl Execution {
                 }
             }
         }
-
-        let buntest = self.bun_test();
-        // SAFETY: deref parent at point-of-use; `self` is not accessed while this `&mut BunTest` is live.
-        unsafe { (*buntest.as_ptr()).add_result(RefDataValue::Start) };
-        Ok(())
     }
 
-    pub fn step(
+    pub(crate) fn step(
         buntest_strong: &BunTestPtr,
         global_this: &JSGlobalObject,
         data: &RefDataValue,
@@ -435,7 +422,7 @@ impl Execution {
         }
     }
 
-    pub fn active_group(&mut self) -> Option<&mut ConcurrentGroup> {
+    pub(crate) fn active_group(&mut self) -> Option<&mut ConcurrentGroup> {
         if self.group_index >= self.groups.len() {
             return None;
         }
@@ -444,7 +431,7 @@ impl Execution {
 
     /// Shared-borrow variant of [`active_group`] for read-only inspection
     /// (e.g. `BunTest::get_current_state_data`, which only reads).
-    pub fn active_group_ref(&self) -> Option<&ConcurrentGroup> {
+    pub(crate) fn active_group_ref(&self) -> Option<&ConcurrentGroup> {
         if self.group_index >= self.groups.len() {
             return None;
         }
@@ -454,7 +441,7 @@ impl Execution {
     /// Returns `NonNull` pointers (not `&mut`) into `self.sequences` / `self.groups` so the
     /// caller can hold both alongside other borrows of `self` without aliased-`&mut` UB.
     /// Dereference at point-of-use only.
-    pub fn get_current_and_valid_execution_sequence(
+    pub(crate) fn get_current_and_valid_execution_sequence(
         &mut self,
         data: &RefDataValue,
     ) -> Option<(NonNull<ExecutionSequence>, NonNull<ConcurrentGroup>)> {
@@ -528,7 +515,6 @@ impl Execution {
         if let Some(entry_ptr) = sequence.active_entry {
             // SAFETY: arena-owned entry, alive for lifetime of BunTest
             let entry = unsafe { entry_ptr.as_ref() };
-            Execution::on_entry_completed(entry_ptr);
 
             sequence.executing = false;
             if sequence.maybe_skip {
@@ -552,19 +538,8 @@ impl Execution {
 
             // Handle retry logic: if test failed and we have retries remaining, retry it
             if test_failed && sequence.remaining_retry_count > 0 {
-                if sequence.flaky_attempt_count < ExecutionSequence::MAX_FLAKY_ATTEMPTS {
-                    let elapsed_ns: u64 = if sequence.started_at.eql(&Timespec::EPOCH) {
-                        0
-                    } else {
-                        sequence.started_at.since_now_force_real_time()
-                    };
-                    sequence.flaky_attempts_buf[sequence.flaky_attempt_count] = FlakyAttempt {
-                        result: sequence.result,
-                        elapsed_ns,
-                    };
-                    sequence.flaky_attempt_count += 1;
-                }
                 sequence.remaining_retry_count -= 1;
+                Execution::discard_junit_failure(buntest);
                 Execution::reset_sequence(sequence);
                 return;
             }
@@ -572,6 +547,7 @@ impl Execution {
             // Handle repeat logic: if test passed and we have repeats remaining, repeat it
             if test_passed && sequence.remaining_repeat_count > 0 {
                 sequence.remaining_repeat_count -= 1;
+                Execution::discard_junit_failure(buntest);
                 Execution::reset_sequence(sequence);
                 return;
             }
@@ -597,7 +573,11 @@ impl Execution {
 
     fn on_group_completed(global_this: &JSGlobalObject) {
         // SAFETY: bun_vm() returns the live per-thread VM.
-        global_this.bun_vm().as_mut().auto_killer.disable();
+        let vm = global_this.bun_vm().as_mut();
+        // Under --isolate the swap between files kills and clears the tracked set.
+        if !vm.test_isolation_enabled {
+            vm.auto_killer.disable();
+        }
     }
 
     fn on_sequence_started(sequence: &mut ExecutionSequence) {
@@ -647,8 +627,6 @@ impl Execution {
             entry.timespec = Timespec::EPOCH;
         }
     }
-
-    fn on_entry_completed(_entry: NonNull<ExecutionEntry>) {}
 
     fn on_sequence_completed(buntest: NonNull<BunTest>, sequence: &mut ExecutionSequence) {
         let elapsed_ns: u64 = if sequence.started_at.eql(&Timespec::EPOCH) {
@@ -729,7 +707,23 @@ impl Execution {
         }
     }
 
-    pub fn reset_sequence(sequence: &mut ExecutionSequence) {
+    /// Drop any captured junit failure so the next retry/repeat starts fresh.
+    /// Kept out of `reset_sequence` so within-attempt errors (e.g. a throwing
+    /// afterEach after the test body already threw) accumulate instead of
+    /// clobbering the primary failure.
+    fn discard_junit_failure(buntest: NonNull<BunTest>) {
+        // SAFETY: `buntest` points at the live per-file BunTest; single-threaded
+        // test runner, no other borrow live here.
+        if let Some(reporter) = unsafe { (*buntest.as_ptr()).reporter } {
+            // SAFETY: `reporter` is a `NonNull<CommandLineReporter>` with write
+            // provenance (see BunTest docs); single-threaded, no other borrow.
+            if let Some(junit) = unsafe { (*reporter.as_ptr()).reporters.junit.as_deref_mut() } {
+                junit.last_failure = None;
+            }
+        }
+    }
+
+    pub(crate) fn reset_sequence(sequence: &mut ExecutionSequence) {
         debug_assert!(!sequence.executing);
         {
             // reset the entries
@@ -752,17 +746,13 @@ impl Execution {
             }
         }
 
-        // Preserve retry/repeat counts and flaky attempt history across reset
-        let saved_flaky_attempt_count = sequence.flaky_attempt_count;
-        let saved_flaky_attempts_buf = sequence.flaky_attempts_buf;
+        // Preserve retry/repeat counts across reset
         *sequence = ExecutionSequence::init(
             sequence.first_entry,
             sequence.test_entry,
             sequence.remaining_retry_count,
             sequence.remaining_repeat_count,
         );
-        sequence.flaky_attempt_count = saved_flaky_attempt_count;
-        sequence.flaky_attempts_buf = saved_flaky_attempts_buf;
 
         // Snapshot counters are keyed by full test name and incremented on every
         // toMatchSnapshot() call. Without this reset, retries / repeats would
@@ -776,7 +766,7 @@ impl Execution {
         }
     }
 
-    pub fn handle_uncaught_exception(
+    pub(crate) fn handle_uncaught_exception(
         &mut self,
         user_data: &RefDataValue,
     ) -> HandleUncaughtExceptionResult {
@@ -823,7 +813,7 @@ impl Execution {
     }
 }
 
-pub(crate) fn step_group(
+fn step_group(
     buntest_strong: &BunTestPtr,
     global_this: &JSGlobalObject,
     now: &mut Timespec,

@@ -2,10 +2,10 @@ use core::ffi::c_int;
 use std::io::Write as _;
 
 use crate::VM;
-use bun_core::{OwnedString, String as BunString};
+use bun_core::String as BunString;
 #[cfg(windows)]
 use bun_paths::OSPathBuffer;
-use bun_paths::PathBuffer;
+use bun_paths::{AutoAbsPathChecked, PathBuffer};
 use bun_sys::{self, Errno, Fd, FdDirExt as _};
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -26,18 +26,6 @@ pub struct CPUProfilerConfig {
     pub interval: u32,
 }
 
-impl Default for CPUProfilerConfig {
-    fn default() -> Self {
-        Self {
-            name: b"",
-            dir: b"",
-            md_format: false,
-            json_format: false,
-            interval: 1000,
-        }
-    }
-}
-
 // C++ function declarations
 unsafe extern "C" {
     /// `VM` is an opaque `UnsafeCell`-backed ZST handle; `&mut VM` is
@@ -56,7 +44,10 @@ unsafe extern "C" {
 }
 
 pub fn set_sampling_interval(interval: u32) {
-    Bun__setSamplingInterval(c_int::try_from(interval).expect("int cast"));
+    // Reachable from a Worker's execArgv: 0 stalls the sampler and the process
+    // never exits, and a value past c_int would panic the cast.
+    let clamped = interval.clamp(1, c_int::MAX as u32);
+    Bun__setSamplingInterval(clamped as c_int);
 }
 
 pub fn start_cpu_profiler(vm: &mut VM) {
@@ -67,8 +58,8 @@ pub(crate) fn stop_and_write_profile(
     vm: &mut VM,
     config: &CPUProfilerConfig,
 ) -> Result<(), ProfilerError> {
-    let mut json_string = BunString::empty();
-    let mut text_string = BunString::empty();
+    let mut json_string = BunString::EMPTY;
+    let mut text_string = BunString::EMPTY;
 
     // Call the unified C++ function with optional out-params for requested formats.
     Bun__stopCPUProfiler(
@@ -76,11 +67,6 @@ pub(crate) fn stop_and_write_profile(
         config.json_format.then_some(&mut json_string),
         config.md_format.then_some(&mut text_string),
     );
-    // C++ handed back +1 refs into json_string/text_string. `bun_core::String`
-    // is `Copy` (no Drop), so wrap in `OwnedString` for scope-exit `deref()`.
-    let json_string = OwnedString::new(json_string);
-    let text_string = OwnedString::new(text_string);
-
     // Write JSON format if requested and not empty
     if config.json_format && !json_string.is_empty() {
         write_profile_to_file(&json_string, config, false)?;
@@ -100,10 +86,9 @@ fn write_profile_to_file(
     is_md_format: bool,
 ) -> Result<(), ProfilerError> {
     let profile_slice = profile_string.to_utf8();
-    // (defer profile_slice.deinit() — handled by Drop on Utf8Slice)
 
-    // Determine the output path using AutoAbsPath
-    let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
+    // dir/name are unbounded CLI input, so use the length-checked variant.
+    let mut path_buf = AutoAbsPathChecked::init_top_level_dir();
     // (defer path_buf.deinit() — handled by Drop)
 
     build_output_path(&mut path_buf, config, is_md_format)?;
@@ -147,7 +132,7 @@ fn write_profile_to_file(
 }
 
 fn build_output_path(
-    path: &mut bun_paths::AutoAbsPath,
+    path: &mut AutoAbsPathChecked,
     config: &CPUProfilerConfig,
     is_md_format: bool,
 ) -> Result<(), ProfilerError> {
@@ -177,15 +162,14 @@ fn build_output_path(
         generate_default_filename(&mut filename_buf, is_md_format)?
     };
 
-    // Append directory if specified
     if !config.dir.is_empty() {
-        // AutoAbsPath uses CheckLength::ASSUME — Err arm is unreachable.
-        // See paths/Path.rs `options::Result` note.
-        path.join(&[config.dir]).expect("unreachable");
+        path.join(&[config.dir])
+            .map_err(|_| ProfilerError::FilenameTooLong)?;
     }
 
-    // Append filename
-    path.append(filename).expect("unreachable");
+    // `join` resolves an absolute --cpu-prof-name where `append` asserts on it.
+    path.join(&[filename])
+        .map_err(|_| ProfilerError::FilenameTooLong)?;
 
     Ok(())
 }
@@ -194,28 +178,82 @@ fn generate_default_filename(
     buf: &mut PathBuffer,
     md_format: bool,
 ) -> Result<&[u8], ProfilerError> {
-    // Generate filename like: CPU.{timestamp}.{pid}.cpuprofile (or .md for markdown format)
-    // Use microsecond timestamp for uniqueness
-    let timespec = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
+    let extension: &str = if md_format { ".md" } else { ".cpuprofile" };
+    let mut cursor = std::io::Cursor::new(&mut buf[..]);
+    write_diagnostic_filename(&mut cursor, "CPU", extension)
+        .map_err(|_| ProfilerError::FilenameTooLong)?;
+    let len = usize::try_from(cursor.position()).expect("int cast");
+    Ok(&buf[..len])
+}
+
+/// Node's DiagnosticFilename: `<prefix>.<yyyymmdd>.<hhmmss>.<pid>.<tid>.<seq><extension>`.
+/// https://github.com/nodejs/node/blob/main/src/util.cc (MakeFilename)
+pub(crate) fn write_diagnostic_filename(
+    cursor: &mut dyn std::io::Write,
+    prefix: &str,
+    extension: &str,
+) -> std::io::Result<()> {
     #[cfg(windows)]
     let pid = bun_sys::windows::GetCurrentProcessId();
     #[cfg(not(windows))]
     // SAFETY: getpid() is always safe to call.
     let pid = unsafe { libc::getpid() };
 
-    let epoch_microseconds: u64 = u64::try_from(
-        timespec
-            .sec
-            .wrapping_mul(1_000_000)
-            .wrapping_add(timespec.nsec / 1000),
+    let (year, month, day, hour, minute, second) = local_time_now();
+
+    static SEQ: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+    let seq = SEQ.fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1;
+
+    write!(
+        cursor,
+        "{prefix}.{year:04}{month:02}{day:02}.{hour:02}{minute:02}{second:02}.{pid}.0.{seq:03}{extension}"
     )
-    .unwrap();
+}
 
-    let extension: &str = if md_format { ".md" } else { ".cpuprofile" };
+#[cfg(not(windows))]
+pub(crate) fn local_time_now() -> (i32, u32, u32, u32, u32, u32) {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs()) as libc::time_t;
+    let mut tm: libc::tm = bun_core::ffi::zeroed();
+    // SAFETY: localtime_r only writes into `tm` and is thread-safe.
+    unsafe { libc::localtime_r(&raw const secs, &raw mut tm) };
+    (
+        tm.tm_year + 1900,
+        (tm.tm_mon + 1) as u32,
+        tm.tm_mday as u32,
+        tm.tm_hour as u32,
+        tm.tm_min as u32,
+        tm.tm_sec as u32,
+    )
+}
 
-    let mut cursor = std::io::Cursor::new(&mut buf[..]);
-    write!(cursor, "CPU.{}.{}{}", epoch_microseconds, pid, extension)
-        .map_err(|_| ProfilerError::FilenameTooLong)?;
-    let len = usize::try_from(cursor.position()).expect("int cast");
-    Ok(&buf[..len])
+#[cfg(windows)]
+pub(crate) fn local_time_now() -> (i32, u32, u32, u32, u32, u32) {
+    #[repr(C)]
+    #[derive(Default)]
+    struct SystemTime {
+        year: u16,
+        month: u16,
+        day_of_week: u16,
+        day: u16,
+        hour: u16,
+        minute: u16,
+        second: u16,
+        milliseconds: u16,
+    }
+    unsafe extern "system" {
+        fn GetLocalTime(system_time: *mut SystemTime);
+    }
+    let mut st = SystemTime::default();
+    // SAFETY: GetLocalTime only writes the out-param (kernel32 SYSTEMTIME layout).
+    unsafe { GetLocalTime(&mut st) };
+    (
+        i32::from(st.year),
+        u32::from(st.month),
+        u32::from(st.day),
+        u32::from(st.hour),
+        u32::from(st.minute),
+        u32::from(st.second),
+    )
 }

@@ -2,8 +2,8 @@
  * Rust build step — cargo as a ninja edge.
  *
  * The Rust port lives in the workspace rooted at the repo's `Cargo.toml`;
- * the leaf crate is `src/bun_bin` (`crate-type = ["staticlib"]`). One
- * `cargo build -p bun_bin` produces `libbun_rust.a` containing the entire
+ * the leaf crate is `src/runtime` (`bun_runtime`, `crate-type = ["staticlib"]`).
+ * One `cargo build -p bun_runtime` produces `libbun_runtime.a` containing the entire
  * Rust crate graph plus libstd, with `main` exported `#[no_mangle] extern "C"`.
  *
  * Cargo's own incremental compilation handles per-file tracking; our ninja
@@ -26,8 +26,9 @@
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { bunExeName, type Config } from "./config.ts";
+import type { Abi, Arch, Config, OS } from "./config.ts";
 import { assert } from "./error.ts";
+import { computeCpuTargetFlags } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
 import { rustLtoFixCliPath } from "./rust-lto-fix-cli.ts";
 import { quote, quoteArgs } from "./shell.ts";
@@ -46,15 +47,20 @@ import { streamPath } from "./stream.ts";
  *   - Cross-compiles (Android/FreeBSD) need it anyway
  */
 export function rustTarget(cfg: Config): string {
-  const arch = cfg.x64 ? "x86_64" : "aarch64";
-  if (cfg.darwin) return `${arch}-apple-darwin`;
-  if (cfg.windows) return `${arch}-pc-windows-msvc`;
-  if (cfg.freebsd) return `${arch}-unknown-freebsd`;
+  return rustTriple(cfg.os, cfg.arch, cfg.abi);
+}
+
+/** `rustTarget()` on the bare target platform; `abi` is linux-only. */
+export function rustTriple(os: OS, arch: Arch, abi: Abi | undefined): string {
+  const rustArch = arch === "x64" ? "x86_64" : "aarch64";
+  if (os === "darwin") return `${rustArch}-apple-darwin`;
+  if (os === "windows") return `${rustArch}-pc-windows-msvc`;
+  if (os === "freebsd") return `${rustArch}-unknown-freebsd`;
   // linux
-  assert(cfg.abi !== undefined, "linux build missing abi");
-  if (cfg.abi === "android") return `${arch}-linux-android`;
-  if (cfg.abi === "musl") return `${arch}-unknown-linux-musl`;
-  return `${arch}-unknown-linux-gnu`;
+  assert(abi !== undefined, "linux build missing abi");
+  if (abi === "android") return `${rustArch}-linux-android`;
+  if (abi === "musl") return `${rustArch}-unknown-linux-musl`;
+  return `${rustArch}-unknown-linux-gnu`;
 }
 
 /**
@@ -66,64 +72,30 @@ export function rustTarget(cfg: Config): string {
  * cargo's stock release already keeps debuginfo (`debug = 1` is the workspace
  * default), and we don't ship a `MinSizeRel` Rust path yet.
  */
-function cargoProfile(cfg: Config): { name: string; subdir: string } {
+export function cargoProfile(cfg: Config): { name: string; subdir: string } {
   return cfg.buildType === "Debug" ? { name: "dev", subdir: "debug" } : { name: "release", subdir: "release" };
 }
 
 /**
- * Can a linux host cross-compile the Rust staticlib for `cfg`'s target
- * without a native runner?
- *
- * Used by CI's `build-rust` step to decide fan-out: targets that return
- * `true` here share one fast linux box (one `cargo build --target <triple>`
- * each); targets that return `false` get a native agent.
- *
- *   linux-{gnu,musl,android} × {x64,aarch64}: yes — `rustup target add`
- *     installs prebuilt std, no foreign linker needed for a staticlib.
- *   freebsd × {x64,aarch64}: yes — Tier 2/3 (`-Zbuild-std` for aarch64),
- *     staticlib needs no FreeBSD libc to produce.
- *   darwin × {x64,aarch64}: yes — Tier 2 prebuilt std, and a staticlib
- *     needs no Mach-O link. No build script in the current dep graph
- *     compiles C for the target; if one ever does, emitRust's
- *     CFLAGS_<triple>/SDKROOT forwarding (set when the SDK is resolved)
- *     points cc-rs at the macOS SDK.
- *   windows-msvc × {x64,aarch64}: yes *when a Windows sysroot (xwin splat)
- *     is present* — the staticlib itself needs no SDK, but the bun_shim_impl
- *     PE that emitRust() also builds links against kernel32/ntdll import
- *     libs via lld-link + /winsysroot (see config.ts `winsysroot`). The
- *     shared CI rust box doesn't carry a splat, so CI runs these on the
- *     amazonlinux fleet instead, where configure fetches one per build.
- *
- * Unlike zig (which bundled its own libc/SDK for every target), cargo
- * delegates to a system C toolchain for any `cc`/`bindgen`/link step, so
- * the cross-compile boundary is "does the host have a C cross-toolchain
- * for the target", not "does rustc support the triple".
- */
-export function rustCanCrossFromLinux(cfg: Config): boolean {
-  if (cfg.linux) return true; // gnu, musl, android — all archs
-  if (cfg.freebsd) return true;
-  if (cfg.darwin) return true;
-  // windows: possible with a winsysroot (see above), but the shared rust
-  // box isn't provisioned with one — CI routes windows rust-only to the
-  // amazonlinux fleet (which fetches a splat at configure time) instead.
-  return false;
-}
-
-/**
- * All target triples CI builds. Exposed so `rust:check-all` can iterate
- * `cargo check --target <t>` without re-deriving the list.
+ * All target triples CI builds (`buildPlatforms` in .buildkite/ci.mjs, one
+ * triple per os/arch/abi; test/internal/source-lints/build-rust.test.ts keeps
+ * the two in sync). Drives `rust:check-all` and the generated
+ * `.cargo/config.toml` (cargo-config.ts). `rust-toolchain.toml`'s `targets`
+ * is this list minus the Tier 3 triples.
  */
 export const allRustTargets = [
   "x86_64-unknown-linux-gnu",
   "aarch64-unknown-linux-gnu",
   "x86_64-unknown-linux-musl",
   "aarch64-unknown-linux-musl",
+  "x86_64-linux-android",
+  "aarch64-linux-android",
   "x86_64-apple-darwin",
   "aarch64-apple-darwin",
   "x86_64-pc-windows-msvc",
   "aarch64-pc-windows-msvc",
   "x86_64-unknown-freebsd",
-  "aarch64-linux-android",
+  "aarch64-unknown-freebsd",
 ] as const;
 
 /**
@@ -132,8 +104,63 @@ export const allRustTargets = [
  * needs the `rust-src` component). As of nightly-2026-05, the only Tier 3
  * triple in CI's matrix is aarch64-freebsd.
  */
-function rustTargetIsTier3(triple: string): boolean {
+export function rustTargetIsTier3(triple: string): boolean {
   return triple === "aarch64-unknown-freebsd";
+}
+
+/**
+ * Build std/core/alloc from source instead of linking the rustup prebuilt.
+ * The workspace is `panic = "abort"` (see Cargo.toml). `proc_macro` is
+ * needed because `cargo build --target` still resolves proc-macro crates for
+ * the host through the same `-Zbuild-std` flag set. Requires the `rust-src`
+ * component, which `rust-toolchain.toml` requests and CI images preinstall
+ * (Dockerfile / bootstrap.sh `rustup component add rust-src`). Shared with
+ * `rust:check-all`, which needs it for the Tier 3 triples.
+ */
+export const cargoBuildStdArg = "-Zbuild-std=core,alloc,std,proc_macro,panic_abort";
+
+/**
+ * The C++ side's `cpuTargetFlags` (flags.ts) spelled as rustflags, derived
+ * from that table so the two halves of the binary can't drift apart. They
+ * have to agree: the Rust half runs on whatever CPU the C++ baseline admits,
+ * and under cross-language LTO (`cfg.crossLangLto`) LLVM only inlines a call
+ * when the callee's CPU feature set is a subset of the caller's (a CPU's own
+ * tuning features and the tune CPU count too), so a mismatch turns off
+ * inlining across the Rust/C++ boundary in both directions.
+ *
+ *   -mcpu=X   → -Ctarget-cpu=X   (both take LLVM CPU names)
+ *   -mtune=X  → -Ztune-cpu=X     (nightly-only, like the other -Z flags here)
+ *   -march=X  → x64:   -Ctarget-cpu=X, since x86 -march values are CPU names
+ *               arm64: -Ctarget-cpu=generic -Ctarget-feature=+ext,...
+ *
+ * The arm64 `-march` value is an architecture level plus extensions
+ * (`armv8-a+crc`), which clang itself lowers to LLVM's `generic` aarch64 CPU
+ * plus the extensions as features (`clang -### ...` shows `-target-cpu
+ * generic`); rustc's target features use the same names. This used to name a
+ * real CPU instead (cortex-a72), which also assumed aes, sha2 and pmuv3
+ * (`rustc --print cfg`), none of which the C++ side does.
+ *
+ * clang-cl (windows) spells the same flags `/clang:-march=...`.
+ */
+function rustCpuTargetFlags(cfg: Config): string[] {
+  const rustflags: string[] = [];
+  for (const clangFlag of computeCpuTargetFlags(cfg)) {
+    const parsed = /^(?:\/clang:)?-m(cpu|tune|arch)=(.+)$/.exec(clangFlag);
+    assert(parsed !== null, `rustCpuTargetFlags() can't translate cpuTargetFlags entry '${clangFlag}'`);
+    const kind = parsed[1]!;
+    const value = parsed[2]!;
+    if (kind === "tune") {
+      rustflags.push(`-Ztune-cpu=${value}`);
+    } else if (kind === "cpu" || cfg.x64) {
+      rustflags.push(`-Ctarget-cpu=${value}`);
+    } else {
+      const [level, ...extensions] = value.split("+");
+      assert(level === "armv8-a", `rustCpuTargetFlags() only knows how to spell -march=armv8-a, not -march=${value}`);
+      rustflags.push("-Ctarget-cpu=generic");
+      if (extensions.length > 0) rustflags.push(`-Ctarget-feature=${extensions.map(ext => `+${ext}`).join(",")}`);
+    }
+  }
+  return rustflags;
 }
 
 /**
@@ -148,18 +175,6 @@ function windowsShimDestPath(cfg: Config): string {
   return resolve(cfg.cwd, "src", "install", "windows-shim", "bun_shim_impl.exe");
 }
 
-/**
- * Path to the `rustup` binary that owns `cfg.cargo`, or `undefined` if
- * `cfg.cargo` isn't a rustup proxy (a distro/Homebrew cargo, say).
- * `rustup target add` is only meaningful when rustup is the toolchain
- * manager — `rust_build_cross` requires it; everyone else gets `rust_build`.
- */
-function findRustup(cfg: Config): string | undefined {
-  if (cfg.cargo === undefined) return undefined;
-  const rustup = join(dirname(cfg.cargo), `rustup${cfg.host.exeSuffix}`);
-  return existsSync(rustup) ? rustup : undefined;
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // Paths
 // ───────────────────────────────────────────────────────────────────────────
@@ -170,14 +185,14 @@ function rustTargetDir(cfg: Config): string {
 }
 
 /**
- * Absolute path to `libbun_rust.a` (or `bun_rust.lib` on Windows).
+ * Absolute path to `libbun_runtime.a` (or `bun_runtime.lib` on Windows).
  *
  * `--target` is always passed, so cargo's output layout is
- * `<target-dir>/<triple>/<profile>/<libPrefix>bun_rust<libSuffix>`.
+ * `<target-dir>/<triple>/<profile>/<libPrefix>bun_runtime<libSuffix>`.
  */
 export function rustLibPath(cfg: Config): string {
   const { subdir } = cargoProfile(cfg);
-  return resolve(rustTargetDir(cfg), rustTarget(cfg), subdir, `${cfg.libPrefix}bun_rust${cfg.libSuffix}`);
+  return resolve(rustTargetDir(cfg), rustTarget(cfg), subdir, `${cfg.libPrefix}bun_runtime${cfg.libSuffix}`);
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -203,7 +218,7 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
   if (cfg.cargo === undefined) return; // emitRust() asserts with a hint
   const stream = `${cfg.jsRuntime} ${q(streamPath)} rust`;
 
-  // Cargo build for `bun_bin`. Runs from repo root (workspace `Cargo.toml`
+  // Cargo build for `bun_runtime`. Runs from repo root (workspace `Cargo.toml`
   // lives there). Env passed via stream.ts `--env=K=V`.
   //
   // `--console`: cargo has its own progress bar / colour; pool=console gives
@@ -211,53 +226,11 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
   // the staticlib when nothing changed.
   n.rule("rust_build", {
     command: `${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} build $args`,
-    description: "cargo bun_bin → $label",
+    description: "cargo bun_runtime → $label",
     pool: "console",
     restat: true,
   });
 
-  // Variant that ensures the pinned toolchain (and `rust-std` for
-  // `$rust_target` when it has a prebuilt one) is fully installed before
-  // building. CI agents pin the toolchain via `RUSTUP_TOOLCHAIN`, which
-  // bypasses `rust-toolchain.toml`'s `targets`/`components` install list, and
-  // rustup-proxy auto-install can leave a *partial* toolchain dir (rustc/cargo
-  // present, no `rust-std`, no `lib/rustlib/multirust-channel-manifest.toml`).
-  // That surfaces as either `error[E0463]: can't find crate for core` (cargo
-  // ran, no std) or `error: Missing manifest in toolchain '<channel>-<host>'`
-  // (rustup-proxy refused to even resolve cargo). `rustup toolchain install
-  // --force` repairs both — `--force` reinstalls missing components rather
-  // than trusting "the dir exists, I'm done", and it's a ~70ms no-op when the
-  // toolchain is already complete (verified locally), so it's cheap to run
-  // unconditionally.
-  //
-  // `$rust_target_arg` is `--target <triple>` for Tier 1/2 (also installs the
-  // prebuilt `rust-std-<triple>`), and empty for Tier 3 (no prebuilt; cargo
-  // gets `-Zbuild-std` instead — see emitRust). Both still get `rust-src`
-  // (needed for `-Zbuild-std`).
-  //
-  // Only registered when `cfg.rustToolchain` is pinned and `cfg.cargo` is a
-  // rustup proxy — otherwise there's no channel to install / no `rustup` to
-  // call, and toolchain management is the user's problem.
-  // `--console` on the rustup step too: it's sequential with cargo (both
-  // sides of `&&`) and the rule already takes the console pool, so there's
-  // no interleaving risk — and `--console` inherits stdio directly, which
-  // matters because stream.ts's pipe path can drop a fast-failing child's
-  // output (it `process.exit()`s on `close` before the async stdout writes
-  // drain). Without it, a failed `toolchain install` shows no error at all.
-  //
-  // No `--profile minimal`: the agent already has the default profile, and
-  // rustup applies `--profile` to the install spec, not just first-install —
-  // requesting a *narrower* profile on a `--force` reinstall is asking for
-  // trouble. We only care that `rust-src` and `rust-std-<triple>` exist on
-  // top of whatever profile is there.
-  //
-  // Windows: ninja spawns commands via CreateProcess directly (no shell), so
-  // `&&` would be passed as a literal argument to the first node.exe — rustup
-  // then sees the second half of the chain as extra argv and rejects
-  // `--experimental-strip-types`. Wrap in `cmd /c "..."` so cmd.exe handles
-  // the chain (cmd's quote-stripping rule removes only the outermost pair,
-  // preserving the embedded `"..."` around paths/env values). Same pattern as
-  // codegen.ts / bun.ts.
   // Windows .bin/ shim PE: cargo build → copy into the source tree for
   // `include_bytes!`. One rule does both; cargo's own output path and the
   // source-tree copy are undeclared side effects (see below for what $out is).
@@ -292,19 +265,6 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
       // No restat: the stamp ($out) is touched unconditionally, so there's
       // nothing for ninja to prune on; the content-conditional copy above
       // exists for cargo's dep-info on $shim_dest, not for restat.
-    });
-  }
-
-  const rustup = findRustup(cfg);
-  if (rustup !== undefined && cfg.rustToolchain !== undefined) {
-    const chain =
-      `${stream} --console $env ${q(rustup)} toolchain install ${cfg.rustToolchain} --force --component rust-src $rust_target_arg && ` +
-      `${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} build $args`;
-    n.rule("rust_build_cross", {
-      command: hostWin ? `cmd /c "${chain}"` : chain,
-      description: "cargo bun_bin → $label ($rust_target_arg)",
-      pool: "console",
-      restat: true,
     });
   }
 }
@@ -346,29 +306,37 @@ export interface RustBuildInputs {
 }
 
 /**
- * Emit the cargo build step. Returns the output staticlib path as a
- * one-element array so the link step can spread it alongside the C++
- * object list.
+ * The exact `cargo build` invocation the Rust step uses.
+ *
+ * Extracted so tooling (`scripts/rust-timings.ts`) can run cargo with the same
+ * args/rustflags/env that `emitRust()` puts into the ninja edge, without
+ * re-deriving any of it. `emitRust()` is the only build-graph caller.
  */
-export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string[] {
-  assert(cfg.cargo !== undefined, "building bun's Rust crates requires cargo but no rust toolchain was found", {
-    hint: "Install rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
-  });
+export interface CargoInvocation {
+  /** `cargo build <args>` — everything after `build`. */
+  args: string[];
+  /** Env vars the cargo process runs under. `CARGO_ENCODED_RUSTFLAGS` included. */
+  env: Record<string, string>;
+  /** `--target-dir` absolute path (also present in `args`). */
+  targetDir: string;
+  /** `--target` triple (also present in `args`). */
+  triple: string;
+}
 
-  n.comment("─── Rust ───");
-  n.blank();
-
-  const hostWin = cfg.host.os === "windows";
+/**
+ * Compute the cargo command line + environment for `cargo build -p bun_runtime`.
+ * Pure function of `cfg`; does no I/O.
+ */
+export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   const targetDir = rustTargetDir(cfg);
   const triple = rustTarget(cfg);
   const tier3 = rustTargetIsTier3(triple);
   const profile = cargoProfile(cfg);
-  const lib = rustLibPath(cfg);
 
   // ─── Build args ───
   const args: string[] = [
     "-p",
-    "bun_bin",
+    "bun_runtime",
     "--lib",
     "--target-dir",
     targetDir,
@@ -376,10 +344,10 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     triple,
     "--profile",
     profile.name,
+    "--locked",
   ];
   if (tier3 || cfg.release || cfg.asan) {
-    // Build std/core/alloc from source instead of linking the rustup prebuilt.
-    //
+    // Rebuild std from source (cargoBuildStdArg) because:
     // tier3:   no prebuilt `rust-std` exists.
     // release: prebuilt std is native code built for generic x86-64 with no
     //          `.llvm_addrsig`. Rebuilding with our RUSTFLAGS gets it
@@ -389,14 +357,15 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // asan:    prebuilt std is uninstrumented; rebuilding applies
     //          `-Zsanitizer=address` so OOB/UAF inside Vec/String/HashMap are
     //          visible instead of stopping at the std boundary.
-    //
-    // The workspace is `panic = "abort"` (see Cargo.toml). `proc_macro` is
-    // needed because `cargo build --target` still resolves proc-macro crates
-    // for the host through the same `-Zbuild-std` flag set. Requires the
-    // `rust-src` component, which `rust-toolchain.toml` requests and CI
-    // images preinstall (Dockerfile / bootstrap.sh `rustup component add
-    // rust-src`).
-    args.push("-Zbuild-std=core,alloc,std,proc_macro,panic_abort");
+    args.push(cargoBuildStdArg);
+    if (cfg.release && !cfg.asan) {
+      // Cargo's default build-std feature set is `panic-unwind,backtrace,default`.
+      // `backtrace` links std's symbolizer (gimli, addr2line, miniz_oxide,
+      // rustc-demangle, ~200 KB on linux-x64) for `std::backtrace` and the
+      // default panic hook; bun installs its own panic hook and symbolizes
+      // crash traces out of process, so nothing reads it.
+      args.push("-Zbuild-std-features=panic-unwind,default");
+    }
   }
 
   // ─── rustflags ───
@@ -406,7 +375,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // the targets where bun links as a position-dependent ET_EXEC. With the
   // default `pic`, every Rust `&'static [T]` / `&'static str` / vtable is a
   // GOT-relative reference and the constant ends up in `.data.rel.ro` (RW
-  // segment, eagerly faulted) instead of `.rodata`; libbun_rust.a alone
+  // segment, eagerly faulted) instead of `.rodata`; libbun_runtime.a alone
   // contributes ~561 KiB of `.data.rel.ro` that the Zig binary placed in
   // shareable read-only pages. `static` lets rustc emit absolute references
   // and the constants land in `.rodata`. This is a *target* RUSTFLAG: with
@@ -417,7 +386,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   if ((cfg.linux && cfg.abi !== "android") || cfg.freebsd) {
     rustflags.push("-Crelocation-model=static");
   }
-  // Keep frame pointers — matches the C++ side's `-fno-omit-frame-pointer` / `/Oy-`
+  // Keep frame pointers — matches the C++ side's `-fno-omit-frame-pointer`
   // (flags.ts:293-301). Needed so profilers and crash backtraces can walk Rust frames.
   rustflags.push("-Cforce-frame-pointers=yes");
   // Parallel frontend: rustc's default is single-threaded for parse / macro
@@ -449,21 +418,18 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // `-Cllvm-args=-addrsig` sets the same LLVM module flag clang's `-faddrsig`
   // does. Harmless on Apple ld64 (ignores the section).
   rustflags.push("-Cllvm-args=-addrsig");
-  // Match the C++ side's CPU target (`cpuTargetFlags` in flags.ts) so Rust
-  // codegen sees the same ISA. Without this, C++ is built with
-  // `-march=haswell` while Rust defaults to generic x86-64 (SSE2 only),
-  // leaving auto-vectorization and BMI/LZCNT/POPCNT on the table for the
-  // entire Rust crate graph. rustc's `-C target-cpu=` takes LLVM CPU names
-  // (same vocabulary as clang's `-march=`/`-mcpu=`), so the mapping is 1:1.
-  const cpuTarget = cfg.x64
-    ? cfg.baseline
-      ? "nehalem"
-      : "haswell"
-    : cfg.darwin
-      ? "apple-m1"
-      : // armv8-a+crc isn't a CPU name — closest LLVM model with CRC baseline:
-        "cortex-a72";
-  rustflags.push(`-Ctarget-cpu=${cpuTarget}`);
+  // Reuse an upstream crate's monomorphization instead of re-instantiating
+  // it locally. rustc defaults this on only at opt-level 0/1/s/z: at O2/O3 a
+  // shared generic is an out-of-line upstream symbol the caller can't
+  // inline. Cross-language ThinLTO re-imports and inlines any callee under
+  // the import threshold at link time, so here it only dedups the large
+  // bodies nobody inlines. Nightly-only; the pinned toolchain is nightly.
+  // Not under ASAN: routing Box/Vec allocs through the shared alloc-crate
+  // instantiation moves their frames and LSAN's conservative reachability
+  // loses some at-exit allocations it previously found (bun-info, bun-audit,
+  // issue 30205), turning benign at-exit state into reported leaks.
+  if (!cfg.asan) rustflags.push("-Zshare-generics=y");
+  rustflags.push(...rustCpuTargetFlags(cfg));
   // `bun_core::build_options::ENABLE_ASAN = cfg!(bun_asan)` — must agree with
   // the C++ `ASAN_ENABLED` macro so Global::exit() picks the same libc exit
   // path (`exit` vs `quick_exit`) that c-bindings.cpp registered Bun__onExit on.
@@ -557,7 +523,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     rustflags.push(`-Cprofile-use=${cfg.pgoUse}`);
   }
   // Force lld for any target link rustc itself performs. None exists today
-  // (`bun_bin` is a staticlib with no link step; `lol_html` is a plain rlib
+  // (`bun_runtime` is a staticlib with no link step; `lol_html` is a plain rlib
   // path dep), so this is defensive — see the Windows note below. The
   // default `cc` driver picks BFD `/usr/bin/ld`, which doesn't match the
   // semantics the C/C++ object set assumes (and, under `-Clinker-plugin-lto`,
@@ -571,7 +537,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // Not on Windows: the per-target linker there is `link.exe` / `lld-link.exe`
   // (see `CARGO_TARGET_*_LINKER` below), which take `/X` args, not the GCC/clang
   // `-fuse-ld=`. RUSTFLAGS only reach *target* crates when `--target` is given,
-  // and the `bun_bin` staticlib has no link step, so it's normally dead — but
+  // and the `bun_runtime` staticlib has no link step, so it's normally dead — but
   // if a target cdylib ever appears it'd fail with "could not open '-fuse-ld=lld'".
   if (!cfg.windows) rustflags.push(`-Clink-arg=-fuse-ld=lld`);
   // Keep the clang driver quiet about link args that don't apply to a given
@@ -606,35 +572,14 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     rustflags.push("-Cembed-bitcode=yes");
     // EnableSplitLTOUnit consistency: lld errors with "inconsistent LTO Unit
     // splitting" if any bitcode module in the link disagrees with the others.
-    // The Rust value must match whatever the C++ side produces, and that
-    // differs per platform:
-    //
-    //   - darwin (ThinLTO): the C/C++ side passes -fno-split-lto-unit
-    //     everywhere (index-based WPD, no hybrid split mode) and Apple
-    //     targets default to 0 anyway, so every C/C++ module is 0. rustc's
-    //     default is also 0 — pass nothing. Adding -Zsplit-lto-unit here
-    //     would make the Rust modules the inconsistent ones and abort the
-    //     link.
-    //   - windows cross (ThinLTO): same as darwin — clang-cl never gets
-    //     -fwhole-program-vtables (COFF associative-COMDAT abort) and
-    //     -fno-split-lto-unit is passed explicitly, so every C/C++ module is
-    //     0 and rustc's default 0 matches — pass nothing.
-    //   - linux (full LTO): the regular-LTO summary clang writes on ELF
-    //     always says EnableSplitLTOUnit=1, so every C++ module (ours and
-    //     the WebKit -lto prebuilts) carries 1. The Rust modules'
-    //     EnableSplitLTOUnit module flag must say 1 to match →
-    //     -Zsplit-lto-unit. (The flag is stamped per-CGU at module
-    //     creation, survives rustc's fat-LTO pre-merge, and is what the
-    //     rust_lto_fix step's `opt --module-summary` copies into the
-    //     regular-LTO summary it bolts onto the merged module — see
-    //     rust-lto-fix-cli.ts.)
-    //
-    // (`-Clink-arg=-fuse-ld=lld` is pushed unconditionally above — under LTO
-    // it doubles as making rustc's bitcode link go through the LTO-aware
-    // linker our final link uses, not BFD `/usr/bin/ld`.)
+    // Every LTO platform now links ThinLTO with the C/C++ side passing
+    // -fno-split-lto-unit (index-based WPD, no hybrid split), so every C/C++
+    // module (ours and the WebKit -lto prebuilts) says 0. rustc's default is
+    // also 0, so pass nothing. (`-Clink-arg=-fuse-ld=lld` is pushed
+    // unconditionally above — under LTO it doubles as making rustc's bitcode
+    // link go through the LTO-aware linker our final link uses, not BFD
+    // `/usr/bin/ld`.)
     if (!cfg.darwin && !cfg.windows) {
-      rustflags.push("-Zsplit-lto-unit");
-
       // Rust functions default to carrying the `uwtable(async)` attribute.
       // When the LTO inliner inlines such a callee into one of our C++
       // callers (compiled without unwind tables), the caller inherits the
@@ -671,7 +616,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     CC: cfg.cc,
     CXX: cfg.cxx,
     AR: cfg.ar,
-    // Per-target linker. The `bun_bin` artifact is a staticlib (no link step);
+    // Per-target linker. The `bun_runtime` artifact is a staticlib (no link step);
     // what actually gets linked are HOST executables/dylibs in the dep graph
     // (build scripts, proc-macros) — and on a native build, `--target` is the
     // host triple, so this env var sets *their* linker too.
@@ -714,34 +659,14 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     }
   }
   if (cfg.crossLangLto) {
-    // The Rust bitcode's shape must match the platform's C++ LTO mode so both
-    // sides land in the same LTO partition at link time and can exchange
-    // function bodies. (The workspace `[profile.release] lto = "fat"` exists
-    // for non-LTO release builds, where the rust .a is linked as
+    // Every crossLangLto platform links ThinLTO, so leave each crate's per-CGU
+    // bitcode with its ThinLTO summary intact: the whole link is one uniform
+    // ThinLTO graph and cross-module importing works across Rust↔C++/JSC.
+    // `fat` would pre-merge the crates into one summary-less blob the thin
+    // link can't import from. (The workspace `[profile.release] lto = "fat"`
+    // exists for non-LTO release builds, where the rust .a is linked as
     // already-codegen'd machine code and still wants intra-Rust inlining.)
-    //
-    //   - darwin / windows cross (ThinLTO links): `off`. Each crate's
-    //     per-CGU bitcode keeps its ThinLTO summary, so the whole link is
-    //     one uniform ThinLTO graph and cross-module importing works across
-    //     Rust↔C++/JSC. `fat` would pre-merge the crates into one
-    //     summary-less blob the thin link can't import from (and rustc's
-    //     serial pre-merge is wasted work — the linker schedules the
-    //     backends itself).
-    //   - ELF (full-LTO link — see the -flto=full entry in flags.ts): `fat`.
-    //     rustc pre-merges every crate (including the prebuilt std's
-    //     embedded bitcode) into ONE summary-less regular-LTO module, which
-    //     lld then merges into the same regular-LTO partition as the C++
-    //     `-flto=full` objects — that merge is what gives Rust↔C++
-    //     cross-language inlining under full LTO. (The merged module first
-    //     gets a regular-LTO summary bolted on by the rust_lto_fix edge —
-    //     rustLtoLinkInputs() below — because lld's EnableSplitLTOUnit
-    //     consistency check requires one.) With `off`, the per-CGU
-    //     ThinLTO-summaried modules are processed as ThinLTO partitions
-    //     instead, which (a) never exchange function bodies with the C++
-    //     regular partition (no cross-language inlining at all), and
-    //     (b) go through the LLVM 22 ThinLTO backend pipeline that
-    //     miscompiles JSC on linux.
-    env.CARGO_PROFILE_RELEASE_LTO = cfg.darwin || cfg.windows ? "off" : "fat";
+    env.CARGO_PROFILE_RELEASE_LTO = "off";
   } else if (cfg.asan) {
     // release-asan has `cfg.lto` forced off (config.ts), but without this
     // override Cargo.toml's `[profile.release] lto = "fat"` still applies —
@@ -750,6 +675,8 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // cargo step vs 4m36s for the linker-plugin-lto build (which defers
     // codegen to lld). ASAN builds don't need intra-Rust LTO; turn it off.
     env.CARGO_PROFILE_RELEASE_LTO = "off";
+    // With LTO off, `codegen-units = 1` only serializes each crate's LLVM pass over the doubled IR; nothing built with ASAN ships, so take cargo's release default instead.
+    env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "16";
   }
   if (cfg.assertions) {
     // Turn `debug_assert!()` / `#[cfg(debug_assertions)]` on in the release
@@ -763,6 +690,27 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     env.CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS = "true";
   }
   if (rustflags.length > 0) env.CARGO_ENCODED_RUSTFLAGS = rustflags.join("\x1f");
+
+  return { args, env, targetDir, triple };
+}
+
+/**
+ * Emit the cargo build step. Returns the output staticlib path as a
+ * one-element array so the link step can spread it alongside the C++
+ * object list.
+ */
+export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string[] {
+  assert(cfg.cargo !== undefined, "building bun's Rust crates requires cargo but no rust toolchain was found", {
+    hint: "Install rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
+  });
+
+  n.comment("─── Rust ───");
+  n.blank();
+
+  const hostWin = cfg.host.os === "windows";
+  const lib = rustLibPath(cfg);
+  const tier3 = rustTargetIsTier3(rustTarget(cfg));
+  const { args, env, targetDir, triple } = cargoBuildInvocation(cfg);
 
   // ─── Windows .bin/ shim PE ───
   // Builds `src/install/windows-shim/bun_shim_impl.rs` as a freestanding release PE and wires the artifact into `include_bytes!`. Without this step `include_bytes!` embeds the
@@ -801,6 +749,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
       triple,
       "--profile",
       "shim",
+      "--locked",
       "-Zbuild-std=core,compiler_builtins",
       "-Zbuild-std-features=compiler-builtins-mem",
     ];
@@ -877,20 +826,9 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   }
 
   // ─── Emit build node ───
-  // When the toolchain is rustup-managed and pinned, route through
-  // `rust_build_cross`, which does `rustup toolchain install --force ...`
-  // before cargo. That makes the first build after a `rust-toolchain.toml`
-  // channel bump (and a partially auto-installed toolchain) self-heal —
-  // see the rule comment above. Tier 1/2 also pass `--target <triple>` so
-  // the prebuilt `rust-std` for the cross triple is installed; Tier 3 omits
-  // it (no prebuilt — cargo gets `-Zbuild-std` instead) and just gets
-  // `rust-src`. Local builds without rustup, or without a pinned channel,
-  // fall back to plain `rust_build` and trust whatever toolchain `cfg.cargo`
-  // resolves to.
-  const useCrossRule = findRustup(cfg) !== undefined && cfg.rustToolchain !== undefined;
   n.build({
     outputs: [lib],
-    rule: useCrossRule ? "rust_build_cross" : "rust_build",
+    rule: "rust_build",
     inputs: [],
     // Cargo binary itself + every .rs/Cargo.toml so editing one re-invokes
     // (cargo's own fingerprinting then decides what to actually recompile).
@@ -903,8 +841,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     vars: {
       cwd: cfg.cwd,
       args: quoteArgs(args, hostWin),
-      ...(useCrossRule ? { rust_target_arg: tier3 ? "" : `--target ${triple}` } : {}),
-      label: `${cfg.libPrefix}bun_rust${cfg.libSuffix}`,
+      label: `${cfg.libPrefix}bun_runtime${cfg.libSuffix}`,
       env: Object.entries(env)
         .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)
         .join(" "),
@@ -936,14 +873,17 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
  */
 export function rustLtoLinkInputs(n: Ninja, cfg: Config, rustObjects: string[]): string[] {
   const rustLib = rustObjects[0];
-  if (!cfg.crossLangLto || cfg.darwin || cfg.windows || rustLib === undefined) return rustObjects;
+  // All LTO platforms now use ThinLTO with -fno-split-lto-unit and per-CGU
+  // rust bitcode (CARGO_PROFILE_RELEASE_LTO=off), so the regular-LTO summary
+  // fix-up below is never needed. Delete this function once confirmed.
+  if (cfg.lto || !cfg.crossLangLto || cfg.darwin || cfg.windows || rustLib === undefined) return rustObjects;
   assert(
     cfg.rustSysroot !== undefined && cfg.host.rustTriple !== undefined,
     "ELF cross-language LTO needs rustc's sysroot to locate its LLVM tools (llvm-link/opt) for the regular-LTO summary fix-up, but rustc wasn't found",
     { hint: "Install the pinned rust toolchain (rustup show active-toolchain), or build with --lto=off" },
   );
   const llvmBin = join(cfg.rustSysroot, "lib", "rustlib", cfg.host.rustTriple, "bin");
-  const out = resolve(cfg.buildDir, "bun_rust.lto.o");
+  const out = resolve(cfg.buildDir, "bun_runtime.lto.o");
   n.build({
     outputs: [out],
     rule: "rust_lto_fix",
@@ -952,11 +892,6 @@ export function rustLtoLinkInputs(n: Ninja, cfg: Config, rustObjects: string[]):
     vars: { llvm_bin: llvmBin, ar: cfg.ar },
   });
   return [out, ...rustObjects];
-}
-
-/** `${buildDir}/${exe}.linker-map` — lld's `-Wl,-Map=` output (see flags.ts). */
-export function linkerMapPath(cfg: Config): string {
-  return join(cfg.buildDir, `${bunExeName(cfg)}.linker-map`);
 }
 
 /**

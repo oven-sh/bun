@@ -1,6 +1,6 @@
 use core::ffi::{c_uint, c_void};
 
-use crate::{Loop, SocketGroup, SocketKind};
+use crate::{SocketGroup, SocketKind};
 
 // `us_connecting_socket_t` — a connect in flight (DNS / non-blocking
 // `connect()` / happy-eyeballs). No I/O is possible yet; on success the loop
@@ -9,7 +9,7 @@ use crate::{Loop, SocketGroup, SocketKind};
 bun_opaque::opaque_ffi! { pub struct ConnectingSocket; }
 
 impl ConnectingSocket {
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         us_connecting_socket_close(self)
     }
 
@@ -17,7 +17,7 @@ impl ConnectingSocket {
     /// shared by every socket it owns;
     /// materializing `&mut SocketGroup` here would alias with other sockets'
     /// borrows of the same group.
-    pub fn group(&mut self) -> *mut SocketGroup {
+    pub(crate) fn group(&mut self) -> *mut SocketGroup {
         us_connecting_socket_group(self)
     }
     pub fn raw_group(&mut self) -> *mut SocketGroup {
@@ -28,13 +28,6 @@ impl ConnectingSocket {
         SocketKind::from_u8(us_connecting_socket_kind(self))
     }
 
-    /// Returns the owning `Loop`. Raw pointer because the loop is a shared
-    /// singleton referenced by every group/socket/timer;
-    /// materializing `&mut Loop` here would be aliased UB.
-    pub fn r#loop(&mut self) -> *mut Loop {
-        us_connecting_socket_get_loop(self)
-    }
-
     pub fn ext<T>(&mut self) -> &mut T {
         // SAFETY: the ext slot is per-socket trailing storage inside this
         // allocation; `&mut self` guarantees exclusive access to it for the
@@ -43,42 +36,42 @@ impl ConnectingSocket {
         unsafe { &mut *us_connecting_socket_ext(self).cast::<T>() }
     }
 
-    pub fn get_error(&mut self) -> i32 {
+    pub(crate) fn get_error(&mut self) -> i32 {
         us_connecting_socket_get_error(self)
     }
 
     /// Raw `getaddrinfo(3)` return code when the name lookup itself failed;
     /// 0 for a connect failure past name resolution. A different namespace
     /// from [`Self::get_error`] (errno).
-    pub fn get_dns_error(&mut self) -> i32 {
+    pub(crate) fn get_dns_error(&mut self) -> i32 {
         us_connecting_socket_get_dns_error(self)
     }
 
-    pub fn get_native_handle(&mut self) -> *mut c_void {
+    pub(crate) fn get_native_handle(&mut self) -> *mut c_void {
         us_connecting_socket_get_native_handle(self)
     }
 
-    pub fn is_closed(&mut self) -> bool {
+    pub(crate) fn is_closed(&mut self) -> bool {
         us_connecting_socket_is_closed(self) == 1
     }
 
-    pub fn is_shutdown(&mut self) -> bool {
+    pub(crate) fn is_shutdown(&mut self) -> bool {
         us_connecting_socket_is_shut_down(self) == 1
     }
 
-    pub fn long_timeout(&mut self, seconds: c_uint) {
+    pub(crate) fn long_timeout(&mut self, seconds: c_uint) {
         us_connecting_socket_long_timeout(self, seconds)
     }
 
-    pub fn shutdown(&mut self) {
+    pub(crate) fn shutdown(&mut self) {
         us_connecting_socket_shutdown(self)
     }
 
-    pub fn shutdown_read(&mut self) {
+    pub(crate) fn shutdown_read(&mut self) {
         us_connecting_socket_shutdown_read(self)
     }
 
-    pub fn timeout(&mut self, seconds: c_uint) {
+    pub(crate) fn timeout(&mut self, seconds: c_uint) {
         us_connecting_socket_timeout(self, seconds)
     }
 }
@@ -104,5 +97,4 @@ unsafe extern "C" {
     pub(crate) safe fn us_connecting_socket_shutdown(s: &mut ConnectingSocket);
     pub(crate) safe fn us_connecting_socket_shutdown_read(s: &mut ConnectingSocket);
     pub(crate) safe fn us_connecting_socket_timeout(s: &mut ConnectingSocket, seconds: c_uint);
-    pub(crate) safe fn us_connecting_socket_get_loop(s: &mut ConnectingSocket) -> *mut Loop;
 }

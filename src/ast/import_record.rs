@@ -2,8 +2,6 @@
 //!
 //! Lives in `bun_ast` so `Ast` (which holds `Vec<ImportRecord>`) is
 //! self-contained and `bun_js_printer` can drop its `bun_js_parser` dep.
-//! `ImportKind::to_api()` lives in `bun_ast::ImportKindExt` (would
-//! back-edge into the schema crate).
 
 use crate::Range;
 use bun_paths::fs::Path;
@@ -38,16 +36,9 @@ pub struct ImportRecord {
 bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
     pub struct Flags: u16 {
-        /// True for the following cases:
-        ///
-        ///   try { require('x') } catch { handle }
-        ///   try { await import('x') } catch { handle }
-        ///   try { require.resolve('x') } catch { handle }
-        ///   import('x').catch(handle)
-        ///   import('x').then(_, handle)
-        ///
-        /// In these cases we shouldn't generate an error if the path could not be
-        /// resolved.
+        /// require() / await import() / require.resolve() inside the try or
+        /// catch body of a try/catch, or import('x').catch(..) / .then(_, ..):
+        /// don't fail the build when the path can't be resolved.
         const HANDLES_IMPORT_ERRORS = 1 << 0;
 
         const IS_INTERNAL = 1 << 1;
@@ -72,17 +63,19 @@ bitflags::bitflags! {
         /// calling the "__reExport()" helper function
         const CALLS_RUNTIME_RE_EXPORT_FN = 1 << 6;
 
-        /// True for require calls like this: "try { require() } catch {}". In this
-        /// case we shouldn't generate an error if the path could not be resolved.
-        const IS_INSIDE_TRY_BODY = 1 << 7;
+        /// Resolution failed (ModuleNotFound). `path.is_disabled` alone can't
+        /// tell this apart from an intentional `"browser": false` disable.
+        const WAS_UNRESOLVED = 1 << 7;
 
         /// If true, this was originally written as a bare "import 'file'" statement
         const WAS_ORIGINALLY_BARE_IMPORT = 1 << 8;
 
         const WAS_ORIGINALLY_REQUIRE = 1 << 9;
 
-        /// If a macro used <import>, it will be tracked here.
-        const WAS_INJECTED_BY_MACRO = 1 << 10;
+        /// A split `require()` (code splitting, target bun): the target is a chunk
+        /// of its own; `path` is pointed at that chunk and the call is printed as
+        /// `import.meta.require(path)`.
+        const CROSS_CHUNK_REQUIRE = 1 << 10;
 
         /// If true, this import can be removed if it's unused
         const IS_EXTERNAL_WITHOUT_SIDE_EFFECTS = 1 << 11;
@@ -123,28 +116,13 @@ pub enum Tag {
     /// For Bun Kit, if a module in the server graph should actually
     /// crossover to the SSR graph. See bake.Framework.ServerComponents.separate_ssr_graph
     BakeResolveToSsrGraph,
-
-    Tailwind,
 }
 
 impl Tag {
     #[inline]
-    pub fn is_runtime(self) -> bool {
-        self == Tag::Runtime
-    }
-
-    #[inline]
     pub fn is_internal(self) -> bool {
         (self as u8) >= (Tag::Runtime as u8)
     }
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum PrintMode {
-    Normal,
-    ImportPath,
-    Css,
-    NapiModule,
 }
 
 // NOTE: no `impl Default for ImportRecord` — `range`, `path`, `kind` have no

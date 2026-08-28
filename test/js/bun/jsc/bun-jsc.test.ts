@@ -196,11 +196,22 @@ describe("bun:jsc", () => {
     // sampled regardless of how fast the optimized code runs.
     const sampleInterval = 50;
 
-    // fib(26) keeps each call long enough (~400k recursive calls) to collect
-    // samples at a 50us interval while staying within the per-test timeout on
-    // slow debug builds; fib(30) takes >4s per call there.
+    // Keep the JS thread busy for a fixed wall-clock window so the sampler
+    // thread is guaranteed time to fire regardless of how fast the JIT makes
+    // fib() or how slowly the sampler thread wakes after start()/pause(). A
+    // single fib(n) call has no such lower bound: once JIT-compiled, fib(26)
+    // can complete inside one 50us sample interval on fast release hardware.
+    const work = () => {
+      const start = performance.now();
+      let acc = 0;
+      do {
+        acc += fib(18);
+      } while (performance.now() - start < 10);
+      return acc;
+    };
+
     // First profile call
-    const result1 = profile(() => fib(26), sampleInterval);
+    const result1 = profile(work, sampleInterval);
     expect(result1).toBeDefined();
     expect(result1.functions).toBeDefined();
     expect(result1.stackTraces).toBeDefined();
@@ -208,18 +219,40 @@ describe("bun:jsc", () => {
 
     // Second profile call - should work after first one completed
     // This verifies that shutdown() -> pause() fix works
-    const result2 = profile(() => fib(26), sampleInterval);
+    const result2 = profile(work, sampleInterval);
     expect(result2).toBeDefined();
     expect(result2.functions).toBeDefined();
     expect(result2.stackTraces).toBeDefined();
     expect(result2.stackTraces.traces.length).toBeGreaterThan(0);
 
     // Third profile call - verify profiler can be reused multiple times
-    const result3 = profile(() => fib(26), sampleInterval);
+    const result3 = profile(work, sampleInterval);
     expect(result3).toBeDefined();
     expect(result3.functions).toBeDefined();
     expect(result3.stackTraces).toBeDefined();
     expect(result3.stackTraces.traces.length).toBeGreaterThan(0);
+  });
+
+  it("profile accepts a callable Proxy", async () => {
+    // functionRunProfiler used to uncheckedDowncast<JSFunction> the callback after only
+    // checking isCallable(), which aborts asserts builds when the callable is a ProxyObject.
+    const script = `
+      const { profile } = require("bun:jsc");
+      const result = profile(new Proxy(function () { return 1; }, {}));
+      if (!result || typeof result.functions !== "string" || !("stackTraces" in result)) {
+        throw new Error("unexpected profile() result keys: " + JSON.stringify(result && Object.keys(result)));
+      }
+      console.log("ok");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -555,4 +588,31 @@ it("deserialize applies the same nesting depth limit to arrays as to objects", a
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, exitCode }).toEqual({ stdout: "rejected\n65\n", exitCode: 0 });
+});
+
+describe("JsRef::Weak liveness", () => {
+  // collectSyncWithoutSweep leaves dead cells allocated until the incremental sweeper reaches them.
+  it("dead-but-unswept cells read as not live, kept cells read as live", () => {
+    const { jscInternals } = require("bun:internal-for-testing");
+    let objects: object[] = [];
+    const dropped: bigint[] = [];
+    for (let i = 0; i < 2000; i++) {
+      const o = { i, pad: [i] };
+      objects.push(o);
+      dropped.push(jscInternals.rawCellAddress(o));
+    }
+    const kept = { keep: true };
+    const keptAddr = jscInternals.rawCellAddress(kept);
+    expect(dropped.every(a => jscInternals.isLiveCellAtRawAddress(a))).toBe(true);
+    expect(jscInternals.isLiveCellAtRawAddress(keptAddr)).toBe(true);
+
+    objects = [];
+    jscInternals.collectSyncWithoutSweep();
+
+    // A few may survive via the conservative stack scan; the bulk must read as dead.
+    const stillLive = dropped.filter(a => jscInternals.isLiveCellAtRawAddress(a)).length;
+    expect(stillLive).toBeLessThan(dropped.length / 2);
+    expect(jscInternals.isLiveCellAtRawAddress(keptAddr)).toBe(true);
+    expect(kept.keep).toBe(true);
+  });
 });

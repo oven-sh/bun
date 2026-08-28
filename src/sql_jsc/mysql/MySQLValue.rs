@@ -3,14 +3,14 @@
 //! `JSValue` references.
 
 use crate::jsc::{
-    IntegerRange, JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsError, JsResult,
-    MarkedArgumentBuffer, StringJsc as _, js_error_to_mysql,
+    IntegerRange, JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsResult,
+    MarkedArgumentBuffer, js_error_to_mysql,
 };
-use bun_core::zig_string::Slice as ZigStringSlice;
-use bun_core::{OwnedString, String as BunString};
+use bun_core::Utf8Bytes;
 
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::any_mysql_error;
+use bun_sql::mysql::protocol::prepared_statement::ExecuteParam;
 use bun_sql::shared::Data;
 
 use crate::jsc::webcore::Blob;
@@ -53,10 +53,6 @@ pub(crate) fn field_type_from_js(
                     u64::MAX
                 ))
                 .throw());
-        }
-
-        if global_object.has_exception() {
-            return Err(JsError::Thrown);
         }
 
         // Ban these types:
@@ -119,7 +115,7 @@ pub(crate) fn field_type_from_js(
     Ok(FieldType::MYSQL_TYPE_VARCHAR)
 }
 
-pub enum Value {
+pub(crate) enum Value {
     Null,
     Bool(bool),
     Short(i16),
@@ -131,10 +127,8 @@ pub enum Value {
     Float(f32),
     Double(f64),
 
-    String(ZigStringSlice),
-    StringData(Data),
+    String(Utf8Bytes<'static>),
     Bytes(Bytes),
-    BytesData(Data),
     Date(DateTime),
     Time(Time),
 }
@@ -151,19 +145,19 @@ pub enum Value {
 /// alive — `params` is on the malloc heap and isn't scanned. `Drop`
 /// unpins.
 pub struct Bytes {
-    pub slice: ZigStringSlice,
+    pub(crate) slice: Utf8Bytes<'static>,
     /// JS ArrayBuffer/view to `unpinArrayBuffer` in `Drop`. `JSValue::ZERO`
     /// when the slice is owned (FastTypedArray dupe), borrowed from a
     /// Blob store (nothing to unpin), or empty. GC rooting of this value
     /// is the caller's responsibility via the `MarkedArgumentBuffer`
     /// passed to `from_js`.
-    pub pinned: JSValue,
+    pub(crate) pinned: JSValue,
 }
 
 impl Default for Bytes {
     fn default() -> Self {
         Self {
-            slice: ZigStringSlice::empty(),
+            slice: Utf8Bytes::EMPTY,
             pinned: JSValue::ZERO,
         }
     }
@@ -176,11 +170,8 @@ impl Drop for Bytes {
             // lifetime of this Value (see struct doc); the FFI itself is `safe fn`.
             JSC__JSValue__unpinArrayBuffer(self.pinned);
         }
-        // self.slice dropped automatically
     }
 }
-
-// No explicit Drop for Value: the enum payloads (ZigStringSlice, Bytes, Data) all impl Drop.
 
 /// The integer branches of `Value::from_js` validate against the full range of
 /// the target type, so the bounds are derived from `T` rather than repeated at
@@ -214,66 +205,54 @@ fn validate_bigint<T: bun_core::Integer>(
         .map_err(js_error_to_mysql)
 }
 
-impl Value {
-    pub fn to_data(&self, field_type: FieldType) -> Result<Data, any_mysql_error::Error> {
+impl ExecuteParam for Value {
+    fn is_null(&self) -> bool {
+        matches!(self, Value::Null)
+    }
+
+    fn to_data(&self, field_type: FieldType) -> Result<Data, any_mysql_error::Error> {
         let mut buffer = [0u8; 15]; // Large enough for all fixed-size types
-        let pos: usize;
-        match self {
+
+        let pos: usize = match self {
             Value::Null => return Ok(Data::Empty),
             Value::Bool(b) => {
                 buffer[0] = if *b { 1 } else { 0 };
-                pos = 1;
+                1
             }
             Value::Short(s) => {
                 buffer[0..2].copy_from_slice(&s.to_le_bytes());
-                pos = 2;
+                2
             }
             Value::Ushort(s) => {
                 buffer[0..2].copy_from_slice(&s.to_le_bytes());
-                pos = 2;
+                2
             }
             Value::Int(i) => {
                 buffer[0..4].copy_from_slice(&i.to_le_bytes());
-                pos = 4;
+                4
             }
             Value::Uint(i) => {
                 buffer[0..4].copy_from_slice(&i.to_le_bytes());
-                pos = 4;
+                4
             }
             Value::Long(l) => {
                 buffer[0..8].copy_from_slice(&l.to_le_bytes());
-                pos = 8;
+                8
             }
             Value::Ulong(l) => {
                 buffer[0..8].copy_from_slice(&l.to_le_bytes());
-                pos = 8;
+                8
             }
             Value::Float(f) => {
                 buffer[0..4].copy_from_slice(&f.to_bits().to_le_bytes());
-                pos = 4;
+                4
             }
             Value::Double(d) => {
                 buffer[0..8].copy_from_slice(&d.to_bits().to_le_bytes());
-                pos = 8;
+                8
             }
-            Value::Date(d) => {
-                pos = d.to_binary(field_type, &mut buffer) as usize;
-            }
-            Value::Time(d) => {
-                pos = d.to_binary(field_type, &mut buffer) as usize;
-            }
-            Value::StringData(data) | Value::BytesData(data) => {
-                // `bun_sql::shared::Data` is not
-                // `Clone`, so return a `Temporary` aliasing the
-                // same bytes. INVARIANT: `to_data` callers must keep `self`
-                // alive until the returned `Data` is consumed.
-                let s = data.slice();
-                return Ok(if s.is_empty() {
-                    Data::Empty
-                } else {
-                    Data::Temporary(bun_ptr::RawSlice::new(s))
-                });
-            }
+            Value::Date(d) => d.to_binary(field_type, &mut buffer) as usize,
+            Value::Time(d) => d.to_binary(field_type, &mut buffer) as usize,
             Value::String(slice) => {
                 let s = slice.slice();
                 return Ok(if s.is_empty() {
@@ -290,12 +269,14 @@ impl Value {
                     Data::Temporary(bun_ptr::RawSlice::new(s))
                 });
             }
-        }
+        };
 
         Data::create(&buffer[0..pos]).map_err(|_| any_mysql_error::Error::OutOfMemory)
     }
+}
 
-    pub fn from_js(
+impl Value {
+    pub(crate) fn from_js(
         value: JSValue,
         global_object: &JSGlobalObject,
         field_type: FieldType,
@@ -360,11 +341,10 @@ impl Value {
                         // FastTypedArray — tiny, GC-movable vector; dupe.
                         1 => Ok(Value::Bytes(Bytes {
                             // SAFETY: ptr/len returned from helper are valid for the
-                            // duration of this call; init_dupe copies immediately.
-                            slice: ZigStringSlice::init_dupe(unsafe {
-                                core::slice::from_raw_parts(ptr, len)
-                            })
-                            .map_err(|_| any_mysql_error::Error::OutOfMemory)?,
+                            // duration of this call; copied immediately.
+                            slice: Utf8Bytes::Owned(
+                                unsafe { core::slice::from_raw_parts(ptr, len) }.to_vec(),
+                            ),
                             pinned: JSValue::ZERO,
                         })),
                         // Oversize/Wasteful/DataView/JSArrayBuffer — pinned
@@ -372,15 +352,15 @@ impl Value {
                         // collect it (and free the backing store despite
                         // the pin) if user JS drops the last reference from
                         // a later parameter.
-                        2 => {
+                        kind @ (2 | 3) => {
                             roots.append(value);
                             Ok(Value::Bytes(Bytes {
-                                // SAFETY: backing ArrayBuffer is pinned (non-detachable) and
+                                // SAFETY: backing storage is pinned or held (bufferless view) and
                                 // rooted via `roots`; slice stays valid until Bytes::drop unpins.
-                                slice: ZigStringSlice::from_utf8_never_free(unsafe {
+                                slice: Utf8Bytes::Borrowed(unsafe {
                                     core::slice::from_raw_parts(ptr, len)
                                 }),
-                                pinned: value,
+                                pinned: if kind == 2 { value } else { JSValue::ZERO },
                             }))
                         }
                         _ => unreachable!(),
@@ -399,16 +379,15 @@ impl Value {
                     // the store survives until execute.write() has read it.
                     roots.append(value);
                     return Ok(Value::Bytes(Bytes {
-                        slice: ZigStringSlice::from_utf8_never_free(blob.shared_view()),
+                        slice: Utf8Bytes::Borrowed(blob.shared_view()),
                         pinned: JSValue::ZERO,
                     }));
                 }
 
                 if value.is_string() {
-                    let str = OwnedString::new(
-                        BunString::from_js(value, global_object).map_err(js_error_to_mysql)?,
-                    );
-                    return Ok(Value::String(str.to_utf8()));
+                    return Ok(Value::String(
+                        value.to_utf8(global_object).map_err(js_error_to_mysql)?,
+                    ));
                 }
 
                 Err(js_error_to_mysql(global_object.throw_invalid_arguments(
@@ -417,42 +396,38 @@ impl Value {
             }
 
             FieldType::MYSQL_TYPE_JSON => {
-                let mut str = OwnedString::new(BunString::empty());
                 // Use jsonStringifyFast for SIMD-optimized serialization
-                value
-                    .json_stringify_fast(global_object, &mut str)
+                let str = value
+                    .json_stringify_fast(global_object)
                     .map_err(js_error_to_mysql)?;
-                Ok(Value::String(str.to_utf8()))
+                Ok(Value::String(str.into_utf8()))
             }
 
             //   FieldType::MYSQL_TYPE_VARCHAR | FieldType::MYSQL_TYPE_VAR_STRING | FieldType::MYSQL_TYPE_STRING => {
-            _ => {
-                let str = OwnedString::new(
-                    BunString::from_js(value, global_object).map_err(js_error_to_mysql)?,
-                );
-                Ok(Value::String(str.to_utf8()))
-            }
+            _ => Ok(Value::String(
+                value.to_utf8(global_object).map_err(js_error_to_mysql)?,
+            )),
         }
     }
 }
 
 #[derive(Default, Clone, Copy)]
 pub struct DateTime {
-    pub year: u16,
-    pub month: u8,
-    pub day: u8,
-    pub hour: u8,
-    pub minute: u8,
-    pub second: u8,
-    pub microsecond: u32,
+    year: u16,
+    month: u8,
+    day: u8,
+    hour: u8,
+    minute: u8,
+    second: u8,
+    microsecond: u32,
 }
 
 impl DateTime {
-    pub fn from_data(data: &Data) -> Result<DateTime, crate::Error> {
+    pub(crate) fn from_data(data: &Data) -> Result<DateTime, crate::Error> {
         Ok(Self::from_binary(data.slice()))
     }
 
-    pub fn from_binary(val: &[u8]) -> DateTime {
+    pub(crate) fn from_binary(val: &[u8]) -> DateTime {
         match val.len() {
             4 => {
                 // Byte 1: [year LSB]     (8 bits of year)
@@ -522,7 +497,7 @@ impl DateTime {
     /// sentinels (`0000-00-00`), impossible calendar values (`2024-02-31`), and
     /// malformed input, so the caller surfaces `Invalid Date` — matching what
     /// the previous `Date.parse` path produced for those.
-    pub fn from_text(text: &[u8]) -> Option<DateTime> {
+    pub(crate) fn from_text(text: &[u8]) -> Option<DateTime> {
         let parsed = crate::shared::datetime_text::parse_mysql(text)?;
         if parsed.month < 1
             || parsed.month > 12
@@ -545,7 +520,7 @@ impl DateTime {
         })
     }
 
-    pub fn to_binary(&self, field_type: FieldType, buffer: &mut [u8]) -> u8 {
+    pub(crate) fn to_binary(&self, field_type: FieldType, buffer: &mut [u8]) -> u8 {
         match field_type {
             FieldType::MYSQL_TYPE_YEAR => {
                 buffer[0] = 2;
@@ -578,7 +553,7 @@ impl DateTime {
         }
     }
 
-    pub fn to_js_timestamp(&self, global_object: &JSGlobalObject) -> JsResult<f64> {
+    pub(crate) fn to_js_timestamp(&self, global_object: &JSGlobalObject) -> JsResult<f64> {
         // MySQL in permissive sql_mode can store zero / partial-zero dates like
         // "0000-00-00" or "2024-00-15" and send them over the binary protocol.
         // WTF::GregorianDateTime would silently wrap month=0 to December of the
@@ -612,7 +587,7 @@ impl DateTime {
         )
     }
 
-    pub fn from_unix_timestamp(timestamp: i64, microseconds: u32) -> DateTime {
+    pub(crate) fn from_unix_timestamp(timestamp: i64, microseconds: u32) -> DateTime {
         let mut ts = timestamp;
         let days = ts.div_euclid(86400);
         ts = ts.rem_euclid(86400);
@@ -635,13 +610,6 @@ impl DateTime {
         }
     }
 
-    pub fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
-        JSValue::from_date_number(
-            global_object,
-            self.to_js_timestamp(global_object).unwrap_or(f64::NAN),
-        )
-    }
-
     /// `from_unix_timestamp`/`gregorian_date` can only represent
     /// 1970-01-01T00:00:00Z through 9999-12-31T23:59:59Z (the MySQL DATETIME
     /// maximum). Anything outside that window panics on an integer cast, so
@@ -658,7 +626,7 @@ impl DateTime {
         Ok(())
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         value: JSValue,
         global_object: &JSGlobalObject,
     ) -> Result<DateTime, any_mysql_error::Error> {
@@ -687,12 +655,12 @@ impl DateTime {
 
 #[derive(Default, Clone, Copy)]
 pub struct Time {
-    pub negative: bool,
-    pub days: u32,
-    pub hours: u8,
-    pub minutes: u8,
-    pub seconds: u8,
-    pub microseconds: u32,
+    pub(crate) negative: bool,
+    pub(crate) days: u32,
+    pub(crate) hours: u8,
+    pub(crate) minutes: u8,
+    pub(crate) seconds: u8,
+    pub(crate) microseconds: u32,
 }
 
 impl Time {
@@ -709,7 +677,7 @@ impl Time {
         Ok(())
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         value: JSValue,
         global_object: &JSGlobalObject,
     ) -> Result<Time, any_mysql_error::Error> {
@@ -732,7 +700,7 @@ impl Time {
         }
     }
 
-    pub fn from_unix_timestamp(timestamp: i64, microseconds: u32) -> Time {
+    pub(crate) fn from_unix_timestamp(timestamp: i64, microseconds: u32) -> Time {
         let days = timestamp.div_euclid(86400);
         let hours = timestamp.rem_euclid(86400).div_euclid(3600);
         let minutes = timestamp.rem_euclid(3600).div_euclid(60);
@@ -747,11 +715,11 @@ impl Time {
         }
     }
 
-    pub fn from_data(data: &Data) -> Result<Time, crate::Error> {
+    pub(crate) fn from_data(data: &Data) -> Result<Time, crate::Error> {
         Ok(Self::from_binary(data.slice()))
     }
 
-    pub fn from_binary(val: &[u8]) -> Time {
+    pub(crate) fn from_binary(val: &[u8]) -> Time {
         if val.is_empty() {
             return Time::default();
         }
@@ -772,27 +740,7 @@ impl Time {
 
         time
     }
-
-    pub fn to_js_timestamp(&self) -> f64 {
-        let mut total_ms: i64 = 0;
-        total_ms = total_ms.saturating_add((self.days as i64) * 86400000);
-        total_ms = total_ms.saturating_add((self.hours as i64) * 3600000);
-        total_ms = total_ms.saturating_add((self.minutes as i64) * 60000);
-        total_ms = total_ms.saturating_add((self.seconds as i64) * 1000);
-        total_ms = total_ms.saturating_add((self.microseconds / 1000) as i64);
-
-        if self.negative {
-            total_ms = -total_ms;
-        }
-
-        total_ms as f64
-    }
-
-    pub fn to_js(self, _global_object: &JSGlobalObject) -> JSValue {
-        JSValue::js_double_number(self.to_js_timestamp())
-    }
-
-    pub fn to_binary(&self, field_type: FieldType, buffer: &mut [u8]) -> u8 {
+    pub(crate) fn to_binary(&self, field_type: FieldType, buffer: &mut [u8]) -> u8 {
         match field_type {
             FieldType::MYSQL_TYPE_TIME | FieldType::MYSQL_TYPE_TIME2 => {
                 buffer[1] = if self.negative { 1 } else { 0 };
@@ -861,7 +809,8 @@ unsafe extern "C" {
     /// No caller-side preconditions → `safe fn`.
     safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
     /// 0 = detached/null, 1 = FastTypedArray (GC-movable — caller should dupe;
-    /// no unpin needed), 2 = pinned ArrayBuffer (caller must `unpinArrayBuffer`).
+    /// no unpin needed), 2 = pinned an existing ArrayBuffer (caller must
+    /// `unpinArrayBuffer`), 3 = held a bufferless OversizeTypedArray (nothing to unpin; root it as for 2).
     /// Out-params are `&mut` (same ABI as `*mut`), so the only obligation left
     /// is on the *returned* slice, not the call itself → `safe fn`.
     safe fn JSC__JSValue__borrowBytesForOffThread(

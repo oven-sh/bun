@@ -1,4 +1,3 @@
-use core::fmt;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
@@ -15,7 +14,9 @@ use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{PackageID, Resolution};
 use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
 use bun_semver::{self as Semver, String as SemverString};
-use bun_sys::{self as sys, Dir, Fd, FdDirExt, File};
+#[cfg(windows)]
+use bun_sys::FdDirExt;
+use bun_sys::{self as sys, Dir, Fd, File};
 
 use crate::bun_progress::Node as ProgressNode;
 
@@ -29,11 +30,11 @@ use super::{Command, Options, PackageManager, ProgressStrings, Subcommand};
 
 impl PackageManager {
     /// Borrowed view of the cached cache-directory fd. Returns `Fd` (not `Dir`)
-    /// because the descriptor is owned by `self.cache_directory_` — handing out
+    /// because the descriptor is owned by `self.cache_directory` — handing out
     /// an owning `Dir` would close the cached fd when the caller drops it.
     /// Callers that need `Dir` methods should use `Dir::borrow(&fd)`.
     #[inline]
-    pub fn get_cache_directory(&mut self) -> Fd {
+    pub(crate) fn get_cache_directory(&mut self) -> Fd {
         get_cache_directory(self)
     }
 
@@ -52,87 +53,25 @@ impl PackageManager {
             enable_manifest_cache_control: self.options.enable.manifest_cache_control(),
             cache_directory: enable_manifest_cache.then(|| get_cache_directory(self)),
             timestamp_for_manifest_cache_control: self.timestamp_for_manifest_cache_control,
+            accept_expired: self.options.offline != super::options::OfflineMode::Online,
         }
     }
 
     #[inline]
-    pub fn get_cache_directory_and_abs_path(&mut self) -> (Fd, AbsPath) {
+    pub(crate) fn get_cache_directory_and_abs_path(&mut self) -> (Fd, AbsPath) {
         get_cache_directory_and_abs_path(self)
     }
 
     #[inline]
-    pub fn get_temporary_directory(&mut self) -> &'static TemporaryDirectory {
+    pub(crate) fn get_temporary_directory(&mut self) -> &'static TemporaryDirectory {
         get_temporary_directory(self)
-    }
-
-    #[inline]
-    pub fn cached_git_folder_name(
-        &self,
-        repository: &Repository,
-        patch_hash: Option<u64>,
-    ) -> &'static ZStr {
-        cached_git_folder_name(self, repository, patch_hash)
-    }
-
-    #[inline]
-    pub fn cached_github_folder_name(
-        &self,
-        repository: &Repository,
-        patch_hash: Option<u64>,
-    ) -> &'static ZStr {
-        cached_github_folder_name(self, repository, patch_hash)
-    }
-
-    #[inline]
-    pub fn cached_npm_package_folder_name(
-        &self,
-        name: &[u8],
-        version: Semver::Version,
-        patch_hash: Option<u64>,
-    ) -> &'static ZStr {
-        cached_npm_package_folder_name(self, name, version, patch_hash)
-    }
-
-    #[inline]
-    pub fn cached_tarball_folder_name(
-        &self,
-        url: SemverString,
-        patch_hash: Option<u64>,
-    ) -> &'static ZStr {
-        cached_tarball_folder_name(self, url, patch_hash)
-    }
-
-    #[inline]
-    pub fn save_lockfile(
-        &mut self,
-        load_result: &LoadResult,
-        save_format: LockfileFormat,
-        had_any_diffs: bool,
-        lockfile_before_install: &Lockfile,
-        packages_len_before_install: usize,
-        log_level: LogLevel,
-    ) -> Result<(), AllocError> {
-        save_lockfile(
-            self,
-            load_result,
-            save_format,
-            had_any_diffs,
-            lockfile_before_install,
-            packages_len_before_install,
-            log_level,
-        )
-    }
-
-    #[inline]
-    pub fn write_yarn_lock(&mut self) -> Result<(), Error> {
-        write_yarn_lock(self)
     }
 }
 
 // ───────────────────────────── cache directory ────────────────────────────────
 
 /// Returns a borrowed view (`Fd`) of the lazily-opened cache directory. The
-/// descriptor is owned by `PackageManager::cache_directory_` (closed only if
+/// descriptor is owned by `PackageManager::cache_directory` (closed only if
 /// the singleton is ever dropped). Callers must not close the returned `Fd`;
 /// use `Dir::borrow(&fd)` to call `&self` `Dir` methods on it.
 #[inline]
@@ -145,7 +84,7 @@ pub fn get_cache_directory(this: &mut PackageManager) -> Fd {
 /// Raw-pointer entry for callers that hold a disjoint `&mut this.manifests`
 /// borrow (see `PackageManifestMap::by_name_hash_allow_expired`). Never
 /// materializes a `&mut PackageManager` covering the whole struct — only the
-/// disjoint `cache_directory_`, `cache_directory_path`, `options.enable`, and
+/// disjoint `cache_directory`, `cache_directory_path`, `options.enable`, and
 /// `env` fields are projected, so an outstanding `&mut manifests` derived
 /// from the same provenance root stays valid under Stacked Borrows.
 ///
@@ -153,10 +92,10 @@ pub fn get_cache_directory(this: &mut PackageManager) -> Fd {
 /// `this` must be valid for reads and writes for the call's duration, and the
 /// caller must hold no live borrow that overlaps the fields listed above.
 #[inline]
-pub unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Fd {
-    // SAFETY: caller contract — `cache_directory_` is disjoint from any
+pub(crate) unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Fd {
+    // SAFETY: caller contract — `cache_directory` is disjoint from any
     // borrow the caller holds.
-    if let Some(d) = unsafe { (*this).cache_directory_.as_ref() } {
+    if let Some(d) = unsafe { (*this).cache_directory.as_ref() } {
         return d.fd();
     }
     // SAFETY: caller contract — `this` is valid and no live borrow overlaps
@@ -164,7 +103,7 @@ pub unsafe fn get_cache_directory_raw(this: *mut PackageManager) -> Fd {
     let d = unsafe { ensure_cache_directory(this) };
     let fd = d.fd();
     // SAFETY: as above; single writer.
-    unsafe { (*this).cache_directory_ = Some(d) };
+    unsafe { (*this).cache_directory = Some(d) };
     fd
 }
 
@@ -180,9 +119,7 @@ pub fn get_cache_directory_and_abs_path(this: &mut PackageManager) -> (Fd, AbsPa
 
 #[inline]
 pub fn get_temporary_directory(this: &mut PackageManager) -> &'static TemporaryDirectory {
-    // `bun_core::Once<T, fn(A)->T>` can't
-    // accept a non-`'static` `&mut PackageManager` argument, so use `OnceLock`
-    // directly and split get/set so the closure doesn't need to capture `this`.
+    // Split get/set so the closure doesn't need to capture `this`.
     if let Some(td) = GET_TEMPORARY_DIRECTORY_ONCE.get() {
         return td;
     }
@@ -192,9 +129,10 @@ pub fn get_temporary_directory(this: &mut PackageManager) -> &'static TemporaryD
 }
 
 pub struct TemporaryDirectory {
-    pub handle: Dir,
-    pub path: ZBox,
-    pub name: &'static [u8],
+    pub(crate) handle: Dir,
+    #[cfg(windows)]
+    pub(crate) path: ZBox,
+    pub(crate) name: &'static [u8],
 }
 
 // `TemporaryDirectory` is auto-`Send + Sync`: `Dir` wraps `Fd` (an integer),
@@ -246,7 +184,11 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     let tmpname =
         FileSystem::tmpname(b"hm", &mut tmpbuf, bun_core::fast_random()).expect("unreachable");
 
-    let mut timer = if manager.options.log_level != LogLevel::Silent {
+    let mut timer = if manager.options.log_level != LogLevel::Silent
+        && !bun_core::env_var::feature_flag::BUN_DISABLE_SLOW_FILESYSTEM_WARNING
+            .get()
+            .unwrap_or(false)
+    {
         Some(bun_core::time::Timer::start())
     } else {
         None
@@ -335,12 +277,8 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
         break;
     }
 
-    if tried_dot_tmp {
-        USING_FALLBACK_TEMP_DIR.store(true, core::sync::atomic::Ordering::Relaxed);
-    }
-
-    if manager.options.log_level != LogLevel::Silent {
-        let elapsed = timer.as_mut().unwrap().read();
+    if let Some(timer) = timer.as_mut() {
+        let elapsed = timer.read();
         if elapsed > bun_core::time::NS_PER_MS * 100 {
             let mut path_buf = PathBuffer::uninit();
             let cache_dir_path: &[u8] = match sys::get_fd_path(cache_directory_fd, &mut path_buf) {
@@ -354,7 +292,9 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
         }
     }
 
+    #[cfg(windows)]
     let mut buf = PathBuffer::uninit();
+    #[cfg(windows)]
     let temp_dir_path = match sys::get_fd_path_z(Fd::from_std_dir(&tempdir), &mut buf) {
         Ok(p) => p,
         Err(err) => {
@@ -370,6 +310,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     TemporaryDirectory {
         handle: tempdir,
         name: temp_dir_name,
+        #[cfg(windows)]
         path: ZBox::from_bytes(temp_dir_path.as_bytes()),
     }
 }
@@ -433,14 +374,12 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
 
 pub struct CacheDir {
     pub path: Vec<u8>,
-    pub is_node_modules: bool,
 }
 
 pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Options>) -> CacheDir {
     if let Some(dir) = env.get(b"BUN_INSTALL_CACHE_DIR") {
         return CacheDir {
             path: FileSystem::instance().abs(&[dir]).to_vec(),
-            is_node_modules: false,
         };
     }
 
@@ -448,7 +387,6 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
         if !opts.cache_directory.is_empty() {
             return CacheDir {
                 path: FileSystem::instance().abs(&[opts.cache_directory]).to_vec(),
-                is_node_modules: false,
             };
         }
     }
@@ -457,7 +395,6 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
         let parts: [&[u8]; 3] = [dir, b"install/", b"cache/"];
         return CacheDir {
             path: FileSystem::instance().abs(&parts).to_vec(),
-            is_node_modules: false,
         };
     }
 
@@ -465,7 +402,6 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
         let parts: [&[u8]; 4] = [dir, b".bun/", b"install/", b"cache/"];
         return CacheDir {
             path: FileSystem::instance().abs(&parts).to_vec(),
-            is_node_modules: false,
         };
     }
 
@@ -473,13 +409,11 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
         let parts: [&[u8]; 4] = [dir, b".bun/", b"install/", b"cache/"];
         return CacheDir {
             path: FileSystem::instance().abs(&parts).to_vec(),
-            is_node_modules: false,
         };
     }
 
     let fallback_parts: [&[u8]; 1] = [b"node_modules/.bun-cache"];
     CacheDir {
-        is_node_modules: true,
         path: FileSystem::instance().abs(&fallback_parts).to_vec(),
     }
 }
@@ -487,8 +421,7 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
 // ─────────────────────── cached folder name printers ──────────────────────────
 //
 // PERF: an earlier version used `core::fmt::write` over a `format_args!` of
-// `bun_fmt::s` / `CacheVersionFormatter` / `PatchHashFmt` / `hex_int_*`
-// pieces. In Rust that is *dynamic* dispatch — every `{}` argument is a
+// `bun_fmt::s` / `hex_int_*` pieces. In Rust that is *dynamic* dispatch — every `{}` argument is a
 // `&dyn Display` whose vtable lives in `.data.rel.ro`, and every
 // `core::fmt::write` call drags in `Formatter` padding/alignment machinery
 // plus a panic-format landing pad for the trailing `.expect("unreachable")`.
@@ -548,15 +481,14 @@ impl<'a> ByteCursor<'a> {
         self.put(&bun_fmt::u64_hex_fixed::<LOWER, 16>(v));
     }
 
-    /// `{:x}` — variable-width lower-hex (no leading zeros), as used by
-    /// `PatchHashFmt`.
+    /// `{:x}` — variable-width lower-hex (no leading zeros).
     #[inline(always)]
     fn put_u64_hex_var(&mut self, n: u64) {
         let mut tmp = [0u8; 16];
         self.put(bun_fmt::u64_hex_var_lower(&mut tmp, n));
     }
 
-    /// Inlined body of `CacheVersionFormatter` — `@@@{d}` when set.
+    /// `@@@{d}` when set.
     #[inline(always)]
     fn put_cache_version(&mut self, v: Option<usize>) {
         if let Some(v) = v {
@@ -565,7 +497,7 @@ impl<'a> ByteCursor<'a> {
         }
     }
 
-    /// Inlined body of `PatchHashFmt` — `_patch_hash={x}` when set.
+    /// `_patch_hash={x}` when set.
     #[inline(always)]
     fn put_patch_hash(&mut self, hash: Option<u64>) {
         if let Some(h) = hash {
@@ -823,6 +755,29 @@ pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool
     sys::directory_exists_at(get_cache_directory(this), folder_path).unwrap_or(false)
 }
 
+/// Cache hit for an unpatched entry: npm folders must contain `package.json`, git checkouts the `.bun-tag` written last.
+pub fn is_package_in_cache_at(cache_dir: Fd, folder_path: &ZStr, tag: ResolutionTag) -> bool {
+    let marker: &[u8] = match tag {
+        ResolutionTag::Npm => b"package.json",
+        ResolutionTag::Git => b".bun-tag",
+        _ => return sys::directory_exists_at(cache_dir, folder_path).unwrap_or(false),
+    };
+    let mut buf = PathBuffer::uninit();
+    let marker_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+        &mut buf.0,
+        &[folder_path.as_bytes(), marker],
+    );
+    sys::exists_at(cache_dir, marker_path)
+}
+
+pub fn is_package_in_cache(
+    this: &mut PackageManager,
+    folder_path: &ZStr,
+    tag: ResolutionTag,
+) -> bool {
+    is_package_in_cache_at(get_cache_directory(this), folder_path, tag)
+}
+
 // ─────────────────────────── global directories ───────────────────────────────
 
 pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) -> Result<(), Error> {
@@ -898,11 +853,6 @@ pub fn global_link_dir_path(this: &mut PackageManager) -> &[u8] {
     &this.global_link_dir_path
 }
 
-pub fn global_link_dir_and_path(this: &mut PackageManager) -> (Fd, &[u8]) {
-    let dir = global_link_dir(this);
-    (dir, &this.global_link_dir_path)
-}
-
 // ────────────────────────── cached path resolution ────────────────────────────
 
 pub fn path_for_cached_npm_path<'a>(
@@ -923,9 +873,7 @@ pub fn path_for_cached_npm_path<'a>(
     let cache_path_len = cache_path.as_bytes().len();
     // reshaped for borrowck — drop borrow before mutating buffer
 
-    if cfg!(debug_assertions) {
-        debug_assert!(cache_path_buf[package_name.len()] == b'@');
-    }
+    debug_assert!(cache_path_buf[package_name.len()] == b'@');
 
     cache_path_buf[package_name.len()] = SEP;
 
@@ -990,8 +938,8 @@ pub fn path_for_resolution<'a>(
 pub struct CacheDirAndSubpath<'a> {
     /// Borrowed view: the descriptor is owned by the `PackageManager` singleton
     /// (or is `Fd::cwd()`); callers must not close it.
-    pub cache_dir: Fd,
-    pub cache_dir_subpath: &'a ZStr,
+    pub(crate) cache_dir: Fd,
+    pub(crate) cache_dir_subpath: &'a ZStr,
 }
 
 /// this is copy pasted from `installPackageWithNameAndResolution()`
@@ -1104,7 +1052,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
 
 // ─────────────────────────── package.json / lockfile ──────────────────────────
 
-pub fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
+pub(crate) fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
     let package_json_file = match Dir::cwd().create_file_z(
         z_static(b"package.json\0"),
         sys::CreateFlags {
@@ -1143,7 +1091,7 @@ pub fn save_lockfile(
     lockfile_before_install: &Lockfile,
     packages_len_before_install: usize,
     log_level: LogLevel,
-) -> Result<(), AllocError> {
+) -> Result<bool, AllocError> {
     if this.lockfile.is_empty() {
         if !this.options.dry_run {
             'delete: {
@@ -1166,7 +1114,7 @@ pub fn save_lockfile(
                         // we don't care
                         if err.get_errno() == sys::E::ENOENT {
                             if had_any_diffs {
-                                return Ok(());
+                                return Ok(false);
                             }
                             break 'delete;
                         }
@@ -1174,7 +1122,7 @@ pub fn save_lockfile(
                         if log_level != LogLevel::Silent {
                             Output::err(err, "failed to delete empty lockfile", ());
                         }
-                        return Ok(());
+                        return Ok(false);
                     }
                 }
             }
@@ -1192,7 +1140,7 @@ pub fn save_lockfile(
             }
         }
 
-        return Ok(());
+        return Ok(false);
     }
 
     // `Progress::start`
@@ -1210,7 +1158,7 @@ pub fn save_lockfile(
         this.progress.refresh();
     }
 
-    this.lockfile.save_to_disk(load_result, &this.options);
+    let wrote = this.lockfile.save_to_disk(load_result, &this.options);
 
     // delete binary lockfile if saving text lockfile
     if save_format == LockfileFormat::Text && load_result.loaded_from_binary_lockfile() {
@@ -1249,12 +1197,12 @@ pub fn save_lockfile(
         this.progress.refresh();
         this.progress.root.end();
         this.progress = Default::default();
-    } else if log_level != LogLevel::Silent {
+    } else if wrote && log_level != LogLevel::Silent {
         bun_core::pretty_errorln!("Saved lockfile");
         Output::flush();
     }
 
-    Ok(())
+    Ok(wrote)
 }
 
 pub fn update_lockfile_if_needed(
@@ -1339,42 +1287,10 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
 
 // ────────────────────────────── formatters ────────────────────────────────────
 
-pub struct CacheVersion;
+pub(crate) struct CacheVersion;
 impl CacheVersion {
-    pub const CURRENT: usize = 1;
+    pub(crate) const CURRENT: usize = 1;
 }
-
-#[derive(Default)]
-pub struct CacheVersionFormatter {
-    pub version_number: Option<usize>,
-}
-
-impl fmt::Display for CacheVersionFormatter {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(version) = self.version_number {
-            write!(f, "@@@{}", version)?;
-        }
-        Ok(())
-    }
-}
-
-#[derive(Default)]
-pub struct PatchHashFmt {
-    pub hash: Option<u64>,
-}
-
-impl fmt::Display for PatchHashFmt {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(h) = self.hash {
-            write!(f, "_patch_hash={:x}", h)?;
-        }
-        Ok(())
-    }
-}
-
-// Set once during the (Once-guarded) temp-dir probe; never read today.
-static USING_FALLBACK_TEMP_DIR: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
 
 // ────────────────────────────── helpers ───────────────────────────────────────
 

@@ -25,7 +25,6 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSString.h>
 #include <wtf/NeverDestroyed.h>
-#include "ErrorCode.h"
 namespace WebCore {
 using namespace JSC;
 
@@ -80,19 +79,6 @@ std::optional<BufferEncodingType> parseEnumerationAllowBuffer(JSGlobalObject& le
 template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType>(JSGlobalObject& lexicalGlobalObject, JSValue arg)
 {
     return parseEnumerationAllowBufferInternal<false>(lexicalGlobalObject, arg);
-}
-
-template<bool allowBuffer>
-std::optional<BufferEncodingType> validateBufferEncoding(JSGlobalObject& lexicalGlobalObject, JSValue arg)
-{
-    auto value = parseEnumerationAllowBufferInternal<allowBuffer>(lexicalGlobalObject, arg);
-    if (!value) {
-        auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject.vm());
-        Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_UNKNOWN_ENCODING, "Invalid encoding"_s);
-        return std::nullopt;
-    }
-
-    return value;
 }
 
 template<> std::optional<BufferEncodingType> parseEnumerationFromString<BufferEncodingType>(const String& encoding)
@@ -174,18 +160,6 @@ template<> std::optional<BufferEncodingType> parseEnumerationFromView<BufferEnco
 template<> ASCIILiteral expectedEnumerationValues<BufferEncodingType>()
 {
     return "\"utf8\", \"ucs2\", \"utf16le\", \"latin1\", \"ascii\", \"base64\", \"base64url\", \"hex\""_s;
-}
-
-template<>
-std::optional<BufferEncodingType> validateBufferEncoding<true>(JSGlobalObject& lexicalGlobalObject, JSValue arg)
-{
-    return parseEnumerationAllowBufferInternal<true>(lexicalGlobalObject, arg);
-}
-
-template<>
-std::optional<BufferEncodingType> validateBufferEncoding<false>(JSGlobalObject& lexicalGlobalObject, JSValue arg)
-{
-    return parseEnumerationAllowBufferInternal<false>(lexicalGlobalObject, arg);
 }
 
 } // namespace WebCore

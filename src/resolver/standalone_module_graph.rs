@@ -13,6 +13,10 @@ pub trait StandaloneModuleGraph: Send + Sync {
     /// Look up `name` (already known to be under the standalone virtual root)
     /// and return the embedded file's canonical name slice if present.
     fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&[u8]>;
+    /// Whether the embedded file at `name` carries a serialized ES module record (`module_info`).
+    fn has_module_info(&self, _name: &[u8]) -> bool {
+        false
+    }
     /// Look up `name` (any path — checks the standalone virtual-root prefix
     /// first) and return the embedded file's canonical name slice if present.
     /// Spec `StandaloneModuleGraph.find`.
@@ -27,4 +31,13 @@ pub trait StandaloneModuleGraph: Send + Sync {
     /// so `process.execArgv` (lower-tier `bun_jsc` callers holding only the
     /// trait object) can read it without downcasting to the concrete graph.
     fn compile_exec_argv(&self) -> &[u8];
+    /// Ahead-of-time bytecode for InternalModuleRegistry module `id` embedded by `bun build --compile`, if any.
+    /// A raw pointer because JSC reads (and may patch) it in place; the bytes live for the process.
+    fn builtin_module_bytecode(&self, _id: u32) -> Option<*mut [u8]> {
+        None
+    }
+    /// The one shared bytecode string table (`JSC::EncoderStringTable::serialize`) every chunk's payload references by ordinal; empty when the executable has none.
+    fn bytecode_string_table(&self) -> &'static [u8] {
+        &[]
+    }
 }

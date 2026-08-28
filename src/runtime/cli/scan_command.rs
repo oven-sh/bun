@@ -1,36 +1,13 @@
 use crate::Command;
+use crate::cli::package_manager_command::PackageManagerCommand;
 use bun_core::{Global, Output};
-use bun_install::lockfile::LoadResult;
-use bun_install::package_manager::{self, security_scanner};
-use bun_install::{CommandLineArguments, Lockfile, PackageManager, Subcommand};
+use bun_install::package_manager::security_scanner;
+use bun_install::{Lockfile, PackageManager};
 
-pub struct ScanCommand;
+pub(crate) struct ScanCommand;
 
 impl ScanCommand {
-    pub fn exec(ctx: Command::Context) -> crate::Result<()> {
-        let cli = CommandLineArguments::parse(Subcommand::Scan)?;
-
-        let (manager, original_cwd) = match package_manager::init(&mut *ctx, cli, Subcommand::Scan)
-        {
-            Ok(v) => v,
-            Err(e) => {
-                if e == bun_install::Error::MissingPackageJSON {
-                    Output::err_generic(
-                        "No package.json found. 'bun pm scan' requires a lockfile to analyze dependencies.",
-                        (),
-                    );
-                    bun_core::note!("Run \"bun install\" first to generate a lockfile");
-                    Global::exit(1);
-                }
-                return Err(e.into());
-            }
-        };
-        // `defer ctx.allocator.free(cwd)` — `original_cwd: Box<[u8]>` drops at scope exit.
-
-        Self::exec_with_manager(ctx, manager, &original_cwd)
-    }
-
-    pub fn exec_with_manager(
+    pub(crate) fn exec_with_manager(
         ctx: Command::Context,
         manager: &mut PackageManager,
         original_cwd: &[u8],
@@ -59,31 +36,20 @@ impl ScanCommand {
         // Project disjoint raw pointers from the singleton first; `load_from_cwd` only
         // reads `manager.options`/migration helpers and never re-borrows `manager.lockfile`.
         {
+            let log_level = manager.options.log_level;
             let pm_ptr: *mut PackageManager = manager;
             // SAFETY: `manager.log` is set non-null by `PackageManager::init`.
             let log: &mut bun_ast::Log = unsafe { &mut *(*pm_ptr).log };
             // SAFETY: `lockfile` is the owned `Box<Lockfile>` field on the singleton;
             // no other live `&mut Lockfile` exists at this point.
             let lockfile: &mut Lockfile = unsafe { &mut *(*pm_ptr).lockfile };
-            match lockfile.load_from_cwd::<true>(
+            let load_result = lockfile.load_from_cwd::<true>(
                 // SAFETY: see comment above — `load_from_cwd` accesses `manager`
                 // fields disjoint from `lockfile`.
                 Some(unsafe { &mut *pm_ptr }),
                 log,
-            ) {
-                LoadResult::NotFound => {
-                    Output::err_generic(
-                        "Lockfile not found. Run 'bun install' first to generate a lockfile.",
-                        (),
-                    );
-                    Global::exit(1);
-                }
-                LoadResult::Err(e) => {
-                    Output::err_generic("Error loading lockfile: {s}", (e.value.name(),));
-                    Global::exit(1);
-                }
-                LoadResult::Ok(_) => {}
-            }
+            );
+            PackageManagerCommand::handle_load_lockfile_errors_for(&load_result, log_level, "scan");
         }
 
         let security_scan_results =

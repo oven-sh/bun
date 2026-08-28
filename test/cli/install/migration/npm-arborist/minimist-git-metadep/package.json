@@ -1,0 +1,8 @@
+{
+  "name": "@isaacs/minimist-git-metadep",
+  "description": "meta-depends on a vulnerable version of minimist, via a git reference",
+  "version": "1.0.0",
+  "devDependencies": {
+    "@isaacs/minimist-git-dep": "^1.0.0"
+  }
+}

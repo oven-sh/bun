@@ -51,7 +51,6 @@ public:
 
     void clear();
 
-    void replace(const JSC::Identifier& eventType, EventListener& oldListener, Ref<EventListener>&& newListener, bool once);
     bool add(const JSC::Identifier& eventType, Ref<EventListener>&&, bool once);
     bool prepend(const JSC::Identifier& eventType, Ref<EventListener>&&, bool once);
     bool remove(const JSC::Identifier& eventType, EventListener&);

@@ -27,7 +27,7 @@ use crate::jsc_hooks::{timer_all, timer_all_mut};
 
 impl All {
     #[unsafe(no_mangle)]
-    pub extern "C" fn Bun__Timer__getNextID() -> i32 {
+    pub(crate) extern "C" fn Bun__Timer__getNextID() -> i32 {
         let all = timer_all();
         if all.is_null() {
             return 0;
@@ -46,7 +46,7 @@ impl All {
     // jsc/runtime crate cycle — see DateHeaderTimer.rs). Opaque-token
     // forwarding makes not_unsafe_ptr_arg_deref a false positive.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn update_date_header_timer_if_necessary(
+    pub(crate) fn update_date_header_timer_if_necessary(
         &mut self,
         loop_: &UwsLoop,
         vm: *mut VirtualMachine,
@@ -60,7 +60,7 @@ impl All {
                         vm,
                         // Be careful to avoid adding extra calls to bun.timespec.now()
                         // when it's not needed.
-                        &Timespec::now(TimespecMockMode::AllowMockedTime),
+                        &Timespec::now(TimespecMockMode::ForceRealTime),
                     );
                 }
             }
@@ -75,10 +75,10 @@ impl All {
         global_this: &JSGlobalObject,
         countdown: f64,
         warning_type: TimeoutWarning,
-    ) {
+    ) -> JsResult<()> {
         const SUFFIX: &str = ".\nTimeout duration was set to 1.";
 
-        let mut warning_string = match warning_type {
+        let warning_string = match warning_type {
             TimeoutWarning::TimeoutOverflowWarning => {
                 if countdown.is_finite() {
                     BunString::create_format(format_args!(
@@ -112,37 +112,17 @@ impl All {
                 BunString::ascii(const_format::concatcp!("NaN is not a number", SUFFIX).as_bytes())
             }
         };
-        let mut warning_type_string =
+        let warning_type_string =
             BunString::create_atom_if_possible(<&'static str>::from(warning_type).as_bytes());
-        // Emitting a warning should never interrupt execution, but the emit path calls
-        // into user-observable JS (process.nextTick, getters, etc.) which can throw.
-        // Swallowing error.JSError alone leaves the exception pending on the VM and
-        // trips assertExceptionPresenceMatches in the host-call wrapper, so clear it.
-        let warning_js = match warning_string.transfer_to_js(global_this) {
-            Ok(v) => v,
-            Err(_) => {
-                let _ = global_this.clear_exception_except_termination();
-                return;
-            }
-        };
-        let warning_type_js = match warning_type_string.transfer_to_js(global_this) {
-            Ok(v) => v,
-            Err(_) => {
-                let _ = global_this.clear_exception_except_termination();
-                return;
-            }
-        };
-        if global_this
-            .emit_warning(
-                warning_js,
-                warning_type_js,
-                JSValue::UNDEFINED,
-                JSValue::UNDEFINED,
-            )
-            .is_err()
-        {
-            let _ = global_this.clear_exception_except_termination();
-        }
+        let warning_js = warning_string.into_js(global_this)?;
+        let warning_type_js = warning_type_string.into_js(global_this)?;
+        global_this.emit_warning(
+            warning_js,
+            warning_type_js,
+            JSValue::UNDEFINED,
+            JSValue::UNDEFINED,
+        )?;
+        Ok(())
     }
 
     /// Convert an arbitrary JavaScript value to a number of milliseconds used to schedule a timer.
@@ -175,14 +155,14 @@ impl All {
                                 global_this,
                                 countdown_double,
                                 TimeoutWarning::TimeoutOverflowWarning,
-                            );
+                            )?;
                         } else if countdown_double < 0.0 && !self.warned_negative_number {
                             self.warned_negative_number = true;
                             Self::warn_invalid_countdown(
                                 global_this,
                                 countdown_double,
                                 TimeoutWarning::TimeoutNegativeWarning,
-                            );
+                            )?;
                         } else if !countdown.is_undefined()
                             && countdown.is_number()
                             && countdown_double.is_nan()
@@ -193,7 +173,7 @@ impl All {
                                 global_this,
                                 countdown_double,
                                 TimeoutWarning::TimeoutNaNWarning,
-                            );
+                            )?;
                         }
                     }
                     1
@@ -209,7 +189,7 @@ impl All {
     /// Bun.sleep
     /// a setTimeout that uses a promise instead of a callback, and interprets the countdown
     /// slightly differently for historical reasons (see jsValueToCountdown)
-    pub fn sleep(
+    pub(crate) fn sleep(
         global: &JSGlobalObject,
         promise: JSValue,
         countdown: JSValue,
@@ -233,7 +213,7 @@ impl All {
         ))
     }
 
-    pub fn set_immediate(
+    pub(crate) fn set_immediate(
         global: &JSGlobalObject,
         callback: JSValue,
         arguments: JSValue,
@@ -253,7 +233,7 @@ impl All {
         ))
     }
 
-    pub fn set_timeout(
+    pub(crate) fn set_timeout(
         global: &JSGlobalObject,
         callback: JSValue,
         arguments: JSValue,
@@ -278,7 +258,7 @@ impl All {
         ))
     }
 
-    pub fn set_interval(
+    pub(crate) fn set_interval(
         global: &JSGlobalObject,
         callback: JSValue,
         arguments: JSValue,
@@ -303,6 +283,14 @@ impl All {
         ))
     }
 
+    /// The id a JS number names, whether JSC holds it as an int32 or as a double.
+    fn timer_id_from_number(value: JSValue) -> Option<i32> {
+        let number = value.as_number();
+        // `as` saturates and maps NaN to 0; the round trip rejects those and fractions.
+        let id = number as i32;
+        (f64::from(id) == number).then_some(id)
+    }
+
     fn remove_timer_by_id(&mut self, id: i32) -> Option<*mut TimeoutObject> {
         let value: *mut EventLoopTimer = if let Some(idx) = self.maps.set_timeout.get_index(&id) {
             self.maps.set_timeout.swap_remove_at(idx).1
@@ -316,7 +304,7 @@ impl All {
         Some(unsafe { TimeoutObject::from_timer_ptr(value) })
     }
 
-    pub fn clear_timer(
+    pub(crate) fn clear_timer(
         timer_id_value: JSValue,
         global_this: &JSGlobalObject,
         kind: Kind,
@@ -327,9 +315,14 @@ impl All {
         let all = timer_all_mut();
 
         let timer: Option<*mut TimerObjectInternals> = 'brk: {
-            if timer_id_value.is_int32() {
+            if timer_id_value.is_number() {
+                // Node.js looks the id up by value (`knownTimersById[id]`): a double holding an
+                // integer names the same timer as the int32. Anything else clears nothing.
+                let Some(id) = Self::timer_id_from_number(timer_id_value) else {
+                    return Ok(());
+                };
                 // Immediates don't have numeric IDs in Node.js so we only have to look up timeouts and intervals
-                let Some(t) = all.remove_timer_by_id(timer_id_value.as_int32()) else {
+                let Some(t) = all.remove_timer_by_id(id) else {
                     return Ok(());
                 };
                 // SAFETY: t is a valid TimeoutObject pointer
@@ -338,9 +331,7 @@ impl All {
                 // Primitive string only (JSType::String) — boxed `new String(..)`
                 // must fall through to `from_js` below and be a no-op, matching
                 // Node.js array-index semantics.
-                // RAII deref on drop — `to_bun_string` returns a +1 ref
-                // and there are several early `return Ok(())` exits below.
-                let string = bun_core::OwnedString::new(timer_id_value.to_bun_string(global_this)?);
+                let string = timer_id_value.to_bun_string(global_this)?;
                 // Custom parseInt logic. I've done this because Node.js is very strict about string
                 // parameters to this function: they can't have leading whitespace, trailing
                 // characters, signs, or even leading zeroes. None of the readily-available string
@@ -423,19 +414,19 @@ impl All {
         Ok(())
     }
 
-    pub fn clear_immediate(global_this: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn clear_immediate(global_this: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         Self::clear_timer(id, global_this, Kind::SetImmediate)?;
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn clear_timeout(global_this: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn clear_timeout(global_this: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         Self::clear_timer(id, global_this, Kind::SetTimeout)?;
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn clear_interval(global_this: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
+    pub(crate) fn clear_interval(global_this: &JSGlobalObject, id: JSValue) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         Self::clear_timer(id, global_this, Kind::SetInterval)?;
         Ok(JSValue::UNDEFINED)
@@ -462,7 +453,7 @@ impl DateHeaderTimer {
     /// # Safety
     /// `vm` must point to the live per-thread `VirtualMachine`; its `uws_loop()`
     /// must outlive this call.
-    pub(super) unsafe fn enable(&mut self, vm: *mut VirtualMachine, now: &Timespec) {
+    unsafe fn enable(&mut self, vm: *mut VirtualMachine, now: &Timespec) {
         debug_assert!(self.event_loop_timer.state != EventLoopTimerState::ACTIVE);
 
         // `EventLoopTimer.next` is the lower-tier `ElTimespec` stub
@@ -498,17 +489,6 @@ impl DateHeaderTimer {
 // ════════════════════════════════════════════════════════════════════════════
 // C-ABI export thunks
 // ════════════════════════════════════════════════════════════════════════════
-
-// HOST_EXPORT(Bun__internal_drainTimers, c)
-pub fn drain_timers_export(vm: *mut VirtualMachine) {
-    let all = timer_all();
-    if all.is_null() {
-        return;
-    }
-    // SAFETY: `all` is the live per-thread `All`; `vm` is the erased VM pointer
-    // (mod.rs::All::drain_timers takes `*mut ()`).
-    unsafe { (*all).drain_timers(vm.cast::<()>()) };
-}
 
 // `generate-host-exports.ts`
 // scrapes the `// HOST_EXPORT` markers below and emits the seven thunks into
@@ -570,7 +550,7 @@ pub fn clear_interval_export(global: &JSGlobalObject, id: JSValue) -> JsResult<J
     All::clear_interval(global, id)
 }
 
-pub mod internal_bindings {
+pub(crate) mod internal_bindings {
     use super::*;
 
     /// Node.js has some tests that check whether timers fire at the right time. They check this

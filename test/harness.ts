@@ -20,7 +20,9 @@ export const BREAKING_CHANGES_BUN_1_2 = false;
 export const isMacOS = process.platform === "darwin";
 export const isLinux = process.platform === "linux";
 export const isFreeBSD = process.platform === "freebsd";
-export const isPosix = isMacOS || isLinux || isFreeBSD;
+/** Bun (like Node) reports `"android"` on Android; it is not folded into `isLinux`. */
+export const isAndroid = process.platform === "android";
+export const isPosix = isMacOS || isLinux || isFreeBSD || isAndroid;
 export const isWindows = process.platform === "win32";
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isArm64 = process.arch === "arm64";
@@ -74,6 +76,12 @@ export const bunEnv: NodeJS.Dict<string> = {
   CI: "1",
   BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
   BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+  // The `bun install` "Slow filesystem detected" warning is timing-dependent
+  // and flakes stderr assertions on slow CI filesystems.
+  BUN_DISABLE_SLOW_FILESYSTEM_WARNING: "1",
+  // Tests drive `bun update --interactive` by writing keystrokes to a pipe;
+  // the real command refuses on non-TTY stdin. Bypass that gate under test.
+  BUN_INTERNAL_INTERACTIVE_ASSUME_TTY: "1",
   BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
   BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
   BUN_DEBUG_linkerctx: "0",
@@ -310,11 +318,67 @@ export async function expectMaxObjectTypeCount(
   expect(heapStats().objectTypeCounts[type] ?? 0).toBeLessThanOrEqual(count);
 }
 
+/**
+ * Peak RSS of a bun process that runs `fixture`, whose only stdout line is
+ * the JSON `expected` (the transfer's completion result), and the peak RSS of
+ * an empty bun process to subtract as the baseline. Compared as a delta so
+ * the assertion is about the payload, not the runtime's fixed footprint.
+ */
+export async function runFixtureMaxRSS(fixture: string, expected: unknown) {
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual(expected);
+  expect(exitCode).toBe(0);
+  const maxRSS = proc.resourceUsage()!.maxRSS;
+  // Guard the unit: any bun process peaks well above 1 MiB in bytes but under
+  // 1_048_576 in kB; a failure here means maxRSS regressed to kB and every
+  // bounded-memory assertion below is vacuous.
+  expect(maxRSS).toBeGreaterThan(1024 * 1024);
+  return maxRSS;
+}
+
+/**
+ * Runs `cmd` (a script that prints `{"deltaMiB": number}` as its last stdout
+ * line) under bun with ASAN quarantine disabled, and asserts the delta is below
+ * `release` MiB (or `debug` MiB under ASAN/debug builds).
+ */
+export async function expectRssDeltaBelow(
+  cmd: string[] /* args after bunExe(), e.g. ["--smol", "-e", code] or [fixturePath] */,
+  bounds: { release: number; debug: number },
+): Promise<void> {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...cmd],
+    env: {
+      ...bunEnv,
+      // ASAN's quarantine pins freed blocks and keeps RSS at peak.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+        .filter(Boolean)
+        .join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr.trim()).toBe("");
+  const { deltaMiB } = JSON.parse(stdout.trim().split("\n").at(-1)!);
+  expect(deltaMiB).toBeLessThan(isASAN || isDebug ? bounds.debug : bounds.release);
+  expect(exitCode).toBe(0);
+}
+
+let emptyBunMaxRSS: Promise<number> | undefined;
+export function emptyProcessMaxRSS() {
+  return (emptyBunMaxRSS ??= (async () => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", ""], env: bunEnv });
+    await proc.exited;
+    return proc.resourceUsage()!.maxRSS;
+  })());
+}
+
 // we must ensure that finalizers are run
 // so that the reference-counting logic is exercised
-export function gcTick(trace = false) {
-  trace && console.trace("");
-  // console.trace("hello");
+export function gcTick(traceForDebugging = false) {
+  traceForDebugging && console.trace("");
   gc();
   return Bun.sleep(0);
 }
@@ -451,30 +515,47 @@ export function tempDirWithFilesAnon(filesOrAbsolutePathToCopyFolderFrom: Direct
   return base;
 }
 
-export function bunRun(file: string, env?: Record<string, string> | NodeJS.ProcessEnv, dump = false) {
+export interface BunRunResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  signalCode: NodeJS.Signals | null;
+}
+
+/**
+ * Spawn `bun` with the given file (or argv array) and collect the results.
+ *
+ * When given a string, runs that file with `cwd` set to its directory.
+ * When given an array, the array is passed directly after `bunExe()`.
+ *
+ * Does not throw on non-zero exit. Pair with `expect(result).toSpawn()` to
+ * assert exit code 0 and empty stderr.
+ */
+export async function bunRun(
+  fileOrArgs: string | string[],
+  env?: Record<string, string | undefined> | NodeJS.ProcessEnv,
+): Promise<BunRunResult> {
   var path = require("path");
-  const result = Bun.spawnSync([bunExe(), file], {
-    cwd: path.dirname(file),
+  const args = Array.isArray(fileOrArgs) ? fileOrArgs : [fileOrArgs];
+  const cwd = Array.isArray(fileOrArgs) ? undefined : path.dirname(fileOrArgs);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
     env: {
       ...bunEnv,
       NODE_ENV: undefined,
       ...env,
     },
     stdin: "ignore",
-    stdout: !dump ? "pipe" : "inherit",
-    stderr: !dump ? "pipe" : "inherit",
+    stdout: "pipe",
+    stderr: "pipe",
   });
-  if (!result.success) {
-    if (dump) {
-      throw new Error(
-        "exited with code " + result.exitCode + (result.signalCode ? `signal: ${result.signalCode}` : ""),
-      );
-    }
-    throw new Error(String(result.stderr) + "\n" + String(result.stdout));
-  }
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return {
-    stdout: String(result.stdout ?? "").trim(),
-    stderr: String(result.stderr ?? "").trim(),
+    stdout: stdout.trim(),
+    stderr: stderr.trim(),
+    exitCode,
+    signalCode: proc.signalCode,
   };
 }
 
@@ -658,31 +739,41 @@ if (expect.extend)
         }
       }
     },
-    toRun(cmds: string[], optionalStdout?: string, expectedCode: number = 0) {
-      const result = Bun.spawnSync({
-        cmd: [bunExe(), ...cmds],
-        env: bunEnv,
-        stdio: ["inherit", "pipe", "inherit"],
-      });
+    toSpawn(actual: BunRunResult, expectedStdout?: string) {
+      if (actual == null || typeof actual !== "object" || typeof actual.exitCode !== "number") {
+        throw new TypeError(
+          `expect(received).toSpawn()\n\nExpected a BunRunResult (did you forget to await bunRun()?)`,
+        );
+      }
 
-      if (result.exitCode !== expectedCode) {
+      if (actual.exitCode !== 0) {
         return {
           pass: false,
-          message: () => `Command ${cmds.join(" ")} failed:` + "\n" + result.stdout.toString("utf-8"),
+          message: () =>
+            `Expected process to exit with code 0 but got ${actual.exitCode}` +
+            (actual.signalCode ? ` (signal: ${actual.signalCode})` : "") +
+            `\nstderr: ${actual.stderr}\nstdout: ${actual.stdout}`,
         };
       }
 
-      if (optionalStdout != null) {
+      if (actual.stderr !== "") {
         return {
-          pass: result.stdout.toString("utf-8") === optionalStdout,
+          pass: false,
+          message: () => `Expected stderr to be empty but got:\n${actual.stderr}`,
+        };
+      }
+
+      if (expectedStdout != null && actual.stdout !== expectedStdout) {
+        return {
+          pass: false,
           message: () =>
-            `Expected ${cmds.join(" ")} to output ${optionalStdout} but got ${result.stdout.toString("utf-8")}`,
+            `Expected stdout to be ${JSON.stringify(expectedStdout)} but got ${JSON.stringify(actual.stdout)}`,
         };
       }
 
       return {
         pass: true,
-        message: () => `Expected ${cmds.join(" ")} to fail`,
+        message: () => `Expected process to fail but it exited with code 0\nstdout: ${actual.stdout}`,
       };
     },
     toThrowWithCode(fn: CallableFunction, cls: CallableFunction, code: string) {
@@ -1111,6 +1202,7 @@ export async function describeWithContainer(
     "mysql_plain": 3306,
     "mysql_native_password": 3306,
     "mysql_tls": 3306,
+    "mariadb_plain": 3306,
     "mysql:8": 3306, // Map mysql:8 to mysql_plain
     "mysql:9": 3306, // Map mysql:9 to mysql_native_password
     "redis_plain": 6379,
@@ -1438,7 +1530,7 @@ export async function runBunInstall(
   });
   expect(stdout).toBeDefined();
   expect(stderr).toBeDefined();
-  let err: string = stderrForInstall(await stderr.text());
+  const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
   expect(err).not.toContain("panic:");
   if (!options?.allowErrors) {
     expect(err).not.toContain("error:");
@@ -1449,14 +1541,8 @@ export async function runBunInstall(
   if ((options?.savesLockfile ?? true) && !production && !options?.frozenLockfile) {
     expect(err).toContain("Saved lockfile");
   }
-  let out: string = await stdout.text();
-  expect(await exited).toBe(options?.expectedExitCode ?? 0);
+  expect(exitCode).toBe(options?.expectedExitCode ?? 0);
   return { out, err, exited };
-}
-
-// stderr with `slow filesystem` warning removed
-export function stderrForInstall(err: string) {
-  return err.replace(/warn: Slow filesystem.*/g, "");
 }
 
 export async function runBunUpdate(
@@ -1554,7 +1640,8 @@ interface BunHarnessTestMatchers {
   toBeUTF16String(): void;
   toHaveTestTimedOutAfter(expected: number): void;
   toBeBinaryType(expected: keyof typeof binaryTypes): void;
-  toRun(optionalStdout?: string, expectedCode?: number): void;
+  /** Asserts that a {@link BunRunResult} exited with code 0 and empty stderr. */
+  toSpawn(expectedStdout?: string): void;
   toThrowWithCode(cls: CallableFunction, code: string): void;
   toThrowWithCodeAsync(cls: CallableFunction, code: string): Promise<void>;
 }
@@ -1757,9 +1844,14 @@ export function assertManifestsPopulated(absCachePath: string, registryUrl: stri
   }
 }
 
-// Make it easier to run some node tests.
+// Make it easier to run some node tests. Node's --expose-gc gc() is a
+// synchronous full collection, so force must default to true here: a bare
+// Bun.gc would take the async path, whose conservative scan can land on a
+// stack state that pins dead objects forever under gc()-polling loops.
 Object.defineProperty(globalThis, "gc", {
-  value: Bun.gc,
+  value: function gc(force = true) {
+    return Bun.gc(force);
+  },
   writable: true,
   enumerable: false,
   configurable: true,
@@ -1782,8 +1874,12 @@ export function libcPathForDlopen() {
       }
     case "darwin":
       return "libc.dylib";
+    case "android":
+      return "libc.so";
+    case "freebsd":
+      return "libc.so.7";
     default:
-      throw new Error("TODO");
+      throw new Error(`libcPathForDlopen: unsupported platform ${process.platform}`);
   }
 }
 
@@ -1828,7 +1924,11 @@ export class VerdaccioRegistry {
 
   async start(silent: boolean = true) {
     await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", `${this.port}`], {
+    // Bind the IPv4 loopback explicitly: a bare port makes verdaccio listen on
+    // whatever `localhost` resolves to, which is `::1` on hosts that list it first,
+    // while the install client connects to 127.0.0.1 and every request is refused.
+    const listen = `127.0.0.1:${this.port}`;
+    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", listen], {
       silent,
       // Prefer using a release build of Bun since it's faster
       execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
@@ -1908,11 +2008,12 @@ export class VerdaccioRegistry {
 
   async authBunfig(user: string) {
     const authToken = await this.generateUser(user, user);
-    return `
-        [install]
-        cache = false
-        registry = { url = "http://localhost:${this.port}/", token = "${authToken}" }
-        `;
+    return Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: { url: `http://localhost:${this.port}/`, token: authToken },
+      },
+    });
   }
 
   async createTestDir(
@@ -1931,31 +2032,21 @@ export class VerdaccioRegistry {
   }
 
   async writeBunfig(dir: string, opts: BunfigOpts = {}) {
-    let bunfig = `
-[install]
-cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
-`;
-    if ("saveTextLockfile" in opts) {
-      bunfig += `saveTextLockfile = ${opts.saveTextLockfile}
-`;
-    }
-    if (!opts.npm) {
-      bunfig += `registry = "${this.registryUrl()}"\n`;
-    }
-    if (opts.linker) {
-      bunfig += `linker = "${opts.linker}"\n`;
-    }
-    if (opts.globalStore !== undefined) {
-      bunfig += `globalStore = ${opts.globalStore}\n`;
-    }
-    if (opts.publicHoistPattern) {
-      if (typeof opts.publicHoistPattern === "string") {
-        bunfig += `publicHoistPattern = "${opts.publicHoistPattern}"`;
-      } else {
-        bunfig += `publicHoistPattern = [${opts.publicHoistPattern.map(p => `"${p}"`).join(", ")}]`;
-      }
-    }
-    await write(join(dir, "bunfig.toml"), bunfig);
+    await write(
+      join(dir, "bunfig.toml"),
+      Bun.TOML.stringify({
+        install: {
+          cache: join(dir, ".bun-cache"),
+          saveTextLockfile: opts.saveTextLockfile,
+          registry: opts.npm ? undefined : this.registryUrl(),
+          linker: opts.linker,
+          globalStore: opts.globalStore,
+          publicHoistPattern: opts.publicHoistPattern,
+          hoistPattern: opts.hoistPattern,
+          hoist: opts.hoist,
+        },
+      }),
+    );
   }
 }
 
@@ -1965,6 +2056,8 @@ type BunfigOpts = {
   linker?: "isolated" | "hoisted";
   globalStore?: boolean;
   publicHoistPattern?: string | string[];
+  hoistPattern?: string | string[];
+  hoist?: boolean;
 };
 
 export async function readdirSorted(path: string): Promise<string[]> {
@@ -2062,10 +2155,10 @@ export function exampleSite(protocol: "https" | "http" = "https") {
     ca: protocol === "https" ? tls.cert : undefined,
     server,
     stop() {
-      return server.stop();
+      return server.stop(true);
     },
     async [Symbol.asyncDispose]() {
-      await server.stop();
+      await server.stop(true);
     },
   };
 }
@@ -2182,3 +2275,36 @@ export function getPuppeteerInstallEnv(): Record<string, string> {
   // env to whatever later launches puppeteer so it finds the browser.
   return { PUPPETEER_CACHE_DIR: tmpdirSync("puppeteer-cache") };
 }
+
+const compiledFixtures = new Map<string, string>();
+export function compileFixture(sourcePath: string, options: { flags?: string[] } = {}): string {
+  const cacheKey = sourcePath + "\0" + (options.flags ?? []).join("\0");
+  const cached = compiledFixtures.get(cacheKey);
+  if (cached) return cached;
+
+  const outDir = tmpdirSync("ffi-fixture-");
+  const base = basename(sourcePath).replace(/\.c$/, "");
+  const libExt = isWindows ? "dll" : isMacOS ? "dylib" : "so";
+  const flagsTag = options.flags?.length ? "-" + Bun.hash((options.flags ?? []).join(" ")).toString(36) : "";
+  const outPath = join(outDir, `${base}${flagsTag}.${libExt}`);
+
+  const cc = which("cc") || which("clang") || which("gcc");
+  if (!cc) throw new Error("compileFixture: no C compiler (cc/clang/gcc) found in $PATH");
+
+  const cmd = isWindows
+    ? [cc, sourcePath, "-shared", "-o", outPath, ...(options.flags ?? [])]
+    : [cc, sourcePath, "-shared", "-fPIC", "-O2", "-o", outPath, ...(options.flags ?? [])];
+  const { exitCode, stderr } = spawnSync({ cmd, cwd: outDir, stdout: "inherit", stderr: "pipe", env: bunEnv });
+  if (exitCode !== 0) {
+    throw new Error(
+      `compileFixture: \`${cmd.join(" ")}\` failed (exit ${exitCode}):\n${stderr?.toString?.() ?? stderr}`,
+    );
+  }
+  compiledFixtures.set(cacheKey, outPath);
+  return outPath;
+}
+
+export const rss: () => number =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? (Bun.unsafe.memoryFootprint as () => number)
+    : process.memoryUsage.rss;

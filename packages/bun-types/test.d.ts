@@ -94,7 +94,7 @@ declare module "bun:test" {
     function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
     function setSystemTime(now?: number | Date): void;
     function setTimeout(milliseconds: number): void;
-    function useFakeTimers(options?: { now?: number | Date }): typeof vi;
+    function useFakeTimers(options?: { now?: number | Date } | "modern" | "legacy"): typeof vi;
     function useRealTimers(): typeof vi;
     function advanceTimersByTime(milliseconds: number): typeof vi;
     function advanceTimersToNextTimer(): typeof vi;

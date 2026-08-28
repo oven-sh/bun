@@ -3,6 +3,10 @@
 // bun.String. Both code paths are exercised:
 //   - absolute URL with a hostname (dupe branch)
 //   - relative path with no hostname (append-to-base-url branch)
+const rss =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
 const isASAN = process.execPath.includes("bun-asan");
 using server = Bun.serve({
   port: 0,
@@ -20,7 +24,7 @@ for (let i = 0; i < 64; i++) {
   await server.fetch(longPath);
 }
 Bun.gc(true);
-const before = process.memoryUsage.rss();
+const before = rss();
 
 // Under ASAN the quarantine (default 256 MB) retains freed URL buffers, so the
 // no-leak baseline alone is ~256 MB. Run more iterations so the leak signature
@@ -31,7 +35,7 @@ for (let i = 0; i < iterations; i++) {
   await server.fetch(longPath);
 }
 Bun.gc(true);
-const after = process.memoryUsage.rss();
+const after = rss();
 
 const deltaMB = (after - before) / 1024 / 1024;
 console.log("RSS delta:", deltaMB.toFixed(1), "MB");

@@ -1,0 +1,8 @@
+{
+  "name": "v9-missing-importer-package-json",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ]
+}

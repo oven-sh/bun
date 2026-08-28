@@ -2,6 +2,7 @@ import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir } from "harness";
 import fs from "node:fs";
 import net from "node:net";
+import { join } from "node:path";
 
 // Every case spawns at least one full `bun test --isolate` child; the heavy
 // ones (8-file leak fixtures, 500-2000-export module_info modules) exceed the
@@ -63,6 +64,46 @@ describe.concurrent("bun test --isolate", () => {
     const { stderr, exitCode } = await runTests(String(dir), ["--isolate"]);
     expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
     expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("with --isolate, a file's process.chdir() is undone before the next file", async () => {
+    const cwdFixtures = {
+      "a-chdir.test.ts": `
+        import { test, expect } from "bun:test";
+        import { tmpdir } from "node:os";
+        test("chdir away", () => {
+          process.chdir(tmpdir());
+          expect(process.cwd()).not.toBe(import.meta.dir);
+        });
+      `,
+      "b-cwd.test.ts": `
+        import { test, expect } from "bun:test";
+        import { realpathSync } from "node:fs";
+        test("cwd is the fixture dir", () => {
+          expect(realpathSync(process.cwd())).toBe(realpathSync(import.meta.dir));
+        });
+      `,
+    };
+    const files = ["./a-chdir.test.ts", "./b-cwd.test.ts"];
+
+    using isolated = tempDir("isolate-cwd", cwdFixtures);
+    const serial = await runTests(String(isolated), ["--isolate"], files);
+    expect(normalizeBunSnapshot(serial.stderr, isolated)).toContain("2 pass");
+    expect(serial.exitCode).toBe(0);
+
+    // One worker takes both files (scale-up gated), so the same restore runs
+    // between files inside a --parallel worker.
+    using parallel = tempDir("isolate-cwd-parallel", cwdFixtures);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", ...files],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "60000" },
+      cwd: String(parallel),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr, parallel)).toContain("2 pass");
     expect(exitCode).toBe(0);
   });
 
@@ -261,6 +302,131 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("with --isolate, leaked vi.useFakeTimers() is deactivated before next file", async () => {
+    // Fake-timer state lives in the per-thread timer heap, not the JS global,
+    // so a file that activates vi.useFakeTimers() and never restores real
+    // timers (e.g. an it.failing that throws before useRealTimers()) used to
+    // route the next file's setTimeout into the never-driven fake heap.
+    // net.Server.listen() fires 'listening' via setTimeout, so such a file
+    // would hang until its per-test timeout.
+    const fakeTimerFixtures = {
+      "a-fake.test.ts": `
+        import { test, vi } from "bun:test";
+        test("leak fake timers", () => {
+          vi.useFakeTimers();
+          setTimeout(() => {}, 1000);
+          AbortSignal.timeout(1000);
+          // intentionally never calling vi.useRealTimers()
+        });
+      `,
+      "b-real.test.ts": `
+        import { test, expect } from "bun:test";
+        import { createServer } from "node:net";
+        test("setTimeout fires and net.Server 'listening' emits", async () => {
+          const fired = await new Promise<boolean>(resolve => {
+            setTimeout(() => resolve(true), 1);
+          });
+          expect(fired).toBe(true);
+
+          const server = createServer();
+          const listened = await new Promise<boolean>((resolve, reject) => {
+            server.once("error", reject);
+            server.listen(0, "127.0.0.1", () => resolve(true));
+          });
+          server.close();
+          expect(listened).toBe(true);
+        });
+      `,
+    };
+    const files = ["./a-fake.test.ts", "./b-real.test.ts"];
+
+    using isolated = tempDir("isolate-fake-timers", fakeTimerFixtures);
+    const serial = await runTests(String(isolated), ["--isolate", "--timeout=5000"], files);
+    expect(normalizeBunSnapshot(serial.stderr, isolated)).toContain("2 pass");
+    expect(normalizeBunSnapshot(serial.stderr, isolated)).toContain("0 fail");
+    expect(serial.exitCode).toBe(0);
+
+    // One worker takes both files (scale-up gated) so the same reset runs
+    // between files inside a --parallel worker.
+    using parallel = tempDir("isolate-fake-timers-parallel", fakeTimerFixtures);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--timeout=5000", ...files],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "60000" },
+      cwd: String(parallel),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr, parallel)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, parallel)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("with --isolate, a leaked monitorEventLoopDelay() is disabled before next file", async () => {
+    // The monitor is per thread while its histogram belongs to the file's
+    // global. A file that enables it and never disables it used to leave the
+    // monitor recording into the collected histogram of the retired global for
+    // the rest of the run. Two things are observable from the next file: a
+    // fresh histogram that reuses the freed cell receives the stale records,
+    // and the next file's own enable() is a no-op because the monitor is still
+    // marked enabled, so its histogram never records anything.
+    const monitorFixtures = {
+      "a-monitor.test.ts": `
+        import { test, expect } from "bun:test";
+        import { monitorEventLoopDelay } from "node:perf_hooks";
+        test("leak an enabled monitor", () => {
+          expect(monitorEventLoopDelay({ resolution: 1 }).enable()).toBe(true);
+          // intentionally never calling disable()
+        });
+      `,
+      "b-histogram.test.ts": `
+        import { test, expect } from "bun:test";
+        import { createHistogram, monitorEventLoopDelay } from "node:perf_hooks";
+        test("previous file's monitor is gone and this file's own works", async () => {
+          // Collect file A's histogram first so a decoy below lands in its cell.
+          Bun.gc(true);
+          const decoys = Array.from({ length: 8 }, () => createHistogram());
+
+          const own = monitorEventLoopDelay({ resolution: 1 });
+          expect(own.enable()).toBe(true);
+          const deadline = Date.now() + 5000;
+          while (own.count === 0 && Date.now() < deadline) {
+            // Stall the loop, then yield so the monitor's timer can measure it.
+            const until = Date.now() + 10;
+            while (Date.now() < until) {}
+            await Bun.sleep(2);
+          }
+          own.disable();
+
+          expect(decoys.map(h => h.count)).toEqual(decoys.map(() => 0));
+          expect(own.count).toBeGreaterThan(0);
+        });
+      `,
+    };
+    const files = ["./a-monitor.test.ts", "./b-histogram.test.ts"];
+
+    using isolated = tempDir("isolate-event-loop-delay", monitorFixtures);
+    const serial = await runTests(String(isolated), ["--isolate", "--timeout=10000"], files);
+    expect(normalizeBunSnapshot(serial.stderr, isolated)).toContain("2 pass");
+    expect(normalizeBunSnapshot(serial.stderr, isolated)).toContain("0 fail");
+    expect(serial.exitCode).toBe(0);
+
+    // One worker takes both files (scale-up gated) so the same sweep runs
+    // between files inside a --parallel worker.
+    using parallel = tempDir("isolate-event-loop-delay-parallel", monitorFixtures);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", "--timeout=10000", ...files],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "60000" },
+      cwd: String(parallel),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr, parallel)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, parallel)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
   test("leaked subprocesses are killed for every isolated file, not just the first", async () => {
     using dir = tempDir("isolate-subprocess", {
       "a-spawn.test.ts": `
@@ -311,6 +477,95 @@ describe.concurrent("bun test --isolate", () => {
     expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
     expect(exitCode).toBe(0);
   });
+
+  // Every file spawns a sleeper at module scope (outside any test or hook),
+  // appends its pid to a shared log, and its test asserts that the sleepers
+  // logged by the files that ran before it are gone. The first file's sleeper
+  // is always killed; the third file is what proves the second file's
+  // module-scope sleeper was killed at its isolation swap too. Holds in any
+  // file order, so the same fixture covers a --parallel worker running
+  // several files.
+  const moduleScopeSpawnFile = `
+    import { test, expect } from "bun:test";
+    import fs from "node:fs";
+    const log = process.env.PID_LOG!;
+    const earlier = fs.readFileSync(log, "utf8").split("\\n").filter(Boolean).map(Number);
+    const child = Bun.spawn({ cmd: [process.execPath, "-e", "setInterval(()=>{}, 1e6)"], stdout: "ignore", stderr: "ignore" });
+    fs.appendFileSync(log, child.pid + "\\n");
+    const isAlive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    test("module-scope sleepers of the files before this one were killed", async () => {
+      // The swap sends SIGTERM; the sleeper may still be getting reaped.
+      const deadline = Date.now() + 2_000;
+      while (earlier.some(isAlive) && Date.now() < deadline) await Bun.sleep(10);
+      expect(earlier.filter(isAlive)).toEqual([]);
+    });
+  `;
+
+  test.each([
+    ["--isolate", ["--isolate"], {}],
+    // One worker takes all three files (scale-up gated), so the worker's
+    // per-file swap is what has to kill the second and third sleepers.
+    ["--parallel worker", ["--parallel=2"], { BUN_TEST_PARALLEL_SCALE_MS: "60000" }],
+  ])("module-scope subprocesses are killed for every isolated file, not just the first (%s)", async (_, args, env) => {
+    using dir = tempDir("isolate-module-scope-subprocess", {
+      "a.test.ts": moduleScopeSpawnFile,
+      "b.test.ts": moduleScopeSpawnFile,
+      "c.test.ts": moduleScopeSpawnFile,
+      "pids.txt": "",
+    });
+    const log = join(String(dir), "pids.txt");
+    const loggedPids = () => fs.readFileSync(log, "utf8").split("\n").filter(Boolean);
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...args, "./a.test.ts", "./b.test.ts", "./c.test.ts"],
+        env: { ...bunEnv, ...env, PID_LOG: log },
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+      expect(loggedPids()).toHaveLength(3);
+      expect(exitCode).toBe(0);
+    } finally {
+      // Nothing swaps after the last file of a serial run, so its sleeper is
+      // ours to kill, as is anything an unfixed runner leaked.
+      for (const pid of loggedPids()) {
+        try {
+          process.kill(Number(pid));
+        } catch {}
+      }
+    }
+  });
+});
+
+// --isolate raises JSC's FTL warm-up threshold. JSC options are set once per
+// process, by whoever initializes JSC first. The [install] hoist patterns are
+// regexes, and compiling them while bunfig.toml loaded used to initialize JSC
+// with the default options before `bun test` could pass its own.
+test.concurrent("--isolate: JSC options survive a bunfig.toml with an install hoist pattern", async () => {
+  using dir = tempDir("isolate-bunfig-hoist-pattern", {
+    "bunfig.toml": `[install]\nhoistPattern = ["*eslint*"]\n`,
+    "a.test.ts": `
+      import { test, expect } from "bun:test";
+      test("passes", () => {
+        expect(1).toBe(1);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--isolate", "./a.test.ts"],
+    env: { ...bunEnv, BUN_JSC_dumpOptions: "2" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const threshold = stderr.split("\n").find(line => line.includes("thresholdForFTLOptimizeAfterWarmUp="));
+  expect(threshold?.trim()).toBe("thresholdForFTLOptimizeAfterWarmUp=1000000");
+  expect(normalizeBunSnapshot(stderr, dir)).toContain("1 pass");
+  expect(exitCode).toBe(0);
 });
 
 // The eviction test below proves the SourceProvider cache is active (control:
@@ -532,20 +787,22 @@ test.concurrent("--isolate: cached SourceProvider's module_info rebuilds correct
   // export entries. Under --isolate, file b hits the SourceProvider cache and
   // rebuilds JSModuleRecord from the cached module_info (Bun__analyzeTranspiledModule)
   // instead of re-parsing. If the record is wrong, named imports would be
-  // undefined or the count would mismatch.
+  // undefined or the count would mismatch. The names are long enough that the
+  // record's string table passes 64 KB and stores its offsets as u32.
   const N = 2000;
+  const P = Buffer.alloc(40, "p").toString();
   let big = "";
-  for (let i = 0; i < N; i++) big += `export function f${i}(x){return x+${i};}\n`;
+  for (let i = 0; i < N; i++) big += `export function f${i}${P}(x){return x+${i};}\n`;
   big += `export const COUNT = ${N};\n`;
 
   const tBody = (name: string) => `
     import { test, expect } from "bun:test";
-    import { f0, f1, f${N - 1}, COUNT } from "./big";
+    import { f0${P}, f1${P}, f${N - 1}${P}, COUNT } from "./big";
     import * as all from "./big";
     test("${name}", () => {
-      expect(f0(1)).toBe(1);
-      expect(f1(1)).toBe(2);
-      expect(f${N - 1}(1)).toBe(${N});
+      expect(f0${P}(1)).toBe(1);
+      expect(f1${P}(1)).toBe(2);
+      expect(f${N - 1}${P}(1)).toBe(${N});
       expect(COUNT).toBe(${N});
       expect(Object.keys(all).length).toBe(${N + 1});
     });
@@ -677,6 +934,18 @@ test.concurrent("--isolate: leaked AbortSignal.timeout does not fire in next fil
 // - setTimeout/setInterval: generation-stale timers only self-cancelled when
 //   they FIRED, so a module-scope long timer held a Strong on its wrapper
 //   until the deadline (effectively forever for hour-scale timers).
+// - AbortSignal.timeout with an abort listener: the swap unlinked the native
+//   timer but left the signal believing it still had one, and the GC keeps a
+//   pending timeout signal's wrapper (hence its listener, hence the global)
+//   alive for as long as the signal says so. Same story when the timer sat in
+//   the fake-timer heap of a file that never called useRealTimers().
+// - mock()/spyOn()/mock.module()/Bun.plugin: the global's own mock-tracking
+//   sets and plugin callback lists were held through Strong handles, so any
+//   file that created a mock or registered a plugin formed an uncollectable
+//   root -> realm object -> global cycle (#31771's linear growth in practice).
+// - monitorEventLoopDelay().enable(): the per-thread monitor holds the file's
+//   histogram. It is disabled at the swap and only ever holds the histogram
+//   weakly, so an enabled monitor must not keep the file's global alive.
 //
 // Each fixture runs 8 isolated files that leak one handle apiece, forces a
 // full GC, and counts live GlobalObject cells. Pinned globals accumulate
@@ -747,6 +1016,70 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
       makeLeakFixture(`
         setTimeout(() => {}, 3_600_000);
         setInterval(() => {}, 3_600_000);
+      `),
+    );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
+  test("AbortSignal.timeout with an abort listener left pending", async () => {
+    using dir = tempDir(
+      "isolate-leak-abort-timeout",
+      makeLeakFixture(`
+        AbortSignal.timeout(3_600_000).addEventListener("abort", () => {});
+      `),
+    );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
+  test("AbortSignal.timeout with an abort listener left pending in a fake-timer heap", async () => {
+    using dir = tempDir(
+      "isolate-leak-abort-timeout-fake",
+      makeLeakFixture(`
+        import { vi } from "bun:test";
+        vi.useFakeTimers();
+        AbortSignal.timeout(3_600_000).addEventListener("abort", () => {});
+      `),
+    );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
+  test("mock(), spyOn() and mock.module() left registered", async () => {
+    using dir = tempDir(
+      "isolate-leak-mocks",
+      makeLeakFixture(`
+        import { mock, spyOn } from "bun:test";
+        const fn = mock(() => 1);
+        fn();
+        spyOn(console, "warn");
+        mock.module("./mocked-dep", () => ({ default: 1 }));
+      `),
+    );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
+  test("Bun.plugin left registered", async () => {
+    using dir = tempDir(
+      "isolate-leak-plugin",
+      makeLeakFixture(`
+        Bun.plugin({
+          name: "leak",
+          setup(build) {
+            build.onLoad({ filter: /never-matches/ }, () => ({ contents: "", loader: "js" }));
+            build.onResolve({ filter: /never-matches/ }, () => null);
+            build.module("leaked-virtual-module", () => ({ exports: {}, loader: "object" }));
+          },
+        });
+      `),
+    );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
+  test("monitorEventLoopDelay() left enabled", async () => {
+    using dir = tempDir(
+      "isolate-leak-event-loop-delay",
+      makeLeakFixture(`
+        import { monitorEventLoopDelay } from "node:perf_hooks";
+        monitorEventLoopDelay({ resolution: 1 }).enable();
       `),
     );
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);

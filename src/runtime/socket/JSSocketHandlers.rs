@@ -86,7 +86,7 @@ macro_rules! callback_getters {
 impl JSSocketHandlers {
     /// Allocates the cell with `callbacks` stored via the barrier-free
     /// early-init path. `JSValue::ZERO` entries are stored as `undefined`.
-    pub fn create(global: &JSGlobalObject, callbacks: &[JSValue; CALLBACK_COUNT]) -> Self {
+    pub(crate) fn create(global: &JSGlobalObject, callbacks: &[JSValue; CALLBACK_COUNT]) -> Self {
         Self(Bun__SocketHandlers__create(global, callbacks.as_ptr()))
     }
 
@@ -105,7 +105,7 @@ impl JSSocketHandlers {
     /// — that is not a guarantee the compiler owes us.
     #[inline]
     #[must_use = "the cell is collectable as soon as this drops"]
-    pub fn root(self, global: &JSGlobalObject) -> Strong {
+    pub(crate) fn root(self, global: &JSGlobalObject) -> Strong {
         Strong::create(self.0, global)
     }
 
@@ -128,20 +128,24 @@ impl JSSocketHandlers {
     /// Replaces every callback on a live cell. `JSValue::ZERO` entries clear
     /// the field, so `socket.reload()` also drops callbacks the new options
     /// omit. One write barrier for the whole batch.
-    pub fn set_callbacks(self, global: &JSGlobalObject, callbacks: &[JSValue; CALLBACK_COUNT]) {
+    pub(crate) fn set_callbacks(
+        self,
+        global: &JSGlobalObject,
+        callbacks: &[JSValue; CALLBACK_COUNT],
+    ) {
         Bun__SocketHandlers__setCallbacks(global, self.0, callbacks.as_ptr());
     }
 
     /// Drops the `open` callback: a client socket clears it after its first TLS
     /// handshake so renegotiations do not fire it again.
     #[inline]
-    pub fn clear_on_open(self, global: &JSGlobalObject) {
+    pub(crate) fn clear_on_open(self, global: &JSGlobalObject) {
         self.set(global, Field::Open, JSValue::ZERO);
     }
 
     /// Stores the pending `Bun.connect` promise.
     #[inline]
-    pub fn set_promise(self, global: &JSGlobalObject, promise: JSValue) {
+    pub(crate) fn set_promise(self, global: &JSGlobalObject, promise: JSValue) {
         self.set(global, Field::Promise, promise);
     }
 
@@ -149,7 +153,7 @@ impl JSSocketHandlers {
     /// settled promise — which resolves to the socket's JS wrapper, the object
     /// holding this very cell — is not kept alive by the connection it
     /// completed.
-    pub fn take_promise(self, global: &JSGlobalObject) -> Option<JSValue> {
+    pub(crate) fn take_promise(self, global: &JSGlobalObject) -> Option<JSValue> {
         let promise = self.get(Field::Promise);
         if promise.is_empty() {
             return None;

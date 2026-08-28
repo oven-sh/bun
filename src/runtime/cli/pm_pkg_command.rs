@@ -494,7 +494,7 @@ impl PmPkgCommand {
             return Err(crate::Error::NotFound);
         }
 
-        let mut parts = key.split(|b| *b == b'.').filter(|s| !s.is_empty());
+        let mut parts = strings::tokenize(key, b".");
         let mut current = root;
 
         while let Some(part) = parts.next() {
@@ -575,7 +575,7 @@ impl PmPkgCommand {
     fn parse_key_path(key: &[u8]) -> Result<Vec<&[u8]>, Error> {
         let mut path_parts: Vec<&[u8]> = Vec::new();
 
-        let mut parts = key.split(|b| *b == b'.').filter(|s| !s.is_empty());
+        let mut parts = strings::tokenize(key, b".");
 
         while let Some(part) = parts.next() {
             if let Some(first_bracket) = strings::index_of(part, b"[") {
@@ -725,7 +725,7 @@ impl PmPkgCommand {
         }
 
         let mut path_parts: Vec<&[u8]> = Vec::new();
-        for part in key.split(|b| *b == b'.').filter(|s| !s.is_empty()) {
+        for part in strings::tokenize(key, b".") {
             path_parts.push(part);
         }
 

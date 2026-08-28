@@ -1,8 +1,8 @@
-//! This file is mostly the API schema but with all the options normalized.
-//! Normalization is necessary because most fields in the API schema are optional
+//! `TransformOptions` (CLI/bunfig input, mostly optional fields) normalized
+//! into the concrete `BundleOptions` the bundler and runtime consume.
 
 use bun_analytics as analytics;
-use bun_collections::{MultiArrayList, StringArrayHashMap, StringHashMap};
+use bun_collections::{StringArrayHashMap, StringHashMap};
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_dotenv as DotEnv;
@@ -21,6 +21,7 @@ pub use defines::Define;
 // traits into scope so the associated-fn call syntax below resolves.
 use crate::defines::{DefineDataExt as _, DefineExt as _};
 pub use bun_options_types::global_cache::GlobalCache;
+pub use bun_options_types::offline_mode::OfflineMode;
 
 // Canonical alias lives in the resolver.
 pub use bun_resolver::package_json::ConditionsMap;
@@ -30,8 +31,6 @@ pub type Dir = bun_sys::Dir;
 /// `bun_ast::LoaderHashTable` so the resolver and
 /// bundler share one nominal map type (PORTING.md crate-tier rule).
 pub(crate) use bun_ast::LoaderHashTable;
-/// Per-[`Loader`] static byte-string map (e.g. the stdin synthetic file names).
-pub type LoaderEnumMap = EnumMap<Loader, &'static [u8]>;
 
 /// `bun.http.MimeType` lives in `bun_http_types` (lower tier), not `bun_http`.
 mod bun_http {
@@ -40,25 +39,7 @@ mod bun_http {
 /// `bun.StringSet` (re-exported for `BundleOptions.bundler_feature_flags`).
 pub use bun_collections::StringSet;
 
-/// TYPE_ONLY moved to top of module so
-/// `entry_points.rs` (and the inline `options` mod) can resolve it before the
-/// gated `Framework` impl block below.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ClientCssInJs {
-    #[default]
-    AutoOnImportCss,
-    Facade,
-    FacadeOnImportCss,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WriteDestination {
-    Stdout,
-    Disk,
-    // eventually: wasm
-}
-
-pub fn validate_path(
+pub(crate) fn validate_path(
     log: &mut bun_ast::Log,
     _fs: &mut Fs::Implementation,
     cwd: &[u8],
@@ -107,7 +88,7 @@ pub use bun_resolver::options::{ExternalModules, WildcardPattern};
 /// Free fn (not an inherent
 /// method) because `ExternalModules` is now a foreign type and Rust forbids
 /// inherent impls across crates (E0116).
-pub fn is_node_builtin(str: &[u8]) -> bool {
+pub(crate) fn is_node_builtin(str: &[u8]) -> bool {
     bun_resolve_builtins::Alias::has(str, bun_ast::Target::Node, Default::default())
 }
 
@@ -130,7 +111,7 @@ fn default_wildcard_patterns() -> Vec<WildcardPattern> {
 /// Free fn for the same orphan-rule
 /// reason as [`is_node_builtin`]; stays at bundler tier because it needs
 /// `Fs`/`logger`/`NODE_BUILTIN_PATTERNS`.
-pub fn init_external_modules(
+pub(crate) fn init_external_modules(
     fs: &mut Fs::Implementation,
     cwd: &[u8],
     externals: &[&[u8]],
@@ -225,7 +206,7 @@ pub(crate) use bun_ast::Target;
 // module-level name for callers that pre-date it.
 pub use bun_ast::target::TARGET_MAP;
 
-pub const TARGET_MAIN_FIELD_NAMES: [&[u8]; 4] = [
+pub(crate) const TARGET_MAIN_FIELD_NAMES: [&[u8]; 4] = [
     b"browser",
     b"module",
     b"main",
@@ -363,29 +344,6 @@ pub trait LoaderExt: Copy {
     fn to_mime_type(self, paths: &[&[u8]]) -> bun_http_types::MimeType::MimeType;
     fn from_mime_type(mime_type: bun_http::MimeType) -> Loader;
 
-    // `pub type Map` hoisted to module-level `LoaderEnumMap`.
-
-    fn stdin_name_map() -> LoaderEnumMap {
-        let mut map: LoaderEnumMap = EnumMap::from_fn(|_| b"" as &[u8]);
-        map[Loader::Jsx] = b"input.jsx";
-        map[Loader::Js] = b"input.js";
-        map[Loader::Ts] = b"input.ts";
-        map[Loader::Tsx] = b"input.tsx";
-        map[Loader::Css] = b"input.css";
-        map[Loader::File] = b"input";
-        map[Loader::Json] = b"input.json";
-        map[Loader::Toml] = b"input.toml";
-        map[Loader::Yaml] = b"input.yaml";
-        map[Loader::Json5] = b"input.json5";
-        map[Loader::Wasm] = b"input.wasm";
-        map[Loader::Napi] = b"input.node";
-        map[Loader::Text] = b"input.txt";
-        map[Loader::Bunsh] = b"input.sh";
-        map[Loader::Html] = b"input.html";
-        map[Loader::Md] = b"input.md";
-        map
-    }
-
     // `fromJS` lives in `bun_bundler_jsc::options_jsc::loader_from_js`
     // (PORTING.md "*_jsc alias" rule).
 
@@ -393,15 +351,6 @@ pub trait LoaderExt: Copy {
     // moved to inherent `impl Loader` in `bun_options_types::bundle_enums` so
     // cross-crate callers (bun_jsc / bun_runtime) resolve them without a trait
     // import.
-
-    fn for_file_name(filename: &[u8], obj: &LoaderHashTable) -> Option<Loader> {
-        let ext = bun_paths::extension(filename);
-        if ext.is_empty() || (ext.len() == 1 && ext[0] == b'.') {
-            return None;
-        }
-
-        obj.get(ext).copied()
-    }
 }
 
 impl LoaderExt for Loader {
@@ -410,9 +359,12 @@ impl LoaderExt for Loader {
         match self {
             Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx => MimeType::JAVASCRIPT,
             Loader::Css => MimeType::CSS,
-            Loader::Toml | Loader::Yaml | Loader::Json | Loader::Jsonc | Loader::Json5 => {
-                MimeType::JSON
-            }
+            Loader::Toml
+            | Loader::Yaml
+            | Loader::Json
+            | Loader::Jsonc
+            | Loader::Json5
+            | Loader::Xml => MimeType::JSON,
             Loader::Wasm => MimeType::WASM,
             Loader::Html | Loader::Md => MimeType::HTML,
             _ => {
@@ -471,7 +423,7 @@ pub type OpaqueBlob = *mut ();
 
 pub use crate::{VmLoaderCtx, VmLoaderCtxKind};
 
-pub fn normalize_specifier<'a>(
+pub(crate) fn normalize_specifier<'a>(
     jsc_vm: &VmLoaderCtx,
     slice_: &'a [u8],
 ) -> (&'a [u8], &'a [u8], &'a [u8]) {
@@ -568,7 +520,7 @@ pub fn get_loader_and_virtual_source<'a>(
 
             // "file:" loader makes no sense for blobs
             // so let's default to tsx.
-            if let Some(filename) = jsc_vm.blob_file_name(blob) {
+            if let Some(filename) = jsc_vm.blob_store_path(blob) {
                 let current_path = Fs::Path::init(filename);
 
                 // Only treat it as a file if is a Bun.file()
@@ -651,6 +603,7 @@ const DEFAULT_LOADERS_POSIX: &[(&[u8], Loader)] = &[
     (b".html", Loader::Html),
     (b".jsonc", Loader::Jsonc),
     (b".json5", Loader::Json5),
+    (b".xml", Loader::Xml),
     (b".md", Loader::Md),
     (b".markdown", Loader::Md),
 ];
@@ -662,7 +615,7 @@ const DEFAULT_LOADERS_WIN32_EXTRA: &[(&[u8], Loader)] = &[(b".sh", Loader::Bunsh
 ///
 /// PERF: deliberately not a hashed map (the old `phf::Map` SipHash-ed the full
 /// key, probed a displacement table, and finished with a memcmp on every
-/// lookup). With only 22 keys bucketing into 5 distinct lengths
+/// lookup). With only 23 keys bucketing into 5 distinct lengths
 /// (3/4/5/6/9, all `.`-prefixed), a length-gated `match` is cheaper: one
 /// `usize` compare rejects every wrong-length probe, and within each bucket
 /// rustc lowers the fixed-width byte-slice arms to single u32/u64 compares (no
@@ -702,6 +655,7 @@ impl DefaultLoaders {
                 b".cts" => Some(&Loader::Ts),
                 b".css" => Some(&Loader::Css),
                 b".yml" => Some(&Loader::Yaml),
+                b".xml" => Some(&Loader::Xml),
                 b".txt" => Some(&Loader::Text),
                 _ => None,
             },
@@ -761,10 +715,10 @@ fn default_loaders_match_table() {
 
 // https://webpack.js.org/guides/package-exports/#reference-syntax
 pub struct ESMConditions {
-    pub default: ConditionsMap,
-    pub import: ConditionsMap,
-    pub require: ConditionsMap,
-    pub style: ConditionsMap,
+    pub(crate) default: ConditionsMap,
+    pub(crate) import: ConditionsMap,
+    pub(crate) require: ConditionsMap,
+    pub(crate) style: ConditionsMap,
 }
 
 impl ESMConditions {
@@ -851,14 +805,6 @@ impl ESMConditions {
         }
         Ok(())
     }
-
-    pub fn append(&mut self, condition: &[u8]) -> Result<(), bun_alloc::AllocError> {
-        self.default.insert(condition, ());
-        self.import.insert(condition, ());
-        self.require.insert(condition, ());
-        self.style.insert(condition, ());
-        Ok(())
-    }
 }
 
 // D042: canonical `jsx::{Runtime, ImportSource, Pragma, RuntimeDevelopmentPair,
@@ -870,21 +816,17 @@ impl ESMConditions {
 pub use bun_options_types::jsx;
 pub use jsx as JSX;
 
-pub mod default_user_defines {
+pub(crate) mod default_user_defines {
     // This must be globally scoped so it doesn't disappear
-    pub mod node_env {
-        pub const KEY: &[u8] = b"process.env.NODE_ENV";
-        pub const VALUE: &[u8] = b"\"development\"";
+    pub(crate) mod node_env {
+        pub(crate) const KEY: &[u8] = b"process.env.NODE_ENV";
     }
-    pub mod process_browser_define {
-        pub const KEY: &[u8] = b"process.browser";
-        pub const VALUE: [&[u8]; 2] = [b"false", b"true"];
+    pub(crate) mod process_browser_define {
+        pub(crate) const KEY: &[u8] = b"process.browser";
     }
 }
 
-pub use default_user_defines as DefaultUserDefines;
-
-pub fn defines_from_transform_options(
+pub(crate) fn defines_from_transform_options(
     log: &mut bun_ast::Log,
     // PERF: borrowed, not owned — the caller (`load_defines`) holds
     // `transform_options` behind an `Arc`, so taking the `StringMap` by value
@@ -924,9 +866,7 @@ pub fn defines_from_transform_options(
             break 'load_env;
         };
 
-        if cfg!(debug_assertions) {
-            debug_assert!(framework.behavior != api::DotEnvBehavior::None);
-        }
+        debug_assert!(framework.behavior != api::DotEnvBehavior::None);
 
         behavior = framework.behavior;
         if behavior == api::DotEnvBehavior::LoadAllWithoutInlining
@@ -935,18 +875,9 @@ pub fn defines_from_transform_options(
             break 'load_env;
         }
 
-        // flatten `api::StringMap` into parallel borrowed slices.
-        // `api::DotEnvBehavior` is the same type as `DotEnv::DotEnvBehavior`
-        // (re-export), so no conversion needed.
-        let api_defaults = framework.to_api().defaults;
-        let default_keys: Vec<&[u8]> = api_defaults.keys.iter().map(|k| k.as_ref()).collect();
-        let default_values: Vec<&[u8]> = api_defaults.values.iter().map(|v| v.as_ref()).collect();
         defines::copy_env_for_define(
             env,
-            &mut user_defines,
             &mut environment_defines,
-            &default_keys,
-            &default_values,
             behavior,
             &framework.prefix,
             bump,
@@ -1036,8 +967,8 @@ const DEFAULT_LOADER_EXT_BROWSER: &[&[u8]] = &[b".html"];
 
 #[derive(Debug, Clone)]
 pub struct ResolveFileExtensions {
-    pub node_modules: ResolveFileExtensionsGroup,
-    pub default: ResolveFileExtensionsGroup,
+    pub(crate) node_modules: ResolveFileExtensionsGroup,
+    pub(crate) default: ResolveFileExtensionsGroup,
 }
 
 impl Default for ResolveFileExtensions {
@@ -1054,41 +985,19 @@ impl Default for ResolveFileExtensions {
     }
 }
 
-impl ResolveFileExtensions {
-    #[inline]
-    fn group(&self, is_node_modules: bool) -> &ResolveFileExtensionsGroup {
-        if is_node_modules {
-            &self.node_modules
-        } else {
-            &self.default
-        }
-    }
-
-    pub fn kind(&self, kind_: bun_ast::ImportKind, is_node_modules: bool) -> &[Box<[u8]>] {
-        use bun_ast::ImportKind;
-        match kind_ {
-            ImportKind::Stmt
-            | ImportKind::EntryPointBuild
-            | ImportKind::EntryPointRun
-            | ImportKind::Dynamic => &self.group(is_node_modules).esm,
-            _ => &self.group(is_node_modules).default,
-        }
-    }
-}
-
 /// Convert a static `&[&[u8]]` default into an owned `Box<[Box<[u8]>]>`.
 /// We own them so
 /// user-provided lists (e.g. `transform.extension_order`) can be stored without
 /// `Box::leak` (PORTING.md §Forbidden patterns).
 #[inline]
-pub(crate) fn owned_string_list(s: &[&[u8]]) -> Box<[Box<[u8]>]> {
+fn owned_string_list(s: &[&[u8]]) -> Box<[Box<[u8]>]> {
     s.iter().map(|b| Box::<[u8]>::from(*b)).collect()
 }
 
 #[derive(Debug, Clone)]
 pub struct ResolveFileExtensionsGroup {
-    pub esm: Box<[Box<[u8]>]>,
-    pub default: Box<[Box<[u8]>]>,
+    pub(crate) esm: Box<[Box<[u8]>]>,
+    pub(crate) default: Box<[Box<[u8]>]>,
 }
 
 impl Default for ResolveFileExtensionsGroup {
@@ -1189,7 +1098,7 @@ impl SourceMapOption {
         }
     }
 
-    pub fn has_external_files(self) -> bool {
+    pub(crate) fn has_external_files(self) -> bool {
         matches!(self, SourceMapOption::Linked | SourceMapOption::External)
     }
 }
@@ -1204,6 +1113,38 @@ bun_core::comptime_string_map! {
     };
 }
 
+/// `--compile --bytecode`: the executable whose internal JS modules (node:fs, ...) get ahead-of-time bytecode. Their
+/// sources differ per platform, so for another platform they are read out of that bun executable's builtins section
+/// (`bun_exe_format::builtins`); `None` is a target executable without one (an older bun), which then gets no builtin
+/// bytecode.
+#[derive(Clone, Default)]
+pub enum CompileTargetBuiltins {
+    #[default]
+    Host,
+    Target(std::sync::Arc<[u8]>),
+    None,
+}
+
+/// What `--compile` resolved to for this bundle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CompileMode {
+    #[default]
+    None,
+    Executable,
+    StandaloneHtml,
+}
+
+impl CompileMode {
+    #[inline]
+    pub const fn is_executable(self) -> bool {
+        matches!(self, CompileMode::Executable)
+    }
+    #[inline]
+    pub const fn is_standalone_html(self) -> bool {
+        matches!(self, CompileMode::StandaloneHtml)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PackagesOption {
     Bundle,
@@ -1211,7 +1152,7 @@ pub enum PackagesOption {
 }
 
 impl PackagesOption {
-    pub fn from_api(packages: Option<api::PackagesMode>) -> PackagesOption {
+    pub(crate) fn from_api(packages: Option<api::PackagesMode>) -> PackagesOption {
         match packages.unwrap_or(api::PackagesMode::Bundle) {
             api::PackagesMode::External => PackagesOption::External,
             api::PackagesMode::Bundle => PackagesOption::Bundle,
@@ -1234,7 +1175,6 @@ bun_core::comptime_string_map! {
     };
 }
 
-/// BundleOptions is used when ResolveMode is not set to "disable".
 /// BundleOptions is effectively webpack + babel
 pub struct BundleOptions<'a> {
     pub footer: Cow<'static, [u8]>,
@@ -1248,77 +1188,73 @@ pub struct BundleOptions<'a> {
     /// `Runtime::Features::init_bundler_feature_flags` (freed on Drop).
     pub bundler_feature_flags: Option<Box<StringSet>>,
     pub loaders: LoaderHashTable,
-    pub resolve_dir: Cow<'static, [u8]>,
     pub jsx: jsx::Pragma,
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
+    pub use_define_for_class_fields: bool,
     pub auto_import_jsx: bool,
     pub allow_runtime: bool,
 
     pub trim_unused_imports: Option<bool>,
-    pub mark_builtins_as_external: bool,
+    pub(crate) mark_builtins_as_external: bool,
     pub server_components: bool,
     pub hot_module_reloading: bool,
     pub react_fast_refresh: bool,
     pub react_compiler: bun_ast::runtime::ReactCompilerMode,
     pub react_compiler_parse_test_pragmas: bool,
-    pub inject: Option<Box<[Box<[u8]>]>>,
+    pub(crate) inject: Option<Box<[Box<[u8]>]>>,
     // `bun_url::URL<'a>` borrows its input string; the owned variant keeps the
     // struct self-contained.
-    pub origin: bun_url::OwnedURL,
-    pub output_dir_handle: Option<Dir>,
+    pub(crate) origin: bun_url::OwnedURL,
+    pub(crate) output_dir_handle: Option<Dir>,
 
     pub output_dir: Box<[u8]>,
     pub root_dir: Box<[u8]>,
-    pub node_modules_bundle_url: Cow<'static, [u8]>,
-    pub node_modules_bundle_pretty_path: Cow<'static, [u8]>,
 
-    pub write: bool,
-    pub preserve_symlinks: bool,
-    pub preserve_extensions: bool,
+    pub(crate) write: bool,
+    pub(crate) preserve_symlinks: bool,
+    pub(crate) preserve_extensions: bool,
     pub production: bool,
 
     // only used by bundle_v2
     pub output_format: Format,
 
-    pub append_package_version_in_query_string: bool,
-
-    pub tsconfig_override: Option<Box<[u8]>>,
+    pub(crate) tsconfig_override: Option<Box<[u8]>>,
     pub target: Target,
-    pub main_fields: Box<[Box<[u8]>]>,
+    pub(crate) main_fields: Box<[Box<[u8]>]>,
     /// TODO: remove this in favor accessing bundler.log
     /// raw `*mut` (not `&'a mut`) — the same `*Log` is aliased
     /// into `Transpiler.log` / `Resolver.log` / `Linker.log`. A stored
     /// `&'a mut` here would assert uniqueness for `'a` and make every access
     /// through those sibling raw pointers UB under stacked borrows.
     pub log: *mut bun_ast::Log,
-    pub external: ExternalModules,
+    pub(crate) external: ExternalModules,
     pub allow_unresolved: AllowUnresolved,
     pub entry_points: Box<[Box<[u8]>]>,
     pub entry_naming: Box<[u8]>,
     pub asset_naming: Box<[u8]>,
     pub chunk_naming: Box<[u8]>,
     pub public_path: Box<[u8]>,
-    pub extension_order: ResolveFileExtensions,
-    pub main_field_extension_order: &'static [&'static [u8]],
+    pub(crate) extension_order: ResolveFileExtensions,
+    pub(crate) main_field_extension_order: &'static [&'static [u8]],
     /// This list applies to all extension resolution cases. The runtime uses
     /// this for implementing `require.extensions`
-    pub extra_cjs_extensions: Box<[Box<[u8]>]>,
+    pub(crate) extra_cjs_extensions: Box<[Box<[u8]>]>,
     pub out_extensions: StringHashMap<&'static [u8]>,
     pub import_path_format: ImportPathFormat,
-    pub defines_loaded: bool,
+    pub(crate) defines_loaded: bool,
     pub env: Env,
-    /// The raw API struct as passed to `from_api`. Kept around because a
+    /// The raw `TransformOptions` as passed to `from_api`. Kept around because a
     /// handful of places (jsx auto-detect, resolver `main_fields_is_default`,
     /// `configure_defines`, runtime VM/server config) re-read the original
     /// user-supplied flags after projection. `Arc` so `for_worker` is a
-    /// pointer-clone instead of a deep clone of the (large) peechy struct —
+    /// pointer-clone instead of a deep clone of the (large) struct —
     /// workers never mutate it.
     pub transform_options: std::sync::Arc<api::TransformOptions>,
-    pub polyfill_node_globals: bool,
+    pub(crate) polyfill_node_globals: bool,
     pub transform_only: bool,
     pub load_tsconfig_json: bool,
-    pub load_package_json: bool,
+    pub(crate) load_package_json: bool,
 
     pub rewrite_jest_for_tests: bool,
 
@@ -1329,14 +1265,17 @@ pub struct BundleOptions<'a> {
     pub tree_shaking: bool,
     pub tree_shaking_override: Option<bool>,
     pub code_splitting: bool,
+    /// With `code_splitting`, target bun: `require()` of a bundled ESM file
+    /// becomes a chunk of its own, loaded synchronously at the call. On by
+    /// default; `--no-split-require` / `splitRequire: false` opts out.
+    pub split_require: bool,
     pub source_map: SourceMapOption,
     pub packages: PackagesOption,
 
     pub disable_transpilation: bool,
 
     pub global_cache: GlobalCache,
-    pub prefer_offline_install: bool,
-    pub prefer_latest_install: bool,
+    pub install_preference: OfflineMode,
     /// Stored as a raw
     /// `NonNull` (not `Option<&'a _>`) because every CLI caller borrows the
     /// process-lifetime `ctx.install: Box<BunInstall>` whose lifetime is
@@ -1358,16 +1297,23 @@ pub struct BundleOptions<'a> {
     /// captures the last expression in { value: expr } for result extraction.
     pub repl_mode: bool,
     pub css_chunking: bool,
+    /// Code splitting: also fold side-effect-free chunks whose source is
+    /// smaller than this many bytes into a chunk more entry points load.
+    /// 0 disables that; chunks with identical load conditions always fold.
+    pub min_chunk_size: u64,
 
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
     pub bytecode: bool,
+    /// How many levels of nested functions get bytecode (`u32::MAX` = all; 0 = only each module's top level).
+    pub bytecode_depth: u32,
+    /// `--compile --bytecode`: whose internal modules get ahead-of-time bytecode embedded alongside the bundle's.
+    pub compile_target_builtins: CompileTargetBuiltins,
 
     pub code_coverage: bool,
     pub debugger: bool,
 
-    pub compile: bool,
-    pub compile_to_standalone_html: bool,
+    pub compile_mode: CompileMode,
     pub metafile: bool,
     /// Path to write JSON metafile (for Bun.build API)
     pub metafile_json_path: Box<[u8]>,
@@ -1390,7 +1336,7 @@ pub struct BundleOptions<'a> {
     /// This is not normally a safe transformation.
     ///
     /// So we have a list of packages which we know are safe to do this with.
-    pub unwrap_commonjs_packages: &'static [&'static [u8]],
+    pub(crate) unwrap_commonjs_packages: &'static [&'static [u8]],
 
     pub supports_multiple_outputs: bool,
 
@@ -1428,14 +1374,22 @@ fn clone_macro_remap(src: &MacroRemap) -> MacroRemap {
 }
 
 impl<'a> BundleOptions<'a> {
-    pub fn is_test(&self) -> bool {
+    pub(crate) fn is_test(&self) -> bool {
         self.rewrite_jest_for_tests
     }
 
-    pub fn set_production(&mut self, value: bool) {
+    pub(crate) fn set_production(&mut self, value: bool) {
         if self.force_node_env == ForceNodeEnv::Unspecified {
             self.production = value;
             self.jsx.development = !value;
+        }
+    }
+
+    pub(crate) fn forced_jsx_development(&self) -> bool {
+        match self.force_node_env {
+            ForceNodeEnv::Development => true,
+            ForceNodeEnv::Production => false,
+            ForceNodeEnv::Unspecified => self.jsx.development,
         }
     }
 
@@ -1448,10 +1402,10 @@ impl<'a> BundleOptions<'a> {
     /// These fields are owned as `Box`,
     /// so a per-worker clone allocates. Profile if it shows up on a hot path;
     /// the hot fields (`define`, `loaders`, `conditions`) are O(dozens) entries.
-    pub fn for_worker(&self) -> BundleOptions<'a> {
+    pub(crate) fn for_worker(&self) -> BundleOptions<'a> {
         debug_assert!(
             self.defines_loaded,
-            "BundleOptions::for_worker requires configure_defines() to have run on the parent (env.defaults is not cloned)",
+            "BundleOptions::for_worker requires configure_defines() to have run on the parent",
         );
         BundleOptions {
             footer: self.footer.clone(),
@@ -1467,10 +1421,10 @@ impl<'a> BundleOptions<'a> {
                 .as_deref()
                 .map(|s| Box::new(bun_core::handle_oom(s.clone()))),
             loaders: bun_core::handle_oom(self.loaders.clone()),
-            resolve_dir: self.resolve_dir.clone(),
             jsx: self.jsx.clone(),
             emit_decorator_metadata: self.emit_decorator_metadata,
             experimental_decorators: self.experimental_decorators,
+            use_define_for_class_fields: self.use_define_for_class_fields,
             auto_import_jsx: self.auto_import_jsx,
             allow_runtime: self.allow_runtime,
             trim_unused_imports: self.trim_unused_imports,
@@ -1487,14 +1441,11 @@ impl<'a> BundleOptions<'a> {
             output_dir_handle: None,
             output_dir: self.output_dir.clone(),
             root_dir: self.root_dir.clone(),
-            node_modules_bundle_url: self.node_modules_bundle_url.clone(),
-            node_modules_bundle_pretty_path: self.node_modules_bundle_pretty_path.clone(),
             write: self.write,
             preserve_symlinks: self.preserve_symlinks,
             preserve_extensions: self.preserve_extensions,
             production: self.production,
             output_format: self.output_format,
-            append_package_version_in_query_string: self.append_package_version_in_query_string,
             tsconfig_override: self.tsconfig_override.clone(),
             target: self.target,
             main_fields: self.main_fields.clone(),
@@ -1512,16 +1463,7 @@ impl<'a> BundleOptions<'a> {
             out_extensions: self.out_extensions.clone(),
             import_path_format: self.import_path_format,
             defines_loaded: self.defines_loaded,
-            // `Env.defaults: MultiArrayList` has no `Clone`; workers never read
-            // it (`configure_defines` early-returns on `defines_loaded`), so
-            // carry the scalars + an empty list.
-            env: Env {
-                behavior: self.env.behavior,
-                prefix: self.env.prefix.clone(),
-                defaults: Default::default(),
-                files: self.env.files.clone(),
-                disable_default_env_files: self.env.disable_default_env_files,
-            },
+            env: self.env.clone(),
             transform_options: std::sync::Arc::clone(&self.transform_options),
             polyfill_node_globals: self.polyfill_node_globals,
             transform_only: self.transform_only,
@@ -1539,12 +1481,12 @@ impl<'a> BundleOptions<'a> {
             tree_shaking: self.tree_shaking,
             tree_shaking_override: self.tree_shaking_override,
             code_splitting: self.code_splitting,
+            split_require: self.split_require,
             source_map: self.source_map,
             packages: self.packages,
             disable_transpilation: self.disable_transpilation,
             global_cache: self.global_cache,
-            prefer_offline_install: self.prefer_offline_install,
-            prefer_latest_install: self.prefer_latest_install,
+            install_preference: self.install_preference,
             install: self.install,
             inlining: self.inlining,
             inline_entrypoint_import_meta_main: self.inline_entrypoint_import_meta_main,
@@ -1555,13 +1497,15 @@ impl<'a> BundleOptions<'a> {
             dead_code_elimination: self.dead_code_elimination,
             repl_mode: self.repl_mode,
             css_chunking: self.css_chunking,
+            min_chunk_size: self.min_chunk_size,
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
             bytecode: self.bytecode,
+            bytecode_depth: self.bytecode_depth,
+            compile_target_builtins: self.compile_target_builtins.clone(),
             code_coverage: self.code_coverage,
             debugger: self.debugger,
-            compile: self.compile,
-            compile_to_standalone_html: self.compile_to_standalone_html,
+            compile_mode: self.compile_mode,
             metafile: self.metafile,
             metafile_json_path: self.metafile_json_path.clone(),
             metafile_markdown_path: self.metafile_markdown_path.clone(),
@@ -1587,7 +1531,7 @@ impl<'a> BundleOptions<'a> {
     /// `Linker.log` as raw `*mut`; a `&` here is sound so long as no caller
     /// holds a live `&mut Log` from one of those aliases concurrently.
     #[inline]
-    pub fn log(&self) -> &bun_ast::Log {
+    pub(crate) fn log(&self) -> &bun_ast::Log {
         // SAFETY: `self.log` is non-null after `from_api` and the caller-owned
         // arena `Log` it points to outlives `self`; see method doc.
         unsafe { &*self.log }
@@ -1602,34 +1546,21 @@ impl<'a> BundleOptions<'a> {
     /// that itself writes through the aliased `*mut Log`.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub fn log_mut(&self) -> &mut bun_ast::Log {
+    pub(crate) fn log_mut(&self) -> &mut bun_ast::Log {
         // SAFETY: `self.log` is non-null and outlives `self`; caller upholds
         // the no-alias contract documented on this method.
         unsafe { &mut *self.log }
-    }
-
-    /// Read-only view of the parsed `bunfig.toml` `[install]` block, if any.
-    ///
-    /// SAFETY: when `Some`, the `NonNull` points at the process-lifetime
-    /// `ctx.install: Box<BunInstall>` (see field doc), which outlives `self`
-    /// and is never mutated after CLI parsing. The sole consumer
-    /// (`PackageManager::init_with_runtime`) only reads through it.
-    #[inline]
-    pub fn install(&self) -> Option<&api::BunInstall> {
-        // SAFETY: when `Some`, the `NonNull` points at the process-lifetime
-        // `ctx.install` box (see field doc), never mutated after CLI parsing.
-        self.install.map(|p| unsafe { p.as_ref() })
     }
 
     /// Whether `bake.DevServer` is driving this bundle. The stored pointer is
     /// erased (`*const ()` — runtime type lives behind `dispatch::DevServerVTable`),
     /// so no `&T` accessor is possible; bundler code only ever tests presence.
     #[inline]
-    pub fn has_dev_server(&self) -> bool {
+    pub(crate) fn has_dev_server(&self) -> bool {
         !self.dev_server.is_null()
     }
 
-    pub const DEFAULT_UNWRAP_COMMONJS_PACKAGES: &'static [&'static [u8]] = &[
+    pub(crate) const DEFAULT_UNWRAP_COMMONJS_PACKAGES: &'static [&'static [u8]] = &[
         b"react",
         b"react-is",
         b"react-dom",
@@ -1639,19 +1570,7 @@ impl<'a> BundleOptions<'a> {
         b"react-refresh",
     ];
 
-    #[inline]
-    pub fn css_import_behavior(&self) -> api::CssInJsBehavior {
-        match self.target {
-            Target::Browser => api::CssInJsBehavior::AutoOnimportcss,
-            _ => api::CssInJsBehavior::Facade,
-        }
-    }
-
-    pub fn are_defines_unset(&self) -> bool {
-        !self.defines_loaded
-    }
-
-    pub fn load_defines(
+    pub(crate) fn load_defines(
         &mut self,
         arena: &bun_alloc::Arena,
         loader_: Option<&mut DotEnv::Loader>,
@@ -1715,7 +1634,7 @@ impl<'a> BundleOptions<'a> {
         self.loaders.get(ext).copied().unwrap_or(Loader::File)
     }
 
-    pub fn from_api(
+    pub(crate) fn from_api(
         fs: &mut Fs::FileSystem,
         log: *mut bun_ast::Log,
         transform: api::TransformOptions,
@@ -1756,16 +1675,17 @@ impl<'a> BundleOptions<'a> {
             external: ExternalModules::default(), // filled below
             entry_points: transform.entry_points.clone().into_boxed_slice(),
             out_extensions: StringHashMap::default(), // filled below
-            env: Env::init(),
+            env: Env::default(),
             transform_options: std::sync::Arc::clone(&transform),
             css_chunking: false,
+            min_chunk_size: 0,
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
 
-            resolve_dir: Cow::Borrowed(b"/"),
             jsx: jsx::Pragma::default(),
             emit_decorator_metadata: false,
             experimental_decorators: false,
+            use_define_for_class_fields: true,
             auto_import_jsx: true,
             allow_runtime: true,
             trim_unused_imports: None,
@@ -1779,13 +1699,10 @@ impl<'a> BundleOptions<'a> {
             origin: bun_url::OwnedURL::from_href(Box::default()),
             output_dir_handle: None,
             root_dir: Box::default(),
-            node_modules_bundle_url: Cow::Borrowed(b""),
-            node_modules_bundle_pretty_path: Cow::Borrowed(b""),
             preserve_symlinks: false,
             preserve_extensions: false,
             production: false,
             output_format: Format::Esm,
-            append_package_version_in_query_string: false,
             tsconfig_override: None,
             main_fields: owned_string_list(Target::default_main_fields_map()[Target::Browser]),
             allow_unresolved: AllowUnresolved::All,
@@ -1814,12 +1731,12 @@ impl<'a> BundleOptions<'a> {
             tree_shaking: false,
             tree_shaking_override: None,
             code_splitting: false,
+            split_require: true,
             source_map: SourceMapOption::None,
             packages: PackagesOption::Bundle,
             disable_transpilation: false,
             global_cache: GlobalCache::disable,
-            prefer_offline_install: false,
-            prefer_latest_install: false,
+            install_preference: OfflineMode::Online,
             install: None,
             inlining: false,
             inline_entrypoint_import_meta_main: false,
@@ -1832,10 +1749,11 @@ impl<'a> BundleOptions<'a> {
             ignore_dce_annotations: false,
             emit_dce_annotations: false,
             bytecode: false,
+            bytecode_depth: u32::MAX,
+            compile_target_builtins: CompileTargetBuiltins::Host,
             code_coverage: false,
             debugger: false,
-            compile: false,
-            compile_to_standalone_html: false,
+            compile_mode: CompileMode::None,
             metafile: false,
             metafile_json_path: Box::default(),
             metafile_markdown_path: Box::default(),
@@ -1876,7 +1794,7 @@ impl<'a> BundleOptions<'a> {
         }
 
         if let Some(jsx_opts) = &transform.jsx {
-            opts.jsx = jsx::Pragma::from_api(jsx_opts.clone())?;
+            opts.jsx = jsx::Pragma::from_api(jsx_opts.clone());
         }
 
         if !transform.extension_order.is_empty() {
@@ -2025,32 +1943,30 @@ pub enum ImportPathFormat {
     PackagePath,
 }
 
-pub mod bundle_options_defaults {
-    pub const EXTENSION_ORDER: &[&[u8]] = &[
+pub(crate) mod bundle_options_defaults {
+    pub(crate) const EXTENSION_ORDER: &[&[u8]] = &[
         b".tsx", b".ts", b".jsx", b".cts", b".cjs", b".js", b".mjs", b".mts", b".json",
     ];
 
-    pub const MAIN_FIELD_EXTENSION_ORDER: &[&[u8]] =
+    pub(crate) const MAIN_FIELD_EXTENSION_ORDER: &[&[u8]] =
         &[b".js", b".cjs", b".cts", b".tsx", b".ts", b".jsx", b".json"];
 
-    pub const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
+    pub(crate) const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
         b".tsx", b".jsx", b".mts", b".ts", b".mjs", b".js", b".cts", b".cjs", b".json",
     ];
 
-    pub const CSS_EXTENSION_ORDER: &[&[u8]] = &[b".css"];
-
-    pub mod node_modules {
-        pub const EXTENSION_ORDER: &[&[u8]] = &[
+    pub(crate) mod node_modules {
+        pub(crate) const EXTENSION_ORDER: &[&[u8]] = &[
             b".jsx", b".cjs", b".js", b".mjs", b".mts", b".tsx", b".ts", b".cts", b".json",
         ];
 
-        pub const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
+        pub(crate) const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
             b".mjs", b".jsx", b".mts", b".js", b".cjs", b".tsx", b".ts", b".cts", b".json",
         ];
     }
 }
 
-pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, crate::Error> {
+pub(crate) fn open_output_dir(output_dir: &[u8]) -> Result<Dir, crate::Error> {
     // Routed through `bun_sys` per CLAUDE.md (never `std::fs`).
     match bun_sys::open_dir_at(bun_sys::Fd::cwd(), output_dir) {
         Ok(d) => Ok(Dir::from_fd(d)),
@@ -2089,123 +2005,25 @@ pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, crate::Error> {
     }
 }
 
-/// Path + contents pair. `bun_resolver::fs`
-/// does not surface this type; local mirror keeps
-/// `TransformOptions.entry_point` self-contained.
-pub struct EntryPointFile {
-    pub path: bun_paths::fs::Path<'static>,
-    pub contents: Box<[u8]>,
-}
-
-pub struct TransformOptions {
-    pub footer: &'static [u8],
-    pub banner: &'static [u8],
-    pub define: StringHashMap<Box<[u8]>>,
-    pub loader: Loader,
-    pub resolve_dir: Box<[u8]>,
-    pub jsx: Option<jsx::Pragma>,
-    pub react_fast_refresh: bool,
-    pub react_compiler: bun_ast::runtime::ReactCompilerMode,
-    pub inject: Option<Box<[Box<[u8]>]>>,
-    pub origin: &'static [u8],
-    pub preserve_symlinks: bool,
-    pub entry_point: EntryPointFile,
-    pub resolve_paths: bool,
-    pub tsconfig_override: Option<Box<[u8]>>,
-
-    pub target: Target,
-    pub main_fields: &'static [&'static [u8]],
-}
-
-impl TransformOptions {
-    pub fn init_uncached(
-        entry_point_name: &'static [u8],
-        code: &[u8],
-    ) -> Result<TransformOptions, crate::Error> {
-        debug_assert!(!entry_point_name.is_empty());
-
-        let entry_point = EntryPointFile {
-            path: bun_paths::fs::Path::init(entry_point_name),
-            contents: Box::from(code),
-        };
-
-        let mut _cwd: Box<[u8]> = Box::from(b"/".as_slice());
-        #[cfg(any(target_os = "wasi", windows))]
-        {
-            // `getcwd_alloc` returns a NUL-terminated `ZBox`; strip the NUL
-            // and reuse the allocation as a plain `Box<[u8]>`.
-            let mut v = bun_sys::getcwd_alloc()?.into_vec_with_nul();
-            v.pop();
-            _cwd = v.into_boxed_slice();
-        }
-
-        let mut define = StringHashMap::<Box<[u8]>>::default();
-        define.reserve(1);
-        define.put_assume_capacity(b"process.env.NODE_ENV", b"development".as_slice().into());
-
-        let entry_point_name = entry_point.path.name();
-        let mut loader = Loader::File;
-        if let Some(default_loader) = DEFAULT_LOADERS.get(entry_point_name.ext) {
-            loader = *default_loader;
-        }
-        debug_assert!(!code.is_empty());
-
-        Ok(TransformOptions {
-            footer: b"",
-            banner: b"",
-            define,
-            loader,
-            resolve_dir: Box::from(entry_point_name.dir),
-            entry_point,
-            // resolve_dir is cloned so
-            // `TransformOptions` stays lifetime-free.
-            main_fields: Target::default_main_fields_map()[Target::Browser],
-            jsx: if loader.is_jsx() {
-                Some(jsx::Pragma::default())
-            } else {
-                None
-            },
-            react_fast_refresh: false,
-            react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
-            inject: None,
-            origin: b"",
-            preserve_symlinks: false,
-            resolve_paths: false,
-            tsconfig_override: None,
-            target: Target::Browser,
-        })
-    }
-}
-
 pub use crate::output_file::OutputFile;
 
 #[derive(Default)]
 pub struct TransformResult {
     pub errors: Box<[bun_ast::Msg]>,
-    pub warnings: Box<[bun_ast::Msg]>,
     pub output_files: Box<[OutputFile]>,
-    pub outbase: Box<[u8]>,
-    /// Non-owning view of `BundleOptions.output_dir_handle`; never close it.
-    pub root_dir: Option<bun_sys::Fd>,
+    pub(crate) outbase: Box<[u8]>,
 }
 
 impl TransformResult {
-    pub fn init(
+    pub(crate) fn init(
         outbase: Box<[u8]>,
         output_files: Box<[OutputFile]>,
         log: &mut bun_ast::Log,
     ) -> Result<TransformResult, crate::Error> {
         let mut errors: Vec<bun_ast::Msg> = Vec::with_capacity(log.errors as usize);
-        let mut warnings: Vec<bun_ast::Msg> = Vec::with_capacity(log.warnings as usize);
         for msg in log.msgs.iter() {
-            match msg.kind {
-                bun_ast::Kind::Err => {
-                    errors.push(msg.clone());
-                }
-                bun_ast::Kind::Warn => {
-                    warnings.push(msg.clone());
-                }
-                _ => {}
+            if msg.kind == bun_ast::Kind::Err {
+                errors.push(msg.clone());
             }
         }
 
@@ -2213,28 +2031,16 @@ impl TransformResult {
             outbase,
             output_files,
             errors: errors.into_boxed_slice(),
-            warnings: warnings.into_boxed_slice(),
-            root_dir: None,
         })
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct EnvEntry {
-    pub key: Box<[u8]>,
-    pub value: Box<[u8]>,
-}
-
-type EnvList = MultiArrayList<EnvEntry>;
-
-// `Debug` derive dropped — `MultiArrayList<T>` is not `Debug`.
+#[derive(Clone, Debug)]
 pub struct Env {
     pub behavior: api::DotEnvBehavior,
     pub prefix: Box<[u8]>,
-    pub defaults: EnvList,
-    // arena: dropped (global mimalloc)
     /// List of explicit env files to load (e..g specified by --env-file args)
-    pub files: Box<[Box<[u8]>]>,
+    pub(crate) files: Box<[Box<[u8]>]>,
 
     /// If true, disable loading of default .env files (from --no-env-file flag or bunfig)
     pub disable_default_env_files: bool,
@@ -2245,230 +2051,16 @@ impl Default for Env {
         Env {
             behavior: api::DotEnvBehavior::disable,
             prefix: Box::default(),
-            defaults: EnvList::default(),
             files: Box::default(),
             disable_default_env_files: false,
         }
     }
 }
-
-impl Env {
-    pub fn init() -> Env {
-        Env {
-            defaults: EnvList::default(),
-            prefix: Box::default(),
-            behavior: api::DotEnvBehavior::disable,
-            files: Box::default(),
-            disable_default_env_files: false,
-        }
-    }
-
-    pub fn ensure_total_capacity(&mut self, capacity: u64) -> Result<(), bun_alloc::AllocError> {
-        self.defaults.ensure_total_capacity(capacity as usize)
-    }
-
-    pub fn set_defaults_map(
-        &mut self,
-        defaults: &api::StringMap,
-    ) -> Result<(), bun_alloc::AllocError> {
-        self.defaults.shrink_retaining_capacity(0);
-
-        if defaults.keys.is_empty() {
-            return Ok(());
-        }
-
-        self.defaults.ensure_total_capacity(defaults.keys.len())?;
-
-        for (i, key) in defaults.keys.iter().enumerate() {
-            self.defaults.append(EnvEntry {
-                key: key.clone(),
-                value: defaults.values[i].clone(),
-            })?;
-        }
-        Ok(())
-    }
-
-    // For reading from API
-    pub fn set_from_api(&mut self, config: &api::EnvConfig) -> Result<(), bun_alloc::AllocError> {
-        self.set_behavior_from_prefix(config.prefix.as_deref().unwrap_or(b""));
-
-        if let Some(defaults) = &config.defaults {
-            self.set_defaults_map(defaults)?;
-        }
-        Ok(())
-    }
-
-    pub fn set_behavior_from_prefix(&mut self, prefix: &[u8]) {
-        self.behavior = api::DotEnvBehavior::disable;
-        self.prefix = Box::default();
-
-        if prefix == b"*" {
-            self.behavior = api::DotEnvBehavior::load_all;
-        } else if !prefix.is_empty() {
-            self.behavior = api::DotEnvBehavior::prefix;
-            self.prefix = Box::from(prefix);
-        }
-    }
-
-    pub fn set_from_loaded(
-        &mut self,
-        config: api::LoadedEnvConfig,
-    ) -> Result<(), bun_alloc::AllocError> {
-        self.behavior = match config.dotenv {
-            api::DotEnvBehavior::prefix => api::DotEnvBehavior::prefix,
-            api::DotEnvBehavior::load_all => api::DotEnvBehavior::load_all,
-            _ => api::DotEnvBehavior::disable,
-        };
-
-        self.prefix = config.prefix;
-
-        self.set_defaults_map(&config.defaults)
-    }
-
-    pub fn to_api(&self) -> api::LoadedEnvConfig {
-        let slice = self.defaults.slice();
-
-        api::LoadedEnvConfig {
-            dotenv: self.behavior,
-            prefix: self.prefix.clone(),
-            defaults: api::StringMap {
-                keys: slice.items::<"key", Box<[u8]>>().to_vec(),
-                values: slice.items::<"value", Box<[u8]>>().to_vec(),
-            },
-        }
-    }
-
-    // For reading from package.json
-    pub fn get_or_put_value(
-        &mut self,
-        key: &[u8],
-        value: &[u8],
-    ) -> Result<(), bun_alloc::AllocError> {
-        let slice = self.defaults.slice();
-        for _key in slice.items::<"key", Box<[u8]>>().iter() {
-            if key == &**_key {
-                return Ok(());
-            }
-        }
-
-        self.defaults.append(EnvEntry {
-            key: Box::from(key),
-            value: Box::from(value),
-        })
-    }
-}
-
-// `Debug` derive dropped — `Env` is not `Debug` (MultiArrayList).
-#[derive(Default)]
-pub struct EntryPoint {
-    pub path: Box<[u8]>,
-    pub env: Env,
-    pub kind: EntryPointKind,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum EntryPointKind {
-    Client,
-    Server,
-    Fallback,
-    #[default]
-    Disabled,
-}
-
-impl EntryPointKind {
-    pub fn to_api(self) -> api::FrameworkEntryPointType {
-        match self {
-            EntryPointKind::Client => api::FrameworkEntryPointType::Client,
-            EntryPointKind::Server => api::FrameworkEntryPointType::Server,
-            EntryPointKind::Fallback => api::FrameworkEntryPointType::Fallback,
-            _ => unreachable!(),
-        }
-    }
-}
-
-impl EntryPoint {
-    pub fn is_enabled(&self) -> bool {
-        self.kind != EntryPointKind::Disabled && !self.path.is_empty()
-    }
-
-    pub fn to_api(
-        &self,
-        toplevel_path: &[u8],
-        kind: EntryPointKind,
-    ) -> Result<Option<api::FrameworkEntryPoint>, crate::Error> {
-        if self.kind == EntryPointKind::Disabled {
-            return Ok(None);
-        }
-
-        Ok(Some(api::FrameworkEntryPoint {
-            kind: kind.to_api(),
-            env: self.env.to_api(),
-            path: self.normalized_path(toplevel_path)?,
-        }))
-    }
-
-    fn normalized_path(&self, toplevel_path: &[u8]) -> Result<Box<[u8]>, crate::Error> {
-        debug_assert!(bun_paths::is_absolute(&self.path));
-        let mut str: &[u8] = &self.path;
-        if let Some(top) = strings::index_of(str, toplevel_path) {
-            str = &str[top + toplevel_path.len()..];
-        }
-
-        // if it *was* a node_module path, we don't do any allocation, we just keep it as a package path
-        if let Some(node_module_i) = strings::index_of(str, bun_paths::NODE_MODULES_TRAILING) {
-            Ok(Box::from(
-                &str[node_module_i + bun_paths::NODE_MODULES_TRAILING.len()..],
-            ))
-            // otherwise, we allocate a new string and copy the path into it with a leading "./"
-        } else {
-            let mut out = vec![0u8; str.len() + 2];
-            out[0] = b'.';
-            out[1] = b'/';
-            out[2..].copy_from_slice(str);
-            Ok(out.into_boxed_slice())
-        }
-    }
-
-    pub fn from_loaded(
-        &mut self,
-        framework_entry_point: api::FrameworkEntryPoint,
-        kind: EntryPointKind,
-    ) -> Result<(), crate::Error> {
-        self.path = framework_entry_point.path;
-        self.kind = kind;
-        let _ = self.env.set_from_loaded(framework_entry_point.env);
-        Ok(())
-    }
-
-    pub fn from_api(
-        &mut self,
-        framework_entry_point: api::FrameworkEntryPointMessage,
-        kind: EntryPointKind,
-    ) -> Result<(), crate::Error> {
-        self.path = framework_entry_point.path.unwrap_or_default();
-        self.kind = kind;
-
-        if self.path.is_empty() {
-            self.kind = EntryPointKind::Disabled;
-            return Ok(());
-        }
-
-        if let Some(env) = framework_entry_point.env {
-            self.env.set_from_api(&env)?;
-        }
-        Ok(())
-    }
-}
-
-// MOVE_DOWN: RouteConfig moved to bun_router (lower-tier crate the bundler
-// already depends on); re-export here so existing options::RouteConfig paths
-// resolve to the single canonical definition.
-pub use bun_router::RouteConfig;
 
 #[derive(Debug, Clone, Default)]
 pub struct PathTemplate {
     pub data: Box<[u8]>,
-    pub placeholder: Placeholder,
+    pub(crate) placeholder: Placeholder,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
@@ -2482,7 +2074,7 @@ pub enum PlaceholderField {
 
 // Shared body for PathTemplate::needs / PathTemplateConst::needs (D064).
 #[inline]
-pub(crate) fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool {
+fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool {
     let needle: &[u8] = match field {
         PlaceholderField::Dir => b"[dir]",
         PlaceholderField::Name => b"[name]",
@@ -2493,9 +2085,37 @@ pub(crate) fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool 
     strings::contains(data, needle)
 }
 
+/// `Some((index_of_open_bracket, &template[index..]))` when a `[` has no matching `]`.
+pub fn find_unterminated_placeholder(template: &[u8]) -> Option<(usize, &[u8])> {
+    let mut remain = template;
+    while let Some(j) = strings::index_of_char(remain, b'[') {
+        let j = j as usize;
+        let open_at = template.len() - remain.len() + j;
+        remain = &remain[j + 1..];
+        let mut count: isize = 1;
+        let mut close: Option<usize> = None;
+        for (idx, c) in remain.iter().enumerate() {
+            count += match *c {
+                b'[' => 1,
+                b']' => -1,
+                _ => 0,
+            };
+            if count == 0 {
+                close = Some(idx);
+                break;
+            }
+        }
+        let Some(end) = close else {
+            return Some((open_at, &template[open_at..]));
+        };
+        remain = &remain[end + 1..];
+    }
+    None
+}
+
 // Shared body for PathTemplate::print / PathTemplateConst::print (D064).
 // Writes raw path bytes via a byte-writer free fn (not `core::fmt::Display`).
-pub(crate) fn path_template_print<W: bun_io::Write>(
+fn path_template_print<W: bun_io::Write>(
     writer: &mut W,
     data: &[u8],
     dir: &[u8],
@@ -2510,11 +2130,6 @@ pub(crate) fn path_template_print<W: bun_io::Write>(
         let j = j as usize;
         PathTemplate::write_replacing_slashes_on_windows(writer, &remain[0..j])?;
         remain = &remain[j + 1..];
-        if remain.is_empty() {
-            // TODO: throw error
-            writer.write_all(b"[")?;
-            break;
-        }
 
         let mut count: isize = 1;
         let mut end_len: usize = remain.len();
@@ -2527,16 +2142,25 @@ pub(crate) fn path_template_print<W: bun_io::Write>(
 
             if count == 0 {
                 end_len = idx;
-                debug_assert!(end_len <= remain.len());
+                debug_assert!(end_len < remain.len());
                 break;
             }
+        }
+
+        if count != 0 {
+            // No matching `]`: emit `[` and fall through to write `remain` literally.
+            writer.write_all(b"[")?;
+            break;
         }
 
         let placeholder = &remain[0..end_len];
 
         let Some(field) = PLACEHOLDER_MAP.get(placeholder).copied() else {
+            // Unknown placeholder: keep `[placeholder]` verbatim in the output.
+            writer.write_all(b"[")?;
             PathTemplate::write_replacing_slashes_on_windows(writer, placeholder)?;
-            remain = &remain[end_len..];
+            writer.write_all(b"]")?;
+            remain = &remain[end_len + 1..];
             continue;
         };
 
@@ -2618,13 +2242,62 @@ fn write_sanitized_parent_dirs_rewrites_every_dotdot_segment() {
     assert_eq!(run(br"weird\dir/x.js"), br"weird\dir/x.js");
 }
 
+#[cfg(test)]
+#[test]
+fn path_template_print_tolerates_malformed_brackets() {
+    fn run(template: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        path_template_print(&mut out, template, b"D", b"N", b"E", Some(0), b"T", false).unwrap();
+        out
+    }
+    // Unterminated known placeholder: used to slice one past the end.
+    assert_eq!(run(b"[name"), b"[name");
+    assert_eq!(run(b"[dir"), b"[dir");
+    assert_eq!(run(b"[hash"), b"[hash");
+    assert_eq!(run(b"[ext"), b"[ext");
+    assert_eq!(run(b"[target"), b"[target");
+    // A closed placeholder before the unterminated one is still substituted.
+    assert_eq!(run(b"[name]-[ext"), b"N-[ext");
+    // Unknown placeholders and stray brackets pass through untouched.
+    assert_eq!(run(b"[foo]-[name].[ext]"), b"[foo]-N.E");
+    assert_eq!(run(b"a[b"), b"a[b");
+    assert_eq!(run(b"foo["), b"foo[");
+    assert_eq!(run(b"["), b"[");
+    assert_eq!(run(b"]"), b"]");
+    assert_eq!(run(b""), b"");
+    // No change to well-formed templates.
+    assert_eq!(run(b"[dir]/[name].[ext]"), b"D/N.E");
+
+    // The up-front validator agrees with the printer on what is unterminated.
+    assert_eq!(
+        find_unterminated_placeholder(b"[name"),
+        Some((0, b"[name".as_slice()))
+    );
+    assert_eq!(
+        find_unterminated_placeholder(b"foo["),
+        Some((3, b"[".as_slice()))
+    );
+    assert_eq!(
+        find_unterminated_placeholder(b"[name]-[ext"),
+        Some((7, b"[ext".as_slice()))
+    );
+    assert_eq!(
+        find_unterminated_placeholder(b"a[b.js"),
+        Some((1, b"[b.js".as_slice()))
+    );
+    assert_eq!(find_unterminated_placeholder(b""), None);
+    assert_eq!(find_unterminated_placeholder(b"]"), None);
+    assert_eq!(find_unterminated_placeholder(b"[dir]/[name].[ext]"), None);
+    assert_eq!(find_unterminated_placeholder(b"[foo]-[name].[ext]"), None);
+}
+
 impl PathTemplate {
-    pub fn needs(&self, field: PlaceholderField) -> bool {
+    pub(crate) fn needs(&self, field: PlaceholderField) -> bool {
         path_template_needs(&self.data, field)
     }
 
     #[inline]
-    pub(crate) fn write_replacing_slashes_on_windows<W: bun_io::Write>(
+    fn write_replacing_slashes_on_windows<W: bun_io::Write>(
         w: &mut W,
         slice: &[u8],
     ) -> bun_io::Result<()> {
@@ -2656,7 +2329,7 @@ impl PathTemplate {
         },
     };
 
-    pub const CHUNK_WITH_TARGET: PathTemplateConst = PathTemplateConst {
+    pub(crate) const CHUNK_WITH_TARGET: PathTemplateConst = PathTemplateConst {
         data: b"[dir]/[target]/chunk-[hash].[ext]",
         placeholder: PlaceholderConst {
             name: b"chunk",
@@ -2672,7 +2345,7 @@ impl PathTemplate {
         placeholder: PlaceholderConst::DEFAULT,
     };
 
-    pub const FILE_WITH_TARGET: PathTemplateConst = PathTemplateConst {
+    pub(crate) const FILE_WITH_TARGET: PathTemplateConst = PathTemplateConst {
         data: b"[dir]/[target]/[name].[ext]",
         placeholder: PlaceholderConst::DEFAULT,
     };
@@ -2682,12 +2355,12 @@ impl PathTemplate {
         placeholder: PlaceholderConst::DEFAULT,
     };
 
-    pub const ASSET_WITH_TARGET: PathTemplateConst = PathTemplateConst {
+    pub(crate) const ASSET_WITH_TARGET: PathTemplateConst = PathTemplateConst {
         data: b"[dir]/[target]/[name]-[hash].[ext]",
         placeholder: PlaceholderConst::DEFAULT,
     };
 
-    pub fn print<W: bun_io::Write>(
+    pub(crate) fn print<W: bun_io::Write>(
         &self,
         writer: &mut W,
         sanitize_parent_dirs: bool,
@@ -2707,11 +2380,11 @@ impl PathTemplate {
 
 #[derive(Debug, Clone, Default)]
 pub struct Placeholder {
-    pub dir: Box<[u8]>,
-    pub name: Box<[u8]>,
-    pub ext: Box<[u8]>,
-    pub hash: Option<u64>,
-    pub target: Box<[u8]>,
+    pub(crate) dir: Box<[u8]>,
+    pub(crate) name: Box<[u8]>,
+    pub(crate) ext: Box<[u8]>,
+    pub(crate) hash: Option<u64>,
+    pub(crate) target: Box<[u8]>,
 }
 
 // hoisted from `impl Placeholder` — Rust forbids `static` in inherent impls.
@@ -2728,21 +2401,21 @@ bun_core::comptime_string_map! {
 // PathTemplateConst is a const-friendly mirror of PathTemplate; convert to PathTemplate at use sites.
 #[derive(Debug, Clone, Copy)]
 pub struct PathTemplateConst {
-    pub data: &'static [u8],
-    pub placeholder: PlaceholderConst,
+    pub(crate) data: &'static [u8],
+    pub(crate) placeholder: PlaceholderConst,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct PlaceholderConst {
-    pub dir: &'static [u8],
-    pub name: &'static [u8],
-    pub ext: &'static [u8],
-    pub hash: Option<u64>,
-    pub target: &'static [u8],
+    pub(crate) dir: &'static [u8],
+    pub(crate) name: &'static [u8],
+    pub(crate) ext: &'static [u8],
+    pub(crate) hash: Option<u64>,
+    pub(crate) target: &'static [u8],
 }
 
 impl PlaceholderConst {
-    pub const DEFAULT: PlaceholderConst = PlaceholderConst {
+    pub(crate) const DEFAULT: PlaceholderConst = PlaceholderConst {
         dir: b"",
         name: b"",
         ext: b"",
@@ -2756,7 +2429,7 @@ impl PathTemplateConst {
     /// Kept as an inherent method so callers writing
     /// to `Vec<u8>` via `write!(.., "{}", template)` resolve through the
     /// blanket [`core::fmt::Display`] impl below.
-    pub fn print<W: bun_io::Write>(
+    pub(crate) fn print<W: bun_io::Write>(
         &self,
         writer: &mut W,
         sanitize_parent_dirs: bool,
@@ -2771,10 +2444,6 @@ impl PathTemplateConst {
             self.placeholder.target,
             sanitize_parent_dirs,
         )
-    }
-
-    pub fn needs(&self, field: PlaceholderField) -> bool {
-        path_template_needs(self.data, field)
     }
 }
 

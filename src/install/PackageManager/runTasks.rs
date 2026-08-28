@@ -117,19 +117,97 @@ pub trait RunTasksCallbacks {
     fn on_resolve(_ctx: &mut Self::Ctx) {
         unreachable!()
     }
+}
 
-    /// Reinterpret `&mut Self::Ctx` as `&mut PackageInstaller` — only valid
-    /// when `IS_PACKAGE_INSTALLER` is true. Default body is unreachable; the `PackageInstaller`
-    /// impl overrides it with an identity cast.
-    fn as_package_installer<'a>(_ctx: &'a mut Self::Ctx) -> &'a mut PackageInstaller<'a> {
-        unreachable!()
+/// Type-erased view of a `RunTasksCallbacks` impl, so the ~2k-line body of
+/// `run_tasks` is compiled once rather than once per callbacks type. Every fn
+/// pointer expects `ctx` to be the `*mut C::Ctx` it was erased alongside.
+struct ErasedCallbacks {
+    progress_bar: bool,
+    manifests_only: bool,
+    has_on_extract: bool,
+    has_on_package_manifest_error: bool,
+    has_on_package_download_error: bool,
+    has_on_resolve: bool,
+    is_package_installer: bool,
+    is_store_installer: bool,
+    on_package_manifest_error: fn(*mut (), &[u8], crate::Error, &[u8]),
+    on_package_download_error_store:
+        fn(*mut (), Task::Id, &[u8], &bun_install::Resolution, crate::Error, &[u8]),
+    on_package_download_error_pkg:
+        fn(*mut (), PackageID, &[u8], &bun_install::Resolution, crate::Error, &[u8]),
+    on_extract_package_installer:
+        fn(*mut (), Task::Id, DependencyID, &mut bun_install::ExtractData, Options::LogLevel),
+    on_extract_store_installer: fn(*mut (), Task::Id),
+    on_resolve: fn(*mut ()),
+}
+
+impl ErasedCallbacks {
+    fn of<C: RunTasksCallbacks>() -> Self {
+        /// Recovers the `&mut C::Ctx` that `run_tasks::<C>` erased.
+        fn ctx<'a, C: RunTasksCallbacks>(ctx: *mut ()) -> &'a mut C::Ctx {
+            // SAFETY: only ever called by `run_tasks_erased` with the pointer
+            // `run_tasks::<C>` erased from a `&mut C::Ctx`, which is the sole
+            // live handle to that context for the duration of the call.
+            unsafe { &mut *ctx.cast() }
+        }
+        Self {
+            progress_bar: C::PROGRESS_BAR,
+            manifests_only: C::MANIFESTS_ONLY,
+            has_on_extract: C::HAS_ON_EXTRACT,
+            has_on_package_manifest_error: C::HAS_ON_PACKAGE_MANIFEST_ERROR,
+            has_on_package_download_error: C::HAS_ON_PACKAGE_DOWNLOAD_ERROR,
+            has_on_resolve: C::HAS_ON_RESOLVE,
+            is_package_installer: C::IS_PACKAGE_INSTALLER,
+            is_store_installer: C::IS_STORE_INSTALLER,
+            on_package_manifest_error: |c, name, err, url| {
+                C::on_package_manifest_error(ctx::<C>(c), name, err, url)
+            },
+            on_package_download_error_store: |c, task_id, name, resolution, err, url| {
+                C::on_package_download_error_store(ctx::<C>(c), task_id, name, resolution, err, url)
+            },
+            on_package_download_error_pkg: |c, package_id, name, resolution, err, url| {
+                C::on_package_download_error_pkg(
+                    ctx::<C>(c),
+                    package_id,
+                    name,
+                    resolution,
+                    err,
+                    url,
+                )
+            },
+            on_extract_package_installer: |c, task_id, dependency_id, data, log_level| {
+                C::on_extract_package_installer(
+                    ctx::<C>(c),
+                    task_id,
+                    dependency_id,
+                    data,
+                    log_level,
+                )
+            },
+            on_extract_store_installer: |c, task_id| {
+                C::on_extract_store_installer(ctx::<C>(c), task_id)
+            },
+            on_resolve: |c| C::on_resolve(ctx::<C>(c)),
+        }
+    }
+}
+
+impl ErasedCallbacks {
+    /// `ctx` *is* the installer when `is_package_installer` (`C::Ctx == PackageInstaller`).
+    fn package_installer<'a>(&self, ctx: *mut ()) -> &'a mut PackageInstaller<'a> {
+        debug_assert!(self.is_package_installer);
+        // SAFETY: `is_package_installer` means `C::Ctx == PackageInstaller`, and
+        // `ctx` is the erased `&mut C::Ctx` (see `ErasedCallbacks::of`).
+        unsafe { &mut *ctx.cast() }
     }
 
-    /// Reinterpret `&mut Self::Ctx` as `&mut Store::Installer` — only valid
-    /// when `IS_STORE_INSTALLER` is true. Default body is unreachable; the `Store::Installer`
-    /// impl overrides it with an identity cast.
-    fn as_store_installer<'a>(_ctx: &'a mut Self::Ctx) -> &'a mut Store::Installer<'a> {
-        unreachable!()
+    /// `ctx` *is* the installer when `is_store_installer` (`C::Ctx == Store::Installer`).
+    fn store_installer<'a>(&self, ctx: *mut ()) -> &'a mut Store::Installer<'a> {
+        debug_assert!(self.is_store_installer);
+        // SAFETY: `is_store_installer` means `C::Ctx == Store::Installer`, and
+        // `ctx` is the erased `&mut C::Ctx` (see `ErasedCallbacks::of`).
+        unsafe { &mut *ctx.cast() }
     }
 }
 
@@ -137,6 +215,22 @@ pub trait RunTasksCallbacks {
 pub fn run_tasks<C: RunTasksCallbacks>(
     manager: &mut PackageManager,
     extract_ctx: &mut C::Ctx,
+    install_peer: bool,
+    log_level: Options::LogLevel,
+) -> crate::Result<()> {
+    run_tasks_erased(
+        manager,
+        core::ptr::from_mut(extract_ctx).cast(),
+        &ErasedCallbacks::of::<C>(),
+        install_peer,
+        log_level,
+    )
+}
+
+fn run_tasks_erased(
+    manager: &mut PackageManager,
+    extract_ctx: *mut (),
+    cb: &ErasedCallbacks,
     install_peer: bool,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
@@ -159,11 +253,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     // use of `manager`/`extract_ctx` below is a child of `*_ptr`, so the
     // pointers stay valid until the guards fire.
     let manager_ptr: *mut PackageManager = manager;
-    let extract_ctx_ptr: *mut C::Ctx = extract_ctx;
-    // SAFETY: `manager_ptr`/`extract_ctx_ptr` were just derived from unique
-    // `&mut` fn params; reborrowing here yields the sole live `&mut` to each
-    // for the body. Dropped before the guards reborrow the same pointers.
-    let (manager, extract_ctx) = unsafe { (&mut *manager_ptr, &mut *extract_ctx_ptr) };
+    // SAFETY: `manager_ptr` was just derived from the unique `&mut` fn param;
+    // reborrowing here yields the sole live `&mut` for the body. Dropped
+    // before the guards reborrow the same pointer. (`extract_ctx` is already a
+    // raw pointer and is only materialized as `&mut` inside the callbacks.)
+    let manager = unsafe { &mut *manager_ptr };
     scopeguard::defer! {
         // SAFETY: guard drops after every body borrow of `manager` has ended
         // (scope exit or `?` unwind); `manager_ptr` retains provenance because
@@ -174,7 +268,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         if log_level.show_progress() {
             manager.start_progress_bar_if_none();
 
-            if C::PROGRESS_BAR {
+            if cb.progress_bar {
                 let completed_items = (manager.total_tasks - manager.pending_task_count()) as usize;
                 // SAFETY: `downloads_node` set by `start_progress_bar_if_none`;
                 // points into `manager.progress` which is live.
@@ -199,25 +293,24 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             break;
         }
         // SAFETY: `next()` returned non-null; node is exclusively owned by this
-        // batch. `ptask_ptr` was produced by `heap::alloc` in `PatchTask::new_*`
-        // — reclaim ownership exactly once here so the `Box` drops at end of
+        // batch. `ptask_ptr` is the `Box` that `enqueue_patch_task` /
+        // `enqueue_patch_task_pre` handed to the fifo via `heap::into_raw`;
+        // reclaim ownership exactly once here so the `Box` drops at end of
         // iteration on every path.
         let mut ptask = unsafe { bun_core::heap::take(ptask_ptr) };
-        if cfg!(debug_assertions) {
-            debug_assert!(manager.pending_task_count() > 0);
-        }
+        debug_assert!(manager.pending_task_count() > 0);
         manager.decrement_pending_tasks();
         ptask.run_from_main_thread(manager, log_level)?;
         if let PatchTaskCallback::Apply(apply) = &mut ptask.callback {
             if apply.logger.errors == 0 {
-                if C::HAS_ON_EXTRACT {
+                if cb.has_on_extract {
                     if let Some(_task_id) = apply.task_id {
                         // autofix
-                    } else if C::IS_PACKAGE_INSTALLER {
+                    } else if cb.is_package_installer {
                         if let Some(ctx) = apply.install_context.as_mut() {
                             // `extract_ctx` *is* the installer here.
                             let installer: &mut PackageInstaller =
-                                C::as_package_installer(extract_ctx);
+                                cb.package_installer(extract_ctx);
                             let path = core::mem::take(&mut ctx.path);
                             installer.node_modules.path = path;
                             installer.current_tree_id = ctx.tree_id;
@@ -225,12 +318,17 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             let resolution =
                                 &manager.lockfile.packages.items_resolution()[pkg_id as usize];
 
-                            installer.install_package_with_name_and_resolution::<false, false>(
+                            // Downloaded, so already known to need an install.
+                            let needs_verify = false;
+                            let is_pending_package_install = false;
+                            installer.install_package_with_name_and_resolution(
                                 ctx.dependency_id,
                                 pkg_id,
                                 log_level,
                                 apply.pkgname,
                                 resolution,
+                                needs_verify,
+                                is_pending_package_install,
                             );
                         }
                     }
@@ -242,13 +340,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         }
     }
 
-    if C::IS_STORE_INSTALLER {
+    if cb.is_store_installer {
         // We obtain the
         // installer via the trait downcast and access PackageManager only
         // through `installer.manager` for the duration of this block, never
         // via the function-scope `manager` shadow, so the two `&mut` do not
         // overlap in use.
-        let installer: &mut Store::Installer<'_> = C::as_store_installer(extract_ctx);
+        let installer: &mut Store::Installer<'_> = cb.store_installer(extract_ctx);
         let installer_ptr: *mut Store::Installer<'_> = installer;
         let batch = installer.task_queue.pop_batch();
         let mut iter = batch.iterator();
@@ -267,8 +365,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     installer
                         .on_task_complete(task.entry_id, store_installer::CompleteState::Success);
                 }
-                store_installer::Result::Err(err) => {
-                    let err = err.clone();
+                store_installer::Result::Err(_) => {
+                    // Move the error out: `on_task_fail` takes `&mut installer`, which owns `task`.
+                    let store_installer::Result::Err(err) =
+                        core::mem::replace(&mut task.result, store_installer::Result::None)
+                    else {
+                        unreachable!()
+                    };
                     installer.on_task_fail(task.entry_id, &err);
                 }
                 store_installer::Result::Blocked => {
@@ -335,9 +438,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         }
         // SAFETY: `next()` returned non-null; node is exclusively owned by this batch.
         let task = unsafe { &mut *task_ptr };
-        if cfg!(debug_assertions) {
-            debug_assert!(manager.pending_task_count() > 0);
-        }
+        debug_assert!(manager.pending_task_count() > 0);
         manager.decrement_pending_tasks();
         // We cannot free the network task at the end of this scope.
         // It may continue to be referenced in a future task.
@@ -368,18 +469,19 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                 }
 
-                if !has_network_error && task.response.metadata.is_none() {
-                    has_network_error = true;
-                    let min = manager.options.min_simultaneous_requests;
-                    let max = AsyncHTTP::max_simultaneous_requests().load(Ordering::Relaxed);
-                    if max > min {
-                        AsyncHTTP::max_simultaneous_requests()
-                            .store(min.max(max / 2), Ordering::Relaxed);
-                    }
+                // Headers can arrive and the connection still die before the
+                // body does; for a 2xx/3xx that is a failed download too (an
+                // error status keeps its own handling below).
+                let download_failed = match &task.response.metadata {
+                    None => true,
+                    Some(m) => task.response.fail.is_some() && m.response.status_code < 400,
+                };
+                if download_failed {
+                    throttle_after_network_error(manager, &mut has_network_error);
                 }
 
                 // Handle retry-able errors.
-                if task.response.metadata.is_none()
+                if download_failed
                     || task
                         .response
                         .metadata
@@ -416,7 +518,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                 }
 
-                let Some(metadata) = task.response.metadata.as_ref() else {
+                let Some(metadata) = task.response.metadata.as_ref().filter(|_| !download_failed)
+                else {
                     // Handle non-retry-able errors.
                     let err = task
                         .response
@@ -424,8 +527,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         .map(crate::Error::from)
                         .unwrap_or(crate::Error::HTTPError);
 
-                    if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
-                        C::on_package_manifest_error(extract_ctx, name, err, &task.url_buf);
+                    if cb.has_on_package_manifest_error {
+                        (cb.on_package_manifest_error)(extract_ctx, name, err, &task.url_buf);
                     } else {
                         let fmt_args = (err.name(), name);
                         if manager.is_network_task_required(task.task_id) {
@@ -465,7 +568,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let response = &metadata.response;
 
                 if response.status_code > 399 {
-                    if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
+                    if cb.has_on_package_manifest_error {
                         let err: PackageManifestError = match response.status_code {
                             400 => PackageManifestError::PackageManifestHTTP400,
                             401 => PackageManifestError::PackageManifestHTTP401,
@@ -476,7 +579,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             _ => PackageManifestError::PackageManifestHTTP5xx,
                         };
 
-                        C::on_package_manifest_error(extract_ctx, name, err.into(), &task.url_buf);
+                        (cb.on_package_manifest_error)(
+                            extract_ctx,
+                            name,
+                            err.into(),
+                            &task.url_buf,
+                        );
 
                         continue;
                     }
@@ -578,7 +686,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             );
                         }
 
-                        if C::MANIFESTS_ONLY {
+                        if cb.manifests_only {
                             continue;
                         }
 
@@ -589,7 +697,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                         let dependency_list = core::mem::take(dependency_list_entry);
 
-                        process_dependency_list_for_ctx::<C>(
+                        process_dependency_list_for_ctx(
+                            cb,
                             manager,
                             dependency_list,
                             extract_ctx,
@@ -631,24 +740,21 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 // touch `task.callback` (see `NetworkTask::reset_streaming_*`
                 // / `discard_unused_streaming_state`).
                 let extract = unsafe { &mut *extract_ptr };
-                // Streaming extraction never pushes its NetworkTask to
-                // `async_network_task_queue` once committed — the
-                // extract Task published by `TarballStream.finish()`
-                // owns its lifetime — so every `.extract` task that
-                // arrives here is taking the buffered path.
+                // A committed stream publishes its result through the extract
+                // Task, except when the connection failed mid-body:
+                // `TarballStream::finish()` then un-commits and sends the
+                // NetworkTask back here to be retried like any failed download.
                 debug_assert!(!task.streaming_committed);
 
-                if !has_network_error && task.response.metadata.is_none() {
-                    has_network_error = true;
-                    let min = manager.options.min_simultaneous_requests;
-                    let max = AsyncHTTP::max_simultaneous_requests().load(Ordering::Relaxed);
-                    if max > min {
-                        AsyncHTTP::max_simultaneous_requests()
-                            .store(min.max(max / 2), Ordering::Relaxed);
-                    }
+                let download_failed = match &task.response.metadata {
+                    None => true,
+                    Some(m) => task.response.fail.is_some() && m.response.status_code < 400,
+                };
+                if download_failed {
+                    throttle_after_network_error(manager, &mut has_network_error);
                 }
 
-                if task.response.metadata.is_none()
+                if download_failed
                     || task
                         .response
                         .metadata
@@ -666,9 +772,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                     if task.retried < manager.options.max_retry_count {
                         task.retried += 1;
-                        // Streaming never committed (asserted above), so
-                        // the pre-allocated stream is safe to reuse for
-                        // the retry attempt.
                         task.reset_streaming_for_retry();
                         enqueue::enqueue_network_task(manager, task_ptr);
 
@@ -677,7 +780,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 manager.log_mut(),
                                 None,
                                 bun_ast::Loc::EMPTY,
-                                "<r><yellow>warn:<r> {} downloading tarball <b>{}@{}<r>. Retrying {}/{}...",
+                                "{} downloading tarball <b>{}@{}<r>. Retrying {}/{}...",
                                 bstr::BStr::new(err.name().as_bytes()),
                                 bstr::BStr::new(extract.name.slice()),
                                 extract
@@ -699,7 +802,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 // path below allocates its own Task.
                 task.discard_unused_streaming_state(manager);
 
-                let Some(metadata) = task.response.metadata.as_ref() else {
+                let Some(metadata) = task.response.metadata.as_ref().filter(|_| !download_failed)
+                else {
                     let err = task
                         .response
                         .fail
@@ -717,9 +821,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let is_required = manager.is_network_task_required(task.task_id);
                     manager.mark_network_task_failed(task.task_id);
 
-                    if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR {
-                        if C::IS_STORE_INSTALLER {
-                            C::on_package_download_error_store(
+                    if cb.has_on_package_download_error {
+                        if cb.is_store_installer {
+                            (cb.on_package_download_error_store)(
                                 extract_ctx,
                                 task.task_id,
                                 extract.name.slice(),
@@ -730,7 +834,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         } else {
                             let package_id = manager.lockfile.buffers.resolutions
                                 [extract.dependency_id as usize];
-                            C::on_package_download_error_pkg(
+                            (cb.on_package_download_error_pkg)(
                                 extract_ctx,
                                 package_id,
                                 extract.name.slice(),
@@ -796,7 +900,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let is_required = manager.is_network_task_required(task.task_id);
                     manager.mark_network_task_failed(task.task_id);
 
-                    if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR {
+                    if cb.has_on_package_download_error {
                         let err = match response.status_code {
                             400 => crate::Error::TarballHTTP400,
                             401 => crate::Error::TarballHTTP401,
@@ -807,8 +911,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             _ => crate::Error::TarballHTTP5xx,
                         };
 
-                        if C::IS_STORE_INSTALLER {
-                            C::on_package_download_error_store(
+                        if cb.is_store_installer {
+                            (cb.on_package_download_error_store)(
                                 extract_ctx,
                                 task.task_id,
                                 extract.name.slice(),
@@ -819,7 +923,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         } else {
                             let package_id = manager.lockfile.buffers.resolutions
                                 [extract.dependency_id as usize];
-                            C::on_package_download_error_pkg(
+                            (cb.on_package_download_error_pkg)(
                                 extract_ctx,
                                 package_id,
                                 extract.name.slice(),
@@ -911,19 +1015,17 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         if task_ptr.is_null() {
             break;
         }
-        if cfg!(debug_assertions) {
-            debug_assert!(manager.pending_task_count() > 0);
-        }
+        debug_assert!(manager.pending_task_count() > 0);
         // raw-ptr capture — borrowck would reject overlapping `&mut`
         // with the loop body. Guard runs on every `continue`/`?`/fallthrough.
         // Phase B: have the iterator yield a pool guard that puts back on Drop.
         // SAFETY: `task_ptr` non-null per loop guard; node exclusively owned by this batch.
         let task = unsafe { &mut *task_ptr };
         // The per-iteration scopeguards capture the function-scope provenance
-        // roots (`manager_ptr`/`extract_ctx_ptr`) — the body shadows
-        // `manager`/`extract_ctx` are reborrows of those same roots (see
-        // drain `defer!` setup), so dereffing a root in a guard is valid both
-        // before *and* after every body use of the shadow under Stacked Borrows.
+        // root (`manager_ptr`) — the body shadow `manager` is a reborrow of
+        // that same root (see drain `defer!` setup), so dereffing the root in a
+        // guard is valid both before *and* after every body use of the shadow
+        // under Stacked Borrows.
         scopeguard::defer! {
             // SAFETY: `manager_ptr` is the provenance root for every body access
             // to `manager`; `task_ptr` is the sole live handle to this pool slot.
@@ -973,8 +1075,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let name = req.name.slice();
                     let err = task.err.unwrap_or(crate::Error::Failed);
 
-                    if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
-                        C::on_package_manifest_error(extract_ctx, name, err, &req.network.url_buf);
+                    if cb.has_on_package_manifest_error {
+                        (cb.on_package_manifest_error)(
+                            extract_ctx,
+                            name,
+                            err,
+                            &req.network.url_buf,
+                        );
                     } else {
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
@@ -997,14 +1104,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     m
                 };
                 let name_hash = manifest.pkg.name.hash;
-                let progress_name: Option<Vec<u8>> = (!C::MANIFESTS_ONLY
+                let progress_name: Option<Vec<u8>> = (!cb.manifests_only
                     && log_level.show_progress()
                     && !has_updated_this_run.get())
                 .then(|| manifest.name().to_vec());
 
                 manager.manifests.insert(name_hash, manifest)?;
 
-                if C::MANIFESTS_ONLY {
+                if cb.manifests_only {
                     continue;
                 }
 
@@ -1014,7 +1121,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     .expect("infallible: task queued");
                 let dependency_list = core::mem::take(dependency_list_entry);
 
-                process_dependency_list_for_ctx::<C>(
+                process_dependency_list_for_ctx(
+                    cb,
                     manager,
                     dependency_list,
                     extract_ctx,
@@ -1083,7 +1191,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // `local_tarball` tasks (they never populate the map).
                     manager.mark_network_task_failed(task.id);
 
-                    if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR {
+                    if cb.has_on_package_download_error {
                         // SAFETY: `task.tag` selects the active `task.request` union arm.
                         let fail_url: &[u8] = unsafe {
                             match task.tag {
@@ -1094,8 +1202,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 _ => unreachable!(),
                             }
                         };
-                        if C::IS_STORE_INSTALLER {
-                            C::on_package_download_error_store(
+                        if cb.is_store_installer {
+                            (cb.on_package_download_error_store)(
                                 extract_ctx,
                                 task.id,
                                 alias,
@@ -1104,7 +1212,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 fail_url,
                             );
                         } else {
-                            C::on_package_download_error_pkg(
+                            (cb.on_package_download_error_pkg)(
                                 extract_ctx,
                                 package_id,
                                 alias,
@@ -1138,10 +1246,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 manager.extracted_count += 1;
                 bun_core::analytics::Features::extracted_packages_inc();
 
-                if C::HAS_ON_EXTRACT {
-                    if C::IS_PACKAGE_INSTALLER {
-                        C::as_package_installer(extract_ctx).fix_cached_lockfile_package_slices();
-                        C::on_extract_package_installer(
+                if cb.has_on_extract {
+                    if cb.is_package_installer {
+                        cb.package_installer(extract_ctx)
+                            .fix_cached_lockfile_package_slices();
+                        (cb.on_extract_package_installer)(
                             extract_ctx,
                             task.id,
                             dependency_id,
@@ -1150,8 +1259,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             unsafe { &mut task.data.extract },
                             log_level,
                         );
-                    } else if C::IS_STORE_INSTALLER {
-                        C::on_extract_store_installer(extract_ctx, task.id);
+                    } else if cb.is_store_installer {
+                        (cb.on_extract_store_installer)(extract_ctx, task.id);
                     } else {
                         unreachable!("unexpected context type");
                     }
@@ -1165,6 +1274,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     task.data_extract(),
                     log_level,
                 ) {
+                    // Record the appended package so a later-enqueued dependency
+                    // on this same tarball can resolve; see `AppendedTaskPackageMap`.
+                    manager.appended_task_packages.insert(task.id, pkg.meta.id);
                     'handle_pkg: {
                         // In the middle of an install, you could end up needing to downlaod the github tarball for a dependency
                         // We need to make sure we resolve the dependencies first before calling the onExtract callback
@@ -1178,10 +1290,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         };
 
                         scopeguard::defer! {
-                            if C::HAS_ON_RESOLVE && any_root.get() {
-                                // SAFETY: `extract_ctx_ptr` is the function-scope provenance
-                                // root for `extract_ctx`; the body shadow is dead at guard time.
-                                C::on_resolve(unsafe { &mut *extract_ctx_ptr });
+                            if cb.has_on_resolve && any_root.get() {
+                                (cb.on_resolve)(extract_ctx);
                             }
                         };
 
@@ -1257,14 +1367,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let name = clone.name.slice();
                 let url = clone.url.slice();
 
-                manager.git_repositories.insert(task.id, repo_fd);
-
                 if task.status == Task::Status::Fail {
                     let err = task.err.unwrap_or(crate::Error::Failed);
 
-                    if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
-                        C::on_package_manifest_error(extract_ctx, name, err, url);
-                    } else if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR && C::IS_STORE_INSTALLER {
+                    if cb.has_on_package_manifest_error {
+                        (cb.on_package_manifest_error)(extract_ctx, name, err, url);
+                    } else if cb.has_on_package_download_error && cb.is_store_installer {
                         // The isolated installer queued its entry contexts
                         // under `checkout_id`, not `clone_id`. A failed clone
                         // never reaches checkout, so drain every waiting
@@ -1294,7 +1402,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     manager.lockfile.str(&res_git.resolved),
                                 );
                                 drained_any = true;
-                                C::on_package_download_error_store(
+                                (cb.on_package_download_error_store)(
                                     extract_ctx,
                                     checkout_id,
                                     name,
@@ -1315,7 +1423,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             let resolved = &clone.res.git().resolved;
                             let checkout_id =
                                 Task::Id::for_git_checkout(url, manager.lockfile.str(resolved));
-                            C::on_package_download_error_store(
+                            (cb.on_package_download_error_store)(
                                 extract_ctx,
                                 checkout_id,
                                 name,
@@ -1337,71 +1445,76 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     continue;
                 }
 
-                if C::HAS_ON_EXTRACT && C::IS_PACKAGE_INSTALLER {
-                    // Installing!
-                    // this dependency might be something other than a git dependency! only need the name and
-                    // behavior, use the resolution from the task.
-                    let dep_id = clone.dep_id;
-                    // reshaped for borrowck — copy the small `String` handles
-                    // + behavior bit so
-                    // the `&manager.lockfile` borrow doesn't extend across the
-                    // `&mut manager` calls (`has_created_network_task`,
-                    // `enqueue_git_checkout`) below; detach the slice backing
-                    // through `string_buf_ptr` (matching the
-                    // `PackageManifest`-arm `name` detach pattern above).
-                    let (dep_name_handle, is_required) = {
-                        let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
-                        (dep.name, dep.behavior.is_required())
-                    };
-                    // SAFETY: `clone.res.tag == Git` — git-clone tasks are only
-                    // enqueued for git resolutions; `value.git` is the active arm.
-                    let git = *clone.res.git();
-                    // SAFETY: `string_bytes` lives as long as `manager.lockfile`
-                    // and is not reallocated while resolve tasks are draining.
-                    let string_buf = unsafe {
-                        bun_ptr::detach_lifetime(manager.lockfile.buffers.string_bytes.as_slice())
-                    };
-                    let dep_name = dep_name_handle.slice(string_buf);
-                    let committish = git.committish.slice(string_buf);
-                    let repo = git.repo.slice(string_buf);
+                manager.git_repositories.insert(task.id, repo_fd);
 
-                    use crate::repository_real::RepositoryExt as _;
-                    let resolved = crate::repository_real::Repository::find_commit(
-                        manager.env_mut(),
-                        manager.log_mut(),
-                        repo_fd,
-                        dep_name,
-                        committish,
-                        task.id,
-                    )?;
-
-                    let checkout_id = Task::Id::for_git_checkout(repo, &resolved);
-
-                    if manager.has_created_network_task(checkout_id, is_required) {
+                if cb.has_on_extract && cb.is_package_installer {
+                    // Installing! The clone task is shared by every dependency on
+                    // this repo URL; enqueue a checkout per waiter, not just one.
+                    let Some(waiters) = manager.task_queue.remove(&task.id) else {
                         continue;
-                    }
+                    };
+                    for waiter in waiters.iter() {
+                        let dep_id = match waiter {
+                            bun_install::TaskCallbackContext::Dependency(id) => *id,
+                            _ => continue,
+                        };
+                        // reshaped for borrowck — copy the small `String` handles
+                        // so the `&manager.lockfile` borrow doesn't extend across
+                        // the `&mut manager` calls below.
+                        let (dep_name_handle, is_required) = {
+                            let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
+                            (dep.name, dep.behavior.is_required())
+                        };
+                        let pkg_id = manager.lockfile.buffers.resolutions[dep_id as usize];
+                        if pkg_id == INVALID_PACKAGE_ID {
+                            continue;
+                        }
+                        let res = manager.lockfile.packages.items_resolution()[pkg_id as usize];
+                        if res.tag != bun_install::ResolutionTag::Git {
+                            continue;
+                        }
+                        // SAFETY: `res.tag == Git` checked just above —
+                        // `value.git` is the active union arm.
+                        let git = *res.git();
+                        // SAFETY: `string_bytes` lives as long as `manager.lockfile`
+                        // and is not reallocated while resolve tasks are draining.
+                        let string_buf = unsafe {
+                            bun_ptr::detach_lifetime(
+                                manager.lockfile.buffers.string_bytes.as_slice(),
+                            )
+                        };
+                        let dep_name = dep_name_handle.slice(string_buf);
+                        let repo = git.repo.slice(string_buf);
+                        let resolved = git.resolved.slice(string_buf);
 
-                    // reshaped for borrowck — split nested `&mut manager`.
-                    let queued = enqueue::enqueue_git_checkout(
-                        manager,
-                        checkout_id,
-                        repo_fd,
-                        dep_id,
-                        dep_name,
-                        &clone.res,
-                        &resolved,
-                        None,
-                    );
-                    manager.task_batch.push(ThreadPoolBatch::from(queued));
+                        let checkout_id = Task::Id::for_git_checkout(repo, resolved);
+
+                        if manager.has_created_network_task(checkout_id, is_required) {
+                            continue;
+                        }
+
+                        // reshaped for borrowck — split nested `&mut manager`.
+                        let queued = enqueue::enqueue_git_checkout(
+                            manager,
+                            checkout_id,
+                            repo_fd,
+                            dep_id,
+                            dep_name,
+                            &res,
+                            resolved,
+                            None,
+                        );
+                        manager.task_batch.push(ThreadPoolBatch::from(queued));
+                    }
                 } else {
                     // Resolving!
-                    let dependency_list_entry = manager
+                    let dependency_list = manager
                         .task_queue
-                        .get_mut(&task.id)
+                        .remove(&task.id)
                         .expect("infallible: task queued");
-                    let dependency_list = core::mem::take(dependency_list_entry);
 
-                    process_dependency_list_for_ctx::<C>(
+                    process_dependency_list_for_ctx(
+                        cb,
                         manager,
                         dependency_list,
                         extract_ctx,
@@ -1430,12 +1543,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if task.status == Task::Status::Fail {
                     let err = task.err.unwrap_or(crate::Error::Failed);
 
-                    if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR && C::IS_STORE_INSTALLER {
+                    if cb.has_on_package_download_error && cb.is_store_installer {
                         // SAFETY: `resolution.tag == Git` — git-checkout tasks are
                         // only enqueued for git resolutions; `value.git` is the
                         // active union arm.
                         let repo = &resolution.git().repo;
-                        C::on_package_download_error_store(
+                        (cb.on_package_download_error_store)(
                             extract_ctx,
                             task.id,
                             alias.slice(),
@@ -1457,15 +1570,16 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     continue;
                 }
 
-                if C::HAS_ON_EXTRACT {
+                if cb.has_on_extract {
                     // We've populated the cache, package already exists in memory. Call the package installer callback
                     // and don't enqueue dependencies
-                    if C::IS_PACKAGE_INSTALLER {
+                    if cb.is_package_installer {
                         // TODO(dylan-conway) most likely don't need to call this now that the package isn't appended, but
                         // keeping just in case for now
-                        C::as_package_installer(extract_ctx).fix_cached_lockfile_package_slices();
+                        cb.package_installer(extract_ctx)
+                            .fix_cached_lockfile_package_slices();
 
-                        C::on_extract_package_installer(
+                        (cb.on_extract_package_installer)(
                             extract_ctx,
                             task.id,
                             git_checkout.dependency_id,
@@ -1474,8 +1588,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             unsafe { &mut task.data.git_checkout },
                             log_level,
                         );
-                    } else if C::IS_STORE_INSTALLER {
-                        C::on_extract_store_installer(extract_ctx, task.id);
+                    } else if cb.is_store_installer {
+                        (cb.on_extract_store_installer)(extract_ctx, task.id);
                     } else {
                         unreachable!("unexpected context type");
                     }
@@ -1489,6 +1603,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     task.data_git_checkout(),
                     log_level,
                 ) {
+                    // Record the appended package so a later-enqueued dependency
+                    // on this same repo+commit can resolve; see `AppendedTaskPackageMap`.
+                    manager.appended_task_packages.insert(task.id, pkg.meta.id);
                     'handle_pkg: {
                         let any_root = Cell::new(false);
                         let dependency_list: TaskCallbackList = {
@@ -1499,10 +1616,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         };
 
                         scopeguard::defer! {
-                            if C::HAS_ON_RESOLVE && any_root.get() {
-                                // SAFETY: `extract_ctx_ptr` is the function-scope provenance
-                                // root for `extract_ctx`; the body shadow is dead at guard time.
-                                C::on_resolve(unsafe { &mut *extract_ctx_ptr });
+                            if cb.has_on_resolve && any_root.get() {
+                                (cb.on_resolve)(extract_ctx);
                             }
                         };
 
@@ -1537,7 +1652,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         }
 
                         // Invariant: this branch only reachable when !HAS_ON_EXTRACT.
-                        debug_assert!(!C::HAS_ON_EXTRACT, "ctx should be void");
+                        debug_assert!(!cb.has_on_extract, "ctx should be void");
                     }
                 }
 
@@ -1579,15 +1694,15 @@ pub fn decrement_pending_tasks(manager: &mut PackageManager) {
 
 impl PackageManager {
     #[inline]
-    pub fn pending_task_count(&self) -> u32 {
+    pub(crate) fn pending_task_count(&self) -> u32 {
         pending_task_count(self)
     }
     #[inline]
-    pub fn increment_pending_tasks(&mut self, count: u32) {
+    pub(crate) fn increment_pending_tasks(&mut self, count: u32) {
         increment_pending_tasks(self, count)
     }
     #[inline]
-    pub fn decrement_pending_tasks(&mut self) {
+    pub(crate) fn decrement_pending_tasks(&mut self) {
         decrement_pending_tasks(self)
     }
 }
@@ -1748,16 +1863,29 @@ pub fn is_network_task_required(this: &PackageManager, task_id: Task::Id) -> boo
     }
 }
 
-pub fn mark_network_task_failed(this: &mut PackageManager, task_id: Task::Id) {
+pub(crate) fn mark_network_task_failed(this: &mut PackageManager, task_id: Task::Id) {
     if let Some(entry) = this.network_dedupe_map.get_mut(&task_id) {
         entry.failed = true;
     }
 }
 
-pub fn network_task_has_failed(this: &PackageManager, task_id: Task::Id) -> bool {
+pub(crate) fn network_task_has_failed(this: &PackageManager, task_id: Task::Id) -> bool {
     this.network_dedupe_map
         .get(&task_id)
         .is_some_and(|e| e.failed)
+}
+
+/// The first failed download in a `run_tasks` pass halves the number of
+/// concurrent requests (down to the configured minimum).
+fn throttle_after_network_error(manager: &PackageManager, has_network_error: &mut bool) {
+    if core::mem::replace(has_network_error, true) {
+        return;
+    }
+    let min = manager.options.min_simultaneous_requests;
+    let max = AsyncHTTP::max_simultaneous_requests().load(Ordering::Relaxed);
+    if max > min {
+        AsyncHTTP::max_simultaneous_requests().store(min.max(max / 2), Ordering::Relaxed);
+    }
 }
 
 pub fn generate_network_task_for_tarball<'a>(
@@ -1772,6 +1900,29 @@ pub fn generate_network_task_for_tarball<'a>(
 ) -> Result<Option<&'a mut NetworkTask>, ForTarballError> {
     if has_created_network_task(this, task_id, is_required) {
         return Ok(None);
+    }
+    // Only reached when the tarball is not already extracted in the cache. Under
+    // --offline nothing can be fetched: report it once (the dedupe entry above stays,
+    // so later edges to the same package are quiet) — as an error only if some edge
+    // requires it — and let the caller treat it like an already-failed download.
+    if this.options.offline == crate::package_manager_real::options::OfflineMode::Offline {
+        if is_required {
+            // reported once; later dependents see the failed dedupe entry
+            mark_network_task_failed(this, task_id);
+            let name = this.lockfile.str(&package.name).to_vec();
+            this.log_mut().add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "--offline: \"{}\" is not in the cache",
+                    bstr::BStr::new(&name)
+                ),
+            );
+        } else {
+            // let a later required edge on the same package report it
+            let _ = this.network_dedupe_map.remove(&task_id);
+        }
+        return Err(ForTarballError::Offline);
     }
 
     // reshaped for borrowck —
@@ -1794,15 +1945,11 @@ pub fn generate_network_task_for_tarball<'a>(
         ))
     });
     let apply_patch_task = if let Some((h, patch_hash)) = patch {
-        let task: *mut PatchTask =
-            PatchTask::new_apply_patch_hash(this, package.meta.id, patch_hash, h);
-        // SAFETY: `task` is a fresh non-null `heap::alloc` from
-        // `new_apply_patch_hash`; we hold the only reference.
-        if let PatchTaskCallback::Apply(apply) = unsafe { &mut (*task).callback } {
+        let mut task = PatchTask::new_apply_patch_hash(this, package.meta.id, patch_hash, h);
+        if let PatchTaskCallback::Apply(apply) = &mut task.callback {
             apply.task_id = Some(task_id);
         }
-        // SAFETY: reclaiming the `Box` produced by `new_apply_patch_hash`.
-        Some(unsafe { bun_core::heap::take(task) })
+        Some(task)
     } else {
         None
     };
@@ -1859,6 +2006,16 @@ pub fn generate_network_task_for_tarball<'a>(
             &mut crate::network_task::filename_store_appender(),
         )
         .expect("unreachable"),
+        // Copied here: extract workers must not read lockfile buffers.
+        github_resolved: if package.resolution.tag == bun_install::ResolutionTag::Github {
+            strings::StringOrTinyString::init_append_if_needed(
+                this.lockfile.str(&package.resolution.github().resolved),
+                &mut crate::network_task::filename_store_appender(),
+            )
+            .expect("unreachable")
+        } else {
+            strings::StringOrTinyString::init(b"")
+        },
     };
 
     network_task.for_tarball(extract_tarball, scope, authorization)?;
@@ -1913,43 +2070,43 @@ impl PackageManager {
         drain_dependency_list(self)
     }
     #[inline]
-    pub fn flush_dependency_queue(&mut self) {
-        flush_dependency_queue(self)
-    }
-    #[inline]
-    pub fn flush_network_queue(&mut self) {
+    pub(crate) fn flush_network_queue(&mut self) {
         flush_network_queue(self)
     }
     #[inline]
-    pub fn flush_patch_task_queue(&mut self) {
+    pub(crate) fn flush_patch_task_queue(&mut self) {
         flush_patch_task_queue(self)
     }
     #[inline]
-    pub fn schedule_tasks(&mut self) -> usize {
+    pub(crate) fn schedule_tasks(&mut self) -> usize {
         schedule_tasks(self)
     }
     #[inline]
-    pub fn has_created_network_task(&mut self, task_id: Task::Id, is_required: bool) -> bool {
+    pub(crate) fn has_created_network_task(
+        &mut self,
+        task_id: Task::Id,
+        is_required: bool,
+    ) -> bool {
         has_created_network_task(self, task_id, is_required)
     }
     #[inline]
-    pub fn is_network_task_required(&self, task_id: Task::Id) -> bool {
+    pub(crate) fn is_network_task_required(&self, task_id: Task::Id) -> bool {
         is_network_task_required(self, task_id)
     }
     #[inline]
-    pub fn mark_network_task_failed(&mut self, task_id: Task::Id) {
+    pub(crate) fn mark_network_task_failed(&mut self, task_id: Task::Id) {
         mark_network_task_failed(self, task_id)
     }
     #[inline]
-    pub fn network_task_has_failed(&self, task_id: Task::Id) -> bool {
+    pub(crate) fn network_task_has_failed(&self, task_id: Task::Id) -> bool {
         network_task_has_failed(self, task_id)
     }
     #[inline]
-    pub fn get_network_task(&mut self) -> *mut NetworkTask {
+    pub(crate) fn get_network_task(&mut self) -> *mut NetworkTask {
         get_network_task(self)
     }
     #[inline]
-    pub fn alloc_github_url(&self, repository: &Repository) -> Vec<u8> {
+    pub(crate) fn alloc_github_url(&self, repository: &Repository) -> Vec<u8> {
         alloc_github_url(self, repository)
     }
 }
@@ -1957,22 +2114,19 @@ impl PackageManager {
 /// Adapter wrapping the existing `PackageManager::process_dependency_list` so
 /// it can be driven by a `RunTasksCallbacks` impl, dispatching `on_resolve`
 /// if any root dep changed.
-fn process_dependency_list_for_ctx<C: RunTasksCallbacks>(
+fn process_dependency_list_for_ctx(
+    cb: &ErasedCallbacks,
     manager: &mut PackageManager,
     dependency_list: TaskCallbackList,
-    extract_ctx: &mut C::Ctx,
+    extract_ctx: *mut (),
     install_peer: bool,
 ) -> crate::Result<()> {
-    let ctx_ptr: *mut C::Ctx = extract_ctx;
+    let on_resolve = cb.on_resolve;
     manager.process_dependency_list(
         dependency_list,
         (),
-        if C::HAS_ON_RESOLVE {
-            Some(move |()| {
-                // SAFETY: `ctx_ptr` derived from a unique `&mut` that outlives
-                // this closure; `process_dependency_list` does not alias it.
-                C::on_resolve(unsafe { &mut *ctx_ptr });
-            })
+        if cb.has_on_resolve {
+            Some(move |()| on_resolve(extract_ctx))
         } else {
             None
         },

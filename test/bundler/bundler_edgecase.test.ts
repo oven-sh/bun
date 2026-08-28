@@ -1,6 +1,6 @@
-import { describe, expect } from "bun:test";
-import { isBroken, isWindows } from "harness";
-import { readdirSync } from "node:fs";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isBroken, isWindows, tempDir } from "harness";
+import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
 
@@ -217,7 +217,7 @@ describe("bundler", () => {
     },
     runtimeFiles: {},
     run: {
-      stdout: '1 {"ns":2,"default":1,"def2":3}',
+      stdout: '1 {"def2":3,"default":1,"ns":2}',
     },
   });
   itBundled("edgecase/ExternalES6ConvertedToCommonJSSimplified", {
@@ -2744,6 +2744,93 @@ describe("bundler", () => {
       expect(out).not.toContain("na_ve");
     },
   });
+  // The bundler's per-edge graph walks (reachable files, tree-shaking /
+  // code-splitting liveness, chunk part ordering, CSS discovery, TLA
+  // validation, async propagation, dependency wrapping) used to recurse once
+  // per import-graph edge, overflowing the stack on long linear chains. 7000
+  // reliably crashed the old recursive form under debug+ASAN.
+  const deepChainDepth = 7000;
+  const deepChainFiles = {
+    ...Object.fromEntries(
+      Array.from({ length: deepChainDepth - 1 }, (_, i) => [
+        `/m${i}.js`,
+        `import { v${i + 1} } from "./m${i + 1}.js"; export const v${i} = v${i + 1} + 1;`,
+      ]),
+    ),
+    [`/m${deepChainDepth - 1}.js`]: `export const v${deepChainDepth - 1} = 1;`,
+  };
+  itBundled("edgecase/DeepImportChain", {
+    files: {
+      "/entry.js": `import { v0 } from "./m0.js"; console.log(v0);`,
+      ...deepChainFiles,
+    },
+    backend: "cli",
+    run: { stdout: String(deepChainDepth) },
+  });
+  // Top-level await in the entry makes `validate_tla` / `propagate_async` walk
+  // the chain; `await import()` of an ESM head without splitting wraps the
+  // whole chain, driving `DependencyWrapper::wrap` through it. The wrapped
+  // output initializes module N by calling module N+1's init, so running it
+  // would recurse at runtime; checking for the deepest wrapper is enough.
+  itBundled("edgecase/DeepImportChainWrappedTLA", {
+    files: {
+      "/entry.js": `await 0; const { v0 } = await import("./m0.js"); console.log(v0);`,
+      ...deepChainFiles,
+    },
+    backend: "cli",
+    onAfterBundle(api) {
+      const out = api.readFile("out.js");
+      expect(out).toContain(`init_m${deepChainDepth - 2}`);
+    },
+  });
+  // Diamond-shaped DAG (half the modules have two importers). The code-
+  // splitting reachability pass tracks min distance-from-entry for each file;
+  // a LIFO walk with distance relaxation does O(V*E) re-visits here, so this
+  // guards that the pass stays O(V+E). Plain fs writes because itBundled's
+  // fixture pipeline is too slow at this scale under debug+ASAN.
+  test.concurrent(
+    "edgecase/DeepImportDiamondDAG",
+    async () => {
+      const N = 20000;
+      using dir = tempDir("deep-import-dag", {});
+      const root = String(dir);
+      for (let i = 0; i < N; i++) {
+        const deps: number[] = [];
+        if (i + 1 < N) deps.push(i + 1);
+        if (2 * i + 3 < N) deps.push(2 * i + 3);
+        writeFileSync(
+          join(root, `m${i}.js`),
+          deps.map(d => `import { v as v${d} } from "./m${d}.js";`).join("\n") +
+            `\nexport const v = ${i}${deps.map(d => ` + v${d}`).join("")};\n`,
+        );
+      }
+      writeFileSync(join(root, "entry.js"), `import { v } from "./m0.js"; console.log(typeof v);\n`);
+
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "entry.js", "--outfile=out.js"],
+        cwd: root,
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 60_000,
+      });
+      const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect({ stderr, exitCode, signalCode: build.signalCode }).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+
+      await using run = Bun.spawn({
+        cmd: [bunExe(), "out.js"],
+        cwd: root,
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, runStderr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+      expect({ stdout, stderr: runStderr, exitCode: runExit }).toEqual({
+        stdout: "number\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
   itBundled("edgecase/NonAsciiPathDerivedWrapperName", {
     files: {
       "/entry.ts": /* js */ `
@@ -2769,6 +2856,371 @@ describe("bundler", () => {
       // Non-ID_Continue code points (U+2014 em dash) are still replaced with _.
       expect(out).toContain("require_foo_bar");
       expect(out).not.toContain("require_foo\u2014bar");
+    },
+  });
+  // `delete (null ?? ns.x)` evaluates its operand to a value, so the result is
+  // `true` with no side effect. When bundling rewrites `ns.x` to the local
+  // binding (EImportIdentifier) after folding `??`, the printer must re-wrap
+  // the operand so `delete` still sees a value instead of the binding itself.
+  // Without the wrap the output is `delete x`, a strict-mode SyntaxError.
+  itBundled("edgecase/DeleteFoldedNamespacePropertyRef", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./m.js";
+        console.log(delete (null ?? ns.x), ns.x);
+        console.log(delete (0, ns.x), ns.x);
+        console.log(delete (true ? ns.x : 0), ns.x);
+      `,
+      "/m.js": /* js */ `
+        export let x = 1;
+      `,
+    },
+    onAfterBundle: api => {
+      const code = api.readFile("out.js");
+      expect(code).not.toMatch(/delete\s+x\b/);
+      expect(code).not.toMatch(/delete\s+ns\.x\b/);
+    },
+    run: { stdout: "true 1\ntrue 1\ntrue 1" },
+  });
+  itBundled("edgecase/DeleteFoldedNamespacePropertyRefMinify", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./m.js";
+        console.log(delete (null ?? ns.x), ns.x);
+      `,
+      "/m.js": /* js */ `
+        export let x = 1;
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    run: { stdout: "true 1" },
+  });
+  // Same path via a direct named import: the identifier becomes an
+  // EImportIdentifier during the visit pass.
+  itBundled("edgecase/DeleteFoldedImportedBindingRef", {
+    files: {
+      "/entry.js": /* js */ `
+        import { x } from "./m.js";
+        console.log(delete (null ?? x), x);
+      `,
+      "/m.js": /* js */ `
+        export let x = 1;
+      `,
+    },
+    onAfterBundle: api => {
+      expect(api.readFile("out.js")).not.toMatch(/delete\s+x\b/);
+    },
+    run: { stdout: "true 1" },
+  });
+  // The bundler rewrites bare `require`/`require.main`/`require.resolve` to an
+  // ERequireCallTarget / ERequireMain / ERequireResolveCallTarget that prints
+  // as `__require` / `__require.main` / `__require.resolve`.
+  itBundled("edgecase/DeleteFoldedRequireRefs", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(delete (null ?? require));
+        console.log(delete (null ?? require.main));
+        console.log(delete (null ?? require.resolve));
+      `,
+    },
+    onAfterBundle: api => {
+      const code = api.readFile("out.js");
+      expect(code).not.toMatch(/delete\s+__require\b/);
+      expect(code).not.toMatch(/delete\s+require\b/);
+    },
+    run: { stdout: "true\ntrue\ntrue" },
+  });
+  // The visit pass substitutes unbound `undefined` to EUndefined, which
+  // `print_undefined` emits as the bare identifier when not minifying.
+  itBundled("edgecase/DeleteFoldedUndefinedRef", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(delete (null ?? undefined));
+      `,
+    },
+    onAfterBundle: api => {
+      expect(api.readFile("out.js")).not.toMatch(/delete\s+undefined\b/);
+    },
+    run: { stdout: "true" },
+  });
+  // `import.meta.main` is rewritten to EImportMetaMain; under `target: node`
+  // that prints as `__require.main == __require.module` without its own paren
+  // wrap, so an unwrapped `delete` would bind to `__require.main`.
+  itBundled("edgecase/DeleteFoldedImportMetaMainRef", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(delete (null ?? import.meta.main));
+      `,
+    },
+    onAfterBundle: api => {
+      expect(api.readFile("out.js")).not.toMatch(/delete\s+import\.meta\.main\b/);
+    },
+    run: { stdout: "true" },
+  });
+  itBundled("edgecase/DeleteFoldedImportMetaMainRefNode", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(delete (null ?? import.meta.main));
+      `,
+    },
+    target: "node",
+    onAfterBundle: api => {
+      expect(api.readFile("out.js")).not.toMatch(/delete\s+__require\.main\b/);
+    },
+    run: { runtime: "node", stdout: "true" },
+  });
+  // A same-file `const enum` member is inlined to an EInlinedEnum wrapping an
+  // ENumber during the visit pass, so the NaN/Infinity check has to look
+  // through the wrapper.
+  itBundled("edgecase/DeleteFoldedInlinedConstEnumNaN", {
+    files: {
+      "/entry.ts": /* ts */ `
+        const enum E { N = 0/0, I = 1/0, V = 1 }
+        console.log(delete (null ?? E.N), delete (null ?? E.I), delete (null ?? E.V));
+      `,
+    },
+    onAfterBundle: api => {
+      const code = api.readFile("out.js");
+      expect(code).not.toMatch(/delete\s+NaN\b/);
+      expect(code).not.toMatch(/delete\s+Infinity\b/);
+    },
+    run: { stdout: "true true true" },
+  });
+  // https://github.com/oven-sh/bun/issues/14509
+  // A require() in the catch handler of a try/catch is the common "fallback
+  // require" pattern and should not fail the build when unresolvable.
+  itBundled("edgecase/RequireInCatchBody", {
+    files: {
+      "/entry.js": /* js */ `
+        let v;
+        try {
+          v = require('pkg');
+        } catch (e) {
+          v = require('pkg/sub.cjs');
+        }
+        console.log(v);
+      `,
+      "/node_modules/pkg/package.json": JSON.stringify({
+        name: "pkg",
+        exports: { ".": "./index.js" },
+      }),
+      "/node_modules/pkg/index.js": `module.exports = "main";`,
+    },
+    target: "bun",
+    run: { stdout: "main" },
+  });
+  itBundled("edgecase/RequireInCatchBodyFromNodeModules", {
+    files: {
+      "/entry.js": `console.log(require('lib'));`,
+      "/node_modules/lib/package.json": JSON.stringify({ name: "lib", main: "index.js" }),
+      "/node_modules/lib/index.js": /* js */ `
+        let v;
+        try {
+          v = require('pkg');
+        } catch (e) {
+          v = require('pkg/dist/node/pkg.cjs');
+        }
+        module.exports = v;
+      `,
+      "/node_modules/pkg/package.json": JSON.stringify({
+        name: "pkg",
+        exports: { ".": "./index.js" },
+      }),
+      "/node_modules/pkg/index.js": `module.exports = "pkg-main";`,
+    },
+    target: "bun",
+    run: { stdout: "pkg-main" },
+  });
+  itBundled("edgecase/RequireInCatchBodyBothUnresolved", {
+    files: {
+      "/entry.js": /* js */ `
+        exports.load = function () {
+          try {
+            return require('does-not-exist-a');
+          } catch (e) {
+            return require('does-not-exist-b');
+          }
+        };
+      `,
+    },
+    target: "bun",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        const { load } = require('./out.js');
+        try {
+          load();
+          console.log("no throw");
+        } catch (e) {
+          console.log("threw: " + e.message.includes("does-not-exist-b"));
+        }
+      `,
+    },
+    run: { file: "/test.js", stdout: "threw: true" },
+  });
+  itBundled("edgecase/RequireResolveInCatchBody", {
+    files: {
+      "/entry.js": /* js */ `
+        let v;
+        try {
+          v = require.resolve('does-not-exist-a');
+        } catch (e) {
+          v = require.resolve('does-not-exist-b');
+        }
+        console.log(typeof v);
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("does-not-exist-b");
+    },
+  });
+  itBundled("edgecase/AwaitImportInCatchBody", {
+    files: {
+      "/entry.js": /* js */ `
+        async function load() {
+          try {
+            return await import('does-not-exist-a');
+          } catch (e) {
+            return await import('does-not-exist-b');
+          }
+        }
+        load().catch(e => console.log("caught"));
+      `,
+    },
+    target: "bun",
+    run: { stdout: "caught" },
+  });
+  itBundled("edgecase/RequireInFinallyStillErrors", {
+    files: {
+      "/entry.js": /* js */ `
+        try {
+          console.log("ok");
+        } catch (e) {
+        } finally {
+          require('does-not-exist');
+        }
+      `,
+    },
+    target: "bun",
+    bundleErrors: {
+      "/entry.js": [`Could not resolve: "does-not-exist". Maybe you need to "bun install"?`],
+    },
+  });
+  itBundled("edgecase/RequireAfterCatchBodyStillErrors", {
+    files: {
+      "/entry.js": /* js */ `
+        try {
+          require('does-not-exist-a');
+        } catch (e) {
+          require('does-not-exist-b');
+        }
+        require('does-not-exist-c');
+      `,
+    },
+    target: "bun",
+    bundleErrors: {
+      "/entry.js": [`Could not resolve: "does-not-exist-c". Maybe you need to "bun install"?`],
+    },
+  });
+  // A resolved-but-disabled path (node builtin under --target=browser, or a
+  // `"browser": { "pkg": false }` remap) in a try/catch body must keep emitting
+  // the empty-module stub, not a runtime throw.
+  itBundled("edgecase/RequireDisabledInCatchBodyStaysEmpty", {
+    files: {
+      "/entry.js": /* js */ `
+        try {
+          throw 0;
+        } catch (e) {
+          const a = require('fs');
+          const b = require('mapped-false');
+          if (a instanceof Error || b instanceof Error) throw new Error("unreachable");
+          console.log("ok");
+        }
+      `,
+      "/package.json": JSON.stringify({ name: "app", browser: { "mapped-false": false } }),
+      "/node_modules/mapped-false/package.json": JSON.stringify({ name: "mapped-false", main: "index.js" }),
+      "/node_modules/mapped-false/index.js": `module.exports = "real";`,
+    },
+    target: "browser",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("Cannot require module");
+    },
+    run: { stdout: "ok" },
+  });
+  itBundled("edgecase/RequireDisabledInTryBodyStaysEmpty", {
+    files: {
+      "/entry.js": /* js */ `
+        let hit = "";
+        try {
+          const x = require('mapped-false');
+          hit = "try:" + (x instanceof Error);
+        } catch (e) {
+          hit = "catch:" + e.message;
+        }
+        console.log(hit);
+      `,
+      "/package.json": JSON.stringify({ name: "app", browser: { "mapped-false": false } }),
+      "/node_modules/mapped-false/package.json": JSON.stringify({ name: "mapped-false", main: "index.js" }),
+      "/node_modules/mapped-false/index.js": `module.exports = "real";`,
+    },
+    target: "browser",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("Cannot require module");
+    },
+    run: { stdout: "try:false" },
+  });
+  // A sloppy-mode file may declare `arguments`/`eval`. ESM output is always
+  // strict, so bundling such a file to ESM is an error in the file, while the
+  // non-strict output formats keep the declaration as written.
+  itBundled("edgecase/SloppyArgumentsDeclarationESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        var arguments = 1;
+        console.log(arguments);
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/entry.js": [
+        'Declarations with the name "arguments" cannot be used with the ESM output format due to strict mode',
+      ],
+    },
+  });
+  itBundled("edgecase/SloppyEvalFunctionDeclarationESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        function eval() {}
+        console.log(typeof eval);
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/entry.js": ['Declarations with the name "eval" cannot be used with the ESM output format due to strict mode'],
+    },
+  });
+  itBundled("edgecase/SloppyArgumentsDeclarationCJSOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        var arguments = 1;
+        console.log(arguments);
+      `,
+    },
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var arguments = 1;");
+    },
+  });
+  itBundled("edgecase/SloppyArgumentsDeclarationIIFEOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        var arguments = 1;
+        console.log(arguments);
+      `,
+    },
+    format: "iife",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var arguments = 1;");
     },
   });
 });

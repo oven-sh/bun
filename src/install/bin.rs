@@ -39,10 +39,10 @@ bun_output::declare_scope!(BinLinker, hidden);
 #[derive(Clone, Copy)]
 pub struct Bin {
     pub tag: Tag,
-    pub _padding_tag: [u8; 3],
+    pub(crate) _padding_tag: [u8; 3],
 
     // Largest member must be zero initialized
-    pub value: Value,
+    pub(crate) value: Value,
 }
 
 impl Default for Bin {
@@ -58,7 +58,7 @@ impl Default for Bin {
 }
 
 impl Bin {
-    pub fn count<B: StringBuilder>(
+    pub(crate) fn count<B: StringBuilder>(
         &self,
         buf: &[u8],
         extern_strings: &[ExternalString],
@@ -87,7 +87,7 @@ impl Bin {
         0
     }
 
-    pub fn eql(
+    pub(crate) fn eql(
         l: &Bin,
         r: &Bin,
         l_buf: &[u8],
@@ -147,7 +147,7 @@ impl Bin {
     /// tail, which is UB under Stacked Borrows) and we build the
     /// `ExternalStringList` directly. Named `clone_with_buffers` to avoid
     /// shadowing `Clone::clone`.
-    pub fn clone_with_buffers<B: StringBuilder>(
+    pub(crate) fn clone_with_buffers<B: StringBuilder>(
         &self,
         buf: &[u8],
         prev_external_strings: &[ExternalString],
@@ -203,7 +203,7 @@ impl Bin {
     }
 
     /// Used for packages read from text lockfile / pnpm migration.
-    pub fn parse_append(
+    pub(crate) fn parse_append(
         bin_expr: &Expr,
         buf: &mut bun_semver::string::Buf,
         extern_strings: &mut Vec<ExternalString>,
@@ -301,7 +301,7 @@ impl Bin {
         Ok(Bin::default())
     }
 
-    pub fn parse_append_from_directories(
+    pub(crate) fn parse_append_from_directories(
         bin_expr: &Expr,
         buf: &mut bun_semver::string::Buf,
     ) -> Result<Bin, AllocError> {
@@ -317,7 +317,7 @@ impl Bin {
         Ok(Bin::default())
     }
 
-    pub fn to_json<W: fmt::Write, const STYLE: ToJsonStyle>(
+    pub(crate) fn to_json<W: fmt::Write, const STYLE: ToJsonStyle>(
         &self,
         indent: Option<&mut u32>,
         buf: &[u8],
@@ -448,7 +448,7 @@ impl Bin {
         Ok(())
     }
 
-    pub fn init() -> Bin {
+    pub(crate) fn init() -> Bin {
         Bin {
             tag: Tag::None,
             _padding_tag: [0; 3],
@@ -487,63 +487,63 @@ pub union Value {
     pub none: (),
 
     /// "bin" is a string
-    /// ```
+    /// ```json
     /// "bin": "./bin/foo",
     /// ```
-    pub file: String,
+    pub(crate) file: String,
 
     // Single-entry map
-    ///```
+    ///```json
     /// "bin": {
     ///     "babel": "./cli.js",
     /// }
     ///```
-    pub named_file: [String; 2],
+    pub(crate) named_file: [String; 2],
 
     /// "bin" is a directory
-    ///```
+    ///```json
     /// "dirs": {
     ///     "bin": "./bin",
     /// }
     ///```
-    pub dir: String,
+    pub(crate) dir: String,
     // "bin" is a map
-    ///```
+    ///```json
     /// "bin": {
     ///     "babel": "./cli.js",
     ///     "babel-cli": "./cli.js",
     /// }
     ///```
-    pub map: ExternalStringList,
+    pub(crate) map: ExternalStringList,
 }
 
 impl Value {
     /// To avoid undefined memory between union values, we must zero initialize the union first.
     #[inline]
-    pub fn init_none() -> Value {
+    pub(crate) fn init_none() -> Value {
         // SAFETY: all-zero is a valid Value (largest member ExternalStringList is POD)
         unsafe { bun_core::ffi::zeroed_unchecked() }
     }
     #[inline]
-    pub fn init_file(file: String) -> Value {
+    pub(crate) fn init_file(file: String) -> Value {
         let mut v = Self::init_none();
         v.file = file;
         v
     }
     #[inline]
-    pub fn init_named_file(named_file: [String; 2]) -> Value {
+    pub(crate) fn init_named_file(named_file: [String; 2]) -> Value {
         let mut v = Self::init_none();
         v.named_file = named_file;
         v
     }
     #[inline]
-    pub fn init_dir(dir: String) -> Value {
+    pub(crate) fn init_dir(dir: String) -> Value {
         let mut v = Self::init_none();
         v.dir = dir;
         v
     }
     #[inline]
-    pub fn init_map(map: ExternalStringList) -> Value {
+    pub(crate) fn init_map(map: ExternalStringList) -> Value {
         let mut v = Self::init_none();
         v.map = map;
         v
@@ -557,13 +557,13 @@ pub enum Tag {
     None = 0,
 
     /// "bin" is a string
-    /// ```
+    /// ```json
     /// "bin": "./bin/foo",
     /// ```
     File = 1,
 
     // Single-entry map
-    ///```
+    ///```json
     /// "bin": {
     ///     "babel": "./cli.js",
     /// }
@@ -571,7 +571,7 @@ pub enum Tag {
     NamedFile = 2,
 
     /// "bin" is a directory
-    ///```
+    ///```json
     /// "dirs": {
     ///     "bin": "./bin",
     /// }
@@ -579,7 +579,7 @@ pub enum Tag {
     Dir = 3,
 
     // "bin" is a map of more than one
-    ///```
+    ///```json
     /// "bin": {
     ///     "babel": "./cli.js",
     ///     "babel-cli": "./cli.js",
@@ -589,19 +589,19 @@ pub enum Tag {
     Map = 4,
 }
 
-pub struct NamesIterator<'a> {
-    pub bin: Bin,
-    pub i: usize,
-    pub done: bool,
-    pub dir_iterator: Option<sys::dir_iterator::WrappedIterator>,
-    pub package_name: String,
+pub(crate) struct NamesIterator<'a> {
+    pub(crate) bin: Bin,
+    pub(crate) i: usize,
+    pub(crate) done: bool,
+    pub(crate) dir_iterator: Option<sys::dir_iterator::WrappedIterator>,
+    pub(crate) package_name: String,
     /// Borrowed view of the destination `node_modules` directory fd; the
     /// caller owns the underlying `Dir`. Default is `Fd::INVALID`, which
     /// `next_in_dir()` never reaches.
-    pub destination_node_modules: Fd,
-    pub buf: PathBuffer,
-    pub string_buffer: &'a [u8],
-    pub extern_string_buf: &'a [ExternalString],
+    pub(crate) destination_node_modules: Fd,
+    pub(crate) buf: PathBuffer,
+    pub(crate) string_buffer: &'a [u8],
+    pub(crate) extern_string_buf: &'a [ExternalString],
 }
 
 impl<'a> NamesIterator<'a> {
@@ -644,7 +644,7 @@ impl<'a> NamesIterator<'a> {
     }
 
     /// next filename, e.g. "babel" instead of "cli.js"
-    pub fn next(&mut self) -> Result<Option<&[u8]>, Error> {
+    pub(crate) fn next(&mut self) -> Result<Option<&[u8]>, Error> {
         match self.bin.tag {
             Tag::File => {
                 if self.i > 0 {
@@ -701,12 +701,12 @@ impl<'a> NamesIterator<'a> {
 // `TreeContext.binaries` field to carry an unsatisfiable `'static` (the
 // installer outlives no concrete lifetime for its own self-borrowed buffers).
 pub struct PriorityQueueContext {
-    pub dependencies: bun_ptr::BackRef<Vec<Dependency>>,
-    pub string_buf: bun_ptr::BackRef<Vec<u8>>,
+    pub(crate) dependencies: bun_ptr::BackRef<Vec<Dependency>>,
+    pub(crate) string_buf: bun_ptr::BackRef<Vec<u8>>,
 }
 
 impl PriorityQueueContext {
-    pub(crate) fn less_than(&self, a: DependencyID, b: DependencyID) -> core::cmp::Ordering {
+    fn less_than(&self, a: DependencyID, b: DependencyID) -> core::cmp::Ordering {
         // `dependencies` / `string_buf` point at
         // `lockfile.buffers.{dependencies,string_bytes}`, which are kept alive
         // for the entire install (the `PackageInstaller` that owns this queue
@@ -732,15 +732,9 @@ impl bun_collections::PriorityCompare<DependencyID> for PriorityQueueContext {
 // Min-heap keyed by `PriorityQueueContext::less_than` (string-order of dep names).
 pub(crate) type PriorityQueue = bun_collections::PriorityQueue<DependencyID, PriorityQueueContext>;
 
-// `inherent_associated_types` is unstable, so callers use `Bin::PriorityQueueContext`.
-pub type Context = PriorityQueueContext;
-
 // https://github.com/npm/npm-normalize-package-bin/blob/574e6d7cd21b2f3dee28a216ec2053c2551f7af9/lib/index.js#L38
-pub(crate) fn normalized_bin_name(name: &[u8]) -> &[u8] {
-    let name = match name
-        .iter()
-        .rposition(|&b| b == b'/' || b == b'\\' || b == b':')
-    {
+fn normalized_bin_name(name: &[u8]) -> &[u8] {
+    let name = match strings::last_index_of_any(name, b"/\\:") {
         Some(i) => &name[i + 1..],
         None => name,
     };
@@ -770,15 +764,14 @@ pub(crate) fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
     // be a drive prefix (or an NTFS alternate-data-stream on the leading
     // segment) — reject it. Colons in later components are left alone so Unix
     // filenames containing `:` keep working.
-    if target
-        .split(|&b| b == b'/' || b == b'\\')
+    if strings::split_any(target, b"/\\")
         .next()
-        .is_some_and(|first| first.contains(&b':'))
+        .is_some_and(|first| strings::contains_char(first, b':'))
     {
         return true;
     }
     let mut depth: isize = 0;
-    for component in target.split(|&b| b == b'/' || b == b'\\') {
+    for component in strings::split_any(target, b"/\\") {
         match component {
             b"" | b"." => {}
             b".." => {
@@ -794,9 +787,7 @@ pub(crate) fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
 }
 
 fn bin_target_needs_resolved_containment_check(target: &[u8]) -> bool {
-    let mut components = target
-        .split(|&b| b == b'/' || b == b'\\')
-        .filter(|component| !component.is_empty());
+    let mut components = strings::tokenize_any(target, b"/\\");
     let Some(first) = components.next() else {
         return false;
     };
@@ -842,7 +833,7 @@ pub struct Linker<'a> {
     pub skipped_due_to_missing_bin: bool,
 }
 
-pub(crate) static UMASK: AtomicU32 = AtomicU32::new(0);
+static UMASK: AtomicU32 = AtomicU32::new(0);
 static HAS_SET_UMASK: AtomicBool = AtomicBool::new(false);
 
 impl<'a> Linker<'a> {
@@ -1455,10 +1446,19 @@ impl<'a> Linker<'a> {
     /// but `claude` at the root of `@anthropic-ai/claude-code-linux-x64`,
     /// which has no `bin` field of its own).
     ///
-    /// Both candidates come from the root package's `bin` entry - its
+    /// All candidates come from the root package's `bin` entry - its
     /// value (`target`) and its key (`bin_name`):
     ///   1. `<package_dir>/<target>` - the path from the root `bin` field
     ///   2. `<package_dir>/<bin_name>` - the bin name at package root
+    ///   3. `<package_dir>/<basename(target)>` - the target's filename at
+    ///      package root (`@anthropic-ai/claude-code-win32-x64` ships
+    ///      `claude.exe` at root while the root package's `bin` is
+    ///      `bin/claude.exe`)
+    ///   4. `<package_dir>/<bin_name>.exe` - esbuild ships `esbuild.exe` at
+    ///      the root of `@esbuild/win32-x64` while the root package's `bin`
+    ///      is the extensionless `bin/esbuild`. Not `#[cfg(windows)]`-gated
+    ///      so the redirect still resolves when cross-installing with
+    ///      `--os win32`.
     ///
     /// Falls through to (1) when nothing exists so the existing
     /// `skipped_due_to_missing_bin` retry-without-redirect path still fires.
@@ -1472,6 +1472,8 @@ impl<'a> Linker<'a> {
         target: &[u8],
         bin_name: &[u8],
     ) -> &'b ZStr {
+        // A trailing separator would make `lchmod` follow a symlinked target; npm drops it too.
+        let target = strings::without_trailing_slash(target);
         let primary = resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target]);
 
         if !is_native_binlink_redirect {
@@ -1489,24 +1491,49 @@ impl<'a> Linker<'a> {
             }
         }
 
+        let target_basename = path::basename(target);
+        if !target_basename.is_empty() && target_basename.len() != target.len() {
+            let at_root =
+                resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target_basename]);
+            if sys::exists(at_root.as_bytes()) {
+                return at_root;
+            }
+        }
+
+        if !bin_name.is_empty() && !strings::has_suffix_comptime(bin_name, b".exe") {
+            let mut exe_name = Vec::with_capacity(bin_name.len() + b".exe".len());
+            exe_name.extend_from_slice(bin_name);
+            exe_name.extend_from_slice(b".exe");
+            let at_root =
+                resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[&exe_name]);
+            if sys::exists(at_root.as_bytes()) {
+                return at_root;
+            }
+        }
+
         // Nothing found; return the primary so `linkBinOrCreateShim` sets
         // `skipped_due_to_missing_bin` and the caller retries without the
         // redirect.
         resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target])
     }
 
-    /// uses `self.abs_target_buf`
-    pub fn build_target_package_dir(&mut self) -> &[u8] {
+    /// Length of `<node_modules>/<package>/` in `abs_target_buf`, `None` if a NUL no longer fits.
+    pub(crate) fn build_target_package_dir(&mut self) -> Option<usize> {
         // SAFETY: `target_node_modules_path` is set at construction to either
         // a caller-owned `AbsPath` or the same buffer as `node_modules_path`;
         // both outlive `self` and are not mutated for the duration of this
         // read.
         let dest_dir_without_trailing_slash =
             strings::without_trailing_slash(unsafe { (*self.target_node_modules_path).slice() });
+        let package_name = self.target_package_name.slice();
+
+        let buf = &mut *self.abs_target_buf;
+        if dest_dir_without_trailing_slash.len() + 1 + package_name.len() + 1 >= buf.len() {
+            return None;
+        }
 
         // reshaped for borrowck — track offset instead of remain.ptr arithmetic
         let mut off: usize = 0;
-        let buf = &mut *self.abs_target_buf;
 
         buf[off..off + dest_dir_without_trailing_slash.len()]
             .copy_from_slice(dest_dir_without_trailing_slash);
@@ -1514,52 +1541,54 @@ impl<'a> Linker<'a> {
         buf[off] = SEP;
         off += 1;
 
-        let package_name = self.target_package_name.slice();
         buf[off..off + package_name.len()].copy_from_slice(package_name);
         off += package_name.len();
         buf[off] = SEP;
         off += 1;
 
-        &self.abs_target_buf[0..off]
+        Some(off)
     }
 
-    /// Returns the offset into `self.abs_dest_buf` where the destination dir ends
-    /// (i.e. where the bin name should be written).
-    // Returning an offset (rather than a slice into abs_dest_buf) avoids
-    // overlapping &mut borrows of self.
-    pub fn build_destination_dir(&mut self, global: bool) -> usize {
-        let dest_dir_without_trailing_slash =
-            strings::without_trailing_slash(self.node_modules_path.slice());
+    /// Length of the `.bin/` (or global bin) dir in `abs_dest_buf`, `None` if a NUL no longer fits.
+    pub(crate) fn build_destination_dir(&mut self, global: bool) -> Option<usize> {
+        let dest_dir_without_trailing_slash = if global {
+            strings::without_trailing_slash(self.global_bin_path.as_bytes())
+        } else {
+            strings::without_trailing_slash(self.node_modules_path.slice())
+        };
+        let suffix_len = if global { b"/".len() } else { b"/.bin/".len() };
 
         let buf = &mut *self.abs_dest_buf;
-        let mut off: usize = 0;
-        if global {
-            let global_bin_path_without_trailing_slash =
-                strings::without_trailing_slash(self.global_bin_path.as_bytes());
-            buf[off..off + global_bin_path_without_trailing_slash.len()]
-                .copy_from_slice(global_bin_path_without_trailing_slash);
-            off += global_bin_path_without_trailing_slash.len();
-            buf[off] = SEP;
-            off += 1;
-        } else {
-            buf[off..off + dest_dir_without_trailing_slash.len()]
-                .copy_from_slice(dest_dir_without_trailing_slash);
-            off += dest_dir_without_trailing_slash.len();
-            // sep_str ++ ".bin" ++ sep_str
-            buf[off] = SEP;
-            buf[off + 1..off + 1 + b".bin".len()].copy_from_slice(b".bin");
-            buf[off + 1 + b".bin".len()] = SEP;
-            off += b"/.bin/".len();
+        if dest_dir_without_trailing_slash.len() + suffix_len >= buf.len() {
+            return None;
         }
 
-        off
+        let mut off: usize = 0;
+        buf[off..off + dest_dir_without_trailing_slash.len()]
+            .copy_from_slice(dest_dir_without_trailing_slash);
+        off += dest_dir_without_trailing_slash.len();
+        buf[off] = SEP;
+        off += 1;
+        if !global {
+            buf[off..off + b".bin".len()].copy_from_slice(b".bin");
+            off += b".bin".len();
+            buf[off] = SEP;
+            off += 1;
+        }
+
+        Some(off)
     }
 
     // target: what the symlink points to
     // destination: where the symlink exists on disk
     pub fn link(&mut self, global: bool) {
-        let package_dir_len = self.build_target_package_dir().len();
-        let mut dest_off = self.build_destination_dir(global);
+        let (Some(package_dir_len), Some(mut dest_off)) = (
+            self.build_target_package_dir(),
+            self.build_destination_dir(global),
+        ) else {
+            self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+            return;
+        };
         let is_redirect = self.is_native_binlink_redirect();
 
         debug_assert!(self.bin.tag != Tag::None);
@@ -1818,8 +1847,13 @@ impl<'a> Linker<'a> {
     }
 
     pub fn unlink(&mut self, global: bool) {
-        let package_dir_len = self.build_target_package_dir().len();
-        let mut dest_off = self.build_destination_dir(global);
+        let (Some(package_dir_len), Some(mut dest_off)) = (
+            self.build_target_package_dir(),
+            self.build_destination_dir(global),
+        ) else {
+            self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+            return;
+        };
 
         debug_assert!(self.bin.tag != Tag::None);
 

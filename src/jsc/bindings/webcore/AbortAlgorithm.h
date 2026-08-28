@@ -35,6 +35,10 @@ class AbortAlgorithm : public ThreadSafeRefCounted<AbortAlgorithm>, public Activ
 public:
     using ActiveDOMCallback::ActiveDOMCallback;
 
+    // ActiveDOMCallback.
+    void ref() const final { ThreadSafeRefCounted::ref(); }
+    void deref() const final { ThreadSafeRefCounted::deref(); }
+
     virtual CallbackResult<void> handleEvent(JSC::JSValue) = 0;
 };
 

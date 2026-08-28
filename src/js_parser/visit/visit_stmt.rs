@@ -44,7 +44,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.current_scope_mut()
     }
 
-    pub fn visit_and_append_stmt(
+    pub(crate) fn visit_and_append_stmt(
         &mut self,
         stmts: &mut StmtList<'a>,
         stmt: &mut Stmt,
@@ -273,7 +273,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // "export {foo} from 'path'"
         let name = p.load_name_from_ref(data.namespace_ref);
 
-        data.namespace_ref = p.new_symbol(js_ast::symbol::Kind::Other, name)?;
+        data.namespace_ref = p.new_symbol(js_ast::symbol::Kind::Other, name);
         VecExt::append(&mut p.cur_scope().generated, data.namespace_ref);
         p.record_declared_symbol(data.namespace_ref);
 
@@ -294,7 +294,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 let _name = p.load_name_from_ref(old_ref);
-                let ref_ = p.new_symbol(js_ast::symbol::Kind::Import, _name)?;
+                let ref_ = p.new_symbol(js_ast::symbol::Kind::Import, _name);
                 VecExt::append(&mut p.cur_scope().generated, ref_);
                 p.record_declared_symbol(ref_);
                 // Compaction: items[..j] is the kept prefix; items[i] is dead
@@ -310,7 +310,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // This is a re-export and the symbols created here are used to reference
             for item in items.iter_mut() {
                 let _name = p.load_name_from_ref(item.name.ref_);
-                let ref_ = p.new_symbol(js_ast::symbol::Kind::Import, _name)?;
+                let ref_ = p.new_symbol(js_ast::symbol::Kind::Import, _name);
                 VecExt::append(&mut p.cur_scope().generated, ref_);
                 p.record_declared_symbol(ref_);
                 item.name.ref_ = ref_;
@@ -329,7 +329,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         // "export * from 'path'"
         let name = p.load_name_from_ref(data.namespace_ref);
-        data.namespace_ref = p.new_symbol(js_ast::symbol::Kind::Other, name)?;
+        data.namespace_ref = p.new_symbol(js_ast::symbol::Kind::Other, name);
         VecExt::append(&mut p.cur_scope().generated, data.namespace_ref);
         p.record_declared_symbol(data.namespace_ref);
 
@@ -458,7 +458,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 if !data.default_name.ref_.is_symbol() {
-                    data.default_name = p.create_default_name(expr.loc).expect("unreachable");
+                    data.default_name = p.create_default_name(expr.loc);
                 }
 
                 let should_emit_temp_var = p.options.features.react_fast_refresh
@@ -614,8 +614,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         if !data.default_name.ref_.is_symbol() {
-                            data.default_name =
-                                p.create_default_name(stmt.loc).expect("unreachable");
+                            data.default_name = p.create_default_name(stmt.loc);
                         }
 
                         // Capture the original function name before any `mem::take` below resets
@@ -809,8 +808,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         if !data.default_name.ref_.is_symbol() {
-                            data.default_name =
-                                p.create_default_name(stmt.loc).expect("unreachable");
+                            data.default_name = p.create_default_name(stmt.loc);
                         }
 
                         // We only inject a name into classes when decorator lowering
@@ -1016,9 +1014,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if p.current_scope == p.module_scope {
-                // defer-vs-drop-scope — restore hook_ctx_storage/is_control_flow_dead
-                // before propagating Err so the stack-local `react_hook_data` ptr is never left in
-                // p.react_refresh on the OOM path.
+                // Restore hook_ctx_storage/is_control_flow_dead before propagating Err so the
+                // stack-local `react_hook_data` ptr is never left in p.react_refresh on the OOM path.
                 rr = p.handle_react_refresh_register(
                     stmts,
                     original_name,
@@ -1333,9 +1330,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Label, stmt.loc)
             .expect("unreachable");
         let name = p.load_name_from_ref(data.name.ref_);
-        let ref_ = p
-            .new_symbol(js_ast::symbol::Kind::Label, name)
-            .expect("unreachable");
+        let ref_ = p.new_symbol(js_ast::symbol::Kind::Label, name);
         data.name.ref_ = ref_;
         p.cur_scope().label_ref = ref_;
         match data.stmt.data {
@@ -1366,7 +1361,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && (p.options.features.minify_syntax && data.value.is_primitive_literal());
         p.stmt_expr_value = data.value.data;
 
-        let is_top_level = p.current_scope == p.module_scope;
+        let is_top_level = p.current_scope == p.module_scope && !p.is_inside_single_stmt_body;
         if p.should_unwrap_common_js_to_esm() {
             p.commonjs_named_exports_needs_conversion = if is_top_level {
                 u32::MAX
@@ -1476,9 +1471,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     S::Local {
                                         kind: S::Kind::KVar,
                                         is_export: false,
-                                        was_commonjs_export: true,
+                                        origin: S::LocalOrigin::CommonJsExport,
                                         decls,
-                                        ..Default::default()
                                     },
                                     stmt.loc,
                                 );
@@ -1653,18 +1647,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut Stmt,
         data: &mut S::While,
     ) -> Result<(), Error> {
-        p.visit_expr(&mut data.test_);
+        p.visit_expr(&mut data.test);
         data.body = p.visit_loop_body(data.body);
 
-        data.test_ = SideEffects::simplify_boolean(p, data.test_);
-        let result = SideEffects::to_boolean(p, &data.test_.data);
-        if result.ok && result.side_effects == SideEffects::NoSideEffects {
-            data.test_ = p.new_expr(
-                E::Boolean {
-                    value: result.value,
-                },
-                data.test_.loc,
-            );
+        data.test = SideEffects::simplify_boolean(p, data.test);
+        if let Some(result) = SideEffects::to_boolean(p, &data.test.data) {
+            if result.side_effects == SideEffects::NoSideEffects {
+                data.test = p.new_expr(
+                    E::Boolean {
+                        value: result.value,
+                    },
+                    data.test.loc,
+                );
+            }
         }
 
         stmts.push(*stmt);
@@ -1678,9 +1673,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::DoWhile,
     ) -> Result<(), Error> {
         data.body = p.visit_loop_body(data.body);
-        p.visit_expr(&mut data.test_);
+        p.visit_expr(&mut data.test);
 
-        data.test_ = SideEffects::simplify_boolean(p, data.test_);
+        data.test = SideEffects::simplify_boolean(p, data.test);
         stmts.push(*stmt);
         Ok(())
     }
@@ -1693,15 +1688,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         let prev_in_branch = p.in_branch_condition;
         p.in_branch_condition = true;
-        p.visit_expr(&mut data.test_);
+        p.visit_expr(&mut data.test);
         p.in_branch_condition = prev_in_branch;
 
         if p.options.features.minify_syntax {
-            data.test_ = SideEffects::simplify_boolean(p, data.test_);
+            data.test = SideEffects::simplify_boolean(p, data.test);
         }
 
-        let effects = SideEffects::to_boolean(p, &data.test_.data);
-        if effects.ok && !effects.value {
+        let effects = SideEffects::to_boolean(p, &data.test.data);
+        if effects.is_some_and(|k| !k.value) {
             let old = p.is_control_flow_dead;
             p.is_control_flow_dead = true;
             data.yes = p.visit_single_stmt(data.yes, StmtsKind::None);
@@ -1712,7 +1707,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // The "else" clause is optional
         if let Some(no) = data.no {
-            if effects.ok && effects.value {
+            if effects.is_some_and(|k| k.value) {
                 let old = p.is_control_flow_dead;
                 p.is_control_flow_dead = true;
                 data.no = Some(p.visit_single_stmt(no, StmtsKind::None));
@@ -1743,7 +1738,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if p.options.features.minify_syntax {
-            if effects.ok {
+            if let Some(effects) = effects {
                 if effects.value {
                     if data.no.is_none()
                         || !SideEffects::should_keep_stmt_in_dead_control_flow(
@@ -1753,13 +1748,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     {
                         if effects.side_effects == SideEffects::CouldHaveSideEffects {
                             // Keep the condition if it could have side effects (but is still known to be truthy)
-                            if let Some(test_) = SideEffects::simplify_unused_expr(p, data.test_) {
+                            if let Some(test) = SideEffects::simplify_unused_expr(p, data.test) {
                                 stmts.push(p.s(
                                     S::SExpr {
-                                        value: test_,
+                                        value: test,
                                         ..Default::default()
                                     },
-                                    test_.loc,
+                                    test.loc,
                                 ));
                             }
                         }
@@ -1773,13 +1768,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if !SideEffects::should_keep_stmt_in_dead_control_flow(data.yes, p.arena) {
                         if effects.side_effects == SideEffects::CouldHaveSideEffects {
                             // Keep the condition if it could have side effects (but is still known to be truthy)
-                            if let Some(test_) = SideEffects::simplify_unused_expr(p, data.test_) {
+                            if let Some(test) = SideEffects::simplify_unused_expr(p, data.test) {
                                 stmts.push(p.s(
                                     S::SExpr {
-                                        value: test_,
+                                        value: test,
                                         ..Default::default()
                                     },
-                                    test_.loc,
+                                    test.loc,
                                 ));
                             }
                         }
@@ -1794,7 +1789,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             // TODO: more if statement syntax minification
-            let can_remove_test = p.expr_can_be_removed_if_unused(&data.test_);
+            let can_remove_test = p.expr_can_be_removed_if_unused(&data.test);
             match data.yes.data {
                 StmtData::SExpr(yes_expr) => {
                     if yes_expr.value.is_missing() {
@@ -1837,13 +1832,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             data.init = Some(p.visit_for_loop_init(initst, false));
         }
 
-        if let Some(mut test_) = data.test_ {
-            p.visit_expr(&mut test_);
-            data.test_ = Some(SideEffects::simplify_boolean(p, test_));
+        if let Some(mut test) = data.test {
+            p.visit_expr(&mut test);
+            data.test = Some(SideEffects::simplify_boolean(p, test));
 
-            let result = SideEffects::to_boolean(p, &data.test_.unwrap().data);
-            if result.ok && result.value && result.side_effects == SideEffects::NoSideEffects {
-                data.test_ = None;
+            if let Some(result) = SideEffects::to_boolean(p, &data.test.unwrap().data) {
+                if result.value && result.side_effects == SideEffects::NoSideEffects {
+                    data.test = None;
+                }
             }
         }
 
@@ -2047,20 +2043,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         p.pop_scope();
 
-        if let Some(catch_) = &mut data.catch_ {
-            p.push_scope_for_visit_pass(js_ast::scope::Kind::CatchBinding, catch_.loc)
+        if let Some(catch) = &mut data.catch {
+            p.push_scope_for_visit_pass(js_ast::scope::Kind::CatchBinding, catch.loc)
                 .expect("unreachable");
             {
-                if let Some(catch_binding) = catch_.binding {
+                if let Some(catch_binding) = catch.binding {
                     p.visit_binding(catch_binding, None);
                 }
-                let mut _stmts = stmts_to_list(p.arena, catch_.body);
-                p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, catch_.body_loc)
+                let mut _stmts = stmts_to_list(p.arena, catch.body);
+                p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, catch.body_loc)
                     .expect("unreachable");
+                p.fn_or_arrow_data_visit.try_body_count += 1;
                 p.visit_stmts(&mut _stmts, StmtsKind::None)
                     .expect("unreachable");
+                p.fn_or_arrow_data_visit.try_body_count -= 1;
                 p.pop_scope();
-                catch_.body = list_to_stmts(_stmts);
+                catch.body = list_to_stmts(_stmts);
             }
             p.pop_scope();
         }
@@ -2087,7 +2085,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut Stmt,
         data: &mut S::Switch,
     ) -> Result<(), Error> {
-        p.visit_expr(&mut data.test_);
+        p.visit_expr(&mut data.test);
         let mut lowered_using = false;
         {
             p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, data.body_loc)

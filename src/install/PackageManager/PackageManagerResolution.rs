@@ -1,6 +1,7 @@
 use crate::lockfile::package::PackageColumns as _;
 use core::mem::ManuallyDrop;
 
+use bun_collections::index_sort;
 use bun_core::Output;
 use bun_core::strings;
 use bun_paths::PathBuffer;
@@ -24,48 +25,12 @@ use super::options::LogLevel;
 // ──────────────────────────────────────────────────────────────────────────
 
 #[inline]
-pub fn format_later_version_in_cache<'a>(
-    this: &'a mut PackageManager,
-    package_name: &[u8],
-    name_hash: PackageNameHash,
-    resolution: &Resolution,
-) -> Option<semver::version::Formatter<'a, u64>> {
-    this.format_later_version_in_cache(package_name, name_hash, resolution)
-}
-
-#[inline]
-pub fn scope_for_package_name<'a>(
-    this: &'a PackageManager,
-    name: &[u8],
-) -> &'a npm::registry::Scope {
-    this.scope_for_package_name(name)
-}
-
-#[inline]
-pub fn get_installed_versions_from_disk_cache(
-    this: &mut PackageManager,
-    tags_buf: &mut Vec<u8>,
-    package_name: &[u8],
-) -> crate::Result<Vec<semver::Version>> {
-    this.get_installed_versions_from_disk_cache(tags_buf, package_name)
-}
-
-#[inline]
 pub fn resolve_from_disk_cache(
     this: &mut PackageManager,
     package_name: &[u8],
     version: &dependency::Version,
 ) -> Option<PackageID> {
     this.resolve_from_disk_cache(package_name, version)
-}
-
-#[inline]
-pub fn assign_resolution(
-    this: &mut PackageManager,
-    dependency_id: DependencyID,
-    package_id: PackageID,
-) {
-    this.assign_resolution(dependency_id, package_id)
 }
 
 #[inline]
@@ -77,21 +42,13 @@ pub fn assign_root_resolution(
     this.assign_root_resolution(dependency_id, package_id)
 }
 
-#[inline]
-pub fn verify_resolutions(this: &mut PackageManager, log_level: LogLevel) {
-    this.verify_resolutions(log_level)
-}
-
 impl PackageManager {
-    pub fn format_later_version_in_cache(
+    pub(crate) fn format_later_version_in_cache(
         &mut self,
         package_name: &[u8],
         name_hash: PackageNameHash,
         resolution: &Resolution,
     ) -> Option<semver::version::Formatter<'_, u64>> {
-        // The `.load_from_memory` arm never reads scope; keep the param for
-        // signature parity.
-        let _ = package_name;
         match resolution.tag {
             ResolutionTag::Npm => {
                 let npm_version = resolution.npm().version;
@@ -107,7 +64,9 @@ impl PackageManager {
                 // nothing on `PackageManager` besides the map, so use the
                 // disjoint-borrow helper and read `self.options` / `self.lockfile`
                 // alongside the held `&mut self.manifests` field borrow.
-                let manifest = self.manifests.by_name_hash_in_memory(name_hash)?;
+                let manifest = self
+                    .manifests
+                    .by_name_hash_in_memory(package_name, name_hash)?;
 
                 if let Some(latest_version) = manifest
                     .find_by_dist_tag_with_filter(
@@ -138,7 +97,7 @@ impl PackageManager {
         self.options.scope_for_package_name(name)
     }
 
-    pub fn get_installed_versions_from_disk_cache(
+    pub(crate) fn get_installed_versions_from_disk_cache(
         &mut self,
         tags_buf: &mut Vec<u8>,
         package_name: &[u8],
@@ -153,8 +112,7 @@ impl PackageManager {
             Err(
                 crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
                 | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
-                | crate::Error::Sys(bun_errno::SystemErrno::EACCES)
-                | crate::Error::DeviceBusy,
+                | crate::Error::Sys(bun_errno::SystemErrno::EACCES),
             ) => {
                 return Ok(list);
             }
@@ -186,15 +144,9 @@ impl PackageManager {
             let mut version = parsed.version.min();
             let total = (version.tag.build.len() + version.tag.pre.len()) as usize;
             if total > 0 {
-                let len_before = tags_buf.len();
-                // `clone_into` writes exactly `total` bytes (build.len + pre.len)
-                // into `available` and advances it; zero-fill the tail first so
-                // we can hand it out as a safe `&mut [u8]` instead of slicing
-                // raw spare capacity.
-                tags_buf.resize(len_before + total, 0);
-                let mut available = &mut tags_buf[len_before..];
-                let new_version = version.clone_into(name, &mut available);
-                version = new_version;
+                let mut offset = tags_buf.len();
+                tags_buf.resize(offset + total, 0);
+                version = version.clone_into(name, tags_buf, &mut offset);
             }
 
             list.push(version);
@@ -203,7 +155,7 @@ impl PackageManager {
         Ok(list)
     }
 
-    pub fn resolve_from_disk_cache(
+    pub(crate) fn resolve_from_disk_cache(
         &mut self,
         package_name: &[u8],
         version: &dependency::Version,
@@ -233,7 +185,9 @@ impl PackageManager {
             // Sort descending. Use the total-order helper with swapped args
             // (`b.order(a)`) so equal keys yield `Equal`; a two-way Less/Greater
             // closure is not antisymmetric and may panic since Rust 1.81.
-            installed_versions.sort_by(|a, b| semver::Version::order_fn(tags_slice, *b, *a));
+            index_sort::sort_slice_by(&mut installed_versions, |a, b| {
+                semver::Version::order_fn(tags_slice, *b, *a)
+            });
         }
         let npm_query = version.npm();
         for installed_version in installed_versions.iter().copied() {
@@ -296,15 +250,13 @@ impl PackageManager {
         None
     }
 
-    pub fn assign_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
+    pub(crate) fn assign_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
         // reshaped for borrowck — capture lengths before mutable borrows.
-        if cfg!(debug_assertions) {
-            debug_assert!(
-                (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
-            );
-            debug_assert!((package_id as usize) < self.lockfile.packages.len());
-            // debug_assert!(self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize] == invalid_package_id);
-        }
+        debug_assert!(
+            (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
+        );
+        debug_assert!((package_id as usize) < self.lockfile.packages.len());
+        // debug_assert!(self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize] == invalid_package_id);
         let buffers = &mut self.lockfile.buffers;
         buffers.resolutions.as_mut_slice()[dependency_id as usize] = package_id;
         let string_buf = buffers.string_bytes.as_slice();
@@ -317,18 +269,20 @@ impl PackageManager {
         }
     }
 
-    pub fn assign_root_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
+    pub(crate) fn assign_root_resolution(
+        &mut self,
+        dependency_id: DependencyID,
+        package_id: PackageID,
+    ) {
         // reshaped for borrowck — capture lengths before mutable borrows.
-        if cfg!(debug_assertions) {
-            debug_assert!(
-                (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
-            );
-            debug_assert!((package_id as usize) < self.lockfile.packages.len());
-            debug_assert!(
-                self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize]
-                    == invalid_package_id
-            );
-        }
+        debug_assert!(
+            (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
+        );
+        debug_assert!((package_id as usize) < self.lockfile.packages.len());
+        debug_assert!(
+            self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize]
+                == invalid_package_id
+        );
         let buffers = &mut self.lockfile.buffers;
         buffers.resolutions.as_mut_slice()[dependency_id as usize] = package_id;
         let string_buf = buffers.string_bytes.as_slice();
@@ -341,7 +295,7 @@ impl PackageManager {
         }
     }
 
-    pub fn verify_resolutions(&mut self, log_level: LogLevel) {
+    pub(crate) fn verify_resolutions(&mut self, log_level: LogLevel) {
         let lockfile = &self.lockfile;
         let resolutions_lists: &[DependencyIDSlice] = lockfile.packages.items_resolutions();
         let dependency_lists: &[DependencySlice] = lockfile.packages.items_dependencies();
@@ -367,8 +321,7 @@ impl PackageManager {
                     continue;
                 }
 
-                // TODO lockfile rewrite: remove this and make non-optional peer dependencies error if they did not resolve.
-                //      Need to keep this for now because old lockfiles might have a peer dependency without the optional flag set.
+                // Unmet peers only warn (`warn_unmet_peer_dependency`).
                 if failed_dep.behavior.is_peer() {
                     continue;
                 }
@@ -385,7 +338,44 @@ impl PackageManager {
                 }
 
                 if log_level != LogLevel::Silent {
-                    if failed_dep.name.is_empty()
+                    if !any_failed {
+                        Output::flush();
+                    }
+                    if failed_dep.version.tag == dependency::Tag::Catalog {
+                        let name = bstr::BStr::new(failed_dep.name.slice(string_buf));
+                        let literal = failed_dep.version.literal.fmt(string_buf);
+                        let catalog_name = failed_dep.version.catalog().slice(string_buf);
+                        let is_default = catalog_name.is_empty() || catalog_name == b"default";
+                        let catalog_exists = is_default
+                            || lockfile
+                                .catalogs
+                                .groups
+                                .keys()
+                                .iter()
+                                .any(|k| k.slice(string_buf) == catalog_name);
+                        if !catalog_exists {
+                            Output::err_generic(
+                                "<b>{}@{}<r>: there is no catalog named \"{}\" in the root package.json",
+                                (name, literal, bstr::BStr::new(catalog_name)),
+                            );
+                        } else if is_default {
+                            Output::err_generic(
+                                "<b>{}@{}<r> is not in the catalog",
+                                (name, literal),
+                            );
+                            bun_core::pretty_errorln!("  bun add --catalog {}", name);
+                        } else {
+                            Output::err_generic(
+                                "<b>{}@{}<r> is not in catalog \"{}\"",
+                                (name, literal, bstr::BStr::new(catalog_name)),
+                            );
+                            bun_core::pretty_errorln!(
+                                "  bun add --catalog={} {}",
+                                bstr::BStr::new(catalog_name),
+                                name
+                            );
+                        }
+                    } else if failed_dep.name.is_empty()
                         || strings::eql_long(
                             failed_dep.name.slice(string_buf),
                             failed_dep.version.literal.slice(string_buf),

@@ -45,14 +45,6 @@ impl<'a> run_tasks::RunTasksCallbacks for HoistedRunTasksCallbacks<'a> {
     ) {
         ctx.install_enqueued_packages_after_extraction(task_id, dependency_id, &*data, log_level);
     }
-
-    fn as_package_installer<'x>(ctx: &'x mut Self::Ctx) -> &'x mut PackageInstaller<'x> {
-        // SAFETY: identity cast — narrows the invariant `'a` param to the
-        // borrow-local `'x` (`'a: 'x` is implied by `&'x mut PackageInstaller<'a>`).
-        // The returned reference cannot outlive `'x`, so all inner `'a` borrows
-        // remain valid. Inner-lifetime variance cast via raw pointer.
-        unsafe { &mut *core::ptr::from_mut(ctx).cast::<PackageInstaller<'x>>() }
-    }
 }
 
 pub(crate) fn install_hoisted_packages(
@@ -356,7 +348,6 @@ pub(crate) fn install_hoisted_packages(
             let names = bun_ptr::RawSlice::new(parts.items_name());
             let pkg_name_hashes = bun_ptr::RawSlice::new(parts.items_name_hash());
             let resolutions = bun_ptr::RawSlice::new(parts.items_resolution());
-            let pkg_dependencies = bun_ptr::RawSlice::new(parts.items_dependencies());
 
             // Hoist the by-value reads out of the struct literal so they
             // finish before the long-lived `&mut *mgr_ptr` borrow for
@@ -378,7 +369,6 @@ pub(crate) fn install_hoisted_packages(
                 names,
                 pkg_name_hashes,
                 resolutions,
-                pkg_dependencies,
                 lockfile: lockfile_ptr,
                 root_node_modules_folder: node_modules_folder,
                 node: &mut install_node,
@@ -417,6 +407,19 @@ pub(crate) fn install_hoisted_packages(
                 folder_path_buf: bun_paths::PathBuffer::uninit(),
                 current_tree_id: tree::INVALID_ID,
                 pending_lifecycle_scripts: Vec::new(),
+                copy_trees: {
+                    let self_contained = this.lockfile.self_contained_workspace_ids();
+                    let mut set = Bitset::init_empty(trees_count)?;
+                    if !self_contained.is_empty() {
+                        for tid in 0..trees_count {
+                            let owner = this.lockfile.owning_workspace_of_tree(tid as tree::Id);
+                            if owner != 0 && self_contained.contains(&owner) {
+                                set.set(tid);
+                            }
+                        }
+                    }
+                    set
+                },
             };
         };
 
@@ -493,7 +496,7 @@ pub(crate) fn install_hoisted_packages(
             }
 
             impl<'a, 'b> Closure<'a, 'b> {
-                pub(crate) fn is_done(closure: &mut Self) -> bool {
+                fn is_done(closure: &mut Self) -> bool {
                     // SAFETY: `closure.manager` is the raw provenance root set
                     // below; `sleep_until`/`tick_raw` hold no `&mut` across
                     // this callback, so this is the unique live borrow.
@@ -541,9 +544,9 @@ pub(crate) fn install_hoisted_packages(
                 manager: mgr,
             };
 
-            // Whenever the event loop wakes up, we need to call `runTasks`
-            // If we call sleep() instead of sleepUntil(), it will wait forever until there are no more lifecycle scripts
-            // which means it will not call runTasks until _all_ current lifecycle scripts have finished running
+            // Whenever the event loop wakes up, we need to call `run_tasks`
+            // If we call sleep() instead of sleep_until(), it will wait forever until there are no more lifecycle scripts
+            // which means it will not call run_tasks until _all_ current lifecycle scripts have finished running
             // SAFETY: `mgr` is derived from the live exclusive `this` borrow;
             // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across
             // `Closure::is_done`, so the callback's `&mut *closure.manager`
@@ -560,9 +563,7 @@ pub(crate) fn install_hoisted_packages(
         // Index instead of `.iter()` so the immutable borrow of
         // `installer.trees` doesn't overlap `&mut self`.
         for tree_idx in 0..installer.trees.len() {
-            if cfg!(debug_assertions) {
-                debug_assert!(installer.trees[tree_idx].pending_installs.len() == 0);
-            }
+            debug_assert!(installer.trees[tree_idx].pending_installs.len() == 0);
             // force = true
             installer.install_available_packages::<true>(log_level);
         }

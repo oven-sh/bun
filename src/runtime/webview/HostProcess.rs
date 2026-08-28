@@ -33,10 +33,12 @@ use {
 
 declare_scope!(WebViewHost, hidden);
 
-pub struct HostProcess {
+pub(crate) struct HostProcess {
     // Intrusive refcount (`.deref()` called in on_process_exit); kept raw
     // because the refcount, not this struct, owns the allocation.
     process: NonNull<Process>,
+    /// Set by [`Bun__WebViewHost__retire`]: the exit is reaped but not reported to C++.
+    retired: bool,
 }
 
 // PORTING.md §Global mutable state: JS-thread-only singleton ptr → AtomicPtr.
@@ -51,7 +53,7 @@ static INSTANCE: core::sync::atomic::AtomicPtr<HostProcess> =
 /// WebContent/GPU/Network helpers are XPC-connected to the child — when the
 /// child dies they get connection-invalidated and exit.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__WebViewHost__kill() {
+extern "C" fn Bun__WebViewHost__kill() {
     // SAFETY: single-threaded access (JS thread only).
     unsafe {
         if let Some(i) = INSTANCE
@@ -65,6 +67,20 @@ pub(crate) extern "C" fn Bun__WebViewHost__kill() {
     }
 }
 
+/// HostClient::retireGlobal (`bun test --isolate`): unpublish and kill this host so the next file can spawn its own at once.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__WebViewHost__retire() {
+    let this = INSTANCE.swap(ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
+    // SAFETY: INSTANCE held a live heap-allocated pointer; on_process_exit
+    // only frees it after it runs, and we have just taken it out of INSTANCE.
+    let Some(host) = (unsafe { this.as_mut() }) else {
+        return;
+    };
+    host.retired = true;
+    // SAFETY: `process` is live until on_process_exit derefs it.
+    let _ = unsafe { host.process.as_mut().kill(9) };
+}
+
 /// Lazy: first `new Bun.WebView()` calls this via C++. Returns the parent
 /// socket fd (C++ adopts into usockets and owns it from then on), or -1.
 /// C++'s HostClient::ensureSpawned checks its own sock before calling here,
@@ -73,7 +89,7 @@ pub(crate) extern "C" fn Bun__WebViewHost__kill() {
 /// owns it; re-returning a fd usockets may have already closed would be a
 /// use-after-close. Rust only owns process lifetime (watch + kill).
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__WebViewHost__ensure(
+extern "C" fn Bun__WebViewHost__ensure(
     global: &JSGlobalObject,
     stdout_inherit: bool,
     stderr_inherit: bool,
@@ -116,14 +132,22 @@ bun_spawn::link_impl_ProcessExit! {
         // pending promises and mark the host dead.
         on_process_exit(_process, status, _rusage) => {
             scoped_log!(WebViewHost, "child exited: {}", status);
-            let signo: i32 = status.signal_code().map_or(0, |s| s as i32);
-            Bun__WebViewHost__childDied(signo);
+            // A retired host was already unpublished by Bun__WebViewHost__retire.
+            if !(*this).retired {
+                let signo: i32 = status.signal_code().map_or(0, |s| s as i32);
+                Bun__WebViewHost__childDied(signo);
+            }
             // `this` was heap-allocated in spawn(); process is the
             // intrusive-rc *mut Process whose strong ref we hold. `deref()`
             // drops that ref, then drop the Box.
             Process::deref((*this).process.as_ptr());
             drop(bun_core::heap::take(this));
-            INSTANCE.store(ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
+            let _ = INSTANCE.compare_exchange(
+                this,
+                ptr::null_mut(),
+                core::sync::atomic::Ordering::Relaxed,
+                core::sync::atomic::Ordering::Relaxed,
+            );
         },
     }
 }
@@ -196,8 +220,11 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
         // per-thread `jsc::EventLoop`.
         let event_loop = unsafe { EventLoopHandle::init((*vm).event_loop().cast()) };
         let process =
-            NonNull::new(spawned.to_process(event_loop, false)).expect("toProcess returned null");
-        let self_ptr = bun_core::heap::into_raw(Box::new(HostProcess { process }));
+            NonNull::new(spawned.to_process(event_loop)).expect("toProcess returned null");
+        let self_ptr = bun_core::heap::into_raw(Box::new(HostProcess {
+            process,
+            retired: false,
+        }));
         // SAFETY: `self_ptr` is a freshly-allocated, exclusively-owned Box that
         // owns `process` and outlives it.
         unsafe {

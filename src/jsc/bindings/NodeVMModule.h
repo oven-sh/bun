@@ -5,8 +5,6 @@
 #include "JavaScriptCore/AbstractModuleRecord.h"
 #include "JavaScriptCore/JSModuleNamespaceObject.h"
 
-#include "../vm/SigintReceiver.h"
-
 namespace Bun {
 
 class NodeVMSourceTextModule;
@@ -16,18 +14,13 @@ public:
     NodeVMModuleRequest(WTF::String specifier, WTF::HashMap<WTF::String, WTF::String> importAttributes = {});
 
     JSArray* toJS(JSGlobalObject* globalObject) const;
-    void addImportAttribute(WTF::String key, WTF::String value);
-
-    const WTF::String& specifier() const { return m_specifier; }
-    void specifier(WTF::String value) { m_specifier = value; }
-    const WTF::HashMap<WTF::String, WTF::String>& importAttributes() const { return m_importAttributes; }
 
 private:
     WTF::String m_specifier;
     WTF::HashMap<WTF::String, WTF::String> m_importAttributes;
 };
 
-class NodeVMModule : public JSC::JSDestructibleObject, public SigintReceiver {
+class NodeVMModule : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
 

@@ -229,18 +229,15 @@ static std::tuple<String, String, size_t> parseTypeAndSubtype(JSGlobalObject* gl
     size_t typeEnd = input->find('/', position);
     if (typeEnd == notFound) {
         StringView remaining = input->substring(position);
-        size_t invalidIndex = findFirstInvalidHTTPTokenChar(remaining);
-        // Adjust index relative to original string
-        size_t originalIndex = (invalidIndex == -1) ? notFound : position + invalidIndex;
-        Bun::ERR::INVALID_MIME_SYNTAX(scope, globalObject, "type"_s, input->toString(), originalIndex);
+        int invalidTypeIndex = findFirstInvalidHTTPTokenChar(remaining);
+        Bun::ERR::INVALID_MIME_SYNTAX(scope, globalObject, "type"_s, input->toString(), invalidTypeIndex);
         return {};
     }
 
     StringView typeView = input->substring(position, typeEnd - position);
     int invalidTypeIndex = findFirstInvalidHTTPTokenChar(typeView);
     if (typeView.isEmpty() || invalidTypeIndex != -1) {
-        size_t originalIndex = (invalidTypeIndex == -1) ? position : position + invalidTypeIndex;
-        Bun::ERR::INVALID_MIME_SYNTAX(scope, globalObject, "type"_s, input->toString(), originalIndex);
+        Bun::ERR::INVALID_MIME_SYNTAX(scope, globalObject, "type"_s, input->toString(), invalidTypeIndex);
         return {};
     }
     String type = typeView.convertToASCIILowercase();
@@ -265,8 +262,7 @@ static std::tuple<String, String, size_t> parseTypeAndSubtype(JSGlobalObject* gl
 
     int invalidSubtypeIndex = findFirstInvalidHTTPTokenChar(subtypeView);
     if (subtypeView.isEmpty() || invalidSubtypeIndex != -1) {
-        size_t originalIndex = (invalidSubtypeIndex == -1) ? position : position + invalidSubtypeIndex;
-        Bun::ERR::INVALID_MIME_SYNTAX(scope, globalObject, "subtype"_s, input->toString(), originalIndex);
+        Bun::ERR::INVALID_MIME_SYNTAX(scope, globalObject, "subtype"_s, input->toString(), invalidSubtypeIndex);
         return {};
     }
     String subtype = subtypeView.convertToASCIILowercase();
@@ -288,7 +284,7 @@ JSMIMEType* JSMIMEType::create(VM& vm, Structure* structure, String type, String
 
 Structure* JSMIMEType::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSMIMEType::JSMIMEType(VM& vm, Structure* structure)
@@ -330,7 +326,7 @@ JSMIMETypePrototype* JSMIMETypePrototype::create(VM& vm, JSGlobalObject* globalO
 
 Structure* JSMIMETypePrototype::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
 JSMIMETypePrototype::JSMIMETypePrototype(VM& vm, Structure* structure)
@@ -495,12 +491,12 @@ void JSMIMETypePrototype::finishCreation(VM& vm)
     Base::finishCreation(vm);
 
     // Add regular methods
-    reifyStaticProperties(vm, JSMIMEType::info(), JSMIMETypePrototypeValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSMIMEType::info(), JSMIMETypePrototypeValues, *this);
 
     // Set toJSON to toString
     putDirectWithoutTransition(vm, vm.propertyNames->toJSON, getDirect(vm, vm.propertyNames->toString), PropertyAttribute::Function | 0);
 
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 //-- JSMIMETypeConstructor Implementation --
@@ -516,7 +512,7 @@ JSMIMETypeConstructor* JSMIMETypeConstructor::create(VM& vm, Structure* structur
 
 Structure* JSMIMETypeConstructor::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(InternalFunctionType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(InternalFunctionType, StructureFlags), info());
 }
 
 JSC_DECLARE_HOST_FUNCTION(callMIMEType);

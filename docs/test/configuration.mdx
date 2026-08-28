@@ -87,7 +87,7 @@ mock.module("./external-api", () => ({
 
 ### Path Ignore Patterns
 
-`pathIgnorePatterns` excludes files and directories from test discovery entirely, using glob patterns. Unlike `coveragePathIgnorePatterns`, which only affects coverage reports, `pathIgnorePatterns` prevents matching paths from being discovered and run as tests.
+`pathIgnorePatterns` excludes files and directories from test discovery entirely, using glob patterns. Unlike `coveragePathIgnorePatterns`, which only affects coverage reports, `pathIgnorePatterns` prevents Bun from discovering matching paths and running them as tests.
 
 Use it when your project contains submodules, vendored code, or other directories with `*.test.ts` files that you don't want `bun test` to pick up.
 
@@ -135,7 +135,7 @@ pathIgnorePatterns = [
 ```
 
 <Note>
-  Command-line `--path-ignore-patterns` flags override the `bunfig.toml` value entirely -- the two are not merged.
+  Command-line `--path-ignore-patterns` flags override the `bunfig.toml` value entirely. Bun does not merge the two.
 </Note>
 
 ## Reporters
@@ -213,7 +213,7 @@ Run test files matching a glob pattern with concurrent test execution enabled.
 concurrentTestGlob = "**/concurrent-*.test.ts"  # Run files matching this pattern concurrently
 ```
 
-Test files matching the pattern behave as if the `--concurrent` flag was passed: every test in those files runs concurrently. Use this to migrate a test suite to concurrent execution gradually, or to run one kind of test (say, integration tests) concurrently while the rest stay sequential.
+Test files matching the pattern behave as if you passed the `--concurrent` flag: every test in those files runs concurrently. Use this to migrate a test suite to concurrent execution gradually, or to run one kind of test (say, integration tests) concurrently while the rest stay sequential.
 
 The `--concurrent` CLI flag overrides this setting, forcing all tests to run concurrently regardless of the glob pattern.
 
@@ -287,14 +287,14 @@ Specify the coverage threshold as a single number or as an object with per-metri
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
-# Simple threshold - applies to lines, functions, and statements
+# Simple threshold - applies to lines and functions
 coverageThreshold = 0.8
 
 # Detailed thresholds
-coverageThreshold = { lines = 0.9, functions = 0.8, statements = 0.85 }
+coverageThreshold = { lines = 0.9, functions = 0.8 }
 ```
 
-Setting any of these enables `fail_on_low_coverage`, causing the test run to fail if coverage is below the threshold.
+Setting a threshold makes `bun test` exit with code 1 when coverage is enabled and any file's line or function coverage is below it. Bun accepts the `statements` key but does not currently enforce it. Outside `--parallel`, the check only runs when the `text` reporter is enabled (the default); a run with only the `lcov` reporter currently exits 0 regardless of the threshold.
 
 #### Threshold Examples
 
@@ -306,8 +306,7 @@ coverageThreshold = 0.9
 # Different requirements for different metrics
 coverageThreshold = {
   lines = 0.85,      # 85% line coverage
-  functions = 0.90,  # 90% function coverage
-  statements = 0.80  # 80% statement coverage
+  functions = 0.90   # 90% function coverage
 }
 ```
 
@@ -331,7 +330,7 @@ coveragePathIgnorePatterns = [
 ]
 ```
 
-Files matching any of these patterns are excluded from coverage calculation and reporting. See [Code coverage](/test/code-coverage).
+Bun excludes files matching any of these patterns from coverage calculation and reporting. See [Code coverage](/test/code-coverage).
 
 #### Common Ignore Patterns
 
@@ -370,7 +369,7 @@ coveragePathIgnorePatterns = [
 
 ### Sourcemap Handling
 
-Bun transpiles every file, so coverage results pass through sourcemaps before they're reported. `coverageIgnoreSourcemaps` opts out of this, but the results will be confusing: during transpilation, Bun may move code around and rename variables. The option is mostly useful for debugging coverage issues.
+Bun transpiles every file, so coverage results pass through sourcemaps before they're reported. `coverageIgnoreSourcemaps` opts out of this, but the results are confusing: during transpilation, Bun may move code around and rename variables. The option is mostly useful for debugging coverage issues.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
@@ -431,7 +430,7 @@ smol = true
 coverage = true
 coverageReporter = ["text", "lcov"]
 coverageDir = "./coverage"
-coverageThreshold = { lines = 0.85, functions = 0.90, statements = 0.80 }
+coverageThreshold = { lines = 0.85, functions = 0.90 }
 coverageSkipTestFiles = true
 coveragePathIgnorePatterns = [
   "**/*.spec.ts",

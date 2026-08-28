@@ -100,6 +100,12 @@ struct loop_ssl_data {
   unsigned int ssl_write_batch_len;
   unsigned int ssl_write_batch_cap;
   int ssl_write_batching;
+  /* The socket whose sealed records fill ssl_write_batch. The slot is shared
+   * per-loop, so a flush must only ever deliver the batch to this socket, and
+   * a batching region entered for another socket flushes these records to
+   * their owner first (BIO_s_custom_write). Meaningful while
+   * ssl_write_batch_len > 0. */
+  struct us_socket_t *ssl_write_batch_owner;
 
   /* Single spill slot: ciphertext a partial batch flush could not deliver.
    * SSL believes these records were written, so they MUST reach this exact
@@ -166,11 +172,23 @@ static int us_ssl_reneg_state_idx = -1;
 /* Per-connection async-SNI suspension state (select_certificate_cb retry). */
 static int us_ssl_sni_pending_idx = -1;
 static int us_ssl_listener_ex_idx = -1;
+/* Per-SSL socket-level SNI resolver (us_socket_sni_resolver_t), used when the
+ * SSL has no listen socket behind it. */
+static int us_ssl_socket_sni_ex_idx = -1;
 /* Set (to a non-NULL marker) only on SSLs attached to a real us_socket_t via
  * us_internal_ssl_attach. The new-session callback uses it to ignore SSLs
  * owned by other engines (the JS-stream SSL wrapper used for TLS-over-duplex)
  * whose BIOs do not point at the loop's shared BIO data. */
 static int us_ssl_is_socket_ex_idx = -1;
+/* (SSL) inline-reject clients: (void*)1 when the rejectUnauthorized policy
+ * was installed, and the LAST X509 error recorded while walking the chain
+ * (node's ssl.verifyError() verdict) as (void*)(intptr_t). */
+static int us_ssl_inline_reject_enabled_ex_idx = -1;
+static int us_ssl_inline_reject_err_ex_idx = -1;
+/* (SSL_CTX) packed client-certificate policy of a Bun.serve per-serverName
+ * entry — see us_ssl_ctx_set_sni_policy. Absent on node:tls SecureContexts,
+ * whose policy is server-level. */
+static int us_ctx_sni_policy_ex_idx = -1;
 /* Defined in Rust (src/uws_sys/SocketKind.rs) so the ordinal tracks the enum. */
 extern const unsigned char BUN_SOCKET_KIND_BUN_SOCKET_TLS;
 extern const unsigned char BUN_SOCKET_KIND_UWS_HTTP_TLS;
@@ -178,6 +196,17 @@ extern const unsigned char BUN_SOCKET_KIND_UWS_HTTP_TLS;
  * SSL stack unwinds; freed with the SSL if never delivered. */
 static int us_ssl_pending_session_idx = -1;
 static int us_ssl_pending_keylog_idx = -1;
+/* The SSL_SESSION* most recently delivered to the new-session callback. Under
+ * TLS 1.3 BoringSSL never updates the SSL's own established_session with a
+ * received NewSessionTicket, so SSL_get_session() alone gives an unresumable
+ * snapshot; node:tls's getSession()/getTLSTicket() read from here instead. */
+static int us_ssl_new_session_ref_idx = -1;
+/* Optional per-SSL sink for resumable sessions: an owner pointer plus a
+ * callback that receives each SSL_SESSION_up_ref'd session. Checked before the
+ * us_ssl_is_socket_ex_idx opt-in so consumers that don't surface a JS
+ * 'session' event (fetch) can still cache without paying the serialized
+ * pending-session queue. */
+static int us_ssl_session_sink_idx = -1;
 #ifdef _WIN32
 static INIT_ONCE us_ex_idx_once = INIT_ONCE_STATIC_INIT;
 #else
@@ -206,6 +235,19 @@ static void us_ssl_sni_pending_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
   if (!st) return;
   if (st->resolved_ctx) SSL_CTX_free(st->resolved_ctx);
   us_free(st);
+}
+
+/* Holder for the socket-level SNI resolver. A struct rather than stashing the
+ * function pointer straight into ex_data: converting a function pointer to
+ * void* is not portable C. */
+struct us_socket_sni_resolver_t {
+  us_socket_server_name_cb cb;
+};
+
+static void us_socket_sni_resolver_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                                        int index, long argl, void *argp) {
+  (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
+  if (ptr) us_free(ptr);
 }
 
 struct us_ssl_reneg_state_t {
@@ -250,6 +292,25 @@ static void us_ssl_pending_session_free(void *parent, void *ptr, CRYPTO_EX_DATA 
     us_free(pending);
     pending = next;
   }
+}
+static void us_ssl_new_session_ref_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                                        int index, long argl, void *argp) {
+  (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
+  if (ptr) SSL_SESSION_free((SSL_SESSION *)ptr);
+}
+
+struct us_ssl_session_sink_t {
+  void *owner;
+  void (*on_new_session)(void *owner, SSL_SESSION *session);
+  void (*on_free)(void *owner);
+};
+static void us_ssl_session_sink_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                                     int index, long argl, void *argp) {
+  (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
+  if (!ptr) return;
+  struct us_ssl_session_sink_t *sink = ptr;
+  if (sink->on_free) sink->on_free(sink->owner);
+  us_free(sink);
 }
 /* NSS key-log lines are produced from inside SSL_do_handshake/SSL_read, so
  * they are parked on the SSL the same way new sessions are and delivered once
@@ -303,15 +364,32 @@ static void ssl_flush_pending_keylog(struct us_socket_t *s) {
 }
 
 static int us_ssl_new_session_cb(SSL *ssl, SSL_SESSION *session) {
+  /* The session sink is the cheap path: hand the session to an owner-provided
+   * callback (one up_ref, no i2d serialize, no queue). Used by the HTTP
+   * client's per-origin session cache. */
+  struct us_ssl_session_sink_t *sink = SSL_get_ex_data(ssl, us_ssl_session_sink_idx);
+  if (sink && sink->on_new_session) {
+    SSL_SESSION_up_ref(session);
+    sink->on_new_session(sink->owner, session);
+    return 0;
+  }
   /* Park only for consumers that will drain the queue: SSLs attached to a
    * real us_socket_t (flushed into us_dispatch_session once the read unwinds)
    * and SSLs whose owner opted in via us_ssl_enable_pending_events (the
    * Rust SSLWrapper behind TLS-over-duplex / named pipes, which polls
-   * us_ssl_pop_pending_session after its reads). Everything else (fetch,
-   * WebSocket tunnels) has no consumer - don't queue. */
+   * us_ssl_pop_pending_session after its reads). Everything else (WebSocket
+   * tunnels) has no consumer - don't queue. */
   if (!SSL_get_ex_data(ssl, us_ssl_is_socket_ex_idx)) {
     return 0;
   }
+  /* Stash the latest session for getSession()/getTLSTicket(): BoringSSL only
+   * hands a TLS 1.3 NewSessionTicket to this callback, never to the SSL's
+   * established_session. Do this before the serialize/park step so a session
+   * too large to queue is still reachable. */
+  SSL_SESSION_up_ref(session);
+  SSL_SESSION *prev = SSL_get_ex_data(ssl, us_ssl_new_session_ref_idx);
+  SSL_set_ex_data(ssl, us_ssl_new_session_ref_idx, session);
+  if (prev) SSL_SESSION_free(prev);
   int length = i2d_SSL_SESSION(session, NULL);
   if (length <= 0 || length > US_SSL_PENDING_SESSION_MAX) {
     return 0;
@@ -371,12 +449,19 @@ static void us_ex_idx_init(void) {
   us_sni_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ctx_cache_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, bun_ssl_ctx_cache_on_free);
   us_ctx_user_ca_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  us_ctx_sni_policy_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_reneg_state_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_reneg_state_free);
   us_ssl_sni_pending_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_sni_pending_free);
   us_ssl_listener_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  us_ssl_socket_sni_ex_idx =
+      SSL_get_ex_new_index(0, NULL, NULL, NULL, us_socket_sni_resolver_free);
   us_ssl_is_socket_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  us_ssl_inline_reject_enabled_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  us_ssl_inline_reject_err_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_pending_session_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_pending_session_free);
   us_ssl_pending_keylog_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_pending_session_free);
+  us_ssl_new_session_ref_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_new_session_ref_free);
+  us_ssl_session_sink_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_session_sink_free);
 }
 
 #ifdef _WIN32
@@ -398,6 +483,37 @@ static inline void us_ex_idx_ensure(void) {
 static inline int us_ssl_ctx_ex_idx(void) {
   us_ex_idx_ensure();
   return us_ctx_ex_idx;
+}
+
+/* Install a session sink on `ssl`: each resumable session reaching the
+ * new-session callback is SSL_SESSION_up_ref'd and passed to `on_new_session`
+ * (which takes ownership of that reference). `on_free(owner)` runs once on
+ * SSL_free. Replacing an existing sink first frees the old one. */
+void us_ssl_set_session_sink(SSL *ssl, void *owner,
+                             void (*on_new_session)(void *, SSL_SESSION *),
+                             void (*on_free)(void *)) {
+  us_ex_idx_ensure();
+  struct us_ssl_session_sink_t *sink = us_malloc(sizeof(*sink));
+  if (!sink) {
+    if (on_free) on_free(owner);
+    return;
+  }
+  sink->owner = owner;
+  sink->on_new_session = on_new_session;
+  sink->on_free = on_free;
+  struct us_ssl_session_sink_t *old = SSL_get_ex_data(ssl, us_ssl_session_sink_idx);
+  SSL_set_ex_data(ssl, us_ssl_session_sink_idx, sink);
+  if (old) {
+    if (old->on_free) old->on_free(old->owner);
+    us_free(old);
+  }
+}
+
+/* The `owner` pointer installed via us_ssl_set_session_sink, or NULL. */
+void *us_ssl_get_session_sink_owner(SSL *ssl) {
+  if (us_ssl_session_sink_idx < 0) return NULL;
+  struct us_ssl_session_sink_t *sink = SSL_get_ex_data(ssl, us_ssl_session_sink_idx);
+  return sink ? sink->owner : NULL;
 }
 
 /* TLS-over-duplex / named-pipe owners (the Rust SSLWrapper): opt this SSL
@@ -439,6 +555,14 @@ int us_ssl_pop_pending_keylog(SSL *ssl, unsigned char *out, int out_cap) {
   return us_ssl_pop_pending(ssl, us_ssl_pending_keylog_idx, out, out_cap);
 }
 
+/* The resumable session most recently delivered via the new-session callback,
+ * or NULL if none has arrived. The returned pointer is borrowed from the SSL's
+ * ex_data and valid until the next NewSessionTicket or SSL_free. */
+SSL_SESSION *us_ssl_get_new_session(SSL *ssl) {
+  if (us_ssl_new_session_ref_idx < 0) return NULL;
+  return SSL_get_ex_data(ssl, us_ssl_new_session_ref_idx);
+}
+
 int us_ssl_ctx_cache_ex_idx(void) {
   us_ex_idx_ensure();
   return us_ctx_cache_ex_idx;
@@ -465,6 +589,9 @@ static inline struct us_ssl_reneg_state_t *us_reneg_state(SSL *ssl) {
 extern void us_internal_socket_raw_shutdown(struct us_socket_t *s);
 
 static void ssl_update_handshake(struct us_socket_t *s);
+static int ssl_flush_write_batch(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s);
+static int us_ssl_inline_reject_tripped(struct us_socket_t *s);
+static inline int ssl_gone(struct us_socket_t *s);
 
 /* ── BIO plumbing ─────────────────────────────────────────────────────────
  * The same shared mem-BIO pair is reused for every SSL* on a loop. The write
@@ -472,6 +599,10 @@ static void ssl_update_handshake(struct us_socket_t *s);
  * re-enters the SSL layer). */
 
 int passphrase_cb(char *buf, int size, int rwflag, void *u) {
+  /* No passphrase configured: behave like Node's PasswordCallback and try an
+   * empty password, so an encrypted key fails with BAD_DECRYPT instead of
+   * BoringSSL's default callback failing with BAD_PASSWORD_READ. */
+  if (u == NULL) return 0;
   const char *passphrase = (const char *)u;
   size_t passphrase_length = strlen(passphrase);
   if (passphrase_length > (size_t)size) return -1;
@@ -497,7 +628,12 @@ static long BIO_s_custom_ctrl(BIO *bio, int cmd, long num, void *user) {
  * from inside SSL_do_handshake/SSL_read: user JS that writes to or destroys a
  * different TLS socket on the same loop re-points loop_ssl_data->ssl_socket
  * (and may consume the read-input window), and the interrupted handshake's
- * next BIO_write would otherwise land on that other socket's fd. */
+ * next BIO_write would otherwise land on that other socket's fd. The batching
+ * flag is saved-and-zeroed so a write or close_notify for a different socket
+ * inside the callback goes to that socket's fd via the per-record BIO path
+ * instead of appending to the interrupted handshake's batch. */
+int us_internal_ssl_loop_state_slots(void) { return US_SSL_LOOP_STATE_SLOTS; }
+
 void us_internal_ssl_loop_state_save(void *ssl_ptr, void **out) {
   SSL *ssl = (SSL *)ssl_ptr;
   struct loop_ssl_data *d = (struct loop_ssl_data *)BIO_get_data(SSL_get_wbio(ssl));
@@ -506,6 +642,8 @@ void us_internal_ssl_loop_state_save(void *ssl_ptr, void **out) {
   out[2] = d ? (void *)d->ssl_read_input : NULL;
   out[3] = d ? (void *)(uintptr_t)d->ssl_read_input_length : NULL;
   out[4] = d ? (void *)(uintptr_t)d->ssl_read_input_offset : NULL;
+  out[5] = d ? (void *)(uintptr_t)d->ssl_write_batching : NULL;
+  if (d) d->ssl_write_batching = 0;
 }
 
 void us_internal_ssl_loop_state_restore(void **saved) {
@@ -515,6 +653,7 @@ void us_internal_ssl_loop_state_restore(void **saved) {
   d->ssl_read_input = (char *)saved[2];
   d->ssl_read_input_length = (unsigned int)(uintptr_t)saved[3];
   d->ssl_read_input_offset = (unsigned int)(uintptr_t)saved[4];
+  d->ssl_write_batching = (int)(uintptr_t)saved[5];
 }
 
 static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
@@ -531,10 +670,31 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
     return length;
   }
 
-  if (loop_ssl_data->ssl_write_batching) {
+  /* Rejecting client whose chain verification failed: suppress the
+   * post-verify flight so the peer never sees the handshake complete
+   * (node's post-verify destroy cancels its queued Finished the same way). */
+  if (loop_ssl_data->ssl_socket &&
+      us_ssl_inline_reject_tripped(loop_ssl_data->ssl_socket)) {
+    BIO_clear_retry_flags(bio);
+    return length;
+  }
+
+  if (loop_ssl_data->ssl_write_batching &&
+      loop_ssl_data->ssl_write_batch_len &&
+      loop_ssl_data->ssl_write_batch_owner != loop_ssl_data->ssl_socket) {
+    /* The batch holds another socket's records (a JS callback in this
+     * dispatch wrote to a second TLS socket on the same loop while the
+     * first socket's flight was held). Deliver them to their owner first so
+     * each socket's records stay in order. */
+    ssl_flush_write_batch(loop_ssl_data, loop_ssl_data->ssl_write_batch_owner);
+  }
+
+  if (loop_ssl_data->ssl_write_batching && loop_ssl_data->ssl_spill_owner == NULL) {
     /* Append the sealed record; the batch hits the kernel once, after
      * SSL_write returns. Reporting the full length keeps BoringSSL sealing
-     * the next record instead of parking a partial one. */
+     * the next record instead of parking a partial one. Skipped while a
+     * spill occupies the slot: a later short flush could not park its
+     * remainder without clobbering that socket's pending ciphertext. */
     unsigned int needed = loop_ssl_data->ssl_write_batch_len + (unsigned int)length;
     if (needed > loop_ssl_data->ssl_write_batch_cap) {
       unsigned int new_cap = loop_ssl_data->ssl_write_batch_cap ? loop_ssl_data->ssl_write_batch_cap : 65536;
@@ -555,6 +715,7 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
     }
     memcpy(loop_ssl_data->ssl_write_batch + loop_ssl_data->ssl_write_batch_len, data, (size_t)length);
     loop_ssl_data->ssl_write_batch_len = needed;
+    loop_ssl_data->ssl_write_batch_owner = loop_ssl_data->ssl_socket;
     BIO_clear_retry_flags(bio);
     return length;
   }
@@ -576,11 +737,26 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
 static int ssl_flush_write_batch(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s) {
   unsigned int len = loop_ssl_data->ssl_write_batch_len;
   if (!len) return 1;
+  if (loop_ssl_data->ssl_write_batch_owner != s) {
+    /* Not this socket's records (SSL_write failed before sealing anything
+     * while another socket's flight was held): leave them for their owner's
+     * own flush point. */
+    return 1;
+  }
   loop_ssl_data->ssl_write_batch_len = 0;
+  loop_ssl_data->ssl_write_batch_owner = NULL;
   int written = us_socket_raw_write(s, loop_ssl_data->ssl_write_batch, (int)len);
   if (written < 0) written = 0;
   if ((unsigned int)written < len) {
     unsigned int remainder = len - (unsigned int)written;
+    if (loop_ssl_data->ssl_spill_owner) {
+      /* The spill slot is already another socket's (a re-entrant JS region
+       * produced one between the entry-time gate and this flush).
+       * Overwriting it would leak and corrupt that socket's stream; this
+       * socket's remainder is undeliverable. */
+      s->ssl_fatal_error = 1;
+      return 0;
+    }
     char *spill = us_malloc(remainder);
     if (!spill) {
       /* Out of memory with ciphertext in flight: the connection cannot stay
@@ -596,6 +772,17 @@ static int ssl_flush_write_batch(struct loop_ssl_data *loop_ssl_data, struct us_
     return 0;
   }
   return 1;
+}
+
+/* Drop the batch slot when its owner dies without reaching a flush point
+ * (error/RST teardown), or when a destroy from inside the handshake cancels
+ * the held flight. The buffer itself is loop-owned and reused. */
+static void ssl_release_batch(struct us_loop_t *loop, struct us_socket_t *s) {
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)loop->data.ssl_data;
+  if (loop_ssl_data && loop_ssl_data->ssl_write_batch_owner == s) {
+    loop_ssl_data->ssl_write_batch_len = 0;
+    loop_ssl_data->ssl_write_batch_owner = NULL;
+  }
 }
 
 /* Try to drain the spill slot for `s`. Returns 1 when clear (or not ours),
@@ -640,6 +827,9 @@ void us_internal_ssl_socket_relocated(struct us_loop_t *loop, struct us_socket_t
   if (!loop_ssl_data) return;
   if (loop_ssl_data->ssl_spill_owner == old_s) {
     loop_ssl_data->ssl_spill_owner = new_s;
+  }
+  if (loop_ssl_data->ssl_write_batch_owner == old_s) {
+    loop_ssl_data->ssl_write_batch_owner = new_s;
   }
   if (loop_ssl_data->ssl_last_fatal_error_owner == (void *)old_s) {
     loop_ssl_data->ssl_last_fatal_error_owner = (void *)new_s;
@@ -766,6 +956,41 @@ end:
   return ret;
 }
 
+/* The context's own cert store for mutation: the process-shared root store and
+ * the still-empty SSL_CTX_new() store are first replaced by a private full
+ * default-root copy, and the context is marked so the per-socket attach keeps
+ * it. https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1831 */
+static X509_STORE *us_ssl_ctx_get_own_cert_store(SSL_CTX *ctx) {
+  X509_STORE *store = SSL_CTX_get_cert_store(ctx);
+  /* us_get_shared_default_ca_store() up-refs before returning, so release
+   * the reference taken just for this comparison. */
+  X509_STORE *shared = us_get_shared_default_ca_store();
+  int store_is_shared = store != NULL && store == shared;
+  X509_STORE_free(shared);
+  us_ex_idx_ensure();
+  int store_is_empty = 0;
+  if (store != NULL && !store_is_shared) {
+    const STACK_OF(X509_OBJECT) *objs = X509_STORE_get0_objects(store);
+    store_is_empty = objs == NULL || sk_X509_OBJECT_num(objs) == 0;
+  }
+  /* A user `ca` can legitimately add zero certificates (a key PEM is ignored,
+   * like Node), leaving an intentionally-empty pin set: only a context with
+   * no `ca` configured at all may be seeded with the default roots here. */
+  int user_ca = SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_ex_idx) != NULL;
+  if (store == NULL || store_is_shared || (store_is_empty && !user_ca)) {
+    X509_STORE *own = us_get_default_ca_store();
+    if (own == NULL) {
+      return NULL;
+    }
+    SSL_CTX_set_cert_store(ctx, own);
+    store = own;
+  }
+  /* Without this marker us_internal_ssl_attach() would hand client sockets
+   * the shared default roots, discarding the store configured here. */
+  SSL_CTX_set_ex_data(ctx, us_ctx_user_ca_ex_idx, (void *)1);
+  return store;
+}
+
 static int add_ca_cert_to_ctx_store(SSL_CTX *ctx, const char *content, X509_STORE *store) {
   X509 *x = NULL;
   ERR_clear_error();
@@ -865,9 +1090,47 @@ end:
 
 static int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
   /* Always continue; the user inspects via us_socket_verify_error after
-   * on_handshake. See SSL_verify_cb docs — returning 1 lets us defer the
-   * decision to JS without aborting mid-handshake. */
+   * on_handshake. Returning 1 defers the decision to JS without aborting
+   * mid-handshake - the same model as Node (crypto_tls.cc VerifyCallback). */
   return 1;
+}
+
+/* Rejecting client: keep walking (so the final verdict matches node's
+ * ssl.verifyError()) but remember the failure; the BIO hook and the
+ * handshake drive then keep the Finished off the wire and fail the socket. */
+static int us_inline_reject_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
+  if (!preverify_ok) {
+    SSL *ssl = X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
+    if (ssl) {
+      SSL_set_ex_data(ssl, us_ssl_inline_reject_err_ex_idx,
+                      (void *)(intptr_t)X509_STORE_CTX_get_error(ctx));
+    }
+  }
+  return 1;
+}
+
+/* Whether this socket is a rejecting client whose chain verification failed:
+ * from that point on its handshake output is suppressed and the handshake is
+ * reported as failed. */
+static int us_ssl_inline_reject_tripped(struct us_socket_t *s) {
+  if (us_ssl_inline_reject_enabled_ex_idx < 0 || !s->ssl) return 0;
+  /* Initial handshake only: renegotiation keeps the deferred JS-side policy,
+   * and established sockets exit here before any ex_data lookups. */
+  if (s->ssl_handshake_state == HANDSHAKE_COMPLETED) return 0;
+  SSL *ssl = s_ssl(s);
+  if (!ssl || !SSL_get_ex_data(ssl, us_ssl_inline_reject_enabled_ex_idx)) return 0;
+  if (!SSL_get_ex_data(ssl, us_ssl_inline_reject_err_ex_idx)) return 0;
+  /* A per-depth failure may be recovered by an alternate chain: only the
+   * final verdict rejects. */
+  return SSL_get_verify_result(ssl) != X509_V_OK;
+}
+
+/* Called from the Rust TLS socket layer for client sockets whose
+ * rejectUnauthorized policy must refuse a bad chain during the handshake. */
+void us_internal_ssl_set_inline_reject(SSL *ssl) {
+  us_ex_idx_ensure();
+  SSL_set_ex_data(ssl, us_ssl_inline_reject_enabled_ex_idx, (void *)1);
+  SSL_set_verify(ssl, SSL_VERIFY_PEER, us_inline_reject_verify_callback);
 }
 
 /* Drop the strdup'd passphrase. Called as soon as private-key load completes
@@ -904,6 +1167,10 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   /* Default options we rely on — changing these breaks the BIO logic. */
   SSL_CTX_set_read_ahead(ssl_context, 1);
   SSL_CTX_set_mode(ssl_context, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
+  /* BoringSSL ships with SSL_MODE_NO_AUTO_CHAIN set; Node clears it so a
+   * leaf-only `cert` presents the intermediates found in the context's store
+   * (crypto_context.cc#L1640). It only runs when the configured chain is 1. */
+  SSL_CTX_clear_mode(ssl_context, SSL_MODE_NO_AUTO_CHAIN);
   /* Honor explicit minVersion/maxVersion (Node's secureProtocol/min/maxVersion);
    * default to a TLS1.2 floor when no minimum is requested. */
   SSL_CTX_set_min_proto_version(ssl_context, options.ssl_min_version ? options.ssl_min_version : TLS1_2_VERSION);
@@ -917,8 +1184,10 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
 
   if (options.passphrase) {
     SSL_CTX_set_default_passwd_cb_userdata(ssl_context, (void *)us_strdup(options.passphrase));
-    SSL_CTX_set_default_passwd_cb(ssl_context, passphrase_cb);
   }
+  /* Installed unconditionally: with no userdata it supplies an empty password
+   * (see passphrase_cb), matching Node's key-decryption error shape. */
+  SSL_CTX_set_default_passwd_cb(ssl_context, passphrase_cb);
 
   /* Multiple identities (e.g. an RSA and an EC pair, the way Node accepts
    * arrays of key/cert or several pfx entries) must be loaded pair-wise:
@@ -1016,15 +1285,18 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
                                       : SSL_VERIFY_PEER,
           us_verify_callback);
     }
-  } else if (options.request_cert) {
-    /* No per-config CAs are added to this store, so the process-wide shared
-     * copy (built once) can be used instead of re-parsing the ~150 bundled
-     * roots for every context - the same approach as Node's root_cert_store. */
+  } else {
+    /* No user CA: seed the shared default root store, like Node's
+     * addRootCerts() when `ca` is absent - the handshake-time auto-chain and
+     * (for requestCert) client verification both read it. The getter up-refs,
+     * so set_cert_store owns exactly one reference per context. */
     SSL_CTX_set_cert_store(ssl_context, us_get_shared_default_ca_store());
-    SSL_CTX_set_verify(ssl_context,
-        options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
-                                    : SSL_VERIFY_PEER,
-        us_verify_callback);
+    if (options.request_cert) {
+      SSL_CTX_set_verify(ssl_context,
+          options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
+                                      : SSL_VERIFY_PEER,
+          us_verify_callback);
+    }
   }
 
   if (options.dh_params_file_name) {
@@ -1071,6 +1343,73 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     SSL_CTX_set_options(ssl_context, options.secure_options);
   }
 
+  if (options.crl && options.crl_count > 0) {
+    /* Mirrors Node's SecureContext::AddCRL: each PEM CRL is added to the
+     * context's OWN store (never the process-shared default root store) and
+     * CRL checking is enabled for the whole chain. */
+    X509_STORE *crl_store = us_ssl_ctx_get_own_cert_store(ssl_context);
+    if (!crl_store) {
+      *err = CREATE_BUN_SOCKET_ERROR_INVALID_CRL;
+      ssl_ctx_build_fail(ssl_context);
+      return NULL;
+    }
+    for (unsigned int i = 0; i < options.crl_count; i++) {
+      BIO *crl_bio = BIO_new_mem_buf(options.crl[i], -1);
+      if (!crl_bio) {
+        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CRL;
+        ssl_ctx_build_fail(ssl_context);
+        return NULL;
+      }
+      X509_CRL *crl = PEM_read_bio_X509_CRL(crl_bio, NULL, NULL, NULL);
+      BIO_free(crl_bio);
+      if (!crl) {
+        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CRL;
+        ssl_ctx_build_fail(ssl_context);
+        return NULL;
+      }
+      int added = X509_STORE_add_crl(crl_store, crl);
+      X509_CRL_free(crl);
+      if (!added) {
+        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CRL;
+        ssl_ctx_build_fail(ssl_context);
+        return NULL;
+      }
+    }
+    X509_STORE_set_flags(crl_store,
+                         X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL);
+  }
+
+  if (options.session_timeout > 0) {
+    SSL_CTX_set_timeout(ssl_context, options.session_timeout);
+  }
+
+  if (options.allow_partial_trust_chain) {
+    /* Mirrors Node's SecureContext::SetAllowPartialTrustChain, which also
+     * flags only the context's own store. A store that cannot be prepared
+     * fails context creation: the user explicitly asked for the option. */
+    X509_STORE *partial_store = us_ssl_ctx_get_own_cert_store(ssl_context);
+    if (!partial_store) {
+      ssl_ctx_build_fail(ssl_context);
+      return NULL;
+    }
+    X509_STORE_set_flags(partial_store, X509_V_FLAG_PARTIAL_CHAIN);
+  }
+
+  if (options.sigalgs) {
+    if (!SSL_CTX_set1_sigalgs_list(ssl_context, options.sigalgs)) {
+      ssl_ctx_build_fail(ssl_context);
+      return NULL;
+    }
+  }
+
+  if (options.ecdh_curve) {
+    if (!SSL_CTX_set1_groups_list(ssl_context, options.ecdh_curve)) {
+      *err = CREATE_BUN_SOCKET_ERROR_INVALID_ECDH_CURVE;
+      ssl_ctx_build_fail(ssl_context);
+      return NULL;
+    }
+  }
+
   /* Surface resumable sessions through the new-session callback the way Node
    * does: for TLS 1.3 the resumable session only exists once the peer's
    * NewSessionTicket arrives, and BoringSSL only exposes it here. NO_INTERNAL
@@ -1091,40 +1430,16 @@ int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content) {
   if (!ctx || !content) {
     return 0;
   }
-  X509_STORE *store = SSL_CTX_get_cert_store(ctx);
-  /* Clone-on-write: a context that shares the process-wide default root
-   * store must get its own copy before a CA is appended, or the addition
-   * would be visible to every other context in the process - the same
-   * root_cert_store check Node's SecureContext::AddCACert performs.
-   * us_get_shared_default_ca_store() up-refs before returning, so release
-   * the reference taken just for this comparison. */
-  X509_STORE *shared = us_get_shared_default_ca_store();
-  int store_is_shared = store && store == shared;
-  X509_STORE_free(shared);
-  /* A default context built without ca/requestCert keeps the empty store from
-   * SSL_CTX_new() (verification for it normally comes from the per-socket
-   * shared-root override). addCACert must EXTEND the default trust set the
-   * way Node does, so when the store is the shared one - or still empty -
-   * replace it with a fresh full default store (bundled roots, NODE_EXTRA_CA
-   * certificates, system CAs when enabled) before appending the user's CA. */
-  int store_is_empty = 0;
-  if (store && !store_is_shared) {
-    const STACK_OF(X509_OBJECT) *objs = X509_STORE_get0_objects(store);
-    store_is_empty = objs == NULL || sk_X509_OBJECT_num(objs) == 0;
-  }
-  if (store_is_shared || store_is_empty) {
-    X509_STORE *own = us_get_default_ca_store();
-    if (!own) {
-      return 0;
-    }
-    SSL_CTX_set_cert_store(ctx, own);
-    store = own;
-  }
+  /* addCACert must EXTEND the default trust set the way Node does: the
+   * own-store helper replaces a shared or still-empty store with a private
+   * full default-root copy before the user's CA is appended. */
+  X509_STORE *store = us_ssl_ctx_get_own_cert_store(ctx);
   if (!store) {
     return 0;
   }
-  us_ex_idx_ensure();
-  SSL_CTX_set_ex_data(ctx, us_ctx_user_ca_ex_idx, (void *)1);
+  /* A CA added after the context was built (pfx extras, addCACert) lands in
+   * the store the handshake-time auto-chain walks, so a leaf-only cert picks
+   * the intermediate up with no eager re-walk. */
   return add_ca_cert_to_ctx_store(ctx, content, store);
 }
 
@@ -1264,6 +1579,49 @@ void us_internal_ssl_ctx_unref(SSL_CTX *p) {
   if (p) SSL_CTX_free(p);
 }
 
+/* ── HTTP/2 ALPN ─────────────────────────────────────────────────────────── */
+
+static int us_alpn_select_h2(SSL *ssl, const unsigned char **out, unsigned char *outlen,
+                             const unsigned char *in, unsigned int inlen, void *arg) {
+  (void) ssl;
+  int allow_http1 = arg != NULL;
+  const unsigned char *http1 = NULL;
+  for (unsigned int i = 0; i + 1 <= inlen;) {
+    unsigned int len = in[i];
+    if (i + 1 + len > inlen) break;
+    const unsigned char *proto = &in[i + 1];
+    if (len == 2 && proto[0] == 'h' && proto[1] == '2') {
+      *out = proto;
+      *outlen = 2;
+      return SSL_TLSEXT_ERR_OK;
+    }
+    if (len == 8 && memcmp(proto, "http/1.1", 8) == 0) http1 = proto;
+    i += 1 + len;
+  }
+  if (http1 && allow_http1) {
+    *out = http1;
+    *outlen = 8;
+    return SSL_TLSEXT_ERR_OK;
+  }
+  /* The client offered ALPN but not h2 (this callback doesn't run at all for
+   * a client that sends no ALPN extension; that one completes the handshake
+   * and is answered at the HTTP layer). Proceed without ALPN when HTTP/1 is
+   * allowed; otherwise refuse the handshake with no_application_protocol. */
+  return allow_http1 ? SSL_TLSEXT_ERR_NOACK : SSL_TLSEXT_ERR_ALERT_FATAL;
+}
+
+void us_ssl_ctx_enable_http2_alpn(SSL_CTX *ctx, int allow_http1) {
+  SSL_CTX_set_alpn_select_cb(ctx, us_alpn_select_h2, allow_http1 ? (void *) 1 : NULL);
+}
+
+int us_socket_alpn_is_h2(struct us_socket_t *s) {
+  if (!s->ssl) return 0;
+  const unsigned char *proto = NULL;
+  unsigned int len = 0;
+  SSL_get0_alpn_selected(s_ssl(s), &proto, &len);
+  return len == 2 && proto[0] == 'h' && proto[1] == '2';
+}
+
 /* ── Per-socket SSL attach/detach ────────────────────────────────────────── */
 
 void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
@@ -1349,6 +1707,7 @@ void us_internal_ssl_detach(struct us_socket_t *s) {
    * owns or the loop-wide slot dangles (batching permanently disabled, and a
    * reused socket address would drain the dead socket's records). */
   ssl_release_spill(s->group->loop, s);
+  ssl_release_batch(s->group->loop, s);
   if (s->ssl) {
     if (s->ssl_in_use) {
       /* SSL_do_handshake/SSL_read is on the stack (a JS callback run from
@@ -1418,10 +1777,7 @@ static long us_internal_verify_peer_certificate(const SSL *ssl, long def) {
     err = SSL_get_verify_result(ssl);
   } else {
     const SSL_CIPHER *curr_cipher = SSL_get_current_cipher(ssl);
-    const SSL_SESSION *sess = SSL_get_session(ssl);
-    if ((curr_cipher && SSL_CIPHER_get_auth_nid(curr_cipher) == NID_auth_psk) ||
-        (sess && SSL_SESSION_get_protocol_version(sess) == TLS1_3_VERSION &&
-         SSL_session_reused(ssl))) {
+    if (curr_cipher && SSL_CIPHER_get_auth_nid(curr_cipher) == NID_auth_psk) {
       return X509_V_OK;
     }
   }
@@ -1456,7 +1812,10 @@ static void ssl_park_fatal_reason(struct us_socket_t *s) {
   struct loop_ssl_data *loop_ssl_data =
       (struct loop_ssl_data *) s->group->loop->data.ssl_data;
   if (loop_ssl_data && s->ssl_handshake_state != HANDSHAKE_COMPLETED) {
-    unsigned long ssl_queue_err = ERR_peek_last_error();
+    /* The OLDEST queued entry is the root cause and is what node reports
+     * (https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L860);
+     * later entries wrap it or belong to another socket on this thread. */
+    unsigned long ssl_queue_err = ERR_peek_error();
     if (ssl_queue_err != 0) {
       ERR_error_string_n(ssl_queue_err, loop_ssl_data->ssl_last_fatal_error,
                          sizeof(loop_ssl_data->ssl_last_fatal_error));
@@ -1492,7 +1851,33 @@ static int ssl_dispatch_parked_reason(struct us_socket_t *s) {
 }
 
 static void ssl_trigger_handshake(struct us_socket_t *s, int success) {
+  /* Read before the state flip below turns tripped() off. */
+  int inline_rejected = us_ssl_inline_reject_tripped(s);
   s->ssl_handshake_state = HANDSHAKE_COMPLETED;
+  /* Inline rejection: the rejecting client's post-verify flight was
+   * suppressed - the session must not be reported as established. */
+  if (inline_rejected) {
+    success = 0;
+  }
+  /* An inline-rejected handshake reports the X509 verdict node surfaces
+   * through ssl.verifyError() (UNABLE_TO_VERIFY_LEAF_SIGNATURE, ...), not
+   * the SSL protocol reason that may wrap it. */
+  if (!success && inline_rejected && s->ssl && s_ssl(s)) {
+    struct loop_ssl_data *loop_ssl_data =
+        (struct loop_ssl_data *)s->group->loop->data.ssl_data;
+    if (loop_ssl_data &&
+        loop_ssl_data->ssl_last_fatal_error_owner == (void *)s) {
+      loop_ssl_data->ssl_last_fatal_error[0] = 0;
+      loop_ssl_data->ssl_last_fatal_error_owner = NULL;
+    }
+    us_dispatch_handshake(s, 0, us_ssl_socket_verify_error_from_ssl(s_ssl(s)));
+    /* Nothing else will tear this connection down (the peer is still waiting
+     * for a Finished that will never come) - close unless JS already did. */
+    if (!ssl_gone(s) && !us_socket_is_closed(s)) {
+      us_socket_close(s, 0, NULL);
+    }
+    return;
+  }
   /* A fatal SSL protocol error (wrong version number, bad record, ...) was
    * recorded just before this failure: report it instead of the X509 verify
    * result so Node's tlsClientError / client error carries the OpenSSL
@@ -1595,7 +1980,12 @@ static int ssl_handle_shutdown(struct us_socket_t *s, int force_fast_shutdown) {
          * exits right after server.close(). The deferred-close contract
          * documented in us_internal_ssl_close only applies to the
          * SSL_shutdown()==0 case where the alert *was* flushed; here it
-         * never went out, so close now. */
+         * never went out, so close now. Deliberate divergence from node,
+         * which parks the alert in its stream write queue (crypto_tls.cc
+         * DoShutdown): replicating that needs a retry hook surviving the
+         * is_shut_down short-circuits, and until one exists dropping the
+         * alert under backpressure is the accepted tradeoff — the peer
+         * still observes the TCP FIN. */
         return 1;
       }
       s->ssl_fatal_error = 1;
@@ -1619,14 +2009,30 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
     s->ssl_pending_close_code = (unsigned char) code;
     return s;
   }
-  /* node's `_handle.close()` (FAST_SHUTDOWN, no reason) must not cut off spilled
+  {
+    /* Ciphertext batched in this dispatch and still held (the handshake's
+     * final flight, a fatal alert sealed by a failing SSL_read) goes to the
+     * wire before the close_notify/FIN this teardown sends. A partial write
+     * spills; the graceful-close deferral below then waits for the drain. */
+    struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
+    if (loop_ssl_data && loop_ssl_data->ssl_write_batch_len &&
+        loop_ssl_data->ssl_write_batch_owner == s && !us_socket_is_closed(s)) {
+      ssl_flush_write_batch(loop_ssl_data, s);
+    }
+  }
+  /* Neither node's `_handle.close()` (FAST_SHUTDOWN, no reason) nor a graceful
+   * close (code 0: peer close_notify / end-completion) may cut off spilled
    * ciphertext already reported as written: SSL sealed it, so it can only be
    * delivered, never re-sent. Mirror ssl_shutdown_after_spill; defer at most once. */
-  if (code == LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN && !reason
+  if ((code == LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN || code == LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN)
+      && !reason
       && !s->ssl_close_after_spill && !s->ssl_fatal_error && !us_socket_is_closed(s)) {
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
     if (loop_ssl_data && !ssl_drain_spill(loop_ssl_data, s)) {
       s->ssl_close_after_spill = 1;
+      /* Resume with the SAME code: a graceful close must not come back as a
+       * forceful FAST_SHUTDOWN (on_close would see an abortive teardown). */
+      s->ssl_pending_close_code = (unsigned char) code;
       return s;
     }
   }
@@ -1648,9 +2054,12 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
     if (ssl_gone(s)) return s;
   }
 
-  /* code != 0 (forceful — `_destroy()` / `_handle.close()` / abort): send
-   * close_notify best-effort and raw-close now. The Zig destroy path detaches
-   * + poll_ref.unref() right after, so deferring would orphan the us_socket_t.
+  /* code == 2 (forceful — `_destroy()` / `_handle.close()`): send close_notify
+   * best-effort and raw-close now. The destroy path detaches + poll_ref.unref()
+   * right after, so deferring would orphan the us_socket_t.
+   *
+   * code == 1 (reset — terminate() / abort): no close_notify, only the RST,
+   * like node's resetAndDestroy().
    *
    * code == 0 (graceful — `end()` → markInactive → closeAndDetach(.normal)):
    * send close_notify and DEFER the fd close until the peer replies. The
@@ -1660,7 +2069,7 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
    * under low-prio fan-out (connectionListener race). The actual raw-close
    * happens via on_end/ZERO_RETURN re-entering this function with
    * SSL_SENT_SHUTDOWN already set (ssl_handle_shutdown then returns 1). */
-  if (ssl_handle_shutdown(s, code != 0)) {
+  if (code == LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET || ssl_handle_shutdown(s, code != 0)) {
     return us_internal_socket_close_raw(s, code, reason);
   }
   return s;
@@ -1709,6 +2118,14 @@ static void ssl_update_handshake(struct us_socket_t *s) {
     return;
   }
 
+  /* Inline rejection tripped during this drive: nothing more will arrive (a
+   * TLS 1.2 client would otherwise wait forever for the server's Finished).
+   * ssl_trigger_handshake reports the recorded X509 verdict and closes. */
+  if (us_ssl_inline_reject_tripped(s)) {
+    ssl_trigger_handshake(s, 0);
+    return;
+  }
+
   if (result <= 0) {
     int err = SSL_get_error(s_ssl(s), result);
     if (err == SSL_ERROR_PENDING_CERTIFICATE) {
@@ -1727,7 +2144,15 @@ static void ssl_update_handshake(struct us_socket_t *s) {
     }
     s->ssl_handshake_state = HANDSHAKE_PENDING;
     s->ssl_write_wants_read = 1;
-    s->flags.last_write_failed = 1;
+    /* Keep writable interest only for a blocked write. Setting this for
+     * WANT_READ too kept the always-writable socket's writable event firing
+     * every tick with zero progress (100% CPU) whenever writable interest
+     * existed while the handshake stalled, e.g. pause() mid-handshake.
+     * WANT_WRITE's blocked BIO write normally sets it in us_socket_raw_write
+     * already; kept for BIO retry paths that buffer without a send. */
+    if (err == SSL_ERROR_WANT_WRITE) {
+      s->flags.last_write_failed = 1;
+    }
     return;
   }
 
@@ -1757,16 +2182,25 @@ struct us_socket_t *us_internal_ssl_on_close(struct us_socket_t *s, int code, vo
   return ret;
 }
 
-/* The EOF dispatch below is scoped to uWS HTTP server sockets: their
- * context's onEnd owns the EOF (premature-EOF clientError
- * HPE_INVALID_EOF_STATE, CONNECT/Upgrade half-open, pipeline drain after
- * FIN), and closing without dispatching silently skipped all of it for
- * node:https. Every other TLS socket kind predates the dispatch and
- * synthesizes its JS 'end' from the close event, so they keep the
- * historical force-close (dispatching for them strands sockets whose end
- * handler expects the transport to close underneath it). */
-static int ssl_wants_eof_dispatch(struct us_socket_t *s) {
+static int ssl_is_uws_http_tls(struct us_socket_t *s) {
   return us_socket_kind(s) == BUN_SOCKET_KIND_UWS_HTTP_TLS;
+}
+
+/* EOF dispatch only for kinds whose user layer consumes 'end' + honors
+ * allow_half_open (uWS HTTP server: their context's onEnd owns the EOF;
+ * Bun.connect/listen, which node:tls rides on). All other TLS kinds derive
+ * EOF from close and keep the historical force-close (dispatching for them
+ * strands sockets whose end handler expects the transport to close
+ * underneath it). */
+static int ssl_wants_eof_dispatch(struct us_socket_t *s) {
+  unsigned char kind = us_socket_kind(s);
+  if (kind == BUN_SOCKET_KIND_UWS_HTTP_TLS) {
+    return 1;
+  }
+  /* Mid-handshake EOF keeps the force-close so JS surfaces it as a failed
+   * handshake (ECONNRESET "socket hang up", like Node) not a clean 'end'. */
+  return kind == BUN_SOCKET_KIND_BUN_SOCKET_TLS &&
+         s->ssl_handshake_state == HANDSHAKE_COMPLETED;
 }
 
 /* Deliver the plaintext EOF to the user layer once, like the plain-TCP path
@@ -1780,6 +2214,17 @@ static struct us_socket_t *ssl_deliver_eof(struct us_socket_t *s) {
   }
   s->ssl_end_delivered = 1;
   return us_dispatch_end(s);
+}
+
+/* Retry a JS write parked on WANT_READ (written before the handshake
+ * finished). No-op while this socket's spill is undrained: the flag is kept
+ * so the retry happens after on_writable drains it. */
+static struct us_socket_t *ssl_retry_parked_write(struct us_socket_t *s) {
+  if (!s->ssl_write_wants_read || s->ssl_read_wants_write) return s;
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
+  if (loop_ssl_data && loop_ssl_data->ssl_spill_owner == s) return s;
+  s->ssl_write_wants_read = 0;
+  return us_internal_ssl_on_writable(s);
 }
 
 struct us_socket_t *us_internal_ssl_on_end(struct us_socket_t *s) {
@@ -1797,11 +2242,15 @@ struct us_socket_t *us_internal_ssl_on_end(struct us_socket_t *s) {
     if (!s || us_socket_is_closed(s)) {
       return s;
     }
-    if (s->flags.allow_half_open) {
+    if (s->flags.allow_half_open &&
+        (ssl_gone(s) || !(SSL_get_shutdown(s_ssl(s)) & SSL_SENT_SHUTDOWN))) {
       /* Keep the write side alive like the plain-TCP half-open branch in
        * loop.c: TCP permits writing after a received FIN, so queued
        * responses still flush and the app's own end() completes the
-       * shutdown. */
+       * shutdown. With SENT_SHUTDOWN both directions are closed; fall
+       * through so a deferred graceful close completes (mirrors the
+       * ZERO_RETURN path; loop.c raw-closes this case first on the
+       * epoll/kqueue backend, the libuv one reaches here). */
       return s;
     }
   }
@@ -1810,7 +2259,17 @@ struct us_socket_t *us_internal_ssl_on_end(struct us_socket_t *s) {
    * forever. */
   s = ssl_close(s, 0, NULL);
   if (s && !us_socket_is_closed(s)) {
-    s = us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
+    if (s->ssl_close_after_spill) {
+      /* The close spill-deferred. When on_writable resumes it, the peer's
+       * FIN above means its close_notify is never coming, so record the
+       * shutdown as received now — otherwise ssl_handle_shutdown defers
+       * for the missing alert and the socket hangs. */
+      if (!ssl_gone(s)) {
+        SSL_set_shutdown(s_ssl(s), SSL_get_shutdown(s_ssl(s)) | SSL_RECEIVED_SHUTDOWN);
+      }
+    } else {
+      s = us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
+    }
   }
   return s;
 }
@@ -1821,7 +2280,27 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
     /* Ciphertext from a partial batch flush goes out before anything else;
      * while it is pending nothing new may be written for this socket. */
+    unsigned int spill_off_before = loop_ssl_data ? loop_ssl_data->ssl_spill_off : 0;
     if (loop_ssl_data && !ssl_drain_spill(loop_ssl_data, s)) {
+      /* A writable event that moves zero spill bytes after the peer's
+       * readable side has already ended means the peer is gone (send()
+       * hit EPIPE/ECONNRESET, folded to 0 by us_socket_raw_write) and
+       * this spill will never drain. Returning here would spin the
+       * re-armed writable poll on kqueue, since EPOLLERR is not delivered
+       * there. Mark the SSL fatal so us_internal_ssl_write returns 0 (the
+       * uWS layer's flushed==0-after-FIN guard, or hasFullyDrained() when
+       * nothing is buffered, then closes the connection on this dispatch)
+       * and dispatch directly, bypassing the is_shut_down gate below that
+       * ssl_fatal_error would otherwise trip. On the libuv backend zero
+       * progress does not prove death (a stale SEND completion can run
+       * after this loop turn refilled the buffer), so confirm with the
+       * kernel before declaring the spill undrainable. */
+      if (s->ssl_end_delivered && loop_ssl_data->ssl_spill_off == spill_off_before &&
+          us_socket_stalled_write_means_peer_gone(s)) {
+        ssl_release_spill(s->group->loop, s);
+        s->ssl_fatal_error = 1;
+        return us_dispatch_writable(s);
+      }
       return s;
     }
     if (s->ssl_shutdown_after_spill) {
@@ -1831,7 +2310,7 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
     }
     if (s->ssl_close_after_spill) {
       s->ssl_close_after_spill = 0;
-      return us_internal_ssl_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, NULL);
+      return us_internal_ssl_close(s, s->ssl_pending_close_code, NULL);
     }
   }
   ssl_update_handshake(s);
@@ -1845,7 +2324,12 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
     s = us_internal_ssl_on_data(s, "", 0);
     if (!s || ssl_gone(s)) return s;
   }
-  if (us_internal_ssl_is_shut_down(s)) return s;
+  if (ssl_gone(s) || s->ssl_fatal_error) return s;
+  /* uWS HTTP sockets keep the pre-existing SENT_SHUTDOWN suppression: their
+   * onWritable clears the teardown timeout armed at shutdown. node sockets
+   * still get write-completion dispatch after a half-close in either
+   * direction. */
+  if (ssl_is_uws_http_tls(s) && us_internal_ssl_is_shut_down(s)) return s;
 
   if (s->ssl_handshake_state == HANDSHAKE_COMPLETED) {
     s = us_dispatch_writable(s);
@@ -1903,12 +2387,45 @@ struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *s, char *data, i
   int read = 0;
 restart:
   while (1) {
+    /* While the handshake is pending, SSL_read seals this side's outbound
+     * flight (TLS 1.3 client Certificate/Finished, server Hello flight).
+     * Batch those records instead of raw-writing each: when the handshake
+     * completes in this read, the flight is HELD across the on_handshake
+     * dispatch below, so a write the JS callback issues appends to it and
+     * us_internal_ssl_write flushes flight + first application data in ONE
+     * kernel write (one TCP segment). Two segments let a peer that tears
+     * down right after the handshake (node's post-verify destroy, #40653)
+     * close with the second segment unread, which turns its FIN teardown
+     * into an RST and a bogus ECONNRESET at this side. Node's memory BIO
+     * drained once per cycle has the same single-segment shape. Gated on a
+     * free spill slot like us_internal_ssl_write, so a short flush cannot
+     * clobber another socket's pending ciphertext. */
+    int hs_batching = s->ssl_handshake_state == HANDSHAKE_PENDING &&
+                      !loop_ssl_data->ssl_write_batching &&
+                      !loop_ssl_data->ssl_spill_owner;
+    if (hs_batching) loop_ssl_data->ssl_write_batching = 1;
     unsigned char ssl_was_in_use = s->ssl_in_use;
     s->ssl_in_use = 1;
     int just_read = SSL_read(s_ssl(s),
                              loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING + read,
                              LIBUS_RECV_BUFFER_LENGTH - read);
     s->ssl_in_use = ssl_was_in_use;
+    if (hs_batching) {
+      loop_ssl_data->ssl_write_batching = 0;
+      if (s->ssl_pending_detach) {
+        /* Destroyed from a callback inside the read: the flight is cancelled
+         * with the connection (the BIO swallows post-detach records the same
+         * way). */
+        ssl_release_batch(s->group->loop, s);
+      } else if (!(s->ssl && s->ssl_handshake_state == HANDSHAKE_PENDING &&
+                   SSL_is_init_finished(s_ssl(s)))) {
+        /* The handshake did not complete in this read (or already reported):
+         * send this round's flight now so the peer can progress. */
+        ssl_flush_write_batch(loop_ssl_data, s);
+      }
+      /* else: handshake just completed - hold the flight for the
+       * on_handshake dispatch below. */
+    }
     if (!ssl_was_in_use && s->ssl_pending_detach) {
       /* A callback run from inside this read destroyed the socket; perform
        * the deferred close now and stop processing. */
@@ -1942,6 +2459,11 @@ restart:
             s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
             if (!s || ssl_gone(s)) return NULL;
           }
+          /* close_notify only closed the PEER's write side; when it rides in
+           * the same flight as its Finished, the loop tail below is never
+           * reached and a parked write would be destroyed with the socket. */
+          s = ssl_retry_parked_write(s);
+          if (!s || ssl_gone(s)) return NULL;
           /* TLS-level EOF: for uWS HTTP sockets, dispatch the user layer's
            * end handler like a TCP FIN would (see ssl_wants_eof_dispatch),
            * then honor half-open exactly like the plain-TCP eof branch in
@@ -1949,16 +2471,29 @@ restart:
           if (ssl_wants_eof_dispatch(s)) {
             s = ssl_deliver_eof(s);
             if (!s || ssl_gone(s)) return NULL;
-            if (s->flags.allow_half_open) {
+            if (s->flags.allow_half_open &&
+                !(SSL_get_shutdown(s_ssl(s)) & SSL_SENT_SHUTDOWN)) {
               /* close_notify only ended the peer's write side; ours may
                * still flush queued bytes, and the app's own end() completes
                * the shutdown (ssl_handle_shutdown sees RECEIVED_SHUTDOWN and
-               * finishes immediately). */
+               * finishes immediately). With SENT_SHUTDOWN both directions are
+               * closed and nothing is left to hold open: fall through so the
+               * deferred graceful close (code 0, no FIN sent) completes here
+               * instead of waiting for a FIN that may never come. A flight
+               * held by this read's handshake batching must not be parked
+               * past this return. */
+              if (loop_ssl_data->ssl_write_batch_len &&
+                  loop_ssl_data->ssl_write_batch_owner == s) {
+                ssl_flush_write_batch(loop_ssl_data, s);
+              }
               return s;
             }
           }
-          ssl_close(s, 0, NULL);
-          return NULL;
+          s = ssl_close(s, 0, NULL);
+          if (!s || ssl_gone(s)) return NULL;
+          /* Spill-deferred close: the socket is still live; report it so the
+           * caller's bookkeeping does not treat it as destroyed. */
+          return s;
         }
 
         if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
@@ -1986,6 +2521,12 @@ restart:
           ssl_trigger_handshake(s, 1);
           if (ssl_gone(s)) return NULL;
           loop_ssl_data->ssl_socket = s;
+          /* The callback ran with the flight held: a write it issued already
+           * flushed flight + data together; send whatever is still held. */
+          if (loop_ssl_data->ssl_write_batch_len &&
+              loop_ssl_data->ssl_write_batch_owner == s) {
+            ssl_flush_write_batch(loop_ssl_data, s);
+          }
         }
         if (!read) break;
 
@@ -2023,6 +2564,12 @@ restart:
       loop_ssl_data->ssl_read_input_length = saved_length;
       loop_ssl_data->ssl_read_input_offset = saved_offset;
       loop_ssl_data->ssl_socket = s;
+      /* Same as the no-data completion above: send what the callback's own
+       * write did not already flush of the held flight. */
+      if (loop_ssl_data->ssl_write_batch_len &&
+          loop_ssl_data->ssl_write_batch_owner == s) {
+        ssl_flush_write_batch(loop_ssl_data, s);
+      }
     }
 
     read += just_read;
@@ -2053,11 +2600,8 @@ restart:
    * needs to write first (would recurse). Re-check s->ssl: any dispatch above may
    * have closed and freed s->ssl. */
   if (ssl_gone(s)) return NULL;
-  if (s->ssl_write_wants_read && !s->ssl_read_wants_write) {
-    s->ssl_write_wants_read = 0;
-    s = us_internal_ssl_on_writable(s);
-    if (!s || ssl_gone(s)) return NULL;
-  }
+  s = ssl_retry_parked_write(s);
+  if (!s || ssl_gone(s)) return NULL;
 
   /* The SSL_read loop above is fully unwound; deliver any session the
    * new-session callback parked while it ran. The JS this dispatches may
@@ -2098,6 +2642,17 @@ void *us_internal_ssl_get_native_handle(struct us_socket_t *s) {
   return s->ssl ? s_ssl(s) : NULL;
 }
 
+/* Ciphertext bytes already sealed for `s` and counted as written by
+ * us_internal_ssl_write, still waiting on a writable event to reach the
+ * kernel. uWS's AsyncSocket::hasFullyDrained() checks this so the HTTP
+ * close-after-drain gates do not fire while the last batch is still in
+ * userspace. */
+unsigned int us_internal_ssl_spill_pending(struct us_socket_t *s) {
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
+  if (!loop_ssl_data || loop_ssl_data->ssl_spill_owner != s) return 0;
+  return loop_ssl_data->ssl_spill_len - loop_ssl_data->ssl_spill_off;
+}
+
 int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
   if (us_socket_is_closed(s) || us_internal_ssl_is_shut_down(s) || length == 0) return 0;
 
@@ -2108,6 +2663,13 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
    * ssl_update_handshake drains it. Mirrors the SEMI_SOCKET guard in
    * us_internal_ssl_close above. */
   if ((us_internal_poll_type(&s->p) & POLL_TYPE_KIND_MASK) == POLL_TYPE_SEMI_SOCKET) {
+    return 0;
+  }
+
+  /* Called from inside SSL_read/SSL_do_handshake on this socket (an ALPN/SNI
+   * callback writing): wait for the handshake, same as WANT_READ below. */
+  if (s->ssl_in_use) {
+    s->ssl_write_wants_read = 1;
     return 0;
   }
 
@@ -2131,6 +2693,7 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
    * we report as written are honest up to one bounded spill. Reporting a
    * whole large write as consumed while its ciphertext sat in memory let the
    * layers above fire 'finish' and close before the data reached the wire. */
+  int outer_batching = loop_ssl_data->ssl_write_batching;
   int batching = (loop_ssl_data->ssl_spill_owner == NULL);
   loop_ssl_data->ssl_write_batching = batching;
 
@@ -2139,7 +2702,19 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
   while (total < length) {
     int chunk = length - total;
     if (chunk > 16384) chunk = 16384;
+    /* Same deferred-close protocol as the SSL_do_handshake/SSL_read drivers. */
+    s->ssl_in_use = 1;
     last_ssl_written = SSL_write(s_ssl(s), data + total, chunk);
+    s->ssl_in_use = 0;
+    if (s->ssl_pending_detach) {
+      /* Closed from inside the call: drop this write's records (and any held
+       * flight of ours they extend) and close now. */
+      loop_ssl_data->ssl_write_batching = outer_batching;
+      ssl_release_batch(s->group->loop, s);
+      s->ssl_pending_detach = 0;
+      us_socket_close(s, s->ssl_pending_close_code, NULL);
+      return 0;
+    }
     if (last_ssl_written <= 0) break;
     total += last_ssl_written;
     /* A batching allocation failure marks the socket fatal from inside the BIO;
@@ -2150,7 +2725,7 @@ int us_internal_ssl_write(struct us_socket_t *s, const char *data, int length) {
       if (s->ssl_fatal_error) break;
     }
   }
-  loop_ssl_data->ssl_write_batching = 0;
+  loop_ssl_data->ssl_write_batching = outer_batching;
   if (batching) {
     ssl_flush_write_batch(loop_ssl_data, s);
   }
@@ -2177,9 +2752,16 @@ void us_internal_ssl_shutdown(struct us_socket_t *s) {
 
   /* Spilled ciphertext is data the layers above already count as written;
    * a FIN/close_notify now would cut it off. Finish the shutdown from the
-   * writable event once the spill drains. */
+   * writable event once the spill drains. A held batch (an end() issued
+   * from the on_handshake callback while the final flight is still parked)
+   * is the same kind of debt: flush it first so the close_notify and FIN
+   * below follow the flight, not precede it. */
   {
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
+    if (loop_ssl_data && loop_ssl_data->ssl_write_batch_len &&
+        loop_ssl_data->ssl_write_batch_owner == s) {
+      ssl_flush_write_batch(loop_ssl_data, s);
+    }
     if (loop_ssl_data && loop_ssl_data->ssl_spill_owner == s) {
       if (!ssl_drain_spill(loop_ssl_data, s)) {
         s->ssl_shutdown_after_spill = 1;
@@ -2188,32 +2770,17 @@ void us_internal_ssl_shutdown(struct us_socket_t *s) {
     }
   }
 
-  /* BoringSSL has no TLS half-close: once SSL_shutdown sends our
-   * close_notify, SSL_read refuses to return any further application data
-   * (SSL_R_PROTOCOL_IS_SHUTDOWN). Node (OpenSSL) keeps reading after sending
-   * close_notify, and node:net/tls semantics depend on that: a write()+end()
-   * server must still receive the reply the peer sends after processing our
-   * data - under TLS 1.2 the server's handshake completes one flight before
-   * the client's, so that ordering is the norm rather than the exception.
-   *
-   * Send the TLS-level close_notify only when the peer's close_notify has
-   * already arrived (we will never need to read again). Otherwise do a TCP
-   * half-close (FIN, keep reading): the peer sees EOF after our last record
-   * and the connection tears down through the normal read-side path when its
-   * close_notify / FIN arrives. */
+  /* Half-close (node's end()): send close_notify, then FIN, and KEEP reading.
+   * BoringSSL only refuses writes after SSL_shutdown (write_shutdown); reads
+   * stay open until the peer's close_notify, and the data path reads with
+   * SENT_SHUTDOWN set, so a TLS 1.2 write()+end() server still receives the
+   * reply the peer sends after processing our data. A bare FIN here reads as
+   * truncation ("unexpected eof") to compliant peers. */
   if (!SSL_in_init(s_ssl(s)) && !(SSL_get_shutdown(s_ssl(s)) & SSL_RECEIVED_SHUTDOWN)) {
-    /* BoringSSL defers post-handshake writes (the TLS 1.3 NewSessionTicket
-     * messages) until the first SSL_write or SSL_shutdown. We are not sending
-     * close_notify here, so flush them explicitly before the FIN: a
-     * zero-length write seals no application record but pushes the pending
-     * handshake data through the BIO. Without this, a server that ends
-     * without writing (the tls.Server((s) => s.end()) pattern) never delivers
-     * its session tickets and clients cannot resume. */
-    struct loop_ssl_data *flush_loop_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
-    flush_loop_data->ssl_read_input_length = 0;
-    flush_loop_data->ssl_socket = s;
-    char zero_buf = 0;
-    SSL_write(s_ssl(s), &zero_buf, 0);
+    /* ssl_handle_shutdown sends the close_notify (BoringSSL's do_tls_write
+     * prepends any pending TLS 1.3 NewSessionTicket flight to the alert, so
+     * tickets are still delivered) and owns the error handling. */
+    ssl_handle_shutdown(s, 0);
     us_internal_socket_raw_shutdown(s);
     return;
   }
@@ -2280,11 +2847,6 @@ void us_socket_sni_resolve(struct us_socket_t *s, struct ssl_ctx_st *ctx, int er
   ssl_update_handshake(s);
 }
 
-void us_internal_ssl_handshake_abort(struct us_socket_t *s) {
-  s->ssl_fatal_error = 1;
-  ssl_close(s, 0, NULL);
-}
-
 /* ── Adopt-TLS (STARTTLS / Bun.connect upgrade) ──────────────────────────── */
 
 /* Feed bytes that were already read off the wire (e.g. a ClientHello consumed
@@ -2298,7 +2860,8 @@ struct us_socket_t *us_socket_tls_feed(struct us_socket_t *s, const char *data, 
 struct us_socket_t *us_socket_adopt_tls(struct us_socket_t *s,
                                         struct us_socket_group_t *group,
                                         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
-                                        const char *sni, int is_client, int old_ext_size,
+                                        const char *sni, int is_client, int request_cert,
+                                        int reject_unauthorized, int old_ext_size,
                                         int ext_size) {
   if (us_socket_is_closed(s)) return NULL;
 
@@ -2309,6 +2872,18 @@ struct us_socket_t *us_socket_adopt_tls(struct us_socket_t *s,
    * `new tls.TLSSocket(acceptedSocket, { isServer: true })`); there is no
    * listener for an adopted socket, so SNI resolves from the single ssl_ctx. */
   us_internal_ssl_attach(new_s, ssl_ctx, is_client, sni, NULL);
+  if (!is_client && new_s->ssl) {
+    /* Node's TLSWrap::SetVerifyMode runs unconditionally on server sockets:
+     * !requestCert must force SSL_VERIFY_NONE, or a shared SSL_CTX built with
+     * `ca` leaks its FAIL_IF_NO_PEER_CERT mode and rejects cert-less clients. */
+    SSL_set_verify(new_s->ssl,
+                   request_cert
+                       ? SSL_VERIFY_PEER | (reject_unauthorized
+                                                ? SSL_VERIFY_FAIL_IF_NO_PEER_CERT
+                                                : 0)
+                       : SSL_VERIFY_NONE,
+                   us_verify_callback);
+  }
   us_socket_resume(new_s);
   /* Do NOT kick the handshake or dispatch on_open here — the caller hasn't
    * repointed the ext slot yet, so any dispatch (open/handshake/close) would
@@ -2335,6 +2910,58 @@ static void sni_node_destructor(void *user) {
 static struct sni_node_t *resolve_listener_ctx(struct us_listen_socket_t *ls, const char *hostname) {
   if (!ls->sni) return NULL;
   return (struct sni_node_t *)sni_find(ls->sni, hostname);
+}
+
+#define US_SNI_POLICY_REQUEST_CERT ((uintptr_t)1)
+#define US_SNI_POLICY_REJECT_UNAUTHORIZED ((uintptr_t)2)
+
+static _Atomic uint32_t us_sni_sid_ctx_counter = 0;
+
+/* Record the client-certificate policy of a per-serverName entry on its
+ * SSL_CTX and give it a session-id context of its own: SSL_set_SSL_CTX copies
+ * the certificate (with its sid_ctx) but not verify_mode, so the SNI switch
+ * reapplies the policy per connection, and a session established under any
+ * other context is never resumed under this one (a resumed handshake skips
+ * client authentication entirely). */
+void us_ssl_ctx_set_sni_policy(SSL_CTX *ctx, int request_cert, int reject_unauthorized) {
+  if (!ctx) return;
+  us_ex_idx_ensure();
+  uintptr_t packed = (request_cert ? US_SNI_POLICY_REQUEST_CERT : 0) |
+                     (reject_unauthorized ? US_SNI_POLICY_REJECT_UNAUTHORIZED : 0);
+  SSL_CTX_set_ex_data(ctx, us_ctx_sni_policy_ex_idx, (void *)packed);
+  uint32_t sid = atomic_fetch_add(&us_sni_sid_ctx_counter, 1) + 1;
+  SSL_CTX_set_session_id_context(ctx, (const uint8_t *)&sid, sizeof(sid));
+}
+
+/* Every SNI context switch goes through here: SSL_set_SSL_CTX alone leaves
+ * verify_mode as inherited from the default context at accept, so a
+ * per-serverName entry's requestCert/rejectUnauthorized are added on top of
+ * it (the connection's inherited requirement is kept). A context without a
+ * recorded policy (node:tls SecureContext, whose policy is server-level)
+ * leaves the connection's verify mode untouched. */
+static void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
+  SSL_set_SSL_CTX(ssl, ctx);
+  if (us_ctx_sni_policy_ex_idx < 0) return;
+  uintptr_t policy = (uintptr_t)SSL_CTX_get_ex_data(ctx, us_ctx_sni_policy_ex_idx);
+  if (!(policy & US_SNI_POLICY_REQUEST_CERT)) return;
+  int mode = SSL_get_verify_mode(ssl) | SSL_VERIFY_PEER;
+  if (policy & US_SNI_POLICY_REJECT_UNAUTHORIZED) mode |= SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
+  SSL_set_verify(ssl, mode, us_verify_callback);
+}
+
+/* Whether the SNI-selected context of this connection demands closing on a
+ * client-certificate verification error (requestCert && rejectUnauthorized
+ * of the per-serverName entry). */
+int us_ssl_ctx_reject_unauthorized(SSL_CTX *ctx) {
+  if (!ctx || us_ctx_sni_policy_ex_idx < 0) return 0;
+  uintptr_t packed = (uintptr_t)SSL_CTX_get_ex_data(ctx, us_ctx_sni_policy_ex_idx);
+  return (packed & US_SNI_POLICY_REQUEST_CERT) &&
+         (packed & US_SNI_POLICY_REJECT_UNAUTHORIZED);
+}
+
+int us_socket_server_name_reject_unauthorized(struct us_socket_t *s) {
+  if (!s->ssl) return 0;
+  return us_ssl_ctx_reject_unauthorized(SSL_get_SSL_CTX(s_ssl(s)));
 }
 
 /* Extracts the host_name from the ClientHello's server_name extension.
@@ -2386,7 +3013,7 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
   if (pending && pending->state == 2) {
     pending->state = 0;
     if (pending->resolved_ctx) {
-      SSL_set_SSL_CTX(ssl, pending->resolved_ctx);
+      us_ssl_apply_selected_ctx(ssl, pending->resolved_ctx);
       SSL_CTX_free(pending->resolved_ctx);
       pending->resolved_ctx = NULL;
       return ssl_select_cert_success;
@@ -2406,7 +3033,7 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
       if (us_client_hello_servername(hello, resumed_host, sizeof(resumed_host))) {
         struct sni_node_t *resumed_node = resolve_listener_ctx(resumed_ls, resumed_host);
         if (resumed_node) {
-          SSL_set_SSL_CTX(ssl, resumed_node->ctx);
+          us_ssl_apply_selected_ctx(ssl, resumed_node->ctx);
         }
       }
     }
@@ -2423,7 +3050,16 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
 
   struct us_listen_socket_t *ls =
       (struct us_listen_socket_t *)SSL_get_ex_data(ssl, us_ssl_listener_ex_idx);
-  if (!ls || !ls->on_server_name) return ssl_select_cert_success;
+  /* With no listener resolver, the SSL may still carry a socket-level one: a
+   * server-side socket adopted into TLS with its own SNICallback. */
+  const int no_listener_resolver = (!ls || !ls->on_server_name);
+  struct us_socket_sni_resolver_t *socket_resolver = NULL;
+  if (no_listener_resolver && us_ssl_socket_sni_ex_idx >= 0) {
+    socket_resolver = SSL_get_ex_data(ssl, us_ssl_socket_sni_ex_idx);
+  }
+  if (no_listener_resolver && !(socket_resolver && socket_resolver->cb)) {
+    return ssl_select_cert_success;
+  }
 
   char hostname[256];
   if (!us_client_hello_servername(hello, hostname, sizeof(hostname))) {
@@ -2444,10 +3080,12 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
   struct loop_ssl_data *cb_lsd = (struct loop_ssl_data *)BIO_get_data(SSL_get_wbio(ssl));
   struct us_socket_t *cb_socket = cb_lsd ? cb_lsd->ssl_socket : NULL;
 
-  void *saved_loop_state[5];
+  void *saved_loop_state[US_SSL_LOOP_STATE_SLOTS];
   us_internal_ssl_loop_state_save(ssl, saved_loop_state);
   int abort_handshake = 0;
-  SSL_CTX *dyn = ls->on_server_name(ls, hostname, &abort_handshake, cb_socket);
+  SSL_CTX *dyn =
+      socket_resolver ? socket_resolver->cb(cb_socket, hostname, &abort_handshake)
+                      : ls->on_server_name(ls, hostname, &abort_handshake, cb_socket);
   us_internal_ssl_loop_state_restore(saved_loop_state);
 
   if (abort_handshake == 1) {
@@ -2472,16 +3110,18 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
     return ssl_select_cert_retry;
   }
   if (dyn) {
-    SSL_set_SSL_CTX(ssl, dyn);
+    us_ssl_apply_selected_ctx(ssl, dyn);
     SSL_CTX_free(dyn);
     return ssl_select_cert_success;
   }
 
   /* No dynamic selection: fall back to the static SNI tree (the bind
-   * hostname and addContext() entries). */
-  struct sni_node_t *node = resolve_listener_ctx(ls, hostname);
-  if (node) {
-    SSL_set_SSL_CTX(ssl, node->ctx);
+   * hostname and addContext() entries). An adopted socket has no tree. */
+  if (ls) {
+    struct sni_node_t *node = resolve_listener_ctx(ls, hostname);
+    if (node) {
+      us_ssl_apply_selected_ctx(ssl, node->ctx);
+    }
   }
   return ssl_select_cert_success;
 }
@@ -2509,7 +3149,7 @@ static int sni_cb(SSL *ssl, int *al, void *arg) {
      * listener). */
     struct sni_node_t *node = resolve_listener_ctx(ls, hostname);
     if (node) {
-      SSL_set_SSL_CTX(ssl, node->ctx);
+      us_ssl_apply_selected_ctx(ssl, node->ctx);
     }
   }
   return SSL_TLSEXT_ERR_OK;
@@ -2587,13 +3227,32 @@ void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
   }
 }
 
+/* Register a socket-level SNI resolver on an already-attached server-side SSL.
+ * Must run after us_socket_adopt_tls and before the handshake is driven. */
+void us_socket_on_server_name(struct us_socket_t *s, us_socket_server_name_cb cb) {
+  if (!s || !cb || !s->ssl || !s_ssl(s)) return;
+  us_ex_idx_ensure();
+  if (us_ssl_socket_sni_ex_idx < 0) return;
+  SSL *ssl = s_ssl(s);
+  struct us_socket_sni_resolver_t *r =
+      SSL_get_ex_data(ssl, us_ssl_socket_sni_ex_idx);
+  if (!r) {
+    r = us_calloc(1, sizeof(*r));
+    if (!r) return;
+    SSL_set_ex_data(ssl, us_ssl_socket_sni_ex_idx, r);
+  }
+  r->cb = cb;
+  /* Only the early select-certificate stage supports retry, which an async
+   * SNICallback needs. The CTX is a memoized SecureContext possibly shared
+   * with a listener, and this install is permanent, so us_select_cert_cb must
+   * stay a no-op on any SSL carrying neither resolver. */
+  SSL_CTX *ctx = SSL_get_SSL_CTX(ssl);
+  if (ctx) SSL_CTX_set_select_certificate_cb(ctx, us_select_cert_cb);
+}
+
 void *us_socket_server_name_userdata(struct us_socket_t *s) {
   if (!s->ssl || !s_ssl(s) || us_sni_ex_idx < 0) return NULL;
   return SSL_CTX_get_ex_data(SSL_get_SSL_CTX(s_ssl(s)), us_sni_ex_idx);
-}
-
-void *us_internal_ssl_sni_userdata(struct us_socket_t *s) {
-  return us_socket_server_name_userdata(s);
 }
 
 const char *us_internal_ssl_sni_servername(struct us_socket_t *s) {

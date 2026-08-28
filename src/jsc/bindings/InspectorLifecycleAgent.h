@@ -35,7 +35,6 @@ public:
     virtual CommandResultOf<Ref<JSON::ArrayOf<String>> /* esm */, Ref<JSON::ArrayOf<String>> /* cjs */, String /* cwd */, String /* main */, Ref<JSON::ArrayOf<String>> /* argv */> getModuleGraph() final;
 
     // Public API
-    void reportReload();
     void reportError(ZigException&);
     Protocol::ErrorStringOr<void> preventExit();
     Protocol::ErrorStringOr<void> stopPreventingExit();

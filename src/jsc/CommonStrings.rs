@@ -5,7 +5,7 @@ use crate::{JSGlobalObject, JSValue};
 /// All getters return a `JSC::JSString`.
 #[derive(Copy, Clone)]
 pub struct CommonStrings<'a> {
-    pub global_object: &'a JSGlobalObject,
+    pub(crate) global_object: &'a JSGlobalObject,
 }
 
 #[repr(u8)]
@@ -24,6 +24,7 @@ enum CommonStringsForZig {
     BinaryTypeArrayBuffer = 10,
     BinaryTypeNodeBuffer = 11,
     BinaryTypeUint8Array = 12,
+    BinaryTypeBlob = 13,
 }
 
 unsafe extern "C" {
@@ -95,5 +96,9 @@ impl<'a> CommonStrings<'a> {
     #[inline]
     pub fn uint8array(self) -> JSValue {
         CommonStringsForZig::BinaryTypeUint8Array.to_js(self.global_object)
+    }
+    #[inline]
+    pub fn blob(self) -> JSValue {
+        CommonStringsForZig::BinaryTypeBlob.to_js(self.global_object)
     }
 }

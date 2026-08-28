@@ -183,8 +183,8 @@ static JSObject* createNodeSqliteError(JSGlobalObject* globalObject, int errcode
     auto& vm = getVM(globalObject);
     auto* zigGlobal = defaultGlobalObject(globalObject);
     JSObject* error = createError(zigGlobal, ErrorCode::ERR_SQLITE_ERROR, message);
-    error->putDirect(vm, Identifier::fromString(vm, "errcode"_s), jsNumber(errcode), 0);
-    error->putDirect(vm, Identifier::fromString(vm, "errstr"_s), jsString(vm, WTF::String::fromUTF8(sqlite3_errstr(errcode))), 0);
+    Bun::putDirectNamed(vm, error, "errcode"_s, jsNumber(errcode));
+    Bun::putDirectNamed(vm, error, "errstr"_s, jsString(vm, WTF::String::fromUTF8(sqlite3_errstr(errcode))));
     return error;
 }
 
@@ -961,17 +961,17 @@ void JSDatabaseSync::finishDeferredClose()
     m_registeredCallbacks.clear();
 }
 
-// Called from ExitHandler::dispatch_on_exit, on the main thread only; entries
-// owned by another VM (a worker) are skipped by the stored-VM comparison
-// without ever touching the foreign cell.
+// Called from the exiting VM's teardown once script is forbidden and its child workers are
+// joined: closes that VM's entries; others are skipped by the stored-VM comparison without
+// touching the foreign cell.
 extern "C" void Bun__closeAllNodeSqliteDatabasesForTermination(JSC::JSGlobalObject* globalObject)
 {
-    JSC::VM* mainVM = &globalObject->vm();
+    JSC::VM* exitingVM = &globalObject->vm();
     WTF::Vector<JSDatabaseSync*> toClose;
     {
         WTF::Locker locker { openDatabasesLock };
         for (auto& entry : openDatabases()) {
-            if (entry.value == mainVM)
+            if (entry.value == exitingVM)
                 toClose.append(entry.key);
         }
     }
@@ -1197,12 +1197,7 @@ void JSDatabaseSync::rememberRegistration(const WTF::String& name, int argc, con
 
 GCClient::IsoSubspace* JSDatabaseSync::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSDatabaseSync, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForNodeSqliteDatabaseSync.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeSqliteDatabaseSync = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForNodeSqliteDatabaseSync.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeSqliteDatabaseSync = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSDatabaseSync, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNodeSqliteDatabaseSync, m_subspaceForNodeSqliteDatabaseSync));
 }
 
 // ─── DatabaseSync prototype functions ───────────────────────────────────────
@@ -1457,13 +1452,15 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncFunction, (JSGlobalObject * globalObject,
     // function(name, func) or function(name, options, func)
     size_t fnIndex = callFrame->argumentCount() < 3 ? 1 : 2;
     JSValue fnVal = callFrame->argument(fnIndex);
-    JSValue optsVal = fnIndex == 2 ? callFrame->argument(1) : jsUndefined();
 
     bool useBigIntArgs = false;
     bool varargs = false;
     bool deterministic = false;
     bool directOnly = false;
-    if (!optsVal.isUndefined()) {
+    // Node validates on arity: with three arguments the middle one MUST be an
+    // object, so `function(name, undefined, fn)` throws.
+    if (fnIndex == 2) {
+        JSValue optsVal = callFrame->uncheckedArgument(1);
         if (!optsVal.isObject()) {
             return throwNodeArgType(globalObject, scope, "options"_s, "an object"_s);
         }
@@ -1636,8 +1633,10 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncCreateSession, (JSGlobalObject * globalOb
 
     WTF::String table;
     WTF::String dbName = "main"_s;
-    JSValue optsVal = callFrame->argument(0);
-    if (!optsVal.isUndefined()) {
+    // Node validates on args.Length() > 0: an explicit `createSession(undefined)`
+    // throws while `createSession()` does not.
+    if (callFrame->argumentCount() > 0) {
+        JSValue optsVal = callFrame->uncheckedArgument(0);
         if (!optsVal.isObject()) {
             return throwNodeArgType(globalObject, scope, "options"_s, "an object"_s);
         }
@@ -2076,17 +2075,21 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncDeserialize, (JSGlobalObject * globalObje
     memcpy(owned, span.data(), span.size());
 
     // Invalidate every existing statement first — after the schema
-    // swap they reference tables that no longer exist. Bumping the
-    // open-generation makes every live JSStatementSync report
-    // isFinalized() without us having to track them explicitly (same
-    // mechanism close()+open() relies on), and Node finalizes its
-    // statements before deserializing too, so the bump stays ahead of
-    // the fallible call. We leave the underlying sqlite3_stmt* alone:
-    // the JS wrappers still own those handles and will
-    // sqlite3_finalize() them on GC, so finalizing here would make the
-    // wrapper double-free a dangling pointer. sqlite3_deserialize
-    // tolerates the outstanding stmts — they simply fail if stepped,
-    // which the generation check prevents.
+    // swap they reference tables that no longer exist. Node
+    // sqlite3_finalize()s its tracked statements here; we can't
+    // (the JS wrappers still own those handles and finalize on GC, so
+    // a pre-emptive finalize would double-free), but an un-reset
+    // iterate() cursor holds a read transaction that makes
+    // sqlite3_deserialize()'s internal ATTACH return SQLITE_BUSY.
+    // Reset every outstanding stmt on the connection so the swap
+    // succeeds, then bump the open-generation so every JSStatementSync
+    // reports isFinalized() (same mechanism close()+open() uses). The
+    // bump stays ahead of the fallible call to match Node, which
+    // finalizes unconditionally before deserializing.
+    for (sqlite3_stmt* s = sqlite3_next_stmt(self->connection(), nullptr); s;
+        s = sqlite3_next_stmt(self->connection(), s)) {
+        sqlite3_reset(s);
+    }
     self->bumpOpenGeneration();
 
     int r = sqlite3_deserialize(self->connection(), dbNameUtf8.data(), owned,
@@ -2117,16 +2120,17 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncCreateTagStore, (JSGlobalObject * globalO
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    // Node: `int capacity = args[0].As<Number>()->Value()` then passed as
+    // size_t to LRUCache. No clamp: -1 wraps to SIZE_MAX (unlimited), 0 stays 0.
+    // JSC::toInt32 avoids the double→int UB Node has for NaN/±Inf/>2^31.
     int capacity = 1000;
     JSValue arg0 = callFrame->argument(0);
     if (arg0.isNumber()) {
-        capacity = arg0.toInt32(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (capacity < 1) capacity = 1;
+        capacity = JSC::toInt32(arg0.asNumber());
     }
     auto* zigGlobal = defaultGlobalObject(globalObject);
     auto* structure = zigGlobal->m_JSNodeSqliteTagStoreClassStructure.get(zigGlobal);
-    auto* store = JSNodeSqliteTagStore::create(vm, structure, self, static_cast<unsigned>(capacity));
+    auto* store = JSNodeSqliteTagStore::create(vm, structure, self, static_cast<size_t>(capacity));
     return JSValue::encode(store);
 }
 
@@ -2188,10 +2192,10 @@ static const HashTableValue JSDatabaseSyncPrototypeTableValues[] = {
 void JSDatabaseSyncPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSDatabaseSync::info(), JSDatabaseSyncPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSDatabaseSync::info(), JSDatabaseSyncPrototypeTableValues, *this);
     // Symbol.dispose — swallow errors if not open, matching Node.js.
     putDirectNativeFunction(vm, globalObject, vm.propertyNames->disposeSymbol, 0, jsDatabaseSyncDispose, ImplementationVisibility::Public, NoIntrinsic, 0);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 // ─── DatabaseSync constructor ───────────────────────────────────────────────
@@ -2285,8 +2289,11 @@ JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSDatabaseSyncConstructor::construct(JSG
     DatabaseSyncOpenConfiguration config {};
     bool openImmediately = true;
 
-    JSValue optsVal = callFrame->argument(1);
-    if (!optsVal.isUndefined()) {
+    // Node validates on args.Length() > 1, not IsUndefined(): an explicit
+    // second argument must be an object (so `new DatabaseSync(p, undefined)`
+    // throws while `new DatabaseSync(p)` does not).
+    if (callFrame->argumentCount() > 1) {
+        JSValue optsVal = callFrame->uncheckedArgument(1);
         if (!optsVal.isObject()) {
             return throwNodeArgType(globalObject, scope, "options"_s, "an object"_s);
         }
@@ -2572,12 +2579,7 @@ Structure* JSStatementSync::ensureRowStructure(JSGlobalObject* globalObject)
 
 GCClient::IsoSubspace* JSStatementSync::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSStatementSync, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForNodeSqliteStatementSync.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeSqliteStatementSync = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForNodeSqliteStatementSync.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeSqliteStatementSync = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSStatementSync, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNodeSqliteStatementSync, m_subspaceForNodeSqliteStatementSync));
 }
 
 // ─── Parameter binding ──────────────────────────────────────────────────────
@@ -2605,7 +2607,7 @@ bool JSStatementSync::bindValue(JSGlobalObject* globalObject, ThrowScope& scope,
         RETURN_IF_EXCEPTION(scope, false);
         auto cmp = JSBigInt::compare(value, roundTrip);
         if (cmp != JSBigInt::ComparisonResult::Equal) {
-            Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "BigInt value is too large to bind"_s);
+            Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE, "BigInt value is too large to bind."_s);
             return false;
         }
         r = sqlite3_bind_int64(m_stmt, index, iv);
@@ -2619,7 +2621,7 @@ bool JSStatementSync::bindValue(JSGlobalObject* globalObject, ThrowScope& scope,
         r = sqlite3_bind_blob64(m_stmt, index, span.data() ? static_cast<const void*>(span.data()) : "", span.size(), SQLITE_TRANSIENT);
     } else {
         Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
-            makeString("Provided value cannot be bound to SQLite parameter "_s, index));
+            makeString("Provided value cannot be bound to SQLite parameter "_s, index, '.'));
         return false;
     }
     if (r != SQLITE_OK) {
@@ -2783,13 +2785,13 @@ static EncodedJSValue statementStepRun(VM& vm, JSGlobalObject* globalObject, Thr
     sqlite3_int64 changes = sqlite3_changes64(db);
     sqlite3_int64 rowid = sqlite3_last_insert_rowid(db);
     if (self->useBigInts()) {
-        result->putDirect(vm, Identifier::fromString(vm, "changes"_s), JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<int64_t>(changes)), 0);
+        Bun::putDirectNamed(vm, result, "changes"_s, JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<int64_t>(changes)));
         RETURN_IF_EXCEPTION(scope, {});
-        result->putDirect(vm, Identifier::fromString(vm, "lastInsertRowid"_s), JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<int64_t>(rowid)), 0);
+        Bun::putDirectNamed(vm, result, "lastInsertRowid"_s, JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<int64_t>(rowid)));
         RETURN_IF_EXCEPTION(scope, {});
     } else {
-        result->putDirect(vm, Identifier::fromString(vm, "changes"_s), jsNumber(static_cast<double>(changes)), 0);
-        result->putDirect(vm, Identifier::fromString(vm, "lastInsertRowid"_s), jsNumber(static_cast<double>(rowid)), 0);
+        Bun::putDirectNamed(vm, result, "changes"_s, jsNumber(static_cast<double>(changes)));
+        Bun::putDirectNamed(vm, result, "lastInsertRowid"_s, jsNumber(static_cast<double>(rowid)));
     }
     return JSValue::encode(result);
 }
@@ -2991,8 +2993,8 @@ static const HashTableValue JSStatementSyncPrototypeTableValues[] = {
 void JSStatementSyncPrototype::finishCreation(VM& vm, JSGlobalObject*)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSStatementSync::info(), JSStatementSyncPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSStatementSync::info(), JSStatementSyncPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 JSC_HOST_CALL_ATTRIBUTES EncodedJSValue JSStatementSyncConstructor::call(JSGlobalObject* globalObject, CallFrame*)
@@ -3057,12 +3059,7 @@ DEFINE_VISIT_CHILDREN(JSStatementSyncIterator);
 
 GCClient::IsoSubspace* JSStatementSyncIterator::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSStatementSyncIterator, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForNodeSqliteStatementSyncIterator.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeSqliteStatementSyncIterator = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForNodeSqliteStatementSyncIterator.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeSqliteStatementSyncIterator = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSStatementSyncIterator, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNodeSqliteStatementSyncIterator, m_subspaceForNodeSqliteStatementSyncIterator));
 }
 
 static inline JSObject* createIterResult(VM& vm, JSGlobalObject* globalObject, bool done, JSValue value)
@@ -3169,7 +3166,7 @@ static const HashTableValue JSStatementSyncIteratorPrototypeTableValues[] = {
 void JSStatementSyncIteratorPrototype::finishCreation(VM& vm, JSGlobalObject*)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSStatementSyncIterator::info(), JSStatementSyncIteratorPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSStatementSyncIterator::info(), JSStatementSyncIteratorPrototypeTableValues, *this);
     // No toStringTag — Node's iterator is a plain object whose prototype
     // chain ends at %IteratorPrototype% (which supplies @@iterator).
 }
@@ -3245,12 +3242,7 @@ DEFINE_VISIT_CHILDREN(JSNodeSqliteSession);
 
 GCClient::IsoSubspace* JSNodeSqliteSession::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSNodeSqliteSession, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForNodeSqliteSession.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeSqliteSession = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForNodeSqliteSession.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeSqliteSession = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSNodeSqliteSession, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNodeSqliteSession, m_subspaceForNodeSqliteSession));
 }
 
 #define THIS_SESSION()                                                                                                 \
@@ -3348,7 +3340,7 @@ static const HashTableValue JSNodeSqliteSessionPrototypeTableValues[] = {
 void JSNodeSqliteSessionPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSNodeSqliteSession::info(), JSNodeSqliteSessionPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSNodeSqliteSession::info(), JSNodeSqliteSessionPrototypeTableValues, *this);
     putDirectNativeFunction(vm, globalObject, vm.propertyNames->disposeSymbol, 0, jsSessionDispose, ImplementationVisibility::Public, NoIntrinsic, 0);
 }
 
@@ -3414,12 +3406,7 @@ DEFINE_VISIT_CHILDREN(JSNodeSqliteLimits);
 
 GCClient::IsoSubspace* JSNodeSqliteLimits::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSNodeSqliteLimits, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForNodeSqliteLimits.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeSqliteLimits = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForNodeSqliteLimits.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeSqliteLimits = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSNodeSqliteLimits, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNodeSqliteLimits, m_subspaceForNodeSqliteLimits));
 }
 
 bool JSNodeSqliteLimits::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
@@ -3517,7 +3504,7 @@ void JSNodeSqliteLimits::getOwnPropertyNames(JSObject* object, JSGlobalObject* g
 const ClassInfo JSNodeSqliteTagStore::s_info = { "SQLTagStore"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodeSqliteTagStore) };
 const ClassInfo JSNodeSqliteTagStorePrototype::s_info = { "SQLTagStore"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodeSqliteTagStorePrototype) };
 
-JSNodeSqliteTagStore* JSNodeSqliteTagStore::create(VM& vm, Structure* structure, JSDatabaseSync* db, unsigned capacity)
+JSNodeSqliteTagStore* JSNodeSqliteTagStore::create(VM& vm, Structure* structure, JSDatabaseSync* db, size_t capacity)
 {
     auto* ptr = new (NotNull, allocateCell<JSNodeSqliteTagStore>(vm)) JSNodeSqliteTagStore(vm, structure);
     ptr->finishCreation(vm, db, capacity);
@@ -3528,7 +3515,7 @@ JSC_DECLARE_CUSTOM_GETTER(jsTagStoreCapacity);
 JSC_DECLARE_CUSTOM_GETTER(jsTagStoreDb);
 JSC_DECLARE_CUSTOM_GETTER(jsTagStoreSize);
 
-void JSNodeSqliteTagStore::finishCreation(VM& vm, JSDatabaseSync* db, unsigned capacity)
+void JSNodeSqliteTagStore::finishCreation(VM& vm, JSDatabaseSync* db, size_t capacity)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
@@ -3566,12 +3553,7 @@ DEFINE_VISIT_CHILDREN(JSNodeSqliteTagStore);
 
 GCClient::IsoSubspace* JSNodeSqliteTagStore::subspaceForImpl(VM& vm)
 {
-    return WebCore::subspaceForImpl<JSNodeSqliteTagStore, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForNodeSqliteTagStore.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeSqliteTagStore = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForNodeSqliteTagStore.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeSqliteTagStore = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSNodeSqliteTagStore, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNodeSqliteTagStore, m_subspaceForNodeSqliteTagStore));
 }
 
 JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, ThrowScope& scope, CallFrame* callFrame)
@@ -3682,11 +3664,13 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
 
         {
             WTF::Locker locker { cellLock() };
-            if (m_order.size() >= m_capacity) m_order.removeLast();
             Entry e;
             e.sql = sqlStr;
             e.stmt.set(vm, this, stmtObj);
             m_order.insert(0, std::move(e));
+            // Node's LRUCache::Put inserts then evicts with `size > capacity`,
+            // so capacity=0 prepares but never caches.
+            if (m_order.size() > m_capacity) m_order.removeLast();
         }
     }
 
@@ -3792,13 +3776,13 @@ JSC_DEFINE_CUSTOM_GETTER(jsTagStoreCapacity, (JSGlobalObject*, EncodedJSValue th
 {
     auto* self = dynamicDowncast<JSNodeSqliteTagStore>(JSValue::decode(thisValue));
     if (!self) return JSValue::encode(jsUndefined());
-    return JSValue::encode(jsNumber(self->capacity()));
+    return JSValue::encode(jsNumber(static_cast<double>(self->capacity())));
 }
 JSC_DEFINE_CUSTOM_GETTER(jsTagStoreSize, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName))
 {
     auto* self = dynamicDowncast<JSNodeSqliteTagStore>(JSValue::decode(thisValue));
     if (!self) return JSValue::encode(jsUndefined());
-    return JSValue::encode(jsNumber(self->size()));
+    return JSValue::encode(jsNumber(static_cast<double>(self->size())));
 }
 JSC_DEFINE_CUSTOM_GETTER(jsTagStoreDb, (JSGlobalObject*, EncodedJSValue thisValue, PropertyName))
 {
@@ -3819,8 +3803,8 @@ static const HashTableValue JSNodeSqliteTagStorePrototypeTableValues[] = {
 void JSNodeSqliteTagStorePrototype::finishCreation(VM& vm, JSGlobalObject*)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSNodeSqliteTagStore::info(), JSNodeSqliteTagStorePrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSNodeSqliteTagStore::info(), JSNodeSqliteTagStorePrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSNodeSqliteTagStoreConstructor::s_info = { "SQLTagStore"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodeSqliteTagStoreConstructor) };
@@ -3894,8 +3878,10 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
     WTF::String targetName = "main"_s;
     JSObject* progressFn = nullptr;
 
-    JSValue optsVal = callFrame->argument(2);
-    if (!optsVal.isUndefined()) {
+    // Node validates on args.Length() > 2: an explicit `backup(db, p, undefined)`
+    // throws while `backup(db, p)` does not.
+    if (callFrame->argumentCount() > 2) {
+        JSValue optsVal = callFrame->uncheckedArgument(2);
         if (!optsVal.isObject()) {
             return throwNodeArgType(globalObject, scope, "options"_s, "an object"_s);
         }
@@ -4015,8 +4001,8 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
         if (remaining != 0) {
             if (progressFn) {
                 JSObject* payload = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
-                payload->putDirect(vm, Identifier::fromString(vm, "totalPages"_s), jsNumber(totalPages), 0);
-                payload->putDirect(vm, Identifier::fromString(vm, "remainingPages"_s), jsNumber(remaining), 0);
+                Bun::putDirectNamed(vm, payload, "totalPages"_s, jsNumber(totalPages));
+                Bun::putDirectNamed(vm, payload, "remainingPages"_s, jsNumber(remaining));
                 MarkedArgumentBuffer args;
                 args.append(payload);
                 auto callData = JSC::getCallData(progressFn);

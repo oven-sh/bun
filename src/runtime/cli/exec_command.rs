@@ -42,10 +42,8 @@ impl ExecCommand {
             exec_arena(),
             ctx.log,
             {
-                // `configure_transform_options_for_bun_vm` (3 field writes).
                 let mut args = ctx.args.clone();
                 args.write = Some(false);
-                args.resolve = Some(api::ResolveMode::Lazy);
                 args.target = Some(api::Target::Bun);
                 args
             },
@@ -66,7 +64,7 @@ impl ExecCommand {
         // process singleton, or freshly `heap::alloc`'d) — never null. The
         // loader is a thread-/process-lifetime singleton, so `&'static mut` is
         // sound for the single CLI dispatch thread.
-        let env = unsafe { &mut *bundle.env.cast::<bun_dotenv::Loader<'static>>() };
+        let env = unsafe { &mut *bundle.env };
         let mini = bun_event_loop::MiniEventLoop::init_global(Some(env), Some(cwd));
         let parts: [&[u8]; 2] = [cwd, b"[eval]"];
         let script_path = bun_paths::resolve_path::join::<bun_paths::platform::Auto>(&parts);
@@ -93,13 +91,6 @@ impl ExecCommand {
             }
         };
 
-        // if (code > 0) {
-        //     if (code != 2 and !silent) {
-        //         Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with code {d}<r>", .{ name, code });
-        //         Output.flush();
-        //     }
-
         Global::exit(u32::from(code));
-        // }
     }
 }

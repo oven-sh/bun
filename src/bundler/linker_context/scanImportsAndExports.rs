@@ -75,7 +75,7 @@ macro_rules! col_ref {
     };
 }
 
-pub fn scan_imports_and_exports(
+pub(crate) fn scan_imports_and_exports(
     this: &mut LinkerContext,
 ) -> Result<(), ScanImportsAndExportsError> {
     let _outer_trace = perf::trace("Bundler.scanImportsAndExports");
@@ -125,7 +125,6 @@ pub fn scan_imports_and_exports(
     let sorted_aliases: *mut [js_meta::SortedAndFilteredExportAliases] =
         meta.sorted_and_filtered_export_aliases;
     let cjs_export_copies: *mut [js_meta::CjsExportCopies] = meta.cjs_export_copies;
-    let entry_point_part_indices: *mut [Index] = meta.entry_point_part_index;
 
     {
         // Step 1: Figure out what modules must be CommonJS
@@ -223,14 +222,18 @@ pub fn scan_imports_and_exports(
                         }
                     }
                     ImportKind::Require =>
-                    // Files that are imported with require() must be CommonJS modules
+                    // Files that are imported with require() must be CommonJS modules,
+                    // unless a split `require()` loads the file at runtime as its own
+                    // chunk (no wrapper, the same as a cross-chunk `import()` below).
                     {
-                        if other_kind == ExportsKind::Esm {
-                            col!(flags)[other_file].wrap = WrapKind::Esm;
-                        } else {
-                            // TODO: introduce a NamedRequire for require("./foo").Bar AST nodes to support tree-shaking those.
-                            col!(flags)[other_file].wrap = WrapKind::Cjs;
-                            col!(exports_kind)[other_file] = ExportsKind::Cjs;
+                        if !this.is_external_dynamic_import(record, id as u32) {
+                            if other_kind == ExportsKind::Esm {
+                                col!(flags)[other_file].wrap = WrapKind::Esm;
+                            } else {
+                                // TODO: introduce a NamedRequire for require("./foo").Bar AST nodes to support tree-shaking those.
+                                col!(flags)[other_file].wrap = WrapKind::Cjs;
+                                col!(exports_kind)[other_file] = ExportsKind::Cjs;
+                            }
                         }
                     }
                     ImportKind::Dynamic => {
@@ -265,29 +268,6 @@ pub fn scan_imports_and_exports(
             }
         }
 
-        if cfg!(feature = "debug_logs") {
-            let mut cjs_count: usize = 0;
-            let mut esm_count: usize = 0;
-            let mut wrap_cjs_count: usize = 0;
-            let mut wrap_esm_count: usize = 0;
-            for kind in col_ref!(exports_kind).iter() {
-                cjs_count += (*kind == ExportsKind::Cjs) as usize;
-                esm_count += (*kind == ExportsKind::Esm) as usize;
-            }
-            for flag in col_ref!(flags).iter() {
-                wrap_cjs_count += (flag.wrap == WrapKind::Cjs) as usize;
-                wrap_esm_count += (flag.wrap == WrapKind::Esm) as usize;
-            }
-            bun_core::scoped_log!(
-                LinkerCtx,
-                "Step 1: {} CommonJS modules (+ {} wrapped), {} ES modules (+ {} wrapped)",
-                cjs_count,
-                wrap_cjs_count,
-                esm_count,
-                wrap_esm_count,
-            );
-        }
-
         // Step 2: Propagate dynamic export status for export star statements that
         // are re-exports from a module whose exports are not statically analyzable.
         // In this case the export star must be evaluated at run time instead of at
@@ -308,6 +288,7 @@ pub fn scan_imports_and_exports(
                     export_star_map: HashMap::default(),
                     export_star_records: &*export_star_import_records,
                     output_format,
+                    wrap_stack: Vec::new(),
                 }
             };
             for source_index_ in &reachable {
@@ -842,7 +823,6 @@ pub fn scan_imports_and_exports(
                         ..Default::default()
                     },
                 )?;
-                col!(entry_point_part_indices)[id] = Index::part(entry_point_part_index);
 
                 // Pull in the "__toCommonJS" symbol if we need it due to being an entry point
                 if force_include_exports && output_format != Format::InternalBakeDev {
@@ -925,7 +905,12 @@ pub fn scan_imports_and_exports(
                             } else {
                                 // We should use "__require" instead of "require" if we're not
                                 // generating a CommonJS output file, since it won't exist otherwise.
-                                if should_call_runtime_require(output_format) {
+                                // An `import()` is printed as-is and never becomes `__require()`,
+                                // nor does a split `require()` (`import.meta.require`).
+                                if kind != ImportKind::Dynamic
+                                    && !is_external_dyn
+                                    && should_call_runtime_require(output_format)
+                                {
                                     runtime_require_uses += 1;
                                 }
 
@@ -1171,6 +1156,7 @@ struct DependencyWrapper<'a> {
     entry_point_kinds: &'a [EntryPoint::Kind],
     export_star_records: &'a [bun_alloc::AstVec<u32>],
     output_format: options::Format,
+    wrap_stack: Vec<IndexInt>,
 }
 
 impl DependencyWrapper<'_> {
@@ -1213,35 +1199,40 @@ impl DependencyWrapper<'_> {
     }
 
     fn wrap(&mut self, source_index: IndexInt) {
-        let mut flag = self.flags[source_index as usize];
+        // Explicit worklist (was per-edge recursive). Only flag bits are
+        // written and never re-read to decide later iterations, so
+        // processing order is irrelevant.
+        debug_assert!(self.wrap_stack.is_empty());
+        self.wrap_stack.push(source_index);
 
-        if flag.did_wrap_dependencies {
-            return;
-        }
-        flag.did_wrap_dependencies = true;
+        while let Some(source_index) = self.wrap_stack.pop() {
+            let flag = &mut self.flags[source_index as usize];
 
-        // Never wrap the runtime file since it always comes first
-        if source_index == Index::RUNTIME.get() {
-            return;
-        }
-
-        // This module must be wrapped
-        if flag.wrap == WrapKind::None {
-            flag.wrap = match self.exports_kind[source_index as usize] {
-                ExportsKind::Cjs => WrapKind::Cjs,
-                _ => WrapKind::Esm,
-            };
-        }
-        self.flags[source_index as usize] = flag;
-
-        // `import_records` is a `&'a [_]` (Copy) field — copy it out so the
-        // recursive `&mut self` call does not overlap the iterator borrow.
-        let records = self.import_records;
-        for record in records[source_index as usize].as_slice() {
-            if !record.source_index.is_valid() {
+            if flag.did_wrap_dependencies {
                 continue;
             }
-            self.wrap(record.source_index.get());
+            flag.did_wrap_dependencies = true;
+
+            // Never wrap the runtime file since it always comes first
+            if source_index == Index::RUNTIME.get() {
+                continue;
+            }
+
+            // This module must be wrapped
+            if flag.wrap == WrapKind::None {
+                flag.wrap = match self.exports_kind[source_index as usize] {
+                    ExportsKind::Cjs => WrapKind::Cjs,
+                    _ => WrapKind::Esm,
+                };
+            }
+
+            for record in self.import_records[source_index as usize].as_slice() {
+                if record.source_index.is_valid()
+                    && !self.flags[record.source_index.get() as usize].did_wrap_dependencies
+                {
+                    self.wrap_stack.push(record.source_index.get());
+                }
+            }
         }
     }
 }
@@ -1392,21 +1383,6 @@ mod __css_validation {
     // `*mut` (`BundledAst.css`), so we never launder a `&T` into `&mut T`.
     use crate::bundled_ast::CssCol;
 
-    /// `ArrayHashAdapter` so `LocalScope` (`ArrayHashMap<Box<[u8]>, LocalEntry>`)
-    /// can be queried by borrowed `&[u8]` (CSS idents are arena `*const [u8]`).
-    struct SliceBoxAdapter;
-    impl bun_collections::array_hash_map::ArrayHashAdapter<[u8], Box<[u8]>> for SliceBoxAdapter {
-        fn hash(&self, key: &[u8]) -> u32 {
-            // Match `LocalScope`'s default `AutoContext` hashing for `Box<[u8]>`
-            // (std `Hash` over the byte slice → wyhash truncated to u32).
-            use bun_collections::array_hash_map::{ArrayHashContext, AutoContext};
-            AutoContext.hash(key)
-        }
-        fn eql(&self, a: &[u8], b: &Box<[u8]>, _i: usize) -> bool {
-            a == &**b
-        }
-    }
-
     pub(super) fn validate_css_import_composes(
         this: &mut LinkerContext,
         id: usize,
@@ -1440,10 +1416,7 @@ mod __css_validation {
                 };
                 for name in compose.names.slice() {
                     let name_v = name.v();
-                    if !other_css_ast
-                        .local_scope
-                        .contains_adapted(name_v, &SliceBoxAdapter)
-                    {
+                    if !other_css_ast.local_scope.contains(name_v) {
                         // Split-borrow — see `LinkerContext::log_disjoint`.
                         let _ = this.log_disjoint().add_error_fmt(
                             &col_ref!(input_files)[record.source_index.get() as usize],
@@ -1628,9 +1601,7 @@ mod __css_validation {
                                 };
                                 for name in compose.names.slice() {
                                     let name_v = name.v();
-                                    let Some(other_name) =
-                                        other_ast.local_scope.get_adapted(name_v, &SliceBoxAdapter)
-                                    else {
+                                    let Some(other_name) = other_ast.local_scope.get(name_v) else {
                                         continue;
                                     };
                                     let other_name_ref =
@@ -1651,9 +1622,7 @@ mod __css_validation {
                             // inside this file
                             for name in compose.names.slice() {
                                 let name_v = name.v();
-                                let Some(name_entry) =
-                                    ast.local_scope.get_adapted(name_v, &SliceBoxAdapter)
-                                else {
+                                let Some(name_entry) = ast.local_scope.get(name_v) else {
                                     continue;
                                 };
                                 self.visit(idx, ast, name_entry.ref_.to_real_ref(idx));

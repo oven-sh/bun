@@ -2,9 +2,7 @@ use crate::StoreRef;
 use crate::base::Ref;
 use crate::binding::Binding;
 use crate::expr::Expr;
-use crate::{ExprNodeIndex, flags};
-// Re-exported so callers can spell `js_ast::b::ArrayBinding`.
-pub use crate::ArrayBinding;
+use crate::{ArrayBinding, ExprNodeIndex, flags};
 
 /// B is for Binding! Bindings are on the left side of variable
 /// declarations (s_local), which is how destructuring assignments
@@ -175,8 +173,3 @@ impl B {
         }
     }
 }
-
-// Keep `Binding` referenced (it's the conceptual tag-host of `B`).
-type _BindingTagHost = Binding;
-
-pub use crate::g::Class;

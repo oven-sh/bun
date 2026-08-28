@@ -33,7 +33,7 @@ use crate::hir::{
 /// `lowerWithMutationAliasing`.
 ///
 /// Corresponds to TS `analyseFunctions(func: HIRFunction): void`.
-pub fn analyse_functions<F>(
+pub(crate) fn analyse_functions<F>(
     func: &mut HirFunction,
     env: &mut Environment,
     debug_logger: &mut F,

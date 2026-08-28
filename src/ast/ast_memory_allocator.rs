@@ -341,12 +341,6 @@ impl ASTMemoryAllocator {
         // SAFETY: bumpalo never returns null.
         crate::StoreRef::from_bump(self.arena().alloc(value))
     }
-
-    /// Returns the single `Arena` backing this allocator.
-    #[inline]
-    pub fn stack_allocator(&self) -> &Arena {
-        self.arena()
-    }
 }
 
 pub struct Scope<'a> {
@@ -415,7 +409,7 @@ impl<'a> Scope<'a> {
         }
     }
 
-    pub fn exit(&mut self) {
+    pub(crate) fn exit(&mut self) {
         if !self.entered {
             return;
         }

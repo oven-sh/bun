@@ -1,8 +1,9 @@
 use core::cell::UnsafeCell;
+use core::mem::MaybeUninit;
 
 use crate::fs as Fs;
 use crate::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS};
-use bun_core::{WStr, ZStr, strings};
+use bun_core::{ZStr, strings};
 
 // Thread-local scratch buffers. Stored in `UnsafeCell` (not `RefCell`)
 // because callers must receive a raw `&mut` slice that outlives the `.with` closure
@@ -12,9 +13,17 @@ use bun_core::{WStr, ZStr, strings};
 // SAFETY invariant: each buffer has at most one live mutable borrow per thread;
 // callers must not re-enter the accessor while a previous borrow is alive.
 thread_local! {
-    static PARSER_JOIN_INPUT_BUFFER: UnsafeCell<[u8; 4096]> = const { UnsafeCell::new([0u8; 4096]) };
-    static PARSER_BUFFER: UnsafeCell<[u8; 1024]> = const { UnsafeCell::new([0u8; 1024]) };
+    static PARSER_JOIN_INPUT_BUFFER: UnsafeCell<[u8; PARSER_JOIN_INPUT_BUFFER_LEN]> =
+        const { UnsafeCell::new([0u8; PARSER_JOIN_INPUT_BUFFER_LEN]) };
+    static PARSER_BUFFER: UnsafeCell<[u8; PARSER_BUFFER_LEN]> =
+        const { UnsafeCell::new([0u8; PARSER_BUFFER_LEN]) };
 }
+
+/// Output capacity of [`join_abs_string`] / [`join_abs_string_z`].
+const PARSER_JOIN_INPUT_BUFFER_LEN: usize = 4096;
+
+/// Output capacity of [`normalize_string`].
+const PARSER_BUFFER_LEN: usize = 1024;
 
 /// Project `&'static mut` into a thread-local `UnsafeCell<[u8; N]>` scratch
 /// buffer. One `unsafe` site for all `PARSER_BUFFER` / `PARSER_JOIN_INPUT_BUFFER`
@@ -33,7 +42,7 @@ fn tl_buf_mut<const N: usize>(b: &UnsafeCell<[u8; N]>) -> &'static mut [u8; N] {
 }
 
 pub fn z<'a>(input: &[u8], output: &'a mut PathBuffer) -> &'a ZStr {
-    if input.len() > MAX_PATH_BYTES {
+    if input.len() >= MAX_PATH_BYTES {
         if cfg!(debug_assertions) {
             panic!("path too long");
         }
@@ -50,7 +59,6 @@ pub fn z<'a>(input: &[u8], output: &'a mut PathBuffer) -> &'a ZStr {
 type IsSeparatorFunc = fn(char: u8) -> bool;
 // Rust cannot express "fn<T>(T) -> bool" as a value, so the generic-`T`
 // callers dispatch via Platform methods instead of fn pointers.
-type LastSeparatorFunction = fn(slice: &[u8]) -> Option<usize>;
 
 #[inline(always)]
 fn is_dotdot_with_type<T: PathChar>(slice: &[T]) -> bool {
@@ -89,7 +97,7 @@ pub fn is_parent_or_equal(parent_: &[u8], child: &[u8]) -> ParentEqual {
     ParentEqual::Unrelated
 }
 
-pub(crate) fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
+fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
     input: &[&'a [u8]],
 ) -> Option<&'a [u8]> {
     let is_path_separator = P::P.get_separator_func();
@@ -203,7 +211,7 @@ fn nql_at_index_case_insensitive_dyn(string_count: usize, index: usize, input: &
 // TODO: is it faster to determine longest_common_separator in the while loop
 // or as an extra step at the end?
 // only boether to check if this function appears in benchmarking
-pub(crate) fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) -> &'a [u8] {
+fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) -> &'a [u8] {
     let is_path_separator = P::P.get_separator_func();
 
     let nql_at_index_fn: fn(usize, usize, &[&[u8]]) -> bool = match P::P {
@@ -377,7 +385,7 @@ pub fn relative_to_common_path_buf() -> *mut PathBuffer {
 /// Find a relative path from a common path
 // Loosely based on Node.js' implementation of path.relative
 // https://github.com/nodejs/node/blob/9a7cbe25de88d87429a69050a1a1971234558d97/lib/path.js#L1250-L1259
-pub(crate) fn relative_to_common_path<'a, const ALWAYS_COPY: bool, P: PlatformT>(
+fn relative_to_common_path<'a, const ALWAYS_COPY: bool, P: PlatformT>(
     common_path_: &[u8],
     normalized_from_: &[u8],
     normalized_to_: &'a [u8],
@@ -748,7 +756,7 @@ pub fn windows_volume_name_len(path: &[u8]) -> (usize, usize) {
     windows_volume_name_len_t::<u8>(path)
 }
 
-pub(crate) fn windows_volume_name_len_t<T: PathChar>(path: &[T]) -> (usize, usize) {
+fn windows_volume_name_len_t<T: PathChar>(path: &[T]) -> (usize, usize) {
     if path.len() < 2 {
         return (0, 0);
     }
@@ -766,8 +774,6 @@ pub(crate) fn windows_volume_name_len_t<T: PathChar>(path: &[T]) -> (usize, usiz
         && !Platform::Windows.is_separator_t::<T>(path[2])
         && path[2] != T::from_u8(b'.')
     {
-        // PERF: the single generic helper checks elementwise (no T==u8 SIMD
-        // branch) — profile if hot.
         if let Some(idx) = strings::index_of_any_t::<T>(&path[3..], T::lit(b"/\\")) {
             // TODO: handle input "//abc//def" should be picked up as a unc path
             if path.len() > idx + 4 && !Platform::Windows.is_separator_t::<T>(path[idx + 4]) {
@@ -809,7 +815,7 @@ pub fn has_any_illegal_chars(maybe_path: &[u8]) -> bool {
     strings::index_of_any(maybe_path_, b"<>:\"|?*").is_some()
 }
 
-pub(crate) fn starts_with_disk_discriminator(maybe_path: &[u8]) -> bool {
+fn starts_with_disk_discriminator(maybe_path: &[u8]) -> bool {
     if !cfg!(windows) {
         return false;
     }
@@ -829,7 +835,7 @@ pub(crate) fn starts_with_disk_discriminator(maybe_path: &[u8]) -> bool {
 }
 
 // path.relative lets you do relative across different share drives
-pub(crate) fn windows_filesystem_root_t<T: PathChar>(path: &[T]) -> &[T] {
+fn windows_filesystem_root_t<T: PathChar>(path: &[T]) -> &[T] {
     if path.is_empty() {
         return &path[..0];
     }
@@ -880,24 +886,6 @@ pub(crate) fn windows_filesystem_root_t<T: PathChar>(path: &[T]) -> &[T] {
     &path[0..0]
 }
 
-pub fn normalize_string_generic<
-    'a,
-    const ALLOW_ABOVE_ROOT: bool,
-    const SEPARATOR: u8,
-    const PRESERVE_TRAILING_SLASH: bool,
->(
-    path_: &[u8],
-    buf: &'a mut [u8],
-    is_separator: impl Fn(u8) -> bool + Copy,
-) -> &'a mut [u8] {
-    normalize_string_generic_t::<u8, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(
-        path_,
-        buf,
-        SEPARATOR,
-        is_separator,
-    )
-}
-
 pub fn normalize_string_generic_t<
     'a,
     T: PathChar,
@@ -915,37 +903,6 @@ pub fn normalize_string_generic_t<
         separator,
         is_separator_t,
     )
-}
-
-/// Plain options struct whose flags become
-/// individual const-generic bools below (separator and is_separator stay
-/// runtime since Rust const generics cannot carry fn pointers / non-integral T).
-pub struct NormalizeOptions<T: PathChar> {
-    pub allow_above_root: bool,
-    pub separator: T,
-    pub is_separator: fn(T) -> bool,
-    pub preserve_trailing_slash: bool,
-    pub zero_terminate: bool,
-    pub add_nt_prefix: bool,
-}
-
-impl<T: PathChar> Default for NormalizeOptions<T> {
-    fn default() -> Self {
-        Self {
-            allow_above_root: false,
-            separator: T::from_u8(SEP),
-            is_separator: |c| {
-                if SEP == SEP_WINDOWS {
-                    c == T::from_u8(b'\\') || c == T::from_u8(b'/')
-                } else {
-                    c == T::from_u8(b'/')
-                }
-            },
-            preserve_trailing_slash: false,
-            zero_terminate: false,
-            add_nt_prefix: false,
-        }
-    }
 }
 
 // Rust cannot vary the return type on a const-generic bool without
@@ -1225,26 +1182,18 @@ impl Platform {
     }
 
     #[inline]
-    pub const fn separator_string(self) -> &'static str {
+    pub(crate) const fn separator_string(self) -> &'static str {
         match self {
             Platform::Loose | Platform::Posix => "/",
             Platform::Nt | Platform::Windows => "\\",
         }
     }
 
-    pub const fn get_separator_func(self) -> IsSeparatorFunc {
+    pub(crate) const fn get_separator_func(self) -> IsSeparatorFunc {
         match self {
             Platform::Loose => is_sep_any,
             Platform::Nt | Platform::Windows => is_sep_any,
             Platform::Posix => is_sep_posix,
-        }
-    }
-
-    pub const fn get_last_separator_func(self) -> LastSeparatorFunction {
-        match self {
-            Platform::Loose => last_index_of_separator_loose,
-            Platform::Nt | Platform::Windows => last_index_of_separator_windows,
-            Platform::Posix => last_index_of_separator_posix,
         }
     }
 
@@ -1254,7 +1203,7 @@ impl Platform {
     }
 
     #[inline(always)]
-    pub fn is_separator_t<T: PathChar>(self, char: T) -> bool {
+    pub(crate) fn is_separator_t<T: PathChar>(self, char: T) -> bool {
         match self {
             Platform::Loose => is_sep_any_t::<T>(char),
             Platform::Nt | Platform::Windows => is_sep_any_t::<T>(char),
@@ -1262,14 +1211,14 @@ impl Platform {
         }
     }
 
-    pub const fn trailing_separator(self) -> [u8; 2] {
+    pub(crate) const fn trailing_separator(self) -> [u8; 2] {
         match self {
             Platform::Nt | Platform::Windows => *b".\\",
             Platform::Posix | Platform::Loose => *b"./",
         }
     }
 
-    pub fn leading_separator_index<T: PathChar>(self, path: &[T]) -> Option<usize> {
+    pub(crate) fn leading_separator_index<T: PathChar>(self, path: &[T]) -> Option<usize> {
         match self {
             Platform::Nt | Platform::Windows => {
                 if path.len() < 1 {
@@ -1320,10 +1269,30 @@ impl Platform {
     }
 }
 
+/// `str` must normalize into [`PARSER_BUFFER_LEN`] bytes; for input of
+/// arbitrary length use [`normalize_string_spill`].
 pub fn normalize_string<const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(str: &[u8]) -> &mut [u8] {
     // returns slice into thread-local PARSER_BUFFER; valid until the
     // next call on this thread.
     PARSER_BUFFER.with(|b| normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, tl_buf_mut(b)))
+}
+
+/// [`normalize_string`] (thread-local buffer) when the result fits, otherwise
+/// into `spill` (grown as needed). `spill` is untouched in the common case.
+pub fn normalize_string_spill<'a, const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(
+    spill: &'a mut Vec<u8>,
+    str: &'a [u8],
+) -> &'a [u8] {
+    // Normalizing only removes bytes, except that on Windows a drive-relative
+    // `C:` becomes `C:.` and a bare UNC volume gains its trailing separator.
+    let needed = str.len() + 1;
+    if needed <= PARSER_BUFFER_LEN {
+        return normalize_string::<ALLOW_ABOVE_ROOT, P>(str);
+    }
+    if spill.len() < needed {
+        spill.resize(needed, 0);
+    }
+    normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, &mut spill[..])
 }
 
 pub fn normalize_buf<'a, P: PlatformT>(str: &[u8], buf: &'a mut [u8]) -> &'a mut [u8] {
@@ -1376,7 +1345,7 @@ pub fn normalize_string_buf<
     normalize_string_buf_t::<u8, ALLOW_ABOVE_ROOT, P, PRESERVE_TRAILING_SLASH>(str, buf)
 }
 
-pub(crate) fn normalize_string_buf_t<
+fn normalize_string_buf_t<
     'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
@@ -1413,6 +1382,24 @@ pub fn join_abs<'a, P: PlatformT>(cwd: &'a [u8], part: &[u8]) -> &'a [u8] {
 // directly when `parts.is_empty()`. Return tied to `cwd`'s lifetime ('static: 'a).
 pub fn join_abs_string<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a [u8] {
     PARSER_JOIN_INPUT_BUFFER.with(|b| join_abs_string_buf::<P>(cwd, tl_buf_mut(b), parts))
+}
+
+/// [`join_abs_string`] (thread-local buffer) when the result fits, otherwise
+/// into `spill` (grown as needed). `spill` is untouched in the common case.
+pub fn join_abs_string_spill<'a, P: PlatformT>(
+    cwd: &'a [u8],
+    spill: &'a mut Vec<u8>,
+    parts: &[&[u8]],
+) -> &'a [u8] {
+    debug_assert!(!matches!(P::P, Platform::Nt));
+    let needed = join_abs_needed(cwd.len(), parts);
+    if needed <= PARSER_JOIN_INPUT_BUFFER_LEN {
+        return join_abs_string::<P>(cwd, parts);
+    }
+    if spill.len() < needed {
+        spill.resize(needed, 0);
+    }
+    join_abs_string_buf::<P>(cwd, &mut spill[..], parts)
 }
 
 /// Convert parts of potentially invalid file paths into a single valid filpeath
@@ -1516,17 +1503,32 @@ pub fn join_string_buf_w_same<'a, P: PlatformT>(buf: &'a mut [u16], parts: &[&[u
     join_string_buf_t_same::<u16, P>(buf, parts)
 }
 
+const JOIN_TEMP_LEN: usize = 4096;
+
+/// Uninitialized scratch for `join_string_buf_t*`'s unnormalized concatenation of `count` units.
+#[inline]
+fn join_temp_buf<'a, T>(
+    stack: &'a mut [MaybeUninit<T>; JOIN_TEMP_LEN],
+    heap: &'a mut Vec<T>,
+    count: usize,
+) -> &'a mut [MaybeUninit<T>] {
+    if count * 2 > JOIN_TEMP_LEN {
+        heap.reserve_exact(count * 2);
+        return heap.spare_capacity_mut();
+    }
+    stack
+}
+
 /// Same-width `joinStringBufT`: parts already match `T`, so no UTF-8→16 transcode.
 /// split out of `join_string_buf_t` because Rust can't monomorphize on the
 /// parts' element types — callers pick the overload.
-pub(crate) fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
+fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
     buf: &'a mut [T],
     parts: &[&[T]],
 ) -> &'a [T] {
     let mut written: usize = 0;
-    let mut temp_buf_: [T; 4096] = [T::from_u8(0); 4096];
-    let mut temp_buf: &mut [T] = &mut temp_buf_;
-    let mut heap_temp_buf: Vec<T>;
+    let mut stack_temp_buf = [const { MaybeUninit::<T>::uninit() }; JOIN_TEMP_LEN];
+    let mut heap_temp_buf: Vec<T> = Vec::new();
 
     let mut count: usize = 0;
     for part in parts {
@@ -1536,12 +1538,7 @@ pub(crate) fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
         count += part.len() + 1;
     }
 
-    if count * 2 > temp_buf.len() {
-        heap_temp_buf = vec![T::from_u8(0); count * 2];
-        temp_buf = &mut heap_temp_buf;
-    }
-
-    temp_buf[0] = T::from_u8(0);
+    let temp_buf = join_temp_buf(&mut stack_temp_buf, &mut heap_temp_buf, count);
 
     for part in parts {
         if part.is_empty() {
@@ -1549,11 +1546,11 @@ pub(crate) fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
         }
 
         if written > 0 {
-            temp_buf[written] = T::from_u8(P::P.separator());
+            temp_buf[written].write(T::from_u8(P::P.separator()));
             written += 1;
         }
 
-        temp_buf[written..written + part.len()].copy_from_slice(part);
+        temp_buf[written..written + part.len()].write_copy_of_slice(part);
         written += part.len();
     }
 
@@ -1562,24 +1559,9 @@ pub(crate) fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
         return &buf[0..1];
     }
 
-    normalize_string_node_t::<T, P>(&temp_buf[0..written], buf)
-}
-
-pub fn join_string_buf_wz<'a, P: PlatformT>(buf: &'a mut [u16], parts: &[&[u8]]) -> &'a WStr {
-    // reshaped for borrowck — capture buf base ptr before sub-borrow
-    let buf_base = buf.as_mut_ptr();
-    let buf_len = buf.len();
-    let (start_offset, len) = {
-        let joined = join_string_buf_t::<u16, P>(&mut buf[..buf_len - 1], parts);
-        (
-            (joined.as_ptr() as usize - buf_base as usize) / 2,
-            joined.len(),
-        )
-    };
-    debug_assert!(start_offset + len < buf_len);
-    buf[start_offset + len] = 0;
-    // SAFETY: NUL written at buf[start_offset + len]; slice is within buf
-    unsafe { WStr::from_raw(buf_base.add(start_offset), len) }
+    // SAFETY: the loop above wrote every unit of `temp_buf[..written]`.
+    let joined = unsafe { temp_buf[..written].assume_init_ref() };
+    normalize_string_node_t::<T, P>(joined, buf)
 }
 
 pub fn join_string_buf_z<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a ZStr {
@@ -1599,16 +1581,12 @@ pub fn join_string_buf_z<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -
     unsafe { ZStr::from_raw(buf_base.add(start_offset), len) }
 }
 
-pub(crate) fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(
-    buf: &'a mut [T],
-    parts: &[&[u8]],
-) -> &'a [T] {
+fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(buf: &'a mut [T], parts: &[&[u8]]) -> &'a [T] {
     // Takes `&[&[u8]]` — every in-tree caller passes u8
     // parts — and transcodes to u16 below when `T == u16`.
     let mut written: usize = 0;
-    let mut temp_buf_: [T; 4096] = [T::from_u8(0); 4096];
-    let mut temp_buf: &mut [T] = &mut temp_buf_;
-    let mut heap_temp_buf: Vec<T>;
+    let mut stack_temp_buf = [const { MaybeUninit::<T>::uninit() }; JOIN_TEMP_LEN];
+    let mut heap_temp_buf: Vec<T> = Vec::new();
 
     let mut count: usize = 0;
     for part in parts {
@@ -1618,12 +1596,7 @@ pub(crate) fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(
         count += part.len() + 1;
     }
 
-    if count * 2 > temp_buf.len() {
-        heap_temp_buf = vec![T::from_u8(0); count * 2];
-        temp_buf = &mut heap_temp_buf;
-    }
-
-    temp_buf[0] = T::from_u8(0);
+    let temp_buf = join_temp_buf(&mut stack_temp_buf, &mut heap_temp_buf, count);
 
     for part in parts {
         if part.is_empty() {
@@ -1631,12 +1604,16 @@ pub(crate) fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(
         }
 
         if written > 0 {
-            temp_buf[written] = T::from_u8(P::P.separator());
+            temp_buf[written].write(T::from_u8(P::P.separator()));
             written += 1;
         }
 
+        let spare = &mut temp_buf[written..];
+        // SAFETY: write-only view; `write_u8_part` only stores into it and returns the units written.
+        let dest: &mut [T] =
+            unsafe { core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<T>(), spare.len()) };
         // Parts are always u8 (see fn-level comment); transcode iff T == u16.
-        written += T::write_u8_part(&mut temp_buf[written..], part);
+        written += T::write_u8_part(dest, part);
     }
 
     if written == 0 {
@@ -1644,7 +1621,17 @@ pub(crate) fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(
         return &buf[0..1];
     }
 
-    normalize_string_node_t::<T, P>(&temp_buf[0..written], buf)
+    // SAFETY: the loop above wrote every unit of `temp_buf[..written]`.
+    let joined = unsafe { temp_buf[..written].assume_init_ref() };
+    normalize_string_node_t::<T, P>(joined, buf)
+}
+
+/// Buffer length that holds `_join_abs_string_buf`'s concatenation of `cwd` and
+/// `parts` (one separator each, plus the one a bare Windows root gains) as well
+/// as its normalized output.
+#[inline]
+fn join_abs_needed(cwd_len: usize, parts: &[&[u8]]) -> usize {
+    parts.iter().map(|p| p.len() + 1).sum::<usize>() + cwd_len + 2
 }
 
 /// Scratch buffer for `_join_abs_string_buf`'s unnormalized concatenation.
@@ -1659,11 +1646,8 @@ enum JoinScratch {
 
 impl JoinScratch {
     #[inline]
-    pub(crate) fn init(base: usize, parts: &[&[u8]]) -> Self {
-        let mut total = base + 2;
-        for p in parts {
-            total += p.len() + 1;
-        }
+    fn init(base: usize, parts: &[&[u8]]) -> Self {
+        let total = join_abs_needed(base, parts);
         if total <= MAX_PATH_BYTES {
             JoinScratch::Pooled(crate::path_buffer_pool::get())
         } else {
@@ -1701,10 +1685,7 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
     debug_assert!(!matches!(P::P, Platform::Nt));
     // Fast path: size check only — don't allocate a JoinScratch here since the
     // inner join_abs_string_buf already has its own (avoids doubling stack usage).
-    let mut total: usize = cwd.len() + 2;
-    for p in parts {
-        total += p.len() + 1;
-    }
+    let total = join_abs_needed(cwd.len(), parts);
     if total < buf.len() {
         return Some(join_abs_string_buf::<P>(cwd, buf, parts));
     }
@@ -1740,11 +1721,11 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
     _parts: &[&[u8]],
 ) -> &'a [u8] {
     if P::P == Platform::Windows || (cfg!(windows) && P::P == Platform::Loose) {
-        return _join_abs_string_buf_windows::<IS_SENTINEL>(_cwd, buf, _parts);
+        return join_abs_string_buf_windows::<IS_SENTINEL>(_cwd, buf, _parts);
     }
 
     if P::P == Platform::Nt {
-        let end_path = _join_abs_string_buf_windows::<IS_SENTINEL>(_cwd, &mut buf[4..], _parts);
+        let end_path = join_abs_string_buf_windows::<IS_SENTINEL>(_cwd, &mut buf[4..], _parts);
         let end_len = end_path.len();
         buf[0..4].copy_from_slice(b"\\\\?\\");
         if IS_SENTINEL {
@@ -1853,7 +1834,7 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
     &buf[0..result_len + leading_len]
 }
 
-fn _join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
+fn join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
     cwd: &'a [u8],
     buf: &'a mut [u8],
     parts: &[&[u8]],
@@ -1952,11 +1933,6 @@ fn _join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
         out += part_without_vol.len();
     }
 
-    // if (out > 0 and temp_buf[out - 1] != '\\') {
-    //     temp_buf[out] = '\\';
-    //     out += 1;
-    // }
-
     let result = normalize_string_buf::<false, platform::Windows, true>(&temp_buf[0..out], buf);
     let result_len = result.len();
 
@@ -1969,42 +1945,42 @@ fn _join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
 // Separator predicates live in T0 `bun_core::path_sep`; re-export the full set
 // so existing `bun_paths::is_sep_*` callers are unchanged.
 pub use bun_core::path_sep::{
-    is_sep_any, is_sep_any_t, is_sep_native, is_sep_native_t, is_sep_posix_t, is_sep_win32_t,
+    is_sep_any, is_sep_any_t, is_sep_native, is_sep_native_t, is_sep_posix_t,
 };
 #[inline(always)]
-pub fn is_sep_posix(c: u8) -> bool {
+pub(crate) fn is_sep_posix(c: u8) -> bool {
     is_sep_posix_t::<u8>(c)
 }
-#[inline(always)]
-pub fn is_sep_win32(c: u8) -> bool {
-    is_sep_win32_t::<u8>(c)
-}
 
-pub(crate) fn last_index_of_separator_windows(slice: &[u8]) -> Option<usize> {
+fn last_index_of_separator_windows(slice: &[u8]) -> Option<usize> {
     last_index_of_separator_windows_t::<u8>(slice)
 }
 
-pub(crate) fn last_index_of_separator_windows_t<T: PathChar>(slice: &[T]) -> Option<usize> {
+fn last_index_of_separator_windows_t<T: PathChar>(slice: &[T]) -> Option<usize> {
+    if core::mem::size_of::<T>() == 1 {
+        return strings::last_index_of_any(bun_core::cast_slice::<T, u8>(slice), b"/\\");
+    }
+    // No two-needle reverse kernel for u16.
     slice.iter().rposition(|&c| is_sep_any_t::<T>(c))
 }
 
-pub(crate) fn last_index_of_separator_posix(slice: &[u8]) -> Option<usize> {
+fn last_index_of_separator_posix(slice: &[u8]) -> Option<usize> {
     last_index_of_separator_posix_t::<u8>(slice)
 }
 
-pub(crate) fn last_index_of_separator_posix_t<T: PathChar>(slice: &[T]) -> Option<usize> {
-    slice.iter().rposition(|&c| c == T::from_u8(SEP_POSIX))
+fn last_index_of_separator_posix_t<T: PathChar>(slice: &[T]) -> Option<usize> {
+    strings::last_index_of_char_t::<T>(slice, T::from_u8(SEP_POSIX))
 }
 
-pub(crate) fn last_index_of_separator_loose(slice: &[u8]) -> Option<usize> {
+fn last_index_of_separator_loose(slice: &[u8]) -> Option<usize> {
     last_index_of_separator_loose_t::<u8>(slice)
 }
 
-pub(crate) fn last_index_of_separator_loose_t<T: PathChar>(slice: &[T]) -> Option<usize> {
+fn last_index_of_separator_loose_t<T: PathChar>(slice: &[T]) -> Option<usize> {
     last_index_of_sep_t::<T>(slice)
 }
 
-pub(crate) fn normalize_string_loose_buf_t<
+fn normalize_string_loose_buf_t<
     'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
@@ -2021,7 +1997,7 @@ pub(crate) fn normalize_string_loose_buf_t<
     )
 }
 
-pub(crate) fn normalize_string_windows_t<
+fn normalize_string_windows_t<
     'a,
     T: PathChar,
     const ALLOW_ABOVE_ROOT: bool,
@@ -2038,7 +2014,7 @@ pub(crate) fn normalize_string_windows_t<
     )
 }
 
-pub(crate) fn normalize_string_node_t<'a, T: PathChar, P: PlatformT>(
+fn normalize_string_node_t<'a, T: PathChar, P: PlatformT>(
     str: &[T],
     buf: &'a mut [T],
 ) -> &'a mut [T] {
@@ -2146,14 +2122,14 @@ pub(crate) fn last_index_of_sep(path: &[u8]) -> Option<usize> {
     last_index_of_sep_t::<u8>(path)
 }
 
-pub(crate) fn last_index_of_sep_t<T: PathChar>(path: &[T]) -> Option<usize> {
+fn last_index_of_sep_t<T: PathChar>(path: &[T]) -> Option<usize> {
     #[cfg(not(windows))]
     {
         return strings::last_index_of_char_t::<T>(path, T::from_u8(b'/'));
     }
     #[cfg(windows)]
     {
-        path.iter().rposition(|&c| is_sep_any_t::<T>(c))
+        last_index_of_separator_windows_t::<T>(path)
     }
 }
 
@@ -2210,18 +2186,6 @@ impl PosixToWinNormalizer {
     pub fn resolve_cwd<'a>(&'a mut self, maybe_posix_path: &'a [u8]) -> crate::Result<&'a [u8]> {
         Self::resolve_cwd_with_external_buf(&mut self._raw_bytes, maybe_posix_path)
     }
-
-    #[cfg(windows)]
-    #[inline]
-    pub fn resolve_cwd_z<'a>(
-        &'a mut self,
-        maybe_posix_path: &'a [u8],
-    ) -> crate::Result<&'a mut ZStr> {
-        Self::resolve_cwd_with_external_buf_z(&mut self._raw_bytes, maybe_posix_path)
-    }
-    // On posix `_raw_bytes` is `()` so `resolve_cwd_z` is windows-only.
-    // Callers on posix use
-    // `resolve_cwd_with_external_buf_z` with an explicit PathBuffer.
 
     // underlying implementation:
 
@@ -2483,10 +2447,8 @@ pub fn dangerously_convert_path_to_windows_in_place<T: PathChar>(path: &mut [T])
 
 pub fn path_to_posix_buf<'a, T: PathChar>(path: &[T], buf: &'a mut [T]) -> &'a mut [T] {
     let mut idx: usize = 0;
-    while let Some(index) = path[idx..]
-        .iter()
-        .position(|&c| c == T::from_u8(SEP_WINDOWS))
-        .map(|p| p + idx)
+    while let Some(index) =
+        strings::index_of_scalar(&path[idx..], T::from_u8(SEP_WINDOWS)).map(|p| p + idx)
     {
         buf[idx..index].copy_from_slice(&path[idx..index]);
         buf[index] = T::from_u8(SEP_POSIX);
@@ -2501,10 +2463,7 @@ pub fn platform_to_posix_buf<'a, T: PathChar>(path: &'a [T], buf: &'a mut [T]) -
         return path;
     }
     let mut idx: usize = 0;
-    while let Some(index) = path[idx..]
-        .iter()
-        .position(|&c| c == T::from_u8(SEP))
-        .map(|p| p + idx)
+    while let Some(index) = strings::index_of_scalar(&path[idx..], T::from_u8(SEP)).map(|p| p + idx)
     {
         buf[idx..index].copy_from_slice(&path[idx..index]);
         buf[index] = T::from_u8(b'/');
@@ -2525,3 +2484,225 @@ pub fn posix_to_platform_in_place<T: PathChar>(path_buffer: &mut [T]) {
 // `PathChar` is now canonical at `crate::path_char`; re-export for callers
 // that still path through `resolve_path::PathChar`.
 pub use crate::PathChar;
+
+// Run with `cargo test -p bun_paths` (also the Miri lane, `bun run rust:miri -p bun_paths`).
+// Normalizing reaches `bun_core::strings`' byte searches, whose highway kernels
+// are only linked into the full binary, so the two they reference are satisfied
+// below with scalar stubs (the simdutf counterparts live in string_paths.rs).
+// Under Miri the wrappers take their own scalar path and never call these.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Returns `haystack_len` when `needle` does not occur, like the kernel.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_index_of_char(
+        haystack: *const u8,
+        haystack_len: usize,
+        needle: u8,
+    ) -> usize {
+        // SAFETY: test stub; callers pass a valid (ptr, len) pair.
+        let haystack = unsafe { core::slice::from_raw_parts(haystack, haystack_len) };
+        haystack
+            .iter()
+            .position(|&b| b == needle)
+            .unwrap_or(haystack_len)
+    }
+
+    /// Returns `text_len` when no byte of `chars` occurs, like the kernel.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_index_of_any_char(
+        text: *const u8,
+        text_len: usize,
+        chars: *const u8,
+        chars_len: usize,
+    ) -> usize {
+        // SAFETY: test stub; callers pass valid (ptr, len) pairs.
+        let (text, chars) = unsafe {
+            (
+                core::slice::from_raw_parts(text, text_len),
+                core::slice::from_raw_parts(chars, chars_len),
+            )
+        };
+        text.iter()
+            .position(|b| chars.contains(b))
+            .unwrap_or(text_len)
+    }
+
+    #[test]
+    fn normalize_string_spill_leaves_spill_untouched_when_the_input_fits() {
+        let mut spill = Vec::new();
+        let out =
+            normalize_string_spill::<true, platform::Loose>(&mut spill, b"./lib/../dist/./x.js");
+        assert_eq!(out, b"dist/x.js");
+        assert!(spill.is_empty());
+    }
+
+    #[test]
+    fn normalize_string_spill_spills_input_longer_than_the_thread_local_buffer() {
+        let segment = vec![b'b'; PARSER_BUFFER_LEN * 3];
+        let mut input = b"./".to_vec();
+        input.extend_from_slice(&segment);
+        input.extend_from_slice(b"/./x.js");
+        let mut expected = segment;
+        expected.extend_from_slice(b"/x.js");
+
+        let mut spill = Vec::new();
+        let out = normalize_string_spill::<true, platform::Loose>(&mut spill, &input);
+        assert_eq!(out, &expected[..]);
+        assert!(!spill.is_empty());
+    }
+
+    #[test]
+    fn normalize_string_spill_reuses_the_spill_across_calls() {
+        let long = vec![b'a'; PARSER_BUFFER_LEN + 1];
+        let longer = vec![b'c'; PARSER_BUFFER_LEN * 2];
+
+        let mut spill = Vec::new();
+        assert_eq!(
+            normalize_string_spill::<true, platform::Loose>(&mut spill, &long),
+            &long[..]
+        );
+        assert_eq!(
+            normalize_string_spill::<true, platform::Loose>(&mut spill, &longer),
+            &longer[..]
+        );
+        // A shorter input after a longer one must not leak the previous tail.
+        assert_eq!(
+            normalize_string_spill::<true, platform::Loose>(&mut spill, &long),
+            &long[..]
+        );
+    }
+
+    #[test]
+    fn join_abs_string_spill_leaves_spill_untouched_when_the_result_fits() {
+        let mut spill = Vec::new();
+        let out = join_abs_string_spill::<platform::Posix>(b"/work", &mut spill, &[b"a/../b.json"]);
+        assert_eq!(out, b"/work/b.json");
+        assert!(spill.is_empty());
+    }
+
+    #[test]
+    fn join_abs_string_spill_spills_a_part_longer_than_the_thread_local_buffer() {
+        let name = vec![b'a'; PARSER_JOIN_INPUT_BUFFER_LEN + 1];
+        let mut expected = b"/work/".to_vec();
+        expected.extend_from_slice(&name);
+
+        let mut spill = Vec::new();
+        let out = join_abs_string_spill::<platform::Posix>(b"/work", &mut spill, &[&name]);
+        assert_eq!(out, &expected[..]);
+        assert!(!spill.is_empty());
+    }
+
+    #[test]
+    fn join_abs_string_spill_spills_an_absolute_part_and_a_long_cwd_alike() {
+        let mut abs = b"/".to_vec();
+        abs.resize(PARSER_JOIN_INPUT_BUFFER_LEN * 2, b'a');
+        let mut spill = Vec::new();
+        assert_eq!(
+            join_abs_string_spill::<platform::Posix>(b"/", &mut spill, &[&abs]),
+            &abs[..]
+        );
+
+        let mut cwd = b"/".to_vec();
+        cwd.resize(PARSER_JOIN_INPUT_BUFFER_LEN, b'c');
+        let mut expected = cwd.clone();
+        expected.extend_from_slice(b"/x");
+        let mut spill = Vec::new();
+        assert_eq!(
+            join_abs_string_spill::<platform::Posix>(&cwd, &mut spill, &[b"./x"]),
+            &expected[..]
+        );
+    }
+
+    #[test]
+    fn join_abs_string_spill_normalizes_a_long_part_that_collapses() {
+        // `sub/../` repeated past the buffer size resolves back to the cwd.
+        let mut part = Vec::new();
+        while part.len() <= PARSER_JOIN_INPUT_BUFFER_LEN {
+            part.extend_from_slice(b"sub/../");
+        }
+        part.extend_from_slice(b"sub");
+
+        let mut spill = Vec::new();
+        let out = join_abs_string_spill::<platform::Posix>(b"/work", &mut spill, &[&part]);
+        assert_eq!(out, b"/work/sub");
+    }
+
+    #[test]
+    fn normalize_string_spill_accounts_for_outputs_that_grow_by_one_byte() {
+        // A bare UNC volume exactly as long as the thread-local buffer
+        // normalizes to one byte more than its input.
+        let mut unc = b"\\\\".to_vec();
+        unc.resize(PARSER_BUFFER_LEN, b's');
+
+        let mut spill = Vec::new();
+        let out = normalize_string_spill::<true, platform::Windows>(&mut spill, &unc);
+        assert_eq!(out.len(), PARSER_BUFFER_LEN + 1);
+        assert_eq!(&out[..unc.len()], &unc[..]);
+        assert_eq!(out[unc.len()], SEP_WINDOWS);
+
+        let mut spill = Vec::new();
+        assert_eq!(
+            normalize_string_spill::<true, platform::Windows>(&mut spill, b"c:"),
+            b"C:."
+        );
+    }
+
+    #[test]
+    fn join_string_buf_skips_empty_parts_and_normalizes() {
+        let mut out = [0u8; 64];
+        assert_eq!(
+            join_string_buf::<platform::Posix>(&mut out, &[b"foo", b"", b"bar/../baz"]),
+            b"foo/baz"
+        );
+        assert_eq!(
+            join_string_buf::<platform::Posix>(&mut out, &[b"", b""]),
+            b"."
+        );
+    }
+
+    #[test]
+    fn join_string_buf_spills_parts_longer_than_the_stack_scratch() {
+        let long = vec![b'a'; JOIN_TEMP_LEN];
+        let mut expected = long.clone();
+        expected.extend_from_slice(b"/y");
+
+        let mut out = vec![0u8; JOIN_TEMP_LEN + 16];
+        assert_eq!(
+            join_string_buf::<platform::Posix>(&mut out, &[&long, b"x/../y"]),
+            &expected[..]
+        );
+    }
+
+    #[test]
+    fn join_string_buf_w_same_skips_empty_parts_and_normalizes() {
+        let foo: Vec<u16> = "foo".encode_utf16().collect();
+        let rest: Vec<u16> = "bar\\..\\baz".encode_utf16().collect();
+        let expected: Vec<u16> = "foo\\baz".encode_utf16().collect();
+
+        let mut out = [0u16; 64];
+        assert_eq!(
+            join_string_buf_w_same::<platform::Windows>(&mut out, &[&foo, &[], &rest]),
+            &expected[..]
+        );
+        assert_eq!(
+            join_string_buf_w_same::<platform::Windows>(&mut out, &[&[], &[]]),
+            &[b'.' as u16][..]
+        );
+    }
+
+    #[test]
+    fn join_string_buf_w_same_spills_parts_longer_than_the_stack_scratch() {
+        let long = vec![b'a' as u16; JOIN_TEMP_LEN];
+        let rest: Vec<u16> = "x\\..\\y".encode_utf16().collect();
+        let mut expected = long.clone();
+        expected.extend_from_slice(&[b'\\' as u16, b'y' as u16]);
+
+        let mut out = vec![0u16; JOIN_TEMP_LEN + 16];
+        assert_eq!(
+            join_string_buf_w_same::<platform::Windows>(&mut out, &[&long, &rest]),
+            &expected[..]
+        );
+    }
+}

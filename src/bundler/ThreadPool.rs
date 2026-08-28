@@ -4,7 +4,7 @@
 //!
 //! `Worker::create` / `initialize_transpiler` build the per-worker
 //! `Transpiler` via `Transpiler::for_worker` (per-field deep clone — no
-//! bitwise struct copy); the `linker.resolver` backref is wired by
+//! bitwise struct copy); the self-referential `linker` backrefs are wired by
 //! `Transpiler::wire_after_move` once the value is at its final address.
 
 use core::mem::{ManuallyDrop, MaybeUninit};
@@ -48,25 +48,25 @@ pub struct ThreadPool {
     // and all `ThreadPoolLib` driver methods (`schedule`, `warm`,
     // `wake_for_idle_events`) take `&self` — so the safe `Deref` projection is
     // sufficient and the per-read `unsafe { p.as_ref() }` disappears.
-    pub io_pool: Option<bun_ptr::ParentRef<ThreadPoolLib::ThreadPool>>,
+    pub(crate) io_pool: Option<bun_ptr::ParentRef<ThreadPoolLib::ThreadPool>>,
     // Conditionally owned via `worker_pool_is_owned`; kept raw so callers
     // (bundle_v2.rs) can dereference for `wake_for_idle_events()` without a
     // borrow on `ThreadPool`.
     pub worker_pool: *mut ThreadPoolLib::ThreadPool,
-    pub worker_pool_is_owned: bool,
+    pub(crate) worker_pool_is_owned: bool,
     // Per PORTING.md §Concurrency ("Mutex<T> owns T"), the lock is folded into
     // the field so `get_worker` can take `&self` — `Worker::get` is entered
     // concurrently from arbitrary worker-pool threads, and a `&mut self` here
     // would alias `&mut ThreadPool` across threads (UB before the lock is even
     // reached).
-    pub workers_assignments: bun_threading::Guarded<ArrayHashMap<ThreadId, *mut Worker>>,
+    pub(crate) workers_assignments: bun_threading::Guarded<ArrayHashMap<ThreadId, *mut Worker>>,
     /// Monotonic per-pool stamp for the [`TLS_WORKER`] fast-path key. Pointer
     /// identity is unsound across `Bun.build()` calls (mimalloc reuses the
     /// freed slot), so each pool draws a fresh `u64` from [`POOL_GENERATION`].
-    pub generation: u64,
+    pub(crate) generation: u64,
     // BACKREF (LIFETIMES.tsv row 170: ThreadPool.v2). `BundleV2` is generic
     // over `'a`; erase to `'static` behind the raw pointer like ParseTask.ctx.
-    pub v2: *const BundleV2<'static>,
+    pub(crate) v2: *const BundleV2<'static>,
 }
 
 // SAFETY: `ThreadPool` is shared across worker threads; the only mutated
@@ -80,21 +80,6 @@ unsafe impl Send for ThreadPool {}
 // `workers_assignments` (through its `bun_threading::Guarded` lock), and the
 // raw-pointer targets (`ThreadPoolLib::ThreadPool`, `BundleV2`) are `Sync`.
 unsafe impl Sync for ThreadPool {}
-
-impl Default for ThreadPool {
-    /// Placeholder so `bundle_v2` can `arena().alloc(ThreadPool::default())`
-    /// before overwriting with [`ThreadPool::init`].
-    fn default() -> Self {
-        Self {
-            io_pool: None,
-            worker_pool: ptr::null_mut(),
-            worker_pool_is_owned: false,
-            workers_assignments: bun_threading::Guarded::new(ArrayHashMap::default()),
-            generation: POOL_GENERATION.fetch_add(1, Ordering::Relaxed),
-            v2: ptr::null(),
-        }
-    }
-}
 
 mod io_thread_pool {
     use super::*;
@@ -172,34 +157,6 @@ mod io_thread_pool {
         let old = REF_COUNT.fetch_sub(1, Ordering::Release);
         debug_assert!(old > 1, "IOThreadPool: too many calls to release()");
     }
-
-    pub(super) fn shutdown() -> bool {
-        // Acquire instead of AcqRel is okay because we only need to ensure that other
-        // threads are done using the IO pool if we read 1 from the ref count.
-        //
-        // Relaxed is okay because this function is only guaranteed to succeed when we
-        // can ensure that no `ThreadPool`s exist.
-        if REF_COUNT
-            .compare_exchange(1, 0, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            // At least one `ThreadPool` still exists.
-            return false;
-        }
-
-        let _guard = MUTEX.lock_guard();
-
-        // Relaxed is okay because the only store that could happen at this point
-        // is guarded by the mutex.
-        if REF_COUNT.load(Ordering::Relaxed) != 0 {
-            return false;
-        }
-        // SAFETY: we hold MUTEX, REF_COUNT == 0, and we previously CAS'd from 1 ⇒ initialized.
-        unsafe {
-            (*THREAD_POOL.get()).assume_init_drop();
-        }
-        true
-    }
 }
 
 impl ThreadPool {
@@ -208,7 +165,7 @@ impl ThreadPool {
     /// resolve without a separate module path.
     pub type Worker = Worker;
 
-    pub fn init(
+    pub(crate) fn init(
         v2: &BundleV2<'_>,
         // `Option<NonNull<_>>` (not `Option<&mut _>`): callers pass the
         // process-wide `WorkPool` singleton (`OnceLock`-backed, shared across
@@ -240,7 +197,7 @@ impl ThreadPool {
         Ok(this)
     }
 
-    pub fn init_with_pool(
+    pub(crate) fn init_with_pool(
         v2: &BundleV2<'_>,
         worker_pool: *mut ThreadPoolLib::ThreadPool,
     ) -> ThreadPool {
@@ -262,7 +219,7 @@ impl ThreadPool {
     /// Explicit teardown (no Drop on
     /// `ThreadPool` because `Graph.pool` is `NonNull<ThreadPool>` and the arena
     /// owns the storage).
-    pub fn deinit(&mut self) {
+    pub(crate) fn deinit(&mut self) {
         if self.worker_pool_is_owned {
             // SAFETY: worker_pool was heap-allocated in `init()` when owned.
             unsafe { drop(bun_core::heap::take(self.worker_pool)) };
@@ -277,10 +234,10 @@ impl ThreadPool {
     /// pointer is set in `init`/`init_with_pool` and never null while `self`
     /// is observable; encapsulating the deref keeps callers out of `unsafe`.
     #[inline]
-    pub fn worker_pool(&self) -> &ThreadPoolLib::ThreadPool {
+    pub(crate) fn worker_pool(&self) -> &ThreadPoolLib::ThreadPool {
         debug_assert!(!self.worker_pool.is_null());
         // SAFETY: `worker_pool` is initialized before any caller can observe
-        // `self` and lives until `deinit_v2`; all driver methods take `&self`.
+        // `self` and lives until `deinit`; all driver methods take `&self`.
         unsafe { &*self.worker_pool }
     }
 
@@ -288,18 +245,18 @@ impl ThreadPool {
     /// pointee is the module-static `io_thread_pool::THREAD_POOL`, live while
     /// `ref_count > 0` (i.e. while any bundler `ThreadPool` exists).
     #[inline]
-    pub fn io_pool_ref(&self) -> Option<&ThreadPoolLib::ThreadPool> {
+    pub(crate) fn io_pool_ref(&self) -> Option<&ThreadPoolLib::ThreadPool> {
         self.io_pool.as_deref()
     }
 
-    pub fn start(&self) {
+    pub(crate) fn start(&self) {
         self.worker_pool().warm(8);
         if let Some(io) = self.io_pool_ref() {
             io.warm(1);
         }
     }
 
-    pub fn uses_io_pool() -> bool {
+    pub(crate) fn uses_io_pool() -> bool {
         if env_var::feature_flag::BUN_FEATURE_FLAG_FORCE_IO_POOL.get() == Some(true) {
             // For testing.
             return true;
@@ -317,44 +274,51 @@ impl ThreadPool {
         return false;
     }
 
-    /// Shut down the IO pool, if and only if no `ThreadPool`s exist right now.
-    /// If a `ThreadPool` exists, this function is a no-op and returns false.
-    /// Blocks until the IO pool is shut down.
-    pub fn shutdown_io_pool() -> bool {
-        if Self::uses_io_pool() {
-            io_thread_pool::shutdown()
-        } else {
-            true
-        }
-    }
-
-    fn schedule_with_options(&self, parse_task: *mut ParseTask, is_inside_thread_pool: bool) {
-        // SAFETY: callers (`schedule`/`schedule_inside_thread_pool`) pass a
-        // live, exclusively-owned ParseTask (heap- or arena-allocated raw
-        // pointer); see call sites in bundle_v2.rs.
-        let parse_task = unsafe { &mut *parse_task };
-        if matches!(parse_task.contents_or_fd, ContentsOrFd::Contents(_))
-            && matches!(parse_task.stage, ParseTaskStage::NeedsSourceCode)
-        {
-            let ContentsOrFd::Contents(contents) = parse_task.contents_or_fd else {
+    /// `parse_task` is raw, not `&mut`: `schedule_fn` publishes the embedded
+    /// `task`/`io_task` to the worker pool mid-body, and a worker can dequeue
+    /// and mutate `*parse_task` before this returns — a `&mut` parameter's
+    /// FnEntry protector would make that a foreign-write UB. All accesses are
+    /// scoped raw place expressions ending before the publish.
+    ///
+    /// # Safety
+    /// `parse_task` is a live, exclusively-owned `ParseTask` (heap- or
+    /// arena-allocated) until it is published to the pool below.
+    unsafe fn schedule_with_options(
+        &self,
+        parse_task: *mut ParseTask,
+        is_inside_thread_pool: bool,
+    ) {
+        // SAFETY: caller contract; each read ends at the statement.
+        let needs_source = unsafe {
+            matches!((*parse_task).contents_or_fd, ContentsOrFd::Contents(_))
+                && matches!((*parse_task).stage, ParseTaskStage::NeedsSourceCode)
+        };
+        if needs_source {
+            // SAFETY: caller contract; match by reference (ContentsOrFd is not Copy).
+            let ContentsOrFd::Contents(contents) = (unsafe { &(*parse_task).contents_or_fd })
+            else {
                 unreachable!()
             };
+            let contents = *contents;
             // `cache::Contents` has no borrowed-slice variant; the
             // contract (see ParseTask.rs `run_with_source_code` defer) is that
             // `entry.deinit()` is *skipped* when `contents_or_fd == .contents`,
             // so an `External` provenance tag (no-op deinit) is the correct
             // mapping for these unowned bytes.
-            parse_task.stage = ParseTaskStage::NeedsParse(CacheEntry {
-                contents: if contents.is_empty() {
-                    Contents::Empty
-                } else {
-                    Contents::External {
-                        ptr: contents.as_ptr(),
-                        len: contents.len(),
-                    }
-                },
-                fd: Fd::INVALID,
-            });
+            // SAFETY: caller contract; borrow ends at `;`.
+            unsafe {
+                (*parse_task).stage = ParseTaskStage::NeedsParse(CacheEntry {
+                    contents: if contents.is_empty() {
+                        Contents::Empty
+                    } else {
+                        Contents::External {
+                            ptr: contents.as_ptr(),
+                            len: contents.len(),
+                        }
+                    },
+                    fd: Fd::INVALID,
+                });
+            }
         }
 
         let schedule_fn: fn(&ThreadPoolLib::ThreadPool, ThreadPoolLib::Batch) =
@@ -364,36 +328,47 @@ impl ThreadPool {
                 ThreadPoolLib::ThreadPool::schedule
             };
 
-        if Self::uses_io_pool() {
-            match parse_task.stage {
-                ParseTaskStage::NeedsParse(_) => {
-                    schedule_fn(
-                        self.worker_pool(),
-                        ThreadPoolLib::Batch::from(&raw mut parse_task.task),
-                    );
+        // SAFETY: caller contract; `stage` read + the `&raw mut` field
+        // projections take no reference to `*parse_task`. After `schedule_fn`
+        // the task is owned by the pool — nothing below touches it.
+        unsafe {
+            if Self::uses_io_pool() {
+                match (*parse_task).stage {
+                    ParseTaskStage::NeedsParse(_) => {
+                        schedule_fn(
+                            self.worker_pool(),
+                            ThreadPoolLib::Batch::from(&raw mut (*parse_task).task),
+                        );
+                    }
+                    ParseTaskStage::NeedsSourceCode => {
+                        // io_pool is Some when uses_io_pool().
+                        let io = self.io_pool_ref().unwrap();
+                        schedule_fn(
+                            io,
+                            ThreadPoolLib::Batch::from(&raw mut (*parse_task).io_task),
+                        );
+                    }
                 }
-                ParseTaskStage::NeedsSourceCode => {
-                    // io_pool is Some when uses_io_pool().
-                    let io = self.io_pool_ref().unwrap();
-                    schedule_fn(io, ThreadPoolLib::Batch::from(&raw mut parse_task.io_task));
-                }
+            } else {
+                schedule_fn(
+                    self.worker_pool(),
+                    ThreadPoolLib::Batch::from(&raw mut (*parse_task).task),
+                );
             }
-        } else {
-            schedule_fn(
-                self.worker_pool(),
-                ThreadPoolLib::Batch::from(&raw mut parse_task.task),
-            );
         }
     }
 
     // takes `*mut` so callers can pass either a
     // raw heap pointer (e.g. `load.parse_task`) or a `&mut` (auto-coerces).
-    pub fn schedule(&self, parse_task: *mut ParseTask) {
-        self.schedule_with_options(parse_task, false);
+    pub(crate) fn schedule(&self, parse_task: *mut ParseTask) {
+        // SAFETY: callers pass a live, exclusively-owned ParseTask (heap- or
+        // arena-allocated raw pointer); see call sites in bundle_v2.rs.
+        unsafe { self.schedule_with_options(parse_task, false) };
     }
 
-    pub fn schedule_inside_thread_pool(&self, parse_task: *mut ParseTask) {
-        self.schedule_with_options(parse_task, true);
+    pub(crate) fn schedule_inside_thread_pool(&self, parse_task: *mut ParseTask) {
+        // SAFETY: see `schedule`.
+        unsafe { self.schedule_with_options(parse_task, true) };
     }
 
     // returns `&'static mut` — the `Worker` is `heap::alloc`'d
@@ -411,7 +386,7 @@ impl ThreadPool {
     // call would mean ~100 K contended acquisitions on a 19 K-module build —
     // ~97 % of the build's futex traffic per perf.
     #[inline]
-    pub fn get_worker(&self, id: ThreadId) -> &'static mut Worker {
+    pub(crate) fn get_worker(&self, id: ThreadId) -> &'static mut Worker {
         let (generation, worker) = TLS_WORKER.get();
         if generation == self.generation {
             // SAFETY: cached by `get_worker_slow` on this thread; the Worker is
@@ -463,7 +438,6 @@ impl ThreadPool {
                 thread: NonNull::new(ThreadPoolLib::Thread::current())
                     .map(bun_ptr::ParentRef::from),
                 data: None,
-                quit: false,
                 ast_memory_store: ManuallyDrop::new(bun_ast::ASTMemoryAllocator::default()),
                 has_created: false,
                 deinit_task: ThreadPoolLib::Task {
@@ -499,7 +473,7 @@ static POOL_GENERATION: core::sync::atomic::AtomicU64 = core::sync::atomic::Atom
 pub struct Worker {
     /// Thread-local arena. `None` until [`Worker::create`] runs;
     /// every read site is post-`has_created`.
-    pub heap: Option<ThreadLocalArena>,
+    pub(crate) heap: Option<ThreadLocalArena>,
 
     /// Thread-local memory arena
     /// All allocations are freed in `deinit` at the very end of bundling.
@@ -508,38 +482,36 @@ pub struct Worker {
     // self-borrow and so call sites read it via safe `Deref` instead of
     // open-coding a raw deref. Dangling until `create()` runs; every read site is
     // post-`has_created`.
-    pub arena: bun_ptr::BackRef<ThreadLocalArena>,
+    pub(crate) arena: bun_ptr::BackRef<ThreadLocalArena>,
 
     /// BACKREF (LIFETIMES.tsv): the owning `BundleV2` strictly outlives every
     /// `Worker` it creates (workers are torn down in `deinit_without_freeing_arena`
     /// before the bundle is dropped). `BackRef` so call sites read
     /// `worker.ctx.field` via safe `Deref` instead of open-coding a raw deref.
-    pub ctx: bun_ptr::BackRef<BundleV2<'static>>,
+    pub(crate) ctx: bun_ptr::BackRef<BundleV2<'static>>,
 
     /// `None` until [`Worker::create`] populates it; every read site is
     /// post-`has_created`.
-    pub data: Option<WorkerData>,
-    pub quit: bool,
+    pub(crate) data: Option<WorkerData>,
 
-    pub ast_memory_store: ManuallyDrop<bun_ast::ASTMemoryAllocator>,
-    pub has_created: bool,
+    pub(crate) ast_memory_store: ManuallyDrop<bun_ast::ASTMemoryAllocator>,
+    pub(crate) has_created: bool,
     /// `ThreadPoolLib.Thread.current` — `None` when called off a pool thread.
     /// `ParentRef` (not raw `*mut`) because the pool-owned `Thread` strictly
     /// outlives the per-thread `Worker` it created, and the only access is
     /// `push_idle_task(&self)` — so the safe `Deref` projection suffices.
-    pub thread: Option<bun_ptr::ParentRef<ThreadPoolLib::Thread>>,
+    pub(crate) thread: Option<bun_ptr::ParentRef<ThreadPoolLib::Thread>>,
 
-    pub deinit_task: ThreadPoolLib::Task,
+    pub(crate) deinit_task: ThreadPoolLib::Task,
 
-    pub temporary_arena: Option<bun_alloc::Arena>,
-    pub stmt_list: Option<StmtList>,
+    pub(crate) temporary_arena: Option<bun_alloc::Arena>,
+    pub(crate) stmt_list: Option<StmtList>,
 }
 
 impl Worker {
     /// Reborrow the self-referential `arena` (= `&self.heap`) as a shared
     /// reference. `BackRef` field, so the deref is encapsulated in
     /// [`bun_ptr::BackRef::get`]; see note on the field.
-    ///
     /// `arena` is set to `&self.heap` in [`Worker::create`] before any caller
     /// can observe the `Worker`, and is never dangling after that point. The
     /// pointee is the worker's own `heap` field, which is pinned for the
@@ -549,7 +521,7 @@ impl Worker {
     /// `&'static mut Worker`; centralising the erasure here avoids per-call-site
     /// `detach_lifetime_ref` (the previous pattern at `ParseTask::run`).
     #[inline]
-    pub fn arena(&self) -> &'static ThreadLocalArena {
+    pub(crate) fn arena(&self) -> &'static ThreadLocalArena {
         // SAFETY: `self.arena` is a `BackRef` to `self.heap`, set in
         // `Worker::create` and never reassigned. `Worker::get` already returns
         // `&'static mut Worker`; callers are task callbacks that complete
@@ -562,8 +534,7 @@ impl Worker {
 pub struct WorkerData {
     // Kept raw because the pointee's arena
     // is the sibling field `Worker.heap`, which Rust cannot express as a borrow.
-    pub log: *mut bun_ast::Log,
-    pub estimated_input_lines_of_code: usize,
+    pub(crate) log: *mut bun_ast::Log,
     // lifetime erased to `'static` — the inner `&'a Arena` borrows
     // `Worker.heap`, which Rust can't express on a sibling field.
     //
@@ -571,8 +542,8 @@ pub struct WorkerData {
     // `Drop`-carrying field, so `WorkerData`'s drop (via
     // `ptr::drop_in_place(data)` in `Worker::deinit`) is sound and frees the
     // per-worker `options`/`resolver.caches`/etc. without touching the parent.
-    pub transpiler: Transpiler<'static>,
-    pub other_transpiler: Option<Box<Transpiler<'static>>>,
+    pub(crate) transpiler: Transpiler<'static>,
+    pub(crate) other_transpiler: Option<Box<Transpiler<'static>>>,
 }
 
 impl Worker {
@@ -599,7 +570,7 @@ impl Worker {
         unsafe { Self::deinit(this) };
     }
 
-    pub fn deinit_soon(&mut self) {
+    pub(crate) fn deinit_soon(&mut self) {
         if let Some(thread) = self.thread {
             thread.push_idle_task(&raw mut self.deinit_task);
         } else {
@@ -624,9 +595,12 @@ impl Worker {
     ///
     /// # Safety
     /// `this` must have come from `heap::alloc` in [`ThreadPool::get_worker`].
-    pub unsafe fn deinit(this: *mut Worker) {
-        // SAFETY: caller contract.
-        let worker = unsafe { &mut *this };
+    pub(crate) unsafe fn deinit(this: *mut Worker) {
+        // SAFETY: caller contract — reclaim the Box; dropping it at scope end
+        // runs the remaining field drop glue (`Option` fields are `None`,
+        // `ast_memory_store` is `ManuallyDrop`), defending against future
+        // `Drop`-carrying fields.
+        let mut worker = unsafe { bun_core::heap::take(this) };
         if worker.has_created {
             // `wire_after_move` boxed a `bun_js_parser_jsc::Macro::MacroContext`
             // behind `macro_context.data` (raw `*mut`, no `Drop` glue);
@@ -663,18 +637,13 @@ impl Worker {
         if worker.has_created {
             worker.heap = None;
         }
-        // SAFETY: caller contract — `this` was heap-allocated via `get_worker`.
-        // Runs full field drop glue: remaining `Option` fields are `None`
-        // (no-op), `ast_memory_store` is `ManuallyDrop` (no auto-drop), so no
-        // double-free; defends against future `Drop`-carrying fields.
-        unsafe { bun_core::heap::destroy(this) };
     }
 
     // returns `&'static mut` (detached) — the `Worker` is
     // heap-pinned (heap::alloc in `get_worker`) and outlives any `ctx`
     // borrow. Tying it to `ctx`'s lifetime would
     // forbid the `worker` ↔ `ctx` re-borrows in `ParseTask::run_*`.
-    pub fn get(ctx: &BundleV2<'_>) -> &'static mut Worker {
+    pub(crate) fn get(ctx: &BundleV2<'_>) -> &'static mut Worker {
         // SAFETY: `ctx` is a BACKREF; `graph.pool` is a `NonNull<ThreadPool>`
         // pointing at the bundle-owned pool that outlives every worker. We only
         // need a shared `&ThreadPool` — `get_worker` takes `&self` and serializes
@@ -691,11 +660,11 @@ impl Worker {
         worker
     }
 
-    pub fn unget(&mut self) {
+    pub(crate) fn unget(&mut self) {
         self.ast_memory_store.pop();
     }
 
-    pub fn init(&mut self, v2: &BundleV2<'_>) {
+    pub(crate) fn init(&mut self, v2: &BundleV2<'_>) {
         // Lifetime-erase `'_` → `'static` via `NonNull::cast` (BACKREF: the
         // bundle outlives every worker).
         self.ctx = bun_ptr::BackRef::from(NonNull::from(v2).cast::<BundleV2<'static>>());
@@ -734,7 +703,6 @@ impl Worker {
         self.stmt_list = Some(StmtList::init());
         let data = self.data.insert(WorkerData {
             log,
-            estimated_input_lines_of_code: 0,
             transpiler: Self::initialize_transpiler(log, ctx.transpiler(), arena_ref),
             other_transpiler: None,
         });
@@ -762,7 +730,7 @@ impl Worker {
         unsafe { Transpiler::<'static>::for_worker(from, arena, log) }
     }
 
-    pub fn transpiler_for_target(&mut self, target: Target) -> &mut Transpiler<'static> {
+    pub(crate) fn transpiler_for_target(&mut self, target: Target) -> &mut Transpiler<'static> {
         // Callers only invoke this after `Worker::get` → `create()`.
         let data = self.data.as_mut().expect("Worker.data set in create()");
         if target == Target::Browser && data.transpiler.options.target != target {
@@ -791,11 +759,5 @@ impl Worker {
         }
 
         &mut data.transpiler
-    }
-
-    pub fn run(&mut self, ctx: &BundleV2<'_>) {
-        if !self.has_created {
-            self.create(ctx);
-        }
     }
 }

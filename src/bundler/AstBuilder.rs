@@ -6,13 +6,12 @@
 //! inside of `js_parser`
 
 use core::mem::MaybeUninit;
-use core::ptr::NonNull;
 
 use bun_alloc::Arena as Bump;
 
 use bun_alloc::AllocError as OOM;
 use bun_ast::{ImportKind, ImportRecord};
-use bun_ast::{Loc, Log, Range, Source};
+use bun_ast::{Loc, Range, Source};
 use bun_collections::VecExt;
 use bun_core::Output;
 use bun_core::{MutableString, strings};
@@ -29,31 +28,28 @@ use bun_ast::{
     NamedExport, Part, PartSymbolUseMap, Scope, Stmt, Symbol,
 };
 use bun_ast::{E, G, S};
-use bun_js_parser as js_parser;
 
 use crate::options;
 
 use bun_paths::fs::{Path as FsPath, PathName};
 
-pub struct AstBuilder<'a, 'bump> {
-    pub bump: &'bump Bump,
-    pub source: &'a Source,
-    pub source_index: u32,
-    pub stmts: Vec<Stmt>,
-    pub scopes: Vec<*mut Scope>,
-    pub symbols: Vec<Symbol>,
-    pub import_records: Vec<ImportRecord>,
-    pub named_imports: NamedImports,
-    pub named_exports: NamedExports,
-    pub import_records_for_current_part: Vec<u32>,
-    pub export_star_import_records: Vec<u32>,
-    pub current_scope: *mut Scope,
-    pub log: Log,
-    pub module_ref: Ref,
-    pub declared_symbols: DeclaredSymbolList,
+pub(crate) struct AstBuilder<'a, 'bump> {
+    pub(crate) bump: &'bump Bump,
+    pub(crate) source: &'a Source,
+    pub(crate) source_index: u32,
+    pub(crate) stmts: Vec<Stmt>,
+    pub(crate) scopes: Vec<*mut Scope>,
+    pub(crate) symbols: Vec<Symbol>,
+    pub(crate) import_records: Vec<ImportRecord>,
+    pub(crate) named_imports: NamedImports,
+    pub(crate) named_exports: NamedExports,
+    pub(crate) import_records_for_current_part: Vec<u32>,
+    pub(crate) current_scope: *mut Scope,
+    pub(crate) module_ref: Ref,
+    pub(crate) declared_symbols: DeclaredSymbolList,
     /// When set, codegen is altered
-    pub hot_reloading: bool,
-    pub hmr_api_ref: Ref,
+    pub(crate) hot_reloading: bool,
+    pub(crate) hmr_api_ref: Ref,
 }
 
 // stub fields for ImportScanner duck typing
@@ -62,15 +58,11 @@ pub struct AstBuilder<'a, 'bump> {
 // AstBuilder emits; if `ImportScanner` ever grows a host trait in
 // `bun_js_parser`, these stubs are the surface it would formalize.
 impl<'a, 'bump> AstBuilder<'a, 'bump> {
-    // stub for ImportScanner duck typing
-    pub fn import_items_for_namespace_get(
-        &self,
-        _ref: Ref,
-    ) -> Option<&js_parser::parser::ImportItemForNamespaceMap> {
-        None
-    }
-
-    pub fn init(bump: &'bump Bump, source: &'a Source, hot_reloading: bool) -> Result<Self, OOM> {
+    pub(crate) fn init(
+        bump: &'bump Bump,
+        source: &'a Source,
+        hot_reloading: bool,
+    ) -> Result<Self, OOM> {
         let scope: *mut Scope = bump.alloc(Scope {
             kind: ScopeKind::Entry,
             label_ref: Ref::NONE,
@@ -89,8 +81,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             import_records_for_current_part: Vec::new(),
             named_imports: Default::default(),
             named_exports: Default::default(),
-            log: Log::init(),
-            export_star_import_records: Vec::new(),
             declared_symbols: Default::default(),
             hot_reloading,
             module_ref: Ref::NONE,  // overwritten below
@@ -112,7 +102,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     /// pointers / `StoreRef`s and are never dereferenced while a `&mut self`
     /// borrow is held, so the returned `&mut Scope` is unique for its lifetime.
     #[inline]
-    pub fn current_scope_mut(&mut self) -> &mut Scope {
+    pub(crate) fn current_scope_mut(&mut self) -> &mut Scope {
         debug_assert!(
             !self.current_scope.is_null(),
             "AstBuilder.current_scope read before init()"
@@ -122,30 +112,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         unsafe { &mut *self.current_scope }
     }
 
-    pub fn push_scope(&mut self, kind: ScopeKind) -> Result<*mut Scope, OOM> {
-        self.scopes.reserve(1);
-        self.current_scope_mut().children.ensure_unused_capacity(1);
-        let scope: *mut Scope = self.bump.alloc(Scope {
-            kind,
-            label_ref: Ref::NONE,
-            parent: NonNull::new(self.current_scope).map(bun_ast::StoreRef::from),
-            ..Default::default()
-        });
-        // `scope` came from `bump.alloc`, so it is non-null and distinct from
-        // `current_scope` (fresh allocation).
-        self.current_scope_mut()
-            .children
-            .append_assume_capacity(NonNull::new(scope).expect("bump alloc non-null").into());
-        self.scopes.push(self.current_scope);
-        self.current_scope = scope;
-        Ok(scope)
-    }
-
-    pub fn pop_scope(&mut self) {
-        self.current_scope = self.scopes.pop().unwrap();
-    }
-
-    pub fn new_symbol(&mut self, kind: SymbolKind, identifier: &[u8]) -> Result<Ref, OOM> {
+    pub(crate) fn new_symbol(&mut self, kind: SymbolKind, identifier: &[u8]) -> Result<Ref, OOM> {
         let inner_index: RefInt = RefInt::try_from(self.symbols.len()).unwrap();
         self.symbols.push(Symbol {
             kind,
@@ -162,12 +129,16 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         Ok(ref_)
     }
 
-    pub fn get_symbol(&mut self, ref_: Ref) -> &mut Symbol {
+    pub(crate) fn get_symbol(&mut self, ref_: Ref) -> &mut Symbol {
         debug_assert!(ref_.source_index() == self.source.index.0);
         &mut self.symbols[ref_.inner_index() as usize]
     }
 
-    pub fn add_import_record(&mut self, path: &'static [u8], kind: ImportKind) -> Result<u32, OOM> {
+    pub(crate) fn add_import_record(
+        &mut self,
+        path: &'static [u8],
+        kind: ImportKind,
+    ) -> Result<u32, OOM> {
         let index = self.import_records.len();
         self.import_records.push(ImportRecord {
             path: FsPath::init(path),
@@ -182,7 +153,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         Ok(u32::try_from(index).expect("int cast"))
     }
 
-    pub fn add_import_stmt<const N: usize>(
+    pub(crate) fn add_import_stmt<const N: usize>(
         &mut self,
         path: &'static [u8],
         identifiers_to_import: [&'static [u8]; N],
@@ -247,21 +218,21 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         Ok(out.map(|e| unsafe { e.assume_init() }))
     }
 
-    pub fn append_stmt<T: StatementData>(&mut self, data: T) -> Result<(), OOM> {
+    pub(crate) fn append_stmt<T: StatementData>(&mut self, data: T) -> Result<(), OOM> {
         self.stmts.reserve(1);
         self.stmts.push(self.new_stmt(data));
         Ok(())
     }
 
-    pub fn new_stmt<T: StatementData>(&self, data: T) -> Stmt {
+    pub(crate) fn new_stmt<T: StatementData>(&self, data: T) -> Stmt {
         Stmt::alloc::<T>(data, Loc::EMPTY)
     }
 
-    pub fn new_expr<T: IntoExprData>(&self, data: T) -> Expr {
+    pub(crate) fn new_expr<T: IntoExprData>(&self, data: T) -> Expr {
         Expr::init::<T>(data, Loc::EMPTY)
     }
 
-    pub fn new_external_symbol(&mut self, name: &[u8]) -> Result<Ref, OOM> {
+    pub(crate) fn new_external_symbol(&mut self, name: &[u8]) -> Result<Ref, OOM> {
         let ref_ = self.new_symbol(SymbolKind::Other, name)?;
         let sym = self.get_symbol(ref_);
         sym.set_must_not_be_renamed(true);
@@ -272,7 +243,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     // `'arena`-carrying field, `url_for_css`, is always set to `b""` here, and
     // every other field stores arena data via raw pointers / `StoreSlice`, so
     // nothing borrows `&mut self` past this call.
-    pub fn to_bundled_ast(
+    pub(crate) fn to_bundled_ast(
         &mut self,
         target: options::Target,
     ) -> Result<crate::BundledAst<'bump>, OOM> {
@@ -416,7 +387,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         self.record_export(st.default_name.loc, b"default", default_ref)?;
                         // convertStmt: AstBuilder only emits the `.expr` arm
                         // (`registerClientReference(...)`), which is not
-                        // `canBeMoved()` — generate a temp const binding and
+                        // `can_be_moved()` — generate a temp const binding and
                         // reference it from `export_props`.
                         // SAFETY: `StmtOrExpr` lives in the arena and has no
                         // Drop fields, so a bitwise read is a plain value copy.
@@ -581,10 +552,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             flags: Default::default(),
             target,
             top_level_await_keyword: Range::NONE,
-            // .nested_scope_slot_counts = if (p.options.features.minify_identifiers)
-            //     renamer.assignNestedScopeSlots(p.arena, p.scopes.items[0], p.symbols.items)
-            // else
-            //     js_ast.SlotCounts{},
             nested_scope_slot_counts: Default::default(),
             hashbang: b"".into(),
             css: None,
@@ -599,13 +566,13 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
 
     // stub methods for ImportScanner duck typing
 
-    pub fn generate_temp_ref(&mut self, name: Option<&[u8]>) -> Ref {
+    pub(crate) fn generate_temp_ref(&mut self, name: Option<&[u8]>) -> Ref {
         self.new_symbol(SymbolKind::Other, name.unwrap_or(b"temp"))
             .expect("OOM")
         // Rust aborts on OOM by default; explicit expect for clarity
     }
 
-    pub fn record_export(&mut self, _loc: Loc, alias: &[u8], ref_: Ref) -> Result<(), OOM> {
+    pub(crate) fn record_export(&mut self, _loc: Loc, alias: &[u8], ref_: Ref) -> Result<(), OOM> {
         if self.named_exports.get(alias).is_some() {
             // Duplicate exports are an error
             Output::panic(format_args!(
@@ -624,7 +591,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         Ok(())
     }
 
-    pub fn record_exported_binding(&mut self, binding: Binding) {
+    pub(crate) fn record_exported_binding(&mut self, binding: Binding) {
         match binding.data {
             B::BMissing(_) => {}
             B::BIdentifier(ident) => {
@@ -645,29 +612,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             }
         }
     }
-
-    pub fn ignore_usage(&mut self, _ref: Ref) {}
-
-    pub fn panic(&self, args: core::fmt::Arguments<'_>) -> ! {
-        Output::panic(args);
-    }
-
-    /// Builds the `module.exports` member expression.
-    pub fn module_exports(&self, loc: Loc) -> Expr {
-        self.new_expr(E::Dot {
-            name: b"exports".into(),
-            name_loc: loc,
-            target: self.new_expr(E::Identifier {
-                ref_: self.module_ref,
-                ..Default::default()
-            }),
-            ..Default::default()
-        })
-    }
 }
 
 use bun_ast::Ref;
-
-pub use crate::DeferredBatchTask::DeferredBatchTask;
-pub use crate::ParseTask;
-pub use crate::ThreadPool;

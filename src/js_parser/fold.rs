@@ -49,7 +49,7 @@ fn e_string_eql_bytes(s: &E::EString, other: &[u8]) -> bool {
 // File-split mixin pattern: a direct `impl P` block.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    pub fn maybe_relocate_vars_to_top_level(
+    pub(crate) fn maybe_relocate_vars_to_top_level(
         &mut self,
         decls: &[G::Decl],
         mode: RelocateVarsMode,
@@ -115,7 +115,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // EDot nodes represent a property access. This function may return an
     // expression to replace the property access with. It assumes that the
     // target of the EDot expression has already been visited.
-    pub fn maybe_rewrite_property_access(
+    pub(crate) fn maybe_rewrite_property_access(
         &mut self,
         loc: bun_ast::Loc,
         target: js_ast::Expr,
@@ -148,9 +148,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 Some(loc_ref) => loc_ref.ref_,
                                 None => {
                                     // Generate a new import item symbol in the module scope
-                                    let new_ref = p
-                                        .new_symbol(js_ast::symbol::Kind::Import, name)
-                                        .expect("unreachable");
+                                    let new_ref = p.new_symbol(js_ast::symbol::Kind::Import, name);
                                     let new_item = LocRef {
                                         loc: name_loc,
                                         ref_: new_ref,
@@ -393,9 +391,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         format!("${}", bun_core::fmt::fmt_identifier(name))
                                             .as_bytes(),
                                     );
-                                    let new_ref = p
-                                        .new_symbol(js_ast::symbol::Kind::Other, sym_name)
-                                        .expect("unreachable");
+                                    let new_ref =
+                                        p.new_symbol(js_ast::symbol::Kind::Other, sym_name);
                                     // SAFETY: module_scope is arena-owned and valid for 'a.
                                     VecExt::append(&mut p.module_scope_mut().generated, new_ref);
                                     p.commonjs_named_exports
@@ -486,6 +483,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             name,
                                         )
                                         && name != b"__proto__"
+                                        && value.can_be_inlined_from_property_access()
                                     {
                                         return Some(value);
                                     }
@@ -536,7 +534,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let url = p.arena.alloc_slice_copy(
                                 format!("{}", bun_url::file_url_from_string(&bunstr)).as_bytes(),
                             );
-                            bunstr.deref();
                             return Some(p.new_expr(e_string_init(url), name_loc));
                         }
                     }
@@ -622,9 +619,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             format!("${}", bun_core::fmt::fmt_identifier(name))
                                                 .as_bytes(),
                                         );
-                                        let new_ref = p
-                                            .new_symbol(js_ast::symbol::Kind::Other, sym_name)
-                                            .expect("unreachable");
+                                        let new_ref =
+                                            p.new_symbol(js_ast::symbol::Kind::Other, sym_name);
                                         // SAFETY: module_scope is arena-owned and valid for 'a.
                                         VecExt::append(
                                             &mut p.module_scope_mut().generated,
@@ -809,7 +805,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         None
     }
 
-    pub fn check_if_defined_helper(&mut self, expr: Expr) -> Result<Expr, crate::Error> {
+    pub(crate) fn check_if_defined_helper(&mut self, expr: Expr) -> Result<Expr, crate::Error> {
         let p = self;
         let flags = if matches!(expr.data, js_ast::ExprData::EIdentifier(_)) {
             E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER
@@ -835,9 +831,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    pub fn maybe_defined_helper(&mut self, identifier_expr: Expr) -> Result<Expr, crate::Error> {
+    pub(crate) fn maybe_defined_helper(
+        &mut self,
+        identifier_expr: Expr,
+    ) -> Result<Expr, crate::Error> {
         let p = self;
-        let test_ = Self::check_if_defined_helper(p, identifier_expr)?;
+        let test = Self::check_if_defined_helper(p, identifier_expr)?;
         let object_ref = p
             .find_symbol(bun_ast::Loc::EMPTY, b"Object")
             .expect("unreachable")
@@ -845,7 +844,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let yes = p.new_expr(E::Identifier::init(object_ref), bun_ast::Loc::EMPTY);
         Ok(p.new_expr(
             E::If {
-                test_,
+                test,
                 yes,
                 no: identifier_expr,
             },
@@ -853,7 +852,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    pub fn maybe_comma_spread_error(&mut self, comma_after_spread: bun_ast::Loc) {
+    pub(crate) fn maybe_comma_spread_error(&mut self, comma_after_spread: bun_ast::Loc) {
         let p = self;
         if comma_after_spread.is_empty() {
             return;

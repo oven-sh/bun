@@ -1,4 +1,5 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path, { dirname, join, resolve } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -67,6 +68,32 @@ describe("bundler", () => {
     },
     run: {
       stdout: "HELLO WORLD",
+    },
+  });
+
+  itBundled("plugin/LoadXmlLoader", {
+    files: {
+      "/index.ts": /* ts */ `
+        import doc from "./data.magic";
+        import feed from "./feed.xml";
+        console.log(JSON.stringify([doc, feed]));
+      `,
+      "/data.magic": `<config env="test"><name>app</name></config>`,
+      "/feed.xml": `<feed><entry>1</entry><entry>2</entry></feed>`,
+    },
+    plugins(builder) {
+      builder.onLoad({ filter: /\.magic$/ }, async args => ({
+        contents: await Bun.file(args.path).text(),
+        loader: "xml",
+      }));
+      // .xml files report their default loader and can rely on it implicitly.
+      builder.onLoad({ filter: /\.xml$/ }, async args => {
+        if (args.loader !== "xml") throw new Error("expected args.loader to be xml, got " + args.loader);
+        return { contents: await Bun.file(args.path).text() };
+      });
+    },
+    run: {
+      stdout: '[{"config":{"@env":"test","name":"app"}},{"feed":{"entry":["1","2"]}}]',
     },
   });
 
@@ -1607,5 +1634,136 @@ describe("bundler", () => {
         expect(asyncCompleted).toBe(true);
       },
     };
+  });
+
+  for (const [name, call, tuple] of [
+    ["addFilter", 1, `[123, () => {}]`],
+    ["onBeforeParse", 3, `[123, {}, "symbol", undefined]`],
+  ] as const) {
+    test.concurrent(`plugin/${name} throws a TypeError when the filter is not a RegExp`, async () => {
+      using dir = tempDir("plugin-filter-not-regexp", {
+        "index.ts": `console.log("hi");`,
+        "build.mjs": `
+          const originalEntries = Map.prototype.entries;
+          let calls = 0;
+          try {
+            await Bun.build({
+              entrypoints: ["./index.ts"],
+              plugins: [
+                {
+                  name: "entries",
+                  setup(build) {
+                    Map.prototype.entries = function () {
+                      if (++calls !== ${call}) return originalEntries.call(this);
+                      Map.prototype.entries = originalEntries;
+                      return [["file", [${tuple}]]][Symbol.iterator]();
+                    };
+                  },
+                },
+              ],
+            });
+            console.log("resolved");
+          } catch (e) {
+            console.log([e.name, e.code, e.message].join("|"));
+          } finally {
+            Map.prototype.entries = originalEntries;
+          }
+          console.log("calls=" + calls);
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, stderr }).toEqual({
+        stdout: `TypeError|ERR_INVALID_ARG_TYPE|Expected filter (1st argument) to be a RegExp\ncalls=${call}\n`,
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  // An entry point that onResolve leaves without a module used to be dropped
+  // without a log entry: the linker aborted on an empty chunk list when it was
+  // the only entry point, and the build silently emitted only the other entry
+  // points otherwise. A declined entry point that the package.json "browser"
+  // field disables gets the same error as without plugins.
+  test.concurrent("plugin/entry point left without a module by onResolve fails the build", async () => {
+    using dir = tempDir("plugin-entry-point-without-module", {
+      "package.json": JSON.stringify({ name: "app", browser: { "./disabled.js": false } }),
+      "entry.js": `console.log("entry");`,
+      "live.js": `console.log("live");`,
+      "disabled.js": `console.log("disabled");`,
+      "build.mjs": `
+        const declined = [];
+        const plugins = [
+          {
+            name: "externalize-entry",
+            setup(build) {
+              build.onResolve({ filter: /entry\\.js$/ }, args => ({ path: args.path, external: true }));
+            },
+          },
+          {
+            name: "decline-disabled",
+            setup(build) {
+              build.onResolve({ filter: /disabled\\.js$/ }, args => {
+                declined.push(args.path);
+              });
+            },
+          },
+        ];
+        const results = {};
+        for (const [name, entrypoints] of Object.entries({
+          external: ["./entry.js"],
+          externalNextToLiveEntryPoint: ["./entry.js", "./live.js"],
+          declinedThenDisabledByBrowserField: ["./disabled.js"],
+        })) {
+          const result = await Bun.build({ entrypoints, target: "browser", plugins, throw: false });
+          results[name] = {
+            success: result.success,
+            logs: result.logs.map(log => log.message),
+            outputs: result.outputs.map(output => output.path),
+          };
+        }
+        results.declined = declined;
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      external: {
+        success: false,
+        logs: ['The entry point "./entry.js" cannot be marked as external'],
+        outputs: [],
+      },
+      externalNextToLiveEntryPoint: {
+        success: false,
+        logs: ['The entry point "./entry.js" cannot be marked as external'],
+        outputs: [],
+      },
+      declinedThenDisabledByBrowserField: {
+        success: false,
+        logs: ['"./disabled.js" is disabled due to "browser" field in package.json (entry point)'],
+        outputs: [],
+      },
+      declined: ["./disabled.js"],
+    });
+    expect(exitCode).toBe(0);
   });
 });

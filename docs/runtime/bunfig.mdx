@@ -11,12 +11,12 @@ Bun relies on pre-existing configuration files like `package.json` and `tsconfig
 
 Put `bunfig.toml` in your project root, alongside your `package.json`.
 
-To configure Bun globally, you can also create a `.bunfig.toml` file at one of the following paths:
+To configure Bun's package manager globally, you can also create a `.bunfig.toml` file at one of the following paths:
 
 - `$HOME/.bunfig.toml`
 - `$XDG_CONFIG_HOME/.bunfig.toml`
 
-If Bun finds both a global and a local `bunfig`, it shallow-merges them, with local overriding global. CLI flags override `bunfig` settings where applicable.
+Only package manager commands (`bun install`, `bun add`, `bun remove`, `bun update`, `bun pm`, `bunx`, and so on) read the global file. If Bun finds both a global and a local `bunfig`, it loads both; keys set in the local file override the same keys in the global file. CLI flags override `bunfig` settings where applicable.
 
 ## Runtime
 
@@ -107,7 +107,7 @@ Bun supports the following loaders:
 
 ### `telemetry`
 
-The `telemetry` field enables or disables analytics. By default, telemetry is enabled. This is equivalent to the `DO_NOT_TRACK` environment variable.
+The `telemetry` field enables or disables analytics. By default, telemetry is enabled. This setting is equivalent to the `DO_NOT_TRACK` environment variable.
 
 We do not currently collect telemetry; this setting only controls anonymous crash reports. We plan to collect information like which Bun APIs are used most or how long `bun build` takes.
 
@@ -133,7 +133,7 @@ file = false
 
 Use this in production or CI/CD pipelines where you want to rely solely on system environment variables.
 
-Files passed explicitly with `--env-file` are still loaded even when default loading is disabled.
+Bun still loads files passed explicitly with `--env-file` even when default loading is disabled.
 
 ### `console`
 
@@ -156,7 +156,7 @@ The `[serve]` section configures `Bun.serve` and `bun run` when serving HTTP.
 
 ### `serve.port`
 
-The default port for `Bun.serve` to listen on. Default `3000`. Can also be set with the `BUN_PORT` or `PORT` environment variables, or the `--port` flag.
+The default port for `Bun.serve` to listen on. Default `3000`. You can also set it with the `BUN_PORT` or `PORT` environment variables, or the `--port` flag.
 
 ```toml title="bunfig.toml" icon="settings"
 [serve]
@@ -192,7 +192,7 @@ preload = ["./setup.ts"]
 
 ### `test.pathIgnorePatterns`
 
-Exclude files and directories from test discovery using glob patterns. Matched directories are pruned during scanning, so their contents are never traversed. Use this when your project contains submodules or vendored code with `*.test.ts` files that you don't want `bun test` to pick up.
+Exclude files and directories from test discovery using glob patterns. The test runner prunes matched directories during scanning, so it never traverses their contents. Use this when your project contains submodules or vendored code with `*.test.ts` files that you don't want `bun test` to pick up.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
@@ -230,11 +230,11 @@ The coverage threshold. By default, no threshold is set. If your test suite does
 coverageThreshold = 0.9
 ```
 
-You can set separate thresholds for line, function, and statement coverage.
+You can set separate thresholds for line and function coverage. Bun accepts a `statements` key but does not currently enforce it.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
-coverageThreshold = { lines = 0.7, functions = 0.8, statements = 0.9 }
+coverageThreshold = { lines = 0.7, functions = 0.8 }
 ```
 
 ### `test.coverageSkipTestFiles`
@@ -275,7 +275,7 @@ coveragePathIgnorePatterns = [
 
 ### `test.coverageReporter`
 
-By default, coverage reports are printed to the console. For persistent reports that CI and other tools can read, use `lcov`.
+By default, the test runner prints coverage reports to the console. For persistent reports that CI and other tools can read, use `lcov`.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
@@ -333,7 +333,7 @@ The `--rerun-each` CLI flag overrides this setting.
 
 ### `test.retry`
 
-Default retry count for all tests. Failed tests are retried up to this many times. Per-test `{ retry: N }` overrides this value. Default `0` (no retries).
+Default retry count for all tests. The test runner retries failed tests up to this many times. Per-test `{ retry: N }` overrides this value. Default `0` (no retries).
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
@@ -357,7 +357,7 @@ The `--concurrent` CLI flag overrides this setting.
 
 ### `test.onlyFailures`
 
-When enabled, only failed tests are displayed in the output, which reduces noise in large test suites. Default `false`.
+When enabled, the output shows only failed tests, which reduces noise in large test suites. Default `false`.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
@@ -430,7 +430,7 @@ peer = true
 
 Whether `bun install` runs in "production mode". Default `false`.
 
-In production mode, `"devDependencies"` are not installed. The `--production` CLI flag overrides this setting.
+In production mode, Bun does not install `"devDependencies"` and freezes the lockfile (same as [`install.frozenLockfile`](#install-frozenlockfile)). Use the `--production` CLI flag to enable it for a single install. Since production mode freezes the lockfile, `bun add`, `bun remove`, and `bun update` fail while it is set.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
@@ -441,7 +441,7 @@ production = false
 
 Whether to set an exact version in `package.json`. Default `false`.
 
-By default Bun uses caret ranges; if the `latest` version of a package is `2.4.1`, Bun writes `^2.4.1` to your `package.json`, which accepts any version from `2.4.1` up to (but not including) `3.0.0`.
+By default Bun uses caret ranges. If the `latest` version of a package is `2.4.1`, Bun writes `^2.4.1` to your `package.json`. That range accepts any version from `2.4.1` up to (but not including) `3.0.0`.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
@@ -508,11 +508,20 @@ prefer = "online"
 
 Valid values are:
 
-| Value       | Description                                                                                        |
-| ----------- | -------------------------------------------------------------------------------------------------- |
-| `"online"`  | Default. Check the registry for stale packages as needed.                                          |
-| `"offline"` | Skip staleness checks and resolve packages from the local cache. Equivalent to `--prefer-offline`. |
-| `"latest"`  | Always check npm for the latest matching versions. Equivalent to `--prefer-latest`.                |
+| Value       | Description                                                                                                                         |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `"online"`  | Default. Check the registry for stale packages as needed.                                                                           |
+| `"offline"` | Skip staleness checks and resolve packages from the local cache. Equivalent to `--prefer-offline` (also honoured by `bun install`). |
+| `"latest"`  | Always check npm for the latest matching versions. Equivalent to `--prefer-latest`.                                                 |
+
+### `install.offline`
+
+When `true`, `bun install` never touches the network: package metadata and tarballs must already be in the cache, and anything missing is an error. Default `false`. Equivalent to `bun install --offline`. For the softer "use the cache when possible" behaviour see `install.prefer = "offline"` / `--prefer-offline`.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+offline = true
+```
 
 ### `install.frozenLockfile`
 
@@ -525,7 +534,7 @@ frozenLockfile = false
 
 ### `install.dryRun`
 
-Whether `bun install` actually installs dependencies. Default `false`. When `true`, it's equivalent to passing `--dry-run` to all `bun install` commands.
+Whether `bun install` resolves dependencies without installing them. Default `false`. When `true`, it's equivalent to passing `--dry-run` to all `bun install` commands.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
@@ -636,7 +645,7 @@ Whether to generate a lockfile on `bun install`. Default `true`.
 save = true
 ```
 
-Whether to generate a non-Bun lockfile alongside `bun.lock`. (A `bun.lock` is always created.) `"yarn"` is the only supported value.
+Whether to generate a non-Bun lockfile alongside `bun.lock`. (Bun always creates a `bun.lock`.) `"yarn"` is the only supported value.
 
 ```toml title="bunfig.toml" icon="settings"
 [install.lockfile]
@@ -663,7 +672,7 @@ Valid values are:
 
 ### `install.globalStore`
 
-When using the `"isolated"` linker, share package installations across projects in a global virtual store at `<cache>/links/` and link `node_modules/.bun/<pkg>@<ver>` into it instead of materializing each package into the project. Makes warm installs after `rm -rf node_modules` an order of magnitude faster. Default `false`. Can also be set with the `BUN_INSTALL_GLOBAL_STORE` environment variable.
+When using the `"isolated"` linker, share package installations across projects in a global virtual store at `<cache>/links/`. Bun links `node_modules/.bun/<pkg>@<ver>` into the store instead of materializing each package into the project. Makes warm installs after `rm -rf node_modules` an order of magnitude faster. Default `false`. You can also set it with the `BUN_INSTALL_GLOBAL_STORE` environment variable.
 
 See [Global virtual store](/pm/global-store).
 
@@ -674,7 +683,7 @@ globalStore = true
 
 ### `install.publicHoistPattern`
 
-When using the `"isolated"` linker, packages matching these glob patterns are hoisted to the root `node_modules` directory so they can be resolved by any package in the project. Default `[]`. Similar to pnpm's `public-hoist-pattern`.
+When using the `"isolated"` linker, Bun hoists packages matching these glob patterns to the root `node_modules` directory so any package in the project can resolve them. Default `[]`. Similar to pnpm's `public-hoist-pattern`.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
@@ -683,11 +692,22 @@ publicHoistPattern = ["*eslint*", "*prettier*"]
 
 ### `install.hoistPattern`
 
-When using the `"isolated"` linker, packages matching these glob patterns are hoisted to the virtual store root (`node_modules/.bun`) so they can be resolved by other packages in the virtual store. Default `[]`. Similar to pnpm's `hoist-pattern`.
+When using the `"isolated"` linker, Bun hoists packages matching these glob patterns to a fallback directory inside the virtual store (`node_modules/.bun/node_modules`) so other packages in the virtual store can resolve them. By default Bun hoists every package there, equivalent to `["*"]`. Similar to pnpm's `hoist-pattern`.
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
 hoistPattern = ["*"]
+```
+
+### `install.hoist`
+
+When using the `"isolated"` linker, Bun creates `node_modules/.bun/node_modules`. This fallback directory contains a symlink to every installed package, or only to the packages matching `install.hoistPattern` when one is set. The directory sits on the upward resolution path of every package in the store, so a package can still resolve dependencies it never declared ("phantom dependencies"). Set `hoist = false` to skip creating this directory entirely. An undeclared import from a store package then fails unless the imported package is linked at the project root `node_modules` (a direct dependency, a `publicHoistPattern` match, or a workspace package). The root `node_modules` stays on the resolution path because `.bun` lives inside it. The project's own `node_modules` symlinks are unchanged. Default `true`. Equivalent to pnpm's `hoist` setting, including this root-`node_modules` caveat; takes precedence over `install.hoistPattern`.
+
+This setting only applies to the `"isolated"` linker. Hoisted installs are unaffected: there the flat `node_modules` tree is the layout itself, not something this switch controls.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+hoist = false
 ```
 
 ### `install.logLevel`
@@ -733,7 +753,7 @@ Learn more about [using and writing security scanners](/pm/security-scanner-api)
 
 ### `install.minimumReleaseAge`
 
-Configure a minimum age (in seconds) for npm package versions. Package versions published more recently than this threshold are filtered out during installation. Default `null` (disabled).
+Configure a minimum age (in seconds) for npm package versions. During installation, Bun filters out package versions published more recently than this threshold. Default `null` (disabled).
 
 ```toml title="bunfig.toml" icon="settings"
 [install]
@@ -782,9 +802,9 @@ shell = "bun"
 
 ### `run.bun` - auto alias `node` to `bun`
 
-When `true`, this prepends `$PATH` with a `node` symlink that points to the `bun` binary for all scripts or executables invoked by `bun run` or `bun`.
+When `true`, Bun prepends `$PATH` with a `node` symlink that points to the `bun` binary for all scripts or executables invoked by `bun run` or `bun`.
 
-A script that runs `node` runs `bun` instead, with no changes to the script. This works recursively, so a script that runs another script that runs `node` also runs `bun`, and it applies to shebangs that point to `node`.
+A script that runs `node` runs `bun` instead, with no changes to the script. This works recursively, so a script that runs another script that runs `node` also runs `bun`. The alias also applies to shebangs that point to `node`.
 
 By default, this is enabled if `node` is not already in your `$PATH`.
 
@@ -820,7 +840,7 @@ When `true`, `bun run` and `bun` don't print the command being run.
 silent = true
 ```
 
-Without this option, the command being run is printed to the console:
+Without this option, Bun prints the command being run to the console:
 
 ```sh terminal icon="terminal"
 bun run dev
@@ -831,7 +851,7 @@ echo "Running \"dev\"..."
 Running "dev"...
 ```
 
-With this option, the command being run is not printed:
+With this option, Bun does not print the command being run:
 
 ```sh
 bun run dev
@@ -860,9 +880,11 @@ elide-lines = 10
 
 ### `run.noOrphans` - don't leave orphan processes behind
 
-When `true`, Bun watches the process that spawned it and exits as soon as that parent goes away — even if the parent was `SIGKILL`ed and never got a chance to forward a signal. On its own exit, Bun also recursively `SIGKILL`s every descendant process so nothing it spawned outlives it. Useful when Bun is launched by a supervisor (Electron, a CI runner, a thin shim) that may be force-killed.
+When `true`, Bun watches the process that spawned it and exits as soon as that parent goes away, even if the parent was force-killed and never got a chance to forward a signal. On its own exit, Bun also terminates every descendant process so nothing it spawned outlives it. Useful when Bun is launched by a supervisor (Electron, a CI runner, a thin shim) that may be force-killed.
 
-Linux and macOS only (no-op on Windows and other platforms). Equivalent to the `--no-orphans` CLI flag or the `BUN_FEATURE_FLAG_NO_ORPHANS=1` environment variable.
+On Linux, Bun uses `prctl(PR_SET_PDEATHSIG)` and a `/proc` descendant walk. On macOS, it uses `EVFILT_PROC`/`NOTE_EXIT` on the event loop's kqueue and a libproc descendant walk. On Windows, it uses a thread-pool wait on the parent's process handle and a kill-on-close Job Object.
+
+Equivalent to the `--no-orphans` CLI flag or the `BUN_FEATURE_FLAG_NO_ORPHANS=1` environment variable.
 
 ```toml title="bunfig.toml" icon="settings"
 [run]

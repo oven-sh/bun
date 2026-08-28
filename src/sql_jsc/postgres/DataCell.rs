@@ -1,6 +1,6 @@
 use core::mem::size_of;
 
-use crate::jsc::{JSGlobalObject, JSValue};
+use crate::jsc::{JSGlobalObject, JSValue, bun_string_jsc};
 use bun_core::String as BunString;
 
 use crate::shared::cached_structure::CachedStructure as PostgresCachedStructure;
@@ -10,23 +10,55 @@ use bun_sql::postgres::postgres_types::AnyPostgresError;
 use bun_sql::shared::data::Data;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode as PostgresSQLQueryResultMode;
 
-pub use crate::shared::sql_data_cell::SQLDataCell;
+pub(crate) use crate::shared::sql_data_cell::SQLDataCell;
 pub use crate::shared::sql_data_cell::{Array, Flags, Raw, Tag, TypedArray, Value};
-use bun_sql::shared::column_identifier::ColumnIdentifier;
 
 type Result<T, E = AnyPostgresError> = core::result::Result<T, E>;
 
 bun_core::declare_scope!(Postgres, visible);
 bun_core::declare_scope!(PostgresDataCell, visible);
 
+/// Text-format `date` / `timestamp` / `timestamptz` (scalar or array element) to epoch ms.
+fn parse_date_time_text(
+    tag: types::Tag,
+    bytes: &[u8],
+    global_object: &JSGlobalObject,
+) -> Result<f64> {
+    use crate::postgres::types::date;
+    // The StartupMessage pins DateStyle=ISO, so the server only ever sends these shapes.
+    let ms = match tag {
+        types::Tag::timestamp | types::Tag::timestamp_array => {
+            date::timestamp_text_to_ms_utc(global_object, bytes)
+        }
+        types::Tag::timestamptz | types::Tag::timestamptz_array => {
+            date::timestamptz_text_to_ms_utc(global_object, bytes)
+        }
+        _ => None,
+    };
+    if let Some(ms) = ms {
+        return Ok(ms);
+    }
+    // `date` (date-only ISO form), BC dates and 5+ digit years fall back to `Date.parse`.
+    let str = BunString::from_bytes(bytes);
+    bun_string_jsc::parse_date(&str, global_object).map_err(crate::jsc::js_error_to_postgres)
+}
+
 fn parse_bytea(hex: &[u8]) -> Result<SQLDataCell> {
     let len = hex.len() / 2;
-    let mut buf = vec![0u8; len].into_boxed_slice();
-    // errdefer free(buf) → Box drops on `?`
-
-    let written = bun_core::decode_hex_to_bytes(&mut buf, hex)
-        .map_err(|_| AnyPostgresError::InvalidByteSequence)?;
-    let ptr = bun_core::heap::into_raw(buf).cast::<u8>();
+    let mut buf: Vec<u8> = Vec::new();
+    buf.try_reserve_exact(len)
+        .map_err(|_| AnyPostgresError::OutOfMemory)?;
+    // SAFETY: the decoder only writes into the spare bytes and returns how many it filled.
+    let written = unsafe {
+        bun_core::vec::fill_spare(&mut buf, 0, |spare| {
+            match bun_core::decode_hex_to_bytes(&mut spare[..len], hex) {
+                Ok(written) => (written, Ok(written)),
+                Err(_) => (0, Err(AnyPostgresError::InvalidByteSequence)),
+            }
+        })
+    }?;
+    // `SQLDataCell::deinit` frees this as a `Box<[u8]>` of exactly `written` bytes.
+    let ptr = bun_core::heap::into_raw(buf.into_boxed_slice()).cast::<u8>();
 
     Ok(SQLDataCell {
         tag: Tag::Bytea,
@@ -207,12 +239,11 @@ fn parse_array(
                 | types::Tag::timestamp_array
                 | types::Tag::date_array => {
                     let date_str = &slice[1..current_idx];
-                    let mut str = BunString::init(date_str);
-                    // defer str.deref() → Drop on BunString
-                    array.push(SQLDataCell::date(
-                        crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)
-                            .map_err(crate::jsc::js_error_to_postgres)?,
-                    ));
+                    array.push(SQLDataCell::date(parse_date_time_text(
+                        array_type,
+                        date_str,
+                        global_object,
+                    )?));
 
                     slice = try_slice(slice, current_idx + 1);
                     continue;
@@ -313,11 +344,15 @@ fn parse_array(
                         continue;
                     }
                     if array_type == types::Tag::date_array {
-                        let mut str = BunString::init(element);
-                        array.push(SQLDataCell::date(
-                            crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)
-                                .map_err(crate::jsc::js_error_to_postgres)?,
-                        ));
+                        let ms = match crate::postgres::types::date::parse_infinity(element) {
+                            Some(inf) => inf,
+                            None => {
+                                let str = BunString::from_bytes(element);
+                                bun_string_jsc::parse_date(&str, global_object)
+                                    .map_err(crate::jsc::js_error_to_postgres)?
+                            }
+                        };
+                        array.push(SQLDataCell::date(ms));
                     } else {
                         // the only escape sequency possible here is \b
                         if element == b"\\b" {
@@ -358,13 +393,13 @@ fn parse_array(
                                     return Err(AnyPostgresError::UnsupportedArrayFormat);
                                 }
                                 if &slice[0..5] == b"false" {
-                                    array.push(SQLDataCell::bool_(false));
+                                    array.push(SQLDataCell::bool(false));
                                     slice = try_slice(slice, 5);
                                     continue;
                                 }
                                 return Err(AnyPostgresError::UnsupportedArrayFormat);
                             } else {
-                                array.push(SQLDataCell::bool_(false));
+                                array.push(SQLDataCell::bool(false));
                                 slice = try_slice(slice, 1);
                                 continue;
                             }
@@ -376,13 +411,13 @@ fn parse_array(
                                     return Err(AnyPostgresError::UnsupportedArrayFormat);
                                 }
                                 if &slice[0..4] == b"true" {
-                                    array.push(SQLDataCell::bool_(true));
+                                    array.push(SQLDataCell::bool(true));
                                     slice = try_slice(slice, 4);
                                     continue;
                                 }
                                 return Err(AnyPostgresError::UnsupportedArrayFormat);
                             } else {
-                                array.push(SQLDataCell::bool_(true));
+                                array.push(SQLDataCell::bool(true));
                                 slice = try_slice(slice, 1);
                                 continue;
                             }
@@ -708,7 +743,7 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
     })
 }
 
-pub(crate) fn from_bytes(
+fn from_bytes(
     binary: bool,
     bigint: bool,
     oid: types::Tag,
@@ -775,7 +810,7 @@ pub(crate) fn from_bytes(
                 Ok(SQLDataCell::float8(parse_binary_float8(bytes)?))
             } else {
                 Ok(SQLDataCell::float8(
-                    bun_core::parse_double(bytes).unwrap_or(f64::NAN),
+                    bun_core::fmt::parse_f64(bytes).unwrap_or(f64::NAN),
                 ))
             }
         }
@@ -784,7 +819,7 @@ pub(crate) fn from_bytes(
                 Ok(SQLDataCell::float8(parse_binary_float4(bytes)? as f64))
             } else {
                 Ok(SQLDataCell::float8(
-                    bun_core::parse_double(bytes).unwrap_or(f64::NAN),
+                    bun_core::fmt::parse_f64(bytes).unwrap_or(f64::NAN),
                 ))
             }
         }
@@ -805,9 +840,9 @@ pub(crate) fn from_bytes(
         T::jsonb | T::json => Ok(SQLDataCell::json(bytes)),
         T::bool => {
             if binary {
-                Ok(SQLDataCell::bool_(!bytes.is_empty() && bytes[0] == 1))
+                Ok(SQLDataCell::bool(!bytes.is_empty() && bytes[0] == 1))
             } else {
-                Ok(SQLDataCell::bool_(!bytes.is_empty() && bytes[0] == b't'))
+                Ok(SQLDataCell::bool(!bytes.is_empty() && bytes[0] == b't'))
             }
         }
         tag @ (T::date | T::timestamp | T::timestamptz) => {
@@ -828,23 +863,14 @@ pub(crate) fn from_bytes(
                 if bun_core::strings::eql_case_insensitive_ascii(bytes, b"NULL", true) {
                     return Ok(SQLDataCell::null());
                 }
-                // `timestamp` (without time zone) text carries no offset, so
-                // decode its components as UTC to match the binary path. `date`
-                // (UTC midnight) and `timestamptz` (explicit offset) already
-                // parse correctly via Date.parse, so only redirect `timestamp`.
-                let date = match tag {
-                    T::timestamp => crate::postgres::types::date::timestamp_text_to_ms_utc(global_object, bytes),
-                    _ => None,
-                };
-                let date = match date {
-                    Some(d) => d,
-                    None => {
-                        let mut str = BunString::init(bytes);
-                        crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)
-                            .map_err(crate::jsc::js_error_to_postgres)?
-                    }
-                };
-                Ok(SQLDataCell::date(date))
+                if let Some(inf) = crate::postgres::types::date::parse_infinity(bytes) {
+                    return Ok(SQLDataCell::date(inf));
+                }
+                Ok(SQLDataCell::date(parse_date_time_text(
+                    tag,
+                    bytes,
+                    global_object,
+                )?))
             }
         }
         tag @ (T::time | T::timetz) => {
@@ -971,7 +997,7 @@ enum PGNummericString<'a> {
 }
 
 impl<'a> PGNummericString<'a> {
-    pub(crate) fn slice(&self) -> &[u8] {
+    fn slice(&self) -> &[u8] {
         match self {
             PGNummericString::Static(value) => value,
             PGNummericString::Dynamic(value) => value,
@@ -1055,6 +1081,10 @@ fn parse_binary_numeric<'a>(
                 0
             };
             bun_core::scoped_log!(PostgresDataCell, "digit: {}", digit);
+            // Postgres numeric_recv rejects `d < 0 || d >= NBASE` (NBASE = 10000).
+            if digit >= 10000 {
+                return Err(crate::Error::InvalidBuffer);
+            }
             let digit_str: [u8; 4] = bun_core::fmt::itoa_padded::<4>(u64::from(digit));
             let digit_len = 4usize;
             if !first_non_zero {
@@ -1098,6 +1128,9 @@ fn parse_binary_numeric<'a>(
                 0
             };
             bun_core::scoped_log!(PostgresDataCell, "dscale digit: {}", digit);
+            if digit >= 10000 {
+                return Err(crate::Error::InvalidBuffer);
+            }
             let digit_str: [u8; 4] = bun_core::fmt::itoa_padded::<4>(u64::from(digit));
             result.extend_from_slice(&digit_str);
             d += 1;
@@ -1112,11 +1145,11 @@ fn parse_binary_numeric<'a>(
 }
 
 // The binary-parse return type varies per tag, so it is split into per-tag fns.
-pub fn parse_binary_float8(bytes: &[u8]) -> Result<f64, AnyPostgresError> {
+pub(crate) fn parse_binary_float8(bytes: &[u8]) -> Result<f64, AnyPostgresError> {
     Ok(f64::from_bits(parse_binary_int8(bytes)? as u64))
 }
 
-pub fn parse_binary_int8(bytes: &[u8]) -> Result<i64, AnyPostgresError> {
+pub(crate) fn parse_binary_int8(bytes: &[u8]) -> Result<i64, AnyPostgresError> {
     // pq_getmsgfloat8
     if bytes.len() != 8 {
         return Err(AnyPostgresError::InvalidBinaryData);
@@ -1124,7 +1157,7 @@ pub fn parse_binary_int8(bytes: &[u8]) -> Result<i64, AnyPostgresError> {
     Ok(i64::from_ne_bytes(bytes[0..8].try_into().expect("infallible: size matches")).swap_bytes())
 }
 
-pub fn parse_binary_int4(bytes: &[u8]) -> Result<i32, AnyPostgresError> {
+pub(crate) fn parse_binary_int4(bytes: &[u8]) -> Result<i32, AnyPostgresError> {
     // pq_getmsgint
     match bytes.len() {
         1 => Ok(bytes[0] as i32),
@@ -1138,7 +1171,7 @@ pub fn parse_binary_int4(bytes: &[u8]) -> Result<i32, AnyPostgresError> {
     }
 }
 
-pub fn parse_binary_oid(bytes: &[u8]) -> Result<u32, AnyPostgresError> {
+pub(crate) fn parse_binary_oid(bytes: &[u8]) -> Result<u32, AnyPostgresError> {
     match bytes.len() {
         1 => Ok(bytes[0] as u32),
         2 => Ok(pg_ntoh16(u16::from_ne_bytes(
@@ -1151,7 +1184,7 @@ pub fn parse_binary_oid(bytes: &[u8]) -> Result<u32, AnyPostgresError> {
     }
 }
 
-pub fn parse_binary_int2(bytes: &[u8]) -> Result<i16, AnyPostgresError> {
+pub(crate) fn parse_binary_int2(bytes: &[u8]) -> Result<i16, AnyPostgresError> {
     // pq_getmsgint
     match bytes.len() {
         1 => Ok(bytes[0] as i16),
@@ -1167,7 +1200,7 @@ pub fn parse_binary_int2(bytes: &[u8]) -> Result<i16, AnyPostgresError> {
     }
 }
 
-pub fn parse_binary_float4(bytes: &[u8]) -> Result<f32, AnyPostgresError> {
+pub(crate) fn parse_binary_float4(bytes: &[u8]) -> Result<f32, AnyPostgresError> {
     // pq_getmsgfloat4
     Ok(f32::from_bits(parse_binary_int4(bytes)? as u32))
 }
@@ -1255,20 +1288,10 @@ impl<'a> Putter<'a> {
             };
         }
         self.count += 1;
-        cell.index = match &field.name_or_index {
-            // The indexed columns can be out of order.
-            ColumnIdentifier::Index(i) => *i,
-            _ => index,
-        };
-
         // TODO: when duplicate and we know the result will be an object
         // and not a .values() array, we can discard the data
         // immediately.
-        cell.is_indexed_column = match &field.name_or_index {
-            ColumnIdentifier::Duplicate => 2,
-            ColumnIdentifier::Index(_) => 1,
-            ColumnIdentifier::Name(_) => 0,
-        };
+        cell.set_column(index, &field.name_or_index);
         Ok(true)
     }
 

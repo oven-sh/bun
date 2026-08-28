@@ -26,17 +26,19 @@
 //! are wired. The watcher does not keep the event loop alive.
 
 use bun_event_loop::ConcurrentTask::{Task, task_tag};
-use bun_jsc::JSGlobalObject;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use bun_jsc::ArrayBuffer;
 #[cfg(not(windows))]
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 #[cfg(not(windows))]
 use core::ptr::NonNull;
 
 /// Pressure level passed to JS. Values are the `NOTE_MEMORYSTATUS_PRESSURE_*`
 /// bits on macOS so the kqueue dispatch can pass `fflags` through unchanged.
-pub mod level {
-    pub const WARNING: i32 = 0x00000002;
-    pub const CRITICAL: i32 = 0x00000004;
+pub(crate) mod level {
+    pub(crate) const WARNING: i32 = 0x00000002;
+    pub(crate) const CRITICAL: i32 = 0x00000004;
 }
 
 unsafe extern "C" {
@@ -45,7 +47,7 @@ unsafe extern "C" {
 
 /// `run_task` target for `task_tag::MemoryPressureTask`. `lvl` is the packed
 /// task payload (macOS kevent `fflags`, or `level::CRITICAL` elsewhere).
-pub fn emit(global: &JSGlobalObject, lvl: i32) {
+pub(crate) fn emit(global: &JSGlobalObject, lvl: i32) {
     // macOS can deliver WARN|CRITICAL together under EV_CLEAR; pick the more severe.
     let lvl = if lvl & level::CRITICAL != 0 || lvl & level::WARNING == 0 {
         level::CRITICAL
@@ -56,8 +58,17 @@ pub fn emit(global: &JSGlobalObject, lvl: i32) {
     unsafe { Process__emitMemoryPressureEvent(core::ptr::from_ref(global).cast_mut(), lvl) };
 }
 
-pub(crate) fn pressure_task(lvl: i32) -> Task {
-    Task::new(task_tag::MemoryPressureTask, lvl as usize as *mut ())
+/// The queued form of a pressure notification: `Task::ptr` packs the level,
+/// there is no allocation.
+pub(crate) struct MemoryPressureTask;
+impl bun_event_loop::Taskable for MemoryPressureTask {
+    const TAG: bun_event_loop::TaskTag = task_tag::MemoryPressureTask;
+    /// Nothing is owned (`this` is the packed level).
+    unsafe fn release_unrun(_: *mut Self) {}
+}
+
+fn pressure_task(lvl: i32) -> Task {
+    Task::init(lvl as usize as *mut MemoryPressureTask)
 }
 
 #[cfg(not(windows))]
@@ -115,7 +126,7 @@ mod posix {
         let mut read = [0u8; 256];
         let n = bun_sys::read(fd, &mut read).unwrap_or(0);
         let _ = bun_sys::close(fd);
-        for line in read[..n].split(|&b| b == b'\n') {
+        for line in bun_core::strings::split(&read[..n], b"\n") {
             let Some(rest) = line.strip_prefix(b"0::") else {
                 continue;
             };
@@ -133,15 +144,21 @@ mod posix {
         None
     }
 
+    /// 150 ms of "some"-stall in any 2 s window. 2 s is the minimum
+    /// window for unprivileged PSI triggers (kernel 6.6+).
+    ///
+    /// The trailing NUL is part of the write: `psi_write()` in
+    /// `kernel/sched/psi.c` replaces the last byte it receives with NUL
+    /// before it parses the buffer. Without it the kernel sees
+    /// `some 150000 200000` and rejects the 200 ms window with `EINVAL`.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(super) const PSI_TRIGGER: &[u8] = b"some 150000 2000000\0";
+
     /// Open a PSI memory file and write a trigger. Tries the system-wide
     /// `/proc/pressure/memory` first, then the current cgroup's file.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn open_psi_fd() -> Option<Fd> {
         use bun_sys::O;
-
-        /// 150 ms of "some"-stall in any 2 s window. 2 s is the minimum
-        /// window for unprivileged PSI triggers (kernel 6.6+).
-        const TRIGGER: &[u8] = b"some 150000 2000000";
 
         let mut cgroup_buf = [0u8; 320];
         let paths = [
@@ -152,7 +169,7 @@ mod posix {
             let Ok(fd) = bun_sys::open(path, O::RDWR | O::NONBLOCK | O::CLOEXEC, 0) else {
                 continue;
             };
-            if bun_sys::write(fd, TRIGGER).is_ok() {
+            if bun_sys::write(fd, PSI_TRIGGER).is_ok() {
                 return Some(fd);
             }
             let _ = bun_sys::close(fd);
@@ -206,6 +223,19 @@ mod posix {
         *slot(global.bun_vm().as_mut()) = NonNull::new(bun_core::heap::into_raw(watcher).cast());
     }
 
+    /// Whether the installed watcher holds a live OS source. `install` still
+    /// fills the slot when no backend could be registered, so `isInstalled`
+    /// alone cannot tell the two apart.
+    pub(super) fn has_os_backend(global: &JSGlobalObject) -> bool {
+        let Some(raw) = *slot(global.bun_vm().as_mut()) else {
+            return false;
+        };
+        // SAFETY: slot is populated only by `install` with a `Box<MemoryPressureWatcher>`,
+        // and nothing else borrows it while this JS host call runs.
+        let watcher = unsafe { raw.cast::<MemoryPressureWatcher>().as_ref() };
+        watcher.poll.is_some()
+    }
+
     pub(super) fn uninstall(global: &JSGlobalObject) {
         let Some(watcher) = take_watcher(global.bun_vm().as_mut()) else {
             return;
@@ -220,7 +250,7 @@ mod posix {
 
     /// `__bun_run_file_poll` dispatch target. `fflags` is the kqueue `fflags`
     /// on macOS (carrying the pressure level) and 0 on Linux.
-    pub fn on_poll(poll: &mut FilePoll, fflags: i64) {
+    pub(crate) fn on_poll(poll: &mut FilePoll, fflags: i64) {
         let vm = VirtualMachine::get_mut();
 
         // `EPOLLERR`/`EPOLLHUP` on a PSI fd means the trigger is dead (e.g.
@@ -303,7 +333,7 @@ mod windows {
         vm.rare_data().memory_pressure_watcher_slot()
     }
 
-    fn thread_main(vm_addr: usize, notify: usize, shutdown: usize) {
+    fn thread_main(vm: bun_jsc::VmHandle, notify: usize, shutdown: usize) {
         bun_core::output::Source::configure_named_thread(bun_core::zstr!("MemoryPressure"));
         let handles: [HANDLE; 2] = [shutdown as HANDLE, notify as HANDLE];
         loop {
@@ -313,10 +343,14 @@ mod windows {
                 break;
             }
             let task = ConcurrentTask::create(super::pressure_task(super::level::CRITICAL));
-            // SAFETY: main-thread VM captured at install; process-lifetime.
-            unsafe { &*(vm_addr as *const VirtualMachine) }
-                .event_loop_shared()
-                .enqueue_task_concurrent(task);
+            if let bun_jsc::vm_handle::Posted::Refused(task) =
+                vm.post(bun_jsc::LoopKind::Regular, task)
+            {
+                // VM torn down (uninstall joins us right after): drop the notification.
+                // SAFETY: refused ⇒ we own the task box.
+                unsafe { drop(bun_core::heap::take(task.as_ptr())) };
+                break;
+            }
             // SAFETY: `shutdown` is valid for the thread's lifetime.
             if unsafe { WaitForSingleObject(handles[0], HOLDOFF_MS) } == WAIT_OBJECT_0 {
                 break;
@@ -343,15 +377,15 @@ mod windows {
         }
         let shutdown = OwnedHandle(shutdown);
 
-        let (vm_addr, n, s) = (
-            core::ptr::from_ref(global.bun_vm()) as usize,
+        let (vm, n, s) = (
+            global.bun_vm().handle(),
             notify.0 as usize,
             shutdown.0 as usize,
         );
         let Ok(thread) = std::thread::Builder::new()
             .name("MemoryPressure".into())
             .stack_size(64 * 1024)
-            .spawn(move || thread_main(vm_addr, n, s))
+            .spawn(move || thread_main(vm, n, s))
         else {
             return;
         };
@@ -384,7 +418,7 @@ mod windows {
 // ────────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__MemoryPressure__install(global: &JSGlobalObject) {
+pub(crate) extern "C" fn Bun__MemoryPressure__install(global: &JSGlobalObject) {
     #[cfg(not(windows))]
     posix::install(global);
     #[cfg(windows)]
@@ -392,7 +426,7 @@ pub extern "C" fn Bun__MemoryPressure__install(global: &JSGlobalObject) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__MemoryPressure__uninstall(global: &JSGlobalObject) {
+pub(crate) extern "C" fn Bun__MemoryPressure__uninstall(global: &JSGlobalObject) {
     #[cfg(not(windows))]
     posix::uninstall(global);
     #[cfg(windows)]
@@ -400,12 +434,12 @@ pub extern "C" fn Bun__MemoryPressure__uninstall(global: &JSGlobalObject) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__MemoryPressure__emit(global: &JSGlobalObject, lvl: i32) {
+pub(crate) extern "C" fn Bun__MemoryPressure__emit(global: &JSGlobalObject, lvl: i32) {
     emit(global, lvl);
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__MemoryPressure__isInstalled(global: &JSGlobalObject) -> bool {
+pub(crate) extern "C" fn Bun__MemoryPressure__isInstalled(global: &JSGlobalObject) -> bool {
     global
         .bun_vm()
         .as_mut()
@@ -414,5 +448,39 @@ pub extern "C" fn Bun__MemoryPressure__isInstalled(global: &JSGlobalObject) -> b
         .is_some()
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// bun:internal-for-testing hooks
+// ────────────────────────────────────────────────────────────────────────────
+
+/// `memoryPressurePsiTrigger()`: the bytes `open_psi_fd` writes, as a
+/// `Buffer`. `null` where there is no PSI backend.
+#[bun_jsc::host_fn]
+pub(crate) fn js_psi_trigger(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        ArrayBuffer::create_buffer(global, posix::PSI_TRIGGER)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    {
+        let _ = global;
+        Ok(JSValue::NULL)
+    }
+}
+
+/// `memoryPressureWatcherHasOsBackend()`: whether the watcher installed by
+/// the current listeners registered an OS source. On Windows `install` either
+/// starts the thread or leaves the slot empty, so this equals `isInstalled`.
+#[bun_jsc::host_fn]
+pub(crate) fn js_watcher_has_os_backend(
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    #[cfg(not(windows))]
+    let armed = posix::has_os_backend(global);
+    #[cfg(windows)]
+    let armed = Bun__MemoryPressure__isInstalled(global);
+    Ok(JSValue::js_boolean(armed))
+}
+
 #[cfg(not(windows))]
-pub use posix::on_poll;
+pub(crate) use posix::on_poll;

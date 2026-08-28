@@ -22,13 +22,13 @@ use crate::prefixes::Feature;
 #[derive(Clone, PartialEq)]
 pub struct Transition {
     /// The property to transition.
-    pub property: PropertyId,
+    pub(crate) property: PropertyId,
     /// The duration of the transition.
-    pub duration: Time,
+    pub(crate) duration: Time,
     /// The delay before the transition starts.
-    pub delay: Time,
+    pub(crate) delay: Time,
     /// The easing function for the transition.
-    pub timing_function: EasingFunction,
+    pub(crate) timing_function: EasingFunction,
 }
 
 impl Transition {
@@ -111,11 +111,11 @@ impl Transition {
 
 #[derive(Default)]
 pub struct TransitionHandler {
-    pub properties: Option<(SmallList<PropertyId, 1>, VendorPrefix)>,
-    pub durations: Option<(SmallList<Time, 1>, VendorPrefix)>,
-    pub delays: Option<(SmallList<Time, 1>, VendorPrefix)>,
-    pub timing_functions: Option<(SmallList<EasingFunction, 1>, VendorPrefix)>,
-    pub has_any: bool,
+    pub(crate) properties: Option<(SmallList<PropertyId, 1>, VendorPrefix)>,
+    pub(crate) durations: Option<(SmallList<Time, 1>, VendorPrefix)>,
+    pub(crate) delays: Option<(SmallList<Time, 1>, VendorPrefix)>,
+    pub(crate) timing_functions: Option<(SmallList<EasingFunction, 1>, VendorPrefix)>,
+    pub(crate) has_any: bool,
 }
 
 // Passing both `&mut self` and `&mut self.<field>` to a generic fn trips
@@ -424,7 +424,7 @@ mod transition_handler_body {
             self.reset();
         }
 
-        pub(crate) fn reset(&mut self) {
+        fn reset(&mut self) {
             self.properties = None;
             self.durations = None;
             self.delays = None;

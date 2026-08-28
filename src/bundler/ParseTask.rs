@@ -88,36 +88,34 @@ pub(crate) enum ContentsOrFdTag {
 pub struct ParseTask {
     // lifetime-erased `'static` — paths borrow from `DirnameStore`
     // (process-lifetime BSS string pool); see `bun_resolver::fs::Path<'a>`.
-    pub path: Fs::Path<'static>,
-    pub secondary_path_for_commonjs_interop: Option<Fs::Path<'static>>,
-    pub contents_or_fd: ContentsOrFd,
-    pub external_free_function: ExternalFreeFunction,
-    pub side_effects: bun_ast::SideEffects,
-    pub loader: Option<Loader>,
-    pub jsx: options::jsx::Pragma,
-    pub source_index: Index,
+    pub(crate) path: Fs::Path<'static>,
+    pub(crate) secondary_path_for_commonjs_interop: Option<Fs::Path<'static>>,
+    pub(crate) contents_or_fd: ContentsOrFd,
+    pub(crate) external_free_function: ExternalFreeFunction,
+    pub(crate) side_effects: bun_ast::SideEffects,
+    pub(crate) loader: Option<Loader>,
+    pub(crate) jsx: options::jsx::Pragma,
+    pub(crate) source_index: Index,
     pub task: ThreadPoolLib::Task,
 
     // Split this into a different task so that we don't accidentally run the
     // tasks for io on the threads that are meant for parsing.
-    pub io_task: ThreadPoolLib::Task,
+    pub(crate) io_task: ThreadPoolLib::Task,
 
     // Used for splitting up the work between the io and parse steps.
-    pub stage: ParseTaskStage,
+    pub(crate) stage: ParseTaskStage,
 
-    pub tree_shaking: bool,
-    pub known_target: options::Target,
-    pub module_type: options::ModuleType,
-    pub emit_decorator_metadata: bool,
-    pub experimental_decorators: bool,
-    /// BACKREF (LIFETIMES.tsv) — written through in
-    /// `on_complete`. `None` only in the `default()` placeholder; every
-    /// scheduled task has it set via `init` / `bundle_v2.rs` write-sites.
-    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>>>,
+    pub(crate) known_target: options::Target,
+    pub(crate) module_type: options::ModuleType,
+    pub(crate) emit_decorator_metadata: bool,
+    pub(crate) experimental_decorators: bool,
+    pub(crate) use_define_for_class_fields: bool,
+    // BACKREF; `None` only before enqueue (`Default`, runtime source).
+    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
     // Borrows package_json (resolver arena); valid for the bundle pass.
-    pub package_version: ast::StoreStr,
-    pub package_name: ast::StoreStr,
-    pub is_entry_point: bool,
+    pub(crate) package_version: ast::StoreStr,
+    pub(crate) package_name: ast::StoreStr,
+    pub(crate) is_entry_point: bool,
 }
 
 pub enum ParseTaskStage {
@@ -130,28 +128,38 @@ pub enum ParseTaskStage {
 // ───────────────────────────────────────────────────────────────────────────
 
 /// The information returned to the Bundler thread when a parse finishes.
-pub struct Result {
-    pub task: EventLoop::Task,
-    pub ctx: bun_ptr::ParentRef<BundleV2<'static>>,
-    pub value: ResultValue,
-    pub watcher_data: WatcherData,
+pub(crate) struct Result {
+    pub(crate) task: EventLoop::Task,
+    pub(crate) ctx: bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>,
+    pub(crate) value: ResultValue,
+    pub(crate) watcher_data: WatcherData,
     /// This is used for native onBeforeParsePlugins to store
     /// a function pointer and context pointer to free the
     /// returned source code by the plugin.
-    pub external: ExternalFreeFunction,
+    pub(crate) external: ExternalFreeFunction,
 }
 // `Result` lives in a bump arena (no Drop on free); boxing the large arm
 // would leak the heap allocation. The size diff is acceptable.
 #[allow(clippy::large_enum_variant)]
-pub enum ResultValue {
+pub(crate) enum ResultValue {
     Success(Success),
     Err(ResultError),
     Empty { source_index: Index },
 }
 
-pub struct WatcherData {
-    pub fd: Fd,
-    pub dir_fd: Fd,
+impl ResultValue {
+    pub(crate) fn source_index(&self) -> u32 {
+        match self {
+            ResultValue::Empty { source_index } => source_index.get(),
+            ResultValue::Err(data) => data.source_index.get(),
+            ResultValue::Success(val) => val.source.index.0,
+        }
+    }
+}
+
+pub(crate) struct WatcherData {
+    pub(crate) fd: Fd,
+    pub(crate) dir_fd: Fd,
 }
 
 impl WatcherData {
@@ -162,36 +170,35 @@ impl WatcherData {
     };
 }
 
-pub struct Success {
-    pub ast: JSAst<'static>,
-    pub source: Source,
-    pub log: Log,
-    pub use_directive: UseDirective,
-    pub side_effects: bun_ast::SideEffects,
+pub(crate) struct Success {
+    pub(crate) ast: JSAst<'static>,
+    pub(crate) source: Source,
+    pub(crate) log: Log,
+    pub(crate) use_directive: UseDirective,
+    pub(crate) side_effects: bun_ast::SideEffects,
 
     /// Used by "file" loader files.
-    pub unique_key_for_additional_file: ast::StoreStr,
+    pub(crate) unique_key_for_additional_file: ast::StoreStr,
     /// Used by "file" loader files.
-    pub content_hash_for_additional_file: u64,
+    pub(crate) content_hash_for_additional_file: u64,
 
-    pub loader: Loader,
+    pub(crate) loader: Loader,
 
     /// The package name from package.json, used for barrel optimization.
-    pub package_name: ast::StoreStr,
+    pub(crate) package_name: ast::StoreStr,
 }
 
-pub struct ResultError {
-    pub err: AnyError,
-    pub step: Step,
-    pub log: Log,
-    pub target: options::Target,
-    pub source_index: Index,
+pub(crate) struct ResultError {
+    pub(crate) err: AnyError,
+    pub(crate) step: Step,
+    pub(crate) log: Log,
+    pub(crate) target: options::Target,
+    pub(crate) source_index: Index,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Step {
     Pending,
-    ReadFile,
     Parse,
     Resolve,
 }
@@ -217,12 +224,12 @@ impl ParseTask {
     /// tasks and outlives all of them. Also requires `ctx` to be initialized
     /// (`init()` was called); debug-asserted.
     #[inline]
-    pub unsafe fn ctx<'r>(&self) -> &'r BundleV2<'static> {
+    pub(crate) unsafe fn ctx<'r>(&self) -> &'r BundleV2<'static> {
         // SAFETY: caller upholds: bundle outlives `'r`. `expect` enforces init().
         unsafe { bun_ptr::detach_lifetime_ref(self.ctx.expect("ParseTask.ctx unset").get()) }
     }
 
-    pub fn init(
+    pub(crate) fn init(
         resolve_result: &_resolver::Result,
         source_index: Index,
         // Take `*mut` so the stored BACKREF retains
@@ -264,6 +271,7 @@ impl ParseTask {
             module_type: resolve_result.module_type,
             emit_decorator_metadata: resolve_result.flags.emit_decorator_metadata(),
             experimental_decorators: resolve_result.flags.experimental_decorators(),
+            use_define_for_class_fields: resolve_result.flags.use_define_for_class_fields(),
             package_version,
             package_name,
             known_target,
@@ -280,7 +288,6 @@ impl ParseTask {
                 callback: io_task_callback,
             },
             stage: ParseTaskStage::NeedsSourceCode,
-            tree_shaking: false,
             is_entry_point: false,
         }
     }
@@ -288,7 +295,7 @@ impl ParseTask {
     /// Re-export of `parse_worker::get_runtime_source` as an associated fn so
     /// callers can spell it `ParseTask::get_runtime_source`.
     #[inline]
-    pub fn get_runtime_source(target: options::Target) -> RuntimeSource {
+    pub(crate) fn get_runtime_source(target: options::Target) -> RuntimeSource {
         parse_worker::get_runtime_source(target)
     }
 }
@@ -314,11 +321,11 @@ impl Default for ParseTask {
                 callback: io_task_callback,
             },
             stage: ParseTaskStage::NeedsSourceCode,
-            tree_shaking: false,
             known_target: options::Target::default(),
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false,
             experimental_decorators: false,
+            use_define_for_class_fields: true,
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
@@ -345,7 +352,7 @@ impl Default for ParseTask {
 /// # Safety
 /// `task` must point at the `io_task` intrusive field of a live `ParseTask`
 /// scheduled by the thread pool, with provenance over the full `ParseTask`.
-pub(crate) unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
+unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` points to `ParseTask.io_task` (intrusive field) — only
     // ever invoked by the thread pool against a `ParseTask` it scheduled, so
     // provenance covers the full `ParseTask` and the `&mut` is unique per the
@@ -358,7 +365,7 @@ pub(crate) unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
 /// # Safety
 /// `task` must point at the `task` intrusive field of a live `ParseTask`
 /// scheduled by the thread pool, with provenance over the full `ParseTask`.
-pub(crate) unsafe fn task_callback(task: *mut ThreadPoolLib::Task) {
+unsafe fn task_callback(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` points to `ParseTask.task` (intrusive field) — see
     // `io_task_callback` for the dispatch invariant.
     let parse_task = unsafe { &mut *bun_core::from_field_ptr!(ParseTask, task, task) };
@@ -369,9 +376,9 @@ pub(crate) unsafe fn task_callback(task: *mut ThreadPoolLib::Task) {
 // RuntimeSource
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct RuntimeSource {
-    pub parse_task: ParseTask,
-    pub source: Source,
+pub(crate) struct RuntimeSource {
+    pub(crate) parse_task: ParseTask,
+    pub(crate) source: Source,
 }
 
 // When the `require` identifier is visited, it is replaced with e_require_call_target
@@ -495,38 +502,41 @@ pub mod parse_worker {
     use super::*;
 
     fn get_runtime_source_comptime(target: options::Target) -> RuntimeSource {
-        use const_format::concatcp;
-
-        let runtime_code: &'static str = match target {
-            options::Target::Bun => {
-                concatcp!(
-                    include_str!("../runtime.js"),
-                    RUNTIME_REQUIRE_BUN,
-                    RUNTIME_USING_BUN
-                )
-            }
-            options::Target::BunMacro => {
-                concatcp!(
-                    include_str!("../runtime.js"),
-                    RUNTIME_REQUIRE_BUN,
-                    RUNTIME_USING_OTHER
-                )
-            }
-            options::Target::Node => {
-                concatcp!(
-                    include_str!("../runtime.js"),
-                    RUNTIME_REQUIRE_NODE,
-                    RUNTIME_USING_OTHER
-                )
-            }
-            _ => {
-                concatcp!(
-                    include_str!("../runtime.js"),
-                    RUNTIME_REQUIRE_OTHER,
-                    RUNTIME_USING_OTHER
-                )
-            }
+        // The runtime module is the shared `runtime.js` body plus a per-target
+        // `__require`/`__using` tail. Concatenating at compile time would embed
+        // four copies of the 13 KB body, so each variant is assembled once on
+        // first use instead.
+        #[derive(Clone, Copy)]
+        enum Variant {
+            Bun,
+            BunMacro,
+            Node,
+            Other,
+        }
+        let variant = match target {
+            options::Target::Bun => Variant::Bun,
+            options::Target::BunMacro => Variant::BunMacro,
+            options::Target::Node => Variant::Node,
+            _ => Variant::Other,
         };
+        static SOURCES: [bun_core::Once<Box<[u8]>>; 4] = [
+            bun_core::Once::new(),
+            bun_core::Once::new(),
+            bun_core::Once::new(),
+            bun_core::Once::new(),
+        ];
+        let runtime_code: &'static [u8] = SOURCES[variant as usize].get_or_init(|| {
+            let (require, using): (&str, &str) = match variant {
+                Variant::Bun => (RUNTIME_REQUIRE_BUN, RUNTIME_USING_BUN),
+                Variant::BunMacro => (RUNTIME_REQUIRE_BUN, RUNTIME_USING_OTHER),
+                Variant::Node => (RUNTIME_REQUIRE_NODE, RUNTIME_USING_OTHER),
+                Variant::Other => (RUNTIME_REQUIRE_OTHER, RUNTIME_USING_OTHER),
+            };
+            [include_str!("../runtime.js"), require, using]
+                .concat()
+                .into_bytes()
+                .into_boxed_slice()
+        });
 
         let parse_task = ParseTask {
             ctx: None,
@@ -536,7 +546,7 @@ pub mod parse_worker {
                 parse: false,
                 ..Default::default()
             },
-            contents_or_fd: ContentsOrFd::Contents(runtime_code.as_bytes()),
+            contents_or_fd: ContentsOrFd::Contents(runtime_code),
             source_index: Index::RUNTIME,
             loader: Some(Loader::Js),
             known_target: target,
@@ -552,10 +562,10 @@ pub mod parse_worker {
                 callback: io_task_callback,
             },
             stage: ParseTaskStage::NeedsSourceCode,
-            tree_shaking: false,
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false,
             experimental_decorators: false,
+            use_define_for_class_fields: true,
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
@@ -571,7 +581,7 @@ pub mod parse_worker {
                 is_disabled: false,
                 is_symlink: false,
             },
-            contents: std::borrow::Cow::Borrowed(runtime_code.as_bytes()),
+            contents: std::borrow::Cow::Borrowed(runtime_code),
             // `Source.index` is `bun_ast::Index` (newtype `u32`),
             // distinct from `bun_ast::Index`. Runtime source is index 0.
             index: bun_ast::Index(Index::RUNTIME.get()),
@@ -580,7 +590,7 @@ pub mod parse_worker {
         RuntimeSource { parse_task, source }
     }
 
-    pub fn get_runtime_source(target: options::Target) -> RuntimeSource {
+    pub(crate) fn get_runtime_source(target: options::Target) -> RuntimeSource {
         get_runtime_source_comptime(target)
     }
 
@@ -605,7 +615,8 @@ pub mod parse_worker {
         // is disjoint from any other field the caller may hold a pointer to.
         let define = unsafe { &mut (*transpiler).options.define };
         let mut ast = JSAst::init(
-            js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?.unwrap(),
+            js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?
+                .ok_or(AnyError::ParserError)?,
         );
         ast.css = Some(crate::bundled_ast::CssAstRef::from_bump(
             bump.alloc(bun_css::BundlerStyleSheet::empty()),
@@ -624,7 +635,8 @@ pub mod parse_worker {
         // SAFETY: see `get_empty_css_ast` — disjoint field of a live `*mut Transpiler`.
         let define = unsafe { &mut (*transpiler).options.define };
         Ok(JSAst::init(
-            js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?.unwrap(),
+            js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?
+                .ok_or(AnyError::ParserError)?,
         ))
     }
 
@@ -632,9 +644,59 @@ pub mod parse_worker {
     // FileLoaderHash
     // ───────────────────────────────────────────────────────────────────────────
 
-    pub struct FileLoaderHash {
-        pub key: ast::StoreStr,
-        pub content_hash: u64,
+    pub(crate) struct FileLoaderHash {
+        pub(crate) key: ast::StoreStr,
+        pub(crate) content_hash: u64,
+    }
+
+    /// Returns the unique key the printer replaces with the asset's final path.
+    fn register_embedded_asset<'b>(
+        bump: &'b Bump,
+        source: &Source,
+        unique_key_prefix: u64,
+        unique_key_for_additional_file: &mut FileLoaderHash,
+    ) -> &'b [u8] {
+        use core::fmt::Write as _;
+        let mut buf = bun_alloc::ArenaString::new_in(bump);
+        write!(
+            &mut buf,
+            "{}",
+            crate::chunk::UniqueKey {
+                prefix: unique_key_prefix,
+                kind: crate::chunk::QueryKind::Asset,
+                index: source.index.0,
+            },
+        )
+        .expect("unreachable");
+        let unique_key = buf.into_bump_str().as_bytes();
+        *unique_key_for_additional_file = FileLoaderHash {
+            key: ast::StoreStr::new(unique_key),
+            content_hash: ContentHasher::run(&source.contents),
+        };
+        unique_key
+    }
+
+    /// `require("<unique key>")`. Unlike `import.meta.require`, the call target
+    /// prints per output format, so `--bytecode` (CommonJS) can compile it.
+    fn require_embedded_asset(unique_key: &[u8]) -> Expr {
+        let import_path = Expr::init(
+            E::String {
+                data: unique_key.into(),
+                ..Default::default()
+            },
+            Loc { start: 0 },
+        );
+        Expr::init(
+            E::Call {
+                target: Expr {
+                    data: ast::ExprData::ERequireCallTarget,
+                    loc: Loc { start: 0 },
+                },
+                args: bun_ast::ExprNodeList::from_arena_slice(&[import_path]),
+                ..Default::default()
+            },
+            Loc { start: 0 },
+        )
     }
 
     // ───────────────────────────────────────────────────────────────────────────
@@ -761,7 +823,7 @@ pub mod parse_worker {
                         source,
                         b"",
                     )?
-                    .unwrap(),
+                    .ok_or(AnyError::ParserError)?,
                 ));
             }
             Loader::Toml => {
@@ -784,7 +846,7 @@ pub mod parse_worker {
                             source,
                             b"",
                         )?
-                        .unwrap(),
+                        .ok_or(AnyError::ParserError)?,
                     ))
                 })();
                 let _ = temp_log.clone_to_with_recycled(log, true);
@@ -794,7 +856,12 @@ pub mod parse_worker {
                 let _trace = perf::trace("Bundler.ParseYAML");
                 let mut temp_log = Log::init();
                 let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
-                    let root: Expr = bun_parsers::yaml::YAML::parse(source, &mut temp_log, bump)?;
+                    let root: Expr = bun_parsers::yaml::YAML::parse(
+                        source,
+                        &mut temp_log,
+                        bump,
+                        bun_parsers::yaml::CyclicAliases::Reject,
+                    )?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,
@@ -805,7 +872,7 @@ pub mod parse_worker {
                             source,
                             b"",
                         )?
-                        .unwrap(),
+                        .ok_or(AnyError::ParserError)?,
                     ))
                 })();
                 let _ = temp_log.clone_to_with_recycled(log, true);
@@ -827,20 +894,64 @@ pub mod parse_worker {
                             source,
                             b"",
                         )?
-                        .unwrap(),
+                        .ok_or(AnyError::ParserError)?,
+                    ))
+                })();
+                let _ = temp_log.clone_to_with_recycled(log, true);
+                return result;
+            }
+            Loader::Xml => {
+                let _trace = perf::trace("Bundler.ParseXML");
+                let mut temp_log = Log::init();
+                let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
+                    bun_core::analytics::Features::xml_parse_inc();
+                    let rows: Expr = bun_parsers::xml::XML::parse(
+                        source,
+                        &mut temp_log,
+                        bump,
+                        bun_parsers::xml::Options {
+                            compact: true,
+                            encoding: bun_parsers::xml::InputEncoding::File,
+                        },
+                    )?;
+                    let root = bun_parsers::json::materialize(&rows, source, &mut temp_log, bump)?;
+                    Ok(JSAst::init(
+                        js_parser::new_lazy_export_ast(
+                            bump,
+                            &mut topts.define,
+                            opts,
+                            &mut temp_log,
+                            root,
+                            source,
+                            b"",
+                        )?
+                        .ok_or(AnyError::ParserError)?,
                     ))
                 })();
                 let _ = temp_log.clone_to_with_recycled(log, true);
                 return result;
             }
             Loader::Text => {
-                let root = Expr::init(
-                    E::String {
-                        data: source.contents().into(),
-                        ..Default::default()
-                    },
-                    Loc { start: 0 },
-                );
+                // A standalone executable embeds the text as a string body the
+                // runtime aliases without a copy (`encode_text_module`), so the
+                // module becomes `export default require("<bunfs path>")`.
+                // Browser chunks cannot reach the embedded graph.
+                let root = if topts.compile_mode.is_executable() && topts.target.is_bun() {
+                    require_embedded_asset(register_embedded_asset(
+                        bump,
+                        source,
+                        unique_key_prefix,
+                        unique_key_for_additional_file,
+                    ))
+                } else {
+                    Expr::init(
+                        E::String {
+                            data: source.contents().into(),
+                            ..Default::default()
+                        },
+                        Loc { start: 0 },
+                    )
+                };
                 let mut ast = JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump,
@@ -851,14 +962,14 @@ pub mod parse_worker {
                         source,
                         b"",
                     )?
-                    .unwrap(),
+                    .ok_or(AnyError::ParserError)?,
                 );
                 ast.add_url_for_css(
                     bump,
                     source,
                     Some(b"text/plain"),
                     None,
-                    topts.compile_to_standalone_html,
+                    topts.compile_mode.is_standalone_html(),
                 );
                 return Ok(ast);
             }
@@ -892,14 +1003,14 @@ pub mod parse_worker {
                         source,
                         b"",
                     )?
-                    .unwrap(),
+                    .ok_or(AnyError::ParserError)?,
                 );
                 ast.add_url_for_css(
                     bump,
                     source,
                     Some(b"text/html"),
                     None,
-                    topts.compile_to_standalone_html,
+                    topts.compile_mode.is_standalone_html(),
                 );
                 return Ok(ast);
             }
@@ -915,29 +1026,15 @@ pub mod parse_worker {
                     return Err(crate::Error::ParserError);
                 }
 
-                let path_to_use: &[u8] = 'brk: {
-                    // Implements embedded sqlite
-                    if loader == Loader::SqliteEmbedded {
-                        let mut buf = bun_alloc::ArenaString::new_in(bump);
-                        write!(
-                            &mut buf,
-                            "{}",
-                            crate::chunk::UniqueKey {
-                                prefix: unique_key_prefix,
-                                kind: crate::chunk::QueryKind::Asset,
-                                index: source.index.0,
-                            },
-                        )
-                        .expect("unreachable");
-                        let embedded_path = buf.into_bump_str().as_bytes();
-                        *unique_key_for_additional_file = FileLoaderHash {
-                            key: ast::StoreStr::new(embedded_path),
-                            content_hash: ContentHasher::run(&source.contents),
-                        };
-                        break 'brk embedded_path;
-                    }
-
-                    break 'brk source.path.text;
+                let path_to_use: &[u8] = if loader == Loader::SqliteEmbedded {
+                    register_embedded_asset(
+                        bump,
+                        source,
+                        unique_key_prefix,
+                        unique_key_for_additional_file,
+                    )
+                } else {
+                    source.path.text
                 };
 
                 // This injects the following code:
@@ -1021,7 +1118,7 @@ pub mod parse_worker {
                         source,
                         b"",
                     )?
-                    .unwrap(),
+                    .ok_or(AnyError::ParserError)?,
                 ));
             }
             Loader::Napi => {
@@ -1036,50 +1133,16 @@ pub mod parse_worker {
                     return Err(crate::Error::ParserError);
                 }
 
-                let mut buf = bun_alloc::ArenaString::new_in(bump);
-                write!(
-                    &mut buf,
-                    "{}",
-                    crate::chunk::UniqueKey {
-                        prefix: unique_key_prefix,
-                        kind: crate::chunk::QueryKind::Asset,
-                        index: source.index.0,
-                    },
-                )
-                .expect("unreachable");
-                let unique_key = buf.into_bump_str().as_bytes();
                 // This injects the following code:
                 //
                 // require(unique_key)
                 //
-                let import_path = Expr::init(
-                    E::String {
-                        data: unique_key.into(),
-                        ..Default::default()
-                    },
-                    Loc { start: 0 },
-                );
-
-                let require_args = bump.alloc_slice_fill_default::<Expr>(1);
-                require_args[0] = import_path;
-
-                let root = Expr::init(
-                    E::Call {
-                        target: Expr {
-                            data: ast::ExprData::ERequireCallTarget,
-                            loc: Loc { start: 0 },
-                        },
-                        // SAFETY: bump-owned slice; never grown via this Vec.
-                        args: unsafe { bun_ast::ExprNodeList::from_bump_slice(require_args) },
-                        ..Default::default()
-                    },
-                    Loc { start: 0 },
-                );
-
-                *unique_key_for_additional_file = FileLoaderHash {
-                    key: ast::StoreStr::new(unique_key),
-                    content_hash: ContentHasher::run(&source.contents),
-                };
+                let root = require_embedded_asset(register_embedded_asset(
+                    bump,
+                    source,
+                    unique_key_prefix,
+                    unique_key_for_additional_file,
+                ));
                 return Ok(JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump,
@@ -1090,7 +1153,7 @@ pub mod parse_worker {
                         source,
                         b"",
                     )?
-                    .unwrap(),
+                    .ok_or(AnyError::ParserError)?,
                 ));
             }
             Loader::Html => {
@@ -1116,7 +1179,7 @@ pub mod parse_worker {
                     source,
                     b"",
                 )?
-                .unwrap();
+                .ok_or(AnyError::ParserError)?;
                 ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
 
                 // We're banning import default of html loader files for now.
@@ -1242,7 +1305,7 @@ pub mod parse_worker {
                     symbols,
                 );
                 let _ = temp_log.append_to_maybe_recycled(log, source);
-                let mut ast = JSAst::init(lazy?.unwrap());
+                let mut ast = JSAst::init(lazy?.ok_or(AnyError::ParserError)?);
                 let css_ast_heap = crate::bundled_ast::CssAstRef::from_bump(bump.alloc(css_ast));
                 ast.css = Some(css_ast_heap);
                 ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
@@ -1311,14 +1374,14 @@ pub mod parse_worker {
                         source,
                         b"",
                     )?
-                    .unwrap(),
+                    .ok_or(AnyError::ParserError)?,
                 );
                 ast.add_url_for_css(
                     bump,
                     source,
                     None,
                     Some(unique_key),
-                    topts.compile_to_standalone_html,
+                    topts.compile_mode.is_standalone_html(),
                 );
                 return Ok(ast);
             }
@@ -1592,14 +1655,14 @@ pub mod parse_worker {
 
     #[repr(C)]
     pub struct OnBeforeParseArguments {
-        pub struct_size: usize,
-        pub context: *mut OnBeforeParsePlugin<'static, 'static>, // FFI (LIFETIMES.tsv)
-        pub path_ptr: *const u8,
-        pub path_len: usize,
-        pub namespace_ptr: *const u8,
-        pub namespace_len: usize,
-        pub default_loader: Loader,
-        pub external: *mut c_void, // FFI (LIFETIMES.tsv)
+        pub(crate) struct_size: usize,
+        pub(crate) context: *mut OnBeforeParsePlugin<'static, 'static>, // FFI (LIFETIMES.tsv)
+        pub(crate) path_ptr: *const u8,
+        pub(crate) path_len: usize,
+        pub(crate) namespace_ptr: *const u8,
+        pub(crate) namespace_len: usize,
+        pub(crate) default_loader: Loader,
+        pub(crate) external: *mut c_void, // FFI (LIFETIMES.tsv)
     }
 
     impl Default for OnBeforeParseArguments {
@@ -1619,40 +1682,21 @@ pub mod parse_worker {
 
     #[repr(C)]
     pub struct BunLogOptions {
-        pub struct_size: usize,
-        pub message_ptr: *const u8,
-        pub message_len: usize,
-        pub path_ptr: *const u8,
-        pub path_len: usize,
-        pub source_line_text_ptr: *const u8,
-        pub source_line_text_len: usize,
-        pub level: bun_ast::Level,
+        pub(crate) struct_size: usize,
+        pub(crate) message_ptr: *const u8,
+        pub(crate) message_len: usize,
+        pub(crate) path_ptr: *const u8,
+        pub(crate) path_len: usize,
+        pub(crate) source_line_text_ptr: *const u8,
+        pub(crate) source_line_text_len: usize,
+        pub(crate) level: bun_ast::Level,
         // Field order matches `packages/bun-native-bundler-plugin-api/bundler_plugin.h`
         // `BunLogOptions` (`line, lineEnd, column, columnEnd`) — verified by the
         // `assert_ffi_layout!` offset checks below.
-        pub line: i32,
-        pub line_end: i32,
-        pub column: i32,
-        pub column_end: i32,
-    }
-
-    impl Default for BunLogOptions {
-        fn default() -> Self {
-            Self {
-                struct_size: core::mem::size_of::<BunLogOptions>(),
-                message_ptr: core::ptr::null(),
-                message_len: 0,
-                path_ptr: core::ptr::null(),
-                path_len: 0,
-                source_line_text_ptr: core::ptr::null(),
-                source_line_text_len: 0,
-                level: bun_ast::Level::Err,
-                line: 0,
-                line_end: 0,
-                column: 0,
-                column_end: 0,
-            }
-        }
+        pub(crate) line: i32,
+        pub(crate) line_end: i32,
+        pub(crate) column: i32,
+        pub(crate) column_end: i32,
     }
 
     // These structs are passed by-pointer to **third-party** native plugins via
@@ -1677,7 +1721,7 @@ pub mod parse_worker {
     );
 
     impl BunLogOptions {
-        pub(crate) fn source_line_text(&self) -> &[u8] {
+        fn source_line_text(&self) -> &[u8] {
             if !self.source_line_text_ptr.is_null() && self.source_line_text_len > 0 {
                 // SAFETY: genuine FFI — ptr/len are populated by a third-party native
                 // plugin per `bundler_plugin.h`'s `BunLogOptions` ABI. Non-null and
@@ -1694,7 +1738,7 @@ pub mod parse_worker {
             b""
         }
 
-        pub(crate) fn path(&self) -> &[u8] {
+        fn path(&self) -> &[u8] {
             if !self.path_ptr.is_null() && self.path_len > 0 {
                 // SAFETY: genuine FFI — ptr/len are populated by a third-party native
                 // plugin per `bundler_plugin.h`'s `BunLogOptions` ABI. Non-null and
@@ -1706,7 +1750,7 @@ pub mod parse_worker {
             b""
         }
 
-        pub(crate) fn message(&self) -> &[u8] {
+        fn message(&self) -> &[u8] {
             if !self.message_ptr.is_null() && self.message_len > 0 {
                 // SAFETY: genuine FFI — ptr/len are populated by a third-party native
                 // plugin per `bundler_plugin.h`'s `BunLogOptions` ABI. Non-null and
@@ -1718,7 +1762,7 @@ pub mod parse_worker {
             b""
         }
 
-        pub(crate) fn append(&self, log: &mut Log, namespace: &'static [u8]) {
+        fn append(&self, log: &mut Log, namespace: &'static [u8]) {
             // `Location.{file,line_text}`
             // are `&'static [u8]` here; `Log::dupe` copies into Log-owned storage
             // (freed when the Log drops) and returns a lifetime-erased borrow —
@@ -1767,7 +1811,7 @@ pub mod parse_worker {
         /// `args_` and `log_options_`, when non-null, must point at live
         /// `OnBeforeParseArguments` / `BunLogOptions` for the duration of the
         /// call (the native-plugin FFI contract).
-        pub(crate) unsafe extern "C" fn log_fn(
+        unsafe extern "C" fn log_fn(
             args_: *mut OnBeforeParseArguments,
             log_options_: *mut BunLogOptions,
         ) {
@@ -1787,7 +1831,7 @@ pub mod parse_worker {
     }
 
     #[repr(C)]
-    pub(crate) struct OnBeforeParseResultWrapper {
+    struct OnBeforeParseResultWrapper {
         pub original_source: *const u8,
         pub original_source_len: usize,
         pub original_source_fd: Fd,
@@ -1801,18 +1845,18 @@ pub mod parse_worker {
 
     #[repr(C)]
     pub struct OnBeforeParseResult {
-        pub struct_size: usize,
-        pub source_ptr: *const u8,
-        pub source_len: usize,
-        pub loader: Loader,
+        pub(crate) struct_size: usize,
+        pub(crate) source_ptr: *const u8,
+        pub(crate) source_len: usize,
+        pub(crate) loader: Loader,
 
-        pub fetch_source_code_fn:
+        pub(crate) fetch_source_code_fn:
             unsafe extern "C" fn(*mut OnBeforeParseArguments, *mut OnBeforeParseResult) -> i32,
 
-        pub user_context: *mut c_void,
-        pub free_user_context: Option<extern "C" fn(*mut c_void)>,
+        pub(crate) user_context: *mut c_void,
+        pub(crate) free_user_context: Option<extern "C" fn(*mut c_void)>,
 
-        pub log: unsafe extern "C" fn(*mut OnBeforeParseArguments, *mut BunLogOptions),
+        pub(crate) log: unsafe extern "C" fn(*mut OnBeforeParseArguments, *mut BunLogOptions),
     }
 
     impl OnBeforeParseResult {
@@ -1820,9 +1864,7 @@ pub mod parse_worker {
         /// `result` must be the `.result` field of a live
         /// `OnBeforeParseResultWrapper`, with provenance covering the wrapper
         /// (derived via `addr_of_mut!(wrapper.result)`).
-        pub(crate) unsafe fn get_wrapper(
-            result: *mut OnBeforeParseResult,
-        ) -> *mut OnBeforeParseResultWrapper {
+        unsafe fn get_wrapper(result: *mut OnBeforeParseResult) -> *mut OnBeforeParseResultWrapper {
             // SAFETY: result points to OnBeforeParseResultWrapper.result (always
             // constructed that way in `OnBeforeParsePlugin::run`).
             let wrapper =
@@ -1838,7 +1880,7 @@ pub mod parse_worker {
     /// `args` and `result_ptr` must point at the live `OnBeforeParseArguments`
     /// / `OnBeforeParseResultWrapper.result` set up by `OnBeforeParsePlugin::run`
     /// (the native-plugin FFI contract).
-    pub(crate) unsafe extern "C" fn fetch_source_code(
+    unsafe extern "C" fn fetch_source_code(
         args: *mut OnBeforeParseArguments,
         result_ptr: *mut OnBeforeParseResult,
     ) -> i32 {
@@ -1928,7 +1970,7 @@ pub mod parse_worker {
     /// constructed by `OnBeforeParsePlugin::run` (called from C++ with that
     /// pointer).
     #[unsafe(no_mangle)]
-    pub(crate) unsafe extern "C" fn OnBeforeParseResult__reset(this: *mut OnBeforeParseResult) {
+    unsafe extern "C" fn OnBeforeParseResult__reset(this: *mut OnBeforeParseResult) {
         // SAFETY: `this` is the wrapper's `.result` field (caller contract).
         let wrapper = unsafe { OnBeforeParseResult::get_wrapper(this) };
         // SAFETY: called from C++ with valid ptr embedded in wrapper. Operate on
@@ -1952,7 +1994,7 @@ pub mod parse_worker {
     /// `this` must point at the live `OnBeforeParsePlugin` set up by
     /// `OnBeforeParsePlugin::run` (called from C++ with that pointer).
     #[unsafe(no_mangle)]
-    pub(crate) unsafe extern "C" fn OnBeforeParsePlugin__isDone(
+    unsafe extern "C" fn OnBeforeParsePlugin__isDone(
         this: *mut OnBeforeParsePlugin<'_, '_>,
     ) -> i32 {
         // SAFETY: called from C++ with valid ptr. Read via raw pointers
@@ -1982,7 +2024,7 @@ pub mod parse_worker {
     }
 
     impl<'a, 'b: 'a> OnBeforeParsePlugin<'a, 'b> {
-        pub fn run(
+        pub(crate) fn run(
             &mut self,
             plugin: &bundler::JSBundlerPlugin,
             from_plugin: &mut bool,
@@ -2031,10 +2073,10 @@ pub mod parse_worker {
             let namespace = if self.file_path.namespace == b"file" {
                 &bun_core::String::EMPTY
             } else {
-                namespace_str = bun_core::String::init(self.file_path.namespace);
+                namespace_str = bun_core::String::from_bytes(self.file_path.namespace);
                 &namespace_str
             };
-            let path_str = bun_core::String::init(self.file_path.text);
+            let path_str = bun_core::String::from_bytes(self.file_path.text);
             // Copy the `&Cell<i32>` out so passing it to FFI doesn't go through
             // `&mut self` after `self_ptr` is derived.
             let should_continue_running = self.should_continue_running;
@@ -2053,15 +2095,6 @@ pub mod parse_worker {
                 result_ptr,
                 should_continue_running,
             );
-            if cfg!(feature = "debug_logs") {
-                scoped_log!(
-                    ParseTask,
-                    "callOnBeforeParsePlugins({}:{}) = {}",
-                    bstr::BStr::new(self.file_path.namespace),
-                    bstr::BStr::new(self.file_path.text),
-                    count
-                );
-            }
             if count > 0 {
                 if let Some(e) = self.deferred_error {
                     if let Some(free_user_context) = wrapper.result.free_user_context {
@@ -2181,7 +2214,7 @@ pub mod parse_worker {
         // SAFETY: `data.transpiler` is initialized (see above) and pinned for the
         // bundle pass.
         let transpiler: *mut Transpiler<'static> = &raw mut data.transpiler;
-        // errdefer transpiler.resetStore() — reshaped: call on the err
+        // errdefer transpiler.reset_store() — reshaped: call on the err
         // path explicitly (scopeguard would alias `transpiler` access below).
         // SAFETY: `transpiler` is live; `resolver` projects a field of it.
         let resolver: *mut Resolver = unsafe { core::ptr::addr_of_mut!((*transpiler).resolver) };
@@ -2245,7 +2278,7 @@ pub mod parse_worker {
         // SAFETY: `worker_raw` just derived from the live `this: &mut Worker`.
         let mut transpiler: *mut Transpiler<'static> =
             std::ptr::from_mut(unsafe { (*worker_raw).transpiler_for_target(task.known_target) });
-        // Error-path cleanup (`transpiler.resetStore()` and
+        // Error-path cleanup (`transpiler.reset_store()` and
         // `if (.fd) entry.deinit(arena)`) is reshaped into the
         // explicit `match ast_result { Err(e) => ... }` cleanup below — scopeguard
         // would alias the `&mut Transpiler` / `&mut CacheEntry` borrows that
@@ -2448,6 +2481,7 @@ pub mod parse_worker {
         opts.features.minify_identifiers = topts.minify_identifiers;
         opts.features.minify_keep_names = topts.keep_names;
         opts.features.minify_whitespace = topts.minify_whitespace;
+        opts.use_define_for_class_fields = task.use_define_for_class_fields;
         opts.features.emit_decorator_metadata = task.emit_decorator_metadata;
         // emitDecoratorMetadata implies legacy/experimental decorators, as it only
         // makes sense with TypeScript's legacy decorator system (reflect-metadata).
@@ -2573,6 +2607,7 @@ pub mod parse_worker {
         };
         opts.code_splitting = topts.code_splitting;
         opts.module_type = task.module_type;
+        opts.is_entry_point = task.is_entry_point;
 
         task.jsx.parse = loader.is_jsx();
 
@@ -2654,11 +2689,7 @@ pub mod parse_worker {
             package_name: task.package_name,
 
             // Hash the files in here so that we do it in parallel.
-            content_hash_for_additional_file: if loader.should_copy_for_bundling() {
-                unique_key_for_additional_file.content_hash
-            } else {
-                0
-            },
+            content_hash_for_additional_file: unique_key_for_additional_file.content_hash,
         })
     }
 
@@ -2811,15 +2842,27 @@ pub mod parse_worker {
             .any_loop_mut()
             .expect("BundleV2.linker.loop must be set before scheduling ParseTask")
         {
-            bun_event_loop::AnyEventLoop::Js { owner } => {
-                owner.enqueue_task_concurrent(
+            bun_event_loop::AnyEventLoop::Js { .. } => {
+                let ct =
                     bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
                         // SAFETY: `p` is the `result` Box leaked above; ownership
                         // transfers to `on_complete`, which deallocates it.
                         unsafe { on_complete(p) };
                         Ok(())
-                    }),
-                );
+                    });
+                let poster = worker
+                    .ctx
+                    .js_poster
+                    .as_ref()
+                    .expect("JS-owned bundle has a poster");
+                if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
+                    // Owning JS VM torn down mid-bundle: free the hop and the result.
+                    // SAFETY: refused ⇒ we own the task box and the leaked result.
+                    unsafe {
+                        bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
+                        drop(bun_core::heap::take(result));
+                    }
+                }
             }
             bun_event_loop::AnyEventLoop::Mini(mini) => {
                 // SAFETY: `result` is a valid heap pointer with `task` at the given offset;
@@ -2872,7 +2915,7 @@ pub mod parse_worker {
     /// (or `ServerComponentParseTask`'s equivalent). Ownership transfers to
     /// this fn, which deallocates `result` before returning. Must run on the
     /// main/bundler thread (it dereferences `result.ctx` mutably).
-    pub unsafe fn on_complete(result: *mut Result) {
+    pub(crate) unsafe fn on_complete(result: *mut Result) {
         // SAFETY: result allocated via heap::alloc above; uniquely owned here.
         let r = unsafe { &mut *result };
         let ctx = r.ctx;
@@ -2889,10 +2932,4 @@ pub mod parse_worker {
     }
 } // end mod parse_worker
 
-pub use parse_worker::{FileLoaderHash, OnBeforeParsePlugin, get_runtime_source, on_complete};
-
-// ───────────────────────────────────────────────────────────────────────────
-// Re-exports
-// ───────────────────────────────────────────────────────────────────────────
-
-pub use crate::DeferredBatchTask::DeferredBatchTask;
+pub(crate) use parse_worker::on_complete;

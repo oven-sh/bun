@@ -100,7 +100,7 @@ impl BlockList {
 
     // NOTE: no `#[bun_jsc::host_fn]` — the `#[bun_jsc::JsClass]` derive emits
     // the `${T}Class__construct` C-ABI shim that calls `<Self>::constructor`.
-    pub fn constructor(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
+    pub(crate) fn constructor(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
         let ptr = bun_core::heap::into_raw(Box::new(Self {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             da_rules: JsCell::new(Vec::new()),
@@ -116,7 +116,7 @@ impl BlockList {
     }
 
     /// May be called from any thread.
-    pub fn estimated_size(&self) -> usize {
+    pub(crate) fn estimated_size(&self) -> usize {
         (core::mem::size_of::<Self>() + self.estimated_size.load(AtomicOrdering::SeqCst) as usize)
             / (self.ref_count.get().max(1) as usize)
     }
@@ -129,20 +129,20 @@ impl BlockList {
     // by the Free-kind shim (it emits a bare `fn_name(...)` call). The
     // `.classes.ts` codegen owns the static-method link name and calls
     // `<Self>::is_block_list` directly.
-    pub fn is_block_list(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn is_block_list(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let [value] = frame.arguments_as_array::<1>();
         Ok(JSValue::from(value.as_::<Self>().is_some()))
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn add_address(
+    pub(crate) fn add_address(
         this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let [address_js, mut family_js] = frame.arguments_as_array::<2>();
         if family_js.is_undefined() {
-            family_js = BunString::static_str("ipv4").to_js(global)?;
+            family_js = BunString::static_("ipv4").to_js(global)?;
         }
         let address = if let Some(sa) = address_js.as_class_ref::<SocketAddress>() {
             sa._addr
@@ -162,10 +162,14 @@ impl BlockList {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn add_range(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn add_range(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let [start_js, end_js, mut family_js] = frame.arguments_as_array::<3>();
         if family_js.is_undefined() {
-            family_js = BunString::static_str("ipv4").to_js(global)?;
+            family_js = BunString::static_("ipv4").to_js(global)?;
         }
         let start = if let Some(sa) = start_js.as_class_ref::<SocketAddress>() {
             sa._addr
@@ -181,7 +185,7 @@ impl BlockList {
             validators::validate_string(global, family_js, format_args!("family"))?;
             SocketAddress::init_from_addr_family(global, end_js, family_js)?._addr
         };
-        if let Some(ord) = _compare(&start, &end) {
+        if let Some(ord) = compare(&start, &end) {
             if ord == Ordering::Greater {
                 return Err(global.throw_invalid_argument_value_custom(
                     b"start",
@@ -201,14 +205,14 @@ impl BlockList {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn add_subnet(
+    pub(crate) fn add_subnet(
         this: &Self,
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let [network_js, prefix_js, mut family_js] = frame.arguments_as_array::<3>();
         if family_js.is_undefined() {
-            family_js = BunString::static_str("ipv4").to_js(global)?;
+            family_js = BunString::static_("ipv4").to_js(global)?;
         }
         let network = if let Some(sa) = network_js.as_class_ref::<SocketAddress>() {
             sa._addr
@@ -249,10 +253,14 @@ impl BlockList {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn check(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn check(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         let [address_js, mut family_js] = frame.arguments_as_array::<2>();
         if family_js.is_undefined() {
-            family_js = BunString::static_str("ipv4").to_js(global)?;
+            family_js = BunString::static_("ipv4").to_js(global)?;
         }
         let address_val;
         let address: &sockaddr = if let Some(sa) = address_js.as_class_ref::<SocketAddress>() {
@@ -272,26 +280,30 @@ impl BlockList {
                 }
             }
         };
-        let _guard = this.mutex.lock_guard();
-        for item in this.da_rules.get().iter() {
+        Ok(JSValue::js_boolean(this.check_sockaddr(address)))
+    }
+
+    pub(crate) fn check_sockaddr(&self, address: &sockaddr) -> bool {
+        let _guard = self.mutex.lock_guard();
+        for item in self.da_rules.get().iter() {
             match item {
                 Rule::Addr(a) => {
-                    let Some(order) = _compare(address, a) else {
+                    let Some(order) = compare(address, a) else {
                         continue;
                     };
                     if order.is_eq() {
-                        return Ok(JSValue::TRUE);
+                        return true;
                     }
                 }
                 Rule::Range { start, end } => {
-                    let Some(os) = _compare(address, start) else {
+                    let Some(os) = compare(address, start) else {
                         continue;
                     };
-                    let Some(oe) = _compare(address, end) else {
+                    let Some(oe) = compare(address, end) else {
                         continue;
                     };
                     if os.is_ge() && oe.is_le() {
-                        return Ok(JSValue::TRUE);
+                        return true;
                     }
                 }
                 Rule::Subnet { network, prefix } => {
@@ -299,13 +311,13 @@ impl BlockList {
                         if let Some(subnet_addr) = network.as_sin().map(|s| s.addr) {
                             if *prefix == 32 {
                                 if ip_addr == subnet_addr {
-                                    return Ok(JSValue::TRUE);
+                                    return true;
                                 } else {
                                     continue;
                                 }
                             }
                             if *prefix == 0 {
-                                return Ok(JSValue::TRUE);
+                                return true;
                             }
                             let one: u32 = 1;
                             let mask_addr: u32 =
@@ -313,7 +325,7 @@ impl BlockList {
                             let ip_net: u32 = u32::swap_bytes(ip_addr) & mask_addr;
                             let subnet_net: u32 = u32::swap_bytes(subnet_addr) & mask_addr;
                             if ip_net == subnet_net {
-                                return Ok(JSValue::TRUE);
+                                return true;
                             }
                         }
                     }
@@ -332,37 +344,37 @@ impl BlockList {
                         let subnet_addr: u128 = u128::from_ne_bytes(net6.addr);
                         if *prefix == 128 {
                             if ip_addr == subnet_addr {
-                                return Ok(JSValue::TRUE);
+                                return true;
                             } else {
                                 continue;
                             }
                         }
                         if *prefix == 0 {
-                            return Ok(JSValue::TRUE);
+                            return true;
                         }
                         let one: u128 = 1;
                         let mask_addr = ((one << (*prefix as u32)) - 1) << (128 - *prefix as u32);
                         let ip_net: u128 = ip_addr.swap_bytes() & mask_addr;
                         let subnet_net: u128 = subnet_addr.swap_bytes() & mask_addr;
                         if ip_net == subnet_net {
-                            return Ok(JSValue::TRUE);
+                            return true;
                         }
                     }
                 }
             }
         }
-        Ok(JSValue::FALSE)
+        false
     }
 
     #[bun_jsc::host_fn(getter)]
-    pub fn rules(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn rules(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let _guard = this.mutex.lock_guard();
         let rules = this.da_rules.get();
         // GC must be able to visit
         let array = JSValue::create_empty_array(global, rules.len())?;
 
         for (i, rule) in rules.iter().enumerate() {
-            let mut s = match rule {
+            let s = match rule {
                 Rule::Addr(a) => {
                     let mut buf = [0u8; inet::INET6_ADDRSTRLEN as usize];
                     BunString::create_format(format_args!(
@@ -391,12 +403,12 @@ impl BlockList {
                     ))
                 }
             };
-            array.put_index(global, i as u32, s.transfer_to_js(global)?)?;
+            array.put_index(global, i as u32, s.into_js(global)?)?;
         }
         Ok(array)
     }
 
-    pub fn on_structured_clone_serialize(
+    pub(crate) fn on_structured_clone_serialize(
         this: &Self,
         _global: &JSGlobalObject,
         ctx: *mut c_void,
@@ -423,34 +435,31 @@ impl BlockList {
     // signature is fixed by `generate-classes.ts`, so the deref is documented with
     // the SAFETY comment below.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn on_structured_clone_deserialize(
+    /// `Ok(None)`: the bytes are not a valid record (the deserializer reports its usual error).
+    pub(crate) fn on_structured_clone_deserialize(
         global: &JSGlobalObject,
         ptr: *mut *mut u8,
         end: *const u8,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Option<JSValue>> {
         // SAFETY: `*ptr` and `end` bound a contiguous byte buffer owned by the
         // caller (C++ SerializedScriptValue); `end >= *ptr`. `ptr` itself is a
         // non-null out-param the caller expects us to advance.
-        let ptr = unsafe { &mut *ptr };
-        let total_length: usize = (end as usize) - (*ptr as usize);
-        // SAFETY: `*ptr` through `end` is the contiguous C++-owned deserialization
-        // buffer (see above); `total_length = end - *ptr`, so the resulting slice
+        let start: *mut u8 = unsafe { *ptr };
+        let total_length: usize = (end as usize) - (start as usize);
+        // SAFETY: `start` through `end` is the contiguous C++-owned deserialization
+        // buffer (see above); `total_length = end - start`, so the resulting slice
         // is exactly that buffer and stays valid for the lifetime of `r`.
         let mut r =
-            bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(*ptr, total_length) });
+            bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(start, total_length) });
 
-        let nonce = match r.read_int_le::<u64>() {
-            Ok(n) => n,
-            Err(_) => {
-                return Err(global.throw(format_args!(
-                    "BlockList.onStructuredCloneDeserialize failed"
-                )));
-            }
+        let Ok(nonce) = r.read_int_le::<u64>() else {
+            return Ok(None);
         };
 
-        // Advance the pointer by the number of bytes consumed
-        // SAFETY: `r.pos <= total_length` (`read_exact` bounds-checks via `checked_add`).
-        *ptr = unsafe { (*ptr).add(r.pos) };
+        // Advance the caller's cursor by the number of bytes consumed
+        // SAFETY: `r.pos <= total_length` (`read_exact` bounds-checks via
+        // `checked_add`); `ptr` is the caller's live out-param (see above).
+        unsafe { *ptr = start.add(r.pos) };
 
         // A single SerializedScriptValue can be deserialized multiple times
         // (e.g. BroadcastChannel fan-out), so each wrapper must own its own ref
@@ -460,9 +469,7 @@ impl BlockList {
         let this: *mut Self = {
             let refs = SERIALIZED_REFS.lock();
             let Some(addr) = refs.iter().find_map(|&(n, a)| (n == nonce).then_some(a)) else {
-                return Err(global.throw(format_args!(
-                    "BlockList.onStructuredCloneDeserialize failed"
-                )));
+                return Ok(None);
             };
             let this = addr as *mut Self;
             // SAFETY: the entry was pushed by `on_structured_clone_serialize`
@@ -476,7 +483,7 @@ impl BlockList {
         // SAFETY: ownership of the ref taken above transfers to the C++ wrapper
         // (released via `finalize` → `deref`). `to_js_ptr` is the
         // `#[bun_jsc::JsClass]`-generated `${T}__create` shim.
-        Ok(unsafe { Self::to_js_ptr(this, global) })
+        Ok(Some(unsafe { Self::to_js_ptr(this, global) }))
     }
 }
 
@@ -506,19 +513,19 @@ pub(crate) enum Rule {
     Subnet { network: sockaddr, prefix: u8 },
 }
 
-fn _compare(l: &sockaddr, r: &sockaddr) -> Option<Ordering> {
+fn compare(l: &sockaddr, r: &sockaddr) -> Option<Ordering> {
     if let Some(l_4) = l.as_v4() {
         if let Some(r_4) = r.as_v4() {
             return Some(l_4.swap_bytes().cmp(&r_4.swap_bytes()));
         }
     }
     if let (Some(l6), Some(r6)) = (l.as_sin6(), r.as_sin6()) {
-        return Some(_compare_ipv6(l6, r6));
+        return Some(compare_ipv6(l6, r6));
     }
     None
 }
 
-fn _compare_ipv6(l: &inet::sockaddr_in6, r: &inet::sockaddr_in6) -> Ordering {
+fn compare_ipv6(l: &inet::sockaddr_in6, r: &inet::sockaddr_in6) -> Ordering {
     let l128 = u128::from_ne_bytes(l.addr).swap_bytes();
     let r128 = u128::from_ne_bytes(r.addr).swap_bytes();
     l128.cmp(&r128)

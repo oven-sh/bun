@@ -1,6 +1,7 @@
 #include "quic.h"
 
 #include "internal/internal.h"
+#include "internal/fault_inject.h"
 #if defined(_WIN32) && !defined(WIN32)
 /* lsquic.h gates on WIN32 (not _WIN32) to pick <vc_compat.h> over <sys/uio.h>. */
 #define WIN32 1
@@ -27,6 +28,7 @@ extern SSL_CTX *us_ssl_ctx_build_raw(
     struct us_bun_socket_context_options_t options,
     enum create_bun_socket_error_t *err);
 extern X509_STORE *us_get_default_ca_store(void);
+extern struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl);
 
 #define US_QUIC_READ_BUF (16 * 1024)
 
@@ -39,6 +41,7 @@ struct us_quic_hset {
     struct lsxpack_header scratch;
     struct us_quic_header_t *headers;
     unsigned int count, hcap;
+    int is_server;
 };
 
 struct us_quic_sni {
@@ -236,8 +239,11 @@ static int us_quic_send_one(LIBUS_SOCKET_DESCRIPTOR fd, const struct lsquic_out_
     msg.msg_namelen = sa_len(spec->dest_sa);
     msg.msg_iov = spec->iov;
     msg.msg_iovlen = spec->iovlen;
-    ssize_t r;
-    do { r = sendmsg(fd, &msg, 0); } while (r < 0 && errno == EINTR);
+    ssize_t r = 0; int unused = 0;
+    if (!US_FAULT_CHECK(US_FAULT_SENDMSG, fd, r, unused)) {
+        do { r = sendmsg(fd, &msg, 0); } while (r < 0 && errno == EINTR);
+    }
+    (void) unused;
     return r < 0 ? -1 : 1;
 #endif
 }
@@ -269,9 +275,15 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
             k++;
         }
         int r;
-        do { r = sendmmsg(fd, mm, k, 0); } while (r < 0 && errno == EINTR);
-        if (r < 0) break;
-        sent += (unsigned) r;
+        {
+            ssize_t injected = 0; int unused = 0;
+            if (US_FAULT_CHECK(US_FAULT_SENDMSG, fd, injected, unused)) {
+                r = (int) injected;
+            } else {
+                do { r = sendmmsg(fd, mm, k, 0); } while (r < 0 && errno == EINTR);
+            }
+            (void) injected; (void) unused;
+        }
         /* sendmmsg(2) BUGS: on a short return the error code is lost and the
          * caller is expected to retry starting at the first failed message.
          * udp(7): an unconnected socket surfaces async ICMP from an earlier
@@ -279,13 +291,25 @@ static int us_quic_packets_out(void *out_ctx, const struct lsquic_out_spec *spec
          * a packet to a live peer can fail mid-batch with an error that
          * belongs to a prior dead peer. So loop instead of breaking; r >= 1
          * here so `sent` advances and the retry's first message either
-         * consumes the stale error (returns -1, handled below) or succeeds. */
+         * consumes the stale error (returns -1, handled below) or succeeds.
+         * The r < 0 path gets one retry for the same reason: the failing
+         * read cleared sk_err, so the retry sends cleanly unless this is
+         * real backpressure. EAGAIN/ENOBUFS (send buffer full) stays a
+         * break — that's the backpressure lsquic's pause is for. */
+        if (r < 0 && !(errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS)) {
+            do { r = sendmmsg(fd, mm, k, 0); } while (r < 0 && errno == EINTR);
+        }
+        if (r < 0) break;
+        sent += (unsigned) r;
     }
 #else
     for (; sent < n; sent++) {
         us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) specs[sent].peer_ctx;
         if (!ls->udp) { errno = EBADF; break; }
-        if (us_quic_send_one(us_poll_fd((struct us_poll_t *) ls->udp), &specs[sent]) < 0) break;
+        if (us_quic_send_one(us_poll_fd((struct us_poll_t *) ls->udp), &specs[sent]) < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS) break;
+            if (us_quic_send_one(us_poll_fd((struct us_poll_t *) ls->udp), &specs[sent]) < 0) break;
+        }
     }
 #endif
 
@@ -401,8 +425,32 @@ static int us_quic_alpn_select(SSL *ssl, const unsigned char **out, unsigned cha
 /* ───── header-set interface ───── */
 
 static void *us_quic_hsi_create(void *hsi_ctx, lsquic_stream_t *s, int is_push) {
-    (void) hsi_ctx; (void) s; (void) is_push;
-    return us_calloc(1, sizeof(struct us_quic_hset));
+    (void) s; (void) is_push;
+    struct us_quic_hset *h = (struct us_quic_hset *) us_calloc(1, sizeof(struct us_quic_hset));
+    if (h) h->is_server = !((us_quic_socket_context_t *) hsi_ctx)->is_client;
+    return h;
+}
+
+static int us_quic_field_is_malformed(const struct lsxpack_header *hdr) {
+    const unsigned char *name = (const unsigned char *) lsxpack_header_get_name(hdr);
+    const unsigned char *val = (const unsigned char *) lsxpack_header_get_value(hdr);
+    if (hdr->name_len == 0) return 1;
+    if (name[0] == ':' && hdr->name_len == 1) return 1;
+    for (unsigned int i = name[0] == ':'; i < hdr->name_len; i++) {
+        unsigned char c = name[i];
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) continue;
+        switch (c) {
+        case '!': case '#': case '$': case '%': case '&': case '\'': case '*':
+        case '+': case '-': case '.': case '^': case '_': case '`': case '|': case '~':
+            continue;
+        }
+        return 1;
+    }
+    for (unsigned int i = 0; i < hdr->val_len; i++) {
+        unsigned char c = val[i];
+        if (c == 0 || c == '\r' || c == '\n') return 1;
+    }
+    return 0;
 }
 
 static struct lsxpack_header *us_quic_hsi_prepare(void *hset_p, struct lsxpack_header *hdr, size_t space) {
@@ -433,6 +481,7 @@ static struct lsxpack_header *us_quic_hsi_prepare(void *hset_p, struct lsxpack_h
 static int us_quic_hsi_process(void *hset_p, struct lsxpack_header *hdr) {
     struct us_quic_hset *h = (struct us_quic_hset *) hset_p;
     if (hdr == NULL) return 0; /* end of headers */
+    if (h->is_server && us_quic_field_is_malformed(hdr)) return 1;
     if (h->count == h->hcap) {
         unsigned int ncap = h->hcap ? h->hcap * 2 : 16;
         struct us_quic_header_t *nh = (struct us_quic_header_t *)
@@ -474,9 +523,18 @@ static void us_quic_hsi_discard(void *hset_p) {
 
 /* ───── stream interface ───── */
 
+static int us_quic_server_peer_verified(us_quic_socket_context_t *ctx, lsquic_conn_t *conn) {
+    SSL *ssl = lsquic_conn_get_ssl(conn);
+    int enforce = us_ssl_ctx_reject_unauthorized(ctx->ssl_ctx) ||
+        (ssl && us_ssl_ctx_reject_unauthorized(SSL_get_SSL_CTX(ssl)));
+    if (!enforce) return 1;
+    if (!ssl) return 0;
+    return us_ssl_socket_verify_error_from_ssl(ssl).error == 0;
+}
+
 static lsquic_conn_ctx_t *us_quic_on_new_conn(void *if_ctx, lsquic_conn_t *conn) {
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *) if_ctx;
-    if (ctx->closing) {
+    if (ctx->closing || (!ctx->is_client && !us_quic_server_peer_verified(ctx, conn))) {
         lsquic_conn_close(conn);
         return NULL;
     }
@@ -495,6 +553,9 @@ static lsquic_conn_ctx_t *us_quic_on_new_conn(void *if_ctx, lsquic_conn_t *conn)
     ctx->loop->num_polls++;
 #endif
     ctx->conn_count++;
+    /* Arm the sweep-timer refcount so DateHeaderTimer runs for h3-only
+     * servers; the TCP path does this per-socket in context.c. */
+    us_internal_enable_sweep_timer(ctx->loop);
     qs->next = ctx->conns;
     ctx->conns = qs;
     if (ctx->on_open) ctx->on_open(qs);
@@ -516,6 +577,7 @@ static void us_quic_on_conn_closed(lsquic_conn_t *conn) {
     ctx->loop->num_polls--;
 #endif
     ctx->conn_count--;
+    us_internal_disable_sweep_timer(ctx->loop);
     /* During graceful drain the UDP fd is the only thing left holding the
      * loop; release it when the last conn closes so the process can exit. */
     if (ctx->closing && ctx->conn_count == 0) {
@@ -657,11 +719,12 @@ void us_quic_global_init(void) {
 #endif
 }
 
-static void us_quic_prepare_ssl_ctx(SSL_CTX *ssl) {
+static void us_quic_prepare_ssl_ctx(SSL_CTX *ssl, const struct us_bun_socket_context_options_t *options) {
     SSL_CTX_set_min_proto_version(ssl, TLS1_3_VERSION);
     SSL_CTX_set_max_proto_version(ssl, TLS1_3_VERSION);
     SSL_CTX_set_alpn_select_cb(ssl, us_quic_alpn_select, NULL);
     SSL_CTX_set_early_data_enabled(ssl, 0);
+    us_ssl_ctx_set_sni_policy(ssl, options->request_cert, options->reject_unauthorized);
 }
 
 us_quic_socket_context_t *us_create_quic_socket_context(
@@ -671,7 +734,7 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     enum create_bun_socket_error_t ssl_err = 0;
     SSL_CTX *ssl = us_ssl_ctx_build_raw(options, &ssl_err);
     if (!ssl) return NULL;
-    us_quic_prepare_ssl_ctx(ssl);
+    us_quic_prepare_ssl_ctx(ssl, &options);
 
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *)
         us_calloc(1, sizeof(us_quic_socket_context_t) + ext_size);
@@ -731,7 +794,9 @@ int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
     enum create_bun_socket_error_t ssl_err = 0;
     SSL_CTX *ssl = us_ssl_ctx_build_raw(options, &ssl_err);
     if (!ssl) return -1;
-    us_quic_prepare_ssl_ctx(ssl);
+    us_quic_prepare_ssl_ctx(ssl, &options);
+    SSL_CTX_set_verify(ssl, SSL_CTX_get_verify_mode(ssl) | SSL_CTX_get_verify_mode(ctx->ssl_ctx),
+        SSL_CTX_get_verify_callback(ssl));
     if (ctx->sni_count == ctx->sni_cap) {
         unsigned ncap = ctx->sni_cap ? ctx->sni_cap * 2 : 4;
         struct us_quic_sni *n = (struct us_quic_sni *) us_realloc(ctx->sni, ncap * sizeof(*n));
@@ -1172,22 +1237,6 @@ us_quic_socket_context_t *us_create_quic_client_context(
     return ctx;
 }
 
-static int us_quic_resolve(const char *host, int port, struct sockaddr_storage *out) {
-    memset(out, 0, sizeof(*out));
-    struct sockaddr_in *v4 = (struct sockaddr_in *) out;
-    struct sockaddr_in6 *v6 = (struct sockaddr_in6 *) out;
-    if (inet_pton(AF_INET, host, &v4->sin_addr) == 1) {
-        v4->sin_family = AF_INET;
-        v4->sin_port = htons((unsigned short) port);
-        return 0;
-    }
-    if (inet_pton(AF_INET6, host, &v6->sin6_addr) == 1) {
-        v6->sin6_family = AF_INET6;
-        v6->sin6_port = htons((unsigned short) port);
-        return 0;
-    }
-    return -1;
-}
 
 /* One UDP endpoint for all client connections on this loop. lsquic
  * demultiplexes incoming datagrams by connection ID, so a single ephemeral
@@ -1334,8 +1383,7 @@ int us_quic_socket_context_connect(
     *out_pending = NULL;
 
     struct sockaddr_storage peer_ss;
-    /* IP literal — no DNS at all. */
-    if (us_quic_resolve(host, port, &peer_ss) == 0) {
+    if (Bun__parseIpAddress(host, (uint16_t) port, &peer_ss)) {
         *out_qs = us_quic_connect_addr(ctx, (struct sockaddr *) &peer_ss, sni,
             reject_unauthorized);
         return *out_qs ? 1 : -1;

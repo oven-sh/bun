@@ -88,6 +88,7 @@ members = [
   "src/shell_parser",
   "src/tcc_sys",
   "src/uws_sys",
+  "src/lsquic_sys",
   "src/zstd",
   "src/options_types",
   "src/output",
@@ -99,13 +100,21 @@ members = [
   "src/spawn",
   "src/spawn_sys",
   "src/bunfig",
-  "src/bun_bin",
 ]
 # `vendor/lolhtml` (the `lol_html` crate) is a non-member path dependency,
 # fetched into `vendor/` by `scripts/build/deps/lolhtml.ts` before cargo runs.
 # Keeping it out of `members` means its `[profile]` section is ignored and its
 # heavy dev-dependencies (criterion, html5ever) never enter `Cargo.lock`.
 exclude = ["vendor"]
+
+# Lint pack run by `bun run rust:mordant` (.github/workflows/rust-lints.yml). Pinned:
+# bumping the rev is a PR of its own, where whatever the new revision finds gets
+# fixed or added to mordant-baseline.toml. Mordant brings its own nightly
+# (see its rust-toolchain), which must still be able to compile this workspace.
+[workspace.metadata.dylint]
+libraries = [
+    { git = "https://github.com/scarletindustries/mordant", rev = "12d279767fd7150afe7e549003896b5ec54493f6" },
+]
 
 [workspace.package]
 version = "0.0.0"
@@ -135,6 +144,16 @@ panic = "abort"
 
 [profile.dev]
 panic = "abort"
+# Split DWARF: debuginfo goes into `.dwo` files alongside each `.o` instead of
+# being packed into the rlibs and then re-packed into `libbun_runtime.a`. The debug
+# `.a` was ~1.5 GB (≥80% debuginfo) and the staticlib step alone spent
+# ~6s archiving it. With split DWARF the `.a` is ~1/4 the size, per-crate
+# codegen writes less to disk, and `gdb`/`lldb` still resolve full debuginfo via
+# the skeleton CUs (`DW_AT_dwo_name`) pointing into `<target>/deps/*.dwo`.
+# No effect on the compiled code. Windows uses PDB so this is a no-op there
+# (rustc ignores it); Darwin's `"unpacked"` is the `.o`-is-the-debuginfo mode
+# `dsymutil` already expects.
+split-debuginfo = "unpacked"
 
 # Fast-iteration release build for local benching when fat LTO's link time
 # (minutes) is in the way. `bun run build:release --cargo-profile=release-dev`.
@@ -171,7 +190,7 @@ codegen-units = 1
 strip = "symbols"
 # Pin these so the shim PE is byte-identical across bun's own profiles.
 # rust.ts sets CARGO_PROFILE_RELEASE_{LTO,DEBUG_ASSERTIONS} for the main
-# bun_bin build and the shim build shares that env; without explicit values
+# bun_runtime build and the shim build shares that env; without explicit values
 # here the env overrides on `release` would be inherited.
 debug-assertions = false
 overflow-checks = false
@@ -319,7 +338,7 @@ new_ret_no_self = "allow"
 map_identity = "allow"
 
 [workspace.dependencies]
-rust-argon2 = "3.0"
+rust-argon2 = { path = "vendor/rust-argon2" }
 bcrypt = "0.19"
 getrandom = "0.4"
 strum = { version = "0.26", features = ["derive"] }
@@ -339,14 +358,13 @@ const_format = "0.2"
 enum-map = "2"
 enumset = "1"
 libc = "0.2"
-memchr = "2"
 rustix = { version = "0.38", default-features = false, features = ["std", "fs", "event", "process", "net"] }
 bitflags = "2"
 thiserror = "2"
 smallvec = "1"
-bumpalo = { version = "3", features = ["collections", "boxed"] }
 typed-arena = "2"
 itoa = "1"
+encoding_rs = "0.8.35"
 # Vendored, not crates.io — see the `exclude = ["vendor"]` note above.
 lol_html = { path = "vendor/lolhtml" }
 bun_opaque = { path = "src/opaque" }
@@ -437,11 +455,11 @@ bun_spawn = { path = "src/spawn" }
 bun_spawn_sys = { path = "src/spawn_sys" }
 bun_tcc_sys = { path = "src/tcc_sys" }
 bun_uws_sys = { path = "src/uws_sys" }
+bun_lsquic_sys = { path = "src/lsquic_sys" }
 bun_zstd = { path = "src/zstd" }
 bun_options_types = { path = "src/options_types" }
 bun_bunfig = { path = "src/bunfig" }
 bun_output = { path = "src/output" }
-bun_runtime = { path = "src/runtime", default-features = false }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
 bun_transpiler = { path = "src/transpiler" }

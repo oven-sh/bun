@@ -12,8 +12,8 @@ use core::ptr::NonNull;
 
 #[derive(Default)]
 pub struct Mkdir {
-    pub opts: Opts,
-    pub state: State,
+    pub(crate) opts: Opts,
+    pub(crate) state: State,
 }
 
 #[derive(Default)]
@@ -26,23 +26,23 @@ pub enum State {
 }
 
 pub struct Exec {
-    pub started: bool,
-    pub tasks_count: usize,
-    pub tasks_done: usize,
-    pub output_waiting: u16,
-    pub output_done: u16,
+    pub(crate) started: bool,
+    pub(crate) tasks_count: usize,
+    pub(crate) tasks_done: usize,
+    pub(crate) output_waiting: u16,
+    pub(crate) output_done: u16,
     /// Index into `Builtin::args` where filepath args start (storing the
     /// index keeps the lifetime tied to the Cmd's argv without a
     /// self-reference).
-    pub args_start: usize,
-    pub err: Option<bun_sys::Error>,
+    pub(crate) args_start: usize,
+    pub(crate) err: Option<bun_sys::Error>,
     /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
     /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
     /// directly (IOWriter.rs is out of scope here): `write_err`/`write_out`
     /// push, `on_io_writer_chunk` pops and forwards to
     /// `OutputTask::on_io_writer_chunk` so the box is reclaimed and the
     /// writeErr→writeOut→onDone state machine runs.
-    pub output_queue: std::collections::VecDeque<*mut OutputTask<Mkdir>>,
+    pub(crate) output_queue: std::collections::VecDeque<*mut OutputTask<Mkdir>>,
 }
 
 impl Mkdir {
@@ -86,7 +86,7 @@ impl Mkdir {
         Builtin::write_failing_error(interp, cmd, Kind::Mkdir.usage_string(), 1)
     }
 
-    pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         // NOTE: reshaped for borrowck — read scalars, drop the borrow,
         // then act.
         let action = match &mut Self::state_mut(interp, cmd).state {
@@ -158,11 +158,7 @@ impl Mkdir {
 
     /// The caller ([`ShellMkdirTask::run_from_main_thread`]) owns the heap
     /// allocation and drops it after this returns.
-    pub(crate) fn on_shell_mkdir_task_done(
-        interp: &Interpreter,
-        cmd: NodeId,
-        task: &mut ShellMkdirTask,
-    ) {
+    fn on_shell_mkdir_task_done(interp: &Interpreter, cmd: NodeId, task: &mut ShellMkdirTask) {
         let output = core::mem::take(&mut task.created_directories);
         let err = task.err.take();
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -277,7 +273,7 @@ pub(crate) struct ShellMkdirTask {
 }
 
 impl ShellMkdirTask {
-    pub(crate) fn create(
+    fn create(
         cmd: NodeId,
         opts: Opts,
         filepath: Vec<u8>,
@@ -298,10 +294,11 @@ impl ShellMkdirTask {
         bun_core::heap::into_raw(task)
     }
 
-    pub(crate) fn run_from_thread_pool(this: &mut ShellMkdirTask) {
+    fn run_from_thread_pool(this: &mut ShellMkdirTask) {
         use bun_paths::{Platform, platform, resolve_path};
         // We have to give an absolute path to our mkdir implementation for it
         // to work with cwd.
+        let mut spill = Vec::new();
         let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
             // Owned `Vec<u8>`; ensure NUL-terminated.
             if this.filepath.last() != Some(&0) {
@@ -309,15 +306,25 @@ impl ShellMkdirTask {
             }
             bun_core::ZStr::from_buf(&this.filepath, this.filepath.len() - 1)
         } else {
-            resolve_path::join_z::<platform::Auto>(&[&this.cwd_path, &this.filepath])
+            resolve_path::join_z_spill::<platform::Auto>(
+                &mut spill,
+                &[&this.cwd_path, &this.filepath],
+            )
         };
+
+        // `NodeFS` expects the `Valid::path_too_long` bound its JS callers
+        // enforce; past it, `PathLike::slice_z` yields "" and mkdir reports ENOENT.
+        if filepath.len() >= bun_paths::MAX_PATH_BYTES {
+            this.err = Some(
+                bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::mkdir)
+                    .with_path(filepath.as_bytes()),
+            );
+            return;
+        }
 
         let mut node_fs = NodeFS::default();
         let args = fs_args::Mkdir {
-            path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                filepath.as_bytes(),
-                false,
-            )),
+            path: PathLike::borrowed(filepath.as_bytes()),
             recursive: this.opts.parents,
             mode: fs_args::Mkdir::DEFAULT_MODE,
             always_return_none: true,
@@ -354,7 +361,7 @@ impl ShellMkdirTask {
 
     /// Reclaims ownership of the heap allocation produced by [`Self::create`]
     /// and forwards it to [`Mkdir::on_shell_mkdir_task_done`].
-    pub(crate) fn run_from_main_thread(this: NonNull<ShellMkdirTask>, interp: &Interpreter) {
+    fn run_from_main_thread(this: NonNull<ShellMkdirTask>, interp: &Interpreter) {
         // SAFETY: `this` is a live heap allocation produced by `Self::create`;
         // the dispatch contract guarantees it is not yet freed.
         let mut task = unsafe { bun_core::heap::take(this.as_ptr()) };
@@ -365,6 +372,15 @@ impl ShellMkdirTask {
 
 impl bun_event_loop::Taskable for ShellMkdirTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMkdirTask;
+    /// A pool completion that will not run: drop the keep-alive and the box
+    /// (nothing else frees an unrun one).
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box the builtin scheduled.
+        unsafe {
+            (*this).task.unref_unrun();
+            drop(bun_core::heap::take(this));
+        }
+    }
 }
 
 /// Collects each created directory into
@@ -414,13 +430,11 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMkdirTask {
 
 #[derive(Default, Clone, Copy)]
 pub struct Opts {
-    /// `-m`, `--mode` — set file mode (as in chmod), not a=rwx - umask
-    pub mode: Option<u32>,
     /// `-p`, `--parents` — no error if existing, make parent directories as
     /// needed, with their file modes unaffected by any -m option.
-    pub parents: bool,
+    pub(crate) parents: bool,
     /// `-v`, `--verbose` — print a message for each created directory
-    pub verbose: bool,
+    pub(crate) verbose: bool,
 }
 
 impl FlagParser for Opts {

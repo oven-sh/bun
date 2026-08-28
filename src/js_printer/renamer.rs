@@ -98,15 +98,15 @@ pub(crate) type NameCountMap =
 pub struct NoOpRenamer<'a> {
     // `symbol::Map` is `Vec<Vec<Symbol>>` (owning). Unlike `MinifyRenamer`/`NumberRenamer` (which the bundler builds over a
     // *borrowed* `LinkerGraph.symbols` and so wrap in `ManuallyDrop`),
-    // `NoOpRenamer` is only constructed by `print_ast`/`print_common_js`, whose
+    // `NoOpRenamer` is only constructed by `print_ast` / `print_json`, whose
     // callers always pass an *owned* Map freshly built by
     // `Map::init_with_one_list(mem::take(&mut ast.symbols))`. Owning + dropping
     // here is required: `ManuallyDrop` leaked the per-file `Vec<Symbol>` on
     // every transpile (require-cache.test.ts "files transpiled and loaded don't
     // leak the output source code" — `await import()` re-transpiles each
     // iteration, so the leak compounds to OOM).
-    pub symbols: symbol::Map,
-    pub source: &'a bun_ast::Source,
+    pub(crate) symbols: symbol::Map,
+    pub(crate) source: &'a bun_ast::Source,
 }
 
 impl<'a> NoOpRenamer<'a> {
@@ -114,12 +114,7 @@ impl<'a> NoOpRenamer<'a> {
         NoOpRenamer { symbols, source }
     }
 
-    #[inline]
-    pub(crate) fn original_name(&self, ref_: Ref) -> &[u8] {
-        self.name_for_symbol(ref_)
-    }
-
-    pub(crate) fn name_for_symbol(&self, ref_: Ref) -> &[u8] {
+    fn name_for_symbol(&self, ref_: Ref) -> &[u8] {
         if ref_.is_source_contents_slice() {
             return &self.source.contents[ref_.source_index() as usize
                 ..(ref_.source_index() + ref_.inner_index()) as usize];
@@ -155,7 +150,7 @@ pub enum Renamer<'r, 'src> {
 }
 
 impl<'r, 'src> Renamer<'r, 'src> {
-    pub fn symbols(&self) -> &symbol::Map {
+    pub(crate) fn symbols(&self) -> &symbol::Map {
         match self {
             Renamer::NumberRenamer(r) => &r.symbols,
             Renamer::NoOpRenamer(r) => &r.symbols,
@@ -170,14 +165,6 @@ impl<'r, 'src> Renamer<'r, 'src> {
             Renamer::MinifyRenamer(r) => r.name_for_symbol(ref_),
         }
     }
-
-    pub fn original_name(&self, ref_: Ref) -> Option<&[u8]> {
-        match self {
-            Renamer::NumberRenamer(r) => Some(r.original_name(ref_)),
-            Renamer::NoOpRenamer(r) => Some(r.original_name(ref_)),
-            Renamer::MinifyRenamer(r) => r.original_name(ref_),
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -187,9 +174,11 @@ pub struct SymbolSlot {
     // We can store the string inline!
     // But we have to be very careful of where it's used.
     // Or we WILL run into memory bugs.
-    pub name: TinyString,
-    pub count: u32,
-    pub needs_capital_for_jsx: bool,
+    pub(crate) name: TinyString,
+    pub(crate) count: u32,
+    pub(crate) needs_capital_for_jsx: bool,
+    /// Named ahead of `assign_names_by_frequency` (`MinifyRenamer::pin`).
+    pub(crate) pinned: bool,
 }
 
 impl Default for SymbolSlot {
@@ -198,6 +187,7 @@ impl Default for SymbolSlot {
             name: TinyString::String(name_str_empty()),
             count: 0,
             needs_capital_for_jsx: false,
+            pinned: false,
         }
     }
 }
@@ -206,12 +196,12 @@ pub(crate) type SymbolSlotList = EnumMap<symbol::SlotNamespace, Vec<SymbolSlot>>
 
 #[derive(Clone, Copy, Default)]
 pub struct InlineString {
-    pub bytes: [u8; 15],
-    pub len: u8,
+    pub(crate) bytes: [u8; 15],
+    pub(crate) len: u8,
 }
 
 impl InlineString {
-    pub(crate) fn init(str_: &[u8]) -> InlineString {
+    fn init(str_: &[u8]) -> InlineString {
         let mut this = InlineString {
             len: u8::try_from(str_.len().min(15)).expect("int cast"),
             ..Default::default()
@@ -228,7 +218,7 @@ impl InlineString {
     // do not make this *const or you will run into memory bugs.
     // we cannot let the compiler decide to copy this struct because
     // that would cause this to become a pointer to stack memory.
-    pub(crate) fn slice(&mut self) -> &[u8] {
+    fn slice(&mut self) -> &[u8] {
         &self.bytes[0..self.len as usize]
     }
 }
@@ -241,7 +231,7 @@ pub enum TinyString {
 }
 
 impl TinyString {
-    pub(crate) fn init(input: &[u8], arena: &Bump) -> Result<TinyString, bun_alloc::AllocError> {
+    fn init(input: &[u8], arena: &Bump) -> Result<TinyString, bun_alloc::AllocError> {
         if input.len() <= 15 {
             Ok(TinyString::InlineString(InlineString::init(input)))
         } else {
@@ -253,7 +243,7 @@ impl TinyString {
     // do not make this *const or you will run into memory bugs.
     // we cannot let the compiler decide to copy this struct because
     // that would cause this to become a pointer to stack memory.
-    pub(crate) fn slice(&mut self) -> &[u8] {
+    fn slice(&mut self) -> &[u8] {
         match self {
             TinyString::InlineString(s) => s.slice(),
             // `StoreStr::slice` centralises the arena-backed deref; the payload
@@ -264,13 +254,16 @@ impl TinyString {
 }
 
 pub struct MinifyRenamer {
-    pub reserved_names: StringHashMap<u32>,
-    pub slots: SymbolSlotList,
-    pub top_level_symbol_to_slot: TopLevelSymbolSlotMap,
-    pub symbols: ManuallyDrop<symbol::Map>,
-    pub owns_symbols: bool,
+    pub(crate) reserved_names: StringHashMap<u32>,
+    pub(crate) slots: SymbolSlotList,
+    pub(crate) top_level_symbol_to_slot: TopLevelSymbolSlotMap,
+    pub(crate) symbols: ManuallyDrop<symbol::Map>,
+    pub(crate) owns_symbols: bool,
     /// Backs `TinyString::String` slot-name allocations.
-    pub arena: Bump,
+    pub(crate) arena: Bump,
+    /// Set once use counts are in; `finish` names the slots with it. Kept
+    /// here so the bundler can pin cross-chunk names between the two steps.
+    pub name_minifier: Option<js_ast::NameMinifier>,
 }
 
 impl Drop for MinifyRenamer {
@@ -288,7 +281,7 @@ impl MinifyRenamer {
     pub fn init(
         symbols: symbol::Map,
         first_top_level_slots: &js_ast::SlotCounts,
-        reserved_names: StringHashMap<u32>,
+        mut reserved_names: StringHashMap<u32>,
     ) -> Result<Box<MinifyRenamer>, bun_alloc::AllocError> {
         let mut slots = SymbolSlotList::default();
 
@@ -299,6 +292,9 @@ impl MinifyRenamer {
             slots[ns] = v;
         }
 
+        // #14586: here, not in `compute_initial_reserved_names`, so `NumberRenamer` keeps user `$` verbatim.
+        reserved_names.put(b"$", 1).expect("unreachable");
+
         Ok(Box::new(MinifyRenamer {
             symbols: ManuallyDrop::new(symbols),
             owns_symbols: false,
@@ -306,11 +302,8 @@ impl MinifyRenamer {
             slots,
             top_level_symbol_to_slot: TopLevelSymbolSlotMap::default(),
             arena: Bump::new(),
+            name_minifier: None,
         }))
-    }
-
-    pub fn to_renamer(&mut self) -> Renamer<'_, 'static> {
-        Renamer::MinifyRenamer(self)
     }
 
     pub fn name_for_symbol(&mut self, ref_: Ref) -> &[u8] {
@@ -335,10 +328,6 @@ impl MinifyRenamer {
 
         // This has to be a pointer because the string might be stored inline
         self.slots[ns][i].name.slice()
-    }
-
-    pub fn original_name(&self, _ref: Ref) -> Option<&[u8]> {
-        None
     }
 
     pub fn accumulate_symbol_use_counts(
@@ -404,6 +393,11 @@ impl MinifyRenamer {
         &mut self,
         top_level_symbols: &[StableSymbolCount],
     ) -> Result<(), bun_alloc::AllocError> {
+        // Upper bound (a ref can repeat across files); sizes the map and the
+        // default namespace, where nearly all top-level symbols live, once.
+        self.top_level_symbol_to_slot
+            .ensure_total_capacity(top_level_symbols.len())?;
+        self.slots[SlotNamespace::Default].reserve(top_level_symbols.len());
         for stable in top_level_symbols {
             let symbol: &Symbol = self.symbols.get_const(stable.ref_).unwrap();
             // Reshaped for borrowck — capture symbol fields before mut-borrowing slots
@@ -424,10 +418,52 @@ impl MinifyRenamer {
                     name: TinyString::String(name_str_empty()),
                     count: stable.count,
                     needs_capital_for_jsx: must_start_with_capital,
+                    pinned: false,
                 });
             }
         }
         Ok(())
+    }
+
+    /// Names this renamer will not hand out (keywords, unbound globals, pinned names).
+    pub fn reserved_names(&self) -> &StringHashMap<u32> {
+        &self.reserved_names
+    }
+
+    /// The accumulated use count of a top-level symbol in this chunk, if it has one.
+    pub fn top_level_count(&self, ref_: Ref) -> Option<u32> {
+        let ref_ = self.symbols.follow(ref_);
+        let slot = *self.top_level_symbol_to_slot.get(&ref_)?;
+        let ns = self.symbols.get_const(ref_).unwrap().slot_namespace();
+        Some(self.slots[ns][slot].count)
+    }
+
+    /// Gives top-level symbol `ref_` the name `name` ahead of
+    /// `assign_names_by_frequency`, which then hands `name` to nothing else.
+    /// Used for bindings that cross chunks, so every chunk calls them the same.
+    pub fn pin(&mut self, ref_: Ref, name: &[u8]) -> Result<(), bun_alloc::AllocError> {
+        let ref_ = self.symbols.follow(ref_);
+        let Some(&slot) = self.top_level_symbol_to_slot.get(&ref_) else {
+            return Ok(());
+        };
+        let ns = self.symbols.get_const(ref_).unwrap().slot_namespace();
+        let slot = &mut self.slots[ns][slot];
+        slot.name = TinyString::init(name, &self.arena)?;
+        slot.pinned = true;
+        self.reserved_names.put(name, 1)?;
+        Ok(())
+    }
+
+    /// Names every slot not already pinned, using the `name_minifier` stored
+    /// by the accumulate step.
+    pub fn finish(&mut self) -> Result<(), crate::Error> {
+        let name_minifier = self
+            .name_minifier
+            .take()
+            .expect("name_minifier set before finish");
+        let result = self.assign_names_by_frequency(&name_minifier);
+        self.name_minifier = Some(name_minifier);
+        result
     }
 
     pub fn assign_names_by_frequency(
@@ -441,10 +477,16 @@ impl MinifyRenamer {
         for &ns in SLOT_NAMESPACES.iter() {
             let slots = &mut self.slots[ns];
             sorted.clear();
-            sorted.extend(slots.iter().enumerate().map(|(i, slot)| SlotAndCount {
-                slot: u32::try_from(i).expect("int cast"),
-                count: slot.count,
-            }));
+            sorted.extend(
+                slots
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, slot)| !slot.pinned)
+                    .map(|(i, slot)| SlotAndCount {
+                        slot: u32::try_from(i).expect("int cast"),
+                        count: slot.count,
+                    }),
+            );
             sorted.sort_unstable_by(|a, b| SlotAndCount::less_than(*a, *b));
 
             let mut next_name: isize = 0;
@@ -494,9 +536,9 @@ impl MinifyRenamer {
 
 #[derive(Clone, Copy)]
 pub struct StableSymbolCount {
-    pub stable_source_index: u32,
-    pub ref_: Ref,
-    pub count: u32,
+    pub(crate) stable_source_index: u32,
+    pub(crate) ref_: Ref,
+    pub(crate) count: u32,
 }
 
 pub(crate) type StableSymbolCountArray = Vec<StableSymbolCount>;
@@ -536,34 +578,16 @@ impl SlotAndCount {
 
 pub struct NumberRenamer {
     // See `NoOpRenamer.symbols` — non-owning view.
-    pub symbols: ManuallyDrop<symbol::Map>,
-    pub names: Box<[Vec<NameStr>]>,
+    pub(crate) symbols: ManuallyDrop<symbol::Map>,
+    pub(crate) names: Box<[Vec<NameStr>]>,
     pub number_scope_pool: HiveArrayFallback<NumberScope, 128>,
     pub root: NumberScope,
     /// Backs renamed-name slices written into `names`.
-    pub arena: Bump,
+    pub(crate) arena: Bump,
 }
 
 impl NumberRenamer {
-    pub fn to_renamer(&mut self) -> Renamer<'_, 'static> {
-        Renamer::NumberRenamer(self)
-    }
-
-    pub fn original_name(&self, ref_: Ref) -> &[u8] {
-        if ref_.is_source_contents_slice() {
-            unreachable!();
-        }
-
-        let resolved = self.symbols.follow(ref_);
-        // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
-        self.symbols
-            .get_const(resolved)
-            .unwrap()
-            .original_name
-            .slice()
-    }
-
-    pub fn assign_name(&mut self, scope: &mut NumberScope, input_ref: Ref) {
+    pub(crate) fn assign_name(&mut self, scope: &mut NumberScope, input_ref: Ref) {
         let ref_ = self.symbols.follow(input_ref);
 
         // Don't rename the same symbol more than once
@@ -633,28 +657,6 @@ impl NumberRenamer {
         }))
     }
 
-    pub fn assign_names_recursive(
-        &mut self,
-        scope: &js_ast::Scope,
-        source_index: u32,
-        parent: Option<bun_ptr::ParentRef<NumberScope>>,
-        sorted: &mut Vec<u32>,
-    ) {
-        let s: *mut NumberScope = self
-            .number_scope_pool
-            .get_init(NumberScope {
-                parent,
-                name_counts: NameCountMap::default(),
-            })
-            .as_ptr();
-
-        self.assign_names_recursive_with_number_scope(s, scope, source_index, sorted);
-
-        // SAFETY: s came from number_scope_pool.get() and was initialized above;
-        // `put` drops `name_counts` in place before recycling the slot.
-        unsafe { self.number_scope_pool.put(s) };
-    }
-
     fn assign_names_in_scope(
         &mut self,
         s: &mut NumberScope,
@@ -700,9 +702,14 @@ impl NumberRenamer {
                         // `s` is non-null (either `initial_scope` or a fresh
                         // pool slot from a prior iteration); the new child
                         // outlives this `ParentRef` only until `put()` below.
-                        parent: Some(bun_ptr::ParentRef::from(
-                            core::ptr::NonNull::new(s).expect("number_scope non-null"),
-                        )),
+                        // SAFETY: `s` is the live pool slot / initial scope (write provenance).
+                        parent: Some(unsafe {
+                            bun_ptr::ParentRef::from_raw_mut(
+                                core::ptr::NonNull::new(s)
+                                    .expect("number_scope non-null")
+                                    .as_ptr(),
+                            )
+                        }),
                         // Pre-size to the AST scope's symbol count so the
                         // per-name insert path doesn't realloc the table
                         // 0→4→8→… as names are assigned. Most scopes assign
@@ -753,6 +760,25 @@ impl NumberRenamer {
             unsafe { self.number_scope_pool.put(s) };
             s = parent;
         }
+    }
+
+    /// Gives top-level symbol `ref_` the name `name` (taken to be free in the
+    /// root scope) so later symbols are numbered around it. Used for bindings
+    /// that cross chunks, so every chunk calls them the same.
+    pub fn pin_top_level_symbol(&mut self, ref_: Ref, name: &[u8]) {
+        let ref_ = self.symbols.follow(ref_);
+        if self.symbols.get_const(ref_).unwrap().slot_namespace() != SlotNamespace::Default {
+            return;
+        }
+        let duped: &[u8] = self.arena.alloc_slice_copy(name);
+        let name = NameStr::new(duped);
+        self.root.name_counts.insert(NameKey(name), 1);
+        let inner: &mut Vec<NameStr> = &mut self.names[ref_.source_index() as usize];
+        let new_len = inner.len().max(ref_.inner_index() as usize + 1);
+        if inner.len() < new_len {
+            inner.resize(new_len, name_str_empty());
+        }
+        inner[ref_.inner_index() as usize] = name;
     }
 
     pub fn add_top_level_symbol(&mut self, ref_: Ref) {
@@ -810,20 +836,19 @@ pub struct NumberScope {
     /// `assign_names_recursive_with_number_scope` call, both of which strictly
     /// outlive this child (children are `put()` back before their parent), so
     /// `ParentRef::get()` is sound without per-site `unsafe`.
-    pub parent: Option<bun_ptr::ParentRef<NumberScope>>,
-    pub name_counts: NameCountMap,
+    pub(crate) parent: Option<bun_ptr::ParentRef<NumberScope, bun_ptr::Mut>>,
+    pub(crate) name_counts: NameCountMap,
 }
 
-pub(crate) enum NameUse {
+enum NameUse {
     Unused,
     SameScope(u32),
     Used,
 }
 
 impl NameUse {
-    pub(crate) fn find(this: &NumberScope, name: &[u8]) -> NameUse {
+    fn find(this: &NumberScope, name: &[u8]) -> NameUse {
         // This version doesn't allocate
-        #[cfg(debug_assertions)]
         debug_assert!(js_lexer::is_identifier(name));
 
         // Hash `name` once and probe each scope in the parent chain with the
@@ -843,7 +868,7 @@ impl NameUse {
             return NameUse::SameScope(count);
         }
 
-        let mut s: Option<bun_ptr::ParentRef<NumberScope>> = this.parent;
+        let mut s: Option<bun_ptr::ParentRef<NumberScope, bun_ptr::Mut>> = this.parent;
 
         while let Some(scope) = s {
             // `ParentRef<NumberScope>: Deref` — safe backref deref under the
@@ -863,7 +888,7 @@ impl NameUse {
     }
 }
 
-pub enum UnusedName {
+pub(crate) enum UnusedName {
     NoCollision,
     Renamed(NameStr),
 }
@@ -895,7 +920,7 @@ fn is_simple_ascii_identifier(s: &[u8]) -> bool {
 
 impl NumberScope {
     /// Caller must use an arena allocator
-    pub fn find_unused_name(&mut self, arena: &Bump, input_name: &[u8]) -> UnusedName {
+    pub(crate) fn find_unused_name(&mut self, arena: &Bump, input_name: &[u8]) -> UnusedName {
         // `MutableString::ensure_valid_identifier` always heap-allocates
         // (Box<[u8]>), even when the input is already a valid ASCII
         // identifier. Skip the call entirely for the common case so this
@@ -1034,11 +1059,11 @@ impl NumberScope {
 }
 
 pub struct ExportRenamer {
-    pub string_buffer: MutableString,
-    pub used: StringHashMap<u32>,
-    pub count: isize,
+    pub(crate) string_buffer: MutableString,
+    pub(crate) used: StringHashMap<u32>,
+    pub(crate) count: isize,
     /// Backs renamed export-name slices returned to the caller.
-    pub arena: Bump,
+    pub(crate) arena: Bump,
 }
 
 impl ExportRenamer {
@@ -1061,47 +1086,57 @@ impl ExportRenamer {
 
     pub fn next_renamed_name(&mut self, input: &[u8]) -> &[u8] {
         let entry = self.used.get_or_put(input).expect("unreachable");
-        let mut tries: u32 = 1;
-        if entry.found_existing {
-            loop {
-                self.string_buffer.reset();
-                write!(
-                    self.string_buffer.writer(),
-                    "{}{}",
-                    bstr::BStr::new(input),
-                    tries
-                )
-                .expect("unreachable");
-                tries += 1;
-                let attempt: &[u8] = self.string_buffer.slice();
-                // Reshaped for borrowck — `get_or_put` borrows `self.used`
-                // mutably, so allocate the arena copy first.
-                let to_use: &[u8] = self.arena.alloc_slice_copy(attempt);
-                let entry = self.used.get_or_put(to_use).expect("unreachable");
-                if !entry.found_existing {
-                    // `StringHashMap` owns a boxed copy of the key on insert.
-                    *entry.value_ptr = tries;
-
-                    let entry = self.used.get_or_put(input).expect("unreachable");
-                    *entry.value_ptr = tries;
-                    // `to_use` borrows `self.arena` (disjoint from `self.used`
-                    // above); returnable directly under split-borrow rules.
-                    return to_use;
-                }
-            }
-        } else {
-            *entry.value_ptr = tries;
+        if !entry.found_existing {
+            *entry.value_ptr = 1;
+            // `StringHashMap` does not expose a key pointer; allocate a copy in
+            // `self.arena` so the returned slice is tied to `&self`.
+            return self.arena.alloc_slice_copy(input);
         }
 
-        // `StringHashMap` does not expose a key pointer; allocate a copy in `self.arena`
-        // so the returned slice is tied to `&self` (sub-borrow of `&mut self`).
-        self.arena.alloc_slice_copy(input)
+        // Resume from the last suffix handed out for this prefix so N collisions
+        // on the same name stay O(N) total (see `NumberScope::find_unused_name`).
+        let mut tries: u32 = *entry.value_ptr;
+        loop {
+            self.string_buffer.reset();
+            write!(
+                self.string_buffer.writer(),
+                "{}{}",
+                bstr::BStr::new(input),
+                tries
+            )
+            .expect("unreachable");
+            tries += 1;
+            let attempt: &[u8] = self.string_buffer.slice();
+            if self.used.contains_key(attempt) {
+                continue;
+            }
+            // `StringHashMap::put` boxes the key itself; the arena copy below is
+            // only for the caller's returned slice (`string_buffer` is reused).
+            self.used.put(attempt, 1).expect("unreachable");
+            *self.used.get_mut(input).expect("unreachable") = tries;
+            return self.arena.alloc_slice_copy(attempt);
+        }
     }
 
     pub fn next_minified_name(&mut self) -> Result<Vec<u8>, crate::Error> {
-        let name = js_ast::NameMinifier::default_number_to_minified_name(self.count)?;
-        self.count += 1;
-        Ok(name)
+        loop {
+            let name = js_ast::NameMinifier::default_number_to_minified_name(self.count)?;
+            self.count += 1;
+            if !self.used.contains_key(name.as_slice()) {
+                return Ok(name);
+            }
+        }
+    }
+
+    /// Mark `name` as taken so neither `next_renamed_name` nor
+    /// `next_minified_name` hands it out. Used for an entry point chunk's own
+    /// export names, which share the chunk's `export {}` namespace with the
+    /// cross-chunk exports.
+    pub fn reserve_name(&mut self, name: &[u8]) {
+        let entry = self.used.get_or_put(name).expect("unreachable");
+        if !entry.found_existing {
+            *entry.value_ptr = 1;
+        }
     }
 }
 

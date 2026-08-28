@@ -1,11 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, rmScope, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
 describe("Bun.serve HTML manifest", () => {
   it("serves HTML import with manifest", async () => {
-    const dir = tempDirWithFiles("serve-html", {
+    await using dir = tempDir("serve-html", {
       "server.ts": `
         import index from "./index.html";
         
@@ -40,8 +40,6 @@ describe("Bun.serve HTML manifest", () => {
       "styles.css": `body { background: red; }`,
       "app.js": `console.log("Hello from app");`,
     });
-
-    using cleanup = { [Symbol.dispose]: () => rmScope(dir) };
 
     const proc = Bun.spawn({
       cmd: [bunExe(), "run", join(dir, "server.ts")],
@@ -97,7 +95,7 @@ describe("Bun.serve HTML manifest", () => {
   });
 
   it("serves HTML with bundled assets", async () => {
-    const dir = tempDirWithFiles("serve-html-bundled", {
+    await using dir = tempDir("serve-html-bundled", {
       "build.ts": `
         const result = await Bun.build({
           entrypoints: ["./server.ts"],
@@ -151,8 +149,6 @@ describe("Bun.serve HTML manifest", () => {
       "shared.css": `body { margin: 0; }`,
       "app.js": `console.log("App loaded");`,
     });
-
-    using cleanup = { [Symbol.dispose]: () => rmScope(dir) };
 
     // Build first
     const buildProc = Bun.spawn({
@@ -221,7 +217,7 @@ describe("Bun.serve HTML manifest", () => {
   });
 
   it("validates manifest files exist", async () => {
-    const dir = tempDirWithFiles("serve-html-validate", {
+    await using dir = tempDir("serve-html-validate", {
       "test.ts": `
         // Create a fake manifest
         const fakeManifest = {
@@ -255,8 +251,6 @@ describe("Bun.serve HTML manifest", () => {
       `,
     });
 
-    using cleanup = { [Symbol.dispose]: () => rmScope(dir) };
-
     const proc = Bun.spawn({
       cmd: [bunExe(), "run", join(dir, "test.ts")],
       cwd: dir,
@@ -273,7 +267,7 @@ describe("Bun.serve HTML manifest", () => {
   });
 
   it("serves manifest with proper headers", async () => {
-    const dir = tempDirWithFiles("serve-html-headers", {
+    await using dir = tempDir("serve-html-headers", {
       "server.ts": `
         import index from "./index.html";
         
@@ -309,8 +303,6 @@ describe("Bun.serve HTML manifest", () => {
 </html>`,
       "test.css": `h1 { color: red; }`,
     });
-
-    using cleanup = { [Symbol.dispose]: () => rmScope(dir) };
 
     // Build first to generate the manifest
     await using buildProc = Bun.spawn({

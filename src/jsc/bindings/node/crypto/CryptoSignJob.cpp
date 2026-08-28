@@ -215,11 +215,11 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
     }
 }
 
-extern "C" void Bun__SignJobCtx__runFromJS(SignJobCtx* ctx, JSGlobalObject* globalObject, EncodedJSValue callback)
+extern "C" void Bun__SignJobCtx__runFromJS(SignJobCtx* ctx, JSGlobalObject* globalObject, JSCallbackArgs* out)
 {
-    ctx->runFromJS(globalObject, JSValue::decode(callback));
+    *out = ctx->runFromJS(globalObject);
 }
-void SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)
+JSCallbackArgs SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
 {
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -230,8 +230,8 @@ void SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback
             JSValue err = m_unsupportedContext
                 ? createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Context parameter is unsupported"_s)
                 : createCryptoError(lexicalGlobalObject, scope, m_opensslError, "sign operation failed"_s);
-            Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
-            return;
+            RETURN_IF_EXCEPTION(scope, {});
+            return { err };
         }
 
         auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -239,48 +239,23 @@ void SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback
         auto sigBuf = ArrayBuffer::createUninitialized(m_signResult->size(), 1);
         memcpy(sigBuf->data(), m_signResult->data(), m_signResult->size());
         auto* signature = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(sigBuf), 0, m_signResult->size());
-        RETURN_IF_EXCEPTION(scope, );
+        RETURN_IF_EXCEPTION(scope, {});
 
-        Bun__EventLoop__runCallback2(
-            lexicalGlobalObject,
-            JSValue::encode(callback),
-            JSValue::encode(jsUndefined()),
-            JSValue::encode(jsNull()),
-            JSValue::encode(signature));
-
-        break;
+        return { jsNull(), signature };
     }
     case Mode::Verify: {
         if (!m_verifyResult) {
             JSValue err = m_unsupportedContext
                 ? createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Context parameter is unsupported"_s)
                 : createCryptoError(lexicalGlobalObject, scope, m_opensslError, "verify operation failed"_s);
-            Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
-            return;
+            RETURN_IF_EXCEPTION(scope, {});
+            return { err };
         }
 
-        Bun__EventLoop__runCallback2(
-            lexicalGlobalObject,
-            JSValue::encode(callback),
-            JSValue::encode(jsUndefined()),
-            JSValue::encode(jsNull()),
-            JSValue::encode(jsBoolean(*m_verifyResult)));
-        break;
+        return { jsNull(), jsBoolean(*m_verifyResult) };
     }
     }
-}
-
-extern "C" SignJob* Bun__SignJob__create(JSGlobalObject* globalObject, SignJobCtx* ctx, EncodedJSValue callback);
-SignJob* SignJob::create(JSGlobalObject* globalObject, SignJobCtx&& ctx, JSValue callback)
-{
-    SignJobCtx* ctxCopy = new SignJobCtx(WTF::move(ctx));
-    return Bun__SignJob__create(globalObject, ctxCopy, JSValue::encode(callback));
-}
-
-extern "C" void Bun__SignJob__schedule(SignJob* job);
-void SignJob::schedule()
-{
-    Bun__SignJob__schedule(this);
+    return {};
 }
 
 extern "C" void Bun__SignJob__createAndSchedule(JSGlobalObject* globalObject, SignJobCtx* ctx, EncodedJSValue callback);

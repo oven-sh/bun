@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
-import { chmodSync } from "node:fs";
+import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync } from "node:fs";
 import { join } from "path";
 
 describe("Bun.build compile", () => {
@@ -35,6 +35,152 @@ describe("Bun.build compile", () => {
     expect(exists).toBe(true);
   });
 
+  // The executable's embedded bytecode is mapped for the life of the process, so decoded instruction streams alias it
+  // instead of being copied into private memory. Same binary with the aliasing switched off is the control.
+  test.skipIf(!isLinux)(
+    "bytecode from a compiled executable is not copied into private memory",
+    async () => {
+      const body = Array.from(
+        { length: 24 },
+        (_, j) => `s = (s * ${j + 3} + a) ^ (b + ${j}); if (s & ${1 << j % 20}) s = s - ${j} | 0; o.p${j} = s;`,
+      ).join(" ");
+      const functions = Array.from(
+        { length: 4000 },
+        (_, i) => `export function f${i}(a, b) { let s = ${i}; const o = {}; ${body} return [s, ${i}, o]; }`,
+      ).join("\n");
+      using dir = tempDir("build-compile-bytecode-rss", {
+        "funcs.js": functions,
+        "app.js": `import * as m from "./funcs.js";
+let n = 0;
+for (const k in m) n += m[k](2, 3)[1] & 1;
+const smaps = require("fs").readFileSync("/proc/self/smaps_rollup", "utf8");
+const anon = Number(/Anonymous: +([0-9]+) kB/.exec(smaps)[1]);
+console.log(JSON.stringify({ n, anonKB: anon }));`,
+      });
+      const outfile = join(dir + "", "app");
+      const result = await Bun.build({
+        entrypoints: [join(dir + "", "app.js")],
+        compile: { outfile },
+        bytecode: true,
+        format: "esm",
+        target: "bun",
+      });
+      expect(result.success).toBe(true);
+
+      const run = async (extraEnv: Record<string, string>) => {
+        await using proc = Bun.spawn({
+          cmd: [outfile],
+          env: { ...bunEnv, ...extraEnv },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout).toContain("anonKB");
+        expect(exitCode).toBe(0);
+        return JSON.parse(stdout.trim()) as { n: number; anonKB: number };
+      };
+      const aliased = await run({});
+      const copied = await run({ BUN_JSC_useBorrowedBytecodeFromCache: "0" });
+      expect(aliased.n).toBe(2000);
+      expect(copied.n).toBe(2000);
+      // 4000 decoded functions carry ~11 MB of instruction stream + expression info; copied, that is anonymous memory the aliasing run never allocates.
+      expect(copied.anonKB - aliased.anonKB).toBeGreaterThan(4096);
+    },
+    60_000,
+  );
+
+  // --bytecode into an executable for another os/arch/libc embeds bytecode written by this platform's JavaScriptCore for
+  // another's; such executables say so in crash reports (Features: cross_compiled_bytecode). The "other platform" build
+  // here is the same OS with the other CPU, and reuses this bun as the target executable, so it still runs here.
+  const otherPlatform = `bun-${isLinux ? "linux" : isMacOS ? "darwin" : "windows"}-${isArm64 ? "x64" : "aarch64"}${isMusl ? "-musl" : ""}`;
+  test.each([
+    ["this platform", undefined as string | undefined, false],
+    [otherPlatform, otherPlatform, true],
+  ])("--compile --bytecode for %s", async (_label, target, expected) => {
+    using dir = tempDir("build-compile-cross-bytecode", {
+      "app.js": `require("bun:internal-for-testing").crash_handler.panic();`,
+    });
+    const outfile = join(dir + "", isWindows ? "app.exe" : "app");
+    await using build = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--bytecode",
+        ...(target ? [`--target=${target}`, `--compile-executable-path=${process.execPath}`] : []),
+        join(dir + "", "app.js"),
+        "--outfile",
+        outfile,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).not.toContain("error");
+    expect(buildExit).toBe(0);
+    await using proc = Bun.spawn({
+      cmd: [outfile],
+      env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // (stdout is not asserted: ASAN builds print the symbolized crash trace there.)
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("panic");
+    expect(stderr.includes("cross_compiled_bytecode")).toBe(expected);
+    expect(exitCode).not.toBe(0);
+  });
+
+  // "cross": the target is not the host, so the internal modules' sources, ids and stamp are read out of the target
+  // executable's builtins section (here: this same bun under a different version, so the result still runs locally).
+  test.each([false, true, "cross" as const])(
+    "--bytecode=%p: internal modules the app imports come from embedded bytecode",
+    async mode => {
+      const bytecode = mode !== false;
+      const os = isMacOS ? "darwin" : isLinux ? "linux" : isWindows ? "windows" : "unknown";
+      const cross =
+        mode === "cross"
+          ? {
+              target: `bun-${os}-${isArm64 ? "aarch64" : "x64"}${isMusl ? "-musl" : ""}-v1.0.0` as any,
+              executablePath: process.execPath,
+            }
+          : {};
+      using dir = tempDir("build-compile-builtin-bytecode", {
+        "app.js": `import { join } from "node:path";
+import http from "node:http";
+import { internalModulesLoadedFromBytecode } from "bun:internal-for-testing";
+const server = http.createServer(() => {});
+console.log(JSON.stringify({ joined: join("a", "b"), fromBytecode: internalModulesLoadedFromBytecode() }));
+server.close();`,
+      });
+      const outfile = join(dir + "", "app");
+      const result = await Bun.build({
+        entrypoints: [join(dir + "", "app.js")],
+        compile: { outfile, ...cross },
+        bytecode,
+        format: "esm",
+        target: "bun",
+      });
+      expect(result.success).toBe(true);
+      await using proc = Bun.spawn({ cmd: [outfile], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const { joined, fromBytecode } = JSON.parse(stdout.trim());
+      expect(joined).toBe(join("a", "b"));
+      if (bytecode) {
+        // node:path, node:http and what they require at load (node:net, node:events, the stream internals, ...).
+        expect(fromBytecode).toBeGreaterThan(10);
+      } else {
+        expect(fromBytecode).toBe(0);
+      }
+      expect(exitCode).toBe(0);
+    },
+    // A --compile build plus (for "cross") bytecode for ~45 internal modules: ~10s under debug+ASAN.
+    60_000,
+  );
+
   test("compile with invalid target fails gracefully", async () => {
     using dir = tempDir("build-compile-invalid", {
       "index.js": `console.log("test");`,
@@ -50,41 +196,27 @@ describe("Bun.build compile", () => {
       }),
     ).toThrowErrorMatchingInlineSnapshot(`"Unknown compile target: bun-invalid-platform"`);
   });
-  test("compile with relative outfile paths", async () => {
-    using dir = tempDir("build-compile-relative-paths", {
-      "app.js": `console.log("Testing relative paths");`,
-    });
 
-    // Test 1: Nested forward slash path
-    const result1 = await Bun.build({
-      entrypoints: [join(dir + "", "app.js")],
-      compile: {
-        outfile: join(dir + "", "output/nested/app1"),
-      },
-    });
-    expect(result1.success).toBe(true);
-    expect(result1.outputs[0].path).toContain(join("output", "nested", isWindows ? "app1.exe" : "app1"));
+  // One compile per test: each compile copies the whole bun binary (~1 GB under debug+ASAN),
+  // which by itself takes a good part of the default per-test timeout.
+  test.each(["output/nested/app1", "app2", "a/b/c/d/app3"])(
+    "compile writes the executable to outfile %s",
+    async relativeOutfile => {
+      using dir = tempDir("build-compile-outfile", {
+        "app.js": `console.log("Testing outfile paths");`,
+      });
+      const outfile = join(String(dir), relativeOutfile);
 
-    // Test 2: Current directory relative path
-    const result2 = await Bun.build({
-      entrypoints: [join(dir + "", "app.js")],
-      compile: {
-        outfile: join(dir + "", "app2"),
-      },
-    });
-    expect(result2.success).toBe(true);
-    expect(result2.outputs[0].path).toEndWith(isWindows ? "app2.exe" : "app2");
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "app.js")],
+        compile: { outfile },
+      });
 
-    // Test 3: Deeply nested path
-    const result3 = await Bun.build({
-      entrypoints: [join(dir + "", "app.js")],
-      compile: {
-        outfile: join(dir + "", "a/b/c/d/app3"),
-      },
-    });
-    expect(result3.success).toBe(true);
-    expect(result3.outputs[0].path).toContain(join("a", "b", "c", "d", isWindows ? "app3.exe" : "app3"));
-  });
+      expect(result.success).toBe(true);
+      expect(result.outputs.map(output => output.path)).toEqual([isWindows ? `${outfile}.exe` : outfile]);
+      expect(await Bun.file(result.outputs[0].path).exists()).toBe(true);
+    },
+  );
 
   test("compile with embedded resources uses correct module prefix", async () => {
     using dir = tempDir("build-compile-embedded-resources", {
@@ -451,17 +583,221 @@ if (isLinux) {
       expect(bunAddr % 128n).toBe(0n);
 
       // Sanity: the binary still runs and produces the expected output.
-      // (Ignore stderr — a debug-ASAN bun may log `hintSourcePagesDontNeed`
-      // advisory warnings from the compiled binary's mmap'd .bun segment.)
       await using proc = Bun.spawn({
         cmd: [result.outputs[0].path],
+        env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
       expect(stdout).toContain("wsl1-regression-20000");
       expect(exitCode).toBe(0);
     }, 60_000);
+
+    // Regression guard for #31023. On NixOS, `autoPatchelfHook` runs
+    // `patchelf --set-interpreter` on the installed bun binary. Patchelf
+    // inserts a *new* writable PT_LOAD at the front of the program-header
+    // table (to hold the relocated PHDR + .interp), so the template bun
+    // has TWO writable PT_LOADs. `write_bun_section` used to pick the
+    // first writable PT_LOAD and extend it — that's patchelf's small
+    // segment, unrelated to .bun — producing an output whose grown
+    // segment overlaps the read-only and executable PT_LOADs at
+    // conflicting vaddrs. The kernel ELF loader mmap'd garbage over .bun
+    // at its runtime address and the compiled binary segfaulted on exec.
+    //
+    // We simulate the NixOS layout by running `patchelf
+    // --set-interpreter` on the bun binary (exactly what
+    // autoPatchelfHook does) and then using `--compile-executable-path`
+    // to drive `bun build --compile` off it. The resulting output must
+    // (a) have the .bun section inside a writable PT_LOAD whose extent
+    // doesn't cross another PT_LOAD, and (b) actually run.
+    const patchelf = Bun.which("patchelf");
+    const ldso =
+      process.arch === "arm64"
+        ? isMusl
+          ? "/lib/ld-musl-aarch64.so.1"
+          : "/lib/ld-linux-aarch64.so.1"
+        : isMusl
+          ? "/lib/ld-musl-x86_64.so.1"
+          : "/lib64/ld-linux-x86-64.so.2";
+
+    // Mirror of `hostUsesNixStoreInterpreter()` in src/exe_format/elf.rs:
+    // gate out NixOS/Guix hosts where the FHS ldso path is a stub that
+    // refuses to exec generic binaries. Without this the final
+    // `Bun.spawn({cmd:[outfile]})` check fails on a NixOS host because
+    // stub-ld rejects the compiled output, not because the fix is broken.
+    // Same pattern as the sibling patchelf tests in
+    // test/regression/issue/29290.test.ts and 24742.test.ts.
+    function readInterp(buf: Buffer): string | null {
+      if (buf.length < 64 || buf.readUInt32BE(0) !== 0x7f454c46) return null;
+      const e_phoff = Number(buf.readBigUInt64LE(32));
+      const e_phnum = buf.readUInt16LE(56);
+      for (let i = 0; i < e_phnum; i++) {
+        const ph = e_phoff + i * 56;
+        if (buf.readUInt32LE(ph) !== 3 /* PT_INTERP */) continue;
+        const p_offset = Number(buf.readBigUInt64LE(ph + 8));
+        const p_filesz = Number(buf.readBigUInt64LE(ph + 32));
+        const region = buf.subarray(p_offset, p_offset + p_filesz);
+        const nul = region.indexOf(0);
+        return region.subarray(0, nul === -1 ? region.length : nul).toString("utf8");
+      }
+      return null;
+    }
+    function hostLooksNix(): boolean {
+      if (existsSync("/etc/NIXOS")) return true;
+      if (existsSync("/gnu/store")) return true;
+      try {
+        // bun is ~1 GB in debug builds; PT_INTERP lives in the first page,
+        // so read only the leading 4 KiB.
+        const fd = openSync(bunExe(), "r");
+        try {
+          const buf = Buffer.alloc(4096);
+          const n = readSync(fd, buf, 0, 4096, 0);
+          const selfInterp = readInterp(buf.subarray(0, n));
+          if (selfInterp && (selfInterp.startsWith("/nix/store/") || selfInterp.startsWith("/gnu/store/"))) {
+            return true;
+          }
+        } finally {
+          closeSync(fd);
+        }
+      } catch {}
+      return false;
+    }
+
+    test.skipIf(!patchelf || !existsSync(ldso) || hostLooksNix())(
+      "compiled binary works when template bun has patchelf-inserted RW PT_LOAD (#31023)",
+      async () => {
+        using dir = tempDir("build-compile-patchelf-rw-regression", {
+          "app.js": `console.log("patchelf-regression-ok");`,
+        });
+        const cwd = String(dir);
+
+        // Copy bun and patchelf it — autoPatchelfHook's signature move.
+        // Any real interpreter works; we just need patchelf to insert its
+        // new writable PT_LOAD at the front of the phdr table.
+        const patchedBun = join(cwd, "patched-bun");
+        cpSync(bunExe(), patchedBun);
+        chmodSync(patchedBun, 0o755);
+        {
+          const r = Bun.spawnSync({
+            cmd: [patchelf!, "--set-interpreter", ldso, patchedBun],
+            stderr: "pipe",
+          });
+          expect(r.stderr.toString()).toBe("");
+          expect(r.exitCode).toBe(0);
+        }
+
+        // Sanity: the patched bun really does have two writable PT_LOADs.
+        // Otherwise the test is vacuous (it would exercise the same path
+        // as the stock-bun tests above).
+        {
+          const bytes = new Uint8Array(await Bun.file(patchedBun).arrayBuffer());
+          const view = new DataView(bytes.buffer);
+          const phoff = Number(view.getBigUint64(32, true));
+          const phentsize = view.getUint16(54, true);
+          const phnum = view.getUint16(56, true);
+          let writableLoads = 0;
+          for (let i = 0; i < phnum; i++) {
+            const off = phoff + i * phentsize;
+            const pType = view.getUint32(off, true);
+            const pFlags = view.getUint32(off + 4, true);
+            if (pType === 1 /* PT_LOAD */ && (pFlags & 2) !== 0 /* PF_W */) writableLoads++;
+          }
+          expect(writableLoads).toBeGreaterThanOrEqual(2);
+        }
+
+        // Drive bun build --compile off the patched template.
+        const outfile = join(cwd, "app-out");
+        const build = Bun.spawnSync({
+          cmd: [
+            bunExe(),
+            "build",
+            "--compile",
+            "--compile-executable-path",
+            patchedBun,
+            join(cwd, "app.js"),
+            "--outfile",
+            outfile,
+          ],
+          env: bunEnv,
+          cwd,
+          stderr: "pipe",
+          stdout: "pipe",
+        });
+        expect(build.stderr.toString()).not.toContain("error:");
+        expect(build.exitCode).toBe(0);
+
+        // Structural check on the output: the writable PT_LOAD that
+        // contains .bun must not overlap any other PT_LOAD. Before the
+        // fix, the grown front PT_LOAD extended past the R and R-E
+        // PT_LOADs, which is exactly the corruption that segfaulted.
+        const bytes = new Uint8Array(await Bun.file(outfile).arrayBuffer());
+        const view = new DataView(bytes.buffer);
+        const phoff = Number(view.getBigUint64(32, true));
+        const phentsize = view.getUint16(54, true);
+        const phnum = view.getUint16(56, true);
+        const shoff = Number(view.getBigUint64(40, true));
+        const shentsize = view.getUint16(58, true);
+        const shnum = view.getUint16(60, true);
+        const shstrndx = view.getUint16(62, true);
+        const strtabHdr = shoff + shstrndx * shentsize;
+        const strtabOff = Number(view.getBigUint64(strtabHdr + 24, true));
+        const strtabSize = Number(view.getBigUint64(strtabHdr + 32, true));
+
+        // Find .bun's vaddr.
+        const decoder = new TextDecoder();
+        let bunAddr = 0n;
+        for (let i = 0; i < shnum; i++) {
+          const hdrOff = shoff + i * shentsize;
+          const nameIdx = view.getUint32(hdrOff, true);
+          if (nameIdx >= strtabSize) continue;
+          let end = strtabOff + nameIdx;
+          while (end < bytes.length && bytes[end] !== 0) end++;
+          const name = decoder.decode(bytes.slice(strtabOff + nameIdx, end));
+          if (name === ".bun") {
+            bunAddr = view.getBigUint64(hdrOff + 16, true);
+            break;
+          }
+        }
+        expect(bunAddr).not.toBe(0n);
+
+        // Collect all PT_LOAD ranges; find the one that covers .bun and
+        // assert it doesn't overlap any of the others.
+        type LoadSeg = { vaddr: bigint; end: bigint; writable: boolean };
+        const loads: LoadSeg[] = [];
+        for (let i = 0; i < phnum; i++) {
+          const off = phoff + i * phentsize;
+          if (view.getUint32(off, true) !== 1 /* PT_LOAD */) continue;
+          const pFlags = view.getUint32(off + 4, true);
+          const pVaddr = view.getBigUint64(off + 16, true);
+          const pMemsz = view.getBigUint64(off + 40, true);
+          loads.push({ vaddr: pVaddr, end: pVaddr + pMemsz, writable: (pFlags & 2) !== 0 });
+        }
+        const bunLoadIdx = loads.findIndex(s => s.writable && s.vaddr <= bunAddr && bunAddr < s.end);
+        expect(bunLoadIdx).toBeGreaterThanOrEqual(0);
+        const bunLoad = loads[bunLoadIdx];
+        for (let i = 0; i < loads.length; i++) {
+          if (i === bunLoadIdx) continue;
+          const other = loads[i];
+          // Disjoint: either bunLoad ends before other starts, or other
+          // ends before bunLoad starts.
+          const disjoint = bunLoad.end <= other.vaddr || other.end <= bunLoad.vaddr;
+          expect(disjoint).toBe(true);
+        }
+
+        // And the binary actually runs — the ultimate behavioral check.
+        await using proc = Bun.spawn({
+          cmd: [outfile],
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout.trim()).toBe("patchelf-regression-ok");
+        expect(exitCode).toBe(0);
+      },
+      180_000,
+    );
   });
 }
 
@@ -568,10 +904,8 @@ describe("compiled binary in a deleted cwd", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      // The entry never runs (VM init aborts first), the ENOENT surfaces, and the
-      // process exits 1 — a crash would terminate via a signal, never exit 1.
       expect(stdout).toBe("");
-      expect(stderr).toContain("ENOENT");
+      expect(stderr).toContain("The current working directory was deleted");
       expect(exitCode).toBe(1);
     },
     60_000,

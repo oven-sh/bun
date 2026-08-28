@@ -234,11 +234,6 @@ impl Behavior {
     }
 
     #[inline]
-    pub fn eq(lhs: Behavior, rhs: Behavior) -> bool {
-        lhs.bits() == rhs.bits()
-    }
-
-    #[inline]
     pub fn add(self, kind: Behavior) -> Behavior {
         self | kind
     }
@@ -345,7 +340,7 @@ pub enum URI {
 }
 
 impl URI {
-    pub fn eql(lhs: URI, rhs: URI, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
+    pub(crate) fn eql(lhs: URI, rhs: URI, lhs_buf: &[u8], rhs_buf: &[u8]) -> bool {
         match (lhs, rhs) {
             (URI::Local(l), URI::Local(r)) | (URI::Remote(l), URI::Remote(r)) => {
                 strings::eql_long(l.slice(lhs_buf), r.slice(rhs_buf), true)
@@ -383,25 +378,10 @@ pub struct TagInfo {
     pub tag: SemverString,
 }
 
-impl TagInfo {
-    pub fn eql(&self, that: &TagInfo, this_buf: &[u8], that_buf: &[u8]) -> bool {
-        self.name.eql(that.name, this_buf, that_buf) && self.tag.eql(that.tag, this_buf, that_buf)
-    }
-}
-
 #[derive(Clone, Copy)]
 pub struct TarballInfo {
     pub uri: URI,
     pub package_name: SemverString,
-}
-
-impl Default for TarballInfo {
-    fn default() -> Self {
-        TarballInfo {
-            uri: URI::Local(SemverString::default()),
-            package_name: SemverString::default(),
-        }
-    }
 }
 
 impl TarballInfo {
@@ -417,7 +397,7 @@ impl TarballInfo {
 /// deep-copy it. `git`/`github` (`Repository`) hold no heap data.
 #[repr(C)]
 pub union DependencyVersionValue {
-    pub uninitialized: (),
+    pub(crate) uninitialized: (),
 
     pub npm: ManuallyDrop<NpmInfo>,
     pub dist_tag: TagInfo,
@@ -548,7 +528,7 @@ impl Clone for Dependency {
 
 impl Dependency {
     /// Sorting order for dependencies is:
-    /// 1. [`peerDependencies`, `optionalDependencies`, `devDependencies`, `dependencies`]
+    /// 1. [`workspaces`, `devDependencies`, `optionalDependencies`, `dependencies`, `peerDependencies`]
     /// 2. name ASC
     /// "name" must be ASC so that later, when we rebuild the lockfile, we
     /// insert it back in reverse order without an extra sorting pass.
@@ -609,8 +589,8 @@ pub trait NegatableEnum: Copy + Eq {
 /// single bitset via [`combine`](Self::combine).
 #[derive(Clone, Copy)]
 pub struct Negatable<T: NegatableEnum> {
-    pub added: T,
-    pub removed: T,
+    pub(crate) added: T,
+    pub(crate) removed: T,
     pub had_wildcard: bool,
     pub had_unrecognized_values: bool,
 }
@@ -817,14 +797,14 @@ impl OperatingSystem {
     pub const NONE: Self = Self(0);
     pub const ALL: Self = Self(Self::ALL_VALUE);
 
-    pub const AIX: u16 = 1 << 1;
-    pub const DARWIN: u16 = 1 << 2;
-    pub const FREEBSD: u16 = 1 << 3;
-    pub const LINUX: u16 = 1 << 4;
-    pub const OPENBSD: u16 = 1 << 5;
-    pub const SUNOS: u16 = 1 << 6;
+    pub(crate) const AIX: u16 = 1 << 1;
+    pub(crate) const DARWIN: u16 = 1 << 2;
+    pub(crate) const FREEBSD: u16 = 1 << 3;
+    pub(crate) const LINUX: u16 = 1 << 4;
+    pub(crate) const OPENBSD: u16 = 1 << 5;
+    pub(crate) const SUNOS: u16 = 1 << 6;
     pub const WIN32: u16 = 1 << 7;
-    pub const ANDROID: u16 = 1 << 8;
+    pub(crate) const ANDROID: u16 = 1 << 8;
 
     pub const ALL_VALUE: u16 = Self::AIX
         | Self::DARWIN
@@ -848,7 +828,6 @@ impl OperatingSystem {
 
     // NB: NODE not NPM — package.json `os` field uses process.platform values
     // ("win32").
-    pub const CURRENT_NAME: &'static str = bun_core::env::OS_NAME_NODE;
 
     #[inline]
     pub const fn none() -> Self {
@@ -885,35 +864,18 @@ pub struct Libc(pub u8);
 
 impl Libc {
     pub const NONE: Self = Self(0);
-    pub const ALL: Self = Self(Self::ALL_VALUE);
+    pub(crate) const ALL: Self = Self(Self::ALL_VALUE);
 
-    pub const GLIBC: u8 = 1 << 1;
-    pub const MUSL: u8 = 1 << 2;
+    pub(crate) const GLIBC: u8 = 1 << 1;
+    pub(crate) const MUSL: u8 = 1 << 2;
 
-    pub const ALL_VALUE: u8 = Self::GLIBC | Self::MUSL;
+    pub(crate) const ALL_VALUE: u8 = Self::GLIBC | Self::MUSL;
 
     // TODO: runtime libc detection
-    pub const CURRENT: Self = Self(Self::GLIBC);
 
     #[inline]
-    pub const fn none() -> Self {
-        Self::NONE
-    }
-    #[inline]
-    pub const fn all() -> Self {
-        Self::ALL
-    }
-    #[inline]
-    pub fn is_match(self, target: Self) -> bool {
-        (self.0 & target.0) != 0
-    }
-    #[inline]
-    pub fn has(self, other: u8) -> bool {
+    pub(crate) fn has(self, other: u8) -> bool {
         (self.0 & other) != 0
-    }
-    #[inline]
-    pub fn negatable(self) -> Negatable<Self> {
-        NegatableExt::negatable(self)
     }
 }
 
@@ -931,17 +893,17 @@ impl Architecture {
     pub const NONE: Self = Self(0);
     pub const ALL: Self = Self(Self::ALL_VALUE);
 
-    pub const ARM: u16 = 1 << 1;
-    pub const ARM64: u16 = 1 << 2;
-    pub const IA32: u16 = 1 << 3;
-    pub const MIPS: u16 = 1 << 4;
-    pub const MIPSEL: u16 = 1 << 5;
-    pub const PPC: u16 = 1 << 6;
-    pub const PPC64: u16 = 1 << 7;
-    pub const S390: u16 = 1 << 8;
-    pub const S390X: u16 = 1 << 9;
-    pub const X32: u16 = 1 << 10;
-    pub const X64: u16 = 1 << 11;
+    pub(crate) const ARM: u16 = 1 << 1;
+    pub(crate) const ARM64: u16 = 1 << 2;
+    pub(crate) const IA32: u16 = 1 << 3;
+    pub(crate) const MIPS: u16 = 1 << 4;
+    pub(crate) const MIPSEL: u16 = 1 << 5;
+    pub(crate) const PPC: u16 = 1 << 6;
+    pub(crate) const PPC64: u16 = 1 << 7;
+    pub(crate) const S390: u16 = 1 << 8;
+    pub(crate) const S390X: u16 = 1 << 9;
+    pub(crate) const X32: u16 = 1 << 10;
+    pub(crate) const X64: u16 = 1 << 11;
 
     pub const ALL_VALUE: u16 = Self::ARM
         | Self::ARM64
@@ -959,11 +921,6 @@ impl Architecture {
     pub const CURRENT: Self = Self(Self::ARM64);
     #[cfg(target_arch = "x86_64")]
     pub const CURRENT: Self = Self(Self::X64);
-
-    #[cfg(target_arch = "aarch64")]
-    pub const CURRENT_NAME: &'static str = "arm64";
-    #[cfg(target_arch = "x86_64")]
-    pub const CURRENT_NAME: &'static str = "x64";
 
     #[inline]
     pub const fn none() -> Self {
@@ -1031,7 +988,13 @@ impl Repository {
         if repo_order != Ordering::Equal {
             return repo_order;
         }
-        self.committish.order(rhs.committish, lhs_buf, rhs_buf)
+        let committish_order = self.committish.order(rhs.committish, lhs_buf, rhs_buf);
+        if committish_order != Ordering::Equal {
+            return committish_order;
+        }
+        // Unconditional so the order stays transitive; an empty `resolved` is
+        // an ordinary value here, not a wildcard like in `eql`.
+        self.resolved.order(rhs.resolved, lhs_buf, rhs_buf)
     }
 
     pub fn count<B: bun_semver::StringBuilder>(&self, buf: &[u8], builder: &mut B) {
@@ -1074,7 +1037,6 @@ impl Repository {
 // can name the `npm` arm's payload without an upward edge.
 
 pub type VersionedURL = VersionedURLType<u64>;
-pub type OldV2VersionedURL = VersionedURLType<u32>;
 
 #[repr(C)]
 pub struct VersionedURLType<SemverInt: bun_semver::version::VersionInt> {
@@ -1206,14 +1168,6 @@ impl Default for Resolution {
     }
 }
 
-impl Resolution {
-    pub const ROOT: Self = Self {
-        tag: ResolutionTag::Root,
-        _padding: [0; 7],
-        value: ResolutionValue { root: () },
-    };
-}
-
 // ─── PreinstallState / Features / misc ────────────────────────────────────
 
 #[repr(u8)]
@@ -1234,6 +1188,7 @@ pub struct Features {
     pub dependencies: bool,
     pub dev_dependencies: bool,
     pub is_main: bool,
+    pub is_workspace: bool,
     pub optional_dependencies: bool,
     pub peer_dependencies: bool,
     pub trusted_dependencies: bool,
@@ -1247,6 +1202,7 @@ impl Default for Features {
             dependencies: true,
             dev_dependencies: false,
             is_main: false,
+            is_workspace: false,
             optional_dependencies: false,
             peer_dependencies: true,
             trusted_dependencies: false,
@@ -1262,42 +1218,13 @@ impl Features {
     pub const fn main() -> Self {
         Self::MAIN
     }
-    #[inline]
-    pub const fn npm() -> Self {
-        Self::NPM
-    }
-    #[inline]
-    pub const fn folder() -> Self {
-        Self::FOLDER
-    }
-    #[inline]
-    pub const fn workspace() -> Self {
-        Self::WORKSPACE
-    }
-    #[inline]
-    pub const fn link() -> Self {
-        Self::LINK
-    }
-    #[inline]
-    pub const fn tarball() -> Self {
-        Self::TARBALL
-    }
-
-    pub fn behavior(self) -> Behavior {
-        let mut out: u8 = 0;
-        out |= (self.dependencies as u8) << 1;
-        out |= (self.optional_dependencies as u8) << 2;
-        out |= (self.dev_dependencies as u8) << 3;
-        out |= (self.peer_dependencies as u8) << 4;
-        out |= (self.workspaces as u8) << 5;
-        Behavior::from_bits_retain(out)
-    }
 
     const fn base() -> Self {
         Self {
             dependencies: true,
             dev_dependencies: false,
             is_main: false,
+            is_workspace: false,
             optional_dependencies: false,
             peer_dependencies: true,
             trusted_dependencies: false,
@@ -1307,7 +1234,7 @@ impl Features {
         }
     }
 
-    pub const MAIN: Self = Self {
+    pub(crate) const MAIN: Self = Self {
         check_for_duplicate_dependencies: true,
         dev_dependencies: true,
         is_main: true,
@@ -1326,6 +1253,7 @@ impl Features {
 
     pub const WORKSPACE: Self = Self {
         dev_dependencies: true,
+        is_workspace: true,
         optional_dependencies: true,
         trusted_dependencies: true,
         ..Self::base()
@@ -1338,13 +1266,6 @@ impl Features {
     };
 
     pub const NPM: Self = Self {
-        optional_dependencies: true,
-        ..Self::base()
-    };
-
-    pub const TARBALL: Self = Self::NPM;
-
-    pub const NPM_MANIFEST: Self = Self {
         optional_dependencies: true,
         ..Self::base()
     };
@@ -1411,6 +1332,11 @@ pub struct DependencyGroup {
     pub prop: &'static [u8],
     pub field: &'static [u8],
     pub behavior: Behavior,
+}
+impl Default for DependencyGroup {
+    fn default() -> Self {
+        Self::DEPENDENCIES
+    }
 }
 impl DependencyGroup {
     pub const DEPENDENCIES: Self = Self {
@@ -1510,10 +1436,6 @@ pub trait AutoInstaller {
         &self,
         package_id: PackageID,
     ) -> core::result::Result<DependencyID, bun_core::Error>;
-    /// Project a `SemverString` into the lockfile's `string_bytes` buffer.
-    /// The returned slice borrows from either `self` (heap buffer) or `s`
-    /// (inline small-string), so both inputs share the bound `'a`.
-    fn lockfile_str<'a>(&'a self, s: &'a SemverString) -> &'a [u8];
 
     // ── Lockfile writes ───────────────────────────────────────────────────
     /// Port of `lockfile.appendPackage(Package.fromPackageJSON(...))` —

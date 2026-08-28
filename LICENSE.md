@@ -35,7 +35,7 @@ Bun statically links these libraries:
 | [`uSockets`](https://github.com/uNetworking/uSockets) | Apache 2.0 |
 | [`zlib-ng`](https://github.com/zlib-ng/zlib-ng) | zlib |
 | [`c-ares`](https://github.com/c-ares/c-ares) | MIT licensed |
-| [`libicu`](https://github.com/unicode-org/icu) 72 | [license here](https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE) |
+| [`libicu`](https://github.com/unicode-org/icu) 78 | [license here](https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE) |
 | [`libbase64`](https://github.com/aklomp/base64/blob/master/LICENSE) | BSD 2-Clause |
 | [`libuv`](https://github.com/libuv/libuv) (on Windows) | MIT |
 | [`libdeflate`](https://github.com/ebiggers/libdeflate) | MIT |
@@ -54,6 +54,8 @@ For compatibility reasons, the following packages are embedded into Bun's binary
 
 | Package | License |
 |---------|---------|
+| [`acorn`](https://github.com/acornjs/acorn) | MIT |
+| [`acorn-walk`](https://github.com/acornjs/acorn) | MIT |
 | [`assert`](https://npmjs.com/package/assert) | MIT |
 | [`browserify-zlib`](https://npmjs.com/package/browserify-zlib) | MIT |
 | [`buffer`](https://npmjs.com/package/buffer) | MIT |

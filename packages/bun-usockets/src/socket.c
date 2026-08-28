@@ -89,10 +89,6 @@ void us_socket_set_ssl_raw_tap(struct us_socket_t *s, int enabled) {
     s->ssl_raw_tap = !!enabled;
 }
 
-__attribute__((always_inline)) int us_socket_is_tls(struct us_socket_t *s) {
-    return s->ssl != NULL;
-}
-
 struct us_socket_group_t *us_connecting_socket_group(struct us_connecting_socket_t *c) {
     return c->group;
 }
@@ -155,6 +151,13 @@ int us_socket_ssl_handshake_callback_has_fired(struct us_socket_t *s) {
         return us_internal_ssl_handshake_callback_has_fired(s);
     }
     return 1;
+}
+
+unsigned int us_socket_ssl_spill_pending(struct us_socket_t *s) {
+    if (s->ssl) {
+        return us_internal_ssl_spill_pending(s);
+    }
+    return 0;
 }
 
 int us_connecting_socket_is_closed(struct us_connecting_socket_t *c) {
@@ -261,12 +264,6 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
  * handshake/secureConnection event. openssl.c re-enters here once that
  * graceful path is done. */
 struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code, void *reason) {
-#ifdef LIBUS_USE_LIBUV
-    if (s->fin_deferred) {
-        s->fin_deferred = 0;
-        s->group->loop->data.fin_deferred_count--;
-    }
-#endif
   if (s->ssl && s->ssl_in_use) {
     /* A JS callback running from inside SSL_do_handshake/SSL_read (ALPN, SNI,
      * keylog, ...) destroyed this socket. Closing now frees the SSL and
@@ -398,7 +395,7 @@ struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned cha
         return 0;
     }
 
-    return us_socket_from_fd(group, kind, NULL, socket_ext_size, fds[0], 0);
+    return us_socket_from_fd(group, kind, NULL, socket_ext_size, fds[0], 0, 0);
 #endif
 }
 
@@ -408,7 +405,21 @@ struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned cha
  * deliver data the caller asked to defer. */
 static void us_internal_rearm_writable(struct us_socket_t *s) {
     us_poll_change(&s->p, s->group->loop,
-                   LIBUS_SOCKET_WRITABLE | (s->flags.is_paused ? 0 : LIBUS_SOCKET_READABLE));
+                   LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
+}
+
+/* See libusockets.h: whether a zero-progress write on a writable event proves
+ * the peer is gone. Only the libuv backend has to ask the kernel. */
+int us_socket_stalled_write_means_peer_gone(struct us_socket_t *s) {
+#ifdef LIBUS_USE_LIBUV
+    if (us_socket_is_closed(s)) {
+        return 1;
+    }
+    return us_socket_get_error(s) != 0 ||
+           us_internal_libuv_peer_reset_probe(us_poll_fd(&s->p));
+#else
+    return 1;
+#endif
 }
 
 int us_socket_write2(struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {
@@ -418,19 +429,18 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
 
     int written = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
     if (written != header_length + payload_length) {
+        s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
 
     return written < 0 ? 0 : written;
 }
 
-struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc) {
-#if defined(LIBUS_USE_LIBUV) || defined(WIN32)
-    return 0;
-#else
+struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int options, int ipc) {
     struct us_poll_t *p1 = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p1, fd, POLL_TYPE_SOCKET);
-    int rc = us_poll_start_rc(p1, group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    int open_paused = (options & LIBUS_SOCKET_OPEN_PAUSED) && !ssl_ctx;
+    int rc = us_poll_start_rc(p1, group->loop, (open_paused ? 0 : LIBUS_SOCKET_READABLE) | LIBUS_SOCKET_WRITABLE);
     if (rc != 0) {
         us_poll_free(p1, group->loop);
         return 0;
@@ -443,13 +453,14 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->timeout = 255;
     s->long_timeout = 255;
     s->flags.low_prio_state = 0;
-    s->flags.allow_half_open = 0;
-    s->flags.is_paused = 0;
+    s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN) != 0;
+    s->flags.is_paused = open_paused;
     s->flags.is_ipc = ipc;
     s->flags.is_closed = 0;
     s->flags.adopted = 0;
     s->flags.last_write_failed = 0;
     s->unclassified_send_failures = 0;
+    s->read_eof = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */
@@ -467,7 +478,6 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     }
 
     return s;
-#endif
 }
 
 void *us_socket_get_native_handle(struct us_socket_t *s) {
@@ -667,12 +677,21 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char *data, int length, 
 
     int sent = bsd_sendmsg(us_poll_fd(&s->p), &msg, 0);
 
+    if (sent < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS) {
+            s->flags.last_write_failed = 1;
+            us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+            return 0;
+        }
+        return -1;
+    }
+
     if (sent != length) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
 
-    return sent < 0 ? 0 : sent;
+    return sent;
 }
 #endif
 
@@ -825,10 +844,6 @@ void us_socket_unref(struct us_socket_t *s) {
     // do nothing if not using libuv
 }
 
-struct us_loop_t *us_connecting_socket_get_loop(struct us_connecting_socket_t *c) {
-    return c->loop;
-}
-
 void us_socket_pause(struct us_socket_t *s) {
     if (s->flags.is_paused) return;
     // closed cannot be paused because it is already closed
@@ -839,24 +854,21 @@ void us_socket_pause(struct us_socket_t *s) {
 }
 
 void us_socket_resume(struct us_socket_t *s) {
-#ifdef LIBUS_USE_LIBUV
-    /* Reads flow again: normal delivery discovers the deferred FIN (and any
-     * reset behind it), so the sweep no longer owns this socket. */
-    if (s->fin_deferred) {
-        s->fin_deferred = 0;
-        s->group->loop->data.fin_deferred_count--;
-    }
-#endif
     if (!s->flags.is_paused) return;
     s->flags.is_paused = 0;
     // closed cannot be resumed
     if (us_socket_is_closed(s)) return;
 
-    if (us_socket_is_shut_down(s)) {
-        // we already sent FIN so we resume only readable side we are read-only
-        us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE);
-        return;
+    int events = s->read_eof ? 0 : LIBUS_SOCKET_READABLE;
+    if (!us_socket_is_shut_down(s)) {
+        // still writable: a FIN of ours would have left the socket read-only
+        events |= LIBUS_SOCKET_WRITABLE;
     }
-    // we are readable and writable so we resume everything
-    us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    if (us_poll_change(&s->p, s->group->loop, events) != 0) {
+        /* The dispatcher parked this socket while it was paused (loop.c) and the
+         * kernel refused to take it back: nothing would ever deliver its tail,
+         * end or close again, so fail it now like a failed first registration. */
+        int err = LIBUS_ERR;
+        us_internal_socket_close_raw(s, err > 2 ? err : LIBUS_ECONNRESET, NULL);
+    }
 }

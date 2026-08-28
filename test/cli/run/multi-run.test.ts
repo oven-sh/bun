@@ -7,7 +7,7 @@ import path from "path";
 async function runMulti(
   args: string[],
   dir: string,
-  extraEnv?: Record<string, string>,
+  extraEnv?: Record<string, string | undefined>,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
@@ -959,6 +959,117 @@ describe.concurrent("timing edge cases", () => {
     expect(ia).toBeLessThan(ib);
     expect(ib).toBeLessThan(ic);
     expect(r.exitCode).toBe(0);
+  });
+
+  // A script is finished when its process exits: output it already wrote is
+  // drained at that point, but a detached child still holding the pipe write
+  // ends must not keep the run alive waiting for an EOF that may never come
+  // (e.g. "dev": "server & watcher" style scripts).
+  test("a detached child holding the pipes does not delay the script's finish", async () => {
+    using dir = tempDir("mr-late-output", {
+      "late.js": `
+        const child = Bun.spawn({
+          cmd: [process.execPath, "-e", "await Bun.sleep(30_000); console.log('late-line')"],
+          stdio: ["ignore", "inherit", "inherit"],
+          // Windows: keep the child out of this process's kill-on-close job.
+          detached: true,
+        });
+        child.unref();
+        await Bun.write("pid.txt", String(child.pid));
+        console.log("early-line");
+      `,
+      "package.json": JSON.stringify({
+        scripts: {
+          late: `${bunExe()} late.js`,
+          other: `echo other-ran`,
+        },
+      }),
+    });
+    // CI ASAN lanes set BUN_FEATURE_FLAG_NO_ORPHANS, which makes the script's
+    // bun SIGKILL the detached child on exit; unset it so the child really
+    // keeps the pipes open.
+    const r = await runMulti(["run", "--sequential", "late", "other"], String(dir), {
+      BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
+    });
+    // Reap the pipe-holding child so nothing outlives the test. Guard the pid:
+    // kill(0) would signal this whole process group.
+    try {
+      const pid = Number(await Bun.file(path.join(String(dir), "pid.txt")).text());
+      if (Number.isInteger(pid) && pid > 0) process.kill(pid, "SIGKILL");
+    } catch {}
+    expectPrefixed(r.stdout, "late", "early-line");
+    expectPrefixed(r.stdout, "other", "other-ran");
+    // The run ends when the script exits; the child's much later write goes to
+    // a closed pipe instead of delaying `other` (and the whole run) by 30s.
+    expect(r.stdout).not.toContain("late-line");
+    expectDone(r.stderr, "late");
+    expectDone(r.stderr, "other");
+    expect(r.exitCode).toBe(0);
+  });
+
+  // Same shape, sh syntax: "orphan": "sleep 30 & echo ..." must not block
+  // --parallel completion until the backgrounded sleep exits.
+  test.skipIf(isWindows)("a backgrounded helper does not block --parallel completion", async () => {
+    using dir = tempDir("mr-bg-helper", {
+      "package.json": JSON.stringify({
+        scripts: {
+          orphan: `sleep 30 & echo orphan-started:$!`,
+          quick: `echo quick-done`,
+        },
+      }),
+    });
+    const r = await runMulti(["run", "--parallel", "quick", "orphan"], String(dir));
+    // Reap the backgrounded sleep so nothing outlives the test.
+    try {
+      const pid = Number(/orphan-started:(\d+)/.exec(r.stdout)?.[1]);
+      if (Number.isInteger(pid) && pid > 0) process.kill(pid, "SIGKILL");
+    } catch {}
+    expectPrefixed(r.stdout, "orphan", "orphan-started");
+    expectPrefixed(r.stdout, "quick", "quick-done");
+    expectDone(r.stderr, "orphan");
+    expectDone(r.stderr, "quick");
+    expect(r.exitCode).toBe(0);
+  });
+
+  // On abort (here: a failing script with exit-on-error), exit alone finishes
+  // a script; waiting for pipe EOF would hang on the detached child that still
+  // holds bg's stdout.
+  test("failure abort does not wait for a child holding another script's pipes", async () => {
+    using dir = tempDir("mr-abort-late", {
+      "bg.js": `
+        const child = Bun.spawn({
+          cmd: [process.execPath, "-e", "await Bun.sleep(30_000)"],
+          stdio: ["ignore", "inherit", "inherit"],
+          detached: true,
+        });
+        child.unref();
+        await Bun.write("ready.txt", String(child.pid));
+      `,
+      "fail.js": `
+        while (!(await Bun.file("ready.txt").exists())) await Bun.sleep(10);
+        process.exit(1);
+      `,
+      "package.json": JSON.stringify({
+        scripts: {
+          fail: `${bunExe()} fail.js`,
+          bg: `${bunExe()} bg.js`,
+        },
+      }),
+    });
+    const start = Date.now();
+    const r = await runMulti(["run", "--parallel", "fail", "bg"], String(dir), {
+      BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
+    });
+    // Reap the pipe-holding child so nothing outlives the test. Guard the pid:
+    // kill(0) would signal this whole process group.
+    try {
+      const pid = Number(await Bun.file(path.join(String(dir), "ready.txt")).text());
+      if (Number.isInteger(pid) && pid > 0) process.kill(pid, "SIGKILL");
+    } catch {}
+    expectExited(r.stderr, "fail", 1);
+    expect(r.exitCode).toBe(1);
+    // Waiting out the child's 30s sleep means the abort bypass regressed.
+    expect(Date.now() - start).toBeLessThan(15000);
   });
 });
 
@@ -2030,5 +2141,52 @@ describe("workspace integration", () => {
     // Label should use relative path "packages/my-pkg" instead of empty string
     expectPrefixed(r.stdout, "packages/my-pkg:build", "no-name-ok");
     expect(r.exitCode).toBe(0);
+  });
+});
+
+// ─── BUNFIG [run] SECTION ─────────────────────────────────────────────────────
+
+// Serial: debug builds recreate the shared `node` shim dir on every `--bun`
+// run, so concurrent `--bun` processes can race each other.
+describe("auto-discovered bunfig.toml [run] section", () => {
+  // With `run.bun = true` bun puts a `node` shim on PATH, so `typeof Bun`
+  // tells which binary ran the script.
+  const typeofBun = `node -e "console.log('Bun is ' + typeof Bun)"`;
+
+  // Script names that are not also `bun` subcommand aliases (`bun a` is `bun add`).
+  test.each([
+    ["bun run --parallel", ["run", "--parallel", "one", "two"]],
+    ["bun --parallel", ["--parallel", "one", "two"]],
+    ["bun run --sequential", ["run", "--sequential", "one", "two"]],
+  ])("%s applies [run] bun = true", async (_, args) => {
+    using dir = tempDir("mr-bunfig-run-bun", {
+      "bunfig.toml": "[run]\nbun = true\n",
+      "package.json": JSON.stringify({ scripts: { one: typeofBun, two: typeofBun } }),
+    });
+    const r = await runMulti(args, String(dir));
+    expectPrefixed(r.stdout, "one", "Bun is object");
+    expectPrefixed(r.stdout, "two", "Bun is object");
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("--bun on the CLI wins over [run] bun = false", async () => {
+    using dir = tempDir("mr-bunfig-cli-bun", {
+      "bunfig.toml": "[run]\nbun = false\n",
+      "package.json": JSON.stringify({ scripts: { one: typeofBun } }),
+    });
+    const r = await runMulti(["run", "--bun", "--parallel", "one"], String(dir));
+    expectPrefixed(r.stdout, "one", "Bun is object");
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("a malformed bunfig.toml fails the run", async () => {
+    using dir = tempDir("mr-bunfig-malformed", {
+      "bunfig.toml": '[run]\nbun = "yes"\n',
+      "package.json": JSON.stringify({ scripts: { one: typeofBun } }),
+    });
+    const r = await runMulti(["run", "--parallel", "one"], String(dir));
+    expect(r.stderr).toContain("Expected boolean");
+    expect(r.stdout).not.toContain("Bun is");
+    expect(r.exitCode).toBe(1);
   });
 });

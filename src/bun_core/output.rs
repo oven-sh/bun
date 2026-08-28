@@ -35,7 +35,7 @@ use crate::io;
 // at crate root) provides the seam; `bun_sys` supplies the `Sys` arm.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use crate::OutputSink;
+pub(crate) use crate::OutputSink;
 
 #[inline]
 pub(crate) fn output_sink() -> OutputSink {
@@ -66,12 +66,12 @@ impl QuietWriter {
         output_sink().quiet_writer_flush(self)
     }
     #[inline]
-    pub fn context_handle(&self) -> Fd {
+    pub(crate) fn context_handle(&self) -> Fd {
         output_sink().quiet_writer_fd(self)
     }
     /// Inherent forwarder so call sites don't need `use fmt::Write`.
     #[inline]
-    pub fn write_fmt(&mut self, args: core::fmt::Arguments<'_>) -> core::fmt::Result {
+    pub(crate) fn write_fmt(&mut self, args: core::fmt::Arguments<'_>) -> core::fmt::Result {
         <Self as core::fmt::Write>::write_fmt(self, args)
     }
 }
@@ -115,13 +115,13 @@ impl QuietWriterAdapter {
 pub struct File(pub Fd);
 
 impl File {
-    pub const ZEROED: Self = Self(Fd::INVALID);
+    pub(crate) const ZEROED: Self = Self(Fd::INVALID);
     #[inline]
-    pub const fn fd(self) -> Fd {
+    pub(crate) const fn fd(self) -> Fd {
         self.0
     }
     #[inline]
-    pub fn handle(self) -> Fd {
+    pub(crate) fn handle(self) -> Fd {
         self.0
     }
     /// `bun_sys::File::stderr()` via the sink (T0-safe).
@@ -136,7 +136,7 @@ impl File {
     /// Write all bytes (best-effort; routes through QuietWriter so errors are
     /// swallowed). Progress.rs uses this.
     #[inline]
-    pub fn write_all(self, bytes: &[u8]) -> crate::CrateResult<()> {
+    pub(crate) fn write_all(self, bytes: &[u8]) -> crate::CrateResult<()> {
         let mut qw = self.quiet_writer();
         let _ = output_sink().quiet_writer_write_all(&mut qw, bytes);
         Ok(())
@@ -196,25 +196,6 @@ pub fn warn(payload: impl PrettyFmtInput) {
     pretty_errorln!("<r><yellow>warn<r><d>:<r> {}", buf);
 }
 
-/// `bun.Output.note` — blue `note:` prefix to stderr.
-#[inline]
-pub fn note(payload: impl PrettyFmtInput) {
-    let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
-    pretty_errorln!("<blue>note<r><d>:<r> {}", buf);
-}
-
-/// Function-form of `Output.debug`.
-/// The macro form is `crate::debug!`; this fn variant takes a single
-/// pre-formatted payload for call sites that build the message dynamically.
-#[inline]
-pub fn debug(payload: impl PrettyFmtInput) {
-    if crate::env::IS_DEBUG {
-        let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
-        pretty_errorln!("<d>DEBUG:<r> {}", buf);
-        flush();
-    }
-}
-
 /// `Output.prettyErrorln` — function form. Performs `<tag>` → ANSI rewrite on
 /// the rendered payload (using stderr's colour state), writes to stderr, and
 /// appends `\n` if the rendered output does not already end in one. Macro
@@ -226,28 +207,6 @@ pub fn pretty_errorln(payload: impl PrettyFmtInput) {
     if buf.0.last() != Some(&b'\n') {
         write_bytes(Destination::Stderr, b"\n");
     }
-}
-
-/// `Output.prettyError` — `<tag>`-rewritten payload to stderr without a
-/// trailing newline.
-#[inline]
-pub fn pretty_error(payload: impl PrettyFmtInput) {
-    let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
-    write_bytes(Destination::Stderr, &buf);
-}
-
-/// Test-harness initializer: configure the output sinks without touching the
-/// real stdio FDs. Safe to call repeatedly.
-pub fn init_test() {
-    if SOURCE_SET.get() {
-        return;
-    }
-    let stdout = File::from(Fd::stdout());
-    let stderr = File::from(Fd::stderr());
-    Source::set_init(stdout, stderr);
-    // Tests run without a TTY; force colours off so snapshot output is stable.
-    ENABLE_ANSI_COLORS_STDOUT.store(false, Ordering::Relaxed);
-    ENABLE_ANSI_COLORS_STDERR.store(false, Ordering::Relaxed);
 }
 
 /// `bun.Output.Source.Stdio.restore` — restore terminal to cooked mode on exit.
@@ -286,8 +245,7 @@ static STDOUT_STREAM_SET: AtomicBool = AtomicBool::new(false);
 // the C declaration `int32_t bun_stdio_tty[3]`. Using atomics instead of
 // `RacyCell` makes Rust-side reads/writes fully safe (cell-get reduction).
 #[unsafe(no_mangle)]
-pub(crate) static bun_stdio_tty: [AtomicI32; 3] =
-    [AtomicI32::new(0), AtomicI32::new(0), AtomicI32::new(0)];
+static bun_stdio_tty: [AtomicI32; 3] = [AtomicI32::new(0), AtomicI32::new(0), AtomicI32::new(0)];
 
 /// Read `bun_stdio_tty[idx]`. Written once at startup (in `Source::set_init` /
 /// `bun_initialize_process`) before reader threads spawn, so `Relaxed` suffices.
@@ -295,17 +253,6 @@ pub(crate) static bun_stdio_tty: [AtomicI32; 3] =
 fn stdio_tty_flag(idx: usize) -> bool {
     bun_stdio_tty[idx].load(Ordering::Relaxed) != 0
 }
-
-// TYPE_ONLY: bun_sys::Winsize → bun_core (move-in pass).
-// `AtomicCell` because the SIGWINCH handler writes this from signal context
-// while any thread may read it. `Winsize` is 4×u16 = 8 bytes, padding-free.
-pub static TERMINAL_SIZE: crate::AtomicCell<crate::Winsize> =
-    crate::AtomicCell::new(crate::Winsize {
-        row: 0,
-        col: 0,
-        xpixel: 0,
-        ypixel: 0,
-    });
 
 // ──────────────────────────────────────────────────────────────────────────
 // Source
@@ -318,28 +265,24 @@ pub type StreamType = File;
 pub type StreamType = io::FixedBufferStream; // wasm32 is not built yet; FixedBufferStream is unported.
 
 pub struct Source {
-    pub stdout_buffer: [u8; 4096],
-    pub stderr_buffer: [u8; 4096],
-    pub buffered_stream_backing: QuietWriterAdapter,
-    pub buffered_error_stream_backing: QuietWriterAdapter,
+    pub(crate) stdout_buffer: [u8; 4096],
+    pub(crate) stderr_buffer: [u8; 4096],
+    pub(crate) buffered_stream_backing: QuietWriterAdapter,
+    pub(crate) buffered_error_stream_backing: QuietWriterAdapter,
     // Self-referential: point into `*_backing.new_interface`. Use the accessor
     // methods instead of these raw fields.
     // (LIFETIMES.tsv: BORROW_FIELD — self-ref into buffered_*_backing)
     buffered_stream: *mut io::Writer,
     buffered_error_stream: *mut io::Writer,
 
-    pub stream_backing: QuietWriterAdapter,
-    pub error_stream_backing: QuietWriterAdapter,
+    pub(crate) stream_backing: QuietWriterAdapter,
+    pub(crate) error_stream_backing: QuietWriterAdapter,
     // Self-referential (BORROW_FIELD)
     stream: *mut io::Writer,
     error_stream: *mut io::Writer,
 
-    pub raw_stream: StreamType,
-    pub raw_error_stream: StreamType,
-    // Borrowed WASM-mode write buffers, never freed by this file.
-    // Not owned → raw fat ptr (BORROW_FIELD-style), not `Box<[u8]>`.
-    pub out_buffer: *mut [u8],
-    pub err_buffer: *mut [u8],
+    pub(crate) raw_stream: StreamType,
+    pub(crate) raw_error_stream: StreamType,
 }
 
 impl Source {
@@ -360,7 +303,7 @@ impl Source {
         pos: 0,
     };
 
-    pub const ZEROED: Self = Self {
+    pub(crate) const ZEROED: Self = Self {
         stdout_buffer: [0u8; 4096],
         stderr_buffer: [0u8; 4096],
         buffered_stream_backing: QuietWriterAdapter::uninit(),
@@ -373,25 +316,23 @@ impl Source {
         error_stream: core::ptr::null_mut(),
         raw_stream: Self::ZEROED_STREAM,
         raw_error_stream: Self::ZEROED_STREAM,
-        out_buffer: core::ptr::slice_from_raw_parts_mut(core::ptr::null_mut(), 0),
-        err_buffer: core::ptr::slice_from_raw_parts_mut(core::ptr::null_mut(), 0),
     };
 
     /// Accessors replacing the self-referential `*std.Io.Writer` fields.
     #[inline]
-    pub fn buffered_stream(&mut self) -> &mut io::Writer {
+    pub(crate) fn buffered_stream(&mut self) -> &mut io::Writer {
         self.buffered_stream_backing.new_interface()
     }
     #[inline]
-    pub fn buffered_error_stream(&mut self) -> &mut io::Writer {
+    pub(crate) fn buffered_error_stream(&mut self) -> &mut io::Writer {
         self.buffered_error_stream_backing.new_interface()
     }
     #[inline]
-    pub fn stream(&mut self) -> &mut io::Writer {
+    pub(crate) fn stream(&mut self) -> &mut io::Writer {
         self.stream_backing.new_interface()
     }
     #[inline]
-    pub fn error_stream(&mut self) -> &mut io::Writer {
+    pub(crate) fn error_stream(&mut self) -> &mut io::Writer {
         self.error_stream_backing.new_interface()
     }
 
@@ -399,7 +340,7 @@ impl Source {
     // thread_local slot, and the adapters built below capture raw pointers
     // into `out.stdout_buffer`/`out.stderr_buffer`. Returning `Self` by value
     // would move the struct after those pointers were captured and dangle them.
-    pub fn init(out: &mut Source, stream: StreamType, err_stream: StreamType) {
+    pub(crate) fn init(out: &mut Source, stream: StreamType, err_stream: StreamType) {
         if crate::env::IS_DEBUG && bun_alloc::USE_MIMALLOC && !SOURCE_SET.get() {
             bun_alloc::mimalloc::mi_option_set(bun_alloc::mimalloc::Option::show_errors, 1);
         }
@@ -478,12 +419,12 @@ impl Source {
         Self::configure_thread_no_js();
     }
 
-    pub fn is_no_color() -> bool {
+    pub(crate) fn is_no_color() -> bool {
         // Parsed bool, default false. NO_COLOR=0 → false.
         env_var::NO_COLOR.get().unwrap_or(false)
     }
 
-    pub fn get_force_color_depth() -> Option<ColorDepth> {
+    pub(crate) fn get_force_color_depth() -> Option<ColorDepth> {
         let force_color = env_var::FORCE_COLOR.get()?;
         // Supported by Node.js, if set will ignore NO_COLOR.
         // - "0" to indicate no color support
@@ -498,30 +439,15 @@ impl Source {
         })
     }
 
-    pub fn is_force_color() -> bool {
+    pub(crate) fn is_force_color() -> bool {
         Self::get_force_color_depth().unwrap_or(ColorDepth::None) != ColorDepth::None
-    }
-
-    pub fn is_color_terminal() -> bool {
-        #[cfg(windows)]
-        {
-            // https://github.com/chalk/supports-color/blob/d4f413efaf8da045c5ab440ed418ef02dbb28bf1/index.js#L100C11-L112
-            // Windows 10 build 10586 is the first Windows release that supports 256 colors.
-            // Windows 10 build 14931 is the first release that supports 16m/TrueColor.
-            // Every other version supports 16 colors.
-            return true;
-        }
-        #[cfg(not(windows))]
-        {
-            Self::color_depth() != ColorDepth::None
-        }
     }
 
     pub fn color_depth() -> ColorDepth {
         *LAZY_COLOR_DEPTH.get_or_init(compute_color_depth)
     }
 
-    pub fn set_init(stdout: StreamType, stderr: StreamType) {
+    pub(crate) fn set_init(stdout: StreamType, stderr: StreamType) {
         SOURCE.with_borrow_mut(|s| Source::init(s, stdout, stderr));
 
         SOURCE_SET.set(true);
@@ -539,13 +465,12 @@ impl Source {
                     let _ = STDERR_DESCRIPTOR_TYPE.set(OutputStreamDescriptor::Terminal);
                 }
 
+                // FORCE_COLOR and NO_COLOR override both streams; otherwise each stream uses its own isatty result.
                 let mut enable_color: Option<bool> = None;
                 if Self::is_force_color() {
                     enable_color = Some(true);
                 } else if Self::is_no_color() {
                     enable_color = Some(false);
-                } else if Self::is_color_terminal() && (is_stdout_tty || is_stderr_tty) {
-                    enable_color = Some(true);
                 }
 
                 ENABLE_ANSI_COLORS_STDOUT
@@ -591,18 +516,17 @@ pub mod windows_stdio {
     /// Write-once at startup → `Once`, not `RacyCell`: `init()` builds the
     /// snapshot locally and `.set()`s it; `restore()` reads via `.get()`. Both
     /// sides are fully safe (cell-get reduction).
-    pub(crate) static CONSOLE_MODE: crate::Once<[Option<u32>; 3]> = crate::Once::new();
-    pub(crate) static CONSOLE_CODEPAGE: core::sync::atomic::AtomicU32 =
-        core::sync::atomic::AtomicU32::new(0);
-    pub(crate) static CONSOLE_OUTPUT_CODEPAGE: core::sync::atomic::AtomicU32 =
+    static CONSOLE_MODE: crate::Once<[Option<u32>; 3]> = crate::Once::new();
+    static CONSOLE_CODEPAGE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+    static CONSOLE_OUTPUT_CODEPAGE: core::sync::atomic::AtomicU32 =
         core::sync::atomic::AtomicU32::new(0);
 
     #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Bun__restoreWindowsStdio() {
+    extern "C" fn Bun__restoreWindowsStdio() {
         restore();
     }
 
-    pub fn restore() {
+    pub(crate) fn restore() {
         // SAFETY: PEB access is sound on Windows; handles are valid for process
         // lifetime. `peb()` returns a raw pointer because the OS/CRT mutate the
         // PEB out-of-band (`SetStdHandle`, …), so we must not materialize a
@@ -630,7 +554,7 @@ pub mod windows_stdio {
         }
     }
 
-    pub fn init() {
+    pub(crate) fn init() {
         w::libuv::uv_disable_stdio_inheritance();
 
         let stdin = w::GetStdHandle(w::STD_INPUT_HANDLE).unwrap_or(w::INVALID_HANDLE_VALUE);
@@ -771,7 +695,7 @@ pub mod stdio {
         }
     }
 
-    pub fn restore() {
+    pub(crate) fn restore() {
         #[cfg(windows)]
         {
             super::windows_stdio::restore();
@@ -907,12 +831,12 @@ pub enum OutputStreamDescriptor {
 
 pub static ENABLE_ANSI_COLORS_STDERR: AtomicBool = AtomicBool::new(Environment::IS_NATIVE);
 pub static ENABLE_ANSI_COLORS_STDOUT: AtomicBool = AtomicBool::new(Environment::IS_NATIVE);
-pub(crate) static ENABLE_BUFFERING: AtomicBool = AtomicBool::new(Environment::IS_NATIVE);
-pub(crate) static IS_VERBOSE: AtomicBool = AtomicBool::new(false);
+static ENABLE_BUFFERING: AtomicBool = AtomicBool::new(Environment::IS_NATIVE);
+static IS_VERBOSE: AtomicBool = AtomicBool::new(false);
 pub static IS_GITHUB_ACTION: AtomicBool = AtomicBool::new(false);
 
-pub(crate) static STDERR_DESCRIPTOR_TYPE: crate::Once<OutputStreamDescriptor> = crate::Once::new();
-pub(crate) static STDOUT_DESCRIPTOR_TYPE: crate::Once<OutputStreamDescriptor> = crate::Once::new();
+static STDERR_DESCRIPTOR_TYPE: crate::Once<OutputStreamDescriptor> = crate::Once::new();
+static STDOUT_DESCRIPTOR_TYPE: crate::Once<OutputStreamDescriptor> = crate::Once::new();
 
 /// Downstream alias. Several call sites
 /// refer to it as `Output::DescriptorType` for brevity.
@@ -942,6 +866,10 @@ pub fn is_stdout_tty() -> bool {
 #[inline]
 pub fn is_stdin_tty() -> bool {
     stdio_tty_flag(0)
+}
+#[inline]
+pub fn is_stderr_tty() -> bool {
+    stdio_tty_flag(2)
 }
 
 pub fn is_github_action() -> bool {
@@ -1001,7 +929,7 @@ pub struct EnableBufferingScope {
 }
 
 impl EnableBufferingScope {
-    pub fn init() -> EnableBufferingScope {
+    pub(crate) fn init() -> EnableBufferingScope {
         let prev_buffering = ENABLE_BUFFERING.load(Ordering::Relaxed);
         ENABLE_BUFFERING.store(true, Ordering::Relaxed);
         EnableBufferingScope { prev_buffering }
@@ -1033,7 +961,7 @@ pub fn disable_buffering() {
 pub struct DisableBufferingScope(());
 
 impl DisableBufferingScope {
-    pub fn init() -> DisableBufferingScope {
+    pub(crate) fn init() -> DisableBufferingScope {
         disable_buffering();
         DisableBufferingScope(())
     }
@@ -1122,6 +1050,11 @@ pub fn reset_terminal() {
 }
 
 pub fn reset_terminal_all() {
+    // Reached from `reload_process`, which any thread may call. A thread that
+    // never ran `Source::configure_thread` has zeroed writers, not stdio.
+    if !SOURCE_SET.get() {
+        return;
+    }
     SOURCE.with_borrow_mut(|s| {
         if ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed) {
             let _ = s.error_stream().write_all(b"\x1B[2J\x1B[3J\x1B[H");
@@ -1251,7 +1184,7 @@ pub fn print_elapsed(elapsed: f64) {
     }
 }
 
-pub fn print_elapsed_stdout(elapsed: f64) {
+pub(crate) fn print_elapsed_stdout(elapsed: f64) {
     match elapsed.round() as i64 {
         0..=1500 => pretty!("<r><d>[<b>{:>.2}ms<r><d>]<r>", elapsed),
         _ => pretty!("<r><d>[<b>{:>.2}s<r><d>]<r>", elapsed / 1000.0),
@@ -1273,21 +1206,6 @@ pub fn print_start_end(start: i128, end: i128) {
 pub fn print_start_end_stdout(start: i128, end: i128) {
     let elapsed = ((end - start) as i64) / crate::time::NS_PER_MS as i64;
     print_elapsed_stdout(elapsed as f64);
-}
-
-/// Minimal timer abstraction so bun_core doesn't depend on bun_perf.
-/// bun_perf::SystemTimer impls this (move-in pass).
-pub trait ReadTimer {
-    fn read(&mut self) -> u64;
-}
-
-pub fn print_timer(timer: &mut impl ReadTimer) {
-    #[cfg(target_arch = "wasm32")]
-    {
-        return;
-    }
-    let elapsed = timer.read() / crate::time::NS_PER_MS;
-    print_elapsed(elapsed as f64);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1406,12 +1324,6 @@ pub fn print_to(dest: Destination, args: fmt::Arguments<'_>) {
     });
 }
 
-#[inline]
-pub fn print_errorable(args: fmt::Arguments<'_>) -> crate::CrateResult<()> {
-    print_to(Destination::Stdout, args);
-    Ok(())
-}
-
 /// Print to stdout
 /// This will appear in the terminal, including in production.
 /// Text automatically buffers
@@ -1440,19 +1352,14 @@ macro_rules! debug {
     };
 }
 
-/// NOTE: this fn form cannot inspect the template and therefore *always*
-/// appends `\n`. Callers must NOT pass a template that already ends in `\n`.
-/// Prefer the `debug!` macro.
-#[inline]
-pub(crate) fn _debug(args: fmt::Arguments<'_>) {
-    debug_assert!(SOURCE_SET.get());
-    print_to(Destination::Stdout, args);
-    write_bytes(Destination::Stdout, b"\n");
-}
-
 #[inline]
 pub fn print(args: fmt::Arguments<'_>) {
     print_to(Destination::Stdout, args);
+}
+
+/// Bytes to stdout exactly as given (no UTF-8 replacement), through the same writer `print` uses.
+pub fn print_bytes(bytes: &[u8]) {
+    write_bytes(Destination::Stdout, bytes);
 }
 
 /// `bun.Output.println(fmt, args)` — `print()` with a trailing newline.
@@ -1466,34 +1373,14 @@ pub fn println(args: fmt::Arguments<'_>) {
 // Scoped debug logging
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Debug-only logs which should not appear in release mode.
-///
-/// To enable a specific log at runtime, set the environment variable
-///   `BUN_DEBUG_${TAG}` to 1.
-///
-/// For example, to enable the "foo" log, set the environment variable
-///   BUN_DEBUG_foo=1
-/// To enable all logs, set the environment variable
-///   BUN_DEBUG_ALL=1
-pub type LogFunction = fn(fmt::Arguments<'_>);
-
+/// Default visibility of a [`ScopedLogger`]: whether it emits without
+/// `BUN_DEBUG_${TAG}=1` set.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Visibility {
     /// Hide logs for this scope by default.
     Hidden,
     /// Show logs for this scope by default.
     Visible,
-}
-
-impl Visibility {
-    /// Show logs for this scope by default if and only if `condition` is true.
-    pub const fn visible_if(condition: bool) -> Visibility {
-        if condition {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
-        }
-    }
 }
 
 /// Runtime state for one scoped logger. One static instance per `declare_scope!`.
@@ -1897,7 +1784,7 @@ impl fmt::Display for PrettyBuf {
 /// Positional-argument bundle for runtime template substitution.
 pub trait FmtTuple {
     /// Write the `idx`-th positional into `f`. Returns `false` if `idx` is out
-    /// of range (caller emits the literal `{}` then).
+    /// of range.
     fn write_nth(&self, idx: usize, f: &mut dyn fmt::Write) -> Result<bool, fmt::Error>;
     fn len(&self) -> usize;
 }
@@ -1977,7 +1864,7 @@ impl_fmt_tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F, 6 G, 7 H);
 
 /// Substitute `{}` / `{s}` / `{d}` / `{any}` / `{f}` placeholders in `template`
 /// with successive entries from `args`. `{{` / `}}` are emitted as literal
-/// braces. Unrecognised specs are passed through verbatim.
+/// braces. The spec inside any other `{...}` is ignored.
 fn substitute_template(
     template: &[u8],
     args: &impl FmtTuple,
@@ -2001,7 +1888,14 @@ fn substitute_template(
             }
             if j < t.len() {
                 // consume placeholder
-                if args.write_nth(argi, f)? {
+                let filled = args.write_nth(argi, f)?;
+                debug_assert!(
+                    filled,
+                    "template has more placeholders than the {} arg(s) passed with it (a format_args! counts as one; pass a tuple): {:?}",
+                    args.len(),
+                    bstr::BStr::new(t),
+                );
+                if filled {
                     argi += 1;
                 }
                 i = j + 1;
@@ -2048,7 +1942,7 @@ impl<A: FmtTuple> fmt::Display for TemplateDisplay<'_, A> {
 ///
 /// Port of `Output.prettyFmt` + `print` fused for the dynamic-template case
 /// (crash_handler builds the template at runtime).
-pub fn pretty_fmt_args<A: FmtTuple>(
+pub(crate) fn pretty_fmt_args<A: FmtTuple>(
     fmt: &str,
     is_enabled: bool,
     args: A,
@@ -2429,16 +2323,12 @@ pub fn enable_ansi_colors_stdout() -> bool {
 pub fn enable_ansi_colors_stderr() -> bool {
     ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed)
 }
-#[inline]
-pub fn enable_ansi_colors() -> bool {
-    ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed)
-}
 
 // ── DebugTimer ────────────────────────────────────────────────────────────
 
 pub struct DebugTimer {
     #[cfg(debug_assertions)]
-    pub timer: std::time::Instant,
+    pub(crate) timer: std::time::Instant,
 }
 
 impl DebugTimer {
@@ -2517,6 +2407,13 @@ pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
     // pretty_errorln! add exactly one.
     let fmt = fmt.strip_suffix('\n').unwrap_or(fmt);
     let body = pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args);
+    err_with_body(&error_name, &body);
+}
+
+/// The type-independent tail of [`err`], so its several format sites are not
+/// re-instantiated for every `(ErrName, FmtTuple)` pair.
+#[inline(never)]
+fn err_with_body(error_name: &dyn ErrName, body: &dyn fmt::Display) {
     if let Some(e) = error_name.as_sys_err_info() {
         // MOVE_DOWN: bun_sys::coreutils_error_map → bun_core (move-in pass).
         if let Some(label) = crate::coreutils_error_map::get(e.errno) {
@@ -2646,7 +2543,7 @@ unsafe extern "C" {
     safe fn getpid() -> c_int;
 }
 
-pub(crate) fn init_scoped_debug_writer_at_startup() {
+fn init_scoped_debug_writer_at_startup() {
     debug_assert!(SOURCE_SET.get());
 
     if let Some(path) = env_var::BUN_DEBUG.get() {
@@ -2724,32 +2621,31 @@ pub fn err_fmt(formatter: impl fmt::Display) {
 // `prompt`/`init`/`publish` callers can read stdin without naming bun_sys.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) static BUFFERED_STDIN: crate::RacyCell<BufferedStdin> =
-    crate::RacyCell::new(BufferedStdin {
-        fd: {
-            #[cfg(windows)]
-            {
-                Fd::INVALID // set in WindowsStdio.init
-            }
-            #[cfg(not(windows))]
-            {
-                Fd::stdin()
-            }
-        },
-        buf: [0; 4096],
-        start: 0,
-        end: 0,
-    });
+static BUFFERED_STDIN: crate::RacyCell<BufferedStdin> = crate::RacyCell::new(BufferedStdin {
+    fd: {
+        #[cfg(windows)]
+        {
+            Fd::INVALID // set in WindowsStdio.init
+        }
+        #[cfg(not(windows))]
+        {
+            Fd::stdin()
+        }
+    },
+    buf: [0; 4096],
+    start: 0,
+    end: 0,
+});
 
 /// `bun.deprecated.BufferedReader(4096, File.Reader)` over the process stdin.
 /// Layout is local to bun_core; bun_sys never casts into this (it only fills
 /// `.fd` during Windows startup).
 #[repr(C)]
 pub struct BufferedStdin {
-    pub fd: Fd,
-    pub buf: [u8; 4096],
-    pub start: usize,
-    pub end: usize,
+    pub(crate) fd: Fd,
+    pub(crate) buf: [u8; 4096],
+    pub(crate) start: usize,
+    pub(crate) end: usize,
 }
 
 impl BufferedStdin {
@@ -2815,7 +2711,7 @@ impl BufferedStdin {
     /// Appends bytes (not
     /// including `delimiter`) into `out`; errors with `StreamTooLong`
     /// semantics if `out.len()` would exceed `max_size`.
-    pub fn read_until_delimiter_array_list(
+    pub(crate) fn read_until_delimiter_array_list(
         &mut self,
         out: &mut Vec<u8>,
         delimiter: u8,
@@ -2850,11 +2746,6 @@ impl StdinReader {
             0 => Err(crate::CrateError::EndOfStream),
             _ => Ok(one[0]),
         }
-    }
-    /// Alias for callers that spell it `read_byte`.
-    #[inline]
-    pub fn read_byte(&mut self) -> crate::CrateResult<u8> {
-        self.take_byte()
     }
 }
 
@@ -2911,7 +2802,7 @@ pub fn synchronized() -> Synchronized {
 pub struct Synchronized;
 
 impl Synchronized {
-    pub fn begin() -> Synchronized {
+    pub(crate) fn begin() -> Synchronized {
         #[cfg(unix)]
         {
             print(format_args!("{}", SYNCHRONIZED_START));

@@ -22,7 +22,7 @@ pub(crate) fn to_js_typed_array_type(t: Tag) -> crate::Result<JSType> {
     }
 }
 
-pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Tag> {
+pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Tag> {
     if value.is_empty_or_undefined_or_null() {
         return Ok(Tag::numeric);
     }

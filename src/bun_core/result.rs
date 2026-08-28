@@ -145,6 +145,7 @@ pub mod coreutils_error_map {
         "EPROTONOSUPPORT" => "Protocol not supported",
         "ESOCKTNOSUPPORT" => "Socket type not supported",
         "EOPNOTSUPP" => "Operation not supported",
+        "ENOTSUP" => "Operation not supported",
         "EPFNOSUPPORT" => "Protocol family not supported",
         "EAFNOSUPPORT" => "Address family not supported by protocol",
         "EADDRINUSE" => "Address already in use",
@@ -282,21 +283,5 @@ pub mod coreutils_error_map {
         "ETOOMANYREFS" => "Too many references: can't splice",
         "EXDEV" => "Cross-device link",
     };
-    }
-}
-
-/// A plain ok/err union.
-pub enum Result<T, E> {
-    Ok(T),
-    Err(E),
-}
-
-impl<T, E> Result<T, E> {
-    #[inline]
-    pub fn as_err(&self) -> Option<&E> {
-        if let Result::Err(e) = self {
-            return Some(e);
-        }
-        None
     }
 }

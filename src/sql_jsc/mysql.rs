@@ -80,14 +80,10 @@ pub mod protocol {
     pub mod any_mysql_error_jsc;
 
     #[path = "DecodeBinaryValue.rs"]
-    pub mod decode_binary_value;
+    pub(crate) mod decode_binary_value;
 
     #[path = "ResultSet.rs"]
     pub mod result_set;
 }
 
-pub use my_sql_connection::MySQLConnection;
 pub use my_sql_context::MySQLContext;
-pub use my_sql_query::MySQLQuery;
-pub use my_sql_request_queue::MySQLRequestQueue;
-pub use my_sql_statement::MySQLStatement;

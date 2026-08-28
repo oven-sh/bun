@@ -132,17 +132,8 @@ pub enum AddToLogError {
 }
 bun_core::impl_tag_error!(AddToLogError);
 
-impl From<AddToLogError> for crate::Error {
-    fn from(e: AddToLogError) -> Self {
-        match e {
-            AddToLogError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
-            AddToLogError::StackOverflow => crate::Error::StackOverflow,
-        }
-    }
-}
-
 impl Error {
-    pub fn add_to_log(&self, source: &Source, log: &mut Log) -> Result<(), AddToLogError> {
+    pub(crate) fn add_to_log(&self, source: &Source, log: &mut Log) -> Result<(), AddToLogError> {
         let loc: Loc = match *self {
             Error::Oom => return Err(AddToLogError::OutOfMemory),
             Error::StackOverflow => return Err(AddToLogError::StackOverflow),

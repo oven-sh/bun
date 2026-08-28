@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSPerformanceObserver.h"
 
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
@@ -121,7 +120,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSPerformanceObserverPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSPerformanceObserverPrototype* ptr = new (NotNull, JSC::allocateCell<JSPerformanceObserverPrototype>(vm)) JSPerformanceObserverPrototype(vm, globalObject, structure);
+        JSPerformanceObserverPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSPerformanceObserverPrototype))) JSPerformanceObserverPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -135,7 +134,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -199,12 +198,8 @@ template<> JSValue JSPerformanceObserverDOMConstructor::prototypeForStructure(JS
 
 template<> void JSPerformanceObserverDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "PerformanceObserver"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSPerformanceObserver::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
-    reifyStaticProperties(vm, JSPerformanceObserver::info(), JSPerformanceObserverConstructorTableValues, *this);
+    initializeBaseProperties(vm, 1, "PerformanceObserver"_s, JSPerformanceObserver::prototype(vm, globalObject));
+    Bun::reifyStaticPropertyTable(vm, JSPerformanceObserver::info(), JSPerformanceObserverConstructorTableValues, *this);
 }
 
 /* Hash table for prototype */
@@ -221,8 +216,8 @@ const ClassInfo JSPerformanceObserverPrototype::s_info = { "PerformanceObserver"
 void JSPerformanceObserverPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSPerformanceObserver::info(), JSPerformanceObserverPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSPerformanceObserver::info(), JSPerformanceObserverPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSPerformanceObserver::s_info = { "PerformanceObserver"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceObserver) };
@@ -330,12 +325,7 @@ JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverPrototypeFunction_takeRecords, (JS
 
 JSC::GCClient::IsoSubspace* JSPerformanceObserver::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSPerformanceObserver, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForPerformanceObserver.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceObserver = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForPerformanceObserver.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceObserver = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSPerformanceObserver, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformanceObserver, m_subspaceForPerformanceObserver));
 }
 
 template<typename Visitor>

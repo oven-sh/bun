@@ -6,6 +6,9 @@ const common = require('../common');
 
 if (!common.hasIntl)
   common.skip('missing Intl');
+// toascii.json expects the Unicode 16 UTS #46 table, which ICU ships from 76 on.
+if (parseInt(process.versions.icu) < 76)
+  common.skip('ICU predates Unicode 16');
 
 const assert = require('assert');
 const { domainToASCII, domainToUnicode } = require('url');

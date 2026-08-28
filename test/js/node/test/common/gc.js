@@ -120,14 +120,57 @@ async function checkIfCollectableByCounting(fn, ctor, count, waitTime = 20) {
   throw new Error(`${name} cannot be collected`);
 }
 
+// Upstream Node's onGC uses async_hooks (AsyncResource + destroy hook) with the
+// documented contract "a full setImmediate() invocation passes between a
+// global.gc() call and the listener being invoked". Bun's async_hooks does not
+// fire destroy on GC, so this shim uses a WeakRef checked synchronously by the
+// --expose-gc shim (common/index.js) right after Bun.gc(true): releaseWeakRefs
+// clears [[KeptAlive]] (so entries added by new WeakRef() / an earlier deref()
+// don't survive the collection), then one more collection+sweep fires ongc()
+// for any ref that cleared. No async hop, so the one-setImmediate contract
+// holds regardless of concurrent-task-queue vs setImmediate ordering
+// (test-net-connect-memleak.js saw the FR callback land after the check on the
+// CI linux-x64 binary only). The sweep is NOT scheduled from onGC(): polling
+// deref() on still-live targets each tick chained [[KeptAlive]] across the
+// getAll loop in test-gc-http-client-connaborted and the last request never
+// became collectable on that same CI binary.
+var onGCPending = [];
+function onGCSweep() {
+  for (let i = onGCPending.length - 1; i >= 0; i--) {
+    if (onGCPending[i].ref.deref() === undefined) {
+      const { ongc } = onGCPending[i];
+      onGCPending.splice(i, 1);
+      ongc();
+    }
+  }
+}
+function onGCSweepSync(releaseWeakRefs, collect) {
+  if (onGCPending.length === 0) return;
+  // [[KeptAlive]] (from new WeakRef()/deref()) would otherwise hold targets
+  // through the collection below.
+  releaseWeakRefs();
+  collect(true);
+  onGCSweep();
+  // A target whose retention chain drops on the next turn (the TLS socket's
+  // secureConnect listener in test-tls-connect-memleak) is not collectable
+  // yet; one nextTick later it is, and nextTick drains before setImmediate.
+  if (onGCPending.length > 0) process.nextTick(() => {
+    releaseWeakRefs();
+    collect(true);
+    onGCSweep();
+  });
+}
+
 var finalizationRegistry = new FinalizationRegistry(heldValue => {
   heldValue.ongc();
 })
 
 function onGC(value, holder) {
   if (holder?.ongc) {
-
-    finalizationRegistry.register(value, { ongc: holder.ongc });
+    let fired = false;
+    const ongc = () => { if (fired) return; fired = true; holder.ongc(); };
+    onGCPending.push({ ref: new WeakRef(value), ongc });
+    finalizationRegistry.register(value, { ongc });
   }
 }
 
@@ -167,5 +210,6 @@ module.exports = {
   runAndBreathe,
   checkIfCollectableByCounting,
   onGC,
+  onGCSweepSync,
   gcUntil,
 };

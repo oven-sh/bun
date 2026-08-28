@@ -10,14 +10,17 @@ describe("require(specifier)", () => {
   it.failing("has an empty prototype", () => expect(require.prototype).toEqual({}));
 
   describe("when specifier is a path to a non js/ts/etc file", () => {
-    it.each(["obj.toml", "obj.json", "obj.jsonc"])("require('%s') synchronously produces an object", file => {
-      const result = require(fixture(file));
-      expect(result).toEqual({
-        foo: {
-          bar: "baz",
-        },
-      });
-    });
+    it.each(["obj.toml", "obj.json", "obj.jsonc", "obj.xml"])(
+      "require('%s') synchronously produces an object",
+      file => {
+        const result = require(fixture(file));
+        expect(result).toEqual({
+          foo: {
+            bar: "baz",
+          },
+        });
+      },
+    );
 
     // note: toml does not support top-level arrays
     it.each(["arr.json", "arr.jsonc"])("require('%s') synchronously produces an array", file => {
@@ -59,10 +62,11 @@ describe("require(specifier)", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     });
 
-    it.failing("is a Module object when a file is run directly", () => {
+    it.failing("is a Module object when a file is run directly", async () => {
       const file = path.join(dir, "index.js");
-      const { stdout, stderr } = bunRun(file);
+      const { stdout, stderr, exitCode } = await bunRun(file);
       expect(stderr).toBeEmpty();
+      expect(exitCode).toBe(0);
 
       // FIXME: most of these properties exist, but are non-enumerable and are
       // not present as keys when stringified

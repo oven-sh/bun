@@ -54,8 +54,6 @@ public:
     ControllerKind m_controllerKind { ControllerKind::None };
     // [[disturbed]]
     bool m_disturbed : 1 { false };
-    // [[Detached]] (transferable streams are not implemented; the slot exists)
-    bool m_detached : 1 { false };
     // Bun: locked by a native/direct consumer WITHOUT a real reader object. Part of every
     // isReadableStreamLocked() check.
     bool m_lockedWithoutReader : 1 { false };
@@ -63,8 +61,9 @@ public:
     bool m_transferred : 1 { false };
     // `typeof rawHighWaterMark === "number"` at construction time.
     bool m_bunHighWaterMarkIsNumber : 1 { false };
-    // `$bunNativeType`: write-only today, kept for the FFI ABI.
-    int32_t m_nativeType { 0 };
+    // Body.textStream(): the native source adapter decodes each chunk as UTF-8
+    // text before enqueue.
+    bool m_nativeTextMode : 1 { false };
 
     // [[reader]] — a default reader, a BYOB reader, or null (undefined).
     JSC::WriteBarrier<JSReadableStreamReaderBase> m_reader;
@@ -106,6 +105,12 @@ public:
     {
         if (m_transferred)
             return JSC::jsNumber(-1);
+        // A text-mode native stream's handle wraps a raw byte source; hide it
+        // from JS-side native-transfer fast paths (Readable.fromWeb) so they
+        // fall back to a reader that sees decoded strings. ReadableStreamTag__tagged
+        // reads the raw slot, so the fetch/server push-side is unaffected.
+        if (m_nativeTextMode)
+            return {};
         return m_nativePtr.get(); // may be empty
     }
     bool nativeHandleDetached() const

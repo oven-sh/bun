@@ -8,14 +8,13 @@ use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
 use crate::cli::Command;
 use crate::cli::filter_arg as FilterArg;
-use crate::cli::run_command::RunCommand;
+use crate::cli::run_command::{ConfigureEnvOptions, RunCommand};
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
 use bun_io::{BufferedReader, ReadState};
-use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 use bun_sys as sys;
 
 // The string fields below are owned boxes, except `combined` which is interned
@@ -45,6 +44,9 @@ struct ProcessInfo {
     // `to_process()` and `set_exit_handler` callers.
     ptr: *mut Process,
     status: Status,
+    start_time: Instant,
+    /// Set together with `status` when the exit arrives.
+    end_time: Option<Instant>,
 }
 
 // `state` is a backref into the owning `State` (which holds `handles: []ProcessHandle`),
@@ -52,22 +54,32 @@ struct ProcessInfo {
 // self-referential; kept as raw pointers per LIFETIMES.tsv (BACKREF).
 pub(crate) struct ProcessHandle<'a> {
     config: &'a ScriptConfig,
-    state: bun_ptr::BackRef<State<'a>>,
+    state: bun_ptr::BackRef<State<'a>, bun_ptr::Mut>,
 
     stdout: BufferedReader,
     stderr: BufferedReader,
+    /// Pipes started and not yet at EOF/error; a script is finished only when
+    /// its process has exited and this is 0 (see `State::maybe_finish`).
+    remaining_fds: i8,
+    /// Set by the `maybe_finish` that counts this script out of
+    /// `remaining_scripts`, so a later pipe/exit event or the abort sweep
+    /// cannot finish it twice.
+    finished: bool,
     buffer: Vec<u8>,
 
     process: Option<ProcessInfo>,
     options: SpawnOptions,
 
-    start_time: Option<Instant>,
-    end_time: Option<Instant>,
-
     remaining_dependencies: usize,
     dependents: Vec<*mut ProcessHandle<'a>>,
-    visited: bool,
-    visiting: bool,
+    visit_state: VisitState,
+}
+
+#[derive(Clone, Copy)]
+enum VisitState {
+    Unvisited,
+    Visiting,
+    Visited,
 }
 
 impl<'a> ProcessHandle<'a> {
@@ -89,7 +101,7 @@ impl<'a> ProcessHandle<'a> {
             handle.config.combined.as_ptr().cast(),
             core::ptr::null(),
         ];
-        handle.start_time = Some(Instant::now());
+        let start_time = Instant::now();
         let spawned: spawn::SpawnProcessResult = 'brk: {
             // Get the envp with the PATH configured
             // There's probably a more optimal way to do this where you have a Vec shared
@@ -133,7 +145,7 @@ impl<'a> ProcessHandle<'a> {
         let mut spawned = spawned;
         #[cfg(windows)]
         let (stdout_pipe, stderr_pipe) = (spawned.stdout.take(), spawned.stderr.take());
-        let process = spawned.to_process(EventLoopHandle::init_mini(state.event_loop), false);
+        let process = spawned.to_process(EventLoopHandle::init_mini(state.event_loop));
 
         let handle_ptr = std::ptr::from_mut::<ProcessHandle<'a>>(handle).cast::<c_void>();
         handle.stdout.set_parent(handle_ptr);
@@ -142,10 +154,10 @@ impl<'a> ProcessHandle<'a> {
         #[cfg(windows)]
         {
             if let spawn::WindowsStdioResult::Buffer(pipe) = stdout_pipe {
-                handle.stdout.source = Some(bun_io::Source::Pipe(pipe));
+                handle.stdout.set_source(bun_io::Source::Pipe(pipe));
             }
             if let spawn::WindowsStdioResult::Buffer(pipe) = stderr_pipe {
-                handle.stderr.source = Some(bun_io::Source::Pipe(pipe));
+                handle.stderr.set_source(bun_io::Source::Pipe(pipe));
             }
         }
 
@@ -153,22 +165,28 @@ impl<'a> ProcessHandle<'a> {
         {
             if let Some(stdout) = stdout_fd {
                 let _ = sys::set_nonblocking(stdout);
+                handle.remaining_fds += 1;
                 handle.stdout.start(stdout, true)?;
             }
             if let Some(stderr) = stderr_fd {
                 let _ = sys::set_nonblocking(stderr);
+                handle.remaining_fds += 1;
                 handle.stderr.start(stderr, true)?;
             }
         }
         #[cfg(not(unix))]
         {
+            handle.remaining_fds += 1;
             handle.stdout.start_with_current_pipe()?;
+            handle.remaining_fds += 1;
             handle.stderr.start_with_current_pipe()?;
         }
 
         handle.process = Some(ProcessInfo {
             ptr: process,
             status: Status::Running,
+            start_time,
+            end_time: None,
         });
         // SAFETY: `process` was just allocated by `to_process` (heap::alloc);
         // sole owner until reaped, owner backref set before reap callback can fire.
@@ -195,7 +213,34 @@ impl<'a> ProcessHandle<'a> {
         Ok(())
     }
 
-    pub(crate) fn on_read_chunk(&mut self, chunk: &[u8], has_more: ReadState) -> bool {
+    /// On process exit, read what the pipes already hold, then force-end any
+    /// pipe a leftover child still keeps open: its EOF may never come and
+    /// must not stall the finish. Windows has no synchronous drain, so only
+    /// the force-end applies there.
+    ///
+    /// # Safety
+    /// `this` is the live handle; the reader callbacks re-enter
+    /// `State::maybe_finish` with their own exclusive reborrow of it, so no
+    /// receiver borrow may be live across these calls.
+    unsafe fn drain_and_close_pipes(this: *mut Self) {
+        // SAFETY: caller contract; raw-ptr reborrows end before each dispatch.
+        unsafe {
+            for reader in [&raw mut (*this).stdout, &raw mut (*this).stderr] {
+                // `is_done()` = EOF already counted out of `remaining_fds`.
+                #[cfg(unix)]
+                if !(*reader).is_done() && (*reader).get_fd() != sys::Fd::INVALID {
+                    BufferedReader::read(reader);
+                }
+                if !(*reader).is_done() {
+                    (*reader).deinit();
+                }
+            }
+            // `deinit` fires no callback; all pipes are over, record it here.
+            (*this).remaining_fds = 0;
+        }
+    }
+
+    fn on_read_chunk(&mut self, chunk: &[u8], has_more: ReadState) -> bool {
         let _ = has_more;
         let mut state_ref = self.state;
         // SAFETY: state backref valid (see start()).
@@ -204,33 +249,46 @@ impl<'a> ProcessHandle<'a> {
         true
     }
 
-    pub(crate) fn on_reader_done(&mut self) {}
+    fn on_reader_done(&mut self) {
+        debug_assert!(self.remaining_fds > 0);
+        self.remaining_fds -= 1;
+        let mut state_ref = self.state;
+        // SAFETY: state backref valid (see start()).
+        let state = unsafe { state_ref.get_mut() };
+        let _ = state.maybe_finish(self);
+    }
 
-    pub(crate) fn on_reader_error(&mut self, err: &sys::Error) {
+    fn on_reader_error(&mut self, err: &sys::Error) {
         let _ = err;
+        debug_assert!(self.remaining_fds > 0);
+        self.remaining_fds -= 1;
+        let mut state_ref = self.state;
+        // SAFETY: state backref valid (see start()).
+        let state = unsafe { state_ref.get_mut() };
+        let _ = state.maybe_finish(self);
     }
 }
 
 bun_spawn::link_impl_ProcessExit! {
     FilterRunHandle for ProcessHandle<'static> => |this| {
-        on_process_exit(process, status, rusage) =>
-            (*this).on_process_exit(&mut *process, status, rusage),
+        // The Process is never freed; the program exits when all scripts finish.
+        on_process_exit(_process, status, _rusage) => {
+            let info = (*this).process.as_mut().unwrap();
+            info.status = status;
+            info.end_time = Some(Instant::now());
+            // Aborted runs finish on exit alone; their pending output is dropped.
+            if !(*(*this).state.as_ptr()).aborted {
+                ProcessHandle::drain_and_close_pipes(this);
+            }
+            let mut state_ref = (*this).state;
+            let state = state_ref.get_mut();
+            let _ = state.maybe_finish(&mut *this);
+        },
     }
 }
 
 impl<'a> ProcessHandle<'a> {
-    pub(crate) fn on_process_exit(&mut self, proc: &mut Process, status: Status, _: &Rusage) {
-        self.process.as_mut().unwrap().status = status;
-        self.end_time = Some(Instant::now());
-        // We just leak the process because we're going to exit anyway after all processes are done
-        let _ = proc;
-        let mut state_ref = self.state;
-        // SAFETY: state backref valid (see start()).
-        let state = unsafe { state_ref.get_mut() };
-        let _ = state.process_exit(self);
-    }
-
-    pub(crate) fn loop_(&self) -> *mut bun_io::Loop {
+    fn loop_(&self) -> *mut bun_io::Loop {
         // SAFETY: state backref valid; event_loop is the live MiniEventLoop singleton.
         bun_io::uws_to_native(unsafe { (*self.state.event_loop).loop_ })
     }
@@ -242,7 +300,7 @@ impl<'a> ProcessHandle<'a> {
 bun_io::impl_buffered_reader_parent! {
     FilterRunHandle for ProcessHandle<'a>;
     has_on_read_chunk = true;
-    on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk(chunk, has_more);
+    on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk(&chunk, has_more);
     on_reader_done  = |this| (*this).on_reader_done();
     on_reader_error = |this, err| (*this).on_reader_error(&err);
     loop_           = |this| (*this).loop_();
@@ -260,7 +318,7 @@ struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
     // Raw `*mut` — `init_global` returns the
     // thread-local singleton pointer; aliasing &mut would be UB.
-    event_loop: *mut MiniEventLoop<'static>,
+    event_loop: *mut MiniEventLoop,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
@@ -275,7 +333,7 @@ struct State<'a> {
     // by Transpiler; ProcessHandle::start mutates `env.map` (PATH swap) so a
     // shared borrow won't do, and `&'a mut` would conflict with the Transpiler's
     // own raw-ptr field. Reborrow `&mut *env` at use sites.
-    env: *mut bun_dotenv::Loader<'static>,
+    env: *mut bun_dotenv::Loader,
 }
 
 struct ElideResult<'b> {
@@ -284,7 +342,7 @@ struct ElideResult<'b> {
 }
 
 impl<'a> State<'a> {
-    pub(crate) fn is_done(&self) -> bool {
+    fn is_done(&self) -> bool {
         self.remaining_scripts == 0
     }
 
@@ -333,7 +391,16 @@ impl<'a> State<'a> {
         Ok(())
     }
 
-    fn process_exit(&mut self, handle: &mut ProcessHandle<'a>) -> crate::Result<()> {
+    /// A script is finished once its process has exited *and* both pipes have
+    /// ended; finishing on exit alone can drop output the exit notification
+    /// beat. The exit path force-ends pipes a leftover child holds open
+    /// (`drain_and_close_pipes`); on abort, exit alone suffices.
+    fn maybe_finish(&mut self, handle: &mut ProcessHandle<'a>) -> crate::Result<()> {
+        let exited = matches!(&handle.process, Some(p) if !matches!(p.status, Status::Running));
+        if handle.finished || !exited || (handle.remaining_fds != 0 && !self.aborted) {
+            return Ok(());
+        }
+        handle.finished = true;
         self.remaining_scripts -= 1;
         if !self.aborted {
             for &dependent in &handle.dependents {
@@ -502,8 +569,8 @@ impl<'a> State<'a> {
                     }
                     Status::Exited(exited) => {
                         if exited.code == 0 {
-                            if let (Some(start), Some(end)) = (handle.start_time, handle.end_time) {
-                                let duration = end.duration_since(start);
+                            if let Some(end) = proc.end_time {
+                                let duration = end.duration_since(proc.start_time);
                                 let ms = duration.as_nanos() as f64 / 1_000_000.0;
                                 if ms > 1000.0 {
                                     write!(
@@ -570,20 +637,34 @@ impl<'a> State<'a> {
         let _ = bun_sys::File::stdout().write_all(&self.draw_buf);
     }
 
-    pub(crate) fn abort(&mut self) {
+    fn abort(&mut self) {
+        if self.aborted {
+            return;
+        }
         // we perform an abort by sending SIGINT to all processes
         self.aborted = true;
-        for handle in self.handles.iter_mut() {
-            if let Some(proc) = &mut handle.process {
+        // Raw ptrs so `self.maybe_finish` can be called while walking (the
+        // file-wide State/handle backref pattern).
+        let handles: Vec<*mut ProcessHandle<'a>> =
+            self.handles.iter_mut().map(std::ptr::from_mut).collect();
+        for handle in handles {
+            // SAFETY: points into `self.handles`, live for the whole run loop.
+            if let Some(proc) = unsafe { (*handle).process.as_ref() } {
                 // if we get an error here we simply ignore it
                 // SAFETY: proc.ptr is a live `*mut Process` (set in start(); leaked
                 // until program exit per on_process_exit note).
                 let _ = unsafe { (*proc.ptr).kill(bun_sys::SignalCode::SIGINT.0) };
             }
+            // An already-exited handle may be waiting on pipes a grandchild
+            // still holds; with `aborted` set this finishes it now. Killed
+            // handles finish when their exit arrives.
+            // SAFETY: same `self.handles` element as above; the exclusive
+            // reborrow is confined to this call.
+            let _ = self.maybe_finish(unsafe { &mut *handle });
         }
     }
 
-    pub(crate) fn finalize(&mut self) -> u8 {
+    fn finalize(&mut self) -> u8 {
         if self.aborted {
             let _ = self.redraw(true);
         }
@@ -634,7 +715,7 @@ impl AbortHandler {
         bun_sys::windows::FALSE
     }
 
-    pub(crate) fn install() {
+    fn install() {
         #[cfg(unix)]
         {
             // SAFETY: libc::sigaction is #[repr(C)] POD; all-zero is a valid value (fields overwritten below).
@@ -661,12 +742,16 @@ impl AbortHandler {
         }
     }
 
-    pub(crate) fn uninstall() {
+    fn uninstall() {
         // only necessary on Windows, as on posix we pass the SA_RESETHAND flag
         #[cfg(windows)]
         {
-            // restores default Ctrl+C behavior
-            let _ = bun_sys::c::SetConsoleCtrlHandler(None, bun_sys::windows::FALSE);
+            // (None, FALSE) clears the ignore attribute; it does NOT unregister
+            // a handler routine — pass the address.
+            let _ = bun_sys::c::SetConsoleCtrlHandler(
+                Some(Self::windows_ctrl_handler),
+                bun_sys::windows::FALSE,
+            );
         }
     }
 }
@@ -703,85 +788,43 @@ pub(crate) fn run_scripts_with_filter(
     let _ = bun_resolver::fs::FileSystem::init(None)?;
     let fsinstance = bun_resolver::fs::FileSystem::get();
 
-    // these things are leaked because we are going to exit
-    // When --workspaces is set, we want to match all workspace packages
-    // Otherwise use the provided filters
-    // `FilterSet::init` takes `&[&[u8]]`; ctx.filters is
-    // `Vec<Box<[u8]>>` so build a borrowed-slice view.
-    let filters_to_use: Vec<&[u8]> = if ctx.workspaces {
-        // Use "*" as filter to match all packages in the workspace
-        vec![b"*".as_slice()]
-    } else {
-        ctx.filters.iter().map(|f| f.as_ref()).collect()
-    };
-
-    let filter_instance = FilterArg::FilterSet::init(&filters_to_use, fsinstance.top_level_dir)?;
-    let mut patterns: Vec<Box<[u8]>> = Vec::new();
-
-    // Find package.json at workspace root
-    let mut root_buf = bun_paths::PathBuffer::uninit();
-    let resolve_root = FilterArg::get_candidate_package_patterns(
-        // SAFETY: `ctx.log` is the process-static `Cli::LOG_`; CLI dispatch is single-threaded
-        // and no other `&mut Log` borrow is live for the duration of this call.
-        unsafe { ctx.log_mut() },
-        &mut patterns,
-        fsinstance.top_level_dir,
-        &mut root_buf,
-    )?;
-
     // TODO(refactor): out-param init — `configureEnvForRun` writes through the
     // out-param. Per PORTING.md this should be reshaped to
     // `RunCommand::configure_env_for_run(...) -> Result<Transpiler, _>`; until then
     // pass `&mut MaybeUninit<Transpiler>` (zeroed() is invalid: Transpiler is not #[repr(C)] POD).
     let mut this_transpiler = core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
-    let _ = RunCommand::configure_env_for_run(&mut *ctx, &mut this_transpiler, None, true, false)?;
+    let _ = RunCommand::configure_env_for_run(
+        &mut *ctx,
+        &mut this_transpiler,
+        None,
+        ConfigureEnvOptions {
+            log_errors: true,
+            store_root_fd: false,
+        },
+    )?;
     // SAFETY: configure_env_for_run fully initializes the out-param on Ok.
     let mut this_transpiler = unsafe { this_transpiler.assume_init() };
 
-    let mut package_json_iter = FilterArg::PackageFilterIterator::init(&patterns, resolve_root)?;
-    // defer package_json_iter.deinit() — handled by Drop
+    let selected = FilterArg::select_packages(
+        &*ctx,
+        &mut this_transpiler.resolver,
+        fsinstance.top_level_dir,
+    )?;
 
-    // Get list of packages that match the configuration
     let mut scripts: Vec<ScriptConfig> = Vec::new();
-    // var scripts = std.ArrayHashMap([]const u8, ScriptConfig).init(ctx.allocator);
-    while let Some(package_json_path) = package_json_iter.next()? {
-        let dirpath =
-            bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(&package_json_path);
-        let path = strings::without_trailing_slash(dirpath);
-
-        // When using --workspaces, skip the root package to prevent recursion
-        if ctx.workspaces && path == resolve_root {
-            continue;
-        }
-
-        let Some(pkgjson) = bun_resolver::PackageJSON::parse::<{ IncludeDependencies::Main }>(
-            &mut this_transpiler.resolver,
-            dirpath,
-            bun_sys::Fd::invalid(),
-            None,
-            IncludeScripts::IncludeScripts,
-        ) else {
-            bun_core::warn!(
-                "Failed to read {}, skipping this workspace package\n",
-                bun_core::fmt::quote(&*package_json_path),
-            );
+    for package in &selected.packages {
+        let path: &[u8] = &package.dir;
+        let Some(pkgscripts) = &package.json.scripts else {
             continue;
         };
-        let Some(pkgscripts) = &pkgjson.scripts else {
-            continue;
-        };
-
-        if !filter_instance.matches(path, &pkgjson.name) {
-            continue;
-        }
 
         let run_in_bun = ctx.debug.run_in_bun;
         let path_var: Vec<u8> = RunCommand::configure_path_for_run_with_package_json_dir(
             &mut *ctx,
-            dirpath,
+            path,
             &mut this_transpiler,
             None,
-            dirpath,
+            path,
             run_in_bun,
         )?;
 
@@ -827,8 +870,9 @@ pub(crate) fn run_scripts_with_filter(
             // SAFETY: interned[combined_len] == 0 (copied from `copy_script`).
             let combined = ZStr::from_buf(interned, combined_len);
 
-            let dep_source_buf = pkgjson.dependencies.source_buf;
-            let deps: Vec<Box<[u8]>> = pkgjson
+            let dep_source_buf = package.json.dependencies.source_buf;
+            let deps: Vec<Box<[u8]>> = package
+                .json
                 .dependencies
                 .map
                 .keys()
@@ -837,8 +881,8 @@ pub(crate) fn run_scripts_with_filter(
                 .collect();
 
             scripts.push(ScriptConfig {
-                package_json_path: package_json_path.clone(),
-                package_name: Box::<[u8]>::from(&pkgjson.name[..]),
+                package_json_path: package.package_json_path.clone(),
+                package_name: Box::<[u8]>::from(&package.json.name[..]),
                 script_name: Box::<[u8]>::from(*name),
                 script_content: Box::<[u8]>::from(&interned[0..len_command_only]),
                 combined,
@@ -860,18 +904,29 @@ pub(crate) fn run_scripts_with_filter(
                 (bstr::BStr::new(script_name),),
             );
         } else {
-            Output::err_generic("No packages matched the filter", ());
+            let patterns: Vec<&[u8]> = ctx.filters.iter().map(|f| &**f).collect();
+            Output::err_generic(
+                "{}",
+                (bstr::BStr::new(
+                    &bun_install::package_manager::workspace_selection::unmatched_message(
+                        &patterns,
+                    ),
+                ),),
+            );
         }
         Global::exit(1);
     }
 
     // SAFETY: Transpiler::init always sets `env` to the process-lifetime singleton.
-    let env_ptr: *mut bun_dotenv::Loader<'static> = this_transpiler.env;
+    let env_ptr: *mut bun_dotenv::Loader = this_transpiler.env;
     let event_loop = MiniEventLoopMod::init_global(
         // SAFETY: see above; `&'static mut` reborrow of the singleton for first-init only.
         Some(unsafe { &mut *env_ptr }),
         None,
     );
+    // Windows: recursive kill-on-close Job so cmd.exe/.cmd-shim grandchildren
+    // (which escape libuv's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
+    bun_io::ParentDeathWatchdog::ensure_kill_on_close_job();
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --filter). Linux is
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.
@@ -930,8 +985,8 @@ pub(crate) fn run_scripts_with_filter(
     // Borrows; `state` is not moved after this point.
     let mut handles_vec: Vec<ProcessHandle> = Vec::with_capacity(scripts.len());
     // SAFETY: `state` is not moved after this point; outlives every `ProcessHandle`.
-    let state_ptr: bun_ptr::BackRef<State> =
-        unsafe { bun_ptr::BackRef::from_raw(core::ptr::addr_of_mut!(state)) };
+    let state_ptr: bun_ptr::BackRef<State, bun_ptr::Mut> =
+        unsafe { bun_ptr::BackRef::from_raw_mut(core::ptr::addr_of_mut!(state)) };
     let mut map: StringHashMap<Vec<*mut ProcessHandle>> = StringHashMap::default();
     for script in scripts.iter() {
         handles_vec.push(ProcessHandle {
@@ -940,6 +995,8 @@ pub(crate) fn run_scripts_with_filter(
             stdout: BufferedReader::init::<ProcessHandle>(),
             stderr: BufferedReader::init::<ProcessHandle>(),
             buffer: Vec::new(),
+            remaining_fds: 0,
+            finished: false,
             process: None,
             options: SpawnOptions {
                 stdin: spawn::Stdio::Ignore,
@@ -967,12 +1024,9 @@ pub(crate) fn run_scripts_with_filter(
                 stream: true,
                 ..Default::default()
             },
-            start_time: None,
-            end_time: None,
             remaining_dependencies: 0,
             dependents: Vec::new(),
-            visited: false,
-            visiting: false,
+            visit_state: VisitState::Unvisited,
         });
     }
     state.handles = handles_vec.into_boxed_slice();
@@ -1030,14 +1084,20 @@ pub(crate) fn run_scripts_with_filter(
         }
     }
 
-    // start inital scripts
-    for handle in state.handles.iter_mut() {
-        if handle.remaining_dependencies == 0 {
-            if handle.start().is_err() {
-                // todo this should probably happen in "start"
-                bun_core::pretty_errorln!("<r><red>error<r>: Failed to start process");
-                Global::exit(1);
-            }
+    // Collect the roots before starting any: a script that has already exited
+    // when `start()` watches it can finish (and cascade) inside `start()`,
+    // which zeroes `remaining_dependencies` of later handles it started.
+    let roots: Vec<*mut ProcessHandle> = state
+        .handles
+        .iter_mut()
+        .filter(|handle| handle.remaining_dependencies == 0)
+        .map(std::ptr::from_mut)
+        .collect();
+    for handle in roots {
+        // SAFETY: points into `state.handles`, which lives for the whole loop.
+        if unsafe { (*handle).start() }.is_err() {
+            bun_core::pretty_errorln!("<r><red>error<r>: Failed to start process");
+            Global::exit(1);
         }
     }
 
@@ -1050,6 +1110,9 @@ pub(crate) fn run_scripts_with_filter(
             // This can be useful if one of the processes is stuck and doesn't react to SIGINT.
             AbortHandler::uninstall();
             state.abort();
+            // The abort sweep may have finished the last script; re-check
+            // before blocking in a tick no event may ever wake.
+            continue;
         }
         // SAFETY: event_loop is the live thread-local MiniEventLoop singleton.
         unsafe { (*event_loop).tick_once(&raw const state as *mut c_void) };
@@ -1061,19 +1124,20 @@ pub(crate) fn run_scripts_with_filter(
 }
 
 fn has_cycle(current: &mut ProcessHandle) -> bool {
-    current.visited = true;
-    current.visiting = true;
+    current.visit_state = VisitState::Visiting;
     for &dep in &current.dependents {
         // SAFETY: dep points into state.handles, valid for the run loop lifetime.
         let dep = unsafe { &mut *dep };
-        if dep.visiting {
-            return true;
-        } else if !dep.visited {
-            if has_cycle(dep) {
-                return true;
+        match dep.visit_state {
+            VisitState::Visiting => return true,
+            VisitState::Unvisited => {
+                if has_cycle(dep) {
+                    return true;
+                }
             }
+            VisitState::Visited => {}
         }
     }
-    current.visiting = false;
+    current.visit_state = VisitState::Visited;
     false
 }

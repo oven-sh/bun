@@ -10,7 +10,7 @@ use bun_core::{String as BunString, ZStr};
 use bun_js_parser::ParserOptions;
 use bun_paths::resolve_path::{self as path_handler, platform};
 use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer, SEP};
-use bun_resolver::fs::{FileSystem, Path as FsPath};
+use bun_resolver::fs::FileSystem;
 use bun_sys::{self as sys, Fd, FdExt as _};
 // Wyhash (final4 variant). Must stay stable so on-disk
 // `.pile` filenames/hashes remain interchangeable across versions.
@@ -43,7 +43,18 @@ bun_core::declare_scope!(cache, visible);
 /// path reinstates the bug for any previously-cached TLA module (#30887).
 /// Version 23: `jsx.runtime`/`jsx.development` participate in the features hash,
 /// and tsconfig `"jsx": "react-jsx"` now emits the production runtime (#4227).
-const EXPECTED_VERSION: u32 = 23;
+/// Version 24: ModuleInfo drops the DeclaredVariable/LexicalVariable records and
+/// renumbers RecordKind (0 is now ImportInfoSingle). JSC derives module-scope
+/// bindings from the compiled bytecode after the module-loader rewrite, so the
+/// record no longer carries them; blobs written in the old numbering must not
+/// be read back.
+/// Version 25: Every ModuleInfo record carries a trailing FetchParameters slot
+/// so ImportEntry/ExportEntry/StarExportEntry moduleRequestType matches JSC's
+/// after WebKit 90b2ecf79ae3 keyed m_loadedModules on (specifier, type).
+/// Version 26: ModuleInfo wire format is a string table (u8/u16/u32
+/// offsets picked by a header byte) plus a body of tagged records with
+/// u8/u16/u32 ids and implied slots dropped, instead of fixed u32 arrays.
+const EXPECTED_VERSION: u32 = 26;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -77,36 +88,36 @@ pub enum ModuleType {
 pub struct Encoding(u8);
 
 impl Encoding {
-    pub const NONE: Encoding = Encoding(0);
-    pub const UTF8: Encoding = Encoding(1);
-    pub const UTF16: Encoding = Encoding(2);
-    pub const LATIN1: Encoding = Encoding(3);
+    pub(crate) const NONE: Encoding = Encoding(0);
+    pub(crate) const UTF8: Encoding = Encoding(1);
+    pub(crate) const UTF16: Encoding = Encoding(2);
+    pub(crate) const LATIN1: Encoding = Encoding(3);
 }
 
 // Copy is intentional despite the ~120-byte size: Metadata is the
 // fixed-layout cache-entry header passed by value through encode/decode/verify.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct Metadata {
-    pub cache_version: u32,
-    pub output_encoding: Encoding,
+    pub(crate) cache_version: u32,
+    pub(crate) output_encoding: Encoding,
     pub module_type: ModuleType,
 
-    pub features_hash: u64,
+    pub(crate) features_hash: u64,
 
-    pub input_byte_length: u64,
-    pub input_hash: u64,
+    pub(crate) input_byte_length: u64,
+    pub(crate) input_hash: u64,
 
-    pub output_byte_offset: u64,
-    pub output_byte_length: u64,
-    pub output_hash: u64,
+    pub(crate) output_byte_offset: u64,
+    pub(crate) output_byte_length: u64,
+    pub(crate) output_hash: u64,
 
-    pub sourcemap_byte_offset: u64,
-    pub sourcemap_byte_length: u64,
-    pub sourcemap_hash: u64,
+    pub(crate) sourcemap_byte_offset: u64,
+    pub(crate) sourcemap_byte_length: u64,
+    pub(crate) sourcemap_hash: u64,
 
-    pub esm_record_byte_offset: u64,
-    pub esm_record_byte_length: u64,
-    pub esm_record_hash: u64,
+    pub(crate) esm_record_byte_offset: u64,
+    pub(crate) esm_record_byte_length: u64,
+    pub(crate) esm_record_hash: u64,
 }
 
 impl Default for Metadata {
@@ -133,9 +144,9 @@ impl Default for Metadata {
 
 impl Metadata {
     // 1×u32 + 2×u8 (enum reprs) + 12×u64 = 4 + 2 + 96 = 102
-    pub const SIZE: usize = 4 + 1 + 1 + 12 * 8;
+    pub(crate) const SIZE: usize = 4 + 1 + 1 + 12 * 8;
 
-    pub fn encode<W: bun_io::Write>(&self, writer: &mut W) -> crate::CrateResult<()> {
+    pub(crate) fn encode<W: bun_io::Write>(&self, writer: &mut W) -> crate::CrateResult<()> {
         writer.write_int_le::<u32>(self.cache_version)?;
         writer.write_int_le::<u8>(self.module_type as u8)?;
         writer.write_int_le::<u8>(self.output_encoding.0)?;
@@ -162,7 +173,7 @@ impl Metadata {
     /// Both call sites (`from_file_with_cache_file_path`, the debug round-trip
     /// in `Entry::save`) drive this from a fixed buffer, so accept the concrete
     /// `bun_io::FixedBufferStream` over a borrowed slice.
-    pub fn decode(
+    pub(crate) fn decode(
         &mut self,
         reader: &mut bun_io::FixedBufferStream<&[u8]>,
     ) -> crate::CrateResult<()> {
@@ -215,49 +226,16 @@ impl Metadata {
 // against the hand-summed constant drifting from the field list.
 const _: () = assert!(Metadata::SIZE == 4 + 1 + 1 + 12 * 8);
 
-pub enum OutputCode {
-    Utf8(Box<[u8]>),
-    String(BunString),
-}
-
-impl Default for OutputCode {
-    fn default() -> Self {
-        OutputCode::Utf8(Box::default())
-    }
-}
-
-impl OutputCode {
-    pub fn byte_slice(&self) -> &[u8] {
-        match self {
-            OutputCode::Utf8(b) => b,
-            OutputCode::String(s) => s.byte_slice(),
-        }
-    }
-
-    fn deinit(&mut self) {
-        match core::mem::take(self) {
-            OutputCode::Utf8(_b) => {}
-            OutputCode::String(s) => s.deref(),
-        }
-    }
-}
-
 #[derive(Default)]
 pub struct Entry {
     pub metadata: Metadata,
-    pub output_code: OutputCode,
+    pub output_code: BunString,
     pub sourcemap: Box<[u8]>,
     pub esm_record: Box<[u8]>,
 }
 
 impl Entry {
-    pub fn deinit(&mut self) {
-        self.output_code.deinit();
-        self.sourcemap = Box::default();
-        self.esm_record = Box::default();
-    }
-
-    pub fn save(
+    pub(crate) fn save(
         destination_dir: Fd,
         destination_path: &ZStr,
         input_byte_length: u64,
@@ -265,7 +243,7 @@ impl Entry {
         features_hash: u64,
         sourcemap: &[u8],
         esm_record: &[u8],
-        output_code: &OutputCode,
+        output_code: &BunString,
         exports_kind: ExportsKind,
     ) -> crate::CrateResult<()> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.save");
@@ -287,10 +265,8 @@ impl Entry {
         let mut tmpfile = sys::Tmpfile::create(destination_dir, tmpfilename)?;
         let _close_guard = sys::CloseOnDrop::new(tmpfile.fd);
         {
-            let errdefer = scopeguard::guard(tmpfile.using_tmpfile, |using_tmpfile| {
-                if !using_tmpfile {
-                    let _ = sys::unlinkat(destination_dir, tmpfilename);
-                }
+            let errdefer = scopeguard::guard((), |()| {
+                let _ = sys::unlinkat(destination_dir, tmpfilename);
             });
 
             let mut metadata_buf = [0u8; Metadata::SIZE * 2];
@@ -303,19 +279,12 @@ impl Entry {
                         ExportsKind::Cjs => ModuleType::Cjs,
                         _ => ModuleType::Esm,
                     },
-                    output_encoding: match output_code {
-                        OutputCode::Utf8(_) => Encoding::UTF8,
-                        // `bun_core::String` has no `.encoding()`; derive it
-                        // from the `is_*` predicates.
-                        OutputCode::String(str) => {
-                            if str.is_utf16() {
-                                Encoding::UTF16
-                            } else if str.is_utf8() {
-                                Encoding::UTF8
-                            } else {
-                                Encoding::LATIN1
-                            }
-                        }
+                    output_encoding: if output_code.is_utf16() {
+                        Encoding::UTF16
+                    } else if output_code.is_utf8() {
+                        Encoding::UTF8
+                    } else {
+                        Encoding::LATIN1
                     },
                     sourcemap_byte_length: sourcemap.len() as u64,
                     output_byte_offset: Metadata::SIZE as u64,
@@ -374,8 +343,7 @@ impl Entry {
             let vecs: &[sys::PlatformIoVecConst] = &vecs_buf[0..vecs_i];
 
             let mut position: i64 = 0;
-            let end_position =
-                Metadata::SIZE + output_bytes.len() + sourcemap.len() + esm_record.len();
+            let file_len = Metadata::SIZE + output_bytes.len() + sourcemap.len() + esm_record.len();
 
             #[cfg(debug_assertions)]
             {
@@ -385,22 +353,12 @@ impl Entry {
                     // `uv_buf_t::len` is `ULONG` (u32) on Windows, `usize` on POSIX.
                     total += v.len as usize;
                 }
-                debug_assert!(end_position == total);
+                debug_assert!(file_len == total);
             }
-            debug_assert!(
-                end_position as i64
-                    == i64::try_from(
-                        sourcemap.len() + output_bytes.len() + Metadata::SIZE + esm_record.len()
-                    )
-                    .unwrap()
-            );
 
-            let _ = sys::preallocate_file(
-                tmpfile.fd.cast(),
-                0,
-                i64::try_from(end_position).expect("int cast"),
-            );
-            while (position as usize) < end_position {
+            let end_position = i64::try_from(file_len).expect("int cast");
+            let _ = sys::preallocate_file(tmpfile.fd.cast(), 0, end_position);
+            while position < end_position {
                 let written = sys::pwritev(tmpfile.fd, vecs, position)?;
                 if written == 0 {
                     return Err(crate::CrateError::WriteFailed);
@@ -424,7 +382,7 @@ impl Entry {
         Ok(())
     }
 
-    pub fn load(&mut self, file: &sys::File) -> crate::CrateResult<()> {
+    pub(crate) fn load(&mut self, file: &sys::File) -> crate::CrateResult<()> {
         let stat_size = file.get_end_pos()? as u64;
         if stat_size
             < (Metadata::SIZE as u64)
@@ -435,12 +393,12 @@ impl Entry {
         }
 
         debug_assert!(
-            matches!(&self.output_code, OutputCode::Utf8(b) if b.is_empty()),
+            self.output_code.is_empty(),
             "this should be the default value"
         );
 
         self.output_code = if self.metadata.output_byte_length == 0 {
-            OutputCode::String(BunString::empty())
+            BunString::EMPTY
         } else {
             match self.metadata.output_encoding {
                 Encoding::UTF8 => {
@@ -469,8 +427,6 @@ impl Entry {
                     if bytes.is_empty() {
                         return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
                     }
-                    // errdefer scratch.deref() — BunString is `Copy`, so guard explicitly.
-                    let errdefer = scopeguard::guard(scratch, |s| s.deref());
                     let read_bytes = file.pread_all(bytes, self.metadata.output_byte_offset)?;
                     if read_bytes as u64 != self.metadata.output_byte_length {
                         return Err(crate::CrateError::MissingData);
@@ -482,15 +438,12 @@ impl Entry {
 
                     if bun_core::strings::is_all_ascii(bytes) {
                         // Fast path: ASCII ⊂ Latin-1, so `scratch` is already
-                        // the correct `BunString` — hand it straight to the
-                        // consumer as `OutputCode::String`.
-                        scopeguard::ScopeGuard::into_inner(errdefer);
-                        OutputCode::String(scratch)
+                        // the correct `BunString`.
+                        scratch
                     } else {
                         // Rare path: real multi-byte UTF-8. Transcode into a
-                        // fresh WTF string and drop the Latin-1 scratch (the
-                        // guard derefs it on scope exit).
-                        OutputCode::String(BunString::clone_utf8(bytes))
+                        // fresh WTF string; the Latin-1 scratch drops.
+                        BunString::clone_utf8(bytes)
                     }
                 }
                 Encoding::LATIN1 => {
@@ -502,8 +455,6 @@ impl Entry {
                     if bytes.is_empty() {
                         return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
                     }
-                    // errdefer latin1.deref() — BunString is `Copy`, so guard explicitly.
-                    let errdefer = scopeguard::guard(latin1, |s| s.deref());
                     let read_bytes = file.pread_all(bytes, self.metadata.output_byte_offset)?;
 
                     if self.metadata.output_hash != 0 {
@@ -516,8 +467,7 @@ impl Entry {
                         return Err(crate::CrateError::MissingData);
                     }
 
-                    scopeguard::ScopeGuard::into_inner(errdefer);
-                    OutputCode::String(latin1)
+                    latin1
                 }
                 Encoding::UTF16 => {
                     let char_len = (self.metadata.output_byte_length / 2) as usize;
@@ -527,8 +477,6 @@ impl Entry {
                     if chars.is_empty() {
                         return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
                     }
-                    let errdefer = scopeguard::guard(string, |s| s.deref());
-
                     // `chars` is `&mut [u16; char_len]` backed by contiguous
                     // WTFString storage; reinterpret as bytes for pread via the
                     // safe POD cast (`u16` → `u8` always satisfies size/align).
@@ -546,17 +494,12 @@ impl Entry {
                         }
                     }
 
-                    scopeguard::ScopeGuard::into_inner(errdefer);
-                    OutputCode::String(string)
+                    string
                 }
 
                 _ => unreachable!("Unexpected output encoding"),
             }
         };
-
-        // BunString is Copy with no Drop, so dropping `Entry` on error does NOT
-        // deref the WTFStringImpl — must do it explicitly here.
-        let output_code_errdefer = scopeguard::guard(&mut self.output_code, |oc| oc.deinit());
 
         if self.metadata.sourcemap_byte_length > 0 {
             self.sourcemap = pread_box(
@@ -582,38 +525,23 @@ impl Entry {
             self.esm_record = esm_record;
         }
 
-        scopeguard::ScopeGuard::into_inner(output_code_errdefer);
         Ok(())
     }
 }
 
 pub struct RuntimeTranspilerCache {
-    pub input_hash: Option<u64>,
-    pub input_byte_length: Option<u64>,
-    pub features_hash: Option<u64>,
-    pub exports_kind: ExportsKind,
-    pub output_code: Option<BunString>,
-    pub entry: Option<Entry>,
+    pub(crate) input_hash: Option<u64>,
+    pub(crate) input_byte_length: Option<u64>,
+    pub(crate) features_hash: Option<u64>,
+    pub(crate) exports_kind: ExportsKind,
+    pub(crate) entry: Option<Entry>,
     // `sourcemap` / `esm_record` are owned `Box<[u8]>` (global mimalloc).
     // The per-call arena that once backed the output code is gone: the UTF-8
     // load arm preads straight into WTF storage (see `Entry::load`), so no
     // arena scratch is needed at all.
 }
 
-impl Default for RuntimeTranspilerCache {
-    fn default() -> Self {
-        Self {
-            input_hash: None,
-            input_byte_length: None,
-            features_hash: None,
-            exports_kind: ExportsKind::None,
-            output_code: None,
-            entry: None,
-        }
-    }
-}
-
-pub fn hash(bytes: &[u8]) -> u64 {
+pub(crate) fn hash(bytes: &[u8]) -> u64 {
     Wyhash::hash(SEED, bytes)
 }
 
@@ -641,7 +569,10 @@ fn pread_box(file: &sys::File, len: usize, offset: u64) -> crate::CrateResult<Bo
 }
 
 impl RuntimeTranspilerCache {
-    pub fn write_cache_filename(buf: &mut [u8], input_hash: u64) -> crate::CrateResult<usize> {
+    pub(crate) fn write_cache_filename(
+        buf: &mut [u8],
+        input_hash: u64,
+    ) -> crate::CrateResult<usize> {
         // Hex-encode the 8 native-endian bytes of `input_hash`.
         let bytes = input_hash.to_ne_bytes();
         let suffix: &[u8] = if bun_core::env::IS_DEBUG {
@@ -658,7 +589,10 @@ impl RuntimeTranspilerCache {
         Ok(needed)
     }
 
-    pub fn get_cache_file_path(buf: &mut PathBuffer, input_hash: u64) -> crate::CrateResult<&ZStr> {
+    pub(crate) fn get_cache_file_path(
+        buf: &mut PathBuffer,
+        input_hash: u64,
+    ) -> crate::CrateResult<&ZStr> {
         let cache_dir_len = Self::get_cache_dir(buf)?;
         buf[cache_dir_len] = SEP;
         let cache_filename_len =
@@ -775,7 +709,7 @@ impl RuntimeTranspilerCache {
         Ok(path_len)
     }
 
-    pub fn from_file(
+    pub(crate) fn from_file(
         input_hash: u64,
         feature_hash: u64,
         input_stat_size: u64,
@@ -793,7 +727,7 @@ impl RuntimeTranspilerCache {
         )
     }
 
-    pub fn from_file_with_cache_file_path(
+    pub(crate) fn from_file_with_cache_file_path(
         cache_file_path: &ZStr,
         input_hash: u64,
         feature_hash: u64,
@@ -813,12 +747,7 @@ impl RuntimeTranspilerCache {
         }
         let mut reader = bun_io::FixedBufferStream::new(&metadata_bytes_buf[0..metadata_bytes]);
 
-        let mut entry = Entry {
-            metadata: Metadata::default(),
-            output_code: OutputCode::Utf8(Box::default()),
-            sourcemap: Box::default(),
-            esm_record: Box::default(),
-        };
+        let mut entry = Entry::default();
         entry.metadata.decode(&mut reader)?;
         if entry.metadata.input_hash != input_hash
             || entry.metadata.input_byte_length != input_stat_size
@@ -838,11 +767,7 @@ impl RuntimeTranspilerCache {
         Ok(entry)
     }
 
-    pub fn is_eligible(&self, path: &FsPath<'_>) -> bool {
-        path.is_file()
-    }
-
-    pub fn to_file(
+    pub(crate) fn to_file(
         input_byte_length: u64,
         input_hash: u64,
         features_hash: u64,
@@ -854,19 +779,6 @@ impl RuntimeTranspilerCache {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.toFile");
 
         let mut cache_file_path_buf = PathBuffer::uninit();
-        // `OutputCode::Utf8` owns a `Box<[u8]>`, so we copy.
-        // PERF: add a borrowed `OutputCode` variant to avoid the copy.
-        //
-        // The non-UTF-8 arm is a by-value copy, **no**
-        // `dupe_ref()` and **no** matching `deref()`. `BunString` is `Copy` and
-        // `OutputCode` has no `Drop`, so `*source_code` here is a
-        // refcount-neutral borrow.
-        let output_code: OutputCode = if source_code.is_utf8() {
-            OutputCode::Utf8(Box::from(source_code.byte_slice()))
-        } else {
-            OutputCode::String(*source_code)
-        };
-
         let cache_file_path = Self::get_cache_file_path(&mut cache_file_path_buf, input_hash)?;
         bun_core::scoped_log!(
             cache,
@@ -909,12 +821,12 @@ impl RuntimeTranspilerCache {
             features_hash,
             sourcemap,
             esm_record,
-            &output_code,
+            source_code,
             exports_kind,
         )
     }
 
-    pub fn is_disabled() -> bool {
+    pub(crate) fn is_disabled() -> bool {
         IS_DISABLED.load(Ordering::Relaxed)
     }
 
@@ -994,46 +906,11 @@ impl RuntimeTranspilerCache {
         #[cfg(bun_debug)]
         {
             if !BUN_DEBUG_RESTORE_FROM_CACHE.load(Ordering::Relaxed) {
-                if let Some(mut entry) = self.entry.take() {
-                    entry.deinit();
-                }
+                self.entry = None;
             }
         }
 
         self.entry.is_some()
-    }
-
-    pub fn put(&mut self, output_code_bytes: &[u8], sourcemap: &[u8], esm_record: &[u8]) {
-        const _: () = assert!(
-            FeatureFlags::RUNTIME_TRANSPILER_CACHE,
-            "RuntimeTranspilerCache is disabled"
-        );
-
-        if self.input_hash.is_none() || IS_DISABLED.load(Ordering::Relaxed) {
-            return;
-        }
-        debug_assert!(self.entry.is_none());
-        let output_code = BunString::clone_latin1(output_code_bytes);
-        // Refcount stays at 1, sole owner.
-        // BunString is Copy with no Drop, so an extra dupe_ref here would leak.
-        self.output_code = Some(output_code);
-
-        if let Err(err) = Self::to_file(
-            self.input_byte_length.unwrap(),
-            self.input_hash.unwrap(),
-            self.features_hash.unwrap(),
-            sourcemap,
-            esm_record,
-            &output_code,
-            self.exports_kind,
-        ) {
-            bun_core::scoped_log!(cache, "put() = {}", err.name());
-            return;
-        }
-        #[cfg(debug_assertions)]
-        {
-            bun_core::scoped_log!(cache, "put() = {} bytes", output_code.latin1().len());
-        }
     }
 }
 
@@ -1052,7 +929,7 @@ pub static IS_DISABLED: AtomicBool = AtomicBool::new(false);
 // ──────────────────────────────────────────────────────────────────────────
 
 bun_ast::link_impl_TranspilerCacheImpl! {
-    Jsc for bun_ast::RuntimeTranspilerCache => |this| {
+    Jsc for extern bun_ast::RuntimeTranspilerCache => |this| {
         get(source, parser_options, used_jsx) => {
             let this = &mut *this;
             let parser_options = parser_options.cast::<ParserOptions<'_>>().as_ref();
@@ -1062,7 +939,6 @@ bun_ast::link_impl_TranspilerCacheImpl! {
                 input_byte_length: this.input_byte_length,
                 features_hash: this.features_hash,
                 exports_kind: this.exports_kind,
-                output_code: None,
                 entry: None,
             };
             let hit = jsc.get(source, parser_options, used_jsx);
@@ -1083,7 +959,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             debug_assert!(this.entry.is_none());
 
             // Borrowed Latin-1 view: `to_file` only reads `byte_slice()` + the encoding
-            // tag (unmarked 8-bit ZigString -> Encoding::LATIN1, same as clone_latin1),
+            // tag (unmarked 8-bit EncodedSlice -> Encoding::LATIN1, same as clone_latin1),
             // and `output_code_bytes` outlives the synchronous `to_file` call.
             let output_code = BunString::ascii(output_code_bytes);
             let result = RuntimeTranspilerCache::to_file(

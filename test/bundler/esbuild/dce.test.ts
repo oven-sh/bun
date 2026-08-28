@@ -1516,7 +1516,6 @@ describe("bundler", () => {
     dce: true,
   });
   itBundled("dce/TreeShakingClassProperty", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         let remove1 = class { x }
@@ -1543,16 +1542,13 @@ describe("bundler", () => {
         let keep4 = class { set [x](_) {} }
         let keep5 = class { async [x]() {} }
         let keep6 = class { [{ toString() { console.log(1); } }] = 'x' }
-
-        let POSSIBLE_REMOVAL_1 = class { [{ toString() {} }] = 'x' }
+        let keep7 = class { [{ toString() {} }] = 'x' }
       `,
     },
-    bundling: false,
     treeShaking: true,
     dce: true,
   });
   itBundled("dce/TreeShakingClassStaticProperty", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         let remove1 = class { static x }
@@ -1579,13 +1575,107 @@ describe("bundler", () => {
         let keep6 = class { static set [x](_) {} }
         let keep7 = class { static async [x]() {} }
         let keep8 = class { static [{ toString() { console.log(1); } }] = 'x' }
-
-        let POSSIBLE_REMOVAL_1 = class { static [{ toString() {} }] = 'x' }
+        let keep9 = class { static [{ toString() {} }] = 'x' }
       `,
     },
-    bundling: false,
     treeShaking: true,
     dce: true,
+  });
+  // https://github.com/oven-sh/bun/issues/20866
+  itBundled("dce/TreeShakingClassPrivateProperty", {
+    files: {
+      "/entry.js": /* js */ `
+        let remove1 = class { #x }
+        let remove2 = class { #x = x }
+        let remove3 = class { #x() {} }
+        let remove4 = class { get #x() {} }
+        let remove5 = class { set #x(_) {} }
+        let remove6 = class { async #x() {} }
+        let remove7 = class { static #x }
+        let remove8 = class { static #x = 1 }
+        let remove9 = class { static #x() {} }
+        let remove10 = class { static get #x() {} }
+        let remove11 = class { static set #x(_) {} }
+
+        let keep1 = class { static #x = x }
+        let keep2 = class { #x; static { x() } }
+      `,
+    },
+    treeShaking: true,
+    dce: true,
+  });
+  // https://github.com/oven-sh/bun/issues/20866
+  itBundled("dce/TreeShakingClassPrivatePropertyDeclaration", {
+    files: {
+      "/entry.js": /* js */ `
+        class REMOVE1 { #x }
+        class REMOVE2 { #x = x }
+        class REMOVE3 { #x() {} }
+        class REMOVE4 { static #x }
+        class REMOVE5 { static #x = 1 }
+        class REMOVE6 { static #x() {} }
+
+        class KEEP1 { static #x = x }
+      `,
+    },
+    dce: true,
+  });
+  // Sibling of edgecase/TsEnumKeyedLiteralObjectTreeShaking#31755 for classes:
+  // the computed-key check must unwrap EInlinedEnum before is_primitive_literal.
+  itBundled("dce/TreeShakingClassEnumKey", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { A } from './lib';
+        console.log(JSON.stringify(A));
+      `,
+      "/lib.ts": /* ts */ `
+        export enum A { FOO, BAR }
+        export const unusedInstanceREMOVE = class { [A.FOO]() {} };
+        export const unusedStaticREMOVE = class { static [A.BAR] = 1 };
+      `,
+    },
+    dce: true,
+    dceKeepMarkerCount: false,
+    run: {
+      stdout: `{"0":"FOO","1":"BAR","FOO":0,"BAR":1}`,
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/40114
+  // A computed class member key that is a side-effect-free reference (a local
+  // const, an import item) must not block tree-shaking of the class.
+  itBundled("dce/TreeShakingClassComputedKeyReference", {
+    files: {
+      "/entry.js": /* js */ `
+        import { used } from './lib';
+        console.log(used);
+      `,
+      "/lib.js": /* js */ `
+        import * as Other from './other';
+        export const used = 1;
+        const TypeId = '~lib/TypeId';
+        class REMOVE1 { [TypeId]; }
+        class REMOVE2 { [TypeId] = 'x' }
+        class REMOVE3 { [TypeId]() {} }
+        class REMOVE4 { static [TypeId] = 'x' }
+        class REMOVE5 {
+          [TypeId];
+          [Other.TypeId];
+          constructor() {
+            this[TypeId] = TypeId;
+            this[Other.TypeId] = Other.TypeId;
+          }
+        }
+        export const makeREMOVE5 = () => new REMOVE5();
+        let keep1 = class { [unboundKEEP] = 'x' };
+      `,
+      "/other.js": /* js */ `
+        export const TypeId = '~other/TypeId';
+        export const REMOVE6 = 'only the tree-shaken class references this module';
+      `,
+    },
+    treeShaking: true,
+    dce: true,
+    dceKeepMarkerCount: 2,
   });
   itBundled("dce/TreeShakingUnaryOperators", {
     files: {

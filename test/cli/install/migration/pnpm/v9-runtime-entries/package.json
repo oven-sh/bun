@@ -1,0 +1,14 @@
+{
+  "name": "v9-runtime-entries",
+  "version": "1.0.0",
+  "dependencies": {
+    "pkg-a": "git+ssh://git@example.com/org/pkg-a.git#v1"
+  },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "22.0.0",
+      "onFail": "download"
+    }
+  }
+}

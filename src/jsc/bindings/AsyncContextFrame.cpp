@@ -1,6 +1,7 @@
 #include "root.h"
 #include "ZigGlobalObject.h"
 #include "AsyncContextFrame.h"
+#include "BunClientData.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
 
 #if ASSERT_ENABLED
@@ -100,6 +101,8 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
     if (!functionObject.isCell())                                                   \
         return jsUndefined();                                                       \
     auto& vm = global->vm();                                                        \
+    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]              \
+        return jsUndefined();                                                       \
     JSValue restoreAsyncContext;                                                    \
     InternalFieldTuple* asyncContextData = nullptr;                                 \
     if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(functionObject)) {       \
@@ -114,14 +117,6 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
     }                                                                               \
     return result;
 
-// JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, const ArgList& args, ASCIILiteral errorMessage)
-// {
-//     ASYNCCONTEXTFRAME_CALL_IMPL(global, ProfilingReason::API, functionObject, args, errorMessage);
-// }
-// JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args, ASCIILiteral errorMessage)
-// {
-//     ASYNCCONTEXTFRAME_CALL_IMPL(global, ProfilingReason::API, functionObject, thisValue, args, errorMessage);
-// }
 JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args)
 {
 #if ASSERT_ENABLED
@@ -129,38 +124,15 @@ JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, 
 #endif
 
     if (!global->isAsyncContextTrackingEnabled()) [[likely]] {
+        if (WebCore::clientData(global->vm())->isStoppingOrStopped(global->vm())) [[unlikely]]
+            return jsUndefined();
         return JSC::profiledCall(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args);
     }
 
     ASYNCCONTEXTFRAME_CALL_IMPL(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args);
 }
-JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args, NakedPtr<JSC::Exception>& returnedException)
-{
-#if ASSERT_ENABLED
-    auditEverything(global, functionObject, thisValue, args);
-#endif
-
-    if (!global->isAsyncContextTrackingEnabled()) [[likely]] {
-        return JSC::profiledCall(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args, returnedException);
-    }
-
-    ASYNCCONTEXTFRAME_CALL_IMPL(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args, returnedException);
-}
 JSValue AsyncContextFrame::profiledCall(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args)
 {
     return AsyncContextFrame::call(global, functionObject, thisValue, args);
-}
-JSValue AsyncContextFrame::profiledCall(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args, NakedPtr<JSC::Exception>& returnedException)
-{
-    return AsyncContextFrame::call(global, functionObject, thisValue, args, returnedException);
-}
-
-JSC::JSValue AsyncContextFrame::run(JSGlobalObject* global, JSValue functionObject, JSValue thisValue, const ArgList& args)
-{
-    ASSERT(global->isAsyncContextTrackingEnabled());
-#if ASSERT_ENABLED
-    auditEverything(global, functionObject, thisValue, args);
-#endif
-    ASYNCCONTEXTFRAME_CALL_IMPL(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args);
 }
 #undef ASYNCCONTEXTFRAME_CALL_IMPL

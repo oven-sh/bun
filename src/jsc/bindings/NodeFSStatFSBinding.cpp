@@ -44,16 +44,6 @@ Structure* getStatFSStructure(Zig::GlobalObject* globalObject)
 }
 
 template<bool isBigInt>
-JSObject* getStatFSPrototype(Zig::GlobalObject* globalObject)
-{
-    if (isBigInt) {
-        return globalObject->m_JSStatFSBigIntClassStructure.prototypeInitializedOnMainThread(globalObject);
-    }
-
-    return globalObject->m_JSStatFSClassStructure.prototypeInitializedOnMainThread(globalObject);
-}
-
-template<bool isBigInt>
 JSObject* getStatFSConstructor(Zig::GlobalObject* globalObject)
 {
     if (isBigInt) {
@@ -70,7 +60,7 @@ public:
 
     static JSStatFSPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSStatFSPrototype* prototype = new (NotNull, JSC::allocateCell<JSStatFSPrototype>(vm)) JSStatFSPrototype(vm, structure);
+        JSStatFSPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSStatFSPrototype))) JSStatFSPrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
     }
@@ -86,7 +76,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        auto* structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
         structure->setMayBePrototype(true);
         return structure;
     }
@@ -107,7 +97,7 @@ public:
 
     static JSBigIntStatFSPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSBigIntStatFSPrototype* prototype = new (NotNull, JSC::allocateCell<JSBigIntStatFSPrototype>(vm)) JSBigIntStatFSPrototype(vm, structure);
+        JSBigIntStatFSPrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSBigIntStatFSPrototype))) JSBigIntStatFSPrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
     }
@@ -123,7 +113,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        auto* structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
         structure->setMayBePrototype(true);
         return structure;
     }
@@ -159,7 +149,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
 private:
@@ -197,7 +187,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
 private:
@@ -216,12 +206,13 @@ private:
 JSC::Structure* createJSStatFSObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     auto* prototype = JSStatFSPrototype::create(vm, globalObject, JSStatFSPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
-    auto structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray, 7);
+    auto structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray, 8);
 
     // Add property transitions for all statfs fields
     PropertyOffset offset = 0;
     structure = structure->addPropertyTransition(vm, structure, vm.propertyNames->type, 0, offset);
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "bsize"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "frsize"_s), 0, offset);
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "blocks"_s), 0, offset);
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "bfree"_s), 0, offset);
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "bavail"_s), 0, offset);
@@ -234,12 +225,13 @@ JSC::Structure* createJSStatFSObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* 
 JSC::Structure* createJSBigIntStatFSObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     auto prototype = JSBigIntStatFSPrototype::create(vm, globalObject, JSBigIntStatFSPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
-    auto structure = JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray, 7);
+    auto structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray, 8);
 
     // Add property transitions for all bigint statfs fields
     PropertyOffset offset = 0;
     structure = structure->addPropertyTransition(vm, structure, vm.propertyNames->type, 0, offset);
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "bsize"_s), 0, offset);
+    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "frsize"_s), 0, offset);
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "blocks"_s), 0, offset);
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "bfree"_s), 0, offset);
     structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "bavail"_s), 0, offset);
@@ -252,6 +244,7 @@ JSC::Structure* createJSBigIntStatFSObjectStructure(JSC::VM& vm, JSC::JSGlobalOb
 extern "C" JSC::EncodedJSValue Bun__createJSStatFSObject(Zig::GlobalObject* globalObject,
     int64_t fstype,
     int64_t bsize,
+    int64_t frsize,
     int64_t blocks,
     int64_t bfree,
     int64_t bavail,
@@ -262,6 +255,7 @@ extern "C" JSC::EncodedJSValue Bun__createJSStatFSObject(Zig::GlobalObject* glob
 
     JSC::JSValue js_fstype = JSC::jsNumber(fstype);
     JSC::JSValue js_bsize = JSC::jsNumber(bsize);
+    JSC::JSValue js_frsize = JSC::jsNumber(frsize);
     JSC::JSValue js_blocks = JSC::jsNumber(blocks);
     JSC::JSValue js_bfree = JSC::jsNumber(bfree);
     JSC::JSValue js_bavail = JSC::jsNumber(bavail);
@@ -273,11 +267,12 @@ extern "C" JSC::EncodedJSValue Bun__createJSStatFSObject(Zig::GlobalObject* glob
 
     object->putDirectOffset(vm, 0, js_fstype);
     object->putDirectOffset(vm, 1, js_bsize);
-    object->putDirectOffset(vm, 2, js_blocks);
-    object->putDirectOffset(vm, 3, js_bfree);
-    object->putDirectOffset(vm, 4, js_bavail);
-    object->putDirectOffset(vm, 5, js_files);
-    object->putDirectOffset(vm, 6, js_ffree);
+    object->putDirectOffset(vm, 2, js_frsize);
+    object->putDirectOffset(vm, 3, js_blocks);
+    object->putDirectOffset(vm, 4, js_bfree);
+    object->putDirectOffset(vm, 5, js_bavail);
+    object->putDirectOffset(vm, 6, js_files);
+    object->putDirectOffset(vm, 7, js_ffree);
 
     return JSC::JSValue::encode(object);
 }
@@ -285,6 +280,7 @@ extern "C" JSC::EncodedJSValue Bun__createJSStatFSObject(Zig::GlobalObject* glob
 extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatFSObject(Zig::GlobalObject* globalObject,
     int64_t fstype,
     int64_t bsize,
+    int64_t frsize,
     int64_t blocks,
     int64_t bfree,
     int64_t bavail,
@@ -298,6 +294,8 @@ extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatFSObject(Zig::GlobalObject
     JSC::JSValue js_fstype = JSC::JSBigInt::createFrom(globalObject, fstype);
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_bsize = JSC::JSBigInt::createFrom(globalObject, bsize);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::JSValue js_frsize = JSC::JSBigInt::createFrom(globalObject, frsize);
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSValue js_blocks = JSC::JSBigInt::createFrom(globalObject, blocks);
     RETURN_IF_EXCEPTION(scope, {});
@@ -314,11 +312,12 @@ extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatFSObject(Zig::GlobalObject
 
     object->putDirectOffset(vm, 0, js_fstype);
     object->putDirectOffset(vm, 1, js_bsize);
-    object->putDirectOffset(vm, 2, js_blocks);
-    object->putDirectOffset(vm, 3, js_bfree);
-    object->putDirectOffset(vm, 4, js_bavail);
-    object->putDirectOffset(vm, 5, js_files);
-    object->putDirectOffset(vm, 6, js_ffree);
+    object->putDirectOffset(vm, 2, js_frsize);
+    object->putDirectOffset(vm, 3, js_blocks);
+    object->putDirectOffset(vm, 4, js_bfree);
+    object->putDirectOffset(vm, 5, js_bavail);
+    object->putDirectOffset(vm, 6, js_files);
+    object->putDirectOffset(vm, 7, js_ffree);
 
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(object));
 }
@@ -337,21 +336,23 @@ inline JSValue callJSStatFSFunction(JSC::JSGlobalObject* globalObject, JSC::Call
 
     JSValue type = callFrame->argument(0);
     JSValue bsize = callFrame->argument(1);
-    JSValue blocks = callFrame->argument(2);
-    JSValue bfree = callFrame->argument(3);
-    JSValue bavail = callFrame->argument(4);
-    JSValue files = callFrame->argument(5);
-    JSValue ffree = callFrame->argument(6);
+    JSValue frsize = callFrame->argument(2);
+    JSValue blocks = callFrame->argument(3);
+    JSValue bfree = callFrame->argument(4);
+    JSValue bavail = callFrame->argument(5);
+    JSValue files = callFrame->argument(6);
+    JSValue ffree = callFrame->argument(7);
 
     auto* object = JSC::JSFinalObject::create(vm, structure);
 
     object->putDirectOffset(vm, 0, type);
     object->putDirectOffset(vm, 1, bsize);
-    object->putDirectOffset(vm, 2, blocks);
-    object->putDirectOffset(vm, 3, bfree);
-    object->putDirectOffset(vm, 4, bavail);
-    object->putDirectOffset(vm, 5, files);
-    object->putDirectOffset(vm, 6, ffree);
+    object->putDirectOffset(vm, 2, frsize);
+    object->putDirectOffset(vm, 3, blocks);
+    object->putDirectOffset(vm, 4, bfree);
+    object->putDirectOffset(vm, 5, bavail);
+    object->putDirectOffset(vm, 6, files);
+    object->putDirectOffset(vm, 7, ffree);
 
     return object;
 }
@@ -368,7 +369,6 @@ inline JSValue constructJSStatFSObject(JSC::JSGlobalObject* lexicalGlobalObject,
     JSObject* newTarget = asObject(callFrame->newTarget());
 
     if (constructor != newTarget) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
         auto* functionGlobalObject = static_cast<Zig::GlobalObject*>(
             // ShadowRealm functions belong to a different global object.
             getFunctionRealm(lexicalGlobalObject, newTarget));
@@ -379,15 +379,17 @@ inline JSValue constructJSStatFSObject(JSC::JSGlobalObject* lexicalGlobalObject,
 
     JSValue type = callFrame->argument(0);
     JSValue bsize = callFrame->argument(1);
-    JSValue blocks = callFrame->argument(2);
-    JSValue bfree = callFrame->argument(3);
-    JSValue bavail = callFrame->argument(4);
-    JSValue files = callFrame->argument(5);
-    JSValue ffree = callFrame->argument(6);
+    JSValue frsize = callFrame->argument(2);
+    JSValue blocks = callFrame->argument(3);
+    JSValue bfree = callFrame->argument(4);
+    JSValue bavail = callFrame->argument(5);
+    JSValue files = callFrame->argument(6);
+    JSValue ffree = callFrame->argument(7);
 
     JSFinalObject* object = JSC::JSFinalObject::create(vm, structure);
     object->putDirect(vm, vm.propertyNames->type, type, 0);
     object->putDirect(vm, Identifier::fromString(vm, "bsize"_s), bsize, 0);
+    object->putDirect(vm, Identifier::fromString(vm, "frsize"_s), frsize, 0);
     object->putDirect(vm, Identifier::fromString(vm, "blocks"_s), blocks, 0);
     object->putDirect(vm, Identifier::fromString(vm, "bfree"_s), bfree, 0);
     object->putDirect(vm, Identifier::fromString(vm, "bavail"_s), bavail, 0);
@@ -431,14 +433,14 @@ void JSStatFSPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 void JSBigIntStatFSPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 void initJSStatFSClassStructure(JSC::LazyClassStructure::Initializer& init)

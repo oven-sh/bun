@@ -1,7 +1,7 @@
 //! `bun_jsc` re-export façade for the SQL bindings.
 //!
 //! All core handle types (`JSValue`, `JSGlobalObject`, `CallFrame`, `JsError`,
-//! `JsResult`, `JSObject`, `JSCell`, `JSType`, [`VirtualMachine`],
+//! `JsResult`, `JSObject`, `JSType`, [`VirtualMachine`],
 //! [`EventLoop`], [`KeepAlive`], …) are **re-exported from `bun_jsc` /
 //! `bun_io`** so the `#[bun_jsc::JsClass]` / `#[bun_jsc::host_fn]` proc-macros
 //! see identical types. SQL-specific helpers that `bun_jsc` doesn't expose at
@@ -27,10 +27,9 @@ use core::ptr::NonNull;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use bun_jsc::{
-    ArrayBuffer, CallFrame, CoerceTo, ErrorBuilder, ErrorCode, ExternColumnIdentifier,
-    ExternColumnIdentifierValue, GlobalRef, JSArrayIterator, JSCell, JSGlobalObject, JSObject,
-    JSType, JSValue, JsCell, JsError, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
-    StrongOptional, ThrowFmtArgs, ZigStringJsc, bun_string_jsc, host_fn,
+    CallFrame, ErrorBuilder, ErrorCode, ExternColumnIdentifier, GlobalRef, JSArrayIterator,
+    JSGlobalObject, JSObject, JSType, JSValue, JsCell, JsError, JsRef, JsResult,
+    MarkedArgumentBuffer, StringJsc, Strong, StrongOptional, bun_string_jsc,
 };
 
 /// Re-export — `bun_jsc` now defines `IntegerRange` at its crate root and the
@@ -50,18 +49,16 @@ pub use bun_jsc::IntegerRange;
 pub(crate) fn js_error_to_postgres(e: JsError) -> bun_sql::postgres::AnyPostgresError {
     use bun_sql::postgres::AnyPostgresError as E;
     match e {
-        JsError::Thrown => E::JSError,
+        JsError::Thrown | JsError::Terminated => E::JSError,
         JsError::OutOfMemory => E::OutOfMemory,
-        JsError::Terminated => E::JSTerminated,
     }
 }
 #[inline]
 pub(crate) fn js_error_to_mysql(e: JsError) -> bun_sql::mysql::protocol::any_mysql_error::Error {
     use bun_sql::mysql::protocol::any_mysql_error::Error as E;
     match e {
-        JsError::Thrown => E::JSError,
+        JsError::Thrown | JsError::Terminated => E::JSError,
         JsError::OutOfMemory => E::OutOfMemory,
-        JsError::Terminated => E::JSTerminated,
     }
 }
 
@@ -141,6 +138,18 @@ pub(crate) fn create_bun_socket_error_to_js(
             .to_js(),
         E::invalid_ciphers => global
             .err(ErrorCode::BORINGSSL, format_args!("Invalid ciphers"))
+            .to_js(),
+        E::invalid_crl => global
+            .err(
+                ErrorCode::ERR_CRYPTO_OPERATION_FAILED,
+                format_args!("Failed to parse CRL"),
+            )
+            .to_js(),
+        E::invalid_ecdh_curve => global
+            .err(
+                ErrorCode::ERR_CRYPTO_OPERATION_FAILED,
+                format_args!("Failed to set ECDH curve"),
+            )
             .to_js(),
     }
 }
@@ -281,9 +290,6 @@ pub(crate) trait VirtualMachineSqlExt {
     /// bun_io::EventLoopCtx for the JS-thread VM, for KeepAlive::{ref_,unref}.
     fn vm_ctx(&self) -> bun_io::EventLoopCtx;
     /// Lazy-init `RareData`'s per-protocol uws [`bun_uws::SocketGroup`].
-    /// Encapsulates the `rare_data(&mut self)` / `*_group(.., &VirtualMachine)`
-    /// borrowck conflict (the two borrows touch field-disjoint state) so the
-    /// four call sites need no per-site raw-pointer dance.
     fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup;
     /// See [`Self::postgres_socket_group`].
     fn mysql_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup;
@@ -318,20 +324,13 @@ impl VirtualMachineSqlExt for VirtualMachine {
     }
     #[inline]
     fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup {
-        // `rare_data()` returns the boxed `&mut RareData` (disjoint allocation);
-        // `*_group` only reads `vm.uws_loop()`. Route the read-only `vm`
-        // argument through the JS-thread singleton accessor instead of a
-        // raw-pointer split-borrow — `VirtualMachine::get()` is `&'static`
-        // and doesn't borrow `self`, so borrowck is satisfied without a
-        // per-site raw-pointer deref.
-        self.rare_data()
-            .postgres_group::<SSL>(VirtualMachine::get())
+        let loop_ = self.uws_loop();
+        self.rare_data().postgres_group::<SSL>(loop_)
     }
     #[inline]
     fn mysql_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup {
-        // See `postgres_socket_group` — singleton `&'static` for the read-only
-        // `vm` argument avoids the raw-pointer split-borrow.
-        self.rare_data().mysql_group::<SSL>(VirtualMachine::get())
+        let loop_ = self.uws_loop();
+        self.rare_data().mysql_group::<SSL>(loop_)
     }
 }
 
@@ -373,12 +372,12 @@ pub use bun_event_loop::EventLoopTimer::{
 // [`SqlRuntimeHooks`] vtable.
 bun_opaque::opaque_ffi! { pub struct TimerHeap; }
 impl TimerHeap {
-    pub fn insert(&mut self, t: &mut EventLoopTimer) {
+    pub(crate) fn insert(&mut self, t: *mut EventLoopTimer) {
         // SAFETY: `self` is `&mut runtime_state().timer`; `t` is a live
-        // intrusive heap node owned by the caller.
+        // intrusive heap node whose provenance covers its container.
         unsafe { (hooks().timer_insert)(self._p.get().cast::<c_void>(), t) }
     }
-    pub fn remove(&mut self, t: &mut EventLoopTimer) {
+    pub(crate) fn remove(&mut self, t: &mut EventLoopTimer) {
         // SAFETY: `self` is `&mut runtime_state().timer`; `t` was previously
         // inserted by the caller.
         unsafe { (hooks().timer_remove)(self._p.get().cast::<c_void>(), t) }
@@ -392,7 +391,7 @@ impl TimerHeap {
 
 #[derive(Default, Debug)]
 pub struct AutoFlusher {
-    pub registered: bool,
+    pub(crate) registered: bool,
 }
 
 /// SQL connection types implement this to participate in deferred flushing.
@@ -401,7 +400,7 @@ pub trait HasAutoFlush: Sized {
 }
 
 impl AutoFlusher {
-    pub fn register_deferred_microtask_with_type_unchecked<T: HasAutoFlush>(
+    pub(crate) fn register_deferred_microtask_with_type_unchecked<T: HasAutoFlush>(
         this: *mut T,
         vm: &VirtualMachine,
     ) {
@@ -418,7 +417,7 @@ impl AutoFlusher {
         let q = &mut vm.event_loop_mut().deferred_tasks;
         q.post_task(NonNull::new(this.cast::<c_void>()), trampoline::<T>);
     }
-    pub fn unregister_deferred_microtask_with_type<T>(this: *mut T, vm: &VirtualMachine) {
+    pub(crate) fn unregister_deferred_microtask_with_type<T>(this: *mut T, vm: &VirtualMachine) {
         // See register_deferred_microtask_with_type_unchecked.
         let q = &mut vm.event_loop_mut().deferred_tasks;
         q.unregister_task(NonNull::new(this.cast::<c_void>()));
@@ -468,7 +467,7 @@ pub mod api {
             /// `SSLConfig.server_name` — the SNI hostname C string, or null
             /// when unset / default.
             #[inline]
-            pub fn server_name(&self) -> *const c_char {
+            pub(crate) fn server_name(&self) -> *const c_char {
                 match self.0 {
                     None => core::ptr::null(),
                     // SAFETY: live boxed SSLConfig; hook returns a borrow into
@@ -479,7 +478,7 @@ pub mod api {
 
             /// `SSLConfig.reject_unauthorized` — non-zero rejects on verify error.
             #[inline]
-            pub fn reject_unauthorized(&self) -> i32 {
+            pub(crate) fn reject_unauthorized(&self) -> i32 {
                 match self.0 {
                     None => 0,
                     // SAFETY: live boxed SSLConfig.
@@ -489,7 +488,7 @@ pub mod api {
 
             /// `SSLConfig.fromJS(vm, global, value)` — VM is accepted but
             /// unused (the hook recovers it from `global`).
-            pub fn from_js<V>(
+            pub(crate) fn from_js<V>(
                 _vm: V,
                 global: &JSGlobalObject,
                 value: JSValue,
@@ -507,7 +506,7 @@ pub mod api {
             /// `#[repr(C)]` `us_bun_socket_context_options_t` for client mode
             /// (request_cert=1, reject_unauthorized=0; SQL re-verifies hostname
             /// itself). Returns `Default` for the empty/`tls:true` config.
-            pub fn as_usockets_for_client_verification(
+            pub(crate) fn as_usockets_for_client_verification(
                 &self,
             ) -> bun_uws::us_bun_socket_context_options_t {
                 match self.0 {
@@ -521,7 +520,6 @@ pub mod api {
                 }
             }
         }
-        pub use SSLConfig as SslConfig;
     }
     /// PascalCase namespace alias.
     #[allow(non_snake_case)]
@@ -541,12 +539,12 @@ pub mod webcore {
     // externs are real C++ symbols (generate-classes.ts), not Rust shims.
     bun_opaque::opaque_ffi! { pub struct Blob; }
     impl Blob {
-        pub fn needs_to_read_file(&self) -> bool {
+        pub(crate) fn needs_to_read_file(&self) -> bool {
             // SAFETY: `self` is a live `*const bun_runtime::webcore::Blob`
             // (codegen m_ctx payload).
             unsafe { (hooks().blob_needs_to_read_file)(self._p.get() as *const c_void) }
         }
-        pub fn shared_view(&self) -> &[u8] {
+        pub(crate) fn shared_view(&self) -> &[u8] {
             let mut len: usize = 0;
             // SAFETY: `self` is a live `*const Blob`; the returned ptr/len
             // borrow the Blob's store, which is immutable for its lifetime.
@@ -617,7 +615,7 @@ pub use bun_jsc::JsClass;
 
 pub mod codegen {
     ::bun_jsc::js_class_module!(JSPostgresSQLConnection = "PostgresSQLConnection"
-        as crate::postgres::PostgresSQLConnection { queries, onconnect, onclose });
+        as crate::postgres::PostgresSQLConnection { queries, onconnect, onclose, onnotification });
     ::bun_jsc::js_class_module!(
         JSPostgresSQLQuery = "PostgresSQLQuery" as crate::postgres::PostgresSQLQuery,
         impl_js_class {
@@ -760,9 +758,9 @@ pub enum Intrinsic {
 }
 #[derive(Clone, Copy, Default)]
 pub struct CreateJSFunctionOptions {
-    pub implementation_visibility: ImplementationVisibility,
-    pub intrinsic: Intrinsic,
-    pub constructor: Option<JSHostFn>,
+    pub(crate) implementation_visibility: ImplementationVisibility,
+    pub(crate) intrinsic: Intrinsic,
+    pub(crate) constructor: Option<JSHostFn>,
 }
 
 unsafe extern "C" {
@@ -771,7 +769,7 @@ unsafe extern "C" {
     // preconditions remain → `safe fn`.
     safe fn JSFunction__createFromZig(
         global: &JSGlobalObject,
-        fn_name: bun_core::String,
+        fn_name: &bun_core::String,
         implementation: JSHostFn,
         arg_count: u32,
         implementation_visibility: ImplementationVisibility,
@@ -813,10 +811,10 @@ impl JSFunction {
         opts: CreateJSFunctionOptions,
     ) -> JSValue {
         let implementation: JSHostFn = implementation.into_js_host_fn();
-        let fn_name = bun_core::String::init(name);
+        let fn_name = bun_core::String::from_bytes(name.as_bytes());
         JSFunction__createFromZig(
             global,
-            fn_name,
+            &fn_name,
             implementation,
             arg_count,
             opts.implementation_visibility,
@@ -831,7 +829,7 @@ impl JSFunction {
 // keeps the `&VirtualMachine` (local view) signature the SQL callsites use.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub mod call_frame {
+pub(crate) mod call_frame {
     use super::*;
     /// Cursor over a `&[JSValue]`.
     pub(crate) struct ArgumentsSlice<'a> {
@@ -870,7 +868,7 @@ pub mod call_frame {
 // by [`SqlRuntimeHooks::ssl_ctx_cache`] / `ssl_ctx_get_or_create`.
 bun_opaque::opaque_ffi! { pub struct SslCtxCache; }
 impl SslCtxCache {
-    pub fn get_or_create_opts(
+    pub(crate) fn get_or_create_opts(
         &mut self,
         opts: &bun_uws::us_bun_socket_context_options_t,
         err: &mut bun_uws::create_bun_socket_error_t,

@@ -71,7 +71,7 @@ impl Coder {
 
 /// RFC 7541 §5.1 + §6.3: encode `value` as a 5-bit-prefix integer with the `001` pattern (0x20)
 /// into `dst[offset..]`. Returns bytes written.
-pub fn write_table_size_update(dst: &mut [u8], offset: usize, value: u32) -> usize {
+fn write_table_size_update(dst: &mut [u8], offset: usize, value: u32) -> usize {
     let mut i = offset;
     if value < 31 {
         dst[i] = 0x20 | value as u8;

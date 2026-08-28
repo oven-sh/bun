@@ -23,10 +23,15 @@ function parseJSCFlags(filePath: string): Record<string, string> {
     if (line === "// @bun" || line.trim() === "") continue;
     if (!line.startsWith("//@")) break;
 
-    const match = line.match(/^\/\/@ (runDefault|runFTLNoCJIT|runDefaultWasm)\((.*)\)/);
-    if (!match) continue;
+    const match = line.match(/^\/\/@ (runDefault|runFTLNoCJIT|runDefaultWasm|requireOptions)\((.*)\)/);
+    const noJIT = /^\/\/@ runNoJIT\b/.test(line);
+    if (!match && !noJIT) continue;
 
-    const [, mode, argsStr] = match;
+    if (noJIT) {
+      env["BUN_JSC_useJIT"] = "false";
+      continue;
+    }
+    const [, mode, argsStr] = match!;
 
     // runFTLNoCJIT implies these flags (from WebKit's run-jsc-stress-tests)
     if (mode === "runFTLNoCJIT") {
@@ -146,6 +151,43 @@ const wasmFixtures = [
   "jspi-exceptions-from-js.js",
 ];
 
+const ffiFixturesDir = path.join(fixturesDir, "ffi");
+const ffiFixtures = [
+  "ffi-align.js",
+  "ffi-arena-depth.js",
+  "ffi-arity-ladders.js",
+  "ffi-arity.js",
+  "ffi-buffer-length.js",
+  "ffi-callback-throw-unwind.js",
+  "ffi-callbacks.js",
+  "ffi-callffi-was-compiled.js",
+  "ffi-canary.js",
+  "ffi-conversion-errors-host.js",
+  "ffi-conversion-errors.js",
+  "ffi-fuzz-signatures.js",
+  "ffi-hooks-and-owner.js",
+  "ffi-host-path.js",
+  "ffi-jsvalue.js",
+  "ffi-no-jit.js",
+  "ffi-non-int32-int-args.js",
+  "ffi-osr-and-exceptions.js",
+  "ffi-pointers-and-buffers.js",
+  "ffi-ptr-non-view-cell-arg.js",
+  "ffi-ptr-object-arg.js",
+  "ffi-signature-errors.js",
+  "ffi-subword-and-returns.js",
+  "ffi-tailcall.js",
+  "ffi-threadsafe-callback-burst.js",
+  "ffi-threadsafe-callback-throw.js",
+  "ffi-threadsafe-callback.js",
+  "ffi-tier-differential.js",
+  "ffi-typedarray-storage-modes.js",
+  "ffi-types-echo.js",
+  "ffi-untyped-float-args.js",
+  "ffi-untyped-int-stack-args.js",
+  "ffi-view-args.js",
+];
+
 const preloadPath = path.join(import.meta.dir, "preload.js");
 
 // Under ASAN, JSC disables the wasm fault signal handler (and therefore wasm
@@ -209,6 +251,50 @@ describe.concurrent("JSC JIT Stress Tests", () => {
             cmd: [bunExe(), "--preload", preloadPath, fixturePath],
             env: { ...fixtureEnv, ...jscEnv },
             cwd: wasmFixturesDir,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+
+          const [stdout, stderr, exitCode] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+          ]);
+
+          if (exitCode !== 0) {
+            console.log("stdout:", stdout);
+            console.log("stderr:", stderr);
+          }
+          expect(exitCode).toBe(0);
+        },
+        fixtureTimeout,
+      );
+    }
+  });
+
+  describe("FFI (bun:ffi engine)", () => {
+    const probeEnv = { ...bunEnv, BUN_JSC_useDollarVM: "1" };
+    const probe = Bun.spawnSync({
+      cmd: [
+        bunExe(),
+        "-e",
+        'process.stdout.write(typeof globalThis.$vm === "object" && typeof $vm.ffiFunction === "function" ? "1" : "0")',
+      ],
+      env: probeEnv,
+      stdout: "pipe",
+    });
+    const hasDollarVM = probe.stdout.toString() === "1";
+
+    for (const fixture of ffiFixtures) {
+      test.skipIf(!hasDollarVM)(
+        fixture,
+        async () => {
+          const fixturePath = path.join(ffiFixturesDir, fixture);
+          const jscEnv = parseJSCFlags(fixturePath);
+
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "--preload", preloadPath, fixturePath],
+            env: { ...fixtureEnv, ...jscEnv, BUN_JSC_useDollarVM: "1" },
             stdout: "pipe",
             stderr: "pipe",
           });

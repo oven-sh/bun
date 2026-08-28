@@ -1,15 +1,17 @@
+use core::cell::Cell;
 use core::ffi::c_char;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMapExt, GetOrPutResult, StringArrayHashMap};
+use bun_collections::{ArrayHashMapExt, GetOrPutResult, StringSet};
 use bun_core::{self, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
 use bun_sys;
 use bun_url::URL;
 use bun_which::which;
+use enumset::EnumSet;
 
 use bun_core::analytics;
 
@@ -20,29 +22,56 @@ pub enum DotEnvFileSuffix {
     Test,
 }
 
-/// Downstream callers (transpiler, install, lockfile) variously spell the load-mode
-/// discriminant `Kind` or `Mode`; both alias the same `DotEnvFileSuffix` enum so the
-/// crate exports a single canonical type without forcing a tree-wide rename.
-pub type Kind = DotEnvFileSuffix;
-pub type Mode = DotEnvFileSuffix;
+/// Declaration order is the order `print_loaded` lists the files in.
+#[derive(enumset::EnumSetType)]
+pub(crate) enum DefaultEnvFile {
+    DevelopmentLocal,
+    ProductionLocal,
+    TestLocal,
+    Local,
+    Development,
+    Production,
+    Test,
+    Env,
+}
+
+impl DefaultEnvFile {
+    fn name(self) -> &'static [u8] {
+        match self {
+            Self::DevelopmentLocal => b".env.development.local",
+            Self::ProductionLocal => b".env.production.local",
+            Self::TestLocal => b".env.test.local",
+            Self::Local => b".env.local",
+            Self::Development => b".env.development",
+            Self::Production => b".env.production",
+            Self::Test => b".env.test",
+            Self::Env => b".env",
+        }
+    }
+}
 
 /// Directory-entry probe used by `Loader::load`. `bun_dotenv` sits below
-/// `bun_resolver` in the crate graph, so the concrete
-/// `bun_resolver::fs::DirEntry` is taken generically; the only operation
-/// `load_default_files` performs is a fast O(1) lookup of a
-/// known-at-compile-time filename in the directory's entry map. Implemented
-/// for `bun_resolver::fs::DirEntry`.
+/// `bun_resolver` in the crate graph, so the directory listing is taken
+/// generically; the only operation `load_default_files` performs is a lookup
+/// of a known-at-compile-time filename. Callers snapshot the resolver's
+/// listing into a [`DirEntryKeys`] (the live `DirEntry` map may be rewritten
+/// in place by a concurrent resolver, so `load` must not probe it directly).
 pub trait DirEntryProbe {
     /// The argument MUST already be ASCII-lowercase.
     fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool;
 }
 
-// LAYERING: the concrete `DirEntry` lives in `bun_resolver::fs` (higher tier,
-// depends on this crate). `impl DirEntryProbe for bun_resolver::fs::DirEntry`
-// is provided there — see src/resolver/lib.rs. No impl here; that would be a
-// dep-cycle.
+/// Directory-listing basenames copied out under the resolver's
+/// `entries_mutex`, probed between the `.env` file reads in `Loader::load`.
+pub struct DirEntryKeys(pub Vec<Box<[u8]>>);
 
-/// schema.peechy — `enum(u32)`. Canonical definition; re-exported as
+impl DirEntryProbe for DirEntryKeys {
+    fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
+        self.0.iter().any(|k| **k == *query_lower)
+    }
+}
+
+/// Canonical definition; re-exported as
 /// `bun_options_types::schema::api::DotEnvBehavior` for higher tiers.
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
@@ -59,8 +88,7 @@ pub enum DotEnvBehavior {
 #[allow(non_upper_case_globals)]
 impl DotEnvBehavior {
     // PascalCase aliases — downstream callers (bundler/options.rs, bundler/defines.rs,
-    // runtime/api/JSBundler.rs) name the variants both ways while the snake_case enum
-    // body above stays the schema ground truth.
+    // runtime/api/JSBundler.rs) name the variants both ways.
     pub const None: Self = Self::_none;
     pub const Disable: Self = Self::disable;
     pub const Prefix: Self = Self::prefix;
@@ -81,7 +109,7 @@ impl DotEnvBehavior {
             Ok((Self::load_all, None))
         } else if s == b"disable" {
             Ok((Self::disable, None))
-        } else if let Some(asterisk) = s.iter().position(|&b| b == b'*') {
+        } else if let Some(asterisk) = strings::index_of_char_usize(s, b'*') {
             if asterisk > 0 {
                 Ok((Self::prefix, Some(&s[..asterisk])))
             } else {
@@ -109,25 +137,18 @@ pub struct S3Credentials {
     pub insecure_http: bool,
 }
 
-pub struct Loader<'a> {
-    pub map: &'a mut Map,
+pub struct Loader {
+    pub map: Map,
     // allocator dropped — global mimalloc (see PORTING.md §Allocators)
-    pub env_local: Option<bun_ast::Source>,
-    pub env_development: Option<bun_ast::Source>,
-    pub env_production: Option<bun_ast::Source>,
-    pub env_test: Option<bun_ast::Source>,
-    pub env_development_local: Option<bun_ast::Source>,
-    pub env_production_local: Option<bun_ast::Source>,
-    pub env_test_local: Option<bun_ast::Source>,
-    pub env: Option<bun_ast::Source>,
+    pub(crate) default_files_loaded: EnumSet<DefaultEnvFile>,
 
     /// only populated with files specified explicitly (e.g. --env-file arg)
-    pub custom_files_loaded: StringArrayHashMap<bun_ast::Source>,
+    pub(crate) custom_files_loaded: StringSet,
 
     pub quiet: bool,
 
-    pub did_load_process: bool,
-    pub reject_unauthorized: Option<bool>,
+    pub(crate) did_load_process: bool,
+    pub(crate) reject_unauthorized: Cell<Option<bool>>,
 
     // Local POD mirror of `bun_s3_signing::S3Credentials` — see type doc above.
     aws_credentials: Option<S3Credentials>,
@@ -141,7 +162,7 @@ static NODE_PATH_TO_USE_SET_ONCE: bun_core::RwLock<Option<Box<[u8]>>> = bun_core
 // PORTING.md §Concurrency: OnceLock — set once from CLI flag, read many.
 pub static HAS_NO_CLEAR_SCREEN_CLI_FLAG: OnceLock<bool> = OnceLock::new();
 
-impl<'a> Loader<'a> {
+impl Loader {
     /// Shared "empty-ish" predicate for proxy env vars: an unset/empty value,
     /// or a literal empty-quote pair left over from shell `export FOO=""` /
     /// `export FOO=''`.
@@ -230,8 +251,6 @@ impl<'a> Loader<'a> {
             .is_some()
     }
 
-    pub fn load_tracy(&self) {}
-
     pub fn get_s3_credentials(&mut self) -> &S3Credentials {
         if self.aws_credentials.is_none() {
             // Copy to `Box<[u8]>` so the cached struct owns its bytes and we
@@ -255,13 +274,13 @@ impl<'a> Loader<'a> {
 
             let mut endpoint: Box<[u8]> = Box::default();
             let mut insecure_http = false;
-            if let Some(endpoint_) = self
+            if let Some(parsed) = self
                 .get(b"S3_ENDPOINT")
                 .or_else(|| self.get(b"AWS_ENDPOINT"))
+                .and_then(URL::parse_s3_endpoint)
             {
-                let url = URL::parse(endpoint_);
-                endpoint = Box::from(url.host_with_path());
-                insecure_http = url.is_http();
+                endpoint = parsed.host_with_path;
+                insecure_http = parsed.is_http;
             }
 
             let bucket: Box<[u8]> = self
@@ -293,22 +312,17 @@ impl<'a> Loader<'a> {
     /// Node's `=== '0'` check exactly).
     ///
     /// **Prefer VirtualMachine.getTLSRejectUnauthorized()** for JavaScript, as individual workers could have different settings.
-    pub fn get_tls_reject_unauthorized(&mut self) -> bool {
-        if let Some(reject_unauthorized) = self.reject_unauthorized {
+    pub fn get_tls_reject_unauthorized(&self) -> bool {
+        if let Some(reject_unauthorized) = self.reject_unauthorized.get() {
             return reject_unauthorized;
         }
-        if let Some(reject) = self.get(b"NODE_TLS_REJECT_UNAUTHORIZED") {
-            if reject == b"0" {
-                self.reject_unauthorized = Some(false);
-                return false;
-            }
-        }
         // default: true
-        self.reject_unauthorized = Some(true);
-        true
+        let result = self.get(b"NODE_TLS_REJECT_UNAUTHORIZED") != Some(b"0");
+        self.reject_unauthorized.set(Some(result));
+        result
     }
 
-    pub fn get_http_proxy_for(&mut self, url: &URL<'_>) -> Option<URL<'a>> {
+    pub fn get_http_proxy_for(&self, url: &URL<'_>) -> Option<URL<'_>> {
         self.get_http_proxy(url.is_http(), Some(url.hostname), Some(url.host))
     }
 
@@ -323,28 +337,13 @@ impl<'a> Loader<'a> {
     /// `hostname` is the host without port (e.g., "localhost")
     /// `host` is the host with port if present (e.g., "localhost:3000")
     pub fn get_http_proxy(
-        &mut self,
+        &self,
         is_http: bool,
         hostname: Option<&[u8]>,
         host: Option<&[u8]>,
-    ) -> Option<URL<'a>> {
+    ) -> Option<URL<'_>> {
         // TODO: When Web Worker support is added, make sure to intern these strings
-        //
-        // Lifetime: the returned `URL` borrows env-var values that are
-        // `Box<[u8]>`-owned by `*self.map: Map`, which is borrowed for `'a`
-        // (`map: &'a mut Map`). The boxed allocations are address-stable
-        // across rehashes and Bun never removes/overwrites the proxy env vars
-        // after they are read here, so the slices are valid for `'a`.
-        // Encapsulating the extension here keeps every caller (PackageManager,
-        // fetch, upgrade, create) free of `transmute` (PORTING.md §Forbidden).
-        let extend = |s: &[u8]| -> &'a [u8] {
-            // SAFETY: `s` points into a `Box<[u8]>` owned by `*self.map`, which is
-            // borrowed for `'a`; the boxed allocation is address-stable and never
-            // removed for the proxy env vars (see lifetime note above).
-            unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
-        };
-
-        let mut http_proxy: Option<URL<'a>> = None;
+        let mut http_proxy: Option<URL<'_>> = None;
 
         let proxy = if is_http {
             self.get_lower_then_upper(b"http_proxy", b"HTTP_PROXY")
@@ -353,7 +352,7 @@ impl<'a> Loader<'a> {
         };
         if let Some(p) = proxy {
             if !Self::is_emptyish(p) {
-                http_proxy = Some(URL::parse(extend(p)));
+                http_proxy = Some(URL::parse(p));
             }
         }
 
@@ -379,7 +378,7 @@ impl<'a> Loader<'a> {
             return false;
         }
 
-        for no_proxy_item in no_proxy_text.split(|&b| b == b',') {
+        for no_proxy_item in strings::split(no_proxy_text, b",") {
             let mut no_proxy_entry = strings::trim(no_proxy_item, &strings::WHITESPACE_CHARS);
             if no_proxy_entry.is_empty() {
                 continue;
@@ -399,7 +398,7 @@ impl<'a> Loader<'a> {
             // IPv6 addresses contain multiple colons (e.g., "::1", "2001:db8::1")
             // Bracketed IPv6 with port: "[::1]:8080"
             // Host with port: "localhost:8080" (single colon)
-            let colon_count = no_proxy_entry.iter().filter(|&&b| b == b':').count();
+            let colon_count = strings::count_char(no_proxy_entry, b':');
             let is_bracketed_ipv6 = strings::starts_with_char(no_proxy_entry, b'[');
             let has_port = 'blk: {
                 if is_bracketed_ipv6 {
@@ -476,7 +475,6 @@ impl<'a> Loader<'a> {
                 *cxx_gop.key_ptr = Box::<[u8]>::from(&**cxx_gop.key_ptr);
                 *cxx_gop.value_ptr = HashTableValue {
                     value: ccache_path.clone(),
-                    conditional: false,
                 };
             }
             let c_gop = self
@@ -484,10 +482,7 @@ impl<'a> Loader<'a> {
                 .get_or_put_without_value(b"CMAKE_C_COMPILER_LAUNCHER")?;
             if !c_gop.found_existing {
                 *c_gop.key_ptr = Box::<[u8]>::from(&**c_gop.key_ptr);
-                *c_gop.value_ptr = HashTableValue {
-                    value: ccache_path,
-                    conditional: false,
-                };
+                *c_gop.value_ptr = HashTableValue { value: ccache_path };
             }
         }
         Ok(())
@@ -528,7 +523,7 @@ impl<'a> Loader<'a> {
         Ok(true)
     }
 
-    pub fn get_as_bool(&self, key: &[u8]) -> Option<bool> {
+    pub(crate) fn get_as_bool(&self, key: &[u8]) -> Option<bool> {
         let value = self.get(key)?;
         if value == b"" {
             return Some(false);
@@ -584,21 +579,18 @@ impl<'a> Loader<'a> {
     // — it constructs `E::String` + `DefineData`, both higher-tier types, and
     // only reads `self.map.map.{keys,values}()` from this crate.
 
-    pub fn init(map: &'a mut Map) -> Loader<'a> {
+    pub fn init() -> Loader {
+        Self::init_with_map(Map::init())
+    }
+
+    pub fn init_with_map(map: Map) -> Loader {
         Loader {
             map,
-            env_local: None,
-            env_development: None,
-            env_production: None,
-            env_test: None,
-            env_development_local: None,
-            env_production_local: None,
-            env_test_local: None,
-            env: None,
-            custom_files_loaded: StringArrayHashMap::default(),
+            default_files_loaded: EnumSet::empty(),
+            custom_files_loaded: StringSet::new(),
             quiet: false,
             did_load_process: false,
-            reject_unauthorized: None,
+            reject_unauthorized: Cell::new(None),
             aws_credentials: None,
         }
     }
@@ -634,11 +626,8 @@ impl<'a> Loader<'a> {
         &mut self,
         str: &[u8],
     ) -> Result<(), AllocError> {
-        // Go straight to `parse_bytes` to avoid the
-        // `Source.contents: &'static [u8]` lifetime constraint (callers like
-        // `node:util.parseEnv` pass JS-owned non-'static buffers).
         let mut value_buffer: Vec<u8> = Vec::new();
-        Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, self.map, &mut value_buffer)
+        Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, &mut self.map, &mut value_buffer)
     }
 
     pub fn load<D: DirEntryProbe + ?Sized>(
@@ -686,7 +675,7 @@ impl<'a> Loader<'a> {
             let arg_value = strings::trim(env_files[i - 1], b" ");
             if !arg_value.is_empty() {
                 // ignore blank args
-                for file_path in arg_value.rsplit(|&b| b == b',') {
+                for file_path in strings::rsplit(arg_value, b",") {
                     if !file_path.is_empty() {
                         self.load_env_file_dynamic::<false>(file_path, value_buffer)?;
                         analytics::Features::dotenv_inc();
@@ -710,111 +699,79 @@ impl<'a> Loader<'a> {
     ) -> crate::Result<()> {
         let dir_handle = bun_sys::Fd::cwd();
 
-        // `bun_dotenv` sits below `bun_resolver` in the crate graph, so the
-        // directory entry is taken generically — `bun_resolver::fs::DirEntry`
-        // impls `DirEntryProbe`.
         match suffix {
-            DotEnvFileSuffix::Development => {
-                self.try_load_default(dir, dir_handle, b".env.development.local", value_buffer)?
-            }
-            DotEnvFileSuffix::Production => {
-                self.try_load_default(dir, dir_handle, b".env.production.local", value_buffer)?
-            }
+            DotEnvFileSuffix::Development => self.try_load_default(
+                dir,
+                dir_handle,
+                DefaultEnvFile::DevelopmentLocal,
+                value_buffer,
+            )?,
+            DotEnvFileSuffix::Production => self.try_load_default(
+                dir,
+                dir_handle,
+                DefaultEnvFile::ProductionLocal,
+                value_buffer,
+            )?,
             DotEnvFileSuffix::Test => {
-                self.try_load_default(dir, dir_handle, b".env.test.local", value_buffer)?
+                self.try_load_default(dir, dir_handle, DefaultEnvFile::TestLocal, value_buffer)?
             }
         }
 
         if suffix != DotEnvFileSuffix::Test {
-            self.try_load_default(dir, dir_handle, b".env.local", value_buffer)?;
+            self.try_load_default(dir, dir_handle, DefaultEnvFile::Local, value_buffer)?;
         }
 
         match suffix {
             DotEnvFileSuffix::Development => {
-                self.try_load_default(dir, dir_handle, b".env.development", value_buffer)?
+                self.try_load_default(dir, dir_handle, DefaultEnvFile::Development, value_buffer)?
             }
             DotEnvFileSuffix::Production => {
-                self.try_load_default(dir, dir_handle, b".env.production", value_buffer)?
+                self.try_load_default(dir, dir_handle, DefaultEnvFile::Production, value_buffer)?
             }
             DotEnvFileSuffix::Test => {
-                self.try_load_default(dir, dir_handle, b".env.test", value_buffer)?
+                self.try_load_default(dir, dir_handle, DefaultEnvFile::Test, value_buffer)?
             }
         }
 
-        self.try_load_default(dir, dir_handle, b".env", value_buffer)
+        self.try_load_default(dir, dir_handle, DefaultEnvFile::Env, value_buffer)
     }
 
-    /// Probe `dir` for a known `.env*` filename and, if present, load it into
-    /// its dedicated slot and bump the analytics counter. Shared body for the
-    /// eight call sites in `load_default_files`.
     #[inline]
     fn try_load_default<D: DirEntryProbe + ?Sized>(
         &mut self,
         dir: &D,
         dir_handle: bun_sys::Fd,
-        name: &'static [u8],
+        env_file: DefaultEnvFile,
         value_buffer: &mut Vec<u8>,
     ) -> crate::Result<()> {
-        if dir.has_comptime_query(name) {
-            self.load_env_file::<false>(dir_handle, name, value_buffer)?;
+        if dir.has_comptime_query(env_file.name()) {
+            self.load_env_file::<false>(dir_handle, env_file, value_buffer)?;
             analytics::Features::dotenv_inc();
         }
         Ok(())
     }
 
-    pub fn print_loaded(&self, start: i128) {
-        let count: usize = (self.env_development_local.is_some() as usize)
-            + (self.env_production_local.is_some() as usize)
-            + (self.env_test_local.is_some() as usize)
-            + (self.env_local.is_some() as usize)
-            + (self.env_development.is_some() as usize)
-            + (self.env_production.is_some() as usize)
-            + (self.env_test.is_some() as usize)
-            + (self.env.is_some() as usize)
-            + self.custom_files_loaded.count();
+    pub(crate) fn print_loaded(&self, start: i128) {
+        let count: usize = self.default_files_loaded.len() + self.custom_files_loaded.count();
 
         if count == 0 {
             return;
         }
         let elapsed = (bun_core::time::nano_timestamp() - start) as f64 / 1_000_000.0;
 
-        const ALL: [&[u8]; 8] = [
-            b".env.development.local",
-            b".env.production.local",
-            b".env.test.local",
-            b".env.local",
-            b".env.development",
-            b".env.production",
-            b".env.test",
-            b".env",
-        ];
-        let loaded: [bool; 8] = [
-            self.env_development_local.is_some(),
-            self.env_production_local.is_some(),
-            self.env_test_local.is_some(),
-            self.env_local.is_some(),
-            self.env_development.is_some(),
-            self.env_production.is_some(),
-            self.env_test.is_some(),
-            self.env.is_some(),
-        ];
-
         let mut loaded_i: usize = 0;
         Output::print_elapsed(elapsed);
         bun_core::pretty_error!(" <d>");
 
-        for (i, &yes) in loaded.iter().enumerate() {
-            if yes {
-                loaded_i += 1;
-                if count == 1 || (loaded_i >= count && count > 1) {
-                    bun_core::pretty_error!("\"{}\"", bstr::BStr::new(ALL[i]));
-                } else {
-                    bun_core::pretty_error!("\"{}\", ", bstr::BStr::new(ALL[i]));
-                }
+        for env_file in self.default_files_loaded.iter() {
+            loaded_i += 1;
+            if count == 1 || (loaded_i >= count && count > 1) {
+                bun_core::pretty_error!("\"{}\"", bstr::BStr::new(env_file.name()));
+            } else {
+                bun_core::pretty_error!("\"{}\", ", bstr::BStr::new(env_file.name()));
             }
         }
 
-        // `iterator()` requires `&mut self`; iterate `keys()` slice instead.
         for k in self.custom_files_loaded.keys() {
             loaded_i += 1;
             if count == 1 || (loaded_i >= count && count > 1) {
@@ -828,30 +785,16 @@ impl<'a> Loader<'a> {
         Output::flush();
     }
 
-    /// Helper: maps a known `.env*` filename to its `Option<Source>` field.
-    fn default_file_slot(&mut self, base: &'static [u8]) -> &mut Option<bun_ast::Source> {
-        match base {
-            b".env.local" => &mut self.env_local,
-            b".env.development" => &mut self.env_development,
-            b".env.production" => &mut self.env_production,
-            b".env.test" => &mut self.env_test,
-            b".env.development.local" => &mut self.env_development_local,
-            b".env.production.local" => &mut self.env_production_local,
-            b".env.test.local" => &mut self.env_test_local,
-            b".env" => &mut self.env,
-            _ => unreachable!(),
-        }
-    }
-
-    pub fn load_env_file<const OVERRIDE: bool>(
+    pub(crate) fn load_env_file<const OVERRIDE: bool>(
         &mut self,
         dir: bun_sys::Fd,
-        base: &'static [u8],
+        env_file: DefaultEnvFile,
         value_buffer: &mut Vec<u8>,
     ) -> crate::Result<()> {
-        if self.default_file_slot(base).is_some() {
+        if self.default_files_loaded.contains(env_file) {
             return Ok(());
         }
+        let base = env_file.name();
 
         // `bun_sys` is errno-based; the match arms below group the recoverable
         // errnos. Any errno not listed propagates.
@@ -863,8 +806,7 @@ impl<'a> Loader<'a> {
                     match err.get_errno() {
                         E::EISDIR | E::ENOENT => {
                             // prevent retrying
-                            *self.default_file_slot(base) =
-                                Some(bun_ast::Source::init_path_string(base, b""));
+                            self.default_files_loaded.insert(env_file);
                             return Ok(());
                         }
                         E::EBUSY | E::EACCES => {
@@ -876,8 +818,7 @@ impl<'a> Loader<'a> {
                                 );
                             }
                             // prevent retrying
-                            *self.default_file_slot(base) =
-                                Some(bun_ast::Source::init_path_string(base, b""));
+                            self.default_files_loaded.insert(env_file);
                             return Ok(());
                         }
                         _ => return Err(err.into()),
@@ -897,19 +838,15 @@ impl<'a> Loader<'a> {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut *self.map, value_buffer)?;
+                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
             }
         }
 
-        // The file buffer is dropped after parsing because
-        // `bun_ast::Source.contents` is `&'static [u8]` and §Forbidden bans
-        // `Box::leak`. The stored `Source` is only ever checked for
-        // `.is_some()` / its path printed, so dropping the bytes is fine.
-        *self.default_file_slot(base) = Some(bun_ast::Source::init_path_string(base, b""));
+        self.default_files_loaded.insert(env_file);
         Ok(())
     }
 
-    pub fn load_env_file_dynamic<const OVERRIDE: bool>(
+    pub(crate) fn load_env_file_dynamic<const OVERRIDE: bool>(
         &mut self,
         file_path: &[u8],
         value_buffer: &mut Vec<u8>,
@@ -922,12 +859,7 @@ impl<'a> Loader<'a> {
             Ok(f) => f,
             Err(_) => {
                 // prevent retrying
-                // `Source::init_path_string` requires a `'static` path; the
-                // map key already carries `file_path` (boxed), and the value is never
-                // read for its path/contents — only `.contains()` and key iteration —
-                // so an empty placeholder is observationally identical.
-                self.custom_files_loaded
-                    .put(file_path, bun_ast::Source::default())?;
+                self.custom_files_loaded.insert(file_path)?;
                 return Ok(());
             }
         };
@@ -944,14 +876,11 @@ impl<'a> Loader<'a> {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut *self.map, value_buffer)?;
+                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
             }
         }
 
-        // See `load_env_file` — `Source.contents` is not retained; only
-        // `.contains()` / key iteration are ever observed.
-        self.custom_files_loaded
-            .put(file_path, bun_ast::Source::default())?;
+        self.custom_files_loaded.insert(file_path)?;
         Ok(())
     }
 }
@@ -991,7 +920,9 @@ struct Parser<'a> {
     value_buffer: &'a mut Vec<u8>,
 }
 
-const WHITESPACE_CHARS: &[u8] = b"\t\x0B\x0C \xA0\n\r";
+// Input is UTF-8, so this set must be ASCII-only: 0xA0 is a continuation byte
+// there (NBSP is C2 A0), and trimming it byte-wise corrupts multi-byte sequences.
+const WHITESPACE_CHARS: &[u8] = b"\t\x0B\x0C \n\r";
 
 impl<'a> Parser<'a> {
     fn skip_line(&mut self) {
@@ -1062,9 +993,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_quoted<const QUOTE: u8>(&mut self) -> Result<Option<&[u8]>, AllocError> {
-        if cfg!(debug_assertions) {
-            debug_assert!(self.src[self.pos] == QUOTE);
-        }
+        debug_assert!(self.src[self.pos] == QUOTE);
         let start = self.pos;
         self.value_buffer.clear(); // Reset the buffer
         let mut end = start + 1;
@@ -1073,57 +1002,49 @@ impl<'a> Parser<'a> {
                 b'\\' => end += 1,
                 q if q == QUOTE => {
                     end += 1;
+                    // The first unescaped closing quote always terminates the value.
+                    // Any trailing content on the same line is discarded (node/dotenv).
                     self.pos = end;
-                    self.skip_whitespaces();
-                    if self.pos >= self.src.len()
-                        || self.src[self.pos] == b'#'
-                        || strings::index_of_char(&self.src[end..self.pos], b'\n').is_some()
-                        || strings::index_of_char(&self.src[end..self.pos], b'\r').is_some()
-                    {
-                        let mut i = start;
-                        while i < end {
-                            match self.src[i] {
-                                b'\\' => {
-                                    if QUOTE == b'"' {
-                                        if cfg!(debug_assertions) {
-                                            debug_assert!(i + 1 < end);
+                    self.skip_line();
+                    let mut i = start;
+                    while i < end {
+                        match self.src[i] {
+                            b'\\' => {
+                                if QUOTE == b'"' {
+                                    debug_assert!(i + 1 < end);
+                                    match self.src[i + 1] {
+                                        b'n' => {
+                                            self.value_buffer.push(b'\n');
+                                            i += 2;
                                         }
-                                        match self.src[i + 1] {
-                                            b'n' => {
-                                                self.value_buffer.push(b'\n');
-                                                i += 2;
-                                            }
-                                            b'r' => {
-                                                self.value_buffer.push(b'\r');
-                                                i += 2;
-                                            }
-                                            _ => {
-                                                self.value_buffer
-                                                    .extend_from_slice(&self.src[i..i + 2]);
-                                                i += 2;
-                                            }
+                                        b'r' => {
+                                            self.value_buffer.push(b'\r');
+                                            i += 2;
                                         }
-                                    } else {
-                                        self.value_buffer.push(b'\\');
-                                        i += 1;
+                                        _ => {
+                                            self.value_buffer
+                                                .extend_from_slice(&self.src[i..i + 2]);
+                                            i += 2;
+                                        }
                                     }
-                                }
-                                b'\r' => {
-                                    i += 1;
-                                    if i >= end || self.src[i] != b'\n' {
-                                        self.value_buffer.push(b'\n');
-                                    }
-                                }
-                                c => {
-                                    self.value_buffer.push(c);
+                                } else {
+                                    self.value_buffer.push(b'\\');
                                     i += 1;
                                 }
                             }
+                            b'\r' => {
+                                i += 1;
+                                if i >= end || self.src[i] != b'\n' {
+                                    self.value_buffer.push(b'\n');
+                                }
+                            }
+                            c => {
+                                self.value_buffer.push(c);
+                                i += 1;
+                            }
                         }
-                        return Ok(Some(self.value_buffer.as_slice()));
                     }
-                    self.pos = start;
-                    // fallthrough to outer loop's `end += 1`
+                    return Ok(Some(self.value_buffer.as_slice()));
                 }
                 _ => {}
             }
@@ -1172,77 +1093,116 @@ impl<'a> Parser<'a> {
         if value.len() < 2 {
             return Ok(None);
         }
-
         self.value_buffer.clear();
-
-        let mut pos = value.len() - 2;
-        let mut last = value.len();
-        loop {
-            if value[pos] == b'$' {
-                if pos > 0 && value[pos - 1] == b'\\' {
-                    // PERF: splice at the front is O(n)
-                    self.value_buffer
-                        .splice(0..0, value[pos..last].iter().copied());
-                    pos -= 1;
-                } else {
-                    let mut end = if value[pos + 1] == b'{' {
-                        pos + 2
-                    } else {
-                        pos + 1
-                    };
-                    let key_start = end;
-                    while end < value.len() {
-                        match value[end] {
-                            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' => {
-                                end += 1;
-                                continue;
-                            }
-                            _ => break,
-                        }
-                    }
-                    let lookup_value = map.get(&value[key_start..end]);
-                    let default_value: &[u8] = if value[end..].starts_with(b":-") {
-                        end += b":-".len();
-                        let value_start = end;
-                        while end < value.len() {
-                            match value[end] {
-                                b'}' | b'\\' => break,
-                                _ => {
-                                    end += 1;
-                                    continue;
-                                }
-                            }
-                        }
-                        &value[value_start..end]
-                    } else {
-                        b""
-                    };
-                    if end < value.len() && value[end] == b'}' {
-                        end += 1;
-                    }
-                    self.value_buffer
-                        .splice(0..0, value[end..last].iter().copied());
-                    self.value_buffer
-                        .splice(0..0, lookup_value.unwrap_or(default_value).iter().copied());
-                }
-                last = pos;
-            }
-            if pos == 0 {
-                if last == value.len() {
-                    return Ok(None);
-                }
-                break;
-            }
-            pos -= 1;
-        }
-        if last > 0 {
-            self.value_buffer
-                .splice(0..0, value[..last].iter().copied());
+        if !Self::expand_into(map, value, self.value_buffer, 0) {
+            return Ok(None);
         }
         Ok(Some(self.value_buffer.as_slice()))
     }
 
-    fn _parse<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
+    /// Left-to-right expansion of `$NAME` / `${NAME}` / `${NAME:-default}`.
+    /// `${...}` locates its matching `}` by depth (`${` opens, `}` closes,
+    /// `\x` skipped); malformed forms fall through as literal text. The `:-`
+    /// default clause is expanded recursively.
+    fn expand_into(map: &Map, value: &[u8], out: &mut Vec<u8>, depth: u8) -> bool {
+        #[inline]
+        fn is_ident(b: u8) -> bool {
+            matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')
+        }
+
+        let mut pos = 0;
+        let mut changed = false;
+        while pos < value.len() {
+            let b = value[pos];
+            if b == b'\\' && value.get(pos + 1) == Some(&b'$') {
+                out.push(b'$');
+                pos += 2;
+                changed = true;
+                continue;
+            }
+            if b != b'$' || pos + 1 >= value.len() {
+                out.push(b);
+                pos += 1;
+                continue;
+            }
+            let next = value[pos + 1];
+            if next == b'{' {
+                let inner_start = pos + 2;
+                let close = {
+                    let mut i = inner_start;
+                    let mut nest = 1usize;
+                    loop {
+                        if i >= value.len() {
+                            break None;
+                        }
+                        match value[i] {
+                            b'\\' if i + 1 < value.len() => i += 2,
+                            b'$' if value.get(i + 1) == Some(&b'{') => {
+                                nest += 1;
+                                i += 2;
+                            }
+                            b'}' => {
+                                nest -= 1;
+                                if nest == 0 {
+                                    break Some(i);
+                                }
+                                i += 1;
+                            }
+                            _ => i += 1,
+                        }
+                    }
+                };
+                let Some(close) = close else {
+                    out.extend_from_slice(&value[pos..]);
+                    pos = value.len();
+                    continue;
+                };
+                changed = true;
+                let inner = &value[inner_start..close];
+                let key_end = inner
+                    .iter()
+                    .position(|&c| !is_ident(c))
+                    .unwrap_or(inner.len());
+                let key = &inner[..key_end];
+                let rest = &inner[key_end..];
+                if rest.is_empty() {
+                    if let Some(v) = map.get(key) {
+                        out.extend_from_slice(v);
+                    }
+                } else if let Some(default) = rest.strip_prefix(b":-") {
+                    if let Some(v) = map.get(key) {
+                        out.extend_from_slice(v);
+                    } else if depth < 200 {
+                        Self::expand_into(map, default, out, depth + 1);
+                    } else {
+                        out.extend_from_slice(default);
+                    }
+                } else {
+                    out.extend_from_slice(&value[pos..=close]);
+                }
+                pos = close + 1;
+                continue;
+            }
+            if is_ident(next) {
+                changed = true;
+                let key_start = pos + 1;
+                let mut k = key_start;
+                while k < value.len() && is_ident(value[k]) {
+                    k += 1;
+                }
+                if let Some(v) = map.get(&value[key_start..k]) {
+                    out.extend_from_slice(v);
+                }
+                pos = k;
+                continue;
+            }
+            out.push(b'$');
+            pos += 1;
+        }
+        changed
+    }
+
+    fn parse<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
         &mut self,
         map: &mut Map,
     ) -> Result<(), AllocError> {
@@ -1266,15 +1226,12 @@ impl<'a> Parser<'a> {
                 }
                 // else: previous value freed by Drop on assignment below
             }
-            *entry.value_ptr = HashTableValue {
-                value: value_owned,
-                conditional: false,
-            };
+            *entry.value_ptr = HashTableValue { value: value_owned };
         }
         if !IS_PROCESS && EXPAND {
             // borrowck — index-based iteration: clone the value bytes, run
             // expansion against an immutable `&Map`, then write back via
-            // `values_mut()`. Values are dupe'd by `_parse` above, so length
+            // `values_mut()`. Values are dupe'd by `parse` above, so length
             // is bounded by file size.
             let total = map.map.count();
             let mut idx = count;
@@ -1283,7 +1240,6 @@ impl<'a> Parser<'a> {
                 if let Some(expanded) = self.expand_value(map, &current)? {
                     map.map.values_mut()[idx] = HashTableValue {
                         value: Box::from(expanded),
-                        conditional: false,
                     };
                 }
                 idx += 1;
@@ -1294,10 +1250,8 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// Same as [`parse`] but takes the source bytes directly. Exists so
-    /// `load_env_file*` can parse a transient `Vec<u8>` without constructing a
-    /// `bun_ast::Source` (whose `contents` field is currently `&'static [u8]`).
-    pub(crate) fn parse_bytes<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
+    /// Builds a [`Parser`] over `src` (minus any UTF-8 BOM) and runs [`Parser::parse`] into `map`.
+    fn parse_bytes<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
         src: &[u8],
         map: &mut Map,
         value_buffer: &mut Vec<u8>,
@@ -1306,23 +1260,20 @@ impl<'a> Parser<'a> {
         value_buffer.clear();
         let mut parser = Parser {
             pos: 0,
-            src,
+            // Notepad and PowerShell redirects emit a UTF-8 BOM; without this the
+            // first key fails `parse_key` and `skip_line` silently drops line 1.
+            src: strings::without_utf8_bom(src),
             value_buffer,
         };
-        parser._parse::<OVERRIDE, IS_PROCESS, EXPAND>(map)
+        parser.parse::<OVERRIDE, IS_PROCESS, EXPAND>(map)
     }
 }
-
-/// Downstream callers spell this `dot_env::Value` / `dotenv::map::Entry`; both alias the
-/// canonical `HashTableValue`.
-pub type Value = HashTableValue;
 
 #[derive(Default, Clone)]
 pub struct HashTableValue {
     // `Box<[u8]>` is owned-by-default, trading some copies for uniform
     // ownership.
     pub value: Box<[u8]>,
-    pub conditional: bool,
 }
 
 // On Windows, environment variables are case-insensitive. So we use a case-insensitive hash map.
@@ -1336,12 +1287,6 @@ pub type HashTable = bun_collections::CaseInsensitiveAsciiStringArrayHashMap<Has
 
 pub struct Map {
     pub map: HashTable,
-}
-
-impl Default for Map {
-    fn default() -> Self {
-        Self::init()
-    }
 }
 
 impl Map {
@@ -1436,25 +1381,8 @@ impl Map {
         self.map.iterator()
     }
 
-    /// Shared-borrow iteration over `(key, value)` pairs in insertion order.
-    /// This is the `&self` surface for callers (e.g. shell `EnvMapIter`) that
-    /// only read entries.
     #[inline]
-    pub fn iter(
-        &self,
-    ) -> core::iter::Zip<core::slice::Iter<'_, Box<[u8]>>, core::slice::Iter<'_, HashTableValue>>
-    {
-        self.map.iter()
-    }
-
-    /// Number of entries in the env map.
-    #[inline]
-    pub fn count(&self) -> usize {
-        self.map.count()
-    }
-
-    #[inline]
-    pub fn init() -> Map {
+    pub(crate) fn init() -> Map {
         Map {
             map: HashTable::default(),
         }
@@ -1470,7 +1398,6 @@ impl Map {
             key,
             HashTableValue {
                 value: Box::from(value),
-                conditional: false,
             },
         )
     }
@@ -1488,7 +1415,6 @@ impl Map {
             key,
             HashTableValue {
                 value: Box::from(value),
-                conditional: false,
             },
         );
     }
@@ -1498,19 +1424,11 @@ impl Map {
         let gop = self.map.get_or_put(key)?;
         *gop.value_ptr = HashTableValue {
             value: Box::from(value),
-            conditional: false,
         };
         if !gop.found_existing {
             *gop.key_ptr = Box::from(key);
         }
         Ok(())
-    }
-
-    #[inline]
-    pub fn put_alloc_key(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        // `Box<[u8]>` storage forces a copy, making this equivalent to
-        // `put_alloc_key_and_value` (which dupes both key and value).
-        self.put_alloc_key_and_value(key, value)
     }
 
     #[inline]
@@ -1529,28 +1447,6 @@ impl Map {
         self.map.get_or_put(key)
     }
 
-    pub fn json_stringify(&self, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
-        // `iterator()` requires `&mut self`; iterate parallel slices instead.
-        let count = self.map.count();
-        writer.write_str("{")?;
-        for (i, (k, v)) in self
-            .map
-            .keys()
-            .iter()
-            .zip(self.map.values().iter())
-            .enumerate()
-        {
-            writer.write_str("\n    ")?;
-            write!(writer, "{}", bstr::BStr::new(k))?;
-            writer.write_str(": ")?;
-            write!(writer, "{}", bstr::BStr::new(&v.value))?;
-            if i < count - 1 {
-                writer.write_str(", ")?;
-            }
-        }
-        writer.write_str("\n}")
-    }
-
     #[inline]
     pub fn get(&self, key: &[u8]) -> Option<&[u8]> {
         self.map.get(key).map(|entry| entry.value.as_ref())
@@ -1562,16 +1458,9 @@ impl Map {
             key,
             HashTableValue {
                 value: Box::from(value),
-                conditional: false,
             },
         )?;
         Ok(())
-    }
-
-    #[inline]
-    pub fn get_or_put(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        // Alias of `put_default`.
-        self.put_default(key, value)
     }
 
     pub fn remove(&mut self, key: &[u8]) {
@@ -1613,10 +1502,16 @@ impl NullDelimitedEnvMap {
     pub fn as_ptr(&self) -> *const *const c_char {
         self.envp.as_ptr()
     }
+    /// The `KEY=VALUE` entries as C strings.
+    pub fn iter(&self) -> impl Iterator<Item = &core::ffi::CStr> {
+        self._storage.iter().map(|s| {
+            core::ffi::CStr::from_bytes_until_nul(s).expect("entries are built NUL-terminated")
+        })
+    }
 }
 
 pub struct StdEnvMapWrapper {
-    pub unsafe_map: bun_sys::EnvMap,
+    pub(crate) unsafe_map: bun_sys::EnvMap,
 }
 
 impl StdEnvMapWrapper {
@@ -1627,21 +1522,20 @@ impl StdEnvMapWrapper {
 
 // Drop replaces deinit (only frees hash_map storage; Rust does this automatically)
 
-// Global singleton. Loader is !Sync (holds `&mut Map`); it is only installed
-// and used under a single-thread (CLI-init) invariant.
-// We store a raw `*mut` in an AtomicPtr (overwritable) and hand
-// the raw pointer back to callers so the no-alias `&mut` proof obligation lives at the *call
-// site*, not here — manufacturing `&'static mut` inside an accessor is aliased-&mut UB the
-// moment two callers hold results simultaneously (PORTING.md §Forbidden: lifetime-extension
-// via `unsafe { &*(p as *const _) }`).
-pub static INSTANCE: AtomicPtr<Loader<'static>> = AtomicPtr::new(core::ptr::null_mut());
+// Global singleton. Installed and used under a single-thread (CLI-init)
+// invariant. We store a raw `*mut` in an AtomicPtr (overwritable) and hand the
+// raw pointer back to callers so the no-alias `&mut` proof obligation lives at
+// the *call site*, not here — manufacturing `&'static mut` inside an accessor
+// is aliased-&mut UB the moment two callers hold results simultaneously
+// (PORTING.md §Forbidden: lifetime-extension via `unsafe { &*(p as *const _) }`).
+pub static INSTANCE: AtomicPtr<Loader> = AtomicPtr::new(core::ptr::null_mut());
 
 /// Read the global singleton as a raw pointer — `Some(ptr)` once `set_instance` has been called.
 /// Callers must `unsafe { &mut *ptr }` at point of use under the single-thread
 /// CLI-init invariant: the loader is only installed and dereferenced on the
 /// main thread, so no two `&mut` borrows can be live at once.
 #[inline]
-pub fn instance() -> Option<*mut Loader<'static>> {
+pub fn instance() -> Option<*mut Loader> {
     let ptr = INSTANCE.load(Ordering::Acquire);
     if ptr.is_null() { None } else { Some(ptr) }
 }
@@ -1649,6 +1543,6 @@ pub fn instance() -> Option<*mut Loader<'static>> {
 /// Install the global singleton. Overwrites any previous value (test harnesses
 /// / worker re-init may call this more than once).
 #[inline]
-pub fn set_instance(loader: *mut Loader<'static>) {
+pub fn set_instance(loader: *mut Loader) {
     INSTANCE.store(loader, Ordering::Release);
 }

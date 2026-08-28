@@ -40,18 +40,13 @@ bool JSAbortSignalOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
     }
 
     if (!abortSignal.aborted()) {
-        if (abortSignal.isFollowingSignal()) {
+        if (abortSignal.hasActiveTimeoutTimer() && abortSignal.hasTimeoutObserver()) {
             if (reason) [[unlikely]]
-                *reason = "Is Following Signal"_s;
+                *reason = "Has Observed Timeout"_s;
             return true;
         }
 
         if (abortSignal.hasAbortEventListener()) {
-            if (abortSignal.hasActiveTimeoutTimer()) {
-                if (reason) [[unlikely]]
-                    *reason = "Has Timeout And Abort Event Listener"_s;
-                return true;
-            }
             if (abortSignal.isDependent()) {
                 // This runs on GC marker threads, so it must not mutate the signal:
                 // sourceSignals().isEmptyIgnoringNullReferences() prunes dead entries.

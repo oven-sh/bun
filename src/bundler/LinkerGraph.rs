@@ -25,7 +25,6 @@ pub mod entry_point {
     pub struct EntryPoint {
         pub output_path: RawSlice<u8>,
         pub source_index: crate::IndexInt,
-        pub output_path_was_auto_generated: bool,
     }
 
     pub type List = MultiArrayList<EntryPoint>;
@@ -34,7 +33,6 @@ pub mod entry_point {
         pub trait EntryPointColumns for EntryPoint {
             output_path: RawSlice<u8>,
             source_index: crate::IndexInt,
-            output_path_was_auto_generated: bool,
         }
     }
 
@@ -49,23 +47,14 @@ pub mod entry_point {
         None,
         UserSpecified,
         DynamicImport,
-        Html,
     }
     impl Kind {
         #[inline]
-        pub fn is_entry_point(self) -> bool {
+        pub(crate) fn is_entry_point(self) -> bool {
             self != Self::None
         }
         #[inline]
-        pub fn is_user_specified_entry_point(self) -> bool {
-            self == Self::UserSpecified
-        }
-        #[inline]
-        pub fn is_server_entry_point(self) -> bool {
-            self == Self::UserSpecified
-        }
-        #[inline]
-        pub fn output_kind(self) -> crate::options::OutputKind {
+        pub(crate) fn output_kind(self) -> crate::options::OutputKind {
             match self {
                 Self::UserSpecified => crate::options::OutputKind::EntryPoint,
                 _ => crate::options::OutputKind::Chunk,
@@ -83,8 +72,8 @@ pub mod js_meta {
     use crate::{ImportTracker, Index, WrapKind};
 
     pub struct ImportData {
-        pub re_exports: AstVec<Dependency>,
-        pub data: ImportTracker,
+        pub(crate) re_exports: AstVec<Dependency>,
+        pub(crate) data: ImportTracker,
     }
     impl Default for ImportData {
         fn default() -> Self {
@@ -97,8 +86,8 @@ pub mod js_meta {
     pub(crate) type ImportToBind = ImportData;
 
     pub struct ExportData {
-        pub potentially_ambiguous_export_star_refs: AstVec<ImportData>,
-        pub data: ImportTracker,
+        pub(crate) potentially_ambiguous_export_star_refs: AstVec<ImportData>,
+        pub(crate) data: ImportTracker,
     }
     impl Default for ExportData {
         fn default() -> Self {
@@ -119,13 +108,13 @@ pub mod js_meta {
 
     #[derive(Clone, Copy, Default)]
     pub struct Flags {
-        pub is_async_or_has_async_dependency: bool,
-        pub needs_exports_variable: bool,
-        pub force_include_exports_for_entry_point: bool,
-        pub needs_export_symbol_from_runtime: bool,
-        pub did_wrap_dependencies: bool,
-        pub needs_synthetic_default_export: bool,
-        pub wrap: WrapKind,
+        pub(crate) is_async_or_has_async_dependency: bool,
+        pub(crate) needs_exports_variable: bool,
+        pub(crate) force_include_exports_for_entry_point: bool,
+        pub(crate) needs_export_symbol_from_runtime: bool,
+        pub(crate) did_wrap_dependencies: bool,
+        pub(crate) needs_synthetic_default_export: bool,
+        pub(crate) wrap: WrapKind,
     }
     pub use crate::WrapKind as Wrap;
 
@@ -138,7 +127,6 @@ pub mod js_meta {
         pub top_level_symbol_to_parts_overlay: TopLevelSymbolToParts,
         pub cjs_export_copies: CjsExportCopies,
         pub wrapper_part_index: Index,
-        pub entry_point_part_index: Index,
         pub flags: Flags,
     }
 
@@ -153,7 +141,6 @@ pub mod js_meta {
                 top_level_symbol_to_parts_overlay: TopLevelSymbolToParts::default(),
                 cjs_export_copies: AstAlloc::vec(),
                 wrapper_part_index: Index::default(),
-                entry_point_part_index: Index::default(),
                 flags: Flags::default(),
             }
         }
@@ -169,14 +156,8 @@ pub mod js_meta {
             top_level_symbol_to_parts_overlay: TopLevelSymbolToParts,
             cjs_export_copies: CjsExportCopies,
             wrapper_part_index: Index,
-            entry_point_part_index: Index,
             flags: Flags,
         }
-    }
-
-    impl JSMeta {
-        pub type Flags = Flags;
-        pub type Wrap = crate::WrapKind;
     }
 }
 
@@ -187,7 +168,7 @@ pub use js_meta::{
 
 pub struct LinkerGraph<'a> {
     pub files: FileList,
-    pub files_live: BitSet,
+    pub(crate) files_live: BitSet,
     /// Per-part liveness — `parts_live[source_index].is_set(part_index)`.
     /// One bitset per source file, sized to that file's `parts.len()`.
     /// Populated by `tree_shaking_and_code_splitting` (regular link) or by
@@ -195,9 +176,9 @@ pub struct LinkerGraph<'a> {
     /// read-only thereafter. Replaces the former `Part::is_live: bool` so the
     /// tree-shaking visited-check doesn't pull a full 272-byte `Part` into
     /// cache for a 1-bit answer.
-    pub parts_live: Vec<AutoBitSet>,
-    pub entry_points: entry_point::List,
-    pub symbols: symbol::Map,
+    pub(crate) parts_live: Vec<AutoBitSet>,
+    pub(crate) entry_points: entry_point::List,
+    pub(crate) symbols: symbol::Map,
 
     // Note: lifetime-erased. The
     // arena is owned by `BundleV2` and outlives every `LinkerGraph` — kept as
@@ -205,13 +186,13 @@ pub struct LinkerGraph<'a> {
     // struct stays `'static`-ish and `LinkerContext`/`Chunk` callers don't
     // grow a `'bump` parameter; threading `'bump` would require `Chunk` and
     // `html_import_manifest` to gain lifetimes first.
-    pub bump: bun_ptr::BackRef<Arena>,
+    pub(crate) bump: bun_ptr::BackRef<Arena>,
 
-    pub code_splitting: bool,
+    pub(crate) code_splitting: bool,
 
     // This is an alias from Graph
     // it is not a clone!
-    pub ast: MultiArrayList<JSAst<'a>>,
+    pub(crate) ast: MultiArrayList<JSAst<'a>>,
     pub meta: MultiArrayList<JSMeta>,
 
     /// We should avoid traversing all files in the bundle, because the linker
@@ -221,17 +202,17 @@ pub struct LinkerGraph<'a> {
     /// If you need to iterate over all files in the linking operation, iterate
     /// over this array. This array is also sorted in a deterministic ordering
     /// to help ensure deterministic builds (source indices are random).
-    pub reachable_files: Vec<Index>,
+    pub(crate) reachable_files: Vec<Index>,
 
     /// Index from `.parse_graph.input_files` to index in `.files`
-    pub stable_source_indices: Vec<u32>,
+    pub(crate) stable_source_indices: Vec<u32>,
 
-    pub is_scb_bitset: BitSet,
+    pub(crate) is_scb_bitset: BitSet,
 
     /// This is for cross-module inlining of detected inlinable constants
     // const_values: bun_ast::Ast::ConstValuesMap,
     /// This is for cross-module inlining of TypeScript enum constants
-    pub ts_enums: bun_ast::ast_result::TsEnumsMap,
+    pub(crate) ts_enums: bun_ast::ast_result::TsEnumsMap,
 }
 
 // SAFETY: `LinkerGraph` is shared read-mostly across worker threads during
@@ -267,30 +248,10 @@ unsafe impl Sync for LinkerGraph<'_> {}
 impl<'a> LinkerGraph<'a> {
     /// `&Arena` accessor — `bump` is a raw backref into `BundleV2`.
     #[inline]
-    pub fn arena(&self) -> &Arena {
+    pub(crate) fn arena(&self) -> &Arena {
         // `bump` is a `BackRef` into `BundleV2.graph.arena`, valid for the
         // lifetime of the link step that constructed this LinkerGraph.
         self.bump.get()
-    }
-}
-
-impl<'a> LinkerGraph<'a> {
-    pub fn init(bump: &Arena, file_count: usize) -> Result<Self, crate::Error> {
-        Ok(LinkerGraph {
-            files: FileList::default(),
-            files_live: BitSet::init_empty(file_count)?,
-            parts_live: Vec::new(),
-            entry_points: entry_point::List::default(),
-            symbols: symbol::Map::default(),
-            bump: bun_ptr::BackRef::new(bump),
-            code_splitting: false,
-            ast: MultiArrayList::default(),
-            meta: MultiArrayList::default(),
-            reachable_files: Vec::new(),
-            stable_source_indices: Vec::new(),
-            is_scb_bitset: BitSet::default(),
-            ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
-        })
     }
 }
 
@@ -327,14 +288,14 @@ impl Default for LinkerGraph<'_> {
 // thin forwarders for call sites that don't have a split in hand.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) fn runtime_function(named_exports: &[bundled_ast::NamedExports], name: &[u8]) -> Ref {
+fn runtime_function(named_exports: &[bundled_ast::NamedExports], name: &[u8]) -> Ref {
     named_exports[Index::RUNTIME.get() as usize]
         .get(name)
         .expect("runtime function must be a named export of the runtime module")
         .ref_
 }
 
-pub fn generate_new_symbol(
+pub(crate) fn generate_new_symbol(
     symbols: &mut symbol::Map,
     module_scopes: &mut [bun_ast::Scope],
     source_index: u32,
@@ -363,7 +324,7 @@ pub fn generate_new_symbol(
     ref_
 }
 
-pub(crate) fn top_level_symbol_to_parts<'a>(
+fn top_level_symbol_to_parts<'a>(
     top_level_symbol_to_parts_overlay: &'a [TopLevelSymbolToParts],
     top_level_symbols_to_parts: &'a [bundled_ast::TopLevelSymbolToParts],
     id: u32,
@@ -378,7 +339,7 @@ pub(crate) fn top_level_symbol_to_parts<'a>(
     &[]
 }
 
-pub(crate) fn add_part_to_file(
+fn add_part_to_file(
     parts: &mut [part::List<'_>],
     top_level_symbol_to_parts_overlay: &mut [TopLevelSymbolToParts],
     top_level_symbols_to_parts: &[bundled_ast::TopLevelSymbolToParts],
@@ -423,7 +384,7 @@ pub(crate) fn add_part_to_file(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn generate_symbol_import_and_use(
+pub(crate) fn generate_symbol_import_and_use(
     parts: &mut [part::List<'_>],
     ast_flags: &mut [bundled_ast::Flags],
     exports_ref: &[Ref],
@@ -513,7 +474,7 @@ pub fn generate_symbol_import_and_use(
 }
 
 impl<'a> LinkerGraph<'a> {
-    pub fn runtime_function(&self, name: &[u8]) -> Ref {
+    pub(crate) fn runtime_function(&self, name: &[u8]) -> Ref {
         runtime_function(self.ast.items_named_exports(), name)
     }
 
@@ -521,8 +482,9 @@ impl<'a> LinkerGraph<'a> {
     /// produced by the symbol table itself). Thin wrapper over
     /// [`symbol::Map::get_const`]; callers previously open-coded
     /// `unsafe { &*graph.symbols.get(r).expect(..) }`.
+    #[cfg(debug_assertions)]
     #[inline]
-    pub fn symbol(&self, ref_: Ref) -> &Symbol {
+    pub(crate) fn symbol(&self, ref_: Ref) -> &Symbol {
         self.symbols
             .get_const(ref_)
             .expect("infallible: ref in symbol table")
@@ -542,9 +504,10 @@ impl<'a> LinkerGraph<'a> {
     /// `unsafe { &mut *get(r) }` call-site obligation.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub unsafe fn symbol_mut(&self, ref_: Ref) -> &mut Symbol {
-        // SAFETY: see `symbol` for liveness/validity; caller guarantees the
-        // mutated slot is disjoint from any other borrow held at the call site.
+    pub(crate) unsafe fn symbol_mut(&self, ref_: Ref) -> &mut Symbol {
+        // SAFETY: `ref_` was produced by this symbol table, so `get` is
+        // infallible and points at a live slot; caller guarantees the mutated
+        // slot is disjoint from any other borrow held at the call site.
         unsafe {
             &mut *self
                 .symbols
@@ -553,7 +516,7 @@ impl<'a> LinkerGraph<'a> {
         }
     }
 
-    pub fn generate_new_symbol(
+    pub(crate) fn generate_new_symbol(
         &mut self,
         source_index: u32,
         kind: symbol::Kind,
@@ -568,7 +531,7 @@ impl<'a> LinkerGraph<'a> {
         )
     }
 
-    pub fn generate_runtime_symbol_import_and_use(
+    pub(crate) fn generate_runtime_symbol_import_and_use(
         &mut self,
         source_index: index::Int,
         entry_point_part_index: Index,
@@ -595,7 +558,11 @@ impl<'a> LinkerGraph<'a> {
         )
     }
 
-    pub fn add_part_to_file(&mut self, id: u32, part: Part) -> Result<u32, bun_alloc::AllocError> {
+    pub(crate) fn add_part_to_file(
+        &mut self,
+        id: u32,
+        part: Part,
+    ) -> Result<u32, bun_alloc::AllocError> {
         let ast = self.ast.split_mut();
         add_part_to_file(
             ast.parts,
@@ -606,7 +573,7 @@ impl<'a> LinkerGraph<'a> {
         )
     }
 
-    pub fn generate_symbol_import_and_use(
+    pub(crate) fn generate_symbol_import_and_use(
         &mut self,
         source_index: u32,
         part_index: u32,
@@ -632,7 +599,7 @@ impl<'a> LinkerGraph<'a> {
         )
     }
 
-    pub fn top_level_symbol_to_parts(&self, id: u32, ref_: Ref) -> &[u32] {
+    pub(crate) fn top_level_symbol_to_parts(&self, id: u32, ref_: Ref) -> &[u32] {
         top_level_symbol_to_parts(
             self.meta.items_top_level_symbol_to_parts_overlay(),
             self.ast.items_top_level_symbols_to_parts(),
@@ -643,7 +610,7 @@ impl<'a> LinkerGraph<'a> {
 }
 
 impl<'a> LinkerGraph<'a> {
-    pub fn load(
+    pub(crate) fn load(
         &mut self,
         entry_points: &[Index],
         sources: &[bun_ast::Source],
@@ -677,10 +644,9 @@ impl<'a> LinkerGraph<'a> {
             // SAFETY: capacity reserved; columns initialized below.
             unsafe { self.entry_points.set_len(entry_points.len()) };
 
-            // Note: `source_indices` / `path_strings` /
-            // `output_path_was_auto_generated` are disjoint columns of the
-            // same `MultiArrayList`. `split_mut()`
-            // hands out all three at once; `self.entry_points` is not
+            // Note: `source_indices` / `path_strings` are disjoint columns of
+            // the same `MultiArrayList`. `split_mut()` hands out both at once;
+            // `self.entry_points` is not
             // reallocated until after `path_strings`/`source_indices` are done
             // with (the next `append_assume_capacity` is within the
             // pre-reserved capacity, so no realloc).
@@ -688,7 +654,6 @@ impl<'a> LinkerGraph<'a> {
             let ep_cols = ep_slice.split_mut();
             let source_indices: &mut [index::Int] = ep_cols.source_index;
             let path_strings: &mut [RawSlice<u8>] = ep_cols.output_path;
-            ep_cols.output_path_was_auto_generated.fill(false);
 
             debug_assert_eq!(entry_points.len(), path_strings.len());
             debug_assert_eq!(entry_points.len(), source_indices.len());
@@ -698,9 +663,7 @@ impl<'a> LinkerGraph<'a> {
                 .zip(source_indices.iter_mut())
             {
                 let source = &sources[i.get() as usize];
-                if cfg!(debug_assertions) {
-                    debug_assert!(source.index.0 == i.get());
-                }
+                debug_assert!(source.index.0 == i.get());
                 entry_point_kinds[source.index.0 as usize] = entry_point::Kind::UserSpecified;
 
                 // Check if this entry point has an original name (from virtual entry resolution)
@@ -727,7 +690,6 @@ impl<'a> LinkerGraph<'a> {
                 self.entry_points.append_assume_capacity(EntryPoint {
                     source_index: id,
                     output_path: RawSlice::new(source.path.text),
-                    output_path_was_auto_generated: true,
                 });
             }
 
@@ -907,7 +869,7 @@ impl<'a> LinkerGraph<'a> {
     /// through whichever thread's `AstAlloc` state is active — `AstAlloc` is a
     /// ZST, so there is nothing to retag) and new symbols feed through
     /// `self.symbols: symbol::Map` (global).
-    pub fn take_ast_ownership(&mut self, heap: &'a Arena) {
+    pub(crate) fn take_ast_ownership(&mut self, heap: &'a Arena) {
         for v in self.ast.items_import_records_mut() {
             bun_alloc::transfer_arena(v, heap);
         }
@@ -916,76 +878,87 @@ impl<'a> LinkerGraph<'a> {
         }
     }
 
-    pub fn propagate_async_dependencies(&mut self) -> Result<(), crate::Error> {
-        struct State<'a> {
-            visited: AutoBitSet,
-            import_records: &'a [import_record::List<'a>],
-            flags: &'a mut [js_meta::Flags],
+    pub(crate) fn propagate_async_dependencies(&mut self) -> Result<(), crate::Error> {
+        // Explicit-stack postorder DFS (was per-edge recursive). A parent's
+        // flag is read from each child after that child's subtree is fully
+        // processed; `AfterChild` is the resumption point for that read.
+        #[derive(Copy, Clone)]
+        enum Frame {
+            Enter(usize),
+            AfterChild { parent: usize, child: usize },
         }
 
-        impl<'a> State<'a> {
-            pub(crate) fn visit_all(&mut self) {
-                for i in 0..self.import_records.len() {
-                    self.visit(i);
-                }
+        let import_records = self.ast.items_import_records();
+        let flags = self.meta.items_flags_mut();
+        let len = import_records.len();
+        let mut visited = AutoBitSet::init_empty(self.ast.len())?;
+        let mut stack: Vec<Frame> = Vec::new();
+
+        for root in 0..len {
+            if visited.is_set(root) {
+                continue;
             }
+            stack.push(Frame::Enter(root));
 
-            fn visit(&mut self, index: usize) {
-                if self.visited.is_set(index) {
-                    return;
-                }
-                self.visited.set(index);
-                if self.flags[index].is_async_or_has_async_dependency {
-                    return;
-                }
-
-                for import_record in self.import_records[index].as_slice().iter() {
-                    match import_record.kind {
-                        ImportKind::Stmt => {}
-
-                        // Any use of `import()` that makes the parent async will necessarily use
-                        // top-level await, so this will have already been detected by `validateTLA`,
-                        // and `is_async_or_has_async_dependency` will already be true.
-                        //
-                        // We don't want to process these imports here because `import()` can appear in
-                        // non-top-level contexts (like inside an async function) or in contexts that
-                        // don't use `await`, which don't necessarily make the parent module async.
-                        ImportKind::Dynamic => continue,
-
-                        // `require()` cannot import async modules.
-                        ImportKind::Require | ImportKind::RequireResolve => continue,
-
-                        // Entry points; not imports from JS
-                        ImportKind::EntryPointRun | ImportKind::EntryPointBuild => continue,
-                        // CSS imports
-                        ImportKind::At
-                        | ImportKind::AtConditional
-                        | ImportKind::Url
-                        | ImportKind::Composes => continue,
-                        // Other non-JS imports
-                        ImportKind::HtmlManifest | ImportKind::Internal => continue,
+            while let Some(frame) = stack.pop() {
+                match frame {
+                    Frame::AfterChild { parent, child } => {
+                        if flags[child].is_async_or_has_async_dependency {
+                            flags[parent].is_async_or_has_async_dependency = true;
+                        }
                     }
+                    Frame::Enter(index) => {
+                        if visited.is_set(index) {
+                            continue;
+                        }
+                        visited.set(index);
+                        if flags[index].is_async_or_has_async_dependency {
+                            continue;
+                        }
 
-                    let import_index: usize = import_record.source_index.get() as usize;
-                    if import_index >= self.import_records.len() {
-                        continue;
-                    }
-                    self.visit(import_index);
+                        let mark = stack.len();
+                        for import_record in import_records[index].as_slice().iter() {
+                            match import_record.kind {
+                                ImportKind::Stmt => {}
 
-                    if self.flags[import_index].is_async_or_has_async_dependency {
-                        self.flags[index].is_async_or_has_async_dependency = true;
-                        break;
+                                // Any use of `import()` that makes the parent async will necessarily use
+                                // top-level await, so this will have already been detected by `validateTLA`,
+                                // and `is_async_or_has_async_dependency` will already be true.
+                                //
+                                // We don't want to process these imports here because `import()` can appear in
+                                // non-top-level contexts (like inside an async function) or in contexts that
+                                // don't use `await`, which don't necessarily make the parent module async.
+                                ImportKind::Dynamic => continue,
+
+                                // `require()` cannot import async modules.
+                                ImportKind::Require | ImportKind::RequireResolve => continue,
+
+                                // Entry points; not imports from JS
+                                ImportKind::EntryPointRun | ImportKind::EntryPointBuild => continue,
+                                // CSS imports
+                                ImportKind::At
+                                | ImportKind::AtConditional
+                                | ImportKind::Url
+                                | ImportKind::Composes => continue,
+                                // Other non-JS imports
+                                ImportKind::HtmlManifest | ImportKind::Internal => continue,
+                            }
+
+                            let import_index: usize = import_record.source_index.get() as usize;
+                            if import_index >= len {
+                                continue;
+                            }
+                            stack.push(Frame::Enter(import_index));
+                            stack.push(Frame::AfterChild {
+                                parent: index,
+                                child: import_index,
+                            });
+                        }
+                        stack[mark..].reverse();
                     }
                 }
             }
         }
-
-        let mut state = State {
-            visited: AutoBitSet::init_empty(self.ast.len())?,
-            import_records: self.ast.items_import_records(),
-            flags: self.meta.items_flags_mut(),
-        };
-        state.visit_all();
         Ok(())
     }
 }
@@ -993,11 +966,11 @@ impl<'a> LinkerGraph<'a> {
 pub struct File {
     pub entry_bits: AutoBitSet,
 
-    pub input_file: Index,
+    pub(crate) input_file: Index,
 
     /// The minimum number of links in the module graph to get from an entry point
     /// to this file
-    pub distance_from_entry_point: u32,
+    pub(crate) distance_from_entry_point: u32,
 
     /// This file is an entry point if and only if this is not ".none".
     /// Note that dynamically-imported files are allowed to also be specified by
@@ -1015,16 +988,6 @@ pub struct File {
 
     pub line_offset_table: bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc>,
     pub quoted_source_contents: Option<bun_alloc::AstVec<u8>>,
-}
-
-impl File {
-    pub fn is_entry_point(&self) -> bool {
-        self.entry_point_kind.is_entry_point()
-    }
-
-    pub fn is_user_specified_entry_point(&self) -> bool {
-        self.entry_point_kind.is_user_specified_entry_point()
-    }
 }
 
 impl Default for File {

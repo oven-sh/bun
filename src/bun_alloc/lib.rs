@@ -10,7 +10,6 @@
 // Used for the per-allocation hot-path TLS in `ast_alloc::AST_ALLOC`.
 #![feature(thread_local)]
 
-use core::fmt::Write as _;
 use core::mem::{MaybeUninit, size_of};
 use core::ptr::{NonNull, addr_of_mut};
 use core::sync::atomic::{AtomicU16, AtomicU32, Ordering};
@@ -29,15 +28,7 @@ pub mod c_thunks;
 pub struct Alignment(pub u8); // log2 of byte alignment
 impl Alignment {
     #[inline]
-    pub const fn of<T>() -> Self {
-        Self(core::mem::align_of::<T>().trailing_zeros() as u8)
-    }
-    #[inline]
-    pub const fn to_byte_units(self) -> usize {
-        1usize << self.0
-    }
-    #[inline]
-    pub const fn from_byte_units(b: usize) -> Self {
+    pub(crate) const fn from_byte_units(b: usize) -> Self {
         Self(b.trailing_zeros() as u8)
     }
 }
@@ -56,55 +47,25 @@ struct MaxAlignT {
     _p: *const (),
 }
 #[cfg(windows)]
-pub const MAX_ALIGN_T: usize = core::mem::align_of::<MaxAlignT>();
+pub(crate) const MAX_ALIGN_T: usize = core::mem::align_of::<MaxAlignT>();
 // On AArch64
 // AAPCS64 `long double` is IEEE binary128, 16-byte aligned. The `libc` crate
 // only defines `max_align_t` for FreeBSD on x86_64, so hardcode the ABI value
 // for the aarch64 port.
 #[cfg(all(target_os = "freebsd", target_arch = "aarch64"))]
-pub const MAX_ALIGN_T: usize = 16;
+pub(crate) const MAX_ALIGN_T: usize = 16;
 #[cfg(not(any(windows, all(target_os = "freebsd", target_arch = "aarch64"))))]
-pub const MAX_ALIGN_T: usize = core::mem::align_of::<libc::max_align_t>();
+pub(crate) const MAX_ALIGN_T: usize = core::mem::align_of::<libc::max_align_t>();
 
 pub struct AllocatorVTable {
-    pub alloc: unsafe fn(*mut core::ffi::c_void, usize, Alignment, usize) -> *mut u8,
-    pub resize: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize, usize) -> bool,
-    pub remap: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize, usize) -> *mut u8,
     pub free: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize),
 }
 impl AllocatorVTable {
-    /// `alloc` impl that always fails. For vtables that only ever `free` an
-    /// externally-produced buffer (mmap region, plugin-owned memory, refcounted
-    /// foreign string) and never allocate or grow it.
-    pub const NO_ALLOC: unsafe fn(*mut core::ffi::c_void, usize, Alignment, usize) -> *mut u8 =
-        |_, _, _, _| core::ptr::null_mut();
-    pub const NO_RESIZE: unsafe fn(
-        *mut core::ffi::c_void,
-        &mut [u8],
-        Alignment,
-        usize,
-        usize,
-    ) -> bool = |_, _, _, _, _| false;
-    pub const NO_REMAP: unsafe fn(
-        *mut core::ffi::c_void,
-        &mut [u8],
-        Alignment,
-        usize,
-        usize,
-    ) -> *mut u8 = |_, _, _, _, _| core::ptr::null_mut();
-
-    /// Build a "free-only" vtable: `alloc`/`resize`/`remap` all no-op/fail and
-    /// only `free` is meaningful. Each call site still gets its own `static`
-    /// (vtable address is an identity tag for `is_instance`).
+    /// Each call site keeps its own `static`: the vtable address is the `is_instance` tag.
     pub const fn free_only(
         free: unsafe fn(*mut core::ffi::c_void, &mut [u8], Alignment, usize),
     ) -> Self {
-        Self {
-            alloc: Self::NO_ALLOC,
-            resize: Self::NO_RESIZE,
-            remap: Self::NO_REMAP,
-            free,
-        }
+        Self { free }
     }
 }
 
@@ -114,12 +75,10 @@ pub struct StdAllocator {
     pub ptr: *mut core::ffi::c_void,
     pub vtable: &'static AllocatorVTable,
 }
-/// Legacy alias for `AllocatorVTable`.
-pub type VTable = AllocatorVTable;
 
 // SAFETY: `ptr` is an opaque tag/context handle; the vtable is `&'static`.
 // Thread-safety of dispatch is the implementor's concern (mimalloc is
-// thread-safe; FixedBufferAllocator is not).
+// thread-safe).
 unsafe impl Send for StdAllocator {}
 // SAFETY: see the `Send` impl directly above.
 unsafe impl Sync for StdAllocator {}
@@ -134,37 +93,8 @@ impl Default for StdAllocator {
 
 impl StdAllocator {
     #[inline]
-    pub fn raw_alloc(&self, len: usize, alignment: Alignment, ra: usize) -> Option<*mut u8> {
-        // SAFETY: vtable invariant — `alloc` callee respects (ptr, len, alignment, ra) contract.
-        let p = unsafe { (self.vtable.alloc)(self.ptr, len, alignment, ra) };
-        if p.is_null() { None } else { Some(p) }
-    }
-    #[inline]
-    pub fn raw_resize(
-        &self,
-        buf: &mut [u8],
-        alignment: Alignment,
-        new_len: usize,
-        ra: usize,
-    ) -> bool {
-        // SAFETY: see `raw_alloc`.
-        unsafe { (self.vtable.resize)(self.ptr, buf, alignment, new_len, ra) }
-    }
-    #[inline]
-    pub fn raw_remap(
-        &self,
-        buf: &mut [u8],
-        alignment: Alignment,
-        new_len: usize,
-        ra: usize,
-    ) -> Option<*mut u8> {
-        // SAFETY: see `raw_alloc`.
-        let p = unsafe { (self.vtable.remap)(self.ptr, buf, alignment, new_len, ra) };
-        if p.is_null() { None } else { Some(p) }
-    }
-    #[inline]
-    pub fn raw_free(&self, buf: &mut [u8], alignment: Alignment, ra: usize) {
-        // SAFETY: see `raw_alloc`.
+    pub(crate) fn raw_free(&self, buf: &mut [u8], alignment: Alignment, ra: usize) {
+        // SAFETY: vtable invariant — `free` callee respects the (ptr, buf, alignment, ra) contract.
         unsafe { (self.vtable.free)(self.ptr, buf, alignment, ra) }
     }
     /// `raw_free` with `ret_addr = 0`, byte-aligned.
@@ -181,86 +111,12 @@ impl StdAllocator {
     }
 }
 
-/// Bump allocator over a caller-owned buffer.
-pub struct FixedBufferAllocator<'a> {
-    end: usize,
-    buffer: &'a mut [u8],
-}
-impl<'a> FixedBufferAllocator<'a> {
-    #[inline]
-    pub fn init(buffer: &'a mut [u8]) -> Self {
-        Self { end: 0, buffer }
-    }
-    #[inline]
-    pub fn reset(&mut self) {
-        self.end = 0;
-    }
-    #[inline]
-    pub fn owns_ptr(&self, p: *const u8) -> bool {
-        let base = self.buffer.as_ptr() as usize;
-        let q = p as usize;
-        q >= base && q < base + self.buffer.len()
-    }
-    pub fn alloc(&mut self, len: usize, alignment: Alignment, _ra: usize) -> Option<*mut u8> {
-        let base = self.buffer.as_mut_ptr() as usize;
-        let aligned =
-            (base + self.end + alignment.to_byte_units() - 1) & !(alignment.to_byte_units() - 1);
-        let new_end = (aligned - base).checked_add(len)?;
-        if new_end > self.buffer.len() {
-            return None;
-        }
-        self.end = new_end;
-        Some(aligned as *mut u8)
-    }
-    pub fn resize(&mut self, buf: &mut [u8], _a: Alignment, new_len: usize, _ra: usize) -> bool {
-        // Only the last allocation can grow; shrinks always succeed.
-        let buf_end = buf.as_ptr() as usize - self.buffer.as_ptr() as usize + buf.len();
-        if buf_end != self.end {
-            return new_len <= buf.len();
-        }
-        let new_end = buf_end - buf.len() + new_len;
-        if new_end > self.buffer.len() {
-            return false;
-        }
-        self.end = new_end;
-        true
-    }
-    #[inline]
-    pub fn remap(
-        &mut self,
-        buf: &mut [u8],
-        a: Alignment,
-        new_len: usize,
-        ra: usize,
-    ) -> Option<*mut u8> {
-        if self.resize(buf, a, new_len, ra) {
-            Some(buf.as_mut_ptr())
-        } else {
-            None
-        }
-    }
-    #[inline]
-    pub fn free(&mut self, buf: &mut [u8], _a: Alignment, _ra: usize) {
-        // Only the last allocation can be freed.
-        let buf_end = buf.as_ptr() as usize - self.buffer.as_ptr() as usize + buf.len();
-        if buf_end == self.end {
-            self.end -= buf.len();
-        }
-    }
-}
-
 // PORTING.md §Allocators: AST crates thread an `Arena`; non-AST use Vec/Box
 // (global mimalloc). `Arena` is the real per-heap `MimallocArena` — unlike
 // `bumpalo::Bump`, it supports per-allocation free + realloc, so `ArenaVec`
 // no longer leaks on grow.
-//
-// `bumpalo::Bump` is kept as `Bump` for genuinely bump-only scratch (parser
-// node stores that are never resized and where the no-op `deallocate` is the
-// point).
 pub use mimalloc_arena::MimallocArena;
 pub type Arena = MimallocArena;
-/// `bumpalo::Bump` — kept for genuinely bump-only scratch that's never resized.
-pub type Bump = bumpalo::Bump;
 mod baby_vec;
 pub use baby_vec::BabyVec;
 /// Arena-backed `Vec` with `u32` length/capacity.
@@ -319,11 +175,7 @@ pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 // ── Allocator-vtable modules: per-module disposition (PORTING.md §Allocators) ──
 //
 //   MimallocArena            → prefer `bun_alloc::Arena` (= bumpalo::Bump)
-//   NullableAllocator        → prefer `Option<&Arena>` or drop the param
 //   MaxHeapAllocator         → debug-only cap (single-allocation arena)
-//   BufferFallbackAllocator  → PORTING.md "StackFallbackAllocator → just use the heap"
-//   fallback                 → libc-malloc + zeroing wrapper
-//   maybe_owned              → prefer `std::borrow::Cow` / `bun_ptr::Owned`
 //   heap_breakdown           → macOS malloc_zone_* per-tag heaps (debug builds)
 //   basic                    → `impl GlobalAlloc for Mimalloc` above is the canonical impl
 //
@@ -332,14 +184,8 @@ pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 //   `bun_runtime::allocators`; callers import from
 //   there directly.
 //
-#[path = "BufferFallbackAllocator.rs"]
-pub mod buffer_fallback_allocator;
-pub mod fallback;
 #[path = "MaxHeapAllocator.rs"]
 pub mod max_heap_allocator;
-pub mod maybe_owned;
-#[path = "NullableAllocator.rs"]
-pub mod nullable_allocator;
 pub mod stack_fallback;
 
 /// Raw alloc/free matching the `#[global_allocator]` (`mi_*` normally, libc under ASAN).
@@ -353,26 +199,6 @@ pub mod default_alloc {
             unsafe { libc::malloc(size) }
         } else {
             crate::mimalloc::mi_malloc(size)
-        }
-    }
-
-    #[inline]
-    pub fn zalloc(size: usize) -> *mut c_void {
-        if cfg!(bun_asan) {
-            // SAFETY: `libc::calloc` has no input preconditions; null on failure.
-            unsafe { libc::calloc(1, size) }
-        } else {
-            crate::mimalloc::mi_zalloc(size)
-        }
-    }
-
-    #[inline]
-    pub fn calloc(count: usize, size: usize) -> *mut c_void {
-        if cfg!(bun_asan) {
-            // SAFETY: `libc::calloc` has no input preconditions; null on failure.
-            unsafe { libc::calloc(count, size) }
-        } else {
-            crate::mimalloc::mi_calloc(count, size)
         }
     }
 
@@ -425,87 +251,10 @@ pub mod default_alloc {
         #[cfg(not(any(all(bun_asan, target_os = "linux"), all(bun_asan, target_os = "macos"))))]
         return unsafe { crate::mimalloc::mi_usable_size(ptr) };
     }
-
-    // The aligned variants are `#[cfg]`-split (not `if cfg!()`) because the
-    // posix_memalign/malloc_usable_size symbols don't exist on Windows.
-
-    #[cfg(not(bun_asan))]
-    #[inline]
-    pub fn malloc_aligned(size: usize, align: usize) -> *mut c_void {
-        crate::mimalloc::mi_malloc_auto_align(size, align)
-    }
-
-    #[cfg(bun_asan)]
-    #[inline]
-    pub fn malloc_aligned(size: usize, align: usize) -> *mut c_void {
-        if align <= crate::MAX_ALIGN_T {
-            return unsafe { libc::malloc(size) };
-        }
-        let mut p: *mut c_void = core::ptr::null_mut();
-        let align = align.max(core::mem::size_of::<*mut c_void>());
-        if unsafe { libc::posix_memalign(&mut p, align, size) } != 0 {
-            return core::ptr::null_mut();
-        }
-        p
-    }
-
-    #[cfg(not(bun_asan))]
-    #[inline]
-    pub fn zalloc_aligned(size: usize, align: usize) -> *mut c_void {
-        crate::mimalloc::mi_zalloc_auto_align(size, align)
-    }
-
-    #[cfg(bun_asan)]
-    #[inline]
-    pub fn zalloc_aligned(size: usize, align: usize) -> *mut c_void {
-        if align <= crate::MAX_ALIGN_T {
-            return unsafe { libc::calloc(1, size) };
-        }
-        let p = malloc_aligned(size, align);
-        if !p.is_null() {
-            unsafe { core::ptr::write_bytes(p.cast::<u8>(), 0, size) };
-        }
-        p
-    }
-
-    /// # Safety
-    /// `ptr` must be null or a live allocation from the default allocator with the given `align`.
-    #[cfg(not(bun_asan))]
-    #[inline]
-    pub unsafe fn realloc_aligned(ptr: *mut c_void, new_size: usize, align: usize) -> *mut c_void {
-        // SAFETY: caller guarantees `ptr` is null or a live mimalloc allocation
-        // with alignment `align`.
-        unsafe { crate::mimalloc::mi_realloc_aligned(ptr, new_size, align) }
-    }
-
-    /// # Safety
-    /// `ptr` must be null or a live allocation from the default allocator with the given `align`.
-    #[cfg(bun_asan)]
-    #[inline]
-    pub unsafe fn realloc_aligned(ptr: *mut c_void, new_size: usize, align: usize) -> *mut c_void {
-        if align <= crate::MAX_ALIGN_T {
-            return unsafe { libc::realloc(ptr, new_size) };
-        }
-        let new_ptr = malloc_aligned(new_size, align);
-        if new_ptr.is_null() {
-            return core::ptr::null_mut();
-        }
-        if !ptr.is_null() {
-            unsafe {
-                let copy = usable_size(ptr).min(new_size);
-                core::ptr::copy_nonoverlapping(ptr.cast::<u8>(), new_ptr.cast::<u8>(), copy);
-                libc::free(ptr);
-            }
-        }
-        new_ptr
-    }
 }
 
-pub use buffer_fallback_allocator::BufferFallbackAllocator;
 pub use max_heap_allocator::MaxHeapAllocator;
-pub use maybe_owned::MaybeOwned;
-pub use nullable_allocator::NullableAllocator;
-pub use stack_fallback::{ArenaPtr, StackFallback};
+pub use stack_fallback::ArenaPtr;
 
 #[path = "MimallocArena.rs"]
 pub mod mimalloc_arena;
@@ -710,7 +459,7 @@ impl Mutex {
         Self(std::sync::Mutex::new(()))
     }
     #[inline]
-    pub fn lock(&self) -> MutexGuard {
+    pub(crate) fn lock(&self) -> MutexGuard {
         let g = self
             .0
             .lock()
@@ -731,26 +480,14 @@ impl Mutex {
 /// Unlocks the paired [`Mutex`] on drop. See the type-level comment on
 /// [`Mutex`] for why this erases the guard lifetime rather than borrowing.
 #[must_use = "if unused the Mutex will immediately unlock"]
-pub struct MutexGuard {
+pub(crate) struct MutexGuard {
     _guard: std::sync::MutexGuard<'static, ()>,
-}
-impl Default for Mutex {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 // Per PORTING.md type map: `OOM!T` / `error{OutOfMemory}!T` → `Result<T, bun_alloc::AllocError>`.
 // This is the crate root, so define it here. Re-exported as `bun_core::OOM`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AllocError;
-
-impl AllocError {
-    #[inline]
-    pub const fn name(self) -> &'static str {
-        "OutOfMemory"
-    }
-}
 
 impl core::fmt::Display for AllocError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -831,31 +568,10 @@ unsafe impl core::alloc::GlobalAlloc for Mimalloc {
     }
 }
 
-/// Resize a mimalloc-owned
-/// byte allocation in place when possible, returning the (possibly moved) slice.
-///
-/// # Safety
-/// `slice` must be backed by a live allocation from the default (mimalloc)
-/// allocator with byte alignment ≤ `MI_MAX_ALIGN_SIZE`. After return, the old
-/// `slice` reference is invalidated; only the returned slice is valid.
-pub unsafe fn realloc_slice(
-    slice: &mut [u8],
-    new_size: usize,
-) -> core::result::Result<&mut [u8], AllocError> {
-    // SAFETY: caller guarantees `slice.as_mut_ptr()` is a mimalloc-owned block.
-    let new_ptr = unsafe { mimalloc::mi_realloc(slice.as_mut_ptr().cast(), new_size) };
-    if new_ptr.is_null() {
-        return Err(AllocError);
-    }
-    // SAFETY: `mi_realloc` returns at least `new_size` bytes, aligned per
-    // `MI_MAX_ALIGN_SIZE`, with the prefix preserved up to `min(old, new)`.
-    Ok(unsafe { core::slice::from_raw_parts_mut(new_ptr.cast::<u8>(), new_size) })
-}
-
-/// Raw-pointer variant of [`realloc_slice`] for callers that cannot soundly
-/// materialize a `&mut [u8]` over their buffer (e.g. it contains uninitialized
-/// or padding bytes). Returns the new base pointer; `min(old_size, new_size)`
-/// prefix bytes are preserved.
+/// Resize a mimalloc-owned buffer, taking a raw pointer for callers that
+/// cannot soundly materialize a `&mut [u8]` over their buffer (e.g. it contains
+/// uninitialized or padding bytes). Returns the new base pointer;
+/// `min(old_size, new_size)` prefix bytes are preserved.
 ///
 /// # Safety
 /// `ptr` must be a live allocation from the default (mimalloc) allocator with
@@ -870,13 +586,6 @@ pub unsafe fn realloc_raw(
         return Err(AllocError);
     }
     Ok(new_ptr.cast::<u8>())
-}
-
-/// `mi_usable_size` — actual allocated size for a mimalloc-owned ptr.
-#[inline]
-pub fn usable_size(ptr: *const u8) -> usize {
-    // SAFETY: `mi_usable_size` is null-safe (returns 0).
-    unsafe { mimalloc::mi_usable_size(ptr.cast()) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -964,182 +673,6 @@ pub fn page_size() -> usize {
     })
 }
 
-// ── String — TYPE_ONLY landing ─────────────────────────────────────────────
-// Layout-only (#[repr(C)]) so T0/T1 crates can name the type; rich methods
-// (toJS, toUTF8, WTF refcounting) remain in bun_str via extension traits.
-// PORTING.md: "#[repr(C)] struct { tag: u8, value: StringValue } — NOT a Rust
-// enum (C++ mutates tag and value independently across FFI)."
-
-/// Discriminant for [`String`]'s representation.
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Tag {
-    Dead = 0,
-    WTFStringImpl = 1,
-    ZigString = 2,
-    StaticZigString = 3,
-    Empty = 4,
-}
-
-// `ZigString` pointer-tag scheme — single source of truth.
-// Flag bits live in the POINTER's high byte; untagging truncates to 53 bits.
-pub const ZS_STATIC_BIT: usize = 1usize << 60;
-pub const ZS_UTF8_BIT: usize = 1usize << 61;
-pub const ZS_GLOBAL_BIT: usize = 1usize << 62;
-pub const ZS_16BIT_BIT: usize = 1usize << 63;
-pub const ZS_UNTAG_MASK: usize = (1usize << 53) - 1;
-
-/// FFI string slice — `{ ptr: *const u8, len: usize }`.
-///
-/// **Canonical storage layout.** `bun_core::string::ZigString` is a
-/// `#[repr(transparent)]` newtype over this struct (so the FFI layout has ONE
-/// source of truth) and adds the encoding-aware/allocating methods via
-/// `Deref`/`DerefMut`. The pointer-tag accessors (`is_*` / `mark_*` /
-/// `untagged` / `slice` / `utf16_slice_aligned`) live HERE so the T0
-/// `bun_alloc::String` union and `WTFStringImplStruct::to_zig_string` can use
-/// them without an upward dep on `bun_core`. Higher-tier callers should name
-/// `bun_core::ZigString`; reaching the inherent methods through `Deref` is the
-/// intended path.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct ZigString {
-    /// Tagged pointer — never dereference directly; use `untagged()`.
-    pub _unsafe_ptr_do_not_use: *const u8,
-    pub len: usize,
-}
-
-impl ZigString {
-    pub const EMPTY: ZigString = ZigString {
-        _unsafe_ptr_do_not_use: b"".as_ptr(),
-        len: 0,
-    };
-
-    #[inline]
-    pub const fn init(slice: &[u8]) -> ZigString {
-        ZigString {
-            _unsafe_ptr_do_not_use: slice.as_ptr(),
-            len: slice.len(),
-        }
-    }
-
-    /// Construct from an already-tagged pointer + length. `ptr` is stored
-    /// verbatim — tag bits are not touched.
-    #[inline]
-    pub const fn from_tagged_ptr(ptr: *const u8, len: usize) -> ZigString {
-        ZigString {
-            _unsafe_ptr_do_not_use: ptr,
-            len,
-        }
-    }
-
-    /// Raw tagged pointer (top-bit flags intact). Pair with
-    /// [`from_tagged_ptr`]; do **not** dereference without [`untagged`].
-    #[inline]
-    pub const fn tagged_ptr(&self) -> *const u8 {
-        self._unsafe_ptr_do_not_use
-    }
-
-    #[inline]
-    pub fn init_utf16(items: &[u16]) -> ZigString {
-        let mut out = ZigString {
-            _unsafe_ptr_do_not_use: items.as_ptr().cast(),
-            len: items.len(),
-        };
-        out.mark_utf16();
-        out
-    }
-
-    #[inline]
-    pub const fn length(&self) -> usize {
-        self.len
-    }
-    #[inline]
-    pub const fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    #[inline]
-    pub fn is_16bit(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & ZS_16BIT_BIT != 0
-    }
-    #[inline]
-    pub fn is_utf8(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & ZS_UTF8_BIT != 0
-    }
-    #[inline]
-    pub fn is_globally_allocated(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & ZS_GLOBAL_BIT != 0
-    }
-    #[inline]
-    pub fn is_static(&self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & ZS_STATIC_BIT != 0
-    }
-    #[inline]
-    pub fn mark_utf16(&mut self) {
-        self._unsafe_ptr_do_not_use =
-            ((self._unsafe_ptr_do_not_use as usize) | ZS_16BIT_BIT) as *const u8;
-    }
-    #[inline]
-    pub fn mark_utf8(&mut self) {
-        self._unsafe_ptr_do_not_use =
-            ((self._unsafe_ptr_do_not_use as usize) | ZS_UTF8_BIT) as *const u8;
-    }
-    #[inline]
-    pub fn mark_global(&mut self) {
-        self._unsafe_ptr_do_not_use =
-            ((self._unsafe_ptr_do_not_use as usize) | ZS_GLOBAL_BIT) as *const u8;
-    }
-    #[inline]
-    pub fn mark_static(&mut self) {
-        self._unsafe_ptr_do_not_use =
-            ((self._unsafe_ptr_do_not_use as usize) | ZS_STATIC_BIT) as *const u8;
-    }
-
-    /// Strip the flag bits — truncate to the low 53 bits.
-    #[inline]
-    pub fn untagged(ptr: *const u8) -> *const u8 {
-        ((ptr as usize) & ZS_UNTAG_MASK) as *const u8
-    }
-
-    /// 8-bit byte view (latin1 or utf8). Caller must ensure `!is_16bit()`.
-    #[inline]
-    pub fn slice(&self) -> &[u8] {
-        if self.len == 0 {
-            return &[];
-        }
-        debug_assert!(
-            !self.is_16bit(),
-            "ZigString::slice() on UTF-16 string; use to_slice()"
-        );
-        // SAFETY: constructor stored a valid ptr/len; flag bits stripped.
-        // Length is capped at `u32::MAX`.
-        unsafe {
-            core::slice::from_raw_parts(
-                Self::untagged(self._unsafe_ptr_do_not_use),
-                core::cmp::min(self.len, u32::MAX as usize),
-            )
-        }
-    }
-
-    /// UTF-16 code-unit view. Caller must ensure `is_16bit()`.
-    #[inline]
-    pub fn utf16_slice_aligned(&self) -> &[u16] {
-        if self.len == 0 {
-            return &[];
-        }
-        debug_assert!(self.is_16bit());
-        // SAFETY: 16-bit-tagged constructor stored a 2-byte-aligned ptr valid
-        // for `self.len` u16 units; flag bits stripped via `ZS_UNTAG_MASK`
-        // (inlined `untagged()` so the cast goes `usize → *const u16` directly).
-        unsafe {
-            core::slice::from_raw_parts(
-                ((self._unsafe_ptr_do_not_use as usize) & ZS_UNTAG_MASK) as *const u16,
-                self.len,
-            )
-        }
-    }
-}
-
 /// Port of `WTFStringImplStruct` — must match WebKit's `WTF::StringImpl` layout.
 ///
 /// `m_ref_count` / `m_hash_and_flags` are `Cell<u32>` (not bare `u32`) because
@@ -1151,10 +684,10 @@ impl ZigString {
 /// `UnsafeCell<u32>`, so the C ABI layout is unchanged.
 #[repr(C)]
 pub struct WTFStringImplStruct {
-    pub m_ref_count: core::cell::Cell<u32>,
-    pub m_length: u32,
+    pub(crate) m_ref_count: core::cell::Cell<u32>,
+    pub(crate) m_length: u32,
     pub m_ptr: WTFStringImplPtr,
-    pub m_hash_and_flags: core::cell::Cell<u32>,
+    pub(crate) m_hash_and_flags: core::cell::Cell<u32>,
 }
 
 #[repr(C)]
@@ -1168,16 +701,16 @@ pub union WTFStringImplPtr {
 pub type WTFStringImpl = *mut WTFStringImplStruct;
 
 impl WTFStringImplStruct {
-    pub const MAX: u32 = u32::MAX;
-
     // ---------------------------------------------------------------------
     // These details must stay in sync with WTFStringImpl.h in WebKit!
     // ---------------------------------------------------------------------
-    pub const S_HASH_FLAG_8BIT_BUFFER: u32 = 1 << 2;
+    pub(crate) const S_HASH_FLAG_8BIT_BUFFER: u32 = 1 << 2;
+    pub(crate) const S_HASH_FLAG_STRING_KIND_IS_ATOM: u32 = 1 << 4;
+    pub(crate) const S_HASH_FLAG_STRING_KIND_IS_SYMBOL: u32 = 1 << 5;
     /// The bottom bit in the ref count indicates a static (immortal) string.
-    pub const S_REF_COUNT_FLAG_IS_STATIC_STRING: u32 = 0x1;
+    pub(crate) const S_REF_COUNT_FLAG_IS_STATIC_STRING: u32 = 0x1;
     /// This allows us to ref / deref without disturbing the static string flag.
-    pub const S_REF_COUNT_INCREMENT: u32 = 0x2;
+    pub(crate) const S_REF_COUNT_INCREMENT: u32 = 0x2;
 
     #[inline]
     pub fn length(&self) -> u32 {
@@ -1202,15 +735,6 @@ impl WTFStringImplStruct {
     #[inline]
     pub fn ref_count(&self) -> u32 {
         self.m_ref_count.get() / Self::S_REF_COUNT_INCREMENT
-    }
-    #[inline]
-    pub fn is_static(&self) -> bool {
-        self.m_ref_count.get() & Self::S_REF_COUNT_FLAG_IS_STATIC_STRING != 0
-    }
-    #[inline]
-    pub fn has_at_least_one_ref(&self) -> bool {
-        // WTF::StringImpl::hasAtLeastOneRef
-        self.m_ref_count.get() > 0
     }
     /// Atomic view of `m_ref_count`. The C++ field is
     /// `std::atomic<uint32_t> m_refCount` (StringImpl.h:163); we model it as
@@ -1269,13 +793,6 @@ impl WTFStringImplStruct {
         // the sole ref; `self` is not touched again after this call.
         unsafe { Bun__WTFStringImpl__destroy(self) };
     }
-    #[inline]
-    pub fn ref_count_allocator(self: *mut Self) -> StdAllocator {
-        StdAllocator {
-            ptr: self.cast(),
-            vtable: StringImplAllocator::VTABLE_PTR,
-        }
-    }
     /// Borrow `len` raw bytes from `m_ptr`. The `latin1` arm of the `repr(C)`
     /// union is a valid byte pointer regardless of encoding (both arms share
     /// the same offset). Centralises the `from_raw_parts(m_ptr.latin1, …)` used
@@ -1310,32 +827,25 @@ impl WTFStringImplStruct {
         }
     }
     #[inline]
-    pub fn latin1_byte_length(&self) -> usize {
-        // Not all UTF-16 characters fit are representable in latin1.
-        // Those get truncated?
-        self.m_length as usize
+    pub fn is_atom(&self) -> bool {
+        (self.m_hash_and_flags.get() & Self::S_HASH_FLAG_STRING_KIND_IS_ATOM) != 0
     }
     #[inline]
-    pub fn is_thread_safe(&self) -> bool {
-        WTFStringImpl__isThreadSafe(self)
+    pub fn is_symbol(&self) -> bool {
+        (self.m_hash_and_flags.get() & Self::S_HASH_FLAG_STRING_KIND_IS_SYMBOL) != 0
+    }
+    #[inline]
+    pub fn is_thread_isolated(&self) -> bool {
+        WTFStringImpl__isThreadIsolated(self)
+    }
+    #[inline]
+    pub fn is_thread_shareable(&self) -> bool {
+        WTFStringImpl__isThreadShareable(self)
     }
     /// Compute the hash() if necessary
     #[inline]
     pub fn ensure_hash(&self) {
         Bun__WTFStringImpl__ensureHash(self);
-    }
-    #[inline]
-    pub fn has_prefix(&self, text: &[u8]) -> bool {
-        // SAFETY: `self` is a valid WTF::StringImpl; text.ptr/len describe a valid slice.
-        unsafe { Bun__WTFStringImpl__hasPrefix(self, text.as_ptr(), text.len()) }
-    }
-    #[inline]
-    pub fn to_zig_string(&self) -> ZigString {
-        if self.is_8bit() {
-            ZigString::init(self.latin1_slice())
-        } else {
-            ZigString::init_utf16(self.utf16_slice())
-        }
     }
 }
 
@@ -1349,206 +859,9 @@ unsafe extern "C" {
     // `destroy` path crosses FFI. `*const` + `unsafe`: it frees the
     // allocation backing the pointer.
     pub fn Bun__WTFStringImpl__destroy(this: *const WTFStringImplStruct);
-    // Rust no longer calls these.
-    pub safe fn Bun__WTFStringImpl__ref(this: &WTFStringImplStruct);
-    pub fn Bun__WTFStringImpl__deref(this: *const WTFStringImplStruct);
-    safe fn WTFStringImpl__isThreadSafe(this: &WTFStringImplStruct) -> bool;
+    safe fn WTFStringImpl__isThreadIsolated(this: &WTFStringImplStruct) -> bool;
+    safe fn WTFStringImpl__isThreadShareable(this: &WTFStringImplStruct) -> bool;
     safe fn Bun__WTFStringImpl__ensureHash(this: &WTFStringImplStruct);
-    fn Bun__WTFStringImpl__hasPrefix(
-        this: *const WTFStringImplStruct,
-        text_ptr: *const u8,
-        text_len: usize,
-    ) -> bool;
-}
-
-/// An [`AllocatorVTable`] whose ctx `ptr` is a `WTFStringImpl`; `alloc` bumps
-/// the refcount, `free` derefs. Hoisted into `bun_alloc` (which already owns
-/// `AllocatorVTable` and the `WTFStringImplStruct` layout) so the
-/// `is_wtf_allocator` vtable-identity check is a local pointer compare — no
-/// upward dependency on `bun_string` and no runtime fn-ptr hook.
-#[allow(non_snake_case)]
-pub mod StringImplAllocator {
-    use super::{Alignment, AllocatorVTable, WTFStringImplStruct};
-
-    unsafe fn alloc(ptr: *mut core::ffi::c_void, len: usize, _: Alignment, _: usize) -> *mut u8 {
-        // SAFETY: vtable contract — `ptr` is the non-null `WTFStringImpl` passed
-        // to `ref_count_allocator`, live with refcount ≥ 1 for this call. Single
-        // deref site (nonnull-asref reduction) — `byte_length`/`r#ref` are safe
-        // `&self` methods.
-        let this = unsafe { &*ptr.cast::<WTFStringImplStruct>() };
-        if this.byte_length() != len {
-            // we don't actually allocate, we just reference count
-            return core::ptr::null_mut();
-        }
-        this.r#ref();
-        // we should never actually allocate
-        // SAFETY: `m_ptr.latin1` is the byte-view union arm (both arms share
-        // offset 0); valid for `byte_length()` bytes.
-        unsafe { this.m_ptr.latin1 }.cast_mut()
-    }
-
-    unsafe fn free(ptr: *mut core::ffi::c_void, buf: &mut [u8], _: Alignment, _: usize) {
-        // SAFETY: see `alloc` — single deref site for the vtable's `WTFStringImpl`
-        // ctx pointer; `byte_slice`/`byte_length`/`deref` are safe `&self` methods.
-        let this = unsafe { &*ptr.cast::<WTFStringImplStruct>() };
-        debug_assert!(this.byte_slice().as_ptr() == buf.as_ptr());
-        // The buffer length is `byte_length()` (i.e. `m_length * 2` for
-        // UTF-16), not the code-unit count.
-        debug_assert!(this.byte_length() == buf.len());
-        this.deref();
-    }
-
-    pub static VTABLE: AllocatorVTable = AllocatorVTable {
-        alloc,
-        resize: AllocatorVTable::NO_RESIZE,
-        remap: AllocatorVTable::NO_REMAP,
-        free,
-    };
-
-    pub const VTABLE_PTR: &AllocatorVTable = &VTABLE;
-}
-
-/// C-layout untagged union over [`String`]'s payload representations.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub union StringImpl {
-    pub zig_string: ZigString,
-    pub wtf_string_impl: WTFStringImpl,
-    // .StaticZigString aliases .zig_string; .Dead/.Empty are zero-width.
-}
-
-/// Known as `BunString` in C++.
-///
-/// 5-variant tagged union over WTF-backed and `ZigString`-backed strings. NOT a
-/// Rust `enum` because C++ mutates `tag` and `value` independently across FFI.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct String {
-    pub tag: Tag,
-    pub value: StringImpl,
-}
-
-impl String {
-    pub const NAME: &'static str = "BunString";
-
-    /// Vtable-identity check against
-    /// [`StringImplAllocator::VTABLE`].
-    #[inline]
-    pub fn is_wtf_allocator(alloc: StdAllocator) -> bool {
-        core::ptr::eq(alloc.vtable, StringImplAllocator::VTABLE_PTR)
-    }
-
-    pub const EMPTY: String = String {
-        tag: Tag::Empty,
-        value: StringImpl {
-            zig_string: ZigString::EMPTY,
-        },
-    };
-    pub const DEAD: String = String {
-        tag: Tag::Dead,
-        value: StringImpl {
-            zig_string: ZigString::EMPTY,
-        },
-    };
-
-    /// Borrow the live `WTF::StringImpl` backing this string.
-    ///
-    /// Centralises the union-field read + raw-ptr deref that `to_zig_string` /
-    /// `length` / `is_8bit` each open-coded. Callers branch on
-    /// `self.tag == WTFStringImpl` first (debug-asserted).
-    #[inline(always)]
-    fn wtf_impl(&self) -> &WTFStringImplStruct {
-        debug_assert_eq!(self.tag, Tag::WTFStringImpl);
-        // SAFETY: `tag == WTFStringImpl` ⇒ `wtf_string_impl` is the active
-        // union field and a non-null, live `*mut WTFStringImplStruct`
-        // (refcount ≥ 1 for the `String`'s lifetime).
-        unsafe { &*self.value.wtf_string_impl }
-    }
-
-    #[inline]
-    pub fn to_zig_string(&self) -> ZigString {
-        match self.tag {
-            Tag::StaticZigString | Tag::ZigString => {
-                // SAFETY: `tag` is `ZigString`/`StaticZigString` ⇒ `zig_string`
-                // is the active union field.
-                unsafe { self.value.zig_string }
-            }
-            Tag::WTFStringImpl => self.wtf_impl().to_zig_string(),
-            _ => ZigString::EMPTY,
-        }
-    }
-
-    #[inline]
-    pub fn length(&self) -> usize {
-        if self.tag == Tag::WTFStringImpl {
-            self.wtf_impl().length() as usize
-        } else {
-            self.to_zig_string().length()
-        }
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.length() == 0
-    }
-
-    #[inline]
-    pub fn is_8bit(&self) -> bool {
-        match self.tag {
-            Tag::WTFStringImpl => self.wtf_impl().is_8bit(),
-            Tag::StaticZigString | Tag::ZigString => {
-                // SAFETY: `tag` is `ZigString`/`StaticZigString` ⇒ `zig_string`
-                // is the active union field.
-                unsafe { !self.value.zig_string.is_16bit() }
-            }
-            _ => true,
-        }
-    }
-
-    /// Compare against a (typically literal) byte slice.
-    /// PERF: this T0 version uses scalar `==` / widening compare. Re-route to
-    /// `bun_core::strings` via inlining if it shows up on a hot path.
-    pub fn eql_comptime(&self, other: &[u8]) -> bool {
-        let zs = self.to_zig_string();
-        if zs.is_16bit() {
-            let u16s = zs.utf16_slice_aligned();
-            if u16s.len() != other.len() {
-                return false;
-            }
-            u16s.iter()
-                .copied()
-                .zip(other.iter().copied())
-                .all(|(a, b)| a == b as u16)
-        } else {
-            zs.slice() == other
-        }
-    }
-}
-
-impl core::fmt::Display for String {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // utf8 → write bytes; utf16 → transcode;
-        // latin1 → widen each byte to a Unicode scalar.
-        let zs = self.to_zig_string();
-        if zs.len == 0 {
-            return Ok(());
-        }
-        if zs.is_16bit() {
-            for c in core::char::decode_utf16(zs.utf16_slice_aligned().iter().copied()) {
-                f.write_char(c.unwrap_or(core::char::REPLACEMENT_CHARACTER))?;
-            }
-            Ok(())
-        } else if zs.is_utf8() {
-            // BStr renders raw bytes without allocating.
-            write!(f, "{}", bstr::BStr::new(zs.slice()))
-        } else {
-            for &b in zs.slice() {
-                // Latin-1 byte → Unicode codepoint of the same value.
-                f.write_char(b as char)?;
-            }
-            Ok(())
-        }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1580,48 +893,6 @@ pub fn range_of_slice_in_buffer(slice: &[u8], buffer: &[u8]) -> Option<[u32; 2]>
     ];
     debug_assert_eq!(slice, &buffer[r[0] as usize..][..r[1] as usize]);
     Some(r)
-}
-
-/// Free a raw `[u8]` allocation not owned by a `Vec`/`Box` (e.g. duped via
-/// `mi_malloc` on the C side, or via [`StdAllocator::free`]). With
-/// `#[global_allocator] = Mimalloc` this is `mi_free`; the `len` is accepted
-/// for size-asserting builds.
-///
-/// # Safety
-/// `ptr` must be null or point to a live allocation of `len` bytes obtained
-/// from the default (mimalloc-backed) allocator. Freed exactly once.
-#[inline]
-pub unsafe fn default_free(ptr: *mut u8, len: usize) {
-    if ptr.is_null() || len == 0 {
-        return;
-    }
-    // SAFETY: caller contract — `ptr[..len]` is a live mimalloc allocation.
-    let buf = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
-    basic::C_ALLOCATOR.raw_free(buf, Alignment::from_byte_units(1), 0);
-}
-
-/// Duplicate `src` into a raw allocation not owned by a
-/// `Vec`/`Box` — symmetric with [`default_free`]. Returns a `&'static [u8]`
-/// view onto a fresh mimalloc allocation; caller is responsible for pairing
-/// with `default_free(ptr, len)`.
-///
-/// Empty input borrows the static empty slice (no allocation; `default_free`
-/// no-ops on `len == 0`).
-pub fn default_dupe(src: &[u8]) -> &'static [u8] {
-    if src.is_empty() {
-        return b"";
-    }
-    let ptr = basic::C_ALLOCATOR
-        .raw_alloc(src.len(), Alignment::from_byte_units(1), 0)
-        .unwrap_or_else(|| crate::out_of_memory());
-    // SAFETY: `raw_alloc` returned a fresh, writable allocation of `src.len()`
-    // bytes, byte-aligned; non-overlapping with `src`. The returned slice's
-    // lifetime is tied to the matching `default_free` call (caller contract),
-    // hence `'static` at the type level.
-    unsafe {
-        core::ptr::copy_nonoverlapping(src.as_ptr(), ptr, src.len());
-        core::slice::from_raw_parts(ptr, src.len())
-    }
 }
 
 /// Zeros
@@ -1705,16 +976,12 @@ impl IndexType {
         (self.0 >> 31) != 0
     }
     #[inline]
-    pub fn set_index(&mut self, index: u32) {
+    pub(crate) fn set_index(&mut self, index: u32) {
         self.0 = (self.0 & 0x8000_0000) | (index & 0x7FFF_FFFF);
     }
     #[inline]
-    pub fn set_is_overflow(&mut self, v: bool) {
+    pub(crate) fn set_is_overflow(&mut self, v: bool) {
         self.0 = (self.0 & 0x7FFF_FFFF) | ((v as u32) << 31);
-    }
-    #[inline]
-    pub const fn raw(self) -> u32 {
-        self.0
     }
 }
 
@@ -1732,7 +999,7 @@ pub enum ItemStatus {
 // ──────────────────────────────────────────────────────────────────────────
 // BSSList / BSSStringList / BSSMapInner — real method bodies follow below.
 // Per-monomorphization statics are emitted at the declare site via the
-// `bss_list!` / `bss_string_list!` / `bss_map_inner!` / `bss_map!` macros
+// `bss_list!` / `bss_string_list!` / `bss_map_inner!` macros
 // (`SyncUnsafeCell<MaybeUninit<Self>>` + `Once` + `init_at`). `init()` is a
 // thin heap-allocating wrapper for callers that manage their own once-guard.
 // ──────────────────────────────────────────────────────────────────────────
@@ -1819,7 +1086,7 @@ macro_rules! bss_singleton {
 
 /// Heap-allocate a fresh `T` via mimalloc and run its in-place `init_at` initializer.
 ///
-/// Shared body of the `BSSList`/`BSSStringList`/`BSSMapInner`/`BSSMap` `init()` shims.
+/// Shared body of the `BSSStringList`/`BSSMapInner` `init()` shims.
 /// The once-guard is the *caller's* responsibility; use the `bss_*!` macros
 /// for the canonical per-monomorphization singleton.
 #[doc(hidden)] // Public only for the `bss_singleton!` macro expansion in dependent crates.
@@ -1859,7 +1126,7 @@ pub fn bss_heap_init<T>(init_at: unsafe fn(*mut T)) -> NonNull<T> {
 /// Returned pointer is `align`-aligned (`align ≤ 4096`).
 #[doc(hidden)]
 #[inline]
-pub fn bss_lazy_bytes(size: usize, align: usize) -> NonNull<u8> {
+pub(crate) fn bss_lazy_bytes(size: usize, align: usize) -> NonNull<u8> {
     debug_assert!(size > 0);
     #[cfg(unix)]
     let ptr = {
@@ -1976,6 +1243,14 @@ fn bss_mmap_noreserve(len: usize) -> *mut u8 {
     if p == libc::MAP_FAILED {
         crate::out_of_memory();
     }
+    // Under THP `enabled=always` the first write to each 2 MiB stretch would
+    // fault a whole huge page, turning this demand-faulted arena into ~4 MiB of
+    // RSS. Per-VMA opt-out (not `PR_SET_THP_DISABLE`, which children inherit).
+    // SAFETY: `p..p+len` is the mapping created above.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    unsafe {
+        libc::madvise(p, len, libc::MADV_NOHUGEPAGE);
+    }
     // LSan only scans data/BSS, stacks, and malloc-tracked heap for live
     // pointers. This anonymous mapping is none of those, so any `Box`/`Vec`
     // whose owning pointer lives inside a `bss_*!` singleton (e.g. the
@@ -1999,7 +1274,7 @@ fn bss_mmap_noreserve(len: usize) -> *mut u8 {
 /// counter — never read past `used`.
 #[doc(hidden)]
 #[inline]
-pub fn bss_lazy_slice<T>(count: usize) -> NonNull<[MaybeUninit<T>]> {
+pub(crate) fn bss_lazy_slice<T>(count: usize) -> NonNull<[MaybeUninit<T>]> {
     let p =
         bss_lazy_bytes(count * size_of::<T>(), core::mem::align_of::<T>()).cast::<MaybeUninit<T>>();
     NonNull::slice_from_raw_parts(p, count)
@@ -2021,19 +1296,11 @@ macro_rules! bss_string_list {
     };
 }
 
-/// Declare a `BSSMapInner<T, COUNT, RM_SLASH>` (`store_keys=false`) singleton accessor.
+/// Declare a `BSSMapInner<T, COUNT, RM_SLASH>` singleton accessor.
 #[macro_export]
 macro_rules! bss_map_inner {
     ($(#[$m:meta])* $vis:vis $name:ident : $value_ty:ty, $count:expr, $rm_slash:expr) => {
         $crate::bss_singleton!($(#[$m])* $vis fn $name() -> $crate::BSSMapInner<$value_ty, { $count }, { $rm_slash }>);
-    };
-}
-
-/// Declare a `BSSMap<T, COUNT, EST_KEY_LEN, RM_SLASH>` (`store_keys=true`) singleton accessor.
-#[macro_export]
-macro_rules! bss_map {
-    ($(#[$m:meta])* $vis:vis $name:ident : $value_ty:ty, $count:expr, $est_key_len:expr, $rm_slash:expr) => {
-        $crate::bss_singleton!($(#[$m])* $vis fn $name() -> $crate::BSSMap<$value_ty, { $count }, { $est_key_len }, { $rm_slash }>);
     };
 }
 
@@ -2043,7 +1310,6 @@ mod __bss_macro_smoke {
     crate::bss_list! { _l  : u32, 4 }
     crate::bss_string_list! { _sl : 4, 8 }
     crate::bss_map_inner! { _mi : u32, 4, true }
-    crate::bss_map! { _m  : u32, 4, 8, false }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2102,7 +1368,6 @@ impl core::hash::Hasher for IdentityU64Hasher {
 type IndexMapHasher = core::hash::BuildHasherDefault<IdentityU64Hasher>;
 
 pub type IndexMap = HashMap<HashKeyType, IndexType, IndexMapHasher>;
-pub type IndexMapManaged = HashMap<HashKeyType, IndexType, IndexMapHasher>;
 
 #[derive(Clone, Copy)]
 pub struct Result {
@@ -2114,10 +1379,6 @@ pub struct Result {
 impl Result {
     pub fn has_checked_if_exists(&self) -> bool {
         self.index.index() != UNASSIGNED.index()
-    }
-
-    pub fn is_overflowing<const COUNT: usize>(&self) -> bool {
-        self.index.raw() as usize >= COUNT
     }
 }
 
@@ -2138,22 +1399,16 @@ const OVERFLOW_GROUP_MAX: usize = 4095;
 const OVERFLOW_GROUP_SLOTS: usize = OVERFLOW_GROUP_MAX + 1;
 type OverflowUsedSize = u16;
 
-pub struct OverflowGroup<Block> {
+struct OverflowGroup<Block> {
     // 16 million files should be good enough for anyone
     // ...right?
-    pub used: OverflowUsedSize,
-    pub allocated: OverflowUsedSize,
-    pub ptrs: [Option<Box<Block>>; OVERFLOW_GROUP_SLOTS],
+    pub(crate) used: OverflowUsedSize,
+    pub(crate) allocated: OverflowUsedSize,
+    pub(crate) ptrs: [Option<Box<Block>>; OVERFLOW_GROUP_SLOTS],
 }
 
 impl<Block: OverflowBlock> OverflowGroup<Block> {
-    #[inline]
-    pub fn zero(&mut self) {
-        self.used = 0;
-        self.allocated = 0;
-    }
-
-    pub fn tail(&mut self) -> core::result::Result<&mut Block, AllocError> {
+    pub(crate) fn tail(&mut self) -> core::result::Result<&mut Block, AllocError> {
         if self.used as usize + 1 >= OVERFLOW_GROUP_SLOTS
             && self.ptrs[self.used as usize]
                 .as_ref()
@@ -2192,11 +1447,6 @@ impl<Block: OverflowBlock> OverflowGroup<Block> {
 
         Ok(self.ptrs[self.used as usize].as_mut().expect("alloc"))
     }
-
-    #[inline]
-    pub fn slice(&mut self) -> &mut [Option<Box<Block>>] {
-        &mut self.ptrs[0..self.used as usize]
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2206,19 +1456,14 @@ impl<Block: OverflowBlock> OverflowGroup<Block> {
 // Const-generic arithmetic (deriving COUNT from another const param) requires
 // `feature(generic_const_exprs)` on stable Rust, so COUNT is pinned per instantiation site.
 
-pub struct OverflowListBlock<ValueType, const COUNT: usize> {
-    pub used: u32,
+struct OverflowListBlock<ValueType, const COUNT: usize> {
+    pub(crate) used: u32,
     // Only `[0..used]` is initialized; writes are raw (no drop glue).
     pub items: [MaybeUninit<ValueType>; COUNT],
 }
 
 impl<ValueType, const COUNT: usize> OverflowListBlock<ValueType, COUNT> {
-    #[inline]
-    pub fn is_full(&self) -> bool {
-        self.used as usize >= COUNT
-    }
-
-    pub fn append(&mut self, value: ValueType) -> &mut ValueType {
+    pub(crate) fn append(&mut self, value: ValueType) -> &mut ValueType {
         debug_assert!((self.used as usize) < COUNT);
         let index = self.used as usize;
         // Raw write — slot may be uninit; no drop glue runs.
@@ -2243,17 +1488,11 @@ impl<ValueType, const COUNT: usize> OverflowBlock for OverflowListBlock<ValueTyp
 }
 
 pub struct OverflowList<ValueType, const COUNT: usize> {
-    pub list: OverflowGroup<OverflowListBlock<ValueType, COUNT>>,
+    pub(crate) list: OverflowGroup<OverflowListBlock<ValueType, COUNT>>,
     pub count: u32,
 }
 
 impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
-    #[inline]
-    pub fn zero(&mut self) {
-        self.list.zero();
-        self.count = 0;
-    }
-
     /// In-place init of just the three scalar counters (`list.used`,
     /// `list.allocated`, `count`) into storage that is already all-zeros.
     ///
@@ -2266,7 +1505,7 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
     /// `list.ptrs` bytes are already zero (i.e. obtained from
     /// `bss_heap_init`/`bss_lazy_bytes`, NOT `mi_malloc`/stack `MaybeUninit`).
     #[inline]
-    pub unsafe fn init_counters_at(slot: *mut Self) {
+    pub(crate) unsafe fn init_counters_at(slot: *mut Self) {
         // SAFETY: caller contract.
         unsafe {
             addr_of_mut!((*slot).list.used).write(0);
@@ -2276,47 +1515,18 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
     }
 
     #[inline]
-    pub fn len(&self) -> u32 {
+    fn len(&self) -> u32 {
         self.count
     }
 
     #[inline]
-    pub fn append(&mut self, value: ValueType) -> core::result::Result<&mut ValueType, AllocError> {
+    pub(crate) fn append(
+        &mut self,
+        value: ValueType,
+    ) -> core::result::Result<&mut ValueType, AllocError> {
         let block = self.list.tail()?;
         self.count += 1;
         Ok(block.append(value))
-    }
-
-    pub fn reset(&mut self) {
-        for block in self.list.slice() {
-            block.as_mut().expect("alloc").used = 0;
-        }
-        self.list.used = 0;
-    }
-
-    #[inline]
-    pub fn at_index(&self, index: IndexType) -> &ValueType {
-        let idx = index.index() as usize;
-        let block_id = if idx > 0 { idx / COUNT } else { 0 };
-
-        debug_assert!(index.is_overflow());
-        debug_assert!(self.list.used as usize >= block_id);
-        debug_assert!(
-            self.list.ptrs[block_id].as_ref().expect("alloc").used as usize > (idx % COUNT)
-        );
-
-        // SAFETY: `block_id <= used` ⇒ `append` allocated `ptrs[block_id]`;
-        // `idx % COUNT < used` ⇒ slot was initialized by `append`.
-        unsafe {
-            self.list
-                .ptrs
-                .get_unchecked(block_id)
-                .as_ref()
-                .unwrap_unchecked()
-                .items
-                .get_unchecked(idx % COUNT)
-                .assume_init_ref()
-        }
     }
 
     #[inline]
@@ -2369,15 +1579,15 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
 /// fault only as `append` actually fills them.
 #[repr(C)]
 pub struct BSSList<ValueType, const COUNT: usize /* = _COUNT * 2 */> {
-    pub mutex: Mutex,
+    pub(crate) mutex: Mutex,
     // LIFETIMES.tsv: dual semantics — points at sibling `tail` OR a heap alloc.
     // Kept as a raw NonNull: self-referential when `head == &self.tail`, so a safe
     // borrow cannot express it.
-    pub head: Option<NonNull<BSSListOverflowBlock<ValueType>>>,
-    pub used: u32,
-    pub tail: BSSListOverflowBlock<ValueType>,
+    pub(crate) head: Option<NonNull<BSSListOverflowBlock<ValueType>>>,
+    pub(crate) used: u32,
+    pub(crate) tail: BSSListOverflowBlock<ValueType>,
     // Only `[0..used]` is initialized.
-    pub backing_buf: [MaybeUninit<ValueType>; COUNT],
+    pub(crate) backing_buf: [MaybeUninit<ValueType>; COUNT],
 }
 
 // SAFETY: `head` is a self-referential `NonNull` into `self.tail` or a heap block owned by
@@ -2391,16 +1601,16 @@ const BSS_LIST_CHUNK_SIZE: usize = 256;
 
 /// The per-store overflow-block size is `count / 4`; this shared constant must
 /// be >= the largest store's, i.e. the filename store's `8192 / 4`.
-pub const BSS_OVERFLOW_BLOCK_SIZE: usize = 2048;
+const BSS_OVERFLOW_BLOCK_SIZE: usize = 2048;
 
 /// `#[repr(C)]` with `prev` before `data` so the inline `BSSList::tail` block's
 /// scalar fields cluster at the front of the singleton mapping (see the layout
 /// note on [`BSSList`]). Heap-allocated overflow blocks don't care about page
 /// locality; the constraint is on the inline-tail instance.
 #[repr(C)]
-pub struct BSSListOverflowBlock<ValueType> {
-    pub used: AtomicU16,
-    pub prev: Option<Box<BSSListOverflowBlock<ValueType>>>,
+struct BSSListOverflowBlock<ValueType> {
+    pub(crate) used: AtomicU16,
+    pub(crate) prev: Option<Box<BSSListOverflowBlock<ValueType>>>,
     // Only `[0..used]` is initialized.
     pub data: [MaybeUninit<ValueType>; BSS_LIST_CHUNK_SIZE],
 }
@@ -2409,7 +1619,7 @@ impl<ValueType> BSSListOverflowBlock<ValueType> {
     /// In-place initialize `used` and `prev` on possibly-uninitialized storage.
     /// SAFETY: `this` must point to writable, properly-aligned storage of `Self`.
     #[inline]
-    pub unsafe fn zero(this: *mut Self) {
+    pub(crate) unsafe fn zero(this: *mut Self) {
         // SAFETY: caller guarantees `this` points to writable, aligned storage of
         // `Self`. Raw `ptr::write` because `*this` may be uninit — assignment
         // would run drop glue on garbage (`prev: Option<Box<..>>`).
@@ -2419,21 +1629,10 @@ impl<ValueType> BSSListOverflowBlock<ValueType> {
         }
     }
 
-    pub fn append(&mut self, item: ValueType) -> core::result::Result<&mut ValueType, AllocError> {
-        let index = self.used.fetch_add(1, Ordering::AcqRel);
-        if index as usize >= BSS_LIST_CHUNK_SIZE {
-            return Err(AllocError);
-        }
-        // Raw write — slot may be uninit; no drop glue runs.
-        self.data[index as usize].write(item);
-        // SAFETY: just initialized on the line above.
-        Ok(unsafe { self.data[index as usize].assume_init_mut() })
-    }
-
     /// Reserve a slot and return its uninitialized storage. Caller MUST
     /// initialize the slot before any other access.
     #[inline(always)]
-    pub fn append_uninit(
+    pub(crate) fn append_uninit(
         &mut self,
     ) -> core::result::Result<*mut MaybeUninit<ValueType>, AllocError> {
         let index = self.used.fetch_add(1, Ordering::AcqRel);
@@ -2449,20 +1648,12 @@ impl<ValueType> BSSListOverflowBlock<ValueType> {
 // `Drop` handles the chain automatically — no explicit impl needed.
 
 impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
-    pub const CHUNK_SIZE: usize = BSS_LIST_CHUNK_SIZE;
     const MAX_INDEX: usize = COUNT - 1;
 
     // Rust cannot define generic statics, so the per-monomorphization storage is
     // emitted at the *declare site* via `bss_list! { name: T, N }` (see macro
     // below), which owns a `SyncUnsafeCell<MaybeUninit<Self>>` + `Once` and
-    // calls `init_at` on first access. `init()` is kept for callers that manage
-    // their own once-guard (e.g. `dir_info::hash_map_instance`); it heap-allocs
-    // a fresh instance each call.
-
-    #[inline]
-    pub fn block_index(index: u32 /* u31 */) -> usize {
-        index as usize / BSS_LIST_CHUNK_SIZE
-    }
+    // calls `init_at` on first access.
 
     /// In-place field initialization into demand-zero storage.
     ///
@@ -2488,30 +1679,8 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         }
     }
 
-    /// Heap-allocate and initialize a fresh instance. The once-guard is the
-    /// *caller's* responsibility — use `bss_list!` for
-    /// the canonical per-monomorphization singleton.
-    pub fn init() -> NonNull<Self> {
-        bss_heap_init(Self::init_at)
-    }
-
     // Singleton teardown belongs to the `bss_list!` singleton wrapper;
     // Drop only frees the heap-allocated head chain.
-
-    pub fn is_overflowing(instance: &Self) -> bool {
-        instance.used as usize >= COUNT
-    }
-
-    pub fn exists(&self, value: &[u8]) -> bool {
-        // Pointer-range check
-        // against the backing storage as raw bytes. Done with addresses rather
-        // than forming a `&[u8]` over `MaybeUninit<T>` storage (which would
-        // assert byte-validity of uninitialized memory).
-        let base = self.backing_buf.as_ptr() as usize;
-        let end = base + core::mem::size_of_val(&self.backing_buf);
-        let p = value.as_ptr() as usize;
-        base <= p && p + value.len() <= end
-    }
 
     /// Reserve an overflow slot and return its uninitialized storage. Mutex is
     /// held by the caller (`append_uninit`). Cold path — only hit after the
@@ -2521,7 +1690,7 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         &mut self,
     ) -> core::result::Result<*mut MaybeUninit<ValueType>, AllocError> {
         self.used += 1;
-        // SAFETY: head is always non-null after init() (points at self.tail or heap block).
+        // SAFETY: head is always non-null after init_at() (points at self.tail or heap block).
         let mut head_ptr = self.head.unwrap();
         // Check capacity first, allocate the new block if
         // needed, then reserve exactly one slot. Safe under `self.mutex`.
@@ -2586,36 +1755,18 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         // is sound. `MutexGuard` stores a raw pointer (see its doc), so the
         // `&mut *this` formed below does not alias a live guard borrow.
         let _guard = unsafe { (*this).mutex.lock() };
-        // SAFETY: inner mutex held ⇒ this thread has exclusive access.
-        let this = unsafe { &mut *this };
-        if this.used as usize > Self::MAX_INDEX {
-            this.append_overflow_uninit()
-        } else {
-            let index = this.used as usize;
-            this.used += 1;
-            // SAFETY: `index <= MAX_INDEX < COUNT` checked above.
-            Ok(unsafe { this.backing_buf.as_mut_ptr().add(index) })
+        // SAFETY: the inner mutex is held, so this call has exclusive access
+        // to `*this` (the receiver is raw precisely so nothing exclusive is
+        // formed before the lock); `index <= MAX_INDEX < COUNT` is checked.
+        unsafe {
+            if (*this).used as usize > Self::MAX_INDEX {
+                (*this).append_overflow_uninit()
+            } else {
+                let index = (*this).used as usize;
+                (*this).used += 1;
+                Ok((*this).backing_buf.as_mut_ptr().add(index))
+            }
         }
-    }
-
-    /// Append `value`, returning a stable `*mut` to its slot.
-    ///
-    /// Thin wrapper over `append_uninit` for callers with a small/already-built
-    /// value. For large `ValueType`s constructed at the call site, prefer
-    /// `append_uninit` + in-place write to avoid the by-value stack copy.
-    ///
-    /// SAFETY: `this` must point to a live, initialized `BSSList` (typically
-    /// the `bss_list!` singleton). Concurrent callers are allowed.
-    #[inline]
-    pub unsafe fn append(
-        this: *mut Self,
-        value: ValueType,
-    ) -> core::result::Result<*mut ValueType, AllocError> {
-        // SAFETY: forwarded — see `append_uninit`.
-        let slot = unsafe { Self::append_uninit(this)? };
-        // SAFETY: `slot` is a freshly-reserved uninit cell exclusively owned by
-        // this thread (index already bumped under the mutex).
-        unsafe { Ok(core::ptr::from_mut((*slot).write(value))) }
     }
 }
 
@@ -2636,11 +1787,6 @@ impl<ValueType, const COUNT: usize> Drop for BSSList<ValueType, COUNT> {
             }
         }
     }
-}
-
-pub struct BSSListPair<ValueType> {
-    pub index: IndexType,
-    pub value: *const ValueType,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2666,12 +1812,12 @@ pub struct BSSStringList<
     //
     // `MaybeUninit` because both arrays are logically uninitialized; only
     // `[..backing_buf_used]` / `[..slice_buf_used]` are ever read.
-    pub backing_buf: NonNull<[MaybeUninit<u8>]>, // len == COUNT * ITEM_LENGTH
-    pub backing_buf_used: u64,
-    pub overflow_list: OverflowList<&'static [u8], BSS_OVERFLOW_BLOCK_SIZE>,
-    pub slice_buf: NonNull<[MaybeUninit<&'static [u8]>]>, // len == COUNT
-    pub slice_buf_used: u16,
-    pub mutex: Mutex,
+    pub(crate) backing_buf: NonNull<[MaybeUninit<u8>]>, // len == COUNT * ITEM_LENGTH
+    pub(crate) backing_buf_used: u64,
+    pub(crate) overflow_list: OverflowList<&'static [u8], BSS_OVERFLOW_BLOCK_SIZE>,
+    pub(crate) slice_buf: NonNull<[MaybeUninit<&'static [u8]>]>, // len == COUNT
+    pub(crate) slice_buf_used: u16,
+    pub(crate) mutex: Mutex,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -2759,11 +1905,6 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 
     // Singleton is process-lifetime; never freed.
 
-    #[inline]
-    pub fn is_overflowing(instance: &Self) -> bool {
-        instance.slice_buf_used as usize >= COUNT
-    }
-
     pub fn exists(&self, value: &[u8]) -> bool {
         // Pointer-range check against the backing storage. Done with addresses
         // rather than forming a `&[u8]` over `MaybeUninit<u8>` storage (which
@@ -2774,17 +1915,17 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         base <= p && p + value.len() <= end
     }
 
-    /// Rust cannot soundly express `&[u8] -> &mut [u8]` (instant UB under stacked borrows),
-    /// so this takes raw parts instead. Callers that held a `&[u8]` must drop that borrow
-    /// before calling and pass `(ptr, len)` derived from a `&mut`-provenance pointer.
-    ///
-    /// # Safety
-    /// `(ptr, len)` must describe a region returned from `append*` on this instance, point
-    /// into our owned mutable backing storage, and have no other live borrow.
-    pub unsafe fn editable_slice<'a>(ptr: *mut u8, len: usize) -> &'a mut [u8] {
-        // SAFETY: caller upholds the `# Safety` contract — `(ptr, len)` is an
-        // exclusively-owned region in this instance's backing storage.
-        unsafe { core::slice::from_raw_parts_mut(ptr, len) }
+    /// `value` with the store's lifetime, if it already points into the store.
+    pub fn as_interned(&'static self, value: &[u8]) -> Option<&'static [u8]> {
+        if !self.exists(value) {
+            return None;
+        }
+        // SAFETY: `exists` proved `value` lies inside `backing_buf`, which is
+        // never freed or moved (process-lifetime singleton). The caller already
+        // holds these bytes as a `&[u8]`, so they are past construction: the only
+        // `&mut` into the buffer (`append_mutable`, crate-private) covers freshly
+        // reserved bytes and ends before `append`/`print` return them shared.
+        Some(unsafe { core::slice::from_raw_parts(value.as_ptr(), value.len()) })
     }
 
     /// Append `value` and return a mutable slice over the freshly-reserved bytes.
@@ -2799,7 +1940,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
     /// SAFETY: `this` must point to a live, initialized `BSSStringList`
     /// (typically the `bss_string_list!` singleton). Concurrent callers are
     /// allowed.
-    pub unsafe fn append_mutable<'a, A: BSSAppendable>(
+    pub(crate) unsafe fn append_mutable<'a, A: BSSAppendable>(
         this: *mut Self,
         value: &A,
     ) -> core::result::Result<&'a mut [u8], AllocError> {
@@ -2817,16 +1958,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
     }
 
     /// SAFETY: see [`append_mutable`].
-    pub unsafe fn get_mutable<'a>(
-        this: *mut Self,
-        len: usize,
-    ) -> core::result::Result<&'a mut [u8], AllocError> {
-        // SAFETY: forwarded — see `append_mutable`.
-        unsafe { Self::append_mutable(this, &EmptyType { len }) }
-    }
-
-    /// SAFETY: see [`append_mutable`].
-    pub unsafe fn print_with_type<'a>(
+    pub(crate) unsafe fn print_with_type<'a>(
         this: *mut Self,
         args: core::fmt::Arguments<'_>,
     ) -> core::result::Result<&'a [u8], AllocError> {
@@ -2920,8 +2052,6 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
     ) -> core::result::Result<&'a [u8], AllocError> {
         // SAFETY: see `append`.
         let _guard = unsafe { (*this).mutex.lock() };
-        // SAFETY: inner mutex held ⇒ this thread has exclusive access.
-        let this_ref = unsafe { &mut *this };
 
         // `do_append` only reads `slice` via `BSSAppendable::copy_into` (copies
         // into `self.backing_buf` / a fresh heap alloc) and returns raw parts
@@ -2929,7 +2059,10 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         // buffer's borrow does not escape.
         let (ptr, len) = if value.len() <= 256 {
             let mut scratch = [0u8; 256];
-            this_ref.do_append(&crate::copy_lowercase(value, &mut scratch[..value.len()]))?
+            // SAFETY: inner mutex held ⇒ this thread has exclusive access.
+            unsafe {
+                (*this).do_append(&crate::copy_lowercase(value, &mut scratch[..value.len()]))?
+            }
         } else {
             // Slow path: input >256 bytes (rare). Use a one-shot heap temp via
             // mimalloc directly (PORTING.md forbids `Vec` in hot allocators).
@@ -2939,7 +2072,8 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
             }
             // SAFETY: `p` is a fresh allocation of `value.len()` bytes; sole owner.
             let tmp = unsafe { core::slice::from_raw_parts_mut(p, value.len()) };
-            let r = this_ref.do_append(&crate::copy_lowercase(value, tmp));
+            // SAFETY: inner mutex held ⇒ this thread has exclusive access.
+            let r = unsafe { (*this).do_append(&crate::copy_lowercase(value, tmp)) };
             // SAFETY: `p` was allocated by `mi_malloc` above.
             unsafe { mimalloc::mi_free(p.cast()) };
             r?
@@ -3044,19 +2178,13 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// BSSMap<ValueType, COUNT, STORE_KEYS, ESTIMATED_KEY_LENGTH, REMOVE_TRAILING_SLASHES>
+// BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES>
 // ──────────────────────────────────────────────────────────────────────────
 
-// Two different struct shapes depending on `store_keys`.
-// Rust cannot return different types from one generic; we expose both:
-//   - `BSSMapInner<V, COUNT, RM_SLASH>` (the `store_keys = false` shape)
-//   - `BSSMap<V, COUNT, EST_KEY_LEN, RM_SLASH>` (the `store_keys = true` wrapper)
-// Callers that passed `store_keys=false` should name `BSSMapInner` directly.
-
 pub struct BSSMapInner<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool> {
-    pub index: IndexMap,
+    pub(crate) index: IndexMap,
     pub overflow_list: OverflowList<ValueType, BSS_OVERFLOW_BLOCK_SIZE>,
-    pub mutex: Mutex,
+    pub(crate) mutex: Mutex,
     // Only `[0..backing_buf_used]` is initialized.
     pub backing_buf: [MaybeUninit<ValueType>; COUNT],
     pub backing_buf_used: u16,
@@ -3093,10 +2221,6 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     }
 
     // With `IndexMap = HashMap`, Drop frees it; singleton Box drop frees instance.
-
-    pub fn is_overflowing(instance: &Self) -> bool {
-        instance.backing_buf_used as usize >= COUNT
-    }
 
     /// Normalize `denormalized_key` per `REMOVE_TRAILING_SLASHES` and hash it.
     /// Shared prelude of `get_or_put` / `get` / `remove`; the trimmed slice itself
@@ -3219,256 +2343,6 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         let _key = Self::key_hash(denormalized_key);
         self.index.remove(&_key).is_some()
     }
-
-    pub fn values(&mut self) -> &mut [ValueType] {
-        // SAFETY: `backing_buf[0..backing_buf_used]` was initialized by `put`;
-        // `MaybeUninit<T>` is `#[repr(transparent)]` so the slice cast is layout-sound.
-        unsafe {
-            core::slice::from_raw_parts_mut(
-                self.backing_buf.as_mut_ptr().cast::<ValueType>(),
-                self.backing_buf_used as usize,
-            )
-        }
-    }
-}
-
-/// `store_keys = true` wrapper.
-pub struct BSSMap<
-    ValueType,
-    const COUNT: usize,
-    const ESTIMATED_KEY_LENGTH: usize,
-    const REMOVE_TRAILING_SLASHES: bool,
-> {
-    // Inner map lives in its own `bss_heap_init` mapping (lazy-faulted; its
-    // inline `[MaybeUninit<ValueType>; COUNT]` + 32 KiB overflow ptrs stay
-    // uncommitted until written). Process-lifetime → never freed → raw
-    // `NonNull` rather than `Box` (avoids tying mmap storage to the global
-    // allocator's `dealloc`).
-    map: NonNull<BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES>>,
-    // Same lazy-fault treatment as `BSSStringList::backing_buf` — see the
-    // struct-level comment there. Mapped separately
-    // because `[u8; COUNT*ESTIMATED_KEY_LENGTH]` needs `generic_const_exprs`.
-    pub key_list_buffer: NonNull<[MaybeUninit<u8>]>, // len == COUNT * ESTIMATED_KEY_LENGTH
-    pub key_list_buffer_used: usize,
-    pub key_list_slices: NonNull<[MaybeUninit<&'static [u8]>]>, // len == COUNT
-    // Indexed by the *absolute* index (not overflow-relative) in `key_at_index`.
-    pub key_list_overflow: Vec<&'static [u8]>,
-}
-
-impl<
-    ValueType,
-    const COUNT: usize,
-    const ESTIMATED_KEY_LENGTH: usize,
-    const REMOVE_TRAILING_SLASHES: bool,
-> BSSMap<ValueType, COUNT, ESTIMATED_KEY_LENGTH, REMOVE_TRAILING_SLASHES>
-{
-    /// In-place field initialization into uninitialized storage.
-    ///
-    /// SAFETY: `slot` must point to writable, properly-aligned, uninitialized
-    /// storage of `size_of::<Self>()` bytes that lives for `'static`.
-    pub unsafe fn init_at(slot: *mut Self) {
-        // SAFETY: caller contract — `slot` is a valid, exclusive, aligned `*mut Self`.
-        unsafe {
-            // Inner map in its own lazy mapping so its inline backing_buf +
-            // overflow ptrs fault on demand.
-            addr_of_mut!((*slot).map).write(bss_heap_init(BSSMapInner::init_at));
-            addr_of_mut!((*slot).key_list_buffer)
-                .write(bss_lazy_slice::<u8>(COUNT * ESTIMATED_KEY_LENGTH));
-            addr_of_mut!((*slot).key_list_buffer_used).write(0);
-            addr_of_mut!((*slot).key_list_slices).write(bss_lazy_slice::<&'static [u8]>(COUNT));
-            addr_of_mut!((*slot).key_list_overflow).write(Vec::new());
-        }
-    }
-
-    /// Heap-allocate and initialize a fresh instance. Once-guard is the caller's
-    /// responsibility — use `bss_map!` for the canonical singleton.
-    pub fn init() -> NonNull<Self> {
-        bss_heap_init(Self::init_at)
-    }
-
-    /// Borrow the inner map. The mapping is process-lifetime; reborrow lifetime
-    /// is tied to `&self`/`&mut self` so the usual aliasing rules apply.
-    #[inline(always)]
-    pub fn map(&self) -> &BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES> {
-        // SAFETY: `map` was set in `init_at` to a fresh `bss_heap_init` mapping
-        // that lives for process lifetime and is exclusively owned by `*self`.
-        unsafe { self.map.as_ref() }
-    }
-    #[inline(always)]
-    pub fn map_mut(&mut self) -> &mut BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES> {
-        // SAFETY: see `map()`; `&mut self` guarantees exclusive access.
-        unsafe { self.map.as_mut() }
-    }
-
-    // Process-lifetime; never freed.
-
-    pub fn is_overflowing(instance: &Self) -> bool {
-        instance.map().backing_buf_used as usize >= COUNT
-    }
-
-    pub fn get_or_put(&mut self, key: &[u8]) -> core::result::Result<Result, AllocError> {
-        self.map_mut().get_or_put(key)
-    }
-
-    pub fn get(&mut self, key: &[u8]) -> Option<&mut ValueType> {
-        self.map_mut().get(key)
-    }
-
-    pub fn at_index(&mut self, index: IndexType) -> Option<&mut ValueType> {
-        self.map_mut().at_index(index)
-    }
-
-    pub fn key_at_index(&self, index: IndexType) -> Option<&[u8]> {
-        match index.index() {
-            i if i == UNASSIGNED.index() || i == NOT_FOUND.index() => None,
-            _ => {
-                if !index.is_overflow() {
-                    let i = index.index() as usize;
-                    debug_assert!(i < COUNT);
-                    // SAFETY: a non-sentinel non-overflow index was assigned by
-                    // `put` (which bumps `backing_buf_used`) and its key stored
-                    // by `put_key` at this slot before any reader could observe
-                    // the index — the slot is initialized. `key_list_slices` is
-                    // a process-lifetime mapping of `COUNT` slots.
-                    Some(unsafe { *self.key_list_slices.cast::<&'static [u8]>().as_ptr().add(i) })
-                } else {
-                    // See the `key_list_overflow` field note.
-                    Some(self.key_list_overflow[index.index() as usize])
-                }
-            }
-        }
-    }
-
-    pub fn put<const STORE_KEY: bool>(
-        &mut self,
-        key: &[u8],
-        result: &mut Result,
-        value: ValueType,
-    ) -> core::result::Result<&mut ValueType, AllocError> {
-        // Reshaped for borrowck — Rust can't hold &mut ValueType across
-        // &mut self.put_key. Stash as raw, re-borrow after.
-        let ptr: *mut ValueType = self.map_mut().put(result, value)?;
-        if STORE_KEY {
-            self.put_key(key, result)?;
-        }
-        // SAFETY: ptr points into self.map.backing_buf / overflow_list, which are owned by
-        // `self` and not reallocated by put_key (put_key only touches key_list_* fields).
-        // We still hold the unique &mut self borrow, so no other alias exists.
-        Ok(unsafe { &mut *ptr })
-    }
-
-    pub fn is_key_statically_allocated(&self, key: &[u8]) -> bool {
-        // Pointer-range check; addresses only (no `&[u8]` over uninit tail).
-        let base = self.key_list_buffer.as_ptr().cast::<u8>() as usize;
-        let end = base + self.key_list_buffer.len();
-        let p = key.as_ptr() as usize;
-        base <= p && p + key.len() <= end
-    }
-
-    // There's two parts to this.
-    // 1. Storing the underlying string.
-    // 2. Making the key accessible at the index.
-    pub fn put_key(
-        &mut self,
-        key: &[u8],
-        result: &mut Result,
-    ) -> core::result::Result<(), AllocError> {
-        let _guard = self.map().mutex.lock();
-
-        let slice: &'static [u8];
-
-        // Is this actually a slice into the map? Don't free it.
-        if self.is_key_statically_allocated(key) {
-            // SAFETY: key points into self.key_list_buffer which lives for the singleton's life.
-            slice = unsafe { core::slice::from_raw_parts(key.as_ptr(), key.len()) };
-        } else if self.key_list_buffer_used + key.len() < self.key_list_buffer.len() {
-            let start = self.key_list_buffer_used;
-            self.key_list_buffer_used += key.len();
-            // SAFETY: `key_list_buffer` is a process-lifetime mapping of
-            // `COUNT*ESTIMATED_KEY_LENGTH` writable bytes owned by this
-            // singleton; `[start..start+key.len()]` is in-bounds (just checked)
-            // and about to be fully written; we hold `&mut self`.
-            let dst: &mut [u8] = unsafe {
-                core::slice::from_raw_parts_mut(
-                    self.key_list_buffer.as_ptr().cast::<u8>().add(start),
-                    key.len(),
-                )
-            };
-            dst.copy_from_slice(key);
-            // SAFETY: points into self.key_list_buffer (singleton-static lifetime).
-            slice = unsafe { core::slice::from_raw_parts(dst.as_ptr(), dst.len()) };
-        } else {
-            // Propagate OOM. Route
-            // through mimalloc directly (PORTING.md forbids `Box::leak`) so the
-            // size-agnostic `mi_free` below stays valid even after `trim_right` shortens
-            // the stored slice.
-            let ptr = mimalloc::mi_malloc(key.len().max(1)).cast::<u8>();
-            if ptr.is_null() {
-                return Err(AllocError);
-            }
-            // SAFETY: `ptr` is a fresh allocation of `key.len()` bytes with no other alias.
-            unsafe { core::ptr::copy_nonoverlapping(key.as_ptr(), ptr, key.len()) };
-            // SAFETY: allocation is owned by this singleton for process lifetime (or until
-            // freed below on overwrite).
-            slice = unsafe { core::slice::from_raw_parts(ptr, key.len()) };
-        }
-
-        let slice = if REMOVE_TRAILING_SLASHES {
-            trim_right(slice, b"/")
-        } else {
-            slice
-        };
-
-        if !result.index.is_overflow() {
-            let i = result.index.index() as usize;
-            debug_assert!(i < COUNT);
-            // SAFETY: `key_list_slices` is a process-lifetime mapping of
-            // `COUNT` slots; `i < COUNT`; we hold `&mut self`. Raw write —
-            // slot may be uninit.
-            unsafe {
-                self.key_list_slices
-                    .as_ptr()
-                    .cast::<MaybeUninit<&'static [u8]>>()
-                    .add(i)
-                    .write(MaybeUninit::new(slice));
-            }
-        } else {
-            // See the `key_list_overflow` field note.
-            let idx = result.index.index() as usize;
-            if self.key_list_overflow.len() > idx {
-                let existing_slice = self.key_list_overflow[idx];
-                if !self.is_key_statically_allocated(existing_slice) {
-                    // `mi_free` is
-                    // size-agnostic, so a trimmed (shorter) stored slice is fine.
-                    // SAFETY: existing_slice was `mi_malloc`'d by a prior put_key call
-                    // (the only non-static-buffer source above) and not yet freed.
-                    unsafe {
-                        mimalloc::mi_free(
-                            existing_slice
-                                .as_ptr()
-                                .cast_mut()
-                                .cast::<core::ffi::c_void>(),
-                        )
-                    };
-                }
-                self.key_list_overflow[idx] = slice;
-            } else {
-                self.key_list_overflow.push(slice);
-            }
-        }
-
-        Ok(())
-    }
-
-    pub fn mark_not_found(&mut self, result: Result) {
-        self.map_mut().mark_not_found(result);
-    }
-
-    /// This does not free the keys.
-    /// Returns `true` if an entry had previously existed.
-    pub fn remove(&mut self, key: &[u8]) -> bool {
-        self.map_mut().remove(key)
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -3489,58 +2363,13 @@ impl<
 // entirely.
 
 /// Legacy allocator marker trait. See module note.
-///
-/// Provides a `type_id()` hook so `is_instance`-style vtable-identity checks
-/// can be expressed as concrete-type identity
-/// on the trait object — every implementor gets a default `type_id()` that
-/// returns its monomorphized `TypeId`.
-pub trait Allocator: 'static {
-    #[inline]
-    fn type_id(&self) -> core::any::TypeId {
-        core::any::TypeId::of::<Self>()
-    }
-}
-
-impl dyn Allocator {
-    /// Is the concrete type behind this `&dyn Allocator` exactly `T`?
-    ///
-    /// A vtable-identity check, expressed as `TypeId`
-    /// identity via the trait's `type_id()` hook (dynamic dispatch on the
-    /// dyn receiver — NOT `Any::type_id`). All per-type
-    /// `Foo::is_instance(alloc)` associated fns delegate here.
-    #[inline]
-    pub fn is<T: Allocator>(&self) -> bool {
-        Allocator::type_id(self) == core::any::TypeId::of::<T>()
-    }
-}
-
-/// Checks whether `allocator` is the default allocator.
-///
-/// Compares identity
-/// against the global mimalloc-backed allocator. With `#[global_allocator] =
-/// Mimalloc`, the Rust default is `DefaultAlloc`; vtable-identity becomes a
-/// `TypeId` comparison.
-#[inline]
-pub fn is_default(alloc: &dyn Allocator) -> bool {
-    alloc.is::<DefaultAlloc>()
-}
+pub trait Allocator: 'static {}
 
 /// Legacy default-allocator ZST. With `#[global_allocator]` set,
 /// this is just a unit marker.
 #[derive(Clone, Copy, Default)]
 pub struct DefaultAlloc;
 impl Allocator for DefaultAlloc {}
-
-static DEFAULT_ALLOC: DefaultAlloc = DefaultAlloc;
-
-/// Global mimalloc-backed allocator handle. With
-/// `#[global_allocator] = Mimalloc`, this is a marker handle; callers that
-/// thread it should be rewritten to use `Box`/`Vec` directly. Kept so ported
-/// call sites that still pass an `&dyn Allocator` resolve.
-#[inline]
-pub fn default_allocator() -> &'static dyn Allocator {
-    &DEFAULT_ALLOC
-}
 
 // `GenericAllocator` / `Borrowed<A>` / `Nullable<A>` are dropped — they modelled
 // an allocator-borrowing discipline (avoid double-free), which Rust's
@@ -3553,4 +2382,3 @@ pub fn default_allocator() -> &'static dyn Allocator {
 // The real impl is `impl GlobalAlloc for Mimalloc` above.
 #[path = "basic.rs"]
 pub mod basic;
-pub mod memory;

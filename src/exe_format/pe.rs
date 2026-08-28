@@ -28,62 +28,22 @@ pub enum Error {
     TooManySections,
     #[error("SectionExists")]
     SectionExists,
-    #[error("InputIsSigned")]
-    InputIsSigned,
     #[error("InvalidSecurityDirectory")]
     InvalidSecurityDirectory,
     #[error("SecurityDirInsideImage")]
     SecurityDirInsideImage,
     #[error("UnexpectedOverlayPresent")]
     UnexpectedOverlayPresent,
-    #[error("InvalidSectionData")]
-    InvalidSectionData,
-    #[error("BunSectionNotFound")]
-    BunSectionNotFound,
-    #[error("InvalidBunSection")]
-    InvalidBunSection,
-    #[error("InsufficientSpace")]
-    InsufficientSpace,
-    #[error("SizeOfImageMismatch")]
-    SizeOfImageMismatch,
-}
-
-// Enums for strip modes and options
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum StripMode {
-    None,
-    StripIfSigned,
-    StripAlways,
-}
-
-#[derive(Copy, Clone)]
-pub struct StripOpts {
-    pub require_overlay: bool,
-    pub recompute_checksum: bool,
-}
-
-impl Default for StripOpts {
-    fn default() -> Self {
-        Self {
-            require_overlay: true,
-            recompute_checksum: true,
-        }
-    }
 }
 
 /// Windows PE Binary manipulation for codesigning standalone executables
 pub struct PEFile {
-    pub data: Vec<u8>,
+    pub(crate) data: Vec<u8>,
     // Store offsets instead of pointers to avoid invalidation after resize
-    pub dos_header_offset: usize,
-    pub pe_header_offset: usize,
-    pub optional_header_offset: usize,
-    pub section_headers_offset: usize,
-    pub num_sections: u16,
-    // Cached values from init
-    pub first_raw: u32,
-    pub last_file_end: u32,
-    pub last_va_end: u32,
+    pub(crate) pe_header_offset: usize,
+    pub(crate) optional_header_offset: usize,
+    pub(crate) section_headers_offset: usize,
+    pub(crate) num_sections: u16,
 }
 
 // PE/COFF on-disk header structs are byte-packed (no padding) per spec, and may
@@ -183,7 +143,7 @@ pub(crate) struct SectionHeader {
     pub characteristics: u32,         // Characteristics
 }
 
-const PE_SIGNATURE: u32 = 0x0000_4550; // "PE\0\0"
+pub(crate) const PE_SIGNATURE: u32 = 0x0000_4550; // "PE\0\0"
 const DOS_SIGNATURE: u16 = 0x5A4D; // "MZ"
 const OPTIONAL_HEADER_MAGIC_64: u16 = 0x020B;
 
@@ -194,6 +154,8 @@ const IMAGE_SCN_MEM_READ: u32 = 0x4000_0000;
 // Directory indices and DLL characteristics
 const IMAGE_DIRECTORY_ENTRY_SECURITY: usize = 4;
 const IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY: u16 = 0x0080;
+
+pub const IMAGE_SUBSYSTEM_WINDOWS_GUI: u16 = 2;
 
 // Section name constant for exact comparison
 const BUN_SECTION_NAME: [u8; 8] = [b'.', b'b', b'u', b'n', 0, 0, 0, 0];
@@ -251,20 +213,8 @@ fn align_up_usize(v: usize, a: usize) -> Result<usize, Error> {
 
 impl PEFile {
     // Helper methods to safely access headers using unaligned pointers
-    fn get_dos_header(&self) -> Result<*const DOSHeader, Error> {
-        view_at_const::<DOSHeader>(&self.data, self.dos_header_offset)
-    }
-
-    fn get_pe_header(&self) -> Result<*const PEHeader, Error> {
-        view_at_const::<PEHeader>(&self.data, self.pe_header_offset)
-    }
-
     fn get_pe_header_mut(&mut self) -> Result<*mut PEHeader, Error> {
         view_at_mut::<PEHeader>(&mut self.data, self.pe_header_offset)
-    }
-
-    fn get_optional_header(&self) -> Result<*const OptionalHeader64, Error> {
-        view_at_const::<OptionalHeader64>(&self.data, self.optional_header_offset)
     }
 
     fn get_optional_header_mut(&mut self) -> Result<*mut OptionalHeader64, Error> {
@@ -361,57 +311,34 @@ impl PEFile {
             return Err(Error::InvalidPEFile);
         }
 
-        // 7. Precompute first_raw, last_file_end, last_va_end
-        let mut first_raw: u32 = u32::try_from(data.len()).expect("int cast");
-        let mut last_file_end: u32 = 0;
-        let mut last_va_end: u32 = 0;
-
+        // 7. Validate each section's aligned virtual extent up front.
         let section_alignment = optional_header.section_alignment;
-
-        if num_sections > 0 {
-            for i in 0..num_sections as usize {
-                let sh_off = section_headers_offset + i * size_of::<SectionHeader>();
-                // SAFETY: `sh_off + size_of::<SectionHeader>()` is within `data` per the
-                // `section_headers_offset + section_headers_size <= data.len()` check above.
-                let section = unsafe {
-                    ptr::read_unaligned(data.as_ptr().add(sh_off).cast::<SectionHeader>())
-                };
-                if section.size_of_raw_data > 0 {
-                    if section.pointer_to_raw_data < first_raw {
-                        first_raw = section.pointer_to_raw_data;
-                    }
-                    let file_end = section.pointer_to_raw_data + section.size_of_raw_data;
-                    if file_end > last_file_end {
-                        last_file_end = file_end;
-                    }
-                }
-                // Use effective virtual size (max of virtual_size and size_of_raw_data)
-                let vs_effective = section.virtual_size.max(section.size_of_raw_data);
-                let va_end =
-                    section.virtual_address + align_up_u32(vs_effective, section_alignment)?;
-                if va_end > last_va_end {
-                    last_va_end = va_end;
-                }
-            }
+        for i in 0..num_sections as usize {
+            let sh_off = section_headers_offset + i * size_of::<SectionHeader>();
+            // SAFETY: `sh_off + size_of::<SectionHeader>()` is within `data` per the
+            // `section_headers_offset + section_headers_size <= data.len()` check above.
+            let section =
+                unsafe { ptr::read_unaligned(data.as_ptr().add(sh_off).cast::<SectionHeader>()) };
+            let vs_effective = section.virtual_size.max(section.size_of_raw_data);
+            section
+                .virtual_address
+                .checked_add(align_up_u32(vs_effective, section_alignment)?)
+                .ok_or(Error::Overflow)?;
         }
 
         Ok(Box::new(PEFile {
             data,
-            dos_header_offset: 0,
             pe_header_offset: pe_off,
             optional_header_offset,
             section_headers_offset,
             num_sections,
-            first_raw,
-            last_file_end,
-            last_va_end,
         }))
     }
 
     // deinit: Drop is automatic — Vec<u8> field freed; Box<PEFile> dropped by caller.
 
     /// Strip Authenticode signatures from the PE file
-    pub fn strip_authenticode(&mut self, opts: StripOpts) -> Result<(), Error> {
+    pub(crate) fn strip_authenticode(&mut self) -> Result<(), Error> {
         let opt = view_at_mut::<OptionalHeader64>(&mut self.data, self.optional_header_offset)?;
 
         // Read Security directory (index 4)
@@ -444,7 +371,7 @@ impl PEFile {
         if sec_off >= file_len || sec_size == 0 {
             return Err(Error::InvalidSecurityDirectory);
         }
-        if opts.require_overlay && sec_off < last_raw_end as usize {
+        if sec_off < last_raw_end as usize {
             return Err(Error::SecurityDirInsideImage);
         }
 
@@ -486,9 +413,7 @@ impl PEFile {
         }
 
         // Recompute checksum (recommended)
-        if opts.recompute_checksum {
-            self.recompute_pe_checksum()?;
-        }
+        self.recompute_pe_checksum()?;
 
         // After strip, ensure no remaining overlay beyond last section
         let after_strip_len = self.data.len();
@@ -521,12 +446,10 @@ impl PEFile {
             sum += data[data.len() - 1] as u64;
         }
 
-        // Final folds + add length
+        // Fold to 16 bits, then add file length (no fold after: result is 32-bit).
         sum = (sum & 0xffff) + (sum >> 16);
         sum = (sum & 0xffff) + (sum >> 16);
-        sum += u64::try_from(data.len()).expect("int cast");
-        sum = (sum & 0xffff) + (sum >> 16);
-        let final_sum: u32 = u32::try_from((sum & 0xffff) + (sum >> 16)).expect("int cast");
+        let final_sum: u32 = (sum as u32).wrapping_add(data.len() as u32);
 
         let opt = self.get_optional_header_mut()?;
         // SAFETY: opt points into self.data at validated offset
@@ -537,25 +460,9 @@ impl PEFile {
     }
 
     /// Add a new section to the PE file for storing Bun module data
-    pub fn add_bun_section(&mut self, data_to_embed: &[u8], strip: StripMode) -> Result<(), Error> {
-        // 1. Optional strip (before any addition)
-        if strip == StripMode::StripAlways {
-            self.strip_authenticode(StripOpts {
-                require_overlay: true,
-                recompute_checksum: true,
-            })?;
-        } else if strip == StripMode::StripIfSigned {
-            // Read Security directory to check if signed
-            let opt = self.get_optional_header()?;
-            // SAFETY: opt points into self.data at validated offset
-            let dd = unsafe { (*opt).data_directories[IMAGE_DIRECTORY_ENTRY_SECURITY] };
-            if dd.virtual_address != 0 || dd.size != 0 {
-                self.strip_authenticode(StripOpts {
-                    require_overlay: true,
-                    recompute_checksum: true,
-                })?;
-            }
-        }
+    pub fn add_bun_section(&mut self, data_to_embed: &[u8]) -> Result<(), Error> {
+        // 1. Strip Authenticode (before any addition)
+        self.strip_authenticode()?;
 
         // 2. Re-read PE/Optional (pointers may have moved due to resize in strip)
         let opt = self.get_optional_header_mut()?;
@@ -704,71 +611,14 @@ impl PEFile {
         Ok(())
     }
 
-    /// Find the .bun section and return its data
-    pub fn get_bun_section_data(&self) -> Result<&[u8], Error> {
-        let section_headers = self.get_section_headers()?;
-        for section in section_headers {
-            if section.name[0..8] == BUN_SECTION_NAME {
-                // Header: 8 bytes size (u64)
-                if (section.size_of_raw_data as usize) < size_of::<u64>() {
-                    return Err(Error::InvalidBunSection);
-                }
-
-                // Bounds check
-                if section.pointer_to_raw_data as usize >= self.data.len()
-                    || (section.pointer_to_raw_data + section.size_of_raw_data) as usize
-                        > self.data.len()
-                {
-                    return Err(Error::InvalidBunSection);
-                }
-
-                let section_data = &self.data[section.pointer_to_raw_data as usize..]
-                    [..section.size_of_raw_data as usize];
-                let data_size = u64::from_le_bytes(
-                    section_data[0..8]
-                        .try_into()
-                        .expect("infallible: size matches"),
-                );
-
-                let total_size = data_size
-                    .checked_add(size_of::<u64>() as u64)
-                    .ok_or(Error::InvalidBunSection)?;
-                if total_size > section.size_of_raw_data as u64 {
-                    return Err(Error::InvalidBunSection);
-                }
-
-                // Data starts at offset 8 (after u64 size)
-                return Ok(&section_data[8..][..data_size as usize]);
-            }
+    /// Set the Windows subsystem field in the optional header. Does not recompute the checksum.
+    pub fn set_subsystem(&mut self, subsystem: u16) -> Result<(), Error> {
+        let opt = self.get_optional_header_mut()?;
+        // SAFETY: opt points into self.data at validated offset
+        unsafe {
+            (*opt).subsystem = subsystem;
         }
-        Err(Error::BunSectionNotFound)
-    }
-
-    /// Get the length of the Bun section data
-    pub fn get_bun_section_length(&self) -> Result<u64, Error> {
-        let section_headers = self.get_section_headers()?;
-        for section in section_headers {
-            if section.name[0..8] == BUN_SECTION_NAME {
-                if (section.size_of_raw_data as usize) < size_of::<u64>() {
-                    return Err(Error::InvalidBunSection);
-                }
-
-                // Bounds check
-                if section.pointer_to_raw_data as usize >= self.data.len()
-                    || section.pointer_to_raw_data as usize + size_of::<u64>() > self.data.len()
-                {
-                    return Err(Error::InvalidBunSection);
-                }
-
-                let section_data = &self.data[section.pointer_to_raw_data as usize..];
-                return Ok(u64::from_le_bytes(
-                    section_data[0..8]
-                        .try_into()
-                        .expect("infallible: size matches"),
-                ));
-            }
-        }
-        Err(Error::BunSectionNotFound)
+        Ok(())
     }
 
     /// Write the modified PE file
@@ -777,99 +627,8 @@ impl PEFile {
         Ok(())
     }
 
-    /// Validate the PE file structure
-    pub fn validate(&self) -> Result<(), Error> {
-        // Check DOS & PE signatures
-        let dos_header = self.get_dos_header()?;
-        // SAFETY: dos_header points into self.data at validated offset
-        if unsafe { (*dos_header).e_magic } != DOS_SIGNATURE {
-            return Err(Error::InvalidDOSSignature);
-        }
-
-        let pe_header = self.get_pe_header()?;
-        // SAFETY: pe_header points into self.data at validated offset
-        if unsafe { (*pe_header).signature } != PE_SIGNATURE {
-            return Err(Error::InvalidPESignature);
-        }
-
-        // Check optional header magic is 0x20B (64-bit)
-        let optional_header = self.get_optional_header()?;
-        // SAFETY: optional_header points into self.data at validated offset
-        let optional_header = unsafe { &*optional_header };
-        if optional_header.magic != OPTIONAL_HEADER_MAGIC_64 {
-            return Err(Error::UnsupportedPEFormat);
-        }
-
-        // Validate file_alignment, section_alignment sanity
-        if !is_pow2(optional_header.file_alignment) || !is_pow2(optional_header.section_alignment) {
-            return Err(Error::BadAlignment);
-        }
-        // Relational rule
-        if optional_header.section_alignment < 4096 {
-            if optional_header.file_alignment != optional_header.section_alignment {
-                return Err(Error::InvalidPEFile);
-            }
-        }
-
-        // Section headers region fits within size_of_headers and file
-        let section_headers_end =
-            self.section_headers_offset + size_of::<SectionHeader>() * self.num_sections as usize;
-        if section_headers_end > optional_header.size_of_headers as usize
-            || section_headers_end > self.data.len()
-        {
-            return Err(Error::InvalidPEFile);
-        }
-
-        // Validate each section
-        let section_headers = self.get_section_headers()?;
-        let mut max_va_end: u32 = 0;
-
-        for (i, section) in section_headers.iter().enumerate() {
-            // If size_of_raw_data > 0, validate raw data bounds
-            if section.size_of_raw_data > 0 {
-                if section.pointer_to_raw_data < optional_header.size_of_headers
-                    || (section.pointer_to_raw_data + section.size_of_raw_data) as usize
-                        > self.data.len()
-                {
-                    return Err(Error::InvalidSectionData);
-                }
-
-                // Check for overlaps with other sections using correct interval test
-                for other in &section_headers[i + 1..] {
-                    if other.size_of_raw_data > 0 {
-                        let section_start = section.pointer_to_raw_data;
-                        let section_end = section_start + section.size_of_raw_data;
-                        let other_start = other.pointer_to_raw_data;
-                        let other_end = other_start + other.size_of_raw_data;
-                        // Standard overlap test: max(start) < min(end)
-                        if section_start.max(other_start) < section_end.min(other_end) {
-                            return Err(Error::InvalidPEFile); // Section raw ranges overlap
-                        }
-                    }
-                }
-            }
-
-            // Track max virtual address end using effective virtual size
-            let vs_effective = section.virtual_size.max(section.size_of_raw_data);
-            let va_end = section.virtual_address
-                + align_up_u32(vs_effective, optional_header.section_alignment)?;
-            if va_end > max_va_end {
-                max_va_end = va_end;
-            }
-        }
-
-        // Verify size_of_image equals alignUp(max(VA + alignUp(VS, SA)), SA)
-        let expected_size_of_image = align_up_u32(max_va_end, optional_header.section_alignment)?;
-        if optional_header.size_of_image != expected_size_of_image {
-            return Err(Error::SizeOfImageMismatch);
-        }
-
-        // Security directory should be 0,0 post-change (if we modified it)
-        // (This is optional validation, not critical)
-
-        // If checksum recomputed, field should be non-zero
-        // (Unless we intentionally write zero, which is allowed)
-        Ok(())
+    pub fn len(&self) -> usize {
+        self.data.len()
     }
 }
 

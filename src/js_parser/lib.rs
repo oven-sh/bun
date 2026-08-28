@@ -5,17 +5,6 @@
 //! `StoreSlice<T>` / `StoreStr` here. A future refactor could thread a
 //! crate-wide `'bump` and rewrite these to `&'bump [T]` / `&'bump mut [T]`.
 
-// `lexer::NewLexer<J: JsonOptionsT>` projects trait associated consts into
-// eight `const bool` slots. Field
-// access on a `const J: JSONOptions` param is rejected by nightly-2025-12-10
-// ("overly complex generic constant"); assoc-const projection on a *type*
-// param works under `generic_const_exprs`. `adt_const_params` keeps
-// `JSONOptions: ConstParamTy` for value-level reification.
-#![feature(adt_const_params, generic_const_exprs)]
-#![allow(incomplete_features)]
-
-pub use bun_collections::VecExt as _VecExtReexport;
-
 pub mod error;
 pub use error::Error;
 pub use error::Result as CrateResult;
@@ -26,12 +15,12 @@ pub mod parser;
 pub use parser::*;
 pub mod lexer;
 
-pub mod fold;
+pub(crate) mod fold;
 pub mod lower;
 pub mod p;
 pub mod parse;
 pub mod react_compiler_host;
-pub mod repl_transforms;
+pub(crate) mod repl_transforms;
 pub mod scan;
 pub mod typescript;
 pub mod visit;
@@ -152,7 +141,7 @@ pub mod Macro {
     }
     impl MacroContext {
         #[inline]
-        pub fn call(
+        pub(crate) fn call(
             &mut self,
             import_record_path: &[u8],
             source_dir: &[u8],
@@ -206,7 +195,7 @@ pub mod Macro {
         /// parser calls without a borrowck conflict; the table lives in
         /// `Transpiler.options` which outlives every parse.
         #[inline]
-        pub fn get_remap(&self, path: &[u8]) -> Option<&'static MacroRemapEntry> {
+        pub(crate) fn get_remap(&self, path: &[u8]) -> Option<&'static MacroRemapEntry> {
             if self.data.is_null() {
                 return None;
             }
@@ -309,25 +298,25 @@ pub mod defines {
         const METHOD_CALL_UNDEF_SHIFT: u8 = 7;
 
         #[inline]
-        pub const fn valueless(self) -> bool {
+        pub(crate) const fn valueless(self) -> bool {
             (self.0 >> Self::VALUELESS_SHIFT) & 1 != 0
         }
         #[inline]
-        pub fn set_valueless(&mut self, v: bool) {
+        pub(crate) fn set_valueless(&mut self, v: bool) {
             self.0 =
                 (self.0 & !(1 << Self::VALUELESS_SHIFT)) | ((v as u8) << Self::VALUELESS_SHIFT);
         }
         #[inline]
-        pub const fn can_be_removed_if_unused(self) -> bool {
+        pub(crate) const fn can_be_removed_if_unused(self) -> bool {
             (self.0 >> Self::CAN_BE_REMOVED_SHIFT) & 1 != 0
         }
         #[inline]
-        pub fn set_can_be_removed_if_unused(&mut self, v: bool) {
+        pub(crate) fn set_can_be_removed_if_unused(&mut self, v: bool) {
             self.0 = (self.0 & !(1 << Self::CAN_BE_REMOVED_SHIFT))
                 | ((v as u8) << Self::CAN_BE_REMOVED_SHIFT);
         }
         #[inline]
-        pub fn call_can_be_unwrapped_if_unused(self) -> E::CallUnwrap {
+        pub(crate) fn call_can_be_unwrapped_if_unused(self) -> E::CallUnwrap {
             // 2-bit field; `E::CallUnwrap` only has discriminants 0/1/2, so
             // an explicit match keeps bit-pattern 3 sound.
             match (self.0 & Self::CALL_UNWRAP_MASK) >> Self::CALL_UNWRAP_SHIFT {
@@ -337,16 +326,16 @@ pub mod defines {
             }
         }
         #[inline]
-        pub fn set_call_can_be_unwrapped_if_unused(&mut self, v: E::CallUnwrap) {
+        pub(crate) fn set_call_can_be_unwrapped_if_unused(&mut self, v: E::CallUnwrap) {
             self.0 = (self.0 & !Self::CALL_UNWRAP_MASK)
                 | (((v as u8) & 0b11) << Self::CALL_UNWRAP_SHIFT);
         }
         #[inline]
-        pub const fn method_call_must_be_replaced_with_undefined(self) -> bool {
+        pub(crate) const fn method_call_must_be_replaced_with_undefined(self) -> bool {
             (self.0 >> Self::METHOD_CALL_UNDEF_SHIFT) & 1 != 0
         }
         #[inline]
-        pub fn set_method_call_must_be_replaced_with_undefined(&mut self, v: bool) {
+        pub(crate) fn set_method_call_must_be_replaced_with_undefined(&mut self, v: bool) {
             self.0 = (self.0 & !(1 << Self::METHOD_CALL_UNDEF_SHIFT))
                 | ((v as u8) << Self::METHOD_CALL_UNDEF_SHIFT);
         }
@@ -436,7 +425,7 @@ pub mod defines {
         }
 
         #[inline]
-        pub fn original_name(&self) -> Option<&[u8]> {
+        pub(crate) fn original_name(&self) -> Option<&[u8]> {
             match &self.original_name {
                 Some(name) if !name.is_empty() => Some(name.as_ref()),
                 _ => None,
@@ -445,20 +434,20 @@ pub mod defines {
 
         /// True if accessing this value is known to not have any side effects.
         #[inline]
-        pub fn can_be_removed_if_unused(&self) -> bool {
+        pub(crate) fn can_be_removed_if_unused(&self) -> bool {
             self.flags.can_be_removed_if_unused()
         }
         /// True if a call to this value is known to not have any side effects.
         #[inline]
-        pub fn call_can_be_unwrapped_if_unused(&self) -> E::CallUnwrap {
+        pub(crate) fn call_can_be_unwrapped_if_unused(&self) -> E::CallUnwrap {
             self.flags.call_can_be_unwrapped_if_unused()
         }
         #[inline]
-        pub fn method_call_must_be_replaced_with_undefined(&self) -> bool {
+        pub(crate) fn method_call_must_be_replaced_with_undefined(&self) -> bool {
             self.flags.method_call_must_be_replaced_with_undefined()
         }
         #[inline]
-        pub fn valueless(&self) -> bool {
+        pub(crate) fn valueless(&self) -> bool {
             self.flags.valueless()
         }
 
@@ -482,7 +471,7 @@ pub mod defines {
             }
         }
 
-        pub fn merge(a: &DefineData, b: DefineData) -> DefineData {
+        pub(crate) fn merge(a: &DefineData, b: DefineData) -> DefineData {
             DefineData {
                 value: b.value,
                 flags: Flags::new(
@@ -507,7 +496,7 @@ pub mod defines {
     }
 
     impl Define {
-        pub fn for_identifier(&self, name: &[u8]) -> Option<&IdentifierDefine> {
+        pub(crate) fn for_identifier(&self, name: &[u8]) -> Option<&IdentifierDefine> {
             if let Some(data) = self.identifiers.get(name) {
                 return Some(data);
             }
@@ -533,15 +522,13 @@ pub mod defines {
             if let Some(last_dot) = strings::last_index_of_char(key, b'.') {
                 let tail = &key[last_dot + 1..key.len()];
                 let remainder = &key[0..last_dot];
-                let count = remainder.iter().filter(|&&b| b == b'.').count() + 1;
+                let count = strings::count_char(remainder, b'.') + 1;
                 let mut parts: Vec<Box<[u8]>> = Vec::with_capacity(count + 1);
-                for split in remainder.split(|b| *b == b'.') {
+                for split in strings::split(remainder, b".") {
                     parts.push(Box::from(split));
                 }
                 parts.push(Box::from(tail));
 
-                let mut initial_values: &[DotDefine] = &[];
-                // Note: reshaped for borrowck — getOrPut split into get/insert.
                 if let Some(existing) = self.dots.get_mut(tail) {
                     for part in existing.iter_mut() {
                         if are_parts_equal(&part.parts, &parts) {
@@ -549,15 +536,12 @@ pub mod defines {
                             return Ok(());
                         }
                     }
-                    initial_values = existing.as_slice();
+                    existing.push(DotDefine { data: value, parts });
+                    return Ok(());
                 }
 
-                let mut list: Vec<DotDefine> = Vec::with_capacity(initial_values.len() + 1);
-                if !initial_values.is_empty() {
-                    list.extend_from_slice(initial_values);
-                }
-                list.push(DotDefine { data: value, parts });
-                self.dots.put_assume_capacity(tail, list);
+                self.dots
+                    .put_assume_capacity(tail, vec![DotDefine { data: value, parts }]);
             } else {
                 // e.g. IS_BROWSER
                 self.identifiers.put_assume_capacity(key, value);
@@ -586,7 +570,6 @@ pub use defines::{Define, DefineData};
 // (it depends on the printer's name-buffer and reserved-names tables).
 pub mod renamer {
     use bun_ast::SlotCounts;
-    use bun_ast::base::Ref;
     use bun_ast::scope::Scope;
     use bun_ast::symbol::{INVALID_NESTED_SCOPE_SLOT, SlotNamespace, Symbol};
     use bun_collections::VecExt;
@@ -635,7 +618,7 @@ pub mod renamer {
         slot_counts
     }
 
-    pub(crate) fn assign_nested_scope_slots_helper(
+    fn assign_nested_scope_slots_helper(
         sorted_members: &mut Vec<u32>,
         scope: &Scope,
         symbols: &mut [Symbol],
@@ -695,31 +678,6 @@ pub mod renamer {
         }
 
         slot_counts
-    }
-
-    #[derive(Copy, Clone)]
-    pub struct StableSymbolCount {
-        pub stable_source_index: u32,
-        pub ref_: Ref,
-        pub count: u32,
-    }
-
-    impl StableSymbolCount {
-        pub fn less_than(i: &StableSymbolCount, j: &StableSymbolCount) -> bool {
-            if i.count > j.count {
-                return true;
-            }
-            if i.count < j.count {
-                return false;
-            }
-            if i.stable_source_index < j.stable_source_index {
-                return true;
-            }
-            if i.stable_source_index > j.stable_source_index {
-                return false;
-            }
-            i.ref_.inner_index() < j.ref_.inner_index()
-        }
     }
 
     // The remaining renamer types are only consumed by the printer and bundler

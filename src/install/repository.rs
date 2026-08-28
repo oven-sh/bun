@@ -13,6 +13,7 @@ use bun_semver::string::Buf as StringBuf;
 use crate::dependency as Dependency;
 use crate::hosted_git_info;
 use crate::install::{self as Install, ExtractData, PackageManager};
+use crate::resolution::fmt_store_url;
 
 // Thread-local scratch buffers. Callers return slices that outlive the access
 // (`try_ssh`/`try_https` hand a slice straight to `download`). `thread_local!`
@@ -112,7 +113,7 @@ struct SloppyGlobalGitConfig {
 static SLOPPY_HOLDER: OnceLock<SloppyGlobalGitConfig> = OnceLock::new();
 
 impl SloppyGlobalGitConfig {
-    pub(crate) fn get() -> SloppyGlobalGitConfig {
+    fn get() -> SloppyGlobalGitConfig {
         *SLOPPY_HOLDER.get_or_init(Self::load_and_parse)
     }
 
@@ -237,8 +238,7 @@ pub(crate) struct SharedEnv {
 // Lazy-init on the install main thread, then `&'static`-read from worker
 // threads. RacyCell — the install enqueue path is single-threaded at the
 // write point.
-pub(crate) static SHARED_ENV: bun_core::RacyCell<SharedEnv> =
-    bun_core::RacyCell::new(SharedEnv { env: None });
+static SHARED_ENV: bun_core::RacyCell<SharedEnv> = bun_core::RacyCell::new(SharedEnv { env: None });
 
 impl SharedEnv {
     pub(crate) fn get(other: &mut bun_dotenv::Loader) -> &'static bun_dotenv::Map {
@@ -293,7 +293,7 @@ bun_core::comptime_string_map! {
 }
 
 #[inline]
-pub(crate) fn host_tld(host: &[u8]) -> Option<&'static [u8]> {
+fn host_tld(host: &[u8]) -> Option<&'static [u8]> {
     HOST_TLDS.get(host).copied()
 }
 
@@ -405,7 +405,6 @@ fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
         let term = match result.term {
             bun_spawn::Term::Exited(code) => format!("exit code {code}"),
             bun_spawn::Term::Signal(sig) => format!("signal {sig}"),
-            bun_spawn::Term::Stopped(sig) => format!("stopped (signal {sig})"),
             bun_spawn::Term::Unknown(_) => "unknown status".to_string(),
         };
         Output::err_generic("{} failed with {}", (BStr::new(argv[0]), term.as_str()));
@@ -420,6 +419,77 @@ fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
     }
 
     Err(crate::Error::InstallFailed)
+}
+
+/// A cache folder is built under a temporary sibling name and renamed onto `folder_name` once complete.
+struct CacheStaging {
+    cache_dir: bun_sys::Fd,
+    tmp_name_buf: [u8; 64],
+    tmp_name_len: usize,
+}
+
+impl CacheStaging {
+    fn new(cache_dir: bun_sys::Fd) -> Result<Self, Error> {
+        let mut tmp_name_buf = [0u8; 64];
+        let tmp_name_len =
+            Path::fs::FileSystem::tmpname(b"tmp", &mut tmp_name_buf, bun_core::fast_random())
+                .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?
+                .len();
+        Ok(Self {
+            cache_dir,
+            tmp_name_buf,
+            tmp_name_len,
+        })
+    }
+
+    fn tmp_name(&self) -> &[u8] {
+        &self.tmp_name_buf[..self.tmp_name_len]
+    }
+
+    fn tmp_path(&self) -> &'static [u8] {
+        Path::resolve_path::join_abs_string::<Path::platform::Auto>(
+            &PackageManager::get().cache_directory_path,
+            &[self.tmp_name()],
+        )
+    }
+
+    fn discard(&self) {
+        let _ = bun_sys::Dir::borrow(&self.cache_dir).delete_tree(self.tmp_name());
+    }
+
+    fn publish(
+        self,
+        log: &mut bun_ast::Log,
+        name: &[u8],
+        folder_name: &[u8],
+    ) -> Result<bun_sys::Dir, Error> {
+        let renamed = bun_sys::renameat_concurrently_a(
+            self.cache_dir,
+            self.tmp_name(),
+            self.cache_dir,
+            folder_name,
+            bun_sys::RenameatConcurrentlyOptions {
+                move_fallback: false,
+            },
+        );
+        // After an exchange the temporary name holds the folder that was replaced.
+        self.discard();
+        if let Err(err) = renamed {
+            log.add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "moving \"{}\" to cache dir failed: {}",
+                    BStr::new(name),
+                    err
+                ),
+            );
+            return Err(crate::Error::InstallFailed);
+        }
+        bun_sys::Dir::borrow(&self.cache_dir)
+            .open_at(folder_name)
+            .map_err(Error::from)
+    }
 }
 
 impl RepositoryExt for Repository {
@@ -449,30 +519,23 @@ impl RepositoryExt for Repository {
         if remain.starts_with(b"github:") {
             remain = &remain[b"github:".len()..];
         }
-        let mut hash: usize = 0;
-        let mut slash: usize = 0;
-        for (i, &c) in remain.iter().enumerate() {
-            match c {
-                b'/' => slash = i,
-                b'#' => hash = i,
-                _ => {}
-            }
-        }
-
-        let repo = if hash == 0 {
-            &remain[slash + 1..]
-        } else {
-            &remain[slash + 1..hash]
+        let (before_hash, committish) = match strings::last_index_of_char(remain, b'#') {
+            Some(hash) => (&remain[..hash], Some(&remain[hash + 1..])),
+            None => (remain, None),
+        };
+        let (owner, repo) = match strings::last_index_of_char(before_hash, b'/') {
+            Some(slash) => (&before_hash[..slash], &before_hash[slash + 1..]),
+            None => (&remain[..0], before_hash),
         };
 
         let mut result = Repository {
-            owner: buf.append(&remain[..slash])?,
+            owner: buf.append(owner)?,
             repo: buf.append(repo)?,
             ..Default::default()
         };
 
-        if hash != 0 {
-            result.committish = buf.append(&remain[hash + 1..])?;
+        if let Some(committish) = committish {
+            result.committish = buf.append(committish)?;
         }
 
         Ok(result)
@@ -561,6 +624,10 @@ impl RepositoryExt for Repository {
             return Some(url);
         }
 
+        if url.len() + b"ssh://git@".len() + b".org".len() > ssh_path_buf.len() {
+            return None;
+        }
+
         if url.starts_with(b"ssh://") {
             // TODO(markovejnovic): This is a stop-gap. One of the problems with the implementation
             // here is that we should integrate hosted_git_info more thoroughly into the codebase
@@ -582,6 +649,9 @@ impl RepositoryExt for Repository {
 
             // Copy corrected URL to thread-local buffer
             let corrected_str = corrected.url_slice();
+            if corrected_str.len() > ssh_path_buf.len() {
+                return Some(url);
+            }
             let result = &mut ssh_path_buf[..corrected_str.len()];
             result.copy_from_slice(corrected_str);
             return Some(&ssh_path_buf[..corrected_str.len()]);
@@ -589,6 +659,9 @@ impl RepositoryExt for Repository {
 
         if Dependency::is_scp_like_path(url) {
             const PREFIX: &[u8] = b"ssh://git@";
+            if PREFIX.len() + url.len() > ssh_path_buf.len() {
+                return None;
+            }
             ssh_path_buf[..PREFIX.len()].copy_from_slice(PREFIX);
             let rest = &mut ssh_path_buf[PREFIX.len()..];
 
@@ -597,7 +670,9 @@ impl RepositoryExt for Repository {
             if let Some(colon) = colon_index {
                 let colon = colon as usize;
                 // make sure known hosts have `.com` or `.org`
-                if let Some(tld) = host_tld(&url[..colon]) {
+                if let Some(tld) = host_tld(&url[..colon])
+                    && url.len() + tld.len() <= rest.len()
+                {
                     rest[..colon].copy_from_slice(&url[..colon]);
                     rest[colon..colon + tld.len()].copy_from_slice(tld);
                     rest[colon + tld.len()] = b'/';
@@ -628,7 +703,14 @@ impl RepositoryExt for Repository {
             return Some(url);
         }
 
+        if url.len() + b"https://".len() + b".org".len() > final_path_buf.len() {
+            return None;
+        }
+
         if url.starts_with(b"ssh://") {
+            if url.len() - b"ssh".len() + b"https".len() > final_path_buf.len() {
+                return None;
+            }
             final_path_buf[..b"https".len()].copy_from_slice(b"https");
             let tail = &url[b"ssh".len()..];
             final_path_buf[b"https".len()..b"https".len() + tail.len()].copy_from_slice(tail);
@@ -638,6 +720,9 @@ impl RepositoryExt for Repository {
 
         if Dependency::is_scp_like_path(url) {
             const PREFIX: &[u8] = b"https://";
+            if PREFIX.len() + url.len() > final_path_buf.len() {
+                return None;
+            }
             final_path_buf[..PREFIX.len()].copy_from_slice(PREFIX);
             let rest = &mut final_path_buf[PREFIX.len()..];
 
@@ -646,7 +731,9 @@ impl RepositoryExt for Repository {
             if let Some(colon) = colon_index {
                 let colon = colon as usize;
                 // make sure known hosts have `.com` or `.org`
-                if let Some(tld) = host_tld(&url[..colon]) {
+                if let Some(tld) = host_tld(&url[..colon])
+                    && url.len() + tld.len() <= rest.len()
+                {
                     rest[..colon].copy_from_slice(&url[..colon]);
                     rest[colon..colon + tld.len()].copy_from_slice(tld);
                     rest[colon + tld.len()] = b'/';
@@ -706,13 +793,20 @@ impl RepositoryExt for Repository {
                     &[folder_name.as_bytes()],
                 );
 
-                if let Err(err) = exec(env, &[b"git", b"-C", path, b"fetch", b"--quiet"]) {
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!("\"git fetch\" for \"{}\" failed", BStr::new(name)),
-                    );
-                    return Err(err);
+                // --offline: use the cached clone as is (--prefer-offline still fetches:
+                // git dependencies pin exact commits, so a stale clone would fail to find a
+                // newly referenced one rather than "resolve older")
+                if PackageManager::get().options.offline
+                    != crate::package_manager_real::options::OfflineMode::Offline
+                {
+                    if let Err(err) = exec(env, &[b"git", b"-C", path, b"fetch", b"--quiet"]) {
+                        log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!("\"git fetch\" for \"{}\" failed", BStr::new(name)),
+                        );
+                        return Err(err);
+                    }
                 }
                 Ok(dir)
             }
@@ -720,12 +814,21 @@ impl RepositoryExt for Repository {
                 if not_found.get_errno() != bun_sys::E::ENOENT {
                     return Err(not_found.into());
                 }
+                if PackageManager::get().options.offline
+                    == crate::package_manager_real::options::OfflineMode::Offline
+                {
+                    log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "--offline: git repository for \"{}\" is not in the cache",
+                            BStr::new(name)
+                        ),
+                    );
+                    return Err(crate::Error::InstallFailed);
+                }
 
-                let target = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
-                    &PackageManager::get().cache_directory_path,
-                    &[folder_name.as_bytes()],
-                );
-
+                let staging = CacheStaging::new(cache_dir)?;
                 if let Err(err) = exec(
                     env,
                     &[
@@ -736,9 +839,10 @@ impl RepositoryExt for Repository {
                         b"--quiet",
                         b"--bare",
                         url,
-                        target,
+                        staging.tmp_path(),
                     ],
                 ) {
+                    staging.discard();
                     if err == crate::Error::RepositoryNotFound || attempt > 1 {
                         log.add_error_fmt(
                             None,
@@ -749,9 +853,7 @@ impl RepositoryExt for Repository {
                     return Err(err);
                 }
 
-                bun_sys::Dir::borrow(&cache_dir)
-                    .open_dir_z(folder_name)
-                    .map_err(Into::into)
+                staging.publish(log, name, folder_name.as_bytes())
             }
         }
     }
@@ -858,92 +960,114 @@ impl RepositoryExt for Repository {
         )
         .as_bytes();
 
-        let package_dir = match bun_sys::Dir::borrow(&cache_dir)
-            .open_at(folder_name)
-            .map_err(Error::from)
-        {
-            Ok(d) => d,
-            Err(not_found) => 'brk: {
-                if not_found != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                    return Err(not_found);
-                }
-
-                let target = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
-                    &PackageManager::get().cache_directory_path,
-                    &[folder_name],
-                );
-
-                let repo_path = bun_sys::get_fd_path(
-                    repo_dir,
-                    // Per-field accessor — disjoint from `folder_name_buf`
-                    // borrow above. See `TlBufs` accessor doc.
-                    TlBufs::final_path_buf(),
-                )?;
-
-                if let Err(err) = exec(
-                    env,
-                    &[
-                        b"git",
-                        b"clone",
-                        b"-c",
-                        b"core.longpaths=true",
-                        b"--quiet",
-                        b"--no-checkout",
-                        repo_path,
-                        target,
-                    ],
-                ) {
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!("\"git clone\" for \"{}\" failed", BStr::new(name)),
-                    );
-                    return Err(err);
-                }
-
-                let folder = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
-                    &PackageManager::get().cache_directory_path,
-                    &[folder_name],
-                );
-
-                if let Err(err) = exec(
-                    env,
-                    // `is_safe_resolved_tag` above rejects a leading `-`, so
-                    // `resolved` cannot be parsed as a git option.
-                    &[b"git", b"-C", folder, b"checkout", b"--quiet", resolved],
-                ) {
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!("\"git checkout\" for \"{}\" failed", BStr::new(name)),
-                    );
-                    return Err(err);
-                }
-                let dir = bun_sys::Dir::borrow(&cache_dir)
-                    .open_at(folder_name)
-                    .map_err(Error::from)?;
-                let _ = dir.delete_tree(b".git");
-
-                if !resolved.is_empty() {
-                    'insert_tag: {
-                        let Ok(git_tag) = dir.create_file_z(
-                            bun_core::zstr!(".bun-tag"),
-                            bun_sys::CreateFlags {
-                                truncate: true,
-                                ..Default::default()
-                            },
-                        ) else {
-                            break 'insert_tag;
-                        };
-                        if git_tag.write_all(resolved).is_err() {
-                            let _ = dir.delete_file_z(bun_core::zstr!(".bun-tag"));
-                        }
-                        let _ = git_tag.close(); // close error is non-actionable
+        let package_dir = 'brk: {
+            match bun_sys::Dir::borrow(&cache_dir).open_at(folder_name) {
+                Ok(dir) => {
+                    if bun_sys::exists_at(dir.fd(), bun_core::zstr!(".bun-tag")) {
+                        break 'brk dir;
                     }
+                    dir.close();
                 }
-
-                break 'brk dir;
+                Err(err) if err.get_errno() == bun_sys::E::ENOENT => {}
+                Err(err) => return Err(err.into()),
             }
+            let repo_path = bun_sys::get_fd_path(
+                repo_dir,
+                // Per-field accessor — disjoint from `folder_name_buf`
+                // borrow above. See `TlBufs` accessor doc.
+                TlBufs::final_path_buf(),
+            )?;
+
+            let staging = CacheStaging::new(cache_dir)?;
+            if let Err(err) = exec(
+                env,
+                &[
+                    b"git",
+                    b"clone",
+                    b"-c",
+                    b"core.longpaths=true",
+                    b"--quiet",
+                    b"--no-checkout",
+                    repo_path,
+                    staging.tmp_path(),
+                ],
+            ) {
+                staging.discard();
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!("\"git clone\" for \"{}\" failed", BStr::new(name)),
+                );
+                return Err(err);
+            }
+
+            if let Err(err) = exec(
+                env,
+                // `is_safe_resolved_tag` above rejects a leading `-`, so
+                // `resolved` cannot be parsed as a git option.
+                &[
+                    b"git",
+                    b"-C",
+                    staging.tmp_path(),
+                    b"checkout",
+                    b"--quiet",
+                    resolved,
+                ],
+            ) {
+                staging.discard();
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!("\"git checkout\" for \"{}\" failed", BStr::new(name)),
+                );
+                return Err(err);
+            }
+            {
+                let dir = match bun_sys::Dir::borrow(&cache_dir).open_at(staging.tmp_name()) {
+                    Ok(dir) => dir,
+                    Err(err) => {
+                        staging.discard();
+                        return Err(err.into());
+                    }
+                };
+                let _ = dir.delete_tree(b".git");
+                // Unlinks a `node_modules` link only; directories are kept (bundleDependencies).
+                let _ = dir.delete_file_z(bun_core::zstr!("node_modules"));
+
+                // `.bun-tag` is the cache-hit marker, so anything the repository checked in under that name is replaced.
+                let _ = dir.delete_tree(b".bun-tag");
+                let tagged = bun_sys::File::openat(
+                    dir.fd(),
+                    bun_core::zstr!(".bun-tag"),
+                    bun_sys::O::WRONLY
+                        | bun_sys::O::CREAT
+                        | bun_sys::O::EXCL
+                        | if cfg!(windows) {
+                            0
+                        } else {
+                            bun_sys::O::NOFOLLOW
+                        },
+                    0o664,
+                )
+                .and_then(|f| f.write_all(resolved));
+                // Windows cannot rename a directory with an open handle inside it.
+                dir.close();
+                if let Err(err) = tagged {
+                    staging.discard();
+                    log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "writing \".bun-tag\" for \"{}\" failed: {}",
+                            BStr::new(name),
+                            BStr::new(err.name())
+                        ),
+                    );
+                    return Err(crate::Error::InstallFailed);
+                }
+            }
+
+            staging.publish(log, name, folder_name)?
         };
 
         let (json_file, json_buf) =
@@ -1038,7 +1162,11 @@ impl<'a> fmt::Display for StorePathFormatter<'a> {
             writer.write_str("ssh++")?;
         }
 
-        write!(writer, "{}", self.repo.repo.fmt_store_path(self.string_buf))?;
+        write!(
+            writer,
+            "{}",
+            fmt_store_url(self.repo.repo.slice(self.string_buf))
+        )?;
 
         if !self.repo.resolved.is_empty() {
             writer.write_str("+")?; // this would be '#' but it's not valid on windows
@@ -1067,7 +1195,6 @@ pub struct Formatter<'a> {
 
 impl<'a> fmt::Display for Formatter<'a> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        #[cfg(debug_assertions)]
         debug_assert!(!self.label.is_empty());
         writer.write_str(self.label)?;
 

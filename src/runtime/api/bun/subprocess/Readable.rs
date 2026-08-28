@@ -1,31 +1,28 @@
 use core::mem;
 use core::ptr::NonNull;
 
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, event_loop::EventLoop};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, event_loop::EventLoop};
 use bun_sys::{self, Fd, FdExt as _};
 
 use crate::node::types::FdJsc as _;
 
 use crate::api::bun_spawn::stdio::Stdio;
 use crate::webcore::ReadableStream;
-use crate::webcore::blob::SizeType as BlobSizeType;
 use bun_io::max_buf::MaxBuf;
-use bun_ptr::IntrusiveRc;
+use bun_ptr::RefPtr;
 use bun_ptr::cow_slice::CowSlice;
 
 use super::subprocess_pipe_reader::PipeReader;
 use super::{StdioResult, Subprocess};
 
 // `bun.ptr.CowString` — owned/borrowed byte slice (has
-// `init_owned` / `length` / `take_slice`). Distinct from the std `Cow` alias
-// re-exported at `bun_ptr::CowString`.
+// `init_owned` / `length` / `take_slice`).
 pub type CowString = CowSlice<u8>;
 
 pub enum Readable {
     Fd(Fd),
     Memfd(Fd),
-    // LIFETIMES.tsv: SHARED → IntrusiveRc<PipeReader> (PipeReader has intrusive RefCount; detach() → deref()).
-    Pipe(IntrusiveRc<PipeReader>),
+    Pipe(RefPtr<PipeReader>),
     Inherit,
     Ignore,
     Closed,
@@ -41,38 +38,18 @@ pub enum Readable {
 impl Readable {
     /// Mutable borrow of the `Pipe` payload's `PipeReader`.
     ///
-    /// Centralises the `IntrusiveRc → &mut T` deref so the per-match-arm
-    /// `unsafe` blocks (`ref_`/`unref`/`close` and the `Subprocess` callers in
-    /// `on_close_io`/`on_process_exit`/`testing_apis`) collapse to this one
-    /// site. `IntrusiveRc` (= `RefPtr`) deliberately has no `DerefMut`; the
-    /// invariant that makes `&mut` sound here is that `Readable::Pipe` holds
-    /// the owning strong ref for the variant's lifetime (created by
-    /// `PipeReader::create`, released by `detach()`/`deref()` only after the
-    /// variant is moved out), the reader lives in its own heap allocation
-    /// disjoint from `Readable`/`Subprocess`, and access is
-    /// single-JS-mutator-thread.
+    /// `RefPtr` deliberately has no `DerefMut`; what makes `&mut` sound here
+    /// is that `Readable::Pipe` holds the owning ref for the variant's
+    /// lifetime, the reader lives in its own heap allocation disjoint from
+    /// `Readable`/`Subprocess`, and access is single-JS-mutator-thread.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub(in crate::api) fn pipe_reader_mut(pipe: &IntrusiveRc<PipeReader>) -> &mut PipeReader {
-        // SAFETY: see fn doc — owning IntrusiveRc, heap-disjoint, single-thread.
+    pub(in crate::api) fn pipe_reader_mut(pipe: &RefPtr<PipeReader>) -> &mut PipeReader {
+        // SAFETY: see fn doc — owning RefPtr, heap-disjoint, single-thread.
         unsafe { &mut *pipe.as_ptr() }
     }
 
-    /// Clear the `PipeReader`'s `process` backref and release the caller's ref.
-    /// Centralises what was the `into_raw()` +
-    /// `unsafe { PipeReader::detach(raw) }` dance so the three callers in
-    /// `finalize` / `to_js` / `to_buffered_value` stay safe — the caller's
-    /// `IntrusiveRc` encodes the "live + one ref" invariant `detach()` needs,
-    /// and `RefPtr::deref` is the safe drop. Callers pass the `IntrusiveRc`
-    /// they just moved out of `self` and drop it (a no-op — `RefPtr` has no
-    /// `Drop`) immediately after.
-    #[inline]
-    fn pipe_detach(pipe: &IntrusiveRc<PipeReader>) {
-        Self::pipe_reader_mut(pipe).process = None;
-        pipe.deref();
-    }
-
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         match self {
             Readable::Pipe(pipe) => mem::size_of::<PipeReader>() + pipe.memory_cost(),
             Readable::Buffer(buffer) => buffer.length(),
@@ -80,7 +57,7 @@ impl Readable {
         }
     }
 
-    pub fn has_pending_activity(&self) -> bool {
+    pub(crate) fn has_pending_activity(&self) -> bool {
         match self {
             Readable::Pipe(pipe) => pipe.has_pending_activity(),
             _ => false,
@@ -96,7 +73,7 @@ impl Readable {
         }
     }
 
-    pub fn unref(&mut self) {
+    pub(crate) fn unref(&mut self) {
         match self {
             Readable::Pipe(pipe) => {
                 Self::pipe_reader_mut(pipe).update_ref(false);
@@ -105,7 +82,7 @@ impl Readable {
         }
     }
 
-    pub fn init(
+    pub(crate) fn init(
         stdio: Stdio,
         event_loop: NonNull<EventLoop>,
         process: NonNull<Subprocess<'static>>,
@@ -115,20 +92,15 @@ impl Readable {
     ) -> Readable {
         super::assert_stdio_result!(result);
 
-        // Ownership of any resource inside `stdio` (notably `.memfd`) is being
-        // *transferred* into the returned `Readable`. `Stdio` has a `Drop` impl that
-        // would close the memfd, so suppress it here to avoid a double-close
-        // (EBADF) when the Readable later closes the same fd.
-        let stdio = mem::ManuallyDrop::new(stdio);
-
+        let mut stdio = stdio;
         #[cfg(unix)]
         {
-            if matches!(*stdio, Stdio::Pipe) {
+            if matches!(stdio, Stdio::Pipe) {
                 let _ = bun_sys::set_nonblocking(result.unwrap());
             }
         }
 
-        match &*stdio {
+        match &stdio {
             Stdio::Inherit => Readable::Inherit,
             Stdio::Ignore | Stdio::Ipc | Stdio::Path(..) => Readable::Ignore,
             Stdio::Fd(fd) => {
@@ -142,10 +114,12 @@ impl Readable {
                     Readable::Fd(*fd)
                 }
             }
-            Stdio::Memfd(memfd) => {
+            Stdio::Memfd(_) => {
+                // Ownership of the fd moves into the Readable; `Stdio`'s Drop would close it.
+                let memfd = stdio.take_memfd().unwrap();
                 #[cfg(unix)]
                 {
-                    Readable::Memfd(*memfd)
+                    Readable::Memfd(memfd)
                 }
                 #[cfg(not(unix))]
                 {
@@ -167,9 +141,7 @@ impl Readable {
             Stdio::Pipe => {
                 Readable::Pipe(PipeReader::create(event_loop, process, result, max_size))
             }
-            Stdio::ArrayBuffer(..) | Stdio::Blob(..) => {
-                panic!("TODO: implement ArrayBuffer & Blob support in Stdio readable")
-            }
+            Stdio::Blob(..) => panic!("TODO: implement Blob support in Stdio readable"),
             Stdio::Capture(..) => panic!("TODO: implement capture support in Stdio readable"),
             // ReadableStream is handled separately
             Stdio::ReadableStream(..) => Readable::Ignore,
@@ -177,14 +149,6 @@ impl Readable {
             Stdio::SocketFd => unreachable!("SocketFd at stdout/stderr"),
         }
     }
-
-    pub fn on_close(&mut self, _: Option<bun_sys::Error>) {
-        *self = Readable::Closed;
-    }
-
-    pub fn on_ready(&mut self, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
-
-    pub fn on_start(&mut self) {}
 
     pub fn close(&mut self) {
         match self {
@@ -236,7 +200,7 @@ impl Readable {
                         unsafe { PipeReader::deref(pipe.as_ptr()) };
                     }
                 }
-                Self::pipe_detach(&pipe);
+                Self::pipe_reader_mut(&pipe).process = None;
             }
             Readable::Buffer(_) => {
                 // Dropping the CowString (via the overwrite) frees the buffer;
@@ -258,7 +222,7 @@ impl Readable {
                     unreachable!()
                 };
                 let result = Self::pipe_reader_mut(&pipe).to_js(global);
-                Self::pipe_detach(&pipe);
+                Self::pipe_reader_mut(&pipe).process = None;
                 result
             }
             Readable::Buffer(_) => {
@@ -277,7 +241,7 @@ impl Readable {
         }
     }
 
-    pub fn to_buffered_value(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_buffered_value(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             Readable::Fd(fd) => Ok(fd.to_js(global)),
             Readable::Memfd(fd) => {
@@ -290,7 +254,7 @@ impl Readable {
                 {
                     let fd = *fd;
                     *self = Readable::Closed;
-                    jsc::ArrayBuffer::to_js_buffer_from_memfd(fd, global)
+                    bun_jsc::ArrayBuffer::to_js_buffer_from_memfd(fd, global)
                 }
             }
             Readable::Pipe(_) => {
@@ -298,8 +262,8 @@ impl Readable {
                     unreachable!()
                 };
                 let result = Self::pipe_reader_mut(&pipe).to_buffer(global);
-                Self::pipe_detach(&pipe);
-                Ok(result)
+                Self::pipe_reader_mut(&pipe).process = None;
+                result
             }
             Readable::Buffer(_) => {
                 let Readable::Buffer(mut buf) = mem::replace(self, Readable::Closed) else {
@@ -310,14 +274,7 @@ impl Readable {
                     Err(_) => return Err(global.throw_out_of_memory()),
                 };
 
-                // Ownership of the mimalloc-backed buffer transfers to JSC
-                // (freed via `MarkedArrayBuffer_deallocator`).
-                Ok(jsc::MarkedArrayBuffer {
-                    buffer: jsc::ArrayBuffer::from_owned_bytes(own, jsc::JSType::Uint8Array),
-                    owns_buffer: true,
-                    pinned: false,
-                }
-                .to_node_buffer(global))
+                JSValue::create_buffer_from_box(global, own)
             }
             _ => Ok(JSValue::UNDEFINED),
         }

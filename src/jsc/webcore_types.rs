@@ -17,14 +17,13 @@
 
 use core::cell::Cell;
 use core::ptr::NonNull;
-// (atomic refcounting now via `bun_ptr::ThreadSafeRefCount`)
 use std::rc::Rc;
 
 use bun_core::strings::AsciiStatus;
 use bun_http_types::MimeType::MimeType;
+use bun_ptr::RefPtr;
 
 use crate::JsCell;
-
 use crate::node_path::{PathLike, PathOrFileDescriptor};
 use crate::{JSGlobalObject, JSValue, JsClass};
 
@@ -120,9 +119,7 @@ pub struct Blob {
     pub reported_estimated_size: Cell<usize>,
     pub size: Cell<SizeType>,
     pub offset: Cell<SizeType>,
-    /// Intrusively-refcounted backing store. `StoreRef::clone`/`drop` map
-    /// directly to `Store::ref_()`/`Store::deref()`.
-    pub store: JsCell<Option<StoreRef>>,
+    pub store: JsCell<Option<RefPtr<Store>>>,
     pub content_type: JsCell<BlobContentType>,
     pub content_type_was_set: Cell<bool>,
     /// Cached encoding probe of `shared_view()`.
@@ -139,16 +136,19 @@ pub struct Blob {
     pub global_this: Cell<*const JSGlobalObject>,
     pub last_modified: Cell<f64>,
     /// Only used by `<input type="file">` / `File` (issue #10178).
-    pub name: bun_core::OwnedStringCell,
+    pub name: bun_ptr::JsCell<bun_core::String>,
 }
 
-// SAFETY: `Blob` holds a raw `global_this` pointer which defaults to
-// `!Send`/`!Sync`. `Blob` moves across threads under `ObjectURLRegistry`'s
-// mutex and via the work-pool read/write tasks; `global_this` is an opaque
-// JSC handle only ever dereferenced on its owning JS thread.
+// SAFETY: `global_this` is dereferenced only on its owning JS thread; blobs
+// that cross threads (object-URL registry entries, the standalone-graph
+// template) carry a null global and a `make_thread_shareable()`d `name`;
+// `store` (`RefPtr<Store>`) / `content_type` are atomically refcounted and
+// `Store::is_all_ascii` is atomic.
 unsafe impl Send for Blob {}
 // SAFETY: concurrent `&Blob` access only occurs under `ObjectURLRegistry`'s
-// mutex or on the single owning JS thread; the `Cell` fields are never raced.
+// mutex, on the standalone-graph template (never written after its `OnceLock`
+// init; dupes only bump atomic refcounts), or on the single owning JS thread;
+// the `Cell` fields are never raced with a writer.
 unsafe impl Sync for Blob {}
 
 impl Default for Blob {
@@ -165,14 +165,14 @@ impl Default for Blob {
             ref_count: bun_ptr::RawRefCount::init(0),
             global_this: Cell::new(core::ptr::null()),
             last_modified: Cell::new(0.0),
-            name: bun_core::OwnedStringCell::new(bun_core::String::dead()),
+            name: bun_ptr::JsCell::new(bun_core::String::DEAD),
         }
     }
 }
 
 // Codegen externs (build/debug/codegen/ZigGeneratedClasses.cpp `JSBlob`).
 // `*mut Blob` is opaque to C++ — only Rust dereferences it. The
-// `improper_ctypes` lint recurses through `Option<StoreRef>` → `NonNull<Store>`
+// `improper_ctypes` lint recurses through `Option<RefPtr<Store>>` → `NonNull<Store>`
 // and complains `Store` lacks `#[repr(C)]`, but `Store` never crosses FFI by
 // value, so silence it for the whole anon-const.
 #[allow(improper_ctypes)]
@@ -232,10 +232,11 @@ impl Blob {
             self.is_heap_allocated(),
             "`finalize` may only be called on a heap-allocated Blob"
         );
-        // `release` returns the raw `m_ctx` pointer without dropping;
-        // `Blob__deref` runs `deinit()` (which `drop(heap::take)`s) when the
-        // count reaches zero.
-        Blob__deref(bun_core::heap::release(self));
+        // SAFETY: `self` is the allocation `Blob::new` produced and the JS
+        // wrapper's `+1` is the count released here. `into_raw` hands the box
+        // over without dropping it; `Blob__deref` runs `deinit()` (which
+        // `drop(heap::take)`s) when the count reaches zero.
+        unsafe { Blob__deref(bun_core::heap::into_raw(self)) }
     }
 
     #[inline]
@@ -245,27 +246,20 @@ impl Blob {
     }
 
     #[inline]
-    pub fn set_not_heap_allocated(&mut self) {
-        self.ref_count = bun_ptr::RawRefCount::init(0);
-    }
-
-    #[inline]
     pub fn content_type_slice(&self) -> &[u8] {
         self.content_type.get().as_slice()
     }
 
-    /// Borrowed accessor for the `JsCell`-wrapped store. R-2: the field is
-    /// interior-mutable so host-fns can take `&self`; this projects back to the
-    /// `Option<&StoreRef>` shape every caller used pre-migration.
+    /// Borrowed accessor for the `JsCell`-wrapped store.
     #[inline]
-    pub fn store(&self) -> Option<&StoreRef> {
+    pub fn store(&self) -> Option<&RefPtr<Store>> {
         self.store.get().as_ref()
     }
 
     /// Move the store ref out without releasing it —
     /// the caller adopts the existing +1. `None` if already detached.
     #[inline]
-    pub fn take_store(&self) -> Option<StoreRef> {
+    pub fn take_store(&self) -> Option<RefPtr<Store>> {
         self.store.replace(None)
     }
 
@@ -282,10 +276,7 @@ impl Blob {
         (!p.is_null()).then(|| JSGlobalObject::opaque_ref(p))
     }
 
-    /// Accepts both
-    /// `Box<Store>` (from `Store::new` / `Store::init*`) and `StoreRef`.
-    pub fn init_with_store<S: Into<StoreRef>>(store: S, global_this: &JSGlobalObject) -> Blob {
-        let store: StoreRef = store.into();
+    pub fn init_with_store(store: RefPtr<Store>, global_this: &JSGlobalObject) -> Blob {
         let size = store.size();
         let content_type = if let store::Data::File(ref f) = store.data {
             BlobContentType::from_mime(&f.mime_type)
@@ -347,7 +338,6 @@ impl Blob {
     /// dropping `self`.
     #[inline]
     pub fn detach(&self) {
-        // `StoreRef::drop` calls `Store::deref()`.
         self.store.set(None);
     }
 
@@ -369,7 +359,6 @@ impl Blob {
     /// borrow path was removed because it dropped user-supplied parameters
     /// like multipart boundaries on a static-mime miss).
     pub fn dupe_with_content_type(&self, _include_content_type: bool) -> Blob {
-        // `Option<StoreRef>::clone` bumps the intrusive `Store::ref_count`.
         Blob {
             reported_estimated_size: Cell::new(self.reported_estimated_size.get()),
             size: Cell::new(self.size.get()),
@@ -419,28 +408,35 @@ impl Blob {
         }
     }
 
-    /// `Blob.isBunFile()` — backed by a filesystem `Store::File`.
-    #[inline]
-    pub fn is_bun_file(&self) -> bool {
-        matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
-    }
-
     /// `Blob.isS3()` — backed by an S3 `Store::S3`.
     #[inline]
     pub fn is_s3(&self) -> bool {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::S3(_)))
     }
 
-    /// `Blob.needsToReadFile()` — true when bytes must be fetched off-disk
-    /// before any in-memory consumer can see them (i.e. `Store::File`).
+    /// `Blob.needsToReadFile()` — backed by a filesystem `Store::File` (a
+    /// `Bun.file()`), so the bytes must be fetched off-disk before any
+    /// in-memory consumer can see them.
     #[inline]
     pub fn needs_to_read_file(&self) -> bool {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
     }
 
-    /// `Blob.getFileName()` — the user-visible name: `Bytes.stored_name`,
-    /// the file path, or the S3 key. `None` for fd-backed or unnamed blobs.
-    pub fn get_file_name(&self) -> Option<&[u8]> {
+    /// A usable filename: a non-empty `name`, else [`store_path`]. (`file.name`
+    /// itself may be `""`; that is not a filename.)
+    ///
+    /// [`store_path`]: Self::store_path
+    pub fn get_file_name(&self) -> Option<bun_core::Utf8Bytes<'_>> {
+        let name = self.name.get();
+        if !name.is_empty() {
+            return Some(name.to_utf8());
+        }
+        self.store_path().map(bun_core::Utf8Bytes::Borrowed)
+    }
+
+    /// `Bytes.stored_name`, the file path, or the S3 key, ignoring `name`.
+    /// `None` for fd-backed or unnamed stores.
+    pub fn store_path(&self) -> Option<&[u8]> {
         match &self.store.get().as_deref()?.data {
             store::Data::Bytes(bytes) => {
                 let n = &bytes.stored_name[..];
@@ -459,7 +455,7 @@ impl Blob {
     /// heap-allocated, also frees the heap box.
     pub fn deinit(&mut self) {
         self.detach();
-        self.name.set(bun_core::String::dead());
+        self.name.set(bun_core::String::DEAD);
 
         self.content_type.set(BlobContentType::default());
 
@@ -476,34 +472,59 @@ impl Blob {
 unsafe impl bun_ptr::ExternalSharedDescriptor for Blob {
     unsafe fn ext_ref(this: *mut Self) {
         // SAFETY: caller guarantees `this` points to a live heap-allocated Blob.
-        unsafe { Blob__ref(&mut *this) }
+        unsafe { Blob__ref(this) }
     }
     unsafe fn ext_deref(this: *mut Self) {
-        // SAFETY: caller guarantees `this` points to a live heap-allocated Blob.
-        unsafe { Blob__deref(&mut *this) }
+        // SAFETY: caller guarantees `this` points to a live heap-allocated Blob
+        // and is releasing a count it owns.
+        unsafe { Blob__deref(this) }
     }
 }
 
+/// Retain half of the refcount protocol behind `BlobImplRefDerefTraits`
+/// (`src/jsc/bindings/blob.h`) and [`bun_ptr::ExternalShared`].
+///
+/// # Safety
+/// `this` must point to a live `Blob` produced by [`Blob::new`], and the call
+/// must happen on the thread that owns it (the count is not atomic). A
+/// by-value `Blob` has a count of zero; bumping it would make a later
+/// [`Blob::deinit`] free an address that was never heap-allocated.
 #[unsafe(no_mangle)]
-pub extern "C" fn Blob__ref(self_: &mut Blob) {
-    debug_assert!(
-        self_.is_heap_allocated(),
-        "cannot ref: this Blob is not heap-allocated"
-    );
-    self_.ref_count.increment();
+unsafe extern "C" fn Blob__ref(this: *mut Blob) {
+    // SAFETY: caller contract above.
+    unsafe {
+        debug_assert!(
+            (*this).is_heap_allocated(),
+            "cannot ref: this Blob is not heap-allocated"
+        );
+        (*this).ref_count.increment();
+    }
 }
 
+/// Release half of the refcount protocol behind `BlobImplRefDerefTraits`
+/// (`src/jsc/bindings/blob.h`), [`bun_ptr::ExternalShared`] and the JS
+/// wrapper's [`Blob::finalize`].
+///
+/// # Safety
+/// `this` must point to a live `Blob` produced by [`Blob::new`], the caller
+/// must own one of its counts (which this call consumes), and the call must
+/// happen on the thread that owns it (the count is not atomic). Releasing the
+/// last count frees the `Blob`, so `this` is dangling once this returns.
 #[unsafe(no_mangle)]
-pub extern "C" fn Blob__deref(self_: &mut Blob) {
-    debug_assert!(
-        self_.is_heap_allocated(),
-        "cannot deref: this Blob is not heap-allocated"
-    );
-    if self_.ref_count.decrement() == bun_ptr::raw_ref_count::DecrementResult::ShouldDestroy {
-        // `deinit` has its own `is_heap_allocated()` guard around the
-        // `drop(heap::take)`, so re-arm so it returns true.
-        self_.ref_count.increment();
-        self_.deinit();
+unsafe extern "C" fn Blob__deref(this: *mut Blob) {
+    // SAFETY: caller contract above. `deinit` frees the allocation, so `this`
+    // is not touched after it.
+    unsafe {
+        debug_assert!(
+            (*this).is_heap_allocated(),
+            "cannot deref: this Blob is not heap-allocated"
+        );
+        if (*this).ref_count.decrement() == bun_ptr::raw_ref_count::DecrementResult::ShouldDestroy {
+            // `deinit` has its own `is_heap_allocated()` guard around the
+            // `drop(heap::take)`, so re-arm so it returns true.
+            (*this).ref_count.increment();
+            (*this).deinit();
+        }
     }
 }
 
@@ -521,17 +542,28 @@ pub mod store {
         pub data: Data,
         pub mime_type: MimeType,
         pub ref_count: bun_ptr::ThreadSafeRefCount<Store>,
-        pub is_all_ascii: Option<bool>,
+        pub is_all_ascii: IsAllAscii,
     }
 
-    impl Default for Store {
-        fn default() -> Self {
-            Self {
-                data: Data::Bytes(Bytes::default()),
-                mime_type: bun_http_types::MimeType::NONE,
-                ref_count: bun_ptr::ThreadSafeRefCount::init(),
-                is_all_ascii: None,
+    /// Tri-state "are the bytes all ASCII", learned lazily by whichever
+    /// thread's dupe reads or writes the full store first.
+    #[derive(Default)]
+    pub struct IsAllAscii(core::sync::atomic::AtomicU8);
+
+    impl IsAllAscii {
+        #[inline]
+        pub fn get(&self) -> Option<bool> {
+            match self.0.load(core::sync::atomic::Ordering::Relaxed) {
+                0 => None,
+                v => Some(v == 2),
             }
+        }
+        #[inline]
+        pub fn set(&self, is_all_ascii: bool) {
+            self.0.store(
+                1 + u8::from(is_all_ascii),
+                core::sync::atomic::Ordering::Relaxed,
+            );
         }
     }
 
@@ -693,14 +725,6 @@ pub mod store {
         }
 
         #[inline]
-        pub fn init_empty_with_name(name: Box<[u8]>) -> Bytes {
-            Bytes {
-                stored_name: name,
-                ..Default::default()
-            }
-        }
-
-        #[inline]
         pub fn allocator(&self) -> bun_alloc::StdAllocator {
             self.allocator
         }
@@ -764,7 +788,7 @@ pub mod store {
     /// A blob store referencing a file on disk.
     #[derive(Clone)]
     pub struct File {
-        pub pathlike: PathOrFileDescriptor,
+        pub pathlike: PathOrFileDescriptor<'static>,
         pub mime_type: MimeType,
         pub is_atty: Option<bool>,
         pub mode: bun_sys::Mode,
@@ -790,23 +814,12 @@ pub mod store {
 
     impl File {
         #[inline]
-        pub fn init(pathlike: PathOrFileDescriptor, mime_type: Option<MimeType>) -> File {
+        pub fn init(pathlike: PathOrFileDescriptor<'static>, mime_type: Option<MimeType>) -> File {
             File {
                 pathlike,
                 mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
                 ..Default::default()
             }
-        }
-
-        #[inline]
-        pub fn is_seekable(&self) -> Option<bool> {
-            if let Some(s) = self.seekable {
-                return Some(s);
-            }
-            if self.mode != 0 {
-                return Some(bun_core::kind_from_mode(self.mode) == bun_core::FileKind::File);
-            }
-            None
         }
     }
 
@@ -818,9 +831,9 @@ pub mod store {
     /// I/O methods (`unlink`/`stat`/`listObjects`/`getCredentialsWithOptions`)
     /// live in `bun_runtime` because they reach the HTTP client / event loop.
     pub struct S3 {
-        pub pathlike: PathLike,
-        pub mime_type: MimeType,
-        pub credentials: Option<Rc<bun_s3_signing::S3Credentials>>,
+        pub pathlike: PathLike<'static>,
+        pub(crate) mime_type: MimeType,
+        pub(crate) credentials: Option<Rc<bun_s3_signing::S3Credentials>>,
         pub options: bun_s3_signing::MultiPartUploadOptions,
         pub acl: Option<bun_s3_signing::ACL>,
         pub storage_class: Option<bun_s3_signing::StorageClass>,
@@ -828,11 +841,6 @@ pub mod store {
     }
 
     impl S3 {
-        #[inline]
-        pub fn is_seekable(&self) -> Option<bool> {
-            Some(true)
-        }
-
         pub fn get_credentials(&self) -> &Rc<bun_s3_signing::S3Credentials> {
             debug_assert!(self.credentials.is_some());
             self.credentials.as_ref().unwrap()
@@ -863,24 +871,8 @@ pub mod store {
             path_name
         }
 
-        pub fn init_with_referenced_credentials(
-            pathlike: PathLike,
-            mime_type: Option<MimeType>,
-            credentials: Rc<bun_s3_signing::S3Credentials>,
-        ) -> S3 {
-            S3 {
-                credentials: Some(credentials),
-                pathlike,
-                mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
-                options: bun_s3_signing::MultiPartUploadOptions::default(),
-                acl: None,
-                storage_class: None,
-                request_payer: false,
-            }
-        }
-
         pub fn init(
-            pathlike: PathLike,
+            pathlike: PathLike<'static>,
             mime_type: Option<MimeType>,
             credentials: bun_s3_signing::S3Credentials,
         ) -> S3 {
@@ -905,21 +897,15 @@ pub mod store {
     // ────────────────────────────────────────────────────────────────────
 
     impl Store {
-        /// `bun.TrivialNew(@This())`.
-        #[inline]
-        pub fn new(init: Store) -> Box<Store> {
-            Box::new(init)
-        }
-
         /// Takes ownership of
         /// `bytes`. Returns a +1-ref heap `Store`.
-        pub fn init(bytes: Vec<u8>) -> StoreRef {
-            StoreRef::from(Store::new(Store {
+        pub fn init(bytes: Vec<u8>) -> RefPtr<Store> {
+            RefPtr::new(Store {
                 data: Data::Bytes(Bytes::init(bytes)),
                 mime_type: bun_http_types::MimeType::NONE,
                 ref_count: bun_ptr::ThreadSafeRefCount::init(),
-                is_all_ascii: None,
-            }))
+                is_all_ascii: IsAllAscii::default(),
+            })
         }
 
         pub fn get_path(&self) -> Option<&[u8]> {
@@ -1010,142 +996,24 @@ pub mod store {
             // `heap::alloc`) as the opaque pointer.
             unsafe { Store::deref(this) };
         }
-    }
 
-    impl Drop for Store {
-        /// `Box` handles the allocation. Every `Data` variant self-frees on
-        /// field drop: `Bytes::drop` frees its buffer + `stored_name`; the
-        /// `File.pathlike` / `S3` payloads (including an owned
-        /// `PathLike::String`, which owns its buffer via `CowSlice`) release in
-        /// `PathLike::drop`.
-        fn drop(&mut self) {}
-    }
-
-    // ────────────────────────────────────────────────────────────────────
-    // StoreRef — intrusive-refcounted handle
-    // ────────────────────────────────────────────────────────────────────
-
-    /// Owning handle to a heap `Store`, refcounted via the *intrusive*
-    /// `Store::ref_count` field.
-    ///
-    /// Not `Arc<Store>`: `Store::deref()` (reachable from `Store::external` and
-    /// other FFI callbacks) frees via `heap::take` when the intrusive count
-    /// hits zero; `Arc` would own the allocation itself, and the two refcounts
-    /// would diverge. One refcount, one deallocation path.
-    #[repr(transparent)]
-    pub struct StoreRef {
-        ptr: NonNull<Store>,
-    }
-
-    impl StoreRef {
-        /// Adopt an existing +1. Does **not** increment.
-        ///
-        /// # Safety
-        /// `ptr` must be a live `Store` allocated by `Store::new`/`Box::new`,
-        /// and the caller transfers one outstanding reference.
-        #[inline]
-        pub unsafe fn adopt(ptr: NonNull<Store>) -> Self {
-            Self { ptr }
-        }
-
-        /// Wrap a raw `*Store`, incrementing its intrusive refcount.
-        ///
-        /// # Safety
-        /// `ptr` must be a live `Store` allocated by `Store::new`/`Box::new`.
-        #[inline]
-        pub unsafe fn retained(ptr: NonNull<Store>) -> Self {
-            let this = Self { ptr };
-            // Deref impl encapsulates the `NonNull::as_ref` (caller contract
-            // discharges its liveness precondition).
-            this.ref_();
-            this
-        }
-
-        #[inline]
-        pub fn as_ptr(&self) -> *mut Store {
-            self.ptr.as_ptr()
-        }
-
-        /// Raw `NonNull<Store>` view (does not touch the refcount). For
-        /// passing the parent `Store` alongside a `&mut` into one of its
-        /// fields without materialising an aliasing `&Store`.
-        #[inline]
-        pub fn as_non_null(&self) -> NonNull<Store> {
-            self.ptr
-        }
-
-        /// Leak the held +1 and return the raw pointer. Pair with a later
-        /// `Store::deref()` (typically via `Store::external` / an FFI
-        /// deallocator).
-        #[inline]
-        pub fn into_raw(self) -> *mut Store {
-            core::mem::ManuallyDrop::new(self).ptr.as_ptr()
-        }
-
-        /// Mutable access to `data` through the shared handle. The caller
-        /// must ensure no
-        /// other `&mut` to the same `Store` is live (single-threaded JS
-        /// event-loop discipline).
+        /// Mutable access to `data` through a shared handle. The caller must
+        /// ensure no other `&mut` to the same `Store` is live (single-threaded
+        /// JS event-loop discipline).
         #[inline]
         #[allow(clippy::mut_from_ref)]
-        pub fn data_mut(&self) -> &mut Data {
+        pub fn data_mut(this: &RefPtr<Store>) -> &mut Data {
             // SAFETY: caller guarantees no other `&mut` to this `Store` is
-            // live; see doc comment.
-            unsafe { &mut (*self.as_ptr()).data }
+            // live; `as_ptr` carries the allocation's provenance.
+            unsafe { &mut (*this.as_ptr()).data }
         }
     }
-
-    impl From<Box<Store>> for StoreRef {
-        #[inline]
-        fn from(b: Box<Store>) -> Self {
-            // `Store::new` initializes `ref_count` to 1 — adopt that +1.
-            Self {
-                ptr: bun_core::heap::into_raw_nn(b),
-            }
-        }
-    }
-
-    impl Clone for StoreRef {
-        #[inline]
-        fn clone(&self) -> Self {
-            // `Deref` (below) encapsulates the NonNull access under the
-            // `StoreRef` liveness invariant.
-            (**self).ref_();
-            Self { ptr: self.ptr }
-        }
-    }
-
-    impl Drop for StoreRef {
-        #[inline]
-        fn drop(&mut self) {
-            // SAFETY: invariant — `ptr` is live and originated from
-            // `heap::alloc` (mutable provenance); `deref()` frees on last ref.
-            unsafe { Store::deref(self.ptr) };
-        }
-    }
-
-    impl core::ops::Deref for StoreRef {
-        type Target = Store;
-        #[inline]
-        fn deref(&self) -> &Store {
-            // SAFETY: invariant — `ptr` is live while any `StoreRef` exists.
-            unsafe { self.ptr.as_ref() }
-        }
-    }
-
-    impl PartialEq for StoreRef {
-        #[inline]
-        fn eq(&self, other: &Self) -> bool {
-            self.ptr == other.ptr
-        }
-    }
-    impl Eq for StoreRef {}
 
     // SAFETY: `Store`'s refcount is atomic and its payload is either
     // immutable-after-init or guarded by callers.
-    unsafe impl Send for StoreRef {}
-    // SAFETY: `Store::ref_count` is atomic and `&StoreRef` only derefs to
-    // `&Store`.
-    unsafe impl Sync for StoreRef {}
+    unsafe impl Send for Store {}
+    // SAFETY: `Store::ref_count` is atomic; `&Store` gives no unguarded
+    // interior mutation.
+    unsafe impl Sync for Store {}
 }
-pub use store::{Store, StoreRef};
+pub use store::Store;

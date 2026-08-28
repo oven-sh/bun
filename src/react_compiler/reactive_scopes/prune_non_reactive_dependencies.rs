@@ -114,7 +114,7 @@ fn is_set_optimistic_type(ty: &crate::hir::Type) -> bool {
 
 /// Prunes dependencies that are guaranteed to be non-reactive.
 /// TS: `pruneNonReactiveDependencies`
-pub fn prune_non_reactive_dependencies(func: &mut ReactiveFunction, env: &mut Environment) {
+pub(crate) fn prune_non_reactive_dependencies(func: &mut ReactiveFunction, env: &mut Environment) {
     let reactive_ids = collect_reactive_identifiers(func, env);
     let mut visitor = PruneVisitor { env };
     let mut state = reactive_ids;

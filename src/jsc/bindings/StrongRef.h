@@ -2,21 +2,24 @@
 #include <JavaScriptCore/JSCJSValue.h>
 #include <memory>
 
-extern "C" void Bun__StrongRef__delete(JSC::JSValue* _Nonnull handleSlot);
-extern "C" JSC::JSValue* Bun__StrongRef__new(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue);
-extern "C" void Bun__StrongRef__set(JSC::JSValue* _Nonnull handleSlot, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue);
-extern "C" void Bun__StrongRef__clear(JSC::JSValue* _Nonnull handleSlot);
+namespace Bun {
+// One occupied slot in a StrongRootBlock; see StrongRef.cpp.
+struct StrongRefImpl;
+}
+
+extern "C" void Bun__StrongRef__delete(Bun::StrongRefImpl* _Nonnull ref);
+extern "C" Bun::StrongRefImpl* Bun__StrongRef__new(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue);
+extern "C" void Bun__StrongRef__set(Bun::StrongRefImpl* _Nonnull ref, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue);
 
 namespace Bun {
 
 struct StrongRefDeleter {
-    // `std::unique_ptr` will never call this with a null pointer.
-    void operator()(JSC::JSValue* _Nonnull handleSlot)
+    void operator()(StrongRefImpl* _Nonnull ref)
     {
-        Bun__StrongRef__delete(handleSlot);
+        Bun__StrongRef__delete(ref);
     }
 };
 
-using StrongRef = std::unique_ptr<JSC::JSValue, StrongRefDeleter>;
+using StrongRef = std::unique_ptr<StrongRefImpl, StrongRefDeleter>;
 
 }

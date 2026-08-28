@@ -14,7 +14,12 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { EventEmitter } from "node:events";
+import { cpSync } from "node:fs";
 import http from "node:http";
+import path from "node:path";
+
+/** The @opentelemetry/api this file was installed with (no network, no auto-install). */
+const apiPackageDir = path.dirname(require.resolve("@opentelemetry/api/package.json"));
 
 const spans: any[] = [];
 Bun.otel.start({
@@ -454,6 +459,7 @@ describe("@opentelemetry/api", () => {
           console.log(JSON.stringify([before, during, spans.map(s => s.name), trace.getTracer("late").startSpan("c").isRecording()]));
         `,
       });
+      cpSync(apiPackageDir, path.join(String(dir), "node_modules", "@opentelemetry", "api"), { recursive: true });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "index.mjs"],
         env: bunEnv,
@@ -466,6 +472,42 @@ describe("@opentelemetry/api", () => {
       expect(stdout.trim()).toBe(JSON.stringify([false, true, ["b"], true]));
       expect(exitCode).toBe(0);
     }
+  });
+
+  test("two copies of @opentelemetry/api: tracers taken from either before start() record afterwards", async () => {
+    // e.g. an app and a dependency each bundling their own api (nested node_modules)
+    using dir = tempDir("otel-two-api-copies", {
+      "index.cjs": `
+        const a = require("./a/node_modules/@opentelemetry/api");
+        const b = require("./b/node_modules/@opentelemetry/api");
+        if (a === b) throw new Error("expected two copies");
+        const diagErrors = [];
+        a.diag.setLogger({ error: m => diagErrors.push(m), warn() {}, info() {}, debug() {}, verbose() {} });
+        const ta = a.trace.getTracer("a"), tb = b.trace.getTracer("b");
+        const spans = [];
+        Bun.otel.start({ exporters: [{ export: batch => spans.push(...batch) }] });
+        ta.startSpan("from-a").end();
+        tb.startSpan("from-b").end();
+        Bun.otel.forceFlush().then(() => {
+          if (diagErrors.length) console.error(diagErrors.join(" | "));
+          console.log(JSON.stringify(spans.map(s => s.name).sort()));
+        });
+      `,
+    });
+    for (const sub of ["a", "b"]) {
+      cpSync(apiPackageDir, path.join(String(dir), sub, "node_modules", "@opentelemetry", "api"), { recursive: true });
+    }
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(JSON.stringify(["from-a", "from-b"]));
+    expect(exitCode).toBe(0);
   });
 
   test("the api global is only installed when telemetry is enabled", async () => {

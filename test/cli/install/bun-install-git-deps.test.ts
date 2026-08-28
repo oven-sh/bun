@@ -6,7 +6,7 @@
 // when an http URL is needed) or tarballs built in memory.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 import { pathToFileURL } from "url";
 
@@ -624,7 +624,8 @@ test.concurrent("bun install <git url> sorts the workspace dependency by its res
 // the synchronous spawn helper, which installed the signal forwarder meant for
 // the foreground child of `bun run`: a SIGINT while clones ran was sent on to
 // one of the git processes instead of stopping the install, and concurrent
-// clones raced on the forwarder's process-wide state.
+// clones raced on the forwarder's process-wide state. On Linux the git
+// processes now carry PR_SET_PDEATHSIG, so they die with bun.
 test.concurrent.skipIf(isWindows)(
   "SIGINT during git clones stops the install and is not forwarded to git",
   async () => {
@@ -681,13 +682,28 @@ exit 1
       }
       proc.kill("SIGINT");
       await Promise.all([stdout, stderr, proc.exited]);
-      // Read the marker only once every fake git has exited. A trap that fires
-      // after bun is gone still counts.
-      const started = lineCount(running);
-      rmSync(running, { force: true });
-      while (lineCount(exited) < started) {
-        if (Date.now() > deadline) throw new Error(`${lineCount(exited)} of ${started} fake gits exited`);
-        await Bun.sleep(10);
+      // Read the marker only once every fake git is gone, so that a trap that
+      // fires after bun exited still counts.
+      const pids = readFileSync(running, "utf8").trim().split("\n").map(Number);
+      if (isLinux) {
+        // The kernel kills them with bun (PR_SET_PDEATHSIG); `running` still exists.
+        const alive = (pid: number) => {
+          try {
+            return !readFileSync(`/proc/${pid}/status`, "utf8").includes("State:\tZ");
+          } catch {
+            return false;
+          }
+        };
+        while (pids.some(alive)) {
+          if (Date.now() > deadline) throw new Error(`fake gits outlived bun: ${pids.filter(alive)}`);
+          await Bun.sleep(10);
+        }
+      } else {
+        rmSync(running, { force: true });
+        while (lineCount(exited) < pids.length) {
+          if (Date.now() > deadline) throw new Error(`${lineCount(exited)} of ${pids.length} fake gits exited`);
+          await Bun.sleep(10);
+        }
       }
       expect({ signalCode: proc.signalCode, gitGotSigint: existsSync(gotSigint) }).toEqual({
         signalCode: "SIGINT",

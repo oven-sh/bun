@@ -37,6 +37,8 @@ pub struct Task<'a> {
     pub(crate) package_manager: Option<bun_ptr::ParentRef<PackageManager, bun_ptr::Mut>>,
     /// default: `None`
     pub(crate) apply_patch_task: Option<Box<PatchTask>>,
+    /// The filesystem tail of a clone or checkout task; `callback` runs it. default: `None`
+    pub(crate) git_finalize: Option<crate::git_runner::Finalize>,
     /// INTRUSIVE — `bun.UnboundedQueue(Task, .next)`
     /// default: null
     pub(crate) next: bun_threading::Link<Task<'a>>,
@@ -70,6 +72,7 @@ pub(crate) fn uninit() -> Task<'static> {
         },
         err: None,
         apply_patch_task: None,
+        git_finalize: None,
         next: bun_threading::Link::new(),
     }
 }
@@ -412,8 +415,11 @@ impl<'a> Task<'a> {
                     };
                     this.status = Status::Success;
                 }
-                Tag::GitClone | Tag::GitCommit | Tag::GitCheckout => {
-                    unreachable!("git tasks run on the install thread (git_runner.rs)")
+                Tag::GitClone | Tag::GitCheckout => {
+                    crate::git_runner::Finalize::run(this);
+                }
+                Tag::GitCommit => {
+                    unreachable!("a commit lookup completes on the install thread (git_runner.rs)")
                 }
                 Tag::LocalTarball => {
                     // `tarball_path` and `normalize` are computed on the main thread when the

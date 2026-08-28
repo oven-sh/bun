@@ -261,7 +261,8 @@ it("child with unusable NODE_CHANNEL_FD tears down IPC without crashing", async 
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("Unable to start IPC");
+  // The Windows message names the fd. It must be the Display form, not `Fd(...)` Debug output.
+  expect(stderr).toContain(isWindows ? "Unable to start IPC pipe '921[libuv]'" : "Unable to start IPC socket");
   expect(stdout).toBe("err ERR_IPC_CHANNEL_CLOSED\nok\n");
   expect(exitCode).toBe(0);
 });

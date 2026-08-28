@@ -79,7 +79,7 @@ it("fd_fdstat_set_rights only narrows the rights of a descriptor", () => {
 });
 
 it("random_get fills only the requested window", () => {
-  const wasi = new WASI({});
+  const wasi = new WASI({ version: "preview1" });
   wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
 
   const WASI_ESUCCESS = 0;

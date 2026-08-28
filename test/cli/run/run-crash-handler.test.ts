@@ -130,6 +130,37 @@ describe("panics through panic_impl and through the std panic hook print the sam
   });
 });
 
+// `--watch` sets `auto_reload_on_crash`, and `crash_handler()` restarts the
+// process after it has printed the report. The hook used to end the process
+// without checking the flag, so a Rust panic under `--watch` stayed dead while
+// a segfault or a `panic_impl` crash restarted.
+describe.if(isPosix)("--watch restarts the process after a panic", () => {
+  test.concurrent.each(panicApproaches)("%s", async (approach, message) => {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "--watch", fixture, approach, "--debug-crash-handler-use-trace-string"],
+      env: noReportEnv,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    try {
+      // The restarted process crashes and restarts again, so stop at the first
+      // restart notice instead of waiting for the process to exit.
+      const restartNotice = "Bun is auto-restarting due to crash";
+      const decoder = new TextDecoder();
+      let stderr = "";
+      for await (const chunk of proc.stderr) {
+        stderr += decoder.decode(chunk, { stream: true });
+        if (stderr.includes(restartNotice)) break;
+      }
+
+      expect(stderr).toContain(`panic(main thread): ${message}\n`);
+      expect(stderr).toContain(restartNotice);
+    } finally {
+      proc.kill("SIGKILL");
+      await proc.exited;
+    }
+  });
+});
+
 // The one thing the panic hook does besides calling the crash handler: a panic
 // payload can be arbitrarily long (an `assert_eq!` dump), so it reports at most
 // MAX_MESSAGE_BYTES (1024) of it, cut on a char boundary (see `rust_panic_hook`

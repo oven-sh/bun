@@ -679,6 +679,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 ..Default::default()
                             },
                         );
+                        Self::finish_quoted_prop_key(self, &mut property.key, Expr::default());
                     }
 
                     self.visit_binding(property.value, duplicate_arg_check.as_deref_mut());
@@ -904,6 +905,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             ..Default::default()
                         },
                     );
+                    Self::finish_quoted_prop_key(self, key, Expr::default());
                 }
 
                 // Make it an error to use "arguments" in a class body

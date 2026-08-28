@@ -11,47 +11,15 @@ use core::ptr::NonNull;
 use bun_collections::{StringHashMap, StringSet};
 use bun_core::String as BunString;
 
-// LAYERING: `bun_jsc::RegularExpression` (Yarr FFI) lives in a higher tier.
-// The bodies are defined `#[no_mangle]` in `bun_jsc::regular_expression`;
-// declared here as `extern "Rust"` and resolved at link time.
+// LAYERING: `bun_jsc::RegExpMatcher` (Yarr FFI) lives in a higher tier. The
+// bodies are defined `#[no_mangle]` in `bun_jsc::regular_expression`; declared
+// here as `extern "Rust"` and resolved at link time.
 unsafe extern "Rust" {
-    /// Compile `pattern` with the given Yarr flag bits. `None` ⇔ the pattern
-    /// does not compile.
-    fn __bun_regex_compile_with_flags(pattern: &BunString, flags: u16) -> Option<NonNull<()>>;
-    fn __bun_regex_matches(regex: NonNull<()>, input: &BunString) -> bool;
-    fn __bun_regex_drop(regex: NonNull<()>);
-}
-
-/// Yarr flag bits. Same layout as `bun_jsc::regular_expression::Flags`, which
-/// is the layout of `JSC::Yarr::Flags`.
-pub mod regexp_flags {
-    pub const HAS_INDICES: u16 = 1 << 0;
-    pub const GLOBAL: u16 = 1 << 1;
-    pub const IGNORE_CASE: u16 = 1 << 2;
-    pub const MULTILINE: u16 = 1 << 3;
-    pub const DOT_ALL: u16 = 1 << 4;
-    pub const UNICODE: u16 = 1 << 5;
-    pub const UNICODE_SETS: u16 = 1 << 6;
-    pub const STICKY: u16 = 1 << 7;
-
-    /// Parse a JS `RegExp.prototype.flags` string. Unknown letters are
-    /// ignored. `g` and `d` do not change whether a string matches, so they
-    /// are dropped.
-    pub fn from_js_flags(flags: &[u8]) -> u16 {
-        let mut bits = 0u16;
-        for &c in flags {
-            bits |= match c {
-                b'i' => IGNORE_CASE,
-                b'm' => MULTILINE,
-                b's' => DOT_ALL,
-                b'u' => UNICODE,
-                b'v' => UNICODE_SETS,
-                b'y' => STICKY,
-                _ => 0,
-            };
-        }
-        bits
-    }
+    /// Compile a JavaScript RegExp from its `source` and `flags` strings.
+    /// `None` ⇔ the pattern or the flags do not compile.
+    fn __bun_regexp_matcher_create(pattern: &BunString, flags: &BunString) -> Option<NonNull<()>>;
+    fn __bun_regexp_matcher_matches(matcher: NonNull<()>, input: &BunString) -> bool;
+    fn __bun_regexp_matcher_destroy(matcher: NonNull<()>);
 }
 
 /// Owned, type-erased compiled JSC regex; drops through the shim.
@@ -59,24 +27,26 @@ struct CompiledRegExp(NonNull<()>);
 
 impl Drop for CompiledRegExp {
     fn drop(&mut self) {
-        // SAFETY: `self.0` was produced by `__bun_regex_compile_with_flags`;
-        // runs the JSC destructor + free.
-        unsafe { __bun_regex_drop(self.0) }
+        // SAFETY: `self.0` was produced by `__bun_regexp_matcher_create`; runs
+        // the JSC destructor + free.
+        unsafe { __bun_regexp_matcher_destroy(self.0) }
     }
 }
 
 struct CompiledRegExpCacheEntry {
-    source: Box<[u8]>,
-    flags: u16,
+    pattern: RegExpPattern,
     compiled: Option<CompiledRegExp>,
 }
 
+/// A build has at most two patterns (`include`, `exclude`). A long-lived
+/// process (`--watch`, a dev server) can see many builds with different
+/// patterns, so the cache is cleared when it grows past this.
+const COMPILED_CACHE_LIMIT: usize = 16;
+
 thread_local! {
-    /// `Yarr::RegularExpression::match` writes into the shared pattern object,
-    /// so one compiled regex must not be used from two threads at once. Each
-    /// parse worker compiles its own copy, keyed by (source, flags). A build
-    /// has at most two patterns (`include`, `exclude`), so a linear scan is
-    /// fine.
+    /// A compiled matcher holds the interpreter's scratch memory, so one
+    /// matcher must not be used from two threads at once. Each parse worker
+    /// compiles its own copy, keyed by (source, flags).
     static COMPILED: RefCell<Vec<CompiledRegExpCacheEntry>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -85,54 +55,54 @@ thread_local! {
 pub struct RegExpPattern {
     /// `RegExp.prototype.source`, UTF-8.
     pub source: Box<[u8]>,
-    /// Yarr flag bits, see [`regexp_flags`].
-    pub flags: u16,
+    /// `RegExp.prototype.flags` (`"iu"`), ASCII. Every flag keeps its
+    /// JavaScript meaning.
+    pub flags: Box<[u8]>,
 }
 
 impl RegExpPattern {
-    pub fn new(source: &[u8], flags: u16) -> Self {
+    pub fn new(source: &[u8], flags: &[u8]) -> Self {
         Self {
             source: source.into(),
-            flags,
+            flags: flags.into(),
         }
     }
 
     /// `RegExp.prototype.test(input)` with `lastIndex` 0. A pattern that does
     /// not compile never matches; callers validate the pattern up front
-    /// (`bun_jsc::RegularExpression::init`) so this does not happen in
+    /// (`bun_jsc::RegExpMatcher::validate`) so this does not happen in
     /// practice.
     pub fn matches(&self, input: &[u8]) -> bool {
         COMPILED.with(|cache| {
             let mut cache = cache.borrow_mut();
-            let index = match cache
-                .iter()
-                .position(|e| e.flags == self.flags && *e.source == *self.source)
-            {
+            let index = match cache.iter().position(|e| e.pattern == *self) {
                 Some(i) => i,
                 None => {
+                    if cache.len() >= COMPILED_CACHE_LIMIT {
+                        cache.clear();
+                    }
                     // SAFETY: link-time extern; Yarr compiles the pattern and
-                    // does not retain the `BunString`.
+                    // does not retain the `BunString`s.
                     let compiled = unsafe {
-                        __bun_regex_compile_with_flags(
+                        __bun_regexp_matcher_create(
                             &BunString::borrow_utf8(&self.source),
-                            self.flags,
+                            &BunString::borrow_utf8(&self.flags),
                         )
                     }
                     .map(CompiledRegExp);
                     cache.push(CompiledRegExpCacheEntry {
-                        source: self.source.clone(),
-                        flags: self.flags,
+                        pattern: self.clone(),
                         compiled,
                     });
                     cache.len() - 1
                 }
             };
             match &cache[index].compiled {
-                // SAFETY: `regex.0` was produced by
-                // `__bun_regex_compile_with_flags` and stays live until the
-                // cache entry drops (thread exit).
-                Some(regex) => unsafe {
-                    __bun_regex_matches(regex.0, &BunString::borrow_utf8(input))
+                // SAFETY: `matcher.0` was produced by
+                // `__bun_regexp_matcher_create` and stays live until the cache
+                // entry drops.
+                Some(matcher) => unsafe {
+                    __bun_regexp_matcher_matches(matcher.0, &BunString::borrow_utf8(input))
                 },
                 None => false,
             }
@@ -148,8 +118,8 @@ pub struct MangleCacheEntry {
     pub mangled: Option<Box<[u8]>>,
 }
 
-/// The mangle cache as it is returned from a build: the input entries in
-/// input order, then every newly generated mapping in assignment order.
+/// The mangle cache as it is returned from a build: the input entries sorted
+/// by name, then every newly generated mapping in assignment order.
 pub type MangleCache = Vec<MangleCacheEntry>;
 
 /// These names have special meaning in the language. Mangling them would

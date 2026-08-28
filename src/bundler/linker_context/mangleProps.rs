@@ -32,6 +32,7 @@ impl LinkerContext<'_> {
         let css_col = self.graph.ast.items_css();
         let flags_col = self.graph.ast.items_flags();
         let char_freq_col = self.graph.ast.items_char_freq();
+        let symbols_col = self.graph.ast.items_symbols();
 
         let mut reserved: StringHashMap<()> = StringHashMap::new();
         for keyword in bun_ast::lexer_tables::KEYWORDS.keys() {
@@ -54,7 +55,18 @@ impl LinkerContext<'_> {
         let mut roots: Vec<Ref> = Vec::new();
         for &source_index in self.graph.reachable_files.iter() {
             let id = source_index.get() as usize;
-            if source_index.is_runtime() || id >= mangled_props_col.len() || css_col[id].is_some() {
+            if source_index.is_runtime() || id >= mangled_props_col.len() {
+                continue;
+            }
+            if css_col[id].is_some() {
+                // A CSS module's class names are the keys of its JS export
+                // object. They are data, never mangled; keep generated names
+                // away from them.
+                for symbol in symbols_col[id].as_slice() {
+                    if symbol.kind == bun_ast::symbol::Kind::LocalCss {
+                        reserved.put(symbol.original_name.slice(), ())?;
+                    }
+                }
                 continue;
             }
             for name in reserved_props_col[id].keys() {

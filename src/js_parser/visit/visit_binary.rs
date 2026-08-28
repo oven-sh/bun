@@ -124,6 +124,11 @@ impl BinaryExpressionVisitor {
         let was_anonymous_named_expr = e_.right.is_anonymous_named();
         let prev_decorator_class_name = p.decorator_class_name;
 
+        // `"name" in x`: the left operand is a property name (visited above).
+        if e_.op == Op::Code::BinIn {
+            P::finish_quoted_prop_key(p, &mut e_.left, Expr::default());
+        }
+
         // Propagate name for anonymous decorated class expressions in assignments
         if e_.op == Op::Code::BinAssign && was_anonymous_named_expr {
             if let ExprData::EClass(class) = &e_.right.data {

@@ -386,7 +386,7 @@ pub use self::js_map::JSMap;
 pub use self::js_runtime_type::JSRuntimeType;
 pub use self::js_uint8_array::JSUint8Array;
 pub use self::marked_argument_buffer::MarkedArgumentBuffer;
-pub use self::regular_expression::RegularExpression;
+pub use self::regular_expression::{RegExpMatcher, RegularExpression};
 pub use self::script_execution_status::ScriptExecutionStatus;
 pub use self::source_provider::SourceProvider;
 pub use self::url_search_params::URLSearchParams;

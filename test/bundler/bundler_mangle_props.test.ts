@@ -1013,7 +1013,45 @@ describe("bundler", () => {
     run: { file: "/test.js", stdout: '[{"a":1},{"b":2},{"a":1}]' },
   });
 
-  itBundled("mangle-props/ShorthandIsKeptWhenMinifiedNamesMatch", {
+  // The property name is pinned to the name of the binding it is paired with,
+  // so the printer collapses `{ y: y }` back into the shorthand `{ y }`.
+  itBundled("mangle-props/ShorthandIsKeptWhenNamesMatch", {
+    files: {
+      "/entry.js": /* js */ `
+        export let fn = ({ xxxxx: y }) => ({ xxxxx: y });
+        export let dflt = ({ xxxxx: y = 1 }) => ({ xxxxx: y });
+        export let other = ({ zzzzz: y }) => ({ zzzzz: y });
+      `,
+    },
+    mangleProps: /x|z/,
+    mangleCache: { xxxxx: "y" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatchInlineSnapshot(`
+        "// entry.js
+        var fn = ({ y }) => ({ y });
+        var dflt = ({ y = 1 }) => ({ y });
+        var other = ({ a: y }) => ({ a: y });
+        export {
+          dflt,
+          fn,
+          other
+        };
+        "
+      `);
+    },
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        import { fn, dflt, other } from "./out.js";
+        console.log(JSON.stringify([fn({ y: 2 }), dflt({}), other({ a: 3 })]));
+      `,
+    },
+    run: { file: "/test.js", stdout: '[{"y":2},{"y":1},{"a":3}]' },
+  });
+
+  // With identifier minification the parameter and the property are renamed
+  // independently, so only the invariants are asserted: the original name is
+  // gone, no `{ a: a }` pair is printed, and the program still works.
+  itBundled("mangle-props/ShorthandWithMinifiedIdentifiers", {
     files: {
       "/entry.js": /* js */ `
         export let fn = ({ xxxxx }) => ({ xxxxx });
@@ -1025,10 +1063,6 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
       expect(code).not.toContain("xxxxx");
-      // The parameter and the property get the same one-letter name, so the
-      // shorthand is kept instead of being printed as `{ a: a }`.
-      expect(code).toMatch(/\(\{ (\w) \}\) => \(\{ \1 \}\)/);
-      expect(code).toMatch(/\(\{ (\w) = 1 \}\) => \(\{ \1 \}\)/);
       expect(code).not.toMatch(/\b(\w+): \1\b/);
     },
     runtimeFiles: {
@@ -1039,6 +1073,348 @@ describe("bundler", () => {
       `,
     },
     run: { file: "/test.js", stdout: "1 [2] [1]" },
+  });
+
+  itBundled("mangle-props/CommonJSExports", {
+    files: {
+      "/entry.js": /* js */ `
+        const lib = require("./lib.cjs");
+        const { foo_, bar_ } = require("./lib.cjs");
+        console.log(lib.foo_, lib.bar_(), foo_, bar_());
+      `,
+      "/lib.cjs": /* js */ `
+        exports.foo_ = "foo";
+        module.exports.bar_ = () => "bar";
+      `,
+    },
+    mangleProps: /_$/,
+    onAfterBundle(api) {
+      // `exports.x` and `module.exports.x` are ordinary property accesses, so
+      // CommonJS export names are mangled too, and the module keeps its
+      // `__commonJS` wrapper.
+      api.expectFile("/out.js").toMatchInlineSnapshot(`
+        "var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+
+        // lib.cjs
+        var require_lib = __commonJS(function(exports, module) {
+          exports.a = "foo";
+          module.exports.b = () => "bar";
+        });
+
+        // entry.js
+        var require_entry = __commonJS(function() {
+          var lib = require_lib();
+          var { a: foo_, b: bar_ } = require_lib();
+          console.log(lib.a, lib.b(), foo_, bar_());
+        });
+        export default require_entry();
+        "
+      `);
+    },
+    run: { stdout: "foo bar foo bar" },
+  });
+
+  itBundled("mangle-props/NonASCIIQuotedNamesQuotedOn", {
+    files: {
+      "/entry.js": /* js */ `
+        const o = { "ñame_": 1, "日本_": 2 };
+        console.log(o["ñame_"], o.ñame_, o["日本_"], o.日本_, "ñame_" in o);
+      `,
+    },
+    mangleProps: /_$/,
+    mangleQuoted: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatchInlineSnapshot(`
+        "// entry.js
+        var o = { a: 1, b: 2 };
+        console.log(o.a, o.a, o.b, o.b, "a" in o);
+        "
+      `);
+    },
+    run: { stdout: "1 1 2 2 true" },
+  });
+
+  // Without `quoted`, a non-ASCII quoted name is kept like an ASCII one while
+  // the unquoted `o.ñame_` is still mangled.
+  itBundled("mangle-props/NonASCIIQuotedNamesQuotedOff", {
+    files: {
+      "/entry.js": /* js */ `
+        const o = { "ñame_": 1, "日本_": 2 };
+        console.log(o["ñame_"], o.ñame_, o["日本_"], o.日本_, "ñame_" in o);
+      `,
+    },
+    mangleProps: /_$/,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatchInlineSnapshot(`
+        "// entry.js
+        var o = { "ñame_": 1, "日本_": 2 };
+        console.log(o["ñame_"], o.a, o["日本_"], o.b, "ñame_" in o);
+        "
+      `);
+    },
+    run: { stdout: "1 undefined 2 undefined true" },
+  });
+
+  // An inlined enum member used as a property key is a quoted name: with
+  // `quoted` it is mangled everywhere it is used as a key.
+  itBundled("mangle-props/InlinedEnumKeysQuotedOn", {
+    files: {
+      "/entry.ts": /* ts */ `
+        enum K { A = "a_" }
+        const o = { [K.A]: 1 };
+        class C { [K.A]() { return "m" } }
+        console.log(o[K.A], o.a_, new C()[K.A](), K.A in o);
+      `,
+    },
+    mangleProps: /_$/,
+    mangleQuoted: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatchInlineSnapshot(`
+        "// entry.ts
+        var o = { ["a"]: 1 };
+
+        class C {
+          ["a"]() {
+            return "m";
+          }
+        }
+        console.log(o.a, o.a, new C().a(), "a" in o);
+        "
+      `);
+    },
+    run: { stdout: "1 1 m true" },
+  });
+
+  // Without `quoted`, the inlined enum member is kept and reserved: no
+  // generated name is `b`.
+  itBundled("mangle-props/InlinedEnumKeysQuotedOff", {
+    files: {
+      "/entry.ts": /* ts */ `
+        enum K { A = "b" }
+        const o = { foo_: 1, bar_: 2, [K.A]: 3 };
+        console.log(o.foo_, o.bar_, o[K.A], o.b, Object.keys(o).join());
+      `,
+    },
+    mangleProps: /_$/,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatchInlineSnapshot(`
+        "// entry.ts
+        var o = { a: 1, c: 2, ["b" /* A */]: 3 };
+        console.log(o.a, o.c, o["b" /* A */], o.b, Object.keys(o).join());
+        "
+      `);
+    },
+    run: { stdout: "1 2 3 3 a,c,b" },
+  });
+
+  // `minifySyntax` inlines the constant into the key position, where the
+  // quoted rule applies.
+  itBundled("mangle-props/InlinedConstantKeysQuotedOn", {
+    files: {
+      "/entry.ts": /* ts */ `
+        const KEY = "k_";
+        const o = { [KEY]: 1, foo_: 2 };
+        console.log(o[KEY], o.k_, o.foo_, KEY in o);
+      `,
+    },
+    mangleProps: /_$/,
+    mangleQuoted: true,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatchInlineSnapshot(`
+        "// entry.ts
+        var o = { ["a"]: 1, b: 2 };
+        console.log(o.a, o.a, o.b, "a" in o);
+        "
+      `);
+    },
+    run: { stdout: "1 1 2 true" },
+  });
+
+  itBundled("mangle-props/JSONAndTOMLKeysAreReserved", {
+    files: {
+      "/entry.js": /* js */ `
+        import data from "./data.json";
+        import config from "./config.toml";
+        let o = { foo_: 1, bar_: 2, baz_: 3 };
+        console.log(o.foo_, o.bar_, o.baz_, JSON.stringify(data), JSON.stringify(config));
+      `,
+      "/data.json": `{ "a": 1, "b": { "c": 2 } }`,
+      "/config.toml": `d = 1\n[e]\nf = 2\n`,
+    },
+    mangleProps: /_$/,
+    onAfterBundle(api) {
+      // The keys of the imported JSON (`a`, `b`, `c`) and TOML (`d`, `e`, `f`)
+      // objects are reserved, so the generated names start at `g`.
+      api.expectFile("/out.js").toMatchInlineSnapshot(`
+        "// data.json
+        var data_default = {
+          a: 1,
+          b: { c: 2 }
+        };
+        // config.toml
+        var config_default = {
+          d: 1,
+          e: {
+            f: 2
+          }
+        };
+
+        // entry.js
+        var o = { g: 1, h: 2, i: 3 };
+        console.log(o.g, o.h, o.i, JSON.stringify(data_default), JSON.stringify(config_default));
+        "
+      `);
+    },
+    run: { stdout: '1 2 3 {"a":1,"b":{"c":2}} {"d":1,"e":{"f":2}}' },
+  });
+
+  itBundled("mangle-props/CSSModuleClassNamesAreReserved", {
+    target: "bun",
+    outdir: "/out",
+    files: {
+      "/entry.js": /* js */ `
+        import styles from "./x.module.css";
+        let o = { foo_: 1, bar_: 2, baz_: 3 };
+        console.log(o.foo_, o.bar_, o.baz_, Object.keys(styles).join());
+      `,
+      "/x.module.css": `.a { color: red }\n.b { color: blue }\n`,
+    },
+    mangleProps: /_$/,
+    onAfterBundle(api) {
+      // The CSS module exports `a` and `b`, so the generated names start at `c`.
+      const code = api.readFile("/out/entry.js");
+      expect(code).toMatch(/a: "a_[\w-]+",\n\s+b: "b_[\w-]+"/);
+      expect(code).toContain("var o = { c: 1, d: 2, e: 3 };");
+      expect(code).toContain("console.log(o.c, o.d, o.e, Object.keys(x_module_default).join());");
+    },
+    run: { stdout: "1 2 3 a,b" },
+  });
+
+  // A `define` replaces the whole `process.env.FOO_` expression before the
+  // property mangler sees it; the undefined `process.env.BAR_` is mangled.
+  itBundled("mangle-props/DefineWinsOverMangling", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(process.env.FOO_, process.env.BAR_);
+      `,
+    },
+    define: { "process.env.FOO_": '"x"' },
+    mangleProps: /_$/,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatchInlineSnapshot(`
+        "// entry.js
+        console.log("x", process.env.a);
+        "
+      `);
+    },
+    run: { stdout: "x undefined" },
+  });
+
+  // `require.resolve` is rewritten by the parser and is not a property access.
+  itBundled("mangle-props/RequireResolveIsNotMangled", {
+    files: {
+      "/entry.js": /* js */ `
+        const o = { resolve: 1 };
+        console.log(typeof require.resolve, o.resolve);
+      `,
+    },
+    target: "bun",
+    mangleProps: /^resolve$/,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("typeof __require.resolve");
+      expect(code).toContain("var o = { a: 1 };");
+      expect(code).toContain("o.a");
+    },
+    run: { stdout: "function 1" },
+  });
+
+  // `minifySyntax` turns `o["b"]` into `o.b`. The name stays unmangled (the
+  // quoted rule) and is reserved, so no generated name is `b`.
+  itBundled("mangle-props/MinifySyntaxQuotedIndexIsReserved", {
+    files: {
+      "/entry.js": /* js */ `
+        let o = { foo_: 1, bar_: 2 };
+        o["b"] = 3;
+        console.log(o["b"], o.foo_, o.bar_, JSON.stringify(o));
+      `,
+    },
+    mangleProps: /_$/,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatchInlineSnapshot(`
+        "// entry.js
+        var o = { a: 1, c: 2 };
+        o.b = 3;
+        console.log(o.b, o.a, o.c, JSON.stringify(o));
+        "
+      `);
+    },
+    run: { stdout: '3 1 2 {"a":1,"c":2,"b":3}' },
+  });
+
+  itBundled("mangle-props/LegacyDecorators", {
+    files: {
+      "/entry.ts": /* ts */ `
+        const keys: string[] = [];
+        function dec(_target: any, key: string | symbol) { keys.push(String(key)); }
+        class C {
+          @dec foo_ = 1;
+          @dec bar_() { return 2 }
+          @dec static baz_ = 3;
+          @dec get qux_() { return 4 }
+          @dec keep = 5;
+        }
+        const c = new C();
+        console.log(keys.join(), c.foo_, c.bar_(), C.baz_, c.qux_, c.keep, keys.every(k => k in c || k in C));
+      `,
+      "/tsconfig.json": /* json */ `{ "compilerOptions": { "experimentalDecorators": true } }`,
+    },
+    mangleProps: /_$/,
+    onAfterBundle(api) {
+      // The decorator receives the mangled member name.
+      const code = api.readFile("/out.js");
+      expect(code).not.toMatch(/foo_|bar_|baz_|qux_/);
+      expect(code).toContain('], C.prototype, "a", undefined);');
+      expect(code).toContain('], C.prototype, "b", null);');
+      expect(code).toContain('], C.prototype, "d", null);');
+      expect(code).toContain('], C.prototype, "keep", undefined);');
+      expect(code).toContain('], C, "c", undefined);');
+    },
+    run: { stdout: "a,b,d,keep,c 1 2 3 4 5 true" },
+  });
+
+  itBundled("mangle-props/StandardDecorators", {
+    files: {
+      "/entry.ts": /* ts */ `
+        const keys: string[] = [];
+        function dec(_value: unknown, context: { name: string | symbol }) { keys.push(String(context.name)); }
+        class C {
+          @dec foo_ = 1;
+          @dec bar_() { return 2 }
+          @dec static baz_ = 3;
+          @dec get qux_() { return 4 }
+          @dec accessor acc_ = 6;
+          @dec keep = 5;
+        }
+        const c = new C();
+        console.log(keys.join(), c.foo_, c.bar_(), C.baz_, c.qux_, c.acc_, c.keep, keys.every(k => k in c || k in C));
+      `,
+    },
+    mangleProps: /_$/,
+    onAfterBundle(api) {
+      // The decorator context receives the mangled member name.
+      const code = api.readFile("/out.js");
+      expect(code).not.toMatch(/foo_|bar_|baz_|qux_|acc_/);
+      expect(code).toContain('__decorateElement(_init, 5, "a", _dec, C);');
+      expect(code).toContain('__decorateElement(_init, 1, "b", _dec2, C);');
+      expect(code).toContain('__decorateElement(_init, 13, "c", _dec3, C);');
+      expect(code).toContain('__decorateElement(_init, 2, "d", _dec4, C);');
+      expect(code).toContain('__decorateElement(_init, 4, "e", _dec5, C, _accessor_storage0);');
+      expect(code).toContain('__decorateElement(_init, 5, "keep", _dec6, C);');
+    },
+    run: { stdout: "b,d,e,c,a,keep 1 2 3 4 6 5 true" },
   });
 });
 
@@ -1127,6 +1503,77 @@ describe.concurrent("Bun.build minify.mangleProps", () => {
     const { code, mangleCache } = await build({ mangleProps: { include: /_$/, cache: { unused_: "a" } } });
     expect(code).toContain("var o = { b: 1, c: 2, keep: 3 }");
     expect(mangleCache).toEqual({ unused_: "a", foo_: "b", bar_: "c" });
+  });
+
+  test("generated names avoid cache keys", async () => {
+    const { code, mangleCache } = await build(
+      { mangleProps: { include: /_$/, cache: { b: false, c: "zz" } } },
+      {
+        "entry.js": /* js */ `
+          let o = { foo_: 1, bar_: 2, baz_: 3 };
+          console.log(o.foo_, o.bar_, o.baz_);
+        `,
+      },
+    );
+    // `b` and `c` are cache keys and `zz` is a cache target, so none of them is generated.
+    expect(code).toContain("var o = { a: 1, d: 2, e: 3 }");
+    expect(Object.entries(mangleCache!)).toEqual([
+      ["b", false],
+      ["c", "zz"],
+      ["foo_", "a"],
+      ["bar_", "d"],
+      ["baz_", "e"],
+    ]);
+  });
+
+  test("mangleCache accepts an index-like key and lists input entries first", async () => {
+    const { code, mangleCache } = await build({ mangleProps: { include: /_$/, cache: { "0": "zero", x: false } } });
+    expect(code).toContain("var o = { a: 1, b: 2, keep: 3 }");
+    expect(mangleCache!["0"]).toBe("zero");
+    expect(Object.entries(mangleCache!)).toEqual([
+      ["0", "zero"],
+      ["x", false],
+      ["foo_", "a"],
+      ["bar_", "b"],
+    ]);
+  });
+
+  test("RegExp flags keep their JavaScript meaning", async () => {
+    const files = {
+      "entry.js": /* js */ `
+        let o = { _abc: 1, _ABC: 2, _é: 3, foo_: 4, fxo_: 5 };
+        console.log(o._abc, o._ABC, o._é, o.foo_, o.fxo_);
+      `,
+    };
+    const [ignoreCase, unicode, ignoreCaseUnicode, sticky] = await Promise.all([
+      build({ mangleProps: /^_[A-Z]+$/i }, files),
+      build({ mangleProps: /^_\p{L}+$/u }, files),
+      build({ mangleProps: /^FOO_$/iu }, files),
+      build({ mangleProps: /_$/y }, files),
+    ]);
+    expect(ignoreCase.mangleCache).toEqual({ _abc: "a", _ABC: "b" });
+    expect(ignoreCase.code).toContain("var o = { a: 1, b: 2, _é: 3, foo_: 4, fxo_: 5 }");
+    expect(unicode.mangleCache).toEqual({ _abc: "a", _ABC: "b", _é: "c" });
+    expect(unicode.code).toContain("var o = { a: 1, b: 2, c: 3, foo_: 4, fxo_: 5 }");
+    expect(ignoreCaseUnicode.mangleCache).toEqual({ foo_: "a" });
+    // A sticky pattern only matches at index 0, so `_$` never matches `foo_`.
+    expect(sticky.mangleCache).toEqual({});
+
+    // `.` only matches a newline with the `s` flag.
+    const newline = {
+      "entry.js": /* js */ `
+        let o = { "f\\no_": 1, foo_: 2 };
+        console.log(o["f\\no_"], o.foo_);
+      `,
+    };
+    const [dotAll, noDotAll] = await Promise.all([
+      build({ mangleProps: { include: /^f.o_$/s, quoted: true } }, newline),
+      build({ mangleProps: { include: /^f.o_$/, quoted: true } }, newline),
+    ]);
+    expect(dotAll.mangleCache).toEqual({ "f\no_": "a", foo_: "b" });
+    expect(dotAll.code).toContain("var o = { a: 1, b: 2 }");
+    expect(noDotAll.mangleCache).toEqual({ foo_: "a" });
+    expect(noDotAll.code).toContain('var o = { "f\\no_": 1, a: 2 }');
   });
 
   test("exclude, reserved and quoted options", async () => {
@@ -1267,7 +1714,12 @@ describe.concurrent("bun build --mangle-props", () => {
   test.each([
     [["--mangle-props=["], '--mangle-props expects a valid regular expression but received "["'],
     [["--mangle-props=(foo"], '--mangle-props expects a valid regular expression but received "(foo"'],
+    [["--mangle-props="], "--mangle-props expects a regular expression but received an empty string"],
     [["--mangle-props=_$", "--reserve-props=["], '--reserve-props expects a valid regular expression but received "["'],
+    [
+      ["--mangle-props=_$", "--reserve-props="],
+      "--reserve-props expects a regular expression but received an empty string",
+    ],
     [["--reserve-props=_"], "--reserve-props requires --mangle-props"],
     [["--mangle-quoted"], "--mangle-quoted requires --mangle-props"],
     [["--mangle-props=_$", "--no-bundle"], "--mangle-props requires bundling and cannot be combined with --no-bundle"],

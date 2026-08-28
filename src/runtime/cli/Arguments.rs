@@ -40,11 +40,22 @@ pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
     Ok(option_loader.to_api())
 }
 
-/// Exit when `source` is not a valid regular expression. Only the validity
-/// matters here: each bundler thread compiles its own copy from `source`
-/// (`RegExpPattern::matches`).
+/// Exit when `source` is empty or not a valid regular expression. Only the
+/// validity matters here: each bundler thread compiles its own copy from
+/// `source` (`RegExpPattern::matches`).
 fn validate_regex_option(flag: &[u8], source: &[u8]) {
-    if RegularExpression::validate(&bun_core::String::from_bytes(source), RegexFlags::None).is_err()
+    if source.is_empty() {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: {} expects a regular expression but received an empty string",
+            BStr::new(flag),
+        );
+        Global::exit(1);
+    }
+    if bun_jsc::RegExpMatcher::validate(
+        &bun_core::String::from_bytes(source),
+        &bun_core::String::static_(""),
+    )
+    .is_err()
     {
         bun_core::pretty_errorln!(
             "<r><red>error<r>: {} expects a valid regular expression but received {}",
@@ -529,7 +540,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--keep-names                     Preserve original function and class names when minifying"
         ),
         parse_param!(
-            "--mangle-props <STR>             Rename properties whose name matches this regex. Unsafe: see docs/bundler/minifier"
+            "--mangle-props <STR>             Rename properties whose name matches this regex. Unsafe unless only your own code uses those names"
         ),
         parse_param!(
             "--reserve-props <STR>            Do not rename properties whose name matches this regex, even if they match --mangle-props"
@@ -2114,11 +2125,12 @@ fn parse_build_command_options(
 
     if let Some(include) = args.option(b"--mangle-props") {
         validate_regex_option(b"--mangle-props", include);
-        let mut mangle_props =
-            bun_options_types::MangleProps::new(bun_options_types::RegExpPattern::new(include, 0));
+        let mut mangle_props = bun_options_types::MangleProps::new(
+            bun_options_types::RegExpPattern::new(include, b""),
+        );
         if let Some(exclude) = args.option(b"--reserve-props") {
             validate_regex_option(b"--reserve-props", exclude);
-            mangle_props.exclude = Some(bun_options_types::RegExpPattern::new(exclude, 0));
+            mangle_props.exclude = Some(bun_options_types::RegExpPattern::new(exclude, b""));
         }
         mangle_props.quoted = args.flag(b"--mangle-quoted");
         ctx.bundler_options.mangle_props = Some(mangle_props);

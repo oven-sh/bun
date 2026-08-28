@@ -47,17 +47,7 @@ impl RegularExpression {
         pattern: &BunString,
         flags: Flags,
     ) -> Result<*mut RegularExpression, RegularExpressionError> {
-        Self::init_with_flag_bits(pattern, flags as u16)
-    }
-
-    /// `flags` is a bitwise OR of [`Flags`] values (the `JSC::Yarr::Flags`
-    /// layout), e.g. `Flags::IgnoreCase as u16 | Flags::Unicode as u16`.
-    #[inline]
-    pub fn init_with_flag_bits(
-        pattern: &BunString,
-        flags: u16,
-    ) -> Result<*mut RegularExpression, RegularExpressionError> {
-        let regex = Yarr__RegularExpression__init(pattern, flags);
+        let regex = Yarr__RegularExpression__init(pattern, flags as u16);
         // `RegularExpression` is an `opaque_ffi!` ZST handle; `opaque_mut` is
         // the centralised non-null-ZST deref proof (panics on null, which
         // `Yarr__RegularExpression__init` never returns).
@@ -91,15 +81,6 @@ impl RegularExpression {
         // SAFETY: `this` is a valid live Yarr RegularExpression handle; consumed here.
         unsafe { Yarr__RegularExpression__deinit(this) }
     }
-
-    /// Compile `pattern` once to check that it is a valid regular expression,
-    /// then free it.
-    pub fn validate(pattern: &BunString, flags: Flags) -> Result<(), RegularExpressionError> {
-        let regex = Self::init(pattern, flags)?;
-        // SAFETY: `regex` is the live handle `init` just returned; consumed here.
-        unsafe { Self::destroy(regex) };
-        Ok(())
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -123,22 +104,90 @@ fn __bun_regex_compile(pattern: &BunString) -> Option<core::ptr::NonNull<()>> {
     }
 }
 
+bun_opaque::opaque_ffi! {
+    /// Opaque FFI handle for `Bun::RegExpMatcher`: a JavaScript RegExp
+    /// (source + flags string) compiled for `regexp.test(input)` without a VM.
+    /// Unlike [`RegularExpression`] it accepts every RegExp flag. One matcher
+    /// must be used by one thread at a time.
+    pub struct RegExpMatcher;
+}
+
+unsafe extern "C" {
+    safe fn Bun__RegExpMatcher__create(
+        pattern: &BunString,
+        flags: &BunString,
+    ) -> *mut RegExpMatcher;
+    safe fn Bun__RegExpMatcher__matches(this: &RegExpMatcher, input: &BunString) -> bool;
+    fn Bun__RegExpMatcher__destroy(this: *mut RegExpMatcher);
+}
+
+impl RegExpMatcher {
+    /// `flags` is spelled like `RegExp.prototype.flags` (`"iu"`). `Err` when
+    /// the flags or the pattern do not compile.
+    pub fn create(
+        pattern: &BunString,
+        flags: &BunString,
+    ) -> Result<*mut RegExpMatcher, RegularExpressionError> {
+        let matcher = Bun__RegExpMatcher__create(pattern, flags);
+        if matcher.is_null() {
+            return Err(RegularExpressionError::InvalidRegExp);
+        }
+        Ok(matcher)
+    }
+
+    /// `regexp.test(input)` with `lastIndex` 0.
+    #[inline]
+    pub fn matches(&self, input: &BunString) -> bool {
+        Bun__RegExpMatcher__matches(self, input)
+    }
+
+    /// Compile once to check that `pattern` and `flags` form a valid RegExp,
+    /// then free the matcher.
+    pub fn validate(pattern: &BunString, flags: &BunString) -> Result<(), RegularExpressionError> {
+        let matcher = Self::create(pattern, flags)?;
+        // SAFETY: `matcher` is the live handle `create` just returned; consumed here.
+        unsafe { Self::destroy(matcher) };
+        Ok(())
+    }
+
+    /// Frees the matcher. Caller must not use `this` afterwards.
+    pub unsafe fn destroy(this: *mut Self) {
+        // SAFETY: `this` is a valid live `Bun::RegExpMatcher`; consumed here.
+        unsafe { Bun__RegExpMatcher__destroy(this) }
+    }
+}
+
 /// `bun_options_types::mangle_props::RegExpPattern` compiles the
-/// `--mangle-props` patterns through this on each bundler worker thread.
+/// `--mangle-props` patterns through these on each bundler worker thread.
 /// Yarr's interpreter needs WTF's thread machinery (`ThreadSpecific` for the
 /// stack check), and `WTF::initializeMainThread` must run on the process main
-/// thread, so this does not call `crate::initialize` itself: `bun build`
+/// thread, so these do not call `crate::initialize` themselves: `bun build`
 /// initializes JSC on the main thread before it bundles with `--mangle-props`
 /// (`build_command.rs`), and `Bun.build` always runs inside a VM.
 #[unsafe(no_mangle)]
-fn __bun_regex_compile_with_flags(
+fn __bun_regexp_matcher_create(
     pattern: &BunString,
-    flags: u16,
+    flags: &BunString,
 ) -> Option<core::ptr::NonNull<()>> {
-    match RegularExpression::init_with_flag_bits(pattern, flags) {
-        Ok(r) => core::ptr::NonNull::new(r.cast()),
+    match RegExpMatcher::create(pattern, flags) {
+        Ok(m) => core::ptr::NonNull::new(m.cast()),
         Err(_) => None,
     }
+}
+
+#[unsafe(no_mangle)]
+fn __bun_regexp_matcher_matches(matcher: core::ptr::NonNull<()>, input: &BunString) -> bool {
+    // `RegExpMatcher` is an `opaque_ffi!` ZST handle; `opaque_mut` is the
+    // centralised non-null deref proof. `matcher` was produced by
+    // `__bun_regexp_matcher_create` and remains live until
+    // `__bun_regexp_matcher_destroy`.
+    RegExpMatcher::opaque_mut(matcher.as_ptr().cast()).matches(input)
+}
+
+#[unsafe(no_mangle)]
+fn __bun_regexp_matcher_destroy(matcher: core::ptr::NonNull<()>) {
+    // SAFETY: `matcher` was produced by `__bun_regexp_matcher_create`; consumed here.
+    unsafe { RegExpMatcher::destroy(matcher.as_ptr().cast()) }
 }
 
 #[unsafe(no_mangle)]

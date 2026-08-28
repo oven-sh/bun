@@ -599,6 +599,13 @@ impl<'a> Parser<'a> {
             final_expr = p.call_runtime(expr.loc, runtime_api_call, args);
         }
 
+        // The keys of a JSON/TOML object are data, never mangled. Record them
+        // so no generated property name collides with one (`data.a` must not
+        // start meaning a mangled property).
+        if p.options.mangle_props.is_some() {
+            reserve_object_keys(p, &final_expr);
+        }
+
         let ns_export_part = js_ast::Part {
             can_be_removed_if_unused: true,
             ..Default::default()
@@ -2350,3 +2357,29 @@ struct PragmaState {
 pub type MacroContext = Option<*mut c_void>;
 #[cfg(not(target_arch = "wasm32"))]
 pub type MacroContext = crate::Macro::MacroContext;
+
+/// `--mangle-props`: every string key of an object literal tree, into
+/// `reserved_props`.
+fn reserve_object_keys(p: &mut JavaScriptParser<'_>, expr: &Expr) {
+    match expr.data {
+        js_ast::ExprData::EObject(object) => {
+            for property in object.properties.slice() {
+                if let Some(key) = property.key {
+                    if let Some(mut key_str) = key.data.e_string() {
+                        let name = key_str.slice(p.arena);
+                        p.reserved_props.put(name, ()).expect("unreachable");
+                    }
+                }
+                if let Some(value) = property.value {
+                    reserve_object_keys(p, &value);
+                }
+            }
+        }
+        js_ast::ExprData::EArray(array) => {
+            for item in array.items.slice() {
+                reserve_object_keys(p, item);
+            }
+        }
+        _ => {}
+    }
+}

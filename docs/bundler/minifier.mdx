@@ -1380,10 +1380,13 @@ await Bun.write(cacheFile, JSON.stringify(result.mangleCache, null, 2));
 ### Limitations
 
 - Property mangling runs in the linker, so it requires bundling. `bun build --no-bundle --mangle-props` is an error.
-- External packages are not part of the bundle, so their own code keeps its property names. Bun still renames your accesses to their properties when the names match, including members of a namespace import (`import * as ns from "pkg"; ns.name_`).
+- External packages are not part of the bundle, so their own code keeps its property names. Bun still renames your accesses to their properties when the names match (`pkg.name_`, `const { name_ } = pkg`), so exclude or reserve those names. A member of a namespace import (`import * as ns from "pkg"; ns.name_`) is an export name and keeps its spelling.
 - Bun does not rename code inside `eval` strings and `new Function` bodies.
 - Bun renames TypeScript enum members, but the reverse mapping `E[0]` still returns the original member name, which is no longer a property of the enum.
 - Bun does not rename a property name that is computed at runtime, such as `x[key]`.
+- Imported JSON, TOML and CSS module objects keep their keys. Bun reserves those keys so no generated name collides with them, but an access such as `data.name_` is still renamed when the name matches.
+- A CommonJS module that assigns a matching name to `exports` (`exports.name_ = 1`) stays a CommonJS module in the bundle, and `exports.name_` is renamed like every other property. `import { name_ } from "./lib.cjs"` binds to the export name and does not follow the renaming, so reserve export names that you import by name.
+- With `emitDecoratorMetadata`, a `design:type` reference to a type inside a TypeScript namespace keeps the original member name.
 
 ## Combined Example
 

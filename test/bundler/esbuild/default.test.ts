@@ -5966,17 +5966,18 @@ describe.concurrent("bundler", () => {
     mangleProps: /_$/,
     external: ["xyz"],
     onAfterBundle(api) {
-      // Import and export names are never mangled. The `exports.foo_` assignment
-      // is an export too, so unlike esbuild Bun keeps its name; the property
-      // read on the external `require()` result is a plain property access.
+      // ESM import and export names are never mangled. In the CommonJS entry,
+      // `exports.foo_` and the property read on the external `require()` result
+      // are ordinary property accesses and are mangled, like esbuild does.
       const esm = api.readFile("/out/esm.js");
       expect(esm).toContain('import { bar_ } from "xyz";');
       expect(esm).toContain("var foo_ = 123;");
       expect(esm).toMatch(/export \{\s+foo_\s+\};/);
       const cjs = api.readFile("/out/cjs.js");
-      expect(cjs).toContain('var bar_ = __require("xyz").a;');
-      expect(cjs).toMatch(/export \{\s+\$foo_ as foo_\s+\};/);
-      expect(cjs).not.toContain("exports.");
+      expect(cjs).toContain("exports.a = 123;");
+      expect(cjs).toContain('var bar_ = __require("xyz").b;');
+      expect(cjs).not.toContain("foo_");
+      expect(cjs).toContain("export default require_cjs();");
     },
   });
   itBundled("default/ManglePropsImportExportBundled", {
@@ -6008,34 +6009,42 @@ describe.concurrent("bundler", () => {
     entryPoints: ["/entry-esm.js", "/entry-cjs.js"],
     mangleProps: /_$/,
     onAfterBundle(api) {
-      // Import names, export names and `exports.x` assignments are never
-      // mangled, and namespace member accesses resolve to the exports, so the
-      // ESM entry keeps working (esbuild mangles `exports.cjs_foo_` and
-      // `esm.esm_foo_` here and produces `[foo, null, null, foo]`).
+      // ESM import and export names are never mangled, and a namespace member
+      // access on an ESM module (`esm.esm_foo_`) resolves to the export itself.
+      // CommonJS `exports.x` assignments and destructuring keys are ordinary
+      // property names and are mangled. So, like esbuild, an ESM import of a
+      // CommonJS export name (`cjs_foo_`, `cjs.cjs_foo_`) and a destructured
+      // `require()` of an ESM module (`esm_foo_`) do not follow the renaming.
       const esm = api.readFile("/out/entry-esm.js");
       expect(esm).toContain("esm_foo_: () => esm_foo_");
-      expect(esm).toContain('exports.cjs_foo_ = "foo";');
+      expect(esm).toContain('exports.a = "foo";');
       expect(esm).toContain("import_cjs.cjs_foo_");
       expect(esm).toContain("cjs.cjs_foo_");
       expect(esm).toMatch(/export \{\s+bar_\s+\};/);
-      // Limitation shared with esbuild: a destructuring pattern on a
-      // `require()` result is an ordinary property binding, so its keys are
-      // mangled while the export names they read are not. The export names of
-      // this entry survive.
       const cjs = api.readFile("/out/entry-cjs.js");
       expect(cjs).toContain("esm_foo_: () => esm_foo_");
-      expect(cjs).toContain('exports.cjs_foo_ = "foo";');
-      expect(cjs).toMatch(/var \{ \w+: esm_foo_2 \} = __toCommonJS\(exports_esm\);/);
-      expect(cjs).toMatch(/var \{ \w+: cjs_foo_ \} = require_cjs\(\);/);
-      expect(cjs).toMatch(/export \{\s+\$bar_ as bar_\s+\};/);
+      expect(cjs).toContain('exports.a = "foo";');
+      expect(cjs).toContain("var { b: esm_foo_2 } = __toCommonJS(exports_esm);");
+      expect(cjs).toContain("var { a: cjs_foo_ } = require_cjs();");
+      expect(cjs).toContain("exports.c = [");
+      expect(cjs).toContain("export default require_entry_cjs();");
     },
     runtimeFiles: {
-      "/test.js": /* js */ `
+      "/test-esm.js": /* js */ `
         import { bar_ } from "./out/entry-esm.js";
         console.log(JSON.stringify(bar_));
       `,
+      "/test-cjs.js": /* js */ `
+        import entry from "./out/entry-cjs.js";
+        console.log(JSON.stringify(entry));
+      `,
     },
-    run: { file: "/test.js", stdout: '["foo","foo","foo","foo"]' },
+    run: [
+      // `esm_foo_` and `esm.esm_foo_` work; the two CommonJS reads are the limitation above.
+      { file: "/test-esm.js", stdout: '["foo",null,"foo",null]' },
+      // `cjs_foo_` follows the renaming through `require()`; the destructured ESM export does not.
+      { file: "/test-cjs.js", stdout: '{"c":[null,"foo"]}' },
+    ],
   });
   itBundled("default/ManglePropsJSXTransform", {
     // GENERATED

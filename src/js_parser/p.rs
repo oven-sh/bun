@@ -1609,6 +1609,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match &key.data {
             js_ast::ExprData::EString(s) => s.string(self.arena).expect("unreachable"),
             js_ast::ExprData::EPrivateIdentifier(private) => self.load_name_from_ref(private.ref_),
+            js_ast::ExprData::ENameOfSymbol(mangled) => self.load_name_from_ref(mangled.ref_),
             _ => b"property",
         }
     }

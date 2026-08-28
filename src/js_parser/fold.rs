@@ -381,6 +381,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     return None;
                                 }
 
+                                // `--mangle-props`: a mangled export name must be
+                                // written as a property (`exports.a = ...`), like
+                                // the `require()` consumers read it. Keep the
+                                // module CommonJS and let `e_dot` mangle the access.
+                                if p.options.mangle_props.is_some()
+                                    && (!identifier_opts.was_quoted() || p.mangles_quoted_props())
+                                    && p.is_mangled_prop(name)
+                                {
+                                    p.deoptimize_common_js_named_exports();
+                                    return None;
+                                }
+
                                 // Note: lookup is split from insertion for borrowck.
                                 let ref_ = if let Some(existing) =
                                     p.commonjs_named_exports.get(name)
@@ -605,6 +617,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if !p.is_control_flow_dead {
                                 if !p.commonjs_named_exports_deoptimized {
                                     if identifier_opts.is_delete_target() {
+                                        p.deoptimize_common_js_named_exports();
+                                        return None;
+                                    }
+
+                                    // `--mangle-props`: see the `exports` arm above.
+                                    if p.options.mangle_props.is_some()
+                                        && (!identifier_opts.was_quoted()
+                                            || p.mangles_quoted_props())
+                                        && p.is_mangled_prop(name)
+                                    {
                                         p.deoptimize_common_js_named_exports();
                                         return None;
                                     }

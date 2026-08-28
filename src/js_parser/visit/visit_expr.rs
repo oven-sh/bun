@@ -101,12 +101,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         };
 
-        // A property name written as a string. Only UTF-8 names can collide
-        // with a generated name.
         let mut s = e.data.e_string().expect("infallible: variant checked");
-        if s.is_utf16 {
-            return;
-        }
         let name: &'a [u8] = s.slice(p.arena);
         if mangle_props.quoted && !s.prefer_template && p.is_mangled_prop(name) {
             let ref_ = p.symbol_for_mangled_prop(name);
@@ -1059,10 +1054,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 let unwrapped = e_.index.unwrap_inlined();
                 if let Some(mut s) = unwrapped.data.e_string() {
-                    if !s.is_utf16 {
+                    if s.is_utf16 {
+                        // A non-ASCII name is never a define or an enum member,
+                        // so only the quoted rule applies.
+                        let target = e_.target;
+                        Self::finish_quoted_prop_key(p, &mut e_.index, target);
+                    } else {
                         let name: &'a [u8] = s.slice(p.arena);
                         let is_mangled_quoted = !s.prefer_template
                             && p.mangles_quoted_props()
+                            && !Self::keeps_export_names(p, e_.target)
                             && p.is_mangled_prop(name);
 
                         // "a['b' + '']" => "a.b"
@@ -1112,7 +1113,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     .with_is_call_target(is_call_target)
                                     // .is_template_tag = is_template_tag,
                                     .with_is_delete_target(is_delete_target)
-                                    .with_assign_target(in_.assign_target),
+                                    .with_assign_target(in_.assign_target)
+                                    .with_was_quoted(true),
                             ) {
                                 *e = rewrite;
                                 return;
@@ -1516,7 +1518,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 IdentifierOpts::default()
                     .with_is_call_target(is_call_target)
                     .with_assign_target(in_.assign_target)
-                    .with_is_delete_target(is_delete_target),
+                    .with_is_delete_target(is_delete_target)
+                    .with_was_quoted(in_.was_originally_quoted_index),
                 // .is_template_tag = p.template_tag != null,
             ) {
                 *e = _expr;
@@ -1573,17 +1576,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.is_revisit_for_substitution && !in_.was_originally_quoted_index {
             return;
         }
-        // An import namespace (`ns?.name`, which `maybe_rewrite_property_access`
-        // skips) or a macro namespace (`m.name()`, matched by `e_call`) must
-        // keep the export name.
-        if let Data::EIdentifier(id) = e_.target.data {
-            if p.import_items_for_namespace.contains_key(&id.ref_)
-                || (Self::ALLOW_MACROS && p.macro_.refs.contains_key(&id.ref_))
-            {
-                return;
-            }
-        }
-        if !p.is_mangled_prop(name) {
+        if Self::keeps_export_names(p, e_.target) || !p.is_mangled_prop(name) {
             return;
         }
 
@@ -1615,6 +1608,50 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.then_catch_chain.next_target = replacement.data;
         }
         *e = replacement;
+    }
+
+    /// `--mangle-props`: a property of `target` is an export name, not a
+    /// property the bundle owns, when `target` is an import namespace
+    /// (`ns?.name`, which `maybe_rewrite_property_access` skips) or a macro
+    /// namespace (`m.name()`, matched by `e_call`).
+    fn keeps_export_names(p: &Self, target: Expr) -> bool {
+        if let Data::EIdentifier(id) = target.data {
+            return p.import_items_for_namespace.contains_key(&id.ref_)
+                || (Self::ALLOW_MACROS && p.macro_.refs.contains_key(&id.ref_));
+        }
+        false
+    }
+
+    /// `--mangle-props`: `key` is a property name written as a string, seen
+    /// after its visit so an inlined enum member or constant is visible. With
+    /// `--mangle-quoted` a selected name becomes an `E::NameOfSymbol`;
+    /// otherwise it is recorded so no generated name collides with it.
+    /// `target` is the object the key is accessed on, if there is one.
+    pub(crate) fn finish_quoted_prop_key(p: &mut Self, key: &mut Expr, target: Expr) {
+        if p.options.mangle_props.is_none() {
+            return;
+        }
+        let unwrapped = key.unwrap_inlined();
+        let Some(mut s) = unwrapped.data.e_string() else {
+            return;
+        };
+        let name: &'a [u8] = s.slice(p.arena);
+        if !s.prefer_template
+            && p.mangles_quoted_props()
+            && !Self::keeps_export_names(p, target)
+            && p.is_mangled_prop(name)
+        {
+            let ref_ = p.symbol_for_mangled_prop(name);
+            *key = p.new_expr(
+                E::NameOfSymbol {
+                    ref_,
+                    has_property_key_comment: false,
+                },
+                unwrapped.loc,
+            );
+            return;
+        }
+        p.reserved_props.put(name, ()).expect("unreachable");
     }
 
     fn e_if(p: &mut Self, e: &mut Expr, in_: ExprIn) {
@@ -1817,16 +1854,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut has_proto = false;
         for property in e_.properties.slice_mut() {
             if property.kind != G::PropertyKind::Spread {
+                let key_ref = property
+                    .key
+                    .as_mut()
+                    .unwrap_or_else(|| panic!("Expected property key"));
                 p.visit_expr_in_out(
-                    property
-                        .key
-                        .as_mut()
-                        .unwrap_or_else(|| panic!("Expected property key")),
+                    key_ref,
                     ExprIn {
                         should_mangle_strings_as_props: true,
                         ..Default::default()
                     },
                 );
+                Self::finish_quoted_prop_key(p, key_ref, Expr::default());
                 let key = property.key.expect("infallible: prop has key");
                 // Forbid duplicate "__proto__" properties according to the specification
                 if !property.flags.contains(Flags::Property::IsComputed)

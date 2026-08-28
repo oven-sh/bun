@@ -784,11 +784,14 @@ impl JSBundleCompletionTask {
                             }
                             None => JSValue::FALSE,
                         };
-                        mangle_cache_js.put(
+                        // A property name can look like an array index ("0").
+                        if let Err(e) = mangle_cache_js.put_may_be_index(
                             global_this,
-                            bun_core::String::borrow_utf8(&entry.original),
+                            &bun_core::String::borrow_utf8(&entry.original),
                             mangled,
-                        );
+                        ) {
+                            return promise.reject(global_this, Err(e));
+                        }
                     }
                     build_output.put(global_this, b"mangleCache", mangle_cache_js);
                 }

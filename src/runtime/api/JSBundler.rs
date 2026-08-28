@@ -16,7 +16,7 @@ use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc as _};
 use bun_options_types::compile_target::CompileTarget;
-use bun_options_types::mangle_props::{is_permanently_reserved_prop, regexp_flags};
+use bun_options_types::mangle_props::is_permanently_reserved_prop;
 use bun_options_types::schema::api; // bun.schema.api
 use bun_options_types::{MangleProps, RegExpPattern};
 use bun_standalone_graph::StandaloneModuleGraph;
@@ -122,10 +122,23 @@ pub mod js_bundler {
             return Err(global_this
                 .throw_invalid_arguments(format_args!("Expected {} to be a RegExp", option)));
         };
-        let flags = match value.get_optional_slice(global_this, b"flags")? {
-            Some(flags) => regexp_flags::from_js_flags(flags.slice()),
-            None => 0,
-        };
+        let flags = value.get_optional_slice(global_this, b"flags")?;
+        let flags: &[u8] = flags.as_ref().map_or(b"", |f| f.slice());
+        // The bundler compiles the pattern again on every worker thread with
+        // the VM-less matcher; reject here what that matcher cannot compile.
+        if jsc::RegExpMatcher::validate(
+            &bun_core::String::borrow_utf8(source.slice()),
+            &bun_core::String::borrow_utf8(flags),
+        )
+        .is_err()
+        {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "Expected {} to be a valid RegExp, but /{}/{} did not compile",
+                option,
+                bstr::BStr::new(source.slice()),
+                bstr::BStr::new(flags)
+            )));
+        }
         Ok(RegExpPattern::new(source.slice(), flags))
     }
 
@@ -217,6 +230,7 @@ pub mod js_bundler {
                     jsc::JSPropertyIteratorOptions {
                         skip_empty_name: true,
                         include_value: true,
+                        own_properties_only: true,
                         ..Default::default()
                     },
                 )?;

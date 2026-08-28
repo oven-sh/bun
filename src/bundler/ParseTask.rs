@@ -974,8 +974,7 @@ pub mod parse_worker {
                 return Ok(ast);
             }
             Loader::Bytes => {
-                // A standalone executable embeds the bytes as an asset instead
-                // (served by `__bun_fetch_builtin_module`).
+                // A standalone executable embeds the bytes as an asset instead.
                 let (root, runtime_api_call): (Expr, &'static [u8]) =
                     if topts.compile_mode.is_executable() && topts.target.is_bun() {
                         let unique_key = register_embedded_asset(

@@ -366,6 +366,15 @@ fn build_archive_from_object(
                     "Failed to create zip: ArchiveFormatError"
                 )));
             }
+            // No padding on the final block: the staging flush would otherwise
+            // leave zero bytes past the EOCD, which the read side then has to
+            // hunt and truncate (and a `PK\x05\x06` signature inside the
+            // EOCD comment could fool that scan). `1` = unpadded.
+            if archive_ref.write_set_bytes_in_last_block(1) != lib::Result::Ok {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Failed to create zip: ArchiveLastBlockError"
+                )));
+            }
             // libarchive's zip writer deflates per entry when configured;
             // level 0 selects the "store" method (uncompressed entries).
             let store_only = matches!(
@@ -484,37 +493,7 @@ fn build_archive_from_object(
     }
 
     match growing_buffer.to_owned_slice() {
-        Ok(mut v) => {
-            // libarchive flushes its 10_240-byte staging block, so the tail
-            // can be zero padding beyond the real archive. Locate the End of
-            // Central Directory record by scanning backwards for its
-            // signature (`PK\x05\x06`, max comment size bounds the search)
-            // and truncate everything after it plus its own optional comment.
-            // A ZIP without a discoverable EOCD is left untouched — readers
-            // will surface the error themselves.
-            if matches!(format, Format::Zip) {
-                let sig = [0x50u8, 0x4b, 0x05, 0x06];
-                let min_start = v.len().saturating_sub(22 + 65_536);
-                let mut eocd = None;
-                let mut i = v.len().checked_sub(22);
-                while let Some(at) = i {
-                    if v[at..at + 4] == sig {
-                        eocd = Some(at);
-                        break;
-                    }
-                    if at == min_start {
-                        break;
-                    }
-                    i = at.checked_sub(1);
-                }
-                if let Some(at) = eocd {
-                    let comment_len =
-                        u16::from_le_bytes([v[at + 20], v[at + 21]]) as usize;
-                    v.truncate(at + 22 + comment_len);
-                }
-            }
-            Ok(v)
-        }
+        Ok(v) => Ok(v),
         Err(_) => {
             Err(global
                 .throw_invalid_arguments(format_args!("Failed to create tarball: OutOfMemory")))

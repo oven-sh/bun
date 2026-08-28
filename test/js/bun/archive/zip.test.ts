@@ -1,16 +1,15 @@
 import { describe, expect, test, beforeAll, afterAll } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { deflateRawSync } from "node:zlib";
+import { tempDirWithFiles } from "harness";
 
-// ─── minimal DEFLATE-entry ZIP writer (independent test fixture) ───────────
-// Produces real ZIP bytes with an independent compressor (Bun.deflateSync raw
-// streams), so the reader side of Bun.Archive is exercised against a writer
-// it did not produce.
-//
-// NOTE: STORE-method entries (method 0) currently trip a slice-safety panic
-// inside the vendored libarchive streaming zip reader; tracked as an
-// upstream hardening item (see journal). Fixtures here use method 8.
+// ─── minimal ZIP writer (independent test fixture) ─────────────────────────
+// Produces real ZIP bytes with an independent compressor (node:zlib's
+// deflateRawSync), so the reader side of Bun.Archive is exercised against a
+// writer it did not produce. `method: 0` emits STORE (uncompressed) entries,
+// which exercise the libarchive data-block EOF marker (ARCHIVE_OK with a
+// null buffer).
 
 const CRC_TABLE = (() => {
   const table = new Uint32Array(256);
@@ -30,9 +29,10 @@ function crc32(bytes: Uint8Array): number {
 
 async function buildZip(
   files: Record<string, string | Uint8Array>,
-  opts: { utf8Flag?: boolean } = {},
+  opts: { utf8Flag?: boolean; method?: 0 | 8 } = {},
 ): Promise<Uint8Array> {
   const utf8Flag = opts.utf8Flag ?? true;
+  const method = opts.method ?? 8;
   const encoder = new TextEncoder();
   const u16 = (v: number) => Uint8Array.from([v & 0xff, (v >>> 8) & 0xff]);
   const u32 = (v: number) =>
@@ -62,13 +62,14 @@ async function buildZip(
     const nameBytes = encoder.encode(name);
     const raw = typeof value === "string" ? encoder.encode(value) : value;
     const crc = crc32(raw);
-    const compressed = new Uint8Array(Bun.deflateSync(raw, { raw: true }));
+    // ZIP method 8 requires raw DEFLATE data (no zlib wrapper).
+    const compressed = method === 8 ? new Uint8Array(deflateRawSync(raw)) : raw;
     const offset = total;
 
     push(u32(0x04034b50));
     push(u16(20));
     push(u16(utf8Flag ? 0x0800 : 0));
-    push(u16(8)); // method: deflate
+    push(u16(method)); // method: 8 = deflate, 0 = store
     push(u16(0));
     push(u16(0x21));
     push(u32(crc));
@@ -94,7 +95,7 @@ async function buildZip(
     push(u16(VERSION_MADE_BY));
     push(u16(20));
     push(u16(utf8Flag ? 0x0800 : 0));
-    push(u16(8));
+    push(u16(method));
     push(u16(0));
     push(u16(0x21));
     push(u32(e.crc));
@@ -134,7 +135,7 @@ async function buildZip(
 let workdir: string;
 
 beforeAll(() => {
-  workdir = mkdtempSync(join(tmpdir(), "bun-archive-zip-"));
+  workdir = tempDirWithFiles("bun-archive-zip", {});
 });
 
 afterAll(() => {
@@ -177,7 +178,7 @@ describe("Bun.Archive zip write", () => {
   });
 
   test("level 0 stores entries uncompressed", async () => {
-    const repeated = "abcdefgh".repeat(64); // 512 bytes, highly compressible
+    const repeated = Buffer.alloc(512, "abcdefgh").toString(); // highly compressible
     await Bun.Archive.write(
       join(workdir, "stored.zip"),
       { "stored.txt": repeated },
@@ -247,6 +248,11 @@ describe("Bun.Archive zip write", () => {
       }
     }
     expect(found).toBe(true);
+    // Regression: the writer used to leave zero padding past the EOCD
+    // (removed by a post-hoc scan); the final block is now written
+    // unpadded, so an empty zip is exactly the 22-byte EOCD record.
+    expect(bytes.length).toBe(22);
+    expect(Array.from(bytes.slice(0, 4))).toEqual([0x50, 0x4b, 0x05, 0x06]);
   });
 });
 
@@ -268,6 +274,27 @@ describe("Bun.Archive zip read", () => {
     const dest = join(workdir, "cp437");
     await new Bun.Archive(fixture).extract(dest);
     expect(readFileSync(join(dest, "plain-name.txt"), "utf8")).toBe("ascii path");
+  });
+
+  test("extracts STORE-method entries (method 0) without crashing", async () => {
+    // Regression: libarchive signals the end of a stored entry as ARCHIVE_OK
+    // with a null buffer; the slice-construction wrapper previously treated
+    // that as a `from_raw_parts(NULL, 0)` fault and panicked, aborting the
+    // process. Both the bytes path (`files`) and the extract path (data
+    // blocks) must survive.
+    const fixture = await buildZip(
+      { "stored.txt": "stored content", "data/numbers.bin": Uint8Array.from([1, 2, 3]) },
+      { method: 0 },
+    );
+    const archive = new Bun.Archive(fixture);
+    const files = await archive.files();
+    expect((await files.get("stored.txt")!.text()).trim()).toBe("stored content");
+    expect(Buffer.from(await files.get("data/numbers.bin")!.arrayBuffer())).toEqual(
+      Buffer.from([1, 2, 3]),
+    );
+    const dest = join(workdir, "store-method");
+    await archive.extract(dest);
+    expect(readFileSync(join(dest, "stored.txt"), "utf8")).toBe("stored content");
   });
 
   test("extract honors glob filtering on zips", async () => {

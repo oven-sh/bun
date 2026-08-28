@@ -35,8 +35,11 @@ pub(crate) fn generate_and_write_profile(
     if profile_string.is_empty() {
         // The V8 builder returns an empty string when the snapshot was too
         // large to serialize. Say so instead of silently writing nothing.
-        bun_core::pretty_errorln!("<red>error<r>: heap snapshot is too large to serialize");
-        Output::flush();
+        // The text profiler reports its own errors inline, so leave it alone.
+        if !config.text_format {
+            bun_core::pretty_errorln!("<red>error<r>: heap snapshot is too large to serialize");
+            Output::flush();
+        }
         return Ok(());
     }
 

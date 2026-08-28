@@ -886,15 +886,14 @@ impl Loader {
     }
 }
 
-/// `O_NONBLOCK`: a blocking `open` of a FIFO waits for a writer. Unix only: a
-/// Windows handle opened without `FILE_SYNCHRONOUS_IO_NONALERT` cannot be read synchronously.
+/// `O_NONBLOCK`: a blocking `open` of a FIFO waits for a writer.
 #[cfg(unix)]
 const ENV_FILE_OPEN_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
+/// No `O_NONBLOCK`: an overlapped Windows handle cannot be read synchronously.
 #[cfg(not(unix))]
 const ENV_FILE_OPEN_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
 
-/// Shared post-open tail of `load_env_file` / `load_env_file_dynamic`. The
-/// callers keep their own open-error handling and memo slot.
+/// Shared post-open tail of `load_env_file` / `load_env_file_dynamic`.
 enum ReadEnvFile {
     /// Zero-length or not a regular file. The caller marks the slot and returns.
     Empty,

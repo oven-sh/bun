@@ -1819,11 +1819,8 @@ mod posix_impl {
             unsafe { libc::send(fd, buf, n, flags) }
         }
     }
-    // EINTR-retry: most wrappers loop on EINTR. NOT all — the macOS
-    // `$NOCANCEL` arms for open/openat/read/write/recv/send issue exactly one
-    // call and surface EINTR to the caller without looping. `check!` keeps the
-    // retry for the common path; the `check_once_*!` macros are the
-    // single-shot variants for the Darwin arms.
+    // `check*!` retries on EINTR. The macOS `$NOCANCEL` arms use the
+    // single-shot `check_once_*!` variants and surface EINTR to the caller.
     macro_rules! check {
         ($rc:expr, $tag:expr) => {{
             loop {
@@ -2367,10 +2364,7 @@ mod posix_impl {
                     SUPPORTS_STATX_ON_LINUX.store(false, Ordering::Relaxed);
                     return statx_fallback(fd, path, flags);
                 }
-                let err = Error::from_code_int(raw_errno, syscall);
-                // `fstatx` names the file by `fd`; `statx`/`lstatx` pass
-                // `AT_FDCWD` plus a path, and the caller attaches the path.
-                return Err(if path.is_none() { err.with_fd(fd) } else { err });
+                return Err(Error::from_code_int(raw_errno, syscall));
             }
 
             // SAFETY: rc == 0 ⇒ kernel populated the buffer.
@@ -2412,7 +2406,7 @@ mod posix_impl {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn fstatx(fd: Fd, mask: u32) -> Maybe<PosixStat> {
-        statx_impl(fd, None, libc::AT_EMPTY_PATH, mask, Tag::fstat)
+        statx_impl(fd, None, libc::AT_EMPTY_PATH, mask, Tag::fstat).map_err(|e| e.with_fd(fd))
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn statx(path: &ZStr, mask: u32) -> Maybe<PosixStat> {

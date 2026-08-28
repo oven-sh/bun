@@ -940,9 +940,7 @@ impl<'a> Resolver<'a> {
     }
 
     pub(crate) fn is_external_pattern(&self, import_path: &[u8]) -> bool {
-        // A "#" specifier is a package-private subpath import. It goes through
-        // the enclosing package.json "imports" map first; `load_node_modules`
-        // applies `packages = external` to whatever the map remaps it to.
+        // "#" subpath imports resolve through the "imports" map first.
         if self.opts.packages == options::Packages::External
             && is_package_path(import_path)
             && !import_path.starts_with(b"#")
@@ -2600,11 +2598,8 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // "import 'pkg'" when all packages are external (vs. "import './pkg'").
-        // `resolve_without_symlinks` already externalized plain package paths,
-        // so this catches the ones it let through: the package path a "#"
-        // import was remapped to (`"#dep": "dep"`), a "#" import with no
-        // "imports" map to consult, and browser-field remaps.
+        // "import 'pkg'" when all packages are external, e.g. the `dep` that
+        // `"#dep": "dep"` remapped to.
         if kind != ast::ImportKind::EntryPointBuild
             && kind != ast::ImportKind::EntryPointRun
             && self.opts.packages == options::Packages::External
@@ -5023,8 +5018,7 @@ impl<'a> Resolver<'a> {
         }
         let imports_map = package_json.imports.as_ref().unwrap();
 
-        // PACKAGE_IMPORTS_RESOLVE rejects exactly "#" and exactly "#/". Longer
-        // "#/..." specifiers are valid (Node 25.4, nodejs/node#60864).
+        // PACKAGE_IMPORTS_RESOLVE, as of nodejs/node#60864: only these two are invalid.
         if import_path == b"#" || import_path == b"#/" {
             if let Some(debug) = self.debug_logs.as_mut() {
                 debug.add_note_fmt(format_args!(

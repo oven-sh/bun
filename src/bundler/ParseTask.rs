@@ -462,11 +462,7 @@ export var __callDispose = (stack, error, hasError) => {
 
 // Other platforms may or may not have the symbol or errors
 // The definitions of __dispose and __asyncDispose match what esbuild's __wellKnownSymbol() helper does
-//
-// When an `await using` value only has Symbol.dispose, the spec wraps that
-// sync disposer: its return value is not awaited and a synchronous throw
-// becomes a rejected promise (so a pending microtask runs before the catch).
-// The `inner` wrapper below is esbuild's version of that step.
+// The `inner` wrapper is the spec's GetDisposeMethod step for an `await using` that falls back to Symbol.dispose
 const RUNTIME_USING_OTHER: &str = "\
 var __dispose = Symbol.dispose || /* @__PURE__ */ Symbol.for('Symbol.dispose');
 var __asyncDispose =  Symbol.asyncDispose || /* @__PURE__ */ Symbol.for('Symbol.asyncDispose');

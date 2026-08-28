@@ -828,10 +828,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             p.lexer.next()?;
 
-            // In a for-loop head, "using of" is the identifier "using" followed
-            // by the "of" keyword ("for (using of xs)"), unless "of" is itself a
-            // binding with an initializer ("for (using of = x;;)", or
-            // "for (using of: T = x;;)" in TypeScript).
+            // "for (using of xs)" iterates the identifier "using"; "for (using of = x;;)" declares "of"
             if p.lexer.token == T::TIdentifier
                 && !p.lexer.has_newline_before
                 && (!opts.is_for_loop_init

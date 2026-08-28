@@ -12,8 +12,7 @@ export var __using = (stack, value, async) => {
       if (async) inner = dispose;
     }
     if (typeof dispose !== "function") throw TypeError("Object not disposable");
-    // An "await using" that falls back to Symbol.dispose must not await the
-    // disposer's return value, and a synchronous throw must become a rejection.
+    // Spec GetDisposeMethod: the sync fallback's result is dropped and a throw becomes a rejection
     if (inner)
       dispose = function () {
         try {

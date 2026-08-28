@@ -55,8 +55,7 @@ bun_core::declare_scope!(cache, visible);
 /// offsets picked by a header byte) plus a body of tagged records with
 /// u8/u16/u32 ids and implied slots dropped, instead of fixed u32 arrays.
 /// Version 27: ModuleInfo string table holds Latin-1 / UTF-16 bodies, not WTF-8.
-/// Version 28: `using` declarations are rejected directly in switch clauses and
-/// for-in heads, and `for (using of x)` parses `using` as an identifier.
+/// Version 28: The parser changed where `using` declarations may appear (switch clauses, for heads).
 const EXPECTED_VERSION: u32 = 28;
 
 /// Source files smaller than this are not written to / read from the on-disk

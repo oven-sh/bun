@@ -9,7 +9,9 @@ import { join } from "node:path";
 // renamed, including the top-level names of the file.
 //
 // Every fixture is sloppy CommonJS. `expected` is what Node prints. `keep`
-// lists source text that every transpiled output must still contain.
+// matches code outside the eval string that every transpiled output must
+// still contain: the reference that must not be inlined, or the declaration
+// whose name must not change (`\s*` because `--minify` prints `a=1,b=2`).
 const fixtures = {
   "const shadowed by eval var, one function deep": {
     source: /* js */ `
@@ -21,7 +23,7 @@ const fixtures = {
       console.log(variable);
     `,
     expected: "true\nfalse",
-    keep: ["console.log(variable)"],
+    keep: [/console\.log\(variable\)/],
   },
   "const shadowed by eval var, two functions deep": {
     source: /* js */ `
@@ -36,7 +38,7 @@ const fixtures = {
       console.log(variable);
     `,
     expected: "true\nfalse\nfalse",
-    keep: ["console.log(variable)"],
+    keep: [/console\.log\(variable\)/],
   },
   "eval reads top-level names, at module scope": {
     source: /* js */ `
@@ -45,7 +47,7 @@ const fixtures = {
       console.log(eval("outerVariable + inner"));
     `,
     expected: "124",
-    keep: ["outerVariable", "inner"],
+    keep: [/\bouterVariable\s*=\s*123\b/, /\binner\s*=\s*1\b/],
   },
   "eval reads top-level names, one function deep": {
     source: /* js */ `
@@ -54,7 +56,7 @@ const fixtures = {
       console.log(r);
     `,
     expected: "124",
-    keep: ["outerVariable", "inner"],
+    keep: [/\bouterVariable\s*=\s*123\b/, /\binner\s*=\s*1\b/],
   },
   "eval reads top-level names, two functions deep": {
     source: /* js */ `
@@ -66,7 +68,7 @@ const fixtures = {
       console.log(outer());
     `,
     expected: "125",
-    keep: ["outerVariable", "middle", "inner"],
+    keep: [/\bouterVariable\s*=\s*123\b/, /\bmiddle\s*=\s*1\b/, /\binner\s*=\s*1\b/],
   },
 };
 
@@ -95,14 +97,14 @@ async function bunBuild(cwd: string, args: string[]): Promise<void> {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 }
 
 function expectKept(output: string, fixture: Fixture) {
-  for (const text of fixture.keep) {
-    expect(output).toContain(text);
+  for (const pattern of fixture.keep) {
+    expect(output).toMatch(pattern);
   }
 }
 

@@ -860,13 +860,7 @@ fn registry_get(
     let mut headers = http::HeaderBuilder::default();
     headers.count(b"Accept", accept);
     // `dist.tarball` is registry-controlled; credentials only go back to the registry's own origin.
-    let same_origin = {
-        let registry = scope.url.url();
-        url.protocol == registry.protocol
-            && url.hostname == registry.hostname
-            && url.get_port_auto() == registry.get_port_auto()
-    };
-    let (token, auth): (&[u8], &[u8]) = if same_origin {
+    let (token, auth): (&[u8], &[u8]) = if url.has_same_origin(&scope.url.url()) {
         (&scope.token, &scope.auth)
     } else {
         (b"", b"")

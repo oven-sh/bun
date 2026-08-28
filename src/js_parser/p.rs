@@ -8043,16 +8043,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // A direct eval at module scope can reach every top-level name. Nested
-        // scopes are pinned in `pop_scope`; the module scope never pops. When
-        // the bundler wraps this file in a CommonJS closure those names stay
-        // private to it, so pin them too. A flat ESM file's top-level names
-        // share the chunk's scope with other files', so they stay renameable
-        // (as in esbuild) and eval may not see them. Import bindings are left
-        // out: the linker merges them into the exporting file's symbol, which
-        // would pin that name in every chunk that references it.
-        //
-        // Whatever the name, the eval can assign the variable.
+        // A direct eval at module scope can assign every top-level variable and
+        // reach every top-level name. Nested scopes are pinned in `pop_scope`;
+        // the module scope never pops. When the bundler wraps this file in a
+        // CommonJS closure those names stay private to it, so pin them too. A
+        // flat ESM file's top-level names share the chunk's scope with other
+        // files', so they stay renameable (as in esbuild) and eval may not see
+        // them. Import bindings are left out: the linker merges them into the
+        // exporting file's symbol, which would pin that name in every chunk
+        // that references it.
         if self.module_scope().contains_direct_eval {
             let pin = bundling && exports_kind == js_ast::ExportsKind::Cjs;
             let module_scope = self.module_scope_ref();

@@ -203,9 +203,11 @@ describe.concurrent("bun run", () => {
           });
         });
 
-        for (let withLogLevel of [true, false]) {
+        // A base config that cannot be found is a warning: shown at the default
+        // and "debug" log levels, hidden at "error".
+        for (const logLevel of [undefined, "debug", "error"]) {
           it(
-            "valid tsconfig.json with invalid extends doesn't crash" + (withLogLevel ? " (log level debug)" : ""),
+            "valid tsconfig.json with invalid extends doesn't crash" + (logLevel ? ` (log level ${logLevel})` : ""),
             async () => {
               using dir = tempDir("bun-run-tsconfig-extends", {
                 "package.json": JSON.stringify({
@@ -221,7 +223,7 @@ describe.concurrent("bun run", () => {
                   2,
                 ),
                 "index.js": "console.log('hi')",
-                ...(withLogLevel ? { "bunfig.toml": `logLevel = "debug"` } : {}),
+                ...(logLevel ? { "bunfig.toml": `logLevel = "${logLevel}"` } : {}),
               });
 
               await using proc = Bun.spawn({
@@ -244,10 +246,10 @@ describe.concurrent("bun run", () => {
                 proc.exited,
               ]);
 
-              if (withLogLevel) {
-                expect(stderr.trim()).toContain("ENOENT loading tsconfig.json extends");
+              if (logLevel === "error") {
+                expect(stderr.trim()).not.toContain("Cannot find base config file");
               } else {
-                expect(stderr.trim()).not.toContain("ENOENT loading tsconfig.json extends");
+                expect(stderr.trim()).toContain('Cannot find base config file "!!!bad!!!"');
               }
 
               expect(stdout).toBe("hi\n");

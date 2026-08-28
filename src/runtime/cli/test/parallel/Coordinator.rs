@@ -78,9 +78,7 @@ pub(crate) struct FileTestRecords {
 }
 
 /// Consecutive pre-`.ready` exits a worker slot tolerates before the slot
-/// stops respawning. Without the cap, a worker that deterministically dies
-/// during init (before the IPC handshake) is respawned forever with no
-/// output and the run never ends.
+/// stops respawning.
 const MAX_STARTUP_FAILURES: u8 = 2;
 
 /// Why the run stopped dispatching files. A worker panic overrides `Bail`
@@ -593,11 +591,9 @@ impl<'a> Coordinator<'a> {
         // the IPC pipe has been drained and this reap actually runs.
         self.live_workers -= 1;
         self.flush_captured(w);
-        // Spawned but exited before the IPC handshake — an init failure
-        // (startup crash, failed fd-3 adopt, bad bunfig in the worker's
-        // bootstrap). `inflight` is None, so the mid-file handling below
-        // never fires; without the per-slot cap this slot would respawn
-        // forever, silently.
+        // Exited before the IPC handshake. `inflight` is None for these, so
+        // the mid-file handling below never fires; the per-slot cap is what
+        // bounds the respawn loop.
         let startup_failure = w.inflight.is_none() && !w.reached_ready;
         let worker_idx = w.idx;
         if let Some(idx) = w.inflight {
@@ -647,9 +643,8 @@ impl<'a> Coordinator<'a> {
             }
         } else if startup_failure {
             w.startup_failures += 1;
-            // A fatal signal during init is a Bun bug just as much as one
-            // mid-file — abort the whole run so the crash's stderr (already
-            // flushed via flush_captured) isn't buried under retries.
+            // A crash signal during init aborts the whole run, same as a
+            // mid-file crash.
             if is_panic_status(status) {
                 self.abort_on_worker_startup_panic(status);
             }
@@ -665,9 +660,8 @@ impl<'a> Coordinator<'a> {
             && self.has_undispatched_files();
 
         if startup_failure && self.stop_reason.is_none() {
-            // `can_respawn` is false either because the slot hit the cap or
-            // because no work remains. Only the former warrants the red
-            // error; the latter is benign (other workers ran everything).
+            // A false `can_respawn` is benign when no work remains; only the
+            // cap warrants the red error.
             self.break_dots();
             let mut buf = [0u8; 32];
             let desc = bstr::BStr::new(describe_status(&mut buf, status));
@@ -791,8 +785,8 @@ impl<'a> Coordinator<'a> {
         self.terminate_workers_after_panic(b"aborted: worker panicked");
     }
 
-    /// `abort_on_worker_panic` for the pre-`.ready` case — there is no file
-    /// to name because nothing was dispatched to the worker yet.
+    /// `abort_on_worker_panic` for the pre-`.ready` case: no file was
+    /// dispatched yet, so there is none to name.
     fn abort_on_worker_startup_panic(&mut self, status: &SpawnStatus) {
         self.break_dots();
         let mut buf = [0u8; 32];

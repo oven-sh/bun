@@ -527,13 +527,10 @@ impl<'a> WorkerLoop<'a> {
             WORKER_CMDS.write(Some(&raw mut self.cmds));
         }
 
-        // Test hook for the coordinator's pre-ready exit path: "abort" dies
-        // by SIGABRT (the startup-panic branch), anything else exits 1 (the
-        // bounded-respawn branch). Real triggers (an init crash, a failed
-        // fd-3 adopt) aren't reproducible from a test; this lets
-        // parallel-startup-failure.test.ts assert both branches. Compiled
-        // only into debug/ASAN builds so a stray env var can't disable
-        // --parallel for users of a release build.
+        // Test hook: "abort" dies by SIGABRT (the startup-panic branch),
+        // anything else exits 1 (the bounded-respawn branch). Real init
+        // failures aren't reproducible from a test. Debug/ASAN builds only,
+        // so a stray env var can't disable --parallel in a release build.
         if cfg!(any(debug_assertions, bun_asan)) {
             // SAFETY: env loader is initialized before the test runner runs.
             if let Some(mode) =

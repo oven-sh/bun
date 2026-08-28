@@ -62,7 +62,6 @@ describe("bunshell", () => {
       process.platform === "win32" ? "cat ldkfjsldf" : null,
       "touch -alskdjfakjfhasjfh",
       "mkdir",
-      "export",
       "cd lskfjlsdkjf",
       process.platform !== "win32" ? "echo hi > /dev/full" : null,
       "pwd sldfkj sfks jdflks flksd f",
@@ -83,7 +82,7 @@ describe("bunshell", () => {
     failing_cmds.forEach(cmdstr =>
       !!cmdstr
         ? TestBuilder.command`${{ raw: cmdstr }}`
-            .exitCode(c => c !== 0)
+            .exitCode(c => expect(c).not.toBe(0))
             .stdout(() => {})
             .stderr(() => {})
             .runAsTest(cmdstr)
@@ -1473,6 +1472,12 @@ describe("deno_task", () => {
     TestBuilder.command`export VAR=1 VAR2=testing VAR3="test this out" && echo $VAR $VAR2 $VAR3`
       .stdout("1 testing test this out\n")
       .runAsTest("exported vars 2");
+
+    TestBuilder.command`export FOO=bar; export`
+      .env({ ZED: "2", ALPHA: "1" })
+      .ensureTempDir()
+      .stdout("ALPHA=1\nFOO=bar\nPWD=$TEMP_DIR\nZED=2\n")
+      .runAsTest("export with no arguments prints the exported vars sorted and succeeds");
   });
 
   describe("pipeline", async () => {
@@ -1612,7 +1617,7 @@ describe("deno_task", () => {
       // Test nested pipeline with mixed success/failure
       TestBuilder.command`(echo success | echo works) | (nonexistent | echo backup) || echo final_fallback`
         .stdout("backup\n")
-        .stderr(s => s.includes("command not found"))
+        .stderr("bun: command not found: nonexistent\n")
         .runAsTest("nested pipeline mixed success failure");
 
       TestBuilder.command`echo 0 | echo 1 | echo 2 | echo 3 | echo 4 | echo 5 | echo 6 | echo 7 | echo 8 | echo 9 | echo 10 | echo 11 | echo 12 | echo 13 | echo 14 | echo 15 | echo 16 | echo 17 | echo 18 | echo 19 | echo 20 | echo 21 | echo 22 | echo 23 | echo 24 | echo 25 | echo 26 | echo 27 | echo 28 | echo 29 | echo 30 | echo 31 | echo 32 | echo 33 | echo 34 | echo 35 | echo 36 | echo 37 | echo 38 | echo 39 | echo 40 | echo 41 | echo 42 | echo 43 | echo 44 | echo 45 | echo 46 | echo 47 | echo 48 | echo 49 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
@@ -2539,16 +2544,14 @@ describe("condexprs", () => {
 [[ ! 1 -eq 1 ]]; echo $?
 [[ ! ! 1 -eq 1 ]]; echo $?
 `
-      .stdout("1")
-      .stdout("0")
+      .stdout("1\n0\n")
       .runAsTest("! toggles on and off rather than just setting an 'invert result' flag");
 
     TestBuilder.command`
 [[ ! ! ! 1 -eq 1 ]]; echo $?
 [[ ! ! ! ! 1 -eq 1 ]]; echo $?
 `
-      .stdout("1")
-      .stdout("0")
+      .stdout("1\n0\n")
       .runAsTest("! toggles on and off rather than just setting an 'invert result' flag");
 
     TestBuilder.command`[[ a ]]`.exitCode(0).runAsTest("parenthesized terms didn't work right until post-2.04");
@@ -2769,8 +2772,7 @@ fi
 if [[ "123abc" == *?(a)bc ]]; then echo ok 42; else echo bad 42; fi
 if [[ "123abc" == *?(a)bc ]]; then echo ok 43; else echo bad 43; fi
 `
-      .stdout("ok 42")
-      .stdout("ok 43")
+      .stdout("ok 42\nok 43\n")
       .runAsTest("bug in all versions up to and including bash-2.05b");
 
     // TestBuilder.command`

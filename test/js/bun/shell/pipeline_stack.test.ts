@@ -75,22 +75,25 @@ describe("pipeline stack edge cases", () => {
 
   describe("cd builtin in pipelines", () => {
     TestBuilder.command`cd / | pwd`
-      .stdout(s => s.includes("$TEMP_DIR"))
+      .stdout("$TEMP_DIR\n")
       .ensureTempDir()
       .runAsTest("cd | pwd - cd doesn't affect next command in pipeline");
 
     TestBuilder.command`mkdir foo; mkdir foo/bar; cd foo | cd foo/bar | pwd`
-      .stdout(s => s.includes("$TEMP_DIR"))
+      .stdout("$TEMP_DIR\n")
       .ensureTempDir()
       .runAsTest("cd | cd | pwd - multiple cd's don't affect");
 
+    // The first pwd writes into the pipe, so only the last one reaches stdout.
     TestBuilder.command`pwd | cd / | pwd`
-      .stdout(s => {
-        const lines = s.trim().split("\n");
-        return lines.length === 2 && lines[0].includes("$TEMP_DIR") && lines[1].includes("$TEMP_DIR");
-      })
+      .stdout("$TEMP_DIR\n")
       .ensureTempDir()
       .runAsTest("pwd | cd | pwd - cd in middle doesn't affect");
+
+    TestBuilder.command`mkdir foo; cd foo | pwd; pwd`
+      .stdout("$TEMP_DIR\n$TEMP_DIR\n")
+      .ensureTempDir()
+      .runAsTest("cd in a pipeline doesn't affect the commands after the pipeline either");
   });
 
   describe("mixed builtin and subprocess pipelines", () => {

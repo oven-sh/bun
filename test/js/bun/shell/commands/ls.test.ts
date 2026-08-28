@@ -110,10 +110,7 @@ describe.concurrent("bunshell ls", () => {
       await $`touch .hidden regular`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls -A`
         .setTempdir(tempdir)
-        .stdout(s => expect(sortedLsOutput(s)).not.toContain("."))
-        .stdout(s => expect(sortedLsOutput(s)).not.toContain(".."))
-        .stdout(s => expect(sortedLsOutput(s)).toContain(".hidden"))
-        .stdout(s => expect(sortedLsOutput(s)).toContain("regular"))
+        .stdout(s => expect(sortedLsOutput(s)).toEqual([".hidden", "regular"]))
         .run();
     });
 
@@ -205,8 +202,9 @@ describe.concurrent("bunshell ls", () => {
       await $`mkdir sub; touch .hidden sub/.hidden-sub`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls -Ra`
         .setTempdir(tempdir)
-        .stdout(s => expect(sortedLsOutput(s)).toContain(".hidden"))
-        .stdout(s => expect(sortedLsOutput(s)).toContain(".hidden-sub"))
+        .stdout(s =>
+          expect(sortedLsOutput(s)).toEqual([".", "..", ".hidden", "sub", "./sub:", ".", "..", ".hidden-sub"].sort()),
+        )
         .run();
     });
 
@@ -215,9 +213,7 @@ describe.concurrent("bunshell ls", () => {
       await $`mkdir sub; touch .hidden sub/.hidden-sub`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls -RA`
         .setTempdir(tempdir)
-        .stdout(s => expect(sortedLsOutput(s)).toContain(".hidden"))
-        .stdout(s => expect(sortedLsOutput(s)).toContain(".hidden-sub"))
-        .stdout(s => expect(sortedLsOutput(s)).not.toContain("."))
+        .stdout(s => expect(sortedLsOutput(s)).toEqual([".hidden", "sub", "./sub:", ".hidden-sub"].sort()))
         .run();
     });
 
@@ -338,9 +334,7 @@ describe.concurrent("bunshell ls", () => {
       await TestBuilder.command`ls -R level1`
         .setTempdir(tempdir)
         .exitCode(1)
-        .stdout(s => expect(sortedLsOutput(s)).toContain("file1"))
-        .stdout(s => expect(sortedLsOutput(s)).toContain("file2"))
-        .stdout(s => expect(sortedLsOutput(s)).toContain("file3"))
+        .stdout(s => expect(sortedLsOutput(s)).toEqual(["file1", "file2", "file3", "level2"]))
         .stderr(s => expect(s).toContain("Permission denied"))
         .run();
 

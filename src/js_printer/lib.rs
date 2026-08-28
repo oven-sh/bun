@@ -2403,8 +2403,7 @@ pub(crate) mod __gated_printer {
                 .add_source_mapping(location, self.writer.slice());
         }
 
-        /// `add_source_mapping` plus a `names` entry when the printed `name`
-        /// differs from the symbol's original name.
+        /// `add_source_mapping` plus a `names` entry when `name` differs from the symbol's original name.
         #[inline]
         pub(crate) fn add_source_mapping_for_name(
             &mut self,

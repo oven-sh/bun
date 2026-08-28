@@ -46,8 +46,7 @@ pub use options_impl::PathTemplate;
 pub use HTMLImportManifest::html_import_manifest;
 pub use bun_core::cheap_prefix_normalizer;
 
-/// `prefix` (the public path or `./`) is written as is; `rel_path` (the `.map`
-/// file) is percent-encoded because the comment value is a URL.
+/// `prefix` (the public path or `./`) is written as is; `rel_path` is URL-escaped.
 pub(crate) fn append_source_mapping_url_comment(buf: &mut Vec<u8>, prefix: &[u8], rel_path: &[u8]) {
     buf.extend_from_slice(b"//# sourceMappingURL=");
     buf.extend_from_slice(prefix);

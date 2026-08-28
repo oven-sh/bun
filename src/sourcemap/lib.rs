@@ -260,9 +260,7 @@ pub struct SourceMapPieces {
     pub suffix: Vec<u8>,
 }
 
-/// This function is extremely hot.
-///
-/// Returns the offset in `buffer` of the name field, when one is written.
+/// This function is extremely hot. Returns the offset of the name field, when one is written.
 pub(crate) fn append_mapping_to_buffer(
     buffer: &mut bun_core::MutableString,
     last_byte: u8,
@@ -365,8 +363,7 @@ pub fn append_null_source_map_segment<'a>(
     Ok(())
 }
 
-/// Percent-encodes a URL path the way Go's `url.URL{Path}.EscapedPath()` (esbuild)
-/// does: `A-Za-z0-9`, `-_.~` and `$&+,/:;=@` pass through, every other byte is `%XX`.
+/// Go's `url.URL{Path}.EscapedPath()` (esbuild): `A-Za-z0-9-_.~$&+,/:;=@` pass, the rest is `%XX`.
 pub fn append_url_escaped_path(out: &mut Vec<u8>, path: &[u8], escape_spaces: bool) {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     out.reserve(path.len());
@@ -1135,10 +1132,7 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
 //
 // After all chunks are computed, they are joined together in a second pass.
 // This rewrites the first mapping in each chunk to be relative to the end
-// state of the previous chunk.
-///
-/// The first name field (at `first_name_offset`, chunk-local index) is rebased
-/// from `prev_end_state.original_name` to `start_state.original_name` the same way.
+// state of the previous chunk. The first name field (at `first_name_offset`) is rebased the same way.
 pub fn append_source_map_chunk<'a>(
     j: &mut bun_core::string_joiner::StringJoiner<'a>,
     prev_end_state_: SourceMapState,

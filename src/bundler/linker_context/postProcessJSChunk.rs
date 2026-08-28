@@ -603,8 +603,7 @@ pub(crate) fn post_process_js_chunk(
             } else {
                 line_offset.advance(compile_result.code());
 
-                // No chunk means no mappings (a loader shim). The null entry
-                // ends the previous file's last mapping where this code starts.
+                // No chunk means no mappings (a loader shim); the null entry ends the previous mapping here.
                 if c.options.source_maps != options::SourceMapOption::None
                     && !compile_result.code().is_empty()
                 {

@@ -13,8 +13,7 @@ use crate::{
 pub struct Chunk {
     pub buffer: MutableString,
 
-    /// JSON-quoted `names` entries joined with `, `. Name indices in `buffer`
-    /// are chunk-local; the bundler rebases them when it joins chunks.
+    /// JSON-quoted `names` entries joined with `, `; indices in `buffer` are chunk-local.
     pub quoted_names: Box<[u8]>,
     pub names_count: u32,
 
@@ -400,8 +399,7 @@ pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
     /// When generating sourcemappings for bun, we store a count of how many mappings there were
     pub prepend_count: bool,
 
-    /// Record renamed symbols' original names (the fifth VLQ field) and the
-    /// `names` table. Only the bundler's output path reads them.
+    /// Record renamed symbols' original names (the fifth VLQ field); only the bundler reads them.
     pub record_names: bool,
     /// JSON-quoted `names` entries joined with `, `.
     pub quoted_names: MutableString,

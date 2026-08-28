@@ -1058,8 +1058,7 @@ impl<'a> LinkerContext<'a> {
             .expect("TODO: handle error");
     }
 
-    /// The `sources` entry for a file: the path relative to the chunk directory
-    /// as a URL, percent-encoded like esbuild does (a space stays literal).
+    /// The `sources` entry for a file: its path relative to the chunk directory, URL-escaped like esbuild.
     fn source_map_relative_path(
         chunk_abs_dir: &[u8],
         source_abs_path: &[u8],
@@ -1200,8 +1199,7 @@ impl<'a> LinkerContext<'a> {
             }
 
             if is_null_entry {
-                // Lands where the previous mapped file's code ends; only the
-                // generated position advances.
+                // Lands where the previous mapped file's code ends; only the generated position advances.
                 SourceMap::append_null_source_map_segment(&mut j, prev_end_state, start_state)?;
                 prev_end_state.generated_line = start_state.generated_line;
                 prev_end_state.generated_column = start_state.generated_column;

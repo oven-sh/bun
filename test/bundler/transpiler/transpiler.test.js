@@ -1660,7 +1660,7 @@ export default class {
       ts.expectPrinted_("for (async as any of [7]);", "for ((async) of [7])\n  ;\n");
       ts.expectPrinted_("for (async satisfies T of [7]);", "for ((async) of [7])\n  ;\n");
       ts.expectPrinted_("for (async! of [7]);", "for ((async) of [7])\n  ;\n");
-      ts.expectPrinted_("for (async of => {};;);", "for (async (of) => {};; )\n  ;\n");
+      ts.expectPrinted_("for (async of => {};;);", "for (async (of) => {}; ; )\n  ;\n");
       ts.expectPrinted_(
         "async function f() { for await (async of [7]); }",
         "async function f() {\n  for await ((async) of [7])\n    ;\n}",
@@ -2842,6 +2842,38 @@ console.log(<div {...obj} key="after" />);`),
       );
     });
 
+    it("for loop and export-from whitespace", () => {
+      const code = [
+        `for (let i = 0; i < 3; i++) {}`,
+        `for (;;) {}`,
+        `for (; x; ) {}`,
+        `for (i = 0; ; i++) {}`,
+        `export {} from "empty";`,
+        `export { a } from "named";`,
+        `export { b as c, d } from "aliased";`,
+      ].join("\n");
+
+      const pretty = new Bun.Transpiler({ loader: "js" }).transformSync(code);
+      expect(pretty).toBe(
+        [
+          `for (let i = 0; i < 3; i++) {}`,
+          `for (; ; ) {}`,
+          `for (; x; ) {}`,
+          `for (i = 0; ; i++) {}`,
+          `export {} from "empty";`,
+          `export { a } from "named";`,
+          `export { b as c, d } from "aliased";`,
+          ``,
+        ].join("\n"),
+      );
+
+      const minified = new Bun.Transpiler({ loader: "js", minifyWhitespace: true }).transformSync(code);
+      expect(minified).toBe(
+        `for(let i=0;i<3;i++){}for(;;){}for(;x;){}for(i=0;;i++){}` +
+          `export{}from"empty";export{a}from"named";export{b as c,d}from"aliased";`,
+      );
+    });
+
     it("import with separator-only or trailing-separator path", () => {
       expectPrinted_(`import "/"`, `import "/"`);
       expectPrinted_(`import "//"`, `import "//"`);
@@ -2851,6 +2883,7 @@ console.log(<div {...obj} key="after" />);`),
       expectPrinted_(`export * from "/"`, `export * from "/"`);
       expectPrinted_(`export * from "foo//"`, `export * from "foo//"`);
       expectPrinted_(`export { a } from "/"`, `export { a } from "/"`);
+      expectPrinted_(`export {} from "/"`, `export {} from "/"`);
     });
 
     it("empty string as import/export clause alias", () => {
@@ -3992,7 +4025,7 @@ console.log(foo, array);
         "let x = arg0;\nwhile (x)\n  return 1;",
         // "let x = arg0;\nfor (; x; )\n  return 1;",
       );
-      check("let x = arg0; for (; x; ) return 1;", "let x = arg0;\nfor (;x; )\n  return 1;");
+      check("let x = arg0; for (; x; ) return 1;", "let x = arg0;\nfor (; x; )\n  return 1;");
 
       // Can substitute an expression without side effects into a branch due to optional chaining
       // TODO:
@@ -4767,7 +4800,7 @@ console.log("boop");
     expectPrinted_("async function f() { await using.foo() }", "async function f() {\n  await using.foo();\n}");
     expectPrinted_(
       "async function f() { for (await using instanceof o;;); }",
-      "async function f() {\n  for (await using instanceof o;; )\n    ;\n}",
+      "async function f() {\n  for (await using instanceof o; ; )\n    ;\n}",
     );
     expectBunPrinted_("await using instanceof o", "await using instanceof o");
   });

@@ -405,11 +405,13 @@ pub fn truncate_utf8(s: &[u8], max: usize) -> &[u8] {
     if s.len() <= max {
         return s;
     }
+    // Back off at most 3 continuation bytes so a code point is not split; input
+    // that is not UTF-8 (a run of 0x80..0xBF bytes) is then simply cut at `max`.
     let mut end = max;
-    while end > 0 && (s[end] & 0xC0) == 0x80 {
+    while end > 0 && max - end < 3 && (s[end] & 0xC0) == 0x80 {
         end -= 1;
     }
-    &s[..end]
+    if (s[end] & 0xC0) == 0x80 { &s[..max] } else { &s[..end] }
 }
 
 /// The semconv `exception.*` attribute set (stacktrace omitted when empty).

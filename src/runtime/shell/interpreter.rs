@@ -733,10 +733,9 @@ impl Interpreter {
         // ── run ────────────────────────────────────────────────────────────
         interp.exit_code.set(Some(1));
         if let Err(e) = interp.run() {
-            let name = e.name();
             interp.deinit_from_exec();
             bun_core::output::err(
-                name,
+                e,
                 "Failed to run script <b>{}<r>",
                 (bstr::BStr::new(label),),
             );

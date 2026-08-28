@@ -434,6 +434,7 @@ describe("Bun.Transpiler", () => {
       // Where only "import foo = bar" is valid, "import type from 'mod'" is not a default import
       errStartsWith("export import type from 'mod'", 'Expected "=" but found "from"');
       errStartsWith("namespace N { import type from 'mod' }", 'Expected "=" but found "from"');
+      exp("export import type from = require('mod'); x", "x;\n");
       exp("export import type = require('mod'); type", 'export const type = require("mod");\n');
     });
 

@@ -1551,18 +1551,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // A name of "from" is left to the code below when this is
                                 // "import type from 'bar';" (a value import named "type"), or
                                 // when only "import foo = bar" is valid here and the guard
-                                // below has to reject it.
+                                // below has to reject everything but "import type from = bar".
                                 let import_equals_only = opts.is_export
                                     || (opts.scope.is_namespace() && !opts.is_typescript_declare);
                                 let leave_from = p.lexer.identifier == b"from"
-                                    && (import_equals_only
-                                        || p.next_token_matches(|p| {
+                                    && p.next_token_matches(|p| {
+                                        if import_equals_only {
+                                            p.lexer.token != T::TEquals
+                                        } else {
                                             matches!(
                                                 p.lexer.token,
                                                 T::TStringLiteral
                                                     | T::TNoSubstitutionTemplateLiteral
                                             )
-                                        }));
+                                        }
+                                    });
                                 if !leave_from {
                                     let name = p.lexer.identifier;
                                     let name_loc = p.lexer.loc();

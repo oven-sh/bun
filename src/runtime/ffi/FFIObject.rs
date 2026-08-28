@@ -491,10 +491,8 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
     JSValue::from_ptr_address(addr)
 }
 
-/// Resolves the `(ptr, byteOffset, byteLength)` arguments of `toBuffer`,
-/// `toArrayBuffer` and `CString` to a raw (ptr, len) over caller-owned FFI
-/// memory. Consumers borrow it (or delegate disposal to a supplied finalizer),
-/// never free it from Rust. An invalid argument throws a TypeError.
+/// Resolves `(ptr, byteOffset, byteLength)` to a raw (ptr, len) over caller-owned FFI
+/// memory. Consumers borrow it or hand it to a supplied finalizer, never free it from Rust.
 fn get_ptr_slice(
     global_this: &JSGlobalObject,
     value: JSValue,
@@ -561,8 +559,7 @@ fn get_ptr_slice(
                 );
             }
 
-            // `to_int64` maps NaN and every value in (-1, 1) to 0, so this also
-            // rejects a length that would truncate to an empty view.
+            // NaN and every value in (-1, 1) truncate to 0 and fail this check too.
             let length_i = value_length.to_int64();
             if length_i <= 0 {
                 return Err(global_this.throw_invalid_arguments(format_args!(

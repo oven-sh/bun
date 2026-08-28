@@ -646,12 +646,15 @@ unsafe impl<const SSL: bool> OpaqueHandle for Response<SSL> {}
 // SAFETY: `h3::Response` is a `#[repr(C)]` ZST (`UnsafeCell<[u8; 0]>`) with
 // align 1; C++ owns the real bytes.
 unsafe impl OpaqueHandle for H3Response {}
+// SAFETY: as above for `h2::Response`.
+unsafe impl OpaqueHandle for H2Response {}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AnyResponse {
     SSL(*mut TLSResponse),
     TCP(*mut TCPResponse),
     H3(*mut H3Response),
+    H2(*mut H2Response),
 }
 
 // Helper: dispatch to the underlying response, calling the same-named method on each
@@ -673,6 +676,10 @@ macro_rules! any_dispatch {
             }
             AnyResponse::H3(ptr) => {
                 let $r = H3Response::as_handle(ptr);
+                $body
+            }
+            AnyResponse::H2(ptr) => {
+                let $r = H2Response::as_handle(ptr);
                 $body
             }
         }
@@ -716,10 +723,16 @@ macro_rules! any_response_register_cb {
             let $any = AnyResponse::H3(std::ptr::from_mut($r));
             $($body)*
         }
+        fn h2<$U, $H: $($bound)*>($u: &mut $U $(, $pre: $pre_ty)*, $r: &mut H2Response $(, $post: $post_ty)*) -> $ret {
+            let $u = std::ptr::from_mut::<$U>($u);
+            let $any = AnyResponse::H2(std::ptr::from_mut($r));
+            $($body)*
+        }
         match $self {
             AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).$method(ssl::<$U, $H>, $opt_data),
             AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).$method(tcp::<$U, $H>, $opt_data),
             AnyResponse::H3(ptr) => H3Response::as_handle(ptr).$method(h3::<$U, $H>, $opt_data),
+            AnyResponse::H2(ptr) => H2Response::as_handle(ptr).$method(h2::<$U, $H>, $opt_data),
         }
     }};
 }
@@ -729,7 +742,9 @@ impl AnyResponse {
         match self {
             AnyResponse::SSL(resp) => resp,
             AnyResponse::TCP(_) => panic!("Expected SSL response, got TCP response"),
-            AnyResponse::H3(_) => panic!("Expected SSL response, got H3 response"),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => {
+                panic!("Expected SSL response, got a stream response")
+            }
         }
     }
 
@@ -737,7 +752,9 @@ impl AnyResponse {
         match self {
             AnyResponse::SSL(_) => panic!("Expected TCP response, got SSL response"),
             AnyResponse::TCP(resp) => resp,
-            AnyResponse::H3(_) => panic!("Expected TCP response, got H3 response"),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => {
+                panic!("Expected TCP response, got a stream response")
+            }
         }
     }
 
@@ -769,7 +786,9 @@ impl AnyResponse {
 
     pub fn socket(self) -> *mut c::uws_res {
         match self {
-            AnyResponse::H3(_) => panic!("socket() is not available for HTTP/3 responses"),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => {
+                panic!("socket() is only available for HTTP/1 responses")
+            }
             AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).downcast(),
             AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).downcast(),
         }
@@ -785,6 +804,7 @@ impl AnyResponse {
             AnyResponse::SSL(ptr) => ptr.cast::<c_void>(),
             AnyResponse::TCP(ptr) => ptr.cast::<c_void>(),
             AnyResponse::H3(ptr) => ptr.cast::<c_void>(),
+            AnyResponse::H2(ptr) => ptr.cast::<c_void>(),
         }
     }
 
@@ -793,13 +813,13 @@ impl AnyResponse {
     }
 
     /// Peer IP/port for HTTP/1 responses, cached per connection. `None` for
-    /// HTTP/3, whose transport only reports the address as text
+    /// HTTP/2 and HTTP/3, whose transports report the address as text
     /// ([`Self::get_remote_socket_info`]).
     pub fn get_remote_address_raw(self) -> Option<(RawIp, u16)> {
         match self {
             AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).get_remote_address_raw(),
             AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).get_remote_address_raw(),
-            AnyResponse::H3(_) => None,
+            AnyResponse::H3(_) | AnyResponse::H2(_) => None,
         }
     }
 
@@ -883,6 +903,12 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.try_end(data, total_size, close_connection))
     }
 
+    /// HTTP/2: widen the stream receive window once the body is wanted.
+    pub fn grow_request_window(self) {
+        if let AnyResponse::H2(r) = self {
+            bun_opaque::opaque_deref_mut(r).grow_request_window();
+        }
+    }
     pub fn pause(self) {
         any_dispatch!(self, |r| r.pause())
     }
@@ -911,12 +937,13 @@ impl AnyResponse {
                     .close(crate::us_socket::CloseCode::failure);
             }
             AnyResponse::H3(ptr) => H3Response::as_handle(ptr).force_close(),
+            AnyResponse::H2(ptr) => H2Response::as_handle(ptr).force_close(),
         }
     }
 
     pub fn get_native_handle(self) -> Fd {
         match self {
-            AnyResponse::H3(_) => bun_core::Fd::INVALID,
+            AnyResponse::H3(_) | AnyResponse::H2(_) => bun_core::Fd::INVALID,
             AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).get_native_handle(),
             AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).get_native_handle(),
         }
@@ -1043,7 +1070,7 @@ impl AnyResponse {
             // server.upgrade() returns false before reaching here for H3
             // (request_context.get(RequestContext) is null — the H3 ctx is a
             // different type and upgrade_context is never set).
-            AnyResponse::H3(_) => unreachable!(),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => unreachable!(),
             AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).upgrade(
                 data,
                 sec_web_socket_key,
@@ -1080,8 +1107,15 @@ impl From<*mut H3Response> for AnyResponse {
         AnyResponse::H3(r)
     }
 }
+impl From<*mut H2Response> for AnyResponse {
+    #[inline]
+    fn from(r: *mut H2Response) -> Self {
+        AnyResponse::H2(r)
+    }
+}
 
 pub(crate) type H3Response = crate::h3::Response;
+pub(crate) type H2Response = crate::h2::Response;
 
 bitflags::bitflags! {
     /// Non-exhaustive bitset — values may carry

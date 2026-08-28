@@ -285,7 +285,7 @@ impl Route {
                         return;
                     };
                     let otel =
-                        crate::telemetry::server::begin_static(server.global_this(), &req, resp)
+                        crate::telemetry::server::begin_static(server.global_this(), &req, resp, server.is_https())
                             .map(|(span, entered)| {
                                 drop(entered);
                                 span
@@ -312,7 +312,7 @@ impl Route {
                     }
                     // TODO: use the code from DevServer.rs to render the error
                     let global = server.global_this();
-                    match crate::telemetry::server::begin_static(global, &req, resp) {
+                    match crate::telemetry::server::begin_static(global, &req, resp, server.is_https()) {
                         Some((span, entered)) => {
                             drop(entered);
                             respond_build_failed(resp);

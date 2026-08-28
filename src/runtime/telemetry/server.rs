@@ -13,10 +13,13 @@ use super::{Entered, local, state};
 /// Returns the span (stored on the request context and finished with
 /// [`end`]) and the activation guard the dispatching frame must hold across
 /// the JS handler call.
+/// `https`: the listener terminates TLS (the response variant cannot say:
+/// HTTP/2 runs both over TLS and as cleartext prior-knowledge).
 pub fn begin(
     global: &JSGlobalObject,
     req: &bun_uws::AnyRequest,
     resp: bun_uws::AnyResponse,
+    https: bool,
 ) -> Option<(NativeSpan, Entered)> {
     if !bun_telemetry::enabled(Instrument::HttpServer) {
         return None;
@@ -55,12 +58,14 @@ pub fn begin(
     let baggage: Option<&[u8]> = raw_bg
         .as_deref()
         .filter(|b| propagation::baggage_is_reasonable(b));
-    // Exhaustive on purpose: a new transport must decide its scheme and
-    // protocol version here rather than silently inherit HTTP/1.1's.
-    let https = match resp {
-        bun_uws::AnyResponse::TCP(_) => false,
-        bun_uws::AnyResponse::SSL(_) | bun_uws::AnyResponse::H3(_) => true,
-    };
+    debug_assert!(
+        match resp {
+            bun_uws::AnyResponse::TCP(_) => !https,
+            bun_uws::AnyResponse::SSL(_) | bun_uws::AnyResponse::H3(_) => https,
+            bun_uws::AnyResponse::H2(_) => true,
+        },
+        "url.scheme disagrees with the transport"
+    );
     // Facts only; attributes are encoded when the batch is exported
     // (bun_telemetry::http_record).
     let span = pool::begin_with(
@@ -100,15 +105,25 @@ pub fn begin(
             } else {
                 R::HttpVersion::Http11
             };
+            // Exhaustive on purpose: a new transport must decide its protocol
+            // version and peer-address source here, not inherit HTTP/1.1's.
             let (peer, peer_port, version) = match resp {
-                bun_uws::AnyResponse::H3(_) => match resp.get_remote_socket_info() {
-                    Some(a) => (
-                        R::PeerIp::from_text(a.ip()),
-                        u16::try_from(a.port).unwrap_or(0),
-                        R::HttpVersion::Http3,
-                    ),
-                    None => (R::PeerIp::None, 0, R::HttpVersion::Http3),
-                },
+                bun_uws::AnyResponse::H3(_) | bun_uws::AnyResponse::H2(_) => {
+                    let version = if matches!(resp, bun_uws::AnyResponse::H3(_)) {
+                        R::HttpVersion::Http3
+                    } else {
+                        R::HttpVersion::Http2
+                    };
+                    // (multiplexed transports report the peer as text per stream)
+                    match resp.get_remote_socket_info() {
+                        Some(a) => (
+                            R::PeerIp::from_text(a.ip()),
+                            u16::try_from(a.port).unwrap_or(0),
+                            version,
+                        ),
+                        None => (R::PeerIp::None, 0, version),
+                    }
+                }
                 bun_uws::AnyResponse::TCP(_) | bun_uws::AnyResponse::SSL(_) => {
                     match resp.get_remote_address_raw() {
                         Some((RawIp::V4(b), port)) => (R::PeerIp::V4(b), port, h1),
@@ -178,8 +193,9 @@ pub fn begin_static(
     global: &JSGlobalObject,
     req: &bun_uws::AnyRequest,
     resp: bun_uws::AnyResponse,
+    https: bool,
 ) -> Option<(NativeSpan, Entered)> {
-    let (span, entered) = begin(global, req, resp)?;
+    let (span, entered) = begin(global, req, resp, https)?;
     if let Some(mut l) = local(global) {
         pool::with(&mut l.pool, span, |s| {
             if s.is_recording() {

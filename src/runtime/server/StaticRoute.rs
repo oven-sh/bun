@@ -317,7 +317,7 @@ impl StaticRoute {
         ) {
             (Some(server), true) => {
                 let global = server.global_this();
-                crate::telemetry::server::begin_static(global, &req, resp)
+                crate::telemetry::server::begin_static(global, &req, resp, server.is_https())
                     .map(|(span, entered)| (span, entered, global))
             }
             _ => None,
@@ -473,11 +473,9 @@ impl StaticRoute {
         match resp {
             AnyResponse::SSL(r) => write_status::<true>(r, status),
             AnyResponse::TCP(r) => write_status::<false>(r, status),
-            AnyResponse::H3(r) => {
+            AnyResponse::H3(_) | AnyResponse::H2(_) => {
                 let mut b = bun_core::fmt::ItoaBuf::new();
-                let s = bun_core::fmt::itoa(&mut b, status);
-                // S008: `h3::Response` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(r).write_status(s);
+                resp.write_status(bun_core::fmt::itoa(&mut b, status));
             }
         }
     }

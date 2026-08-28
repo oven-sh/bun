@@ -88,6 +88,12 @@ type SHA512Digest = [u8; sha::SHA512::DIGEST];
 
 pub(crate) struct PublishCommand;
 
+/// Bundle for the PUT body's `_attachments`, whether freshly generated or loaded from `--provenance-file`.
+struct ProvenanceAttachment {
+    media_type: String,
+    bundle_json: Vec<u8>,
+}
+
 // Const generics cannot vary field types; the script fields and script_env are
 // kept as Option<> in both instantiations and we rely on
 // invariants (always None / never used when DIRECTORY_PUBLISH == false).
@@ -369,6 +375,12 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                                 Global::crash();
                             }
                         };
+                    }
+                }
+
+                if manager.options.publish_config.provenance.is_none() {
+                    if let Some(prov) = config.get(b"provenance").and_then(|e| e.as_bool()) {
+                        manager.options.publish_config.provenance = Some(prov);
                     }
                 }
 
@@ -842,6 +854,130 @@ impl PublishCommand {
         false
     }
 
+    /// Precedence: `--provenance-file`, then the CLI flag / `publishConfig.provenance` (merged into one field), then `NPM_CONFIG_PROVENANCE` (set by `actions/setup-node`).
+    fn provenance_requested<const DIRECTORY_PUBLISH: bool>(
+        ctx: &Context<'_, DIRECTORY_PUBLISH>,
+    ) -> bool {
+        let cfg = &ctx.manager.options.publish_config;
+        if !cfg.provenance_file.is_empty() {
+            return true;
+        }
+        if let Some(p) = cfg.provenance {
+            return p;
+        }
+        // Both spellings, as with NPM_CONFIG_REGISTRY in `PackageManagerOptions::load`: npm sets the lowercase form in lifecycle scripts.
+        let env = bun_core::getenv_z(bun_core::zstr!("NPM_CONFIG_PROVENANCE"))
+            .or_else(|| bun_core::getenv_z(bun_core::zstr!("npm_config_provenance")));
+        match env {
+            Some(v) => strings::eql_case_insensitive_ascii(v, b"true", true) || v == b"1",
+            None => false,
+        }
+    }
+
+    /// Usage and network errors crash rather than publishing unattested, matching npm's `EUSAGE`.
+    fn maybe_generate_provenance<const DIRECTORY_PUBLISH: bool>(
+        ctx: &Context<'_, DIRECTORY_PUBLISH>,
+    ) -> Option<ProvenanceAttachment> {
+        if !Self::provenance_requested(ctx) {
+            return None;
+        }
+        let cfg = &ctx.manager.options.publish_config;
+
+        // `Some(false)` + a file is valid (publishConfig may say false), hence `== Some(true)` rather than `is_some()`.
+        if cfg.provenance == Some(true) && !cfg.provenance_file.is_empty() {
+            Output::err_generic(
+                "--provenance and --provenance-file are mutually exclusive",
+                (),
+            );
+            Global::crash();
+        }
+
+        // npm queries the registry's visibility endpoint for this; requiring an explicit `--access public` gives the same outcome offline.
+        if cfg.access != Some(Access::Public) && cfg.provenance_file.is_empty() {
+            Output::err_generic(
+                "provenance requires <cyan>--access public<r> (provenance cannot be \
+                 generated for private packages)",
+                (),
+            );
+            Global::crash();
+        }
+
+        // Tarball's SHA-512 as lowercase hex — the in-toto subject digest.
+        let mut integrity: SHA512Digest = [0u8; sha::SHA512::DIGEST];
+        let mut sha512 = sha::SHA512::init();
+        sha512.update(&ctx.tarball_bytes);
+        sha512.r#final(&mut integrity);
+        let sha512_hex = bun_fmt::hex_lower(&integrity).to_string();
+        // Raw manifest version including any `+build` suffix, as in npm's purl and the `.sigstore` attachment key.
+        let subject =
+            bun_sigstore::provenance::subject(&ctx.package_name, &ctx.package_version, &sha512_hex);
+
+        // `--provenance-file`: verify subject matches, skip generation.
+        if !cfg.provenance_file.is_empty() {
+            let bytes = match File::read_from(Fd::cwd(), cfg.provenance_file) {
+                Ok(b) => b,
+                Err(e) => {
+                    Output::err(
+                        e,
+                        "Invalid provenance provided: failed to read {}",
+                        (bstr::BStr::new(cfg.provenance_file),),
+                    );
+                    Global::crash();
+                }
+            };
+            return match bun_sigstore::verify_bundle(bytes, &subject) {
+                Ok(att) => {
+                    bun_core::prettyln!(
+                        "<green>✓<r> Attached provenance bundle from <b>{}<r>",
+                        bstr::BStr::new(cfg.provenance_file),
+                    );
+                    Some(ProvenanceAttachment {
+                        media_type: att.media_type,
+                        bundle_json: att.bundle_json,
+                    })
+                }
+                Err(e) => {
+                    e.print();
+                    Global::crash();
+                }
+            };
+        }
+
+        // Preflight: supported CI + OIDC token available.
+        let provider = match bun_sigstore::ensure_provenance_generation() {
+            Ok(p) => p,
+            Err(e) => {
+                e.print();
+                Global::crash();
+            }
+        };
+
+        let payload = bun_sigstore::provenance::generate(provider, &subject);
+        let endpoints = bun_sigstore::Endpoints::from_env();
+
+        let att = match bun_sigstore::attest(&payload, &endpoints) {
+            Ok(a) => a,
+            Err(e) => {
+                e.print();
+                Global::crash();
+            }
+        };
+
+        bun_core::prettyln!(
+            "<green>✓<r> Signed provenance statement with source and build information from \
+             <b>{}<r>",
+            provider.display_name(),
+        );
+        if let Some(url) = &att.transparency_log_url {
+            bun_core::prettyln!("<d>  Transparency log: {}<r>", url);
+        }
+
+        Some(ProvenanceAttachment {
+            media_type: att.media_type.to_owned(),
+            bundle_json: att.bundle_json,
+        })
+    }
+
     fn publish<const DIRECTORY_PUBLISH: bool>(
         ctx: &Context<'_, DIRECTORY_PUBLISH>,
     ) -> Result<(), PublishError> {
@@ -895,12 +1031,15 @@ impl PublishCommand {
             return Ok(());
         }
 
+        // Before the body is built, so the bundle can go into `_attachments`.
+        let provenance = Self::maybe_generate_provenance(ctx);
+
         // Note: `AsyncHTTP::init_sync` requires `&'static [u8]` for the
         // request body. Single-shot CLI path — adopt the
         // already-owned `Box<[u8]>` (base64-encoded tarball; can be multi-MB)
         // into the process-lifetime side-table. Zero-copy.
         let publish_req_body: &'static [u8] = crate::cli::cli_adopt(
-            Self::construct_publish_request_body::<DIRECTORY_PUBLISH>(ctx)?,
+            Self::construct_publish_request_body::<DIRECTORY_PUBLISH>(ctx, provenance.as_ref())?,
         );
 
         let mut print_buf: Vec<u8> = Vec::new();
@@ -1993,6 +2132,7 @@ impl PublishCommand {
 
     fn construct_publish_request_body<const DIRECTORY_PUBLISH: bool>(
         ctx: &Context<'_, DIRECTORY_PUBLISH>,
+        provenance: Option<&ProvenanceAttachment>,
     ) -> Result<Box<[u8]>, AllocError> {
         let tag: &[u8] = if !ctx.manager.options.publish_config.tag.is_empty() {
             ctx.manager.options.publish_config.tag
@@ -2066,7 +2206,29 @@ impl PublishCommand {
             };
             debug_assert!(count == encoded_tarball_len);
 
-            let _ = write!(&mut buf, "\",\"length\":{}}}}}}}", ctx.tarball_bytes.len());
+            let _ = write!(&mut buf, "\",\"length\":{}}}", ctx.tarball_bytes.len());
+
+            // libnpmpublish attaches the bundle JSON as a plain string (not base64) under `{name}-{version}.sigstore`.
+            if let Some(prov) = provenance {
+                // `length` is npm's `JSON.stringify(bundle).length`, i.e. UTF-16 units; Rekor checkpoints contain U+2014, so the body must be encoded as UTF-8.
+                let data_len = std::str::from_utf8(&prov.bundle_json)
+                    .map(|s| s.encode_utf16().count())
+                    .unwrap_or(prov.bundle_json.len());
+                let _ = write!(
+                    &mut buf,
+                    ",\"{}-{}.sigstore\":{{\"content_type\":{},\"data\":{},\"length\":{}}}",
+                    bstr::BStr::new(&ctx.package_name),
+                    bstr::BStr::new(&ctx.package_version),
+                    bun_fmt::format_json_string_utf8(
+                        prov.media_type.as_bytes(),
+                        Default::default()
+                    ),
+                    bun_fmt::format_json_string_utf8(&prov.bundle_json, Default::default()),
+                    data_len,
+                );
+            }
+
+            buf.extend_from_slice(b"}}");
         }
 
         Ok(buf.into_boxed_slice())

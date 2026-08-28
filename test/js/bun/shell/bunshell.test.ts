@@ -1416,6 +1416,14 @@ describe("deno_task", () => {
       .testMini()
       .runAsTest("export exits 1 on an invalid identifier");
 
+    // `.quiet()` keeps stderr as an in-memory buffer, so the builtin takes the
+    // synchronous write path instead of the async fd write the other runs use.
+    TestBuilder.command`export 1abc`
+      .stderr("export: `1abc`: not a valid identifier\n")
+      .exitCode(1)
+      .quiet()
+      .runAsTest("export exits 1 on an invalid identifier with quiet output");
+
     TestBuilder.command`export _ok OK2=1 && echo done`.stdout("done\n").runAsTest("export accepts valid identifiers");
 
     TestBuilder.command`export -- FOO=bar && echo $FOO && export -- && echo done`

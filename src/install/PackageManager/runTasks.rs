@@ -551,16 +551,7 @@ fn run_tasks_erased(
                             );
                         }
 
-                        if manager.subcommand != Subcommand::Remove {
-                            for request in manager.update_requests.iter_mut() {
-                                if strings::eql(request.name, name) {
-                                    request.failed = true;
-                                    manager.options.do_.remove(Do::SAVE_LOCKFILE);
-                                    manager.options.do_.remove(Do::SAVE_YARN_LOCK);
-                                    manager.options.do_.remove(Do::INSTALL_PACKAGES);
-                                }
-                            }
-                        }
+                        mark_update_request_failed(manager, name);
                     }
 
                     continue;
@@ -608,16 +599,7 @@ fn run_tasks_erased(
                             response.status_code,
                         );
                     }
-                    if manager.subcommand != Subcommand::Remove {
-                        for request in manager.update_requests.iter_mut() {
-                            if strings::eql(request.name, name) {
-                                request.failed = true;
-                                manager.options.do_.remove(Do::SAVE_LOCKFILE);
-                                manager.options.do_.remove(Do::SAVE_YARN_LOCK);
-                                manager.options.do_.remove(Do::INSTALL_PACKAGES);
-                            }
-                        }
-                    }
+                    mark_update_request_failed(manager, name);
 
                     continue;
                 }
@@ -810,41 +792,11 @@ fn run_tasks_erased(
                         .map(crate::Error::from)
                         .unwrap_or(crate::Error::TarballFailedToDownload);
 
-                    // The download will not be retried for this task_id. Mark
-                    // the dedupe entry as failed so a later
-                    // `enqueuePackageForDownload` for the same package observes
-                    // the failure and fails fast instead of either waiting
-                    // forever on a callback that never arrives (entry kept) or
-                    // re-running the entire download+retry cycle (entry removed).
-                    // Runs before the callback branch so `Store.Installer`
-                    // (which `continue`s from the callback) is covered too.
-                    let is_required = manager.is_network_task_required(task.task_id);
-                    manager.mark_network_task_failed(task.task_id);
-
-                    if cb.has_on_package_download_error {
-                        if cb.is_store_installer {
-                            (cb.on_package_download_error_store)(
-                                extract_ctx,
-                                task.task_id,
-                                extract.name.slice(),
-                                &extract.resolution,
-                                err,
-                                &task.url_buf,
-                            );
-                        } else {
-                            let package_id = manager.lockfile.buffers.resolutions
-                                [extract.dependency_id as usize];
-                            (cb.on_package_download_error_pkg)(
-                                extract_ctx,
-                                package_id,
-                                extract.name.slice(),
-                                &extract.resolution,
-                                err,
-                                &task.url_buf,
-                            );
-                        }
+                    let Some(is_required) =
+                        dispatch_tarball_error(cb, manager, extract_ctx, task, extract, err)
+                    else {
                         continue;
-                    }
+                    };
 
                     if is_required {
                         bun_ast::add_error_pretty!(
@@ -871,16 +823,7 @@ fn run_tasks_erased(
                                 .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto,),
                         );
                     }
-                    if manager.subcommand != Subcommand::Remove {
-                        for request in manager.update_requests.iter_mut() {
-                            if strings::eql(request.name, extract.name.slice()) {
-                                request.failed = true;
-                                manager.options.do_.remove(Do::SAVE_LOCKFILE);
-                                manager.options.do_.remove(Do::SAVE_YARN_LOCK);
-                                manager.options.do_.remove(Do::INSTALL_PACKAGES);
-                            }
-                        }
-                    }
+                    mark_update_request_failed(manager, extract.name.slice());
 
                     if let Some(removed) = manager.task_queue.remove(&task.task_id) {
                         drop(removed);
@@ -892,48 +835,21 @@ fn run_tasks_erased(
                 let response = &metadata.response;
 
                 if response.status_code > 399 {
-                    // Non-retryable HTTP error: mark the dedupe entry as failed
-                    // so a later enqueue for this task_id fails fast instead of
-                    // waiting on this failed one or re-downloading it. Runs
-                    // before the callback branch so `Store.Installer` (which
-                    // `continue`s from the callback) is covered too.
-                    let is_required = manager.is_network_task_required(task.task_id);
-                    manager.mark_network_task_failed(task.task_id);
+                    let err = match response.status_code {
+                        400 => crate::Error::TarballHTTP400,
+                        401 => crate::Error::TarballHTTP401,
+                        402 => crate::Error::TarballHTTP402,
+                        403 => crate::Error::TarballHTTP403,
+                        404 => crate::Error::TarballHTTP404,
+                        405..=499 => crate::Error::TarballHTTP4xx,
+                        _ => crate::Error::TarballHTTP5xx,
+                    };
 
-                    if cb.has_on_package_download_error {
-                        let err = match response.status_code {
-                            400 => crate::Error::TarballHTTP400,
-                            401 => crate::Error::TarballHTTP401,
-                            402 => crate::Error::TarballHTTP402,
-                            403 => crate::Error::TarballHTTP403,
-                            404 => crate::Error::TarballHTTP404,
-                            405..=499 => crate::Error::TarballHTTP4xx,
-                            _ => crate::Error::TarballHTTP5xx,
-                        };
-
-                        if cb.is_store_installer {
-                            (cb.on_package_download_error_store)(
-                                extract_ctx,
-                                task.task_id,
-                                extract.name.slice(),
-                                &extract.resolution,
-                                err,
-                                &task.url_buf,
-                            );
-                        } else {
-                            let package_id = manager.lockfile.buffers.resolutions
-                                [extract.dependency_id as usize];
-                            (cb.on_package_download_error_pkg)(
-                                extract_ctx,
-                                package_id,
-                                extract.name.slice(),
-                                &extract.resolution,
-                                err,
-                                &task.url_buf,
-                            );
-                        }
+                    let Some(is_required) =
+                        dispatch_tarball_error(cb, manager, extract_ctx, task, extract, err)
+                    else {
                         continue;
-                    }
+                    };
 
                     if is_required {
                         bun_ast::add_error_pretty!(
@@ -954,16 +870,7 @@ fn run_tasks_erased(
                             response.status_code,
                         );
                     }
-                    if manager.subcommand != Subcommand::Remove {
-                        for request in manager.update_requests.iter_mut() {
-                            if strings::eql(request.name, extract.name.slice()) {
-                                request.failed = true;
-                                manager.options.do_.remove(Do::SAVE_LOCKFILE);
-                                manager.options.do_.remove(Do::SAVE_YARN_LOCK);
-                                manager.options.do_.remove(Do::INSTALL_PACKAGES);
-                            }
-                        }
-                    }
+                    mark_update_request_failed(manager, extract.name.slice());
 
                     if let Some(removed) = manager.task_queue.remove(&task.task_id) {
                         drop(removed);
@@ -1671,6 +1578,68 @@ fn run_tasks_erased(
     }
 
     Ok(())
+}
+
+/// Non-retryable tarball download failure. The download will not be retried
+/// for this task_id, so the dedupe entry is marked failed before the error is
+/// dispatched: a later `enqueue_package_for_download` for the same package
+/// then fails fast instead of waiting forever on a callback that never
+/// arrives (entry kept) or re-running the whole download (entry removed).
+/// The store installer's `on_package_download_error` drains `task_queue`
+/// itself but does not touch `network_dedupe_map`, so the mark runs on the
+/// callback path too. Returns `None` when the `on_package_download_error_*`
+/// callback consumed the error, otherwise `Some(is_required)` for the
+/// caller's log-and-mark fallback.
+fn dispatch_tarball_error(
+    cb: &ErasedCallbacks,
+    manager: &mut PackageManager,
+    extract_ctx: *mut (),
+    task: &NetworkTask,
+    extract: &ExtractTarball,
+    err: crate::Error,
+) -> Option<bool> {
+    let is_required = manager.is_network_task_required(task.task_id);
+    manager.mark_network_task_failed(task.task_id);
+
+    if cb.has_on_package_download_error {
+        if cb.is_store_installer {
+            (cb.on_package_download_error_store)(
+                extract_ctx,
+                task.task_id,
+                extract.name.slice(),
+                &extract.resolution,
+                err,
+                &task.url_buf,
+            );
+        } else {
+            let package_id = manager.lockfile.buffers.resolutions[extract.dependency_id as usize];
+            (cb.on_package_download_error_pkg)(
+                extract_ctx,
+                package_id,
+                extract.name.slice(),
+                &extract.resolution,
+                err,
+                &task.url_buf,
+            );
+        }
+        return None;
+    }
+
+    Some(is_required)
+}
+
+fn mark_update_request_failed(manager: &mut PackageManager, name: &[u8]) {
+    if manager.subcommand == Subcommand::Remove {
+        return;
+    }
+    for request in manager.update_requests.iter_mut() {
+        if strings::eql(request.name, name) {
+            request.failed = true;
+            manager.options.do_.remove(Do::SAVE_LOCKFILE);
+            manager.options.do_.remove(Do::SAVE_YARN_LOCK);
+            manager.options.do_.remove(Do::INSTALL_PACKAGES);
+        }
+    }
 }
 
 #[inline]

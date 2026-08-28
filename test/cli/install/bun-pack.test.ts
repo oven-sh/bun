@@ -51,6 +51,13 @@ test("basic", async () => {
   expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/index.js" }]);
 });
 
+test("fails when package.json cannot be parsed", async () => {
+  await write(join(packageDir, "package.json"), '{"name": "pack-bad-json",');
+
+  const { err } = await packExpectError(packageDir, bunEnv);
+  expect(err).toContain(`failed to parse package.json: ${join(packageDir, "package.json")}`);
+});
+
 test("in subdirectory", async () => {
   await Promise.all([
     write(

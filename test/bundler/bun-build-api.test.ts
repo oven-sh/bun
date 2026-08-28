@@ -1485,7 +1485,8 @@ export { greeting };`,
     let promiseRejected = false;
 
     // Assertions live outside the callback: an onEnd callback that throws
-    // rejects the build promise, which the catch below would swallow.
+    // rejects the build promise, and the rejection handler below captures
+    // whatever the rejection is instead of failing the test.
     const rejection = await Bun.build({
       entrypoints: [join(dir, "index.ts")],
       throw: true,
@@ -1654,9 +1655,10 @@ export { greeting };`,
   });
 });
 
-// The tests from here to "does not wait for unrelated thread-pool work" each
-// run a child process that performs many real bundles. They are concurrent so
-// the children overlap instead of running one after another.
+// The tests from here to "does not wait for unrelated thread-pool work" are
+// concurrent. Most of them run a child process that performs many real
+// bundles, and the children overlap instead of running one after another.
+// The only in-process one among them is the single small sourcesContent build.
 //
 // On release builds mimalloc's large-allocation arenas make RSS growth too
 // non-deterministic to draw a clean line between "leaking" and "not leaking"

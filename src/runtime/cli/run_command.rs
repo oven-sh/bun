@@ -30,6 +30,7 @@ use bun_which::which;
 use crate::cli;
 use crate::cli::arguments;
 use crate::cli::command::{ContextData, Tag as CommandTag};
+use crate::cli::did_you_mean;
 use crate::cli::shell_completions::ShellCompletions;
 
 bun_core::declare_scope!(RUN_LOG, visible);
@@ -2283,7 +2284,8 @@ impl RunCommand {
 
         // ── find what to run ────────────────────────────────────────────────
         let mut positionals: &[Box<[u8]>] = &ctx.positionals[..];
-        if !positionals.is_empty() && positionals[0].as_ref() == b"run" {
+        let explicit_run = !positionals.is_empty() && positionals[0].as_ref() == b"run";
+        if explicit_run {
             positionals = &positionals[1..];
         }
 
@@ -2688,12 +2690,123 @@ impl RunCommand {
                         "<r><red>error<r><d>:<r> <b>Script not found \"<b>{}<r>\"",
                         bstr::BStr::new(target_name),
                     );
+                    let path = env_loader.get(b"PATH").unwrap_or(b"");
+                    let bin_dirs = if original_path.len() < path.len() {
+                        &path[..path.len() - (original_path.len() + 1)]
+                    } else {
+                        b""
+                    };
+                    Self::print_did_you_mean(
+                        target_name,
+                        root_dir.enclosing_package_json,
+                        bin_dirs,
+                        !explicit_run,
+                    );
                 }
             }
             Global::exit(1);
         }
 
         Ok(false)
+    }
+
+    /// After `Script not found "<typed>"`: point at the package.json scripts,
+    /// the `node_modules/.bin` entries (`bin_dirs` is the PATH-delimited list
+    /// of those directories) and, when `include_commands`, the `bun` commands
+    /// that `typed` looks like a typo of.
+    fn print_did_you_mean(
+        typed: &[u8],
+        package_json: Option<&PackageJSON>,
+        bin_dirs: &[u8],
+        include_commands: bool,
+    ) {
+        enum Kind {
+            Script,
+            Command(&'static cli::command::RootCommand),
+        }
+        struct Candidate {
+            word: Box<[u8]>,
+            kind: Kind,
+        }
+        let mut candidates: Vec<Candidate> = Vec::new();
+
+        if let Some(scripts) = package_json.and_then(|p| p.scripts.as_deref()) {
+            for key in scripts.keys() {
+                candidates.push(Candidate {
+                    word: key.clone(),
+                    kind: Kind::Script,
+                });
+            }
+        }
+
+        for dir in strings::split(bin_dirs, &[DELIMITER]) {
+            if !strings::ends_with(
+                dir,
+                path_literal!(b"node_modules/.bin", b"node_modules\\.bin"),
+            ) {
+                continue;
+            }
+            let Ok(fd) = sys::open_dir_for_iteration(Fd::cwd(), dir) else {
+                continue;
+            };
+            let mut entries = sys::iterate_dir(fd);
+            while let Ok(Some(entry)) = entries.next() {
+                let mut name = entry.name.slice_u8();
+                if name.starts_with(b".") {
+                    continue;
+                }
+                // On Windows a bin is installed with shims next to it:
+                // `tsc`, `tsc.cmd`, `tsc.ps1`, `tsc.bunx`, `tsc.exe`.
+                if cfg!(windows) {
+                    const SHIM_EXTENSIONS: &[&[u8]] =
+                        &[b".cmd", b".ps1", b".bunx", b".exe", b".bat"];
+                    let ext = paths::extension(name);
+                    if strings::eql_any_comptime(ext, SHIM_EXTENSIONS) {
+                        name = &name[..name.len() - ext.len()];
+                    }
+                }
+                candidates.push(Candidate {
+                    word: Box::from(name),
+                    kind: Kind::Script,
+                });
+            }
+            fd.close();
+        }
+
+        if include_commands {
+            for command in cli::command::ROOT_COMMANDS {
+                if !command.is_for_users() {
+                    continue;
+                }
+                for word in ::core::iter::once(&command.name).chain(command.aliases) {
+                    candidates.push(Candidate {
+                        word: Box::from(*word),
+                        kind: Kind::Command(command),
+                    });
+                }
+            }
+        }
+
+        // A script is spelled `bun run x`: `bun x` would be the command of
+        // the same name (`bun build` bundles, `bun run build` runs the script).
+        // A command is spelled by its name, whichever alias was the closest.
+        let picked = did_you_mean::closest(
+            typed,
+            &candidates,
+            |c| &c.word,
+            |a, b| match (&a.kind, &b.kind) {
+                (Kind::Command(a), Kind::Command(b)) => ::core::ptr::eq(*a, *b),
+                _ => a.word == b.word,
+            },
+        );
+        let commands: Vec<Vec<u8>> = picked
+            .into_iter()
+            .map(|candidate| match &candidate.kind {
+                Kind::Script => [b"bun run ".as_slice(), &candidate.word[..]].concat(),
+                Kind::Command(command) => [b"bun ".as_slice(), command.name].concat(),
+            })
+            .collect();
+        did_you_mean::note(&commands);
     }
 
     /// Fast-path file probe: if `target` resolves to an existing regular file,

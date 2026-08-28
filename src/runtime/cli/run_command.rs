@@ -936,6 +936,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 ctx,
             )?;
         }
+        // Outside the guard: bunfig may have been preloaded via --config.
+        arguments::apply_bunfig_ca_store(ctx);
 
         // The shell does not need to initialize JSC (saves 1-3ms).
         if strings::has_suffix_comptime(&entry_path, b".sh") {
@@ -1138,6 +1140,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 ctx,
             )?;
         }
+        // Standalone executables skip `Arguments::parse`'s CA precedence block.
+        arguments::apply_bunfig_ca_store(ctx);
 
         // layering — `Options::graph` is the resolver's trait object
         // (`&'static dyn bun_resolver::StandaloneModuleGraph`); the concrete
@@ -2322,6 +2326,8 @@ impl RunCommand {
                 ctx,
             );
         }
+        // .RunCommand defers its bunfig load until now, past `Arguments::parse`.
+        arguments::apply_bunfig_ca_store(ctx);
 
         // ── try fast run (file exists & not a dir → boot VM) ────────────────
         if try_fast_run && Self::maybe_open_with_bun_js(ctx, target_name) {

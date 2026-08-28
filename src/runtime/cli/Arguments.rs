@@ -741,19 +741,32 @@ fn replace_pid_placeholder(name: &[u8]) -> Box<[u8]> {
     out.into_boxed_slice()
 }
 
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum BunCAStore {
-    Bundled,
-    Openssl,
-    System,
-}
+pub(crate) use bun_options_types::context::BunCAStore;
+
 #[unsafe(no_mangle)]
 static Bun__Node__CAStore: core::sync::atomic::AtomicU8 =
     core::sync::atomic::AtomicU8::new(BunCAStore::Bundled as u8);
 #[unsafe(no_mangle)]
 pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
+
+/// Set when a CLI flag or `NODE_USE_SYSTEM_CA` pins the CA store; bunfig can't override it.
+pub(crate) static Bun__Node__CAStore_locked: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Applies the bunfig `CA` value unless the store is locked. Idempotent.
+pub(crate) fn apply_bunfig_ca_store(ctx: &mut bun_options_types::context::ContextData) {
+    if !Bun__Node__CAStore_locked.load(core::sync::atomic::Ordering::Relaxed) {
+        if let Some(ca_store) = ctx.runtime_options.ca_store {
+            Bun__Node__CAStore.store(ca_store as u8, core::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    let current = Bun__Node__CAStore.load(core::sync::atomic::Ordering::Relaxed);
+    Bun__Node__UseSystemCA.store(
+        current == BunCAStore::System as u8,
+        core::sync::atomic::Ordering::Relaxed,
+    );
+}
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 // their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
@@ -1461,7 +1474,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             Global::exit(1);
         }
 
-        // CLI overrides env var (NODE_USE_SYSTEM_CA)
+        // Precedence: CLI flag > NODE_USE_SYSTEM_CA > bunfig.toml `CA` > bundled default.
         let store: Option<BunCAStore> = if use_bundled_ca {
             Some(BunCAStore::Bundled)
         } else if use_openssl_ca {
@@ -1469,22 +1482,11 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         } else if use_system_ca || env_var::NODE_USE_SYSTEM_CA.get().unwrap_or(false) {
             Some(BunCAStore::System)
         } else {
-            // No CA flag — leave the FFI default (Bundled) in place. Avoids a
-            // `transmute<u8, BunCAStore>` round-trip through the atomic, which
-            // would be UB on an out-of-range discriminant.
             None
         };
         if let Some(store) = store {
             Bun__Node__CAStore.store(store as u8, core::sync::atomic::Ordering::Relaxed);
-            // Back-compat boolean used by native code until fully migrated
-            Bun__Node__UseSystemCA.store(
-                store == BunCAStore::System,
-                core::sync::atomic::Ordering::Relaxed,
-            );
-        } else {
-            // `Bun__Node__UseSystemCA` is written unconditionally,
-            // even when no CA flag/env was supplied (default bundled ⇒ false).
-            Bun__Node__UseSystemCA.store(false, core::sync::atomic::Ordering::Relaxed);
+            Bun__Node__CAStore_locked.store(true, core::sync::atomic::Ordering::Relaxed);
         }
 
         if args.flag(b"--tls-min-v1.3") && args.flag(b"--tls-max-v1.2") {
@@ -1493,6 +1495,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             );
             Global::exit(1);
         }
+
+        // .RunCommand's bunfig loads later in `Run::boot`, which applies again.
+        apply_bunfig_ca_store(ctx);
     }
 
     if let (Some(port), true) = (opts.port, opts.origin.is_none()) {

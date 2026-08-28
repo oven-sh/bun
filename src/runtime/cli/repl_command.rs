@@ -54,6 +54,8 @@ impl ReplCommand {
                 ctx,
             )?;
         }
+        // Outside the guard: bunfig may have been preloaded via --config.
+        Arguments::apply_bunfig_ca_store(ctx);
 
         jsc::initialize(jsc::InitializeOptions {
             eval_mode: true,

@@ -1,5 +1,7 @@
 // HTML tests are tests relating to HTML files themselves.
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import { expect, test } from "bun:test";
+import net from "node:net";
+import { type Dev, devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("html file is watched", {
   files: {
@@ -319,6 +321,172 @@ devTest("error report endpoint rejects requests whose origin header does not mat
 
     await dev.fetch("/").expect.toInclude("<h1>Origin Check</h1>");
   },
+});
+
+/** Status line of a raw `/_bun/hmr` WebSocket handshake sent with the given `Host`. */
+function hmrHandshakeStatus(dev: Dev, host: string): Promise<string> {
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  const socket = net.connect(dev.port, "127.0.0.1", () => {
+    socket.write(
+      `GET /_bun/hmr HTTP/1.1\r\n` +
+        `Host: ${host}\r\n` +
+        `Origin: http://${host}\r\n` +
+        `Upgrade: websocket\r\n` +
+        `Connection: Upgrade\r\n` +
+        `Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n` +
+        `Sec-WebSocket-Version: 13\r\n\r\n`,
+    );
+  });
+  let received = "";
+  socket.on("data", chunk => {
+    received += chunk;
+    if (received.includes("\r\n\r\n")) {
+      socket.destroy();
+      resolve(received.split("\r\n")[0]);
+    }
+  });
+  socket.on("error", reject);
+  return promise;
+}
+
+devTest("development.allowedHosts lets the dev server answer for extra hostnames", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["/style.css"],
+      scripts: ["/script.ts"],
+      body: "<h1>Allowed Hosts</h1>",
+    }),
+    "style.css": `
+      h1 { color: red; }
+    `,
+    "script.ts": `
+      console.log("hello");
+    `,
+    // The harness-generated bun.app.ts has no `development` object, so
+    // provide one directly. `htmlFiles: []` tells the harness not to
+    // generate its own config from index.html.
+    "bun.app.ts": `
+      import html from "./index.html";
+      export default {
+        static: {
+          "/": html,
+        },
+        development: {
+          allowedHosts: ["mybox.local", ".tunnel.example"],
+        },
+        fetch(req) {
+          return new Response("Not Found", { status: 404 });
+        },
+      };
+    `,
+  },
+  htmlFiles: [],
+  async test(dev) {
+    // Hostnames match case-insensitively and without the port.
+    const page = await dev.fetch("/", { headers: { Host: "MYBOX.local:3000" } });
+    const pageText = await page.text();
+    expect(pageText).toContain("<h1>Allowed Hosts</h1>");
+    expect(page.status).toBe(200);
+
+    // The script and stylesheet the page references load under that host too,
+    // as does the HMR WebSocket.
+    const [, scriptUrl] = pageText.match(/src="(\/_bun\/client\/[^"]+)"/)!;
+    const [, styleUrl] = pageText.match(/href="(\/_bun\/asset\/[^"]+)"/)!;
+    const script = await dev.fetch(scriptUrl, { headers: { Host: "mybox.local" } });
+    expect(await script.text()).toContain('console.log("hello")');
+    expect(script.status).toBe(200);
+    const style = await dev.fetch(styleUrl, { headers: { Host: "mybox.local" } });
+    expect(await style.text()).toContain("color: red");
+    expect(style.status).toBe(200);
+    expect(await hmrHandshakeStatus(dev, "mybox.local")).toBe("HTTP/1.1 101 Switching Protocols");
+
+    // A leading "." allows the domain itself and every subdomain.
+    for (const host of ["tunnel.example", "a.b.tunnel.example"]) {
+      const res = await dev.fetch("/", { headers: { Host: host } });
+      expect(await res.text()).toContain("<h1>Allowed Hosts</h1>");
+      expect(res.status).toBe(200);
+    }
+
+    // Every other hostname is still blocked, and the response says how to allow it.
+    for (const host of ["nottunnel.example", "mybox.local.example", "rebound-host.example"]) {
+      const res = await dev.fetch("/", { headers: { Host: host } });
+      const text = await res.text();
+      expect(text).not.toContain("/_bun/client/");
+      expect(text).toContain("development.allowedHosts");
+      expect(res.status).toBe(403);
+      const blockedScript = await dev.fetch(scriptUrl, { headers: { Host: host } });
+      expect(blockedScript.status).toBe(403);
+    }
+    expect(await hmrHandshakeStatus(dev, "rebound-host.example")).toBe("HTTP/1.1 403 Forbidden");
+
+    // The built-in list still applies.
+    const local = await dev.fetch("/", { headers: { Host: "app.localhost" } });
+    expect(await local.text()).toContain("<h1>Allowed Hosts</h1>");
+    expect(local.status).toBe(200);
+  },
+});
+
+devTest("development.allowedHosts: true turns the host check off", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["/script.ts"],
+      body: "<h1>Any Host</h1>",
+    }),
+    "script.ts": `
+      console.log("hello");
+    `,
+    "bun.app.ts": `
+      import html from "./index.html";
+      export default {
+        static: {
+          "/": html,
+        },
+        development: {
+          allowedHosts: true,
+        },
+        fetch(req) {
+          return new Response("Not Found", { status: 404 });
+        },
+      };
+    `,
+  },
+  htmlFiles: [],
+  async test(dev) {
+    const page = await dev.fetch("/", { headers: { Host: "any-host.example" } });
+    const pageText = await page.text();
+    expect(pageText).toContain("<h1>Any Host</h1>");
+    expect(page.status).toBe(200);
+
+    const [, scriptUrl] = pageText.match(/src="(\/_bun\/client\/[^"]+)"/)!;
+    const script = await dev.fetch(scriptUrl, { headers: { Host: "any-host.example" } });
+    expect(script.status).toBe(200);
+    expect(await hmrHandshakeStatus(dev, "any-host.example")).toBe("HTTP/1.1 101 Switching Protocols");
+  },
+});
+
+test("development.allowedHosts rejects values that are not hostnames", () => {
+  const serve = (allowedHosts: unknown) => {
+    const server = Bun.serve({
+      port: 0,
+      development: { allowedHosts } as any,
+      fetch() {
+        return new Response("unreachable");
+      },
+    });
+    // Only reached when the option was accepted, which fails the assertion below.
+    server.stop(true);
+  };
+  expect(() => serve("mybox.local")).toThrow(
+    "Bun.serve() expects 'development.allowedHosts' to be an array of hostnames or true",
+  );
+  expect(() => serve([42])).toThrow(
+    "Bun.serve() expects 'development.allowedHosts' to be an array of hostnames or true",
+  );
+  for (const entry of ["", ".", "http://mybox.local", "mybox.local:3000", "mybox.local/app", "*.tunnel.example"]) {
+    expect(() => serve([entry])).toThrow(
+      `Bun.serve() expects each entry of 'development.allowedHosts' to be a hostname without a scheme, port, or path (a leading "." allows subdomains), got "${entry}"`,
+    );
+  }
 });
 
 devTest("error report endpoint blanks stray non-text bytes in reported frames", {

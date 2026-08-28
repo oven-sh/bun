@@ -39,6 +39,9 @@ pub struct ServerConfig {
     pub(crate) max_request_body_size: usize,
     pub(crate) development: DevelopmentOption,
     pub(crate) broadcast_console_log_from_browser_to_server_for_bake: bool,
+    /// `development.allowedHosts`: extra `Host` header values the dev server
+    /// answers for. See `bake::is_allowed_host_header`.
+    pub(crate) allowed_hosts: AllowedHosts,
 
     /// Enable automatic workspace folders for Chrome DevTools
     /// https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
@@ -87,6 +90,7 @@ impl Default for ServerConfig {
             max_request_body_size: 1024 * 1024 * 128,
             development: DevelopmentOption::Development,
             broadcast_console_log_from_browser_to_server_for_bake: false,
+            allowed_hosts: AllowedHosts::BuiltIn,
             enable_chrome_devtools_automatic_workspace_folders: true,
             on_error: JSValue::ZERO,
             on_request: JSValue::ZERO,
@@ -143,6 +147,60 @@ impl DevelopmentOption {
 
     pub(crate) fn is_development(self) -> bool {
         self == DevelopmentOption::Development || self == DevelopmentOption::DevelopmentWithoutHmr
+    }
+}
+
+/// Which `Host` header values the dev server answers for. The built-in list
+/// (`localhost`, `*.localhost`, IP literals, the bound `hostname`) always
+/// applies; `development.allowedHosts` adds to it or turns the check off.
+#[derive(Default)]
+pub enum AllowedHosts {
+    #[default]
+    BuiltIn,
+    /// Hostnames without a port. An entry with a leading `.` allows that
+    /// domain and every subdomain of it.
+    List(Vec<Box<[u8]>>),
+    /// `allowedHosts: true`: every `Host` header is accepted.
+    Any,
+}
+
+impl AllowedHosts {
+    fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<AllowedHosts> {
+        const EXPECTED: &str =
+            "Bun.serve() expects 'development.allowedHosts' to be an array of hostnames or true";
+        if value.is_boolean() {
+            return Ok(if value == JSValue::TRUE {
+                AllowedHosts::Any
+            } else {
+                AllowedHosts::BuiltIn
+            });
+        }
+        if !value.is_cell() || !value.js_type().is_array() {
+            return Err(global.throw_invalid_arguments(format_args!("{EXPECTED}")));
+        }
+        let mut iter = value.array_iterator(global)?;
+        let mut hosts: Vec<Box<[u8]>> = Vec::new();
+        while let Some(item) = iter.next()? {
+            if !item.is_string() {
+                return Err(global.throw_invalid_arguments(format_args!("{EXPECTED}")));
+            }
+            let host = item.to_utf8(global)?;
+            // `.` alone would match every host with a trailing dot, and an
+            // empty entry would match a malformed `Host` header. A scheme,
+            // port, or path never matches anything, so reject those early.
+            if host.is_empty()
+                || &*host == b"."
+                || strings::index_of_any(&host, b":/?#*\t\r\n ").is_some()
+            {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Bun.serve() expects each entry of 'development.allowedHosts' to be a hostname \
+                     without a scheme, port, or path (a leading \".\" allows subdomains), got \"{}\"",
+                    bstr::BStr::new(&*host),
+                )));
+            }
+            hosts.push(Box::<[u8]>::from(&*host));
+        }
+        Ok(AllowedHosts::List(hosts))
     }
 }
 
@@ -278,6 +336,7 @@ impl ServerConfig {
             development: self.development,
             broadcast_console_log_from_browser_to_server_for_bake: self
                 .broadcast_console_log_from_browser_to_server_for_bake,
+            allowed_hosts: core::mem::take(&mut self.allowed_hosts),
             enable_chrome_devtools_automatic_workspace_folders: self
                 .enable_chrome_devtools_automatic_workspace_folders,
             on_error: self.on_error,
@@ -710,6 +769,12 @@ impl ServerConfig {
                     dev.get_boolean_strict(global, "chromeDevToolsAutomaticWorkspaceFolders")?
                 {
                     args.enable_chrome_devtools_automatic_workspace_folders = v;
+                }
+
+                if let Some(v) = dev.get(global, "allowedHosts")? {
+                    if !v.is_undefined_or_null() {
+                        args.allowed_hosts = AllowedHosts::from_js(global, v)?;
+                    }
                 }
             } else {
                 args.development = if dev.to_boolean() {

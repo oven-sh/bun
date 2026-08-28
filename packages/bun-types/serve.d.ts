@@ -585,6 +585,33 @@ declare module "bun" {
            * @default true
            */
           chromeDevToolsAutomaticWorkspaceFolders?: boolean;
+
+          /**
+           * Extra `Host` header values the development server answers for.
+           *
+           * In development, HTML routes, their bundled assets under `/_bun/*`
+           * and the hot-reload WebSocket only answer requests whose `Host`
+           * header is `localhost`, a `*.localhost` name, an IP address, or
+           * the configured `hostname`. Other requests get a `403`. This
+           * protects the bundled source code from DNS rebinding attacks.
+           *
+           * Add the hostnames you use to reach the server through an mDNS
+           * name, a tunnel, or an `/etc/hosts` entry. An entry with a leading
+           * `.` allows that domain and every subdomain of it. Entries are
+           * hostnames without a port. Pass `true` to answer every `Host`,
+           * which removes the DNS rebinding protection.
+           *
+           * @example
+           * ```ts
+           * Bun.serve({
+           *   routes: { "/": homepage },
+           *   development: {
+           *     allowedHosts: ["mybox.local", ".ngrok-free.app"],
+           *   },
+           * });
+           * ```
+           */
+          allowedHosts?: string[] | true;
         };
 
     type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";

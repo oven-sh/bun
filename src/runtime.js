@@ -339,6 +339,8 @@ export var __EARLY_RETURN_SENTINEL = /* @__PURE__ */ Symbol.for("react.early_ret
 
 var __zodStateSymbol;
 var __zodFail = {};
+// Thrown by a validator on an input that zod 4.x releases treat differently. A returned __zodFail from a conclusive node tells a union to try its next option; the throw ends the whole fast path instead, so the installed zod decides.
+var __zodAbort = {};
 var __zodCompileCache;
 var __zodProtoHandler;
 
@@ -417,7 +419,13 @@ function __zodRun(state, wrapper, data, params, mode) {
     var compiled = state.compiled;
     if (compiled === undefined) compiled = __zodEnsureCompiled(state);
     if (compiled !== null) {
-      var r = compiled(data, state.refs);
+      var r;
+      try {
+        r = compiled(data, state.refs);
+      } catch (e) {
+        if (e !== __zodAbort) throw e;
+        r = __zodFail;
+      }
       if (r !== __zodFail) {
         return mode & 1 ? { success: true, data: r } : r;
       }
@@ -1052,7 +1060,7 @@ function __zodCompile(n) {
         if (keySet !== null) {
           // Mirrors zod's handleCatchall: for-in, inherited enumerable keys included. An own "__proto__" key is left to the installed zod (4.4 skips it, earlier 4.x validates it).
           for (var uk in v) {
-            if (uk === "__proto__") return __zodFail;
+            if (uk === "__proto__") throw __zodAbort;
             if (keySet.has(uk)) continue;
             if (caNever) return __zodFail;
             var cr = caFn(v[uk], refs);
@@ -1124,14 +1132,14 @@ function __zodCompile(n) {
         if (!__zodIsPlainObject(v)) return __zodFail;
         // Inputs that zod 4.x releases treat differently are left to the installed zod: an own non-function `constructor` (a plain object since 4.2), an own "__proto__" key and non-enumerable keys (skipped since 4.4).
         var ctor = v.constructor;
-        if (ctor !== undefined && typeof ctor !== "function") return __zodFail;
+        if (ctor !== undefined && typeof ctor !== "function") throw __zodAbort;
         var keys = Reflect.ownKeys(v);
         var out = {};
         for (var i = 0; i < keys.length; i++) {
           var key = keys[i];
           // Symbol keys fail string key schemas in zod; delegate.
-          if (typeof key !== "string" || key === "__proto__") return __zodFail;
-          if (!Object.prototype.propertyIsEnumerable.call(v, key)) return __zodFail;
+          if (typeof key !== "string") return __zodFail;
+          if (key === "__proto__" || !Object.prototype.propertyIsEnumerable.call(v, key)) throw __zodAbort;
           var r = recVal(v[key], refs);
           if (r === __zodFail) return __zodFail;
           out[key] = r;

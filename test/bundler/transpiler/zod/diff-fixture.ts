@@ -190,6 +190,11 @@ const SCHEMAS: Record<string, () => any> = {
   unionRefineFirst: () => z.union([z.number().refine(isEven), z.string()]),
   unionDefaultFirst: () => z.union([z.string().default("d"), z.number()]),
   unionCoerceFirst: () => z.union([z.coerce.string(), z.number()]),
+  // Conclusive options that hand release-dependent inputs (an own "__proto__"
+  // key, a non-function `constructor`, non-enumerable keys) to zod: the union
+  // must not read that as a rejection and move on to the next option.
+  unionStrictFirst: () => z.union([z.strictObject({ a: z.string() }), z.object({ a: z.string().toUpperCase() })]),
+  unionRecordFirst: () => z.union([z.record(z.string(), z.number()), z.object({ constructor: z.coerce.string() })]),
   optionalAsyncRefine: () =>
     z
       .number()

@@ -503,6 +503,9 @@ itBundled("zod/ReleaseDependentInputsGoToTheInstalledZod", {
       const Strict = z.strictObject({ a: z.string() });
       const Loose = z.looseObject({ a: z.string() });
       const Rec = z.record(z.string(), z.number());
+      // Under 4.4 the strict option accepts this input and wins; under 4.1 it
+      // rejects and the second option wins. Either way the answer is zod's.
+      const Union = z.union([z.strictObject({ a: z.string() }), z.object({ a: z.string().toUpperCase() })]);
       const protoKey = JSON.parse('{"__proto__": {"p": 1}, "a": "s"}');
       const hidden = { k: 1 };
       Object.defineProperty(hidden, "hidden", { value: 9, enumerable: false });
@@ -510,7 +513,8 @@ itBundled("zod/ReleaseDependentInputsGoToTheInstalledZod", {
       console.log(Object.getPrototypeOf(Loose.parse(protoKey)) === Object.prototype);
       console.log(JSON.stringify(Rec.parse(hidden)), JSON.stringify(Rec.parse({ k: 1 })));
       console.log(Rec.safeParse(JSON.parse('{"constructor": 0, "k": 1}')).success);
+      console.log(JSON.stringify(Union.parse(protoKey)));
     `,
   },
-  run: { stdout: 'false true\nfalse\n{"k":1,"hidden":9} {"k":1}\nfalse' },
+  run: { stdout: 'false true\nfalse\n{"k":1,"hidden":9} {"k":1}\nfalse\n{"a":"S"}' },
 });

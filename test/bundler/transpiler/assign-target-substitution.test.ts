@@ -156,6 +156,28 @@ describe("bun build", () => {
     expect(stdout).toBe(mode === "--no-bundle" ? printed : `// entry.js\n${printed}`);
     expect(exitCode).toBe(0);
   });
+
+  // With `--format=cjs`, a read of `import.meta.main`, `.dir` or `.url` inlines
+  // to a constant. A write keeps the property reference.
+  test.concurrent("--format=cjs keeps import.meta as an assignment target", async () => {
+    const { source, printed } = join(
+      unchanged([
+        ["assignment", `import.meta.main = 1;`],
+        ["postfix increment", `import.meta.main++;`],
+        ["array destructuring", `[import.meta.main] = [1];`],
+        ["dir", `import.meta.dir = 1;`],
+        ["url", `import.meta.url = 1;`],
+        ["read", `console.log(import.meta.main);`, `console.log(require.main == module);`],
+      ]),
+    );
+    using dir = tempDir("import-meta-target-build", { "entry.js": source });
+
+    const { stdout, stderr, exitCode } = await run([bunExe(), "build", "--format=cjs", "entry.js"], String(dir));
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`// entry.js\n${printed}`);
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("bun run", () => {

@@ -1822,8 +1822,8 @@ mod posix_impl {
     // EINTR-retry: most wrappers loop on EINTR. NOT all — the macOS
     // `$NOCANCEL` arms for open/openat/read/write/recv/send issue exactly one
     // call and surface EINTR to the caller without looping. `check!` keeps the
-    // retry for the common path; `check_once!` is the single-shot variant for
-    // the Darwin arms.
+    // retry for the common path; the `check_once_*!` macros are the
+    // single-shot variants for the Darwin arms.
     macro_rules! check {
         ($rc:expr, $tag:expr) => {{
             loop {
@@ -1854,6 +1854,22 @@ mod posix_impl {
             }
         }};
     }
+    // Attaches `.fd`.
+    macro_rules! check_fd {
+        ($rc:expr, $tag:expr, $fd:expr) => {{
+            loop {
+                let rc = $rc;
+                if rc < 0 {
+                    let e = last_errno();
+                    if e == libc::EINTR {
+                        continue;
+                    }
+                    return Err(Error::from_code_int(e, $tag).with_fd($fd));
+                }
+                break rc;
+            }
+        }};
+    }
     // Attaches BOTH `.fd` and `.path`.
     macro_rules! check_fp {
         ($rc:expr, $tag:expr, $fd:expr, $path:expr) => {{
@@ -1874,21 +1890,21 @@ mod posix_impl {
     }
     // Single-shot: no EINTR retry (Darwin `$NOCANCEL` arms).
     #[cfg(target_os = "macos")]
-    macro_rules! check_once {
-        ($rc:expr, $tag:expr) => {{
-            let rc = $rc;
-            if rc < 0 {
-                return Err(Error::from_code_int(last_errno(), $tag));
-            }
-            rc
-        }};
-    }
-    #[cfg(target_os = "macos")]
     macro_rules! check_once_p {
         ($rc:expr, $tag:expr, $path:expr) => {{
             let rc = $rc;
             if rc < 0 {
                 return Err(Error::from_code_int(last_errno(), $tag).with_path($path.as_bytes()));
+            }
+            rc
+        }};
+    }
+    #[cfg(target_os = "macos")]
+    macro_rules! check_once_fd {
+        ($rc:expr, $tag:expr, $fd:expr) => {{
+            let rc = $rc;
+            if rc < 0 {
+                return Err(Error::from_code_int(last_errno(), $tag).with_fd($fd));
             }
             rc
         }};
@@ -2006,23 +2022,25 @@ mod posix_impl {
         // macOS: single `read$NOCANCEL`, no EINTR retry.
         #[cfg(target_os = "macos")]
         {
-            let n = check_once!(
+            let n = check_once_fd!(
                 // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` writes.
                 unsafe { sys_read(fd.native(), buf.as_mut_ptr().cast(), len) },
-                Tag::read
+                Tag::read,
+                fd
             );
             Ok(n as usize)
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             super::linux_syscall::read(fd, &mut buf[..len])
-                .map_err(|e| Error::from_code_int(e, Tag::read))
+                .map_err(|e| Error::from_code_int(e, Tag::read).with_fd(fd))
         }
         #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
         {
-            let n = check!(
+            let n = check_fd!(
                 unsafe { sys_read(fd.native(), buf.as_mut_ptr().cast(), len) },
-                Tag::read
+                Tag::read,
+                fd
             );
             Ok(n as usize)
         }
@@ -2032,23 +2050,25 @@ mod posix_impl {
         // macOS: single `write$NOCANCEL`, no EINTR retry.
         #[cfg(target_os = "macos")]
         {
-            let n = check_once!(
+            let n = check_once_fd!(
                 // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` reads.
                 unsafe { sys_write(fd.native(), buf.as_ptr().cast(), len) },
-                Tag::write
+                Tag::write,
+                fd
             );
             Ok(n as usize)
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             super::linux_syscall::write(fd, &buf[..len])
-                .map_err(|e| Error::from_code_int(e, Tag::write))
+                .map_err(|e| Error::from_code_int(e, Tag::write).with_fd(fd))
         }
         #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
         {
-            let n = check!(
+            let n = check_fd!(
                 unsafe { sys_write(fd.native(), buf.as_ptr().cast(), len) },
-                Tag::write
+                Tag::write,
+                fd
             );
             Ok(n as usize)
         }
@@ -2058,14 +2078,15 @@ mod posix_impl {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             return super::linux_syscall::pread(fd, &mut buf[..len], off)
-                .map_err(|e| Error::from_code_int(e, Tag::pread));
+                .map_err(|e| Error::from_code_int(e, Tag::pread).with_fd(fd));
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
-            let n = check!(
+            let n = check_fd!(
                 // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` writes.
                 unsafe { sys_pread(fd.native(), buf.as_mut_ptr().cast(), len, off) },
-                Tag::pread
+                Tag::pread,
+                fd
             );
             Ok(n as usize)
         }
@@ -2075,14 +2096,15 @@ mod posix_impl {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             return super::linux_syscall::pwrite(fd, &buf[..len], off)
-                .map_err(|e| Error::from_code_int(e, Tag::pwrite));
+                .map_err(|e| Error::from_code_int(e, Tag::pwrite).with_fd(fd));
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
-            let n = check!(
+            let n = check_fd!(
                 // SAFETY: `fd` is a live descriptor; `buf` is valid for `len` reads.
                 unsafe { sys_pwrite(fd.native(), buf.as_ptr().cast(), len, off) },
-                Tag::pwrite
+                Tag::pwrite,
+                fd
             );
             Ok(n as usize)
         }
@@ -2110,15 +2132,16 @@ mod posix_impl {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             return super::linux_syscall::fstat(fd)
-                .map_err(|e| Error::from_code_int(e, Tag::fstat));
+                .map_err(|e| Error::from_code_int(e, Tag::fstat).with_fd(fd));
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let mut st = core::mem::MaybeUninit::<Stat>::uninit();
-            check!(
+            check_fd!(
                 // SAFETY: `fd` is a live descriptor; `st` is a valid out-param.
                 unsafe { libc::fstat(fd.native(), st.as_mut_ptr()) },
-                Tag::fstat
+                Tag::fstat,
+                fd
             );
             // SAFETY: rc == 0 ⇒ kernel populated `st`.
             Ok(unsafe { st.assume_init() })
@@ -2344,11 +2367,10 @@ mod posix_impl {
                     SUPPORTS_STATX_ON_LINUX.store(false, Ordering::Relaxed);
                     return statx_fallback(fd, path, flags);
                 }
-                return Err(Error {
-                    errno: raw_errno as _,
-                    syscall,
-                    ..Default::default()
-                });
+                let err = Error::from_code_int(raw_errno, syscall);
+                // `fstatx` names the file by `fd`; `statx`/`lstatx` pass
+                // `AT_FDCWD` plus a path, and the caller attaches the path.
+                return Err(if path.is_none() { err.with_fd(fd) } else { err });
             }
 
             // SAFETY: rc == 0 ⇒ kernel populated the buffer.
@@ -2628,18 +2650,19 @@ mod posix_impl {
         }
     }
     pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> {
-        check!(
+        check_fd!(
             safe_libc::fchmod(fd.native(), mode as libc::mode_t),
-            Tag::fchmod
+            Tag::fchmod,
+            fd
         );
         Ok(())
     }
     pub fn fchown(fd: Fd, uid: u32, gid: u32) -> Maybe<()> {
-        check!(safe_libc::fchown(fd.native(), uid, gid), Tag::fchown);
+        check_fd!(safe_libc::fchown(fd.native(), uid, gid), Tag::fchown, fd);
         Ok(())
     }
     pub fn ftruncate(fd: Fd, len: i64) -> Maybe<()> {
-        check!(safe_libc::ftruncate(fd.native(), len), Tag::ftruncate);
+        check_fd!(safe_libc::ftruncate(fd.native(), len), Tag::ftruncate, fd);
         Ok(())
     }
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
@@ -2901,11 +2924,12 @@ mod posix_impl {
     }
     pub fn futimens(fd: Fd, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
         let ts = [atime.to_timespec(), mtime.to_timespec()];
-        check!(
+        check_fd!(
             // SAFETY: `fd` is a live descriptor; `ts` is a 2-element stack
             // array and `futimens` reads exactly two `timespec`s.
             unsafe { libc::futimens(fd.native(), ts.as_ptr()) },
-            Tag::futimens
+            Tag::futimens,
+            fd
         );
         Ok(())
     }
@@ -3020,11 +3044,15 @@ mod posix_impl {
         safe_libc::isatty(fd.native()) == 1
     }
     pub fn fsync(fd: Fd) -> Maybe<()> {
-        check!(safe_libc::fsync(fd.native()), Tag::fsync);
+        check_fd!(safe_libc::fsync(fd.native()), Tag::fsync, fd);
         Ok(())
     }
     pub fn lseek(fd: Fd, offset: i64, whence: i32) -> Maybe<i64> {
-        let rc = check!(safe_libc::lseek(fd.native(), offset, whence), Tag::lseek);
+        let rc = check_fd!(
+            safe_libc::lseek(fd.native(), offset, whence),
+            Tag::lseek,
+            fd
+        );
         Ok(rc)
     }
     pub fn chdir(path: &ZStr) -> Maybe<()> {
@@ -3049,17 +3077,19 @@ mod posix_impl {
         let len = buf.len().min(MAX_COUNT);
         // macOS: single `recvfrom$NOCANCEL`, no EINTR retry.
         #[cfg(target_os = "macos")]
-        let n = check_once!(
+        let n = check_once_fd!(
             // SAFETY: `fd` is a live socket; `buf` is valid for `len` writes.
             unsafe { sys_recv(fd.native(), buf.as_mut_ptr().cast(), len, flags) },
-            Tag::recv
+            Tag::recv,
+            fd
         );
         #[cfg(not(target_os = "macos"))]
-        let n = check!(
+        let n = check_fd!(
             // SAFETY: `fd` is a live socket; `buf[..len]` is a valid exclusive
             // slice and `len <= buf.len()` (clamped above).
             unsafe { sys_recv(fd.native(), buf.as_mut_ptr().cast(), len, flags) },
-            Tag::recv
+            Tag::recv,
+            fd
         );
         Ok(n as usize)
     }
@@ -3068,17 +3098,19 @@ mod posix_impl {
         // forward the full length and let the kernel decide.
         // macOS: single `sendto$NOCANCEL`, no EINTR retry.
         #[cfg(target_os = "macos")]
-        let n = check_once!(
+        let n = check_once_fd!(
             // SAFETY: `fd` is a live socket; `buf` is valid for `buf.len()` reads.
             unsafe { sys_send(fd.native(), buf.as_ptr().cast(), buf.len(), flags) },
-            Tag::send
+            Tag::send,
+            fd
         );
         #[cfg(not(target_os = "macos"))]
-        let n = check!(
+        let n = check_fd!(
             // SAFETY: `fd` is a live socket; `buf` is a valid shared slice of
             // `buf.len()` readable bytes.
             unsafe { sys_send(fd.native(), buf.as_ptr().cast(), buf.len(), flags) },
-            Tag::send
+            Tag::send,
+            fd
         );
         Ok(n as usize)
     }
@@ -4492,7 +4524,7 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
                 )
             };
             if rc < 0 {
-                return Err(Error::from_code_int(last_errno(), Tag::pwritev));
+                return Err(Error::from_code_int(last_errno(), Tag::pwritev).with_fd(fd));
             }
             return Ok(rc as usize);
         }
@@ -4502,7 +4534,7 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
             return unsafe {
                 linux_syscall::pwritev(fd, vecs.as_ptr().cast::<libc::iovec>(), vecs.len(), offset)
             }
-            .map_err(|e| Error::from_code_int(e, Tag::pwritev));
+            .map_err(|e| Error::from_code_int(e, Tag::pwritev).with_fd(fd));
         }
         #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
         loop {
@@ -4519,7 +4551,7 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
                 if e == libc::EINTR {
                     continue;
                 }
-                return Err(Error::from_code_int(e, Tag::pwritev));
+                return Err(Error::from_code_int(e, Tag::pwritev).with_fd(fd));
             }
             return Ok(rc as usize);
         }

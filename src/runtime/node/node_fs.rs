@@ -34,7 +34,6 @@ use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, Wor
 pub trait MaybeSysResultExt<R>: Sized {
     fn get_errno(&self) -> E;
     fn init_err_with_p(e: SystemErrno, syscall: sys::Tag, path: impl AsRef<[u8]>) -> Self;
-    fn errno_sys<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag) -> Option<Self>;
     fn errno_sys_fd<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag, fd: FD) -> Option<Self>;
     fn errno_sys_p<Rc: sys::GetErrno>(
         rc: Rc,
@@ -64,17 +63,6 @@ impl<R> MaybeSysResultExt<R> for Maybe<R> {
             path: path.as_ref().into(),
             ..Default::default()
         })
-    }
-    #[inline]
-    fn errno_sys<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag) -> Option<Self> {
-        match sys::get_errno(rc) {
-            E::SUCCESS => None,
-            e => Some(Err(sys::Error {
-                errno: (e as u16),
-                syscall,
-                ..Default::default()
-            })),
-        }
     }
     #[inline]
     fn errno_sys_fd<Rc: sys::GetErrno>(rc: Rc, syscall: sys::Tag, fd: FD) -> Option<Self> {
@@ -5262,7 +5250,7 @@ impl NodeFS {
             unsafe extern "C" {
                 safe fn fsync(fd: libc::c_int) -> libc::c_int;
             }
-            Maybe::<ret::Fsync>::errno_sys(fsync(args.fd.native()), sys::Tag::fsync)
+            Maybe::<ret::Fsync>::errno_sys_fd(fsync(args.fd.native()), sys::Tag::fsync, args.fd)
                 .unwrap_or(Ok(()))
         }
     }

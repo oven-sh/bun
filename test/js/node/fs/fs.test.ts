@@ -5874,6 +5874,54 @@ it("promises.fdatasync with a bad fd should include that in the error thrown", a
   expect.unreachable();
 });
 
+describe("fd-based fs errors carry err.fd", () => {
+  const BAD_FD = 50001;
+  const buf = Buffer.alloc(1);
+  const cases: { name: string; syscall: string; op: () => unknown; skip?: boolean }[] = [
+    { name: "readSync", syscall: "read", op: () => fs.readSync(BAD_FD, buf) },
+    { name: "writeSync", syscall: "write", op: () => fs.writeSync(BAD_FD, buf) },
+    { name: "readvSync", syscall: "readv", op: () => fs.readvSync(BAD_FD, [buf]) },
+    { name: "writevSync", syscall: "writev", op: () => fs.writevSync(BAD_FD, [buf]) },
+    { name: "fstatSync", syscall: "fstat", op: () => fs.fstatSync(BAD_FD) },
+    { name: "ftruncateSync", syscall: "ftruncate", op: () => fs.ftruncateSync(BAD_FD, 0) },
+    { name: "fchmodSync", syscall: "fchmod", op: () => fs.fchmodSync(BAD_FD, 0o644) },
+    // libuv implements fchown as a no-op on Windows, so it never fails there.
+    { name: "fchownSync", syscall: "fchown", op: () => fs.fchownSync(BAD_FD, 0, 0), skip: isWindows },
+    { name: "futimesSync", syscall: "futime", op: () => fs.futimesSync(BAD_FD, 0, 0) },
+    { name: "fsyncSync", syscall: "fsync", op: () => fs.fsyncSync(BAD_FD) },
+    { name: "fdatasyncSync", syscall: "fdatasync", op: () => fs.fdatasyncSync(BAD_FD) },
+    { name: "closeSync", syscall: "close", op: () => fs.closeSync(BAD_FD) },
+  ];
+
+  for (const { name, syscall, op, skip } of cases) {
+    it.skipIf(!!skip)(`${name} on a bad fd`, () => {
+      expect(op).toThrow(
+        expect.objectContaining({
+          code: "EBADF",
+          syscall,
+          fd: BAD_FD,
+        }),
+      );
+    });
+  }
+
+  it("writeSync on a read-only fd", () => {
+    using dir = tempDir("fs-err-fd", { "file.txt": "read only" });
+    const fd = fs.openSync(join(String(dir), "file.txt"), "r");
+    try {
+      expect(() => fs.writeSync(fd, "x")).toThrow(
+        expect.objectContaining({
+          code: "EBADF",
+          syscall: "write",
+          fd,
+        }),
+      );
+    } finally {
+      fs.closeSync(fd);
+    }
+  });
+});
+
 it("promises.cp should work even if dest does not exist", async () => {
   const x_dir = tmpdirSync();
   const text_expected = "A".repeat(131073);

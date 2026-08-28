@@ -1081,8 +1081,12 @@ mod draft {
                         // typo like `_authtoken` would otherwise be silent and its credential
                         // dropped. Only an option-shaped word with a string value qualifies,
                         // so a bare `//host:port` line or a missing `=` never names a value.
+                        // The word sits right after the key's last `/` as `:word`, with no
+                        // second colon: `//host/:_auth:dXNl…` (a `:` typed for `=`) would
+                        // otherwise name the credential as the option.
                         if let Some(colon) = bun_core::strings::last_index_of_char(key, b':')
                             .filter(|&colon| !bun_core::strings::contains_char(&key[colon..], b'/'))
+                            .filter(|&colon| colon > 0 && key[colon - 1] == b'/')
                         {
                             let word = &key[colon + 1..];
                             let option_shaped = word
@@ -1332,7 +1336,14 @@ mod draft {
                 Some(owned) => owned.url(),
                 None => URL::parse(url_bytes),
             };
-            let path = url.path.strip_suffix(b"/").unwrap_or(url.path);
+            // `pathname` carries the query; `path` is query-free but collapses a
+            // one-byte path such as `/r/` to `/`, so cut the query off `pathname`.
+            let pathname = url.pathname;
+            let path_end =
+                bun_core::strings::index_of_char_usize(pathname, b'?').unwrap_or(pathname.len());
+            let path = pathname[..path_end]
+                .strip_suffix(b"/")
+                .unwrap_or(&pathname[..path_end]);
             let mut key = Vec::with_capacity(url.host.len() + path.len() + 1);
             key.extend_from_slice(url.host);
             key[..url.host.len()].make_ascii_lowercase();

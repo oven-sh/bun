@@ -136,11 +136,8 @@ export function write(this: Console, input) {
   return wrote;
 }
 
-// Node implements createTask in the V8 inspector (v8-console.cc), where `run`
-// brackets the callback with async-stack tagging for an attached frontend.
-// Bun has no such inspector hook, so `run` validates and invokes the callback,
-// Node's observable behavior with no frontend attached. The private name
-// mirrors Node's internal-slot receiver check.
+// Node's createTask (v8-console.cc) only adds inspector async-stack tagging
+// on top of this. The private name mirrors Node's internal-slot receiver check.
 export function createCreateTask() {
   function run(f) {
     if (!$isCallable(f)) {

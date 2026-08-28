@@ -139,6 +139,75 @@ describe("Bun.Transpiler", () => {
     it("works nested", () => {
       ts.expectPrintedMin_('const a = ["hey"][0][0];', 'const a = "h"');
     });
+    it("bails out when the index is a delete target", () => {
+      // `a[n]` is a property reference; folding it to a value changes the
+      // result of `delete`.
+      ts.expectPrintedMin_("x = delete [y][0]", "x = delete [y][0]");
+      ts.expectPrintedMin_("x = delete [y.z][0]", "x = delete [y.z][0]");
+      ts.expectPrintedMin_("x = delete { f: y }.f", "x = delete { f: y }.f");
+      ts.expectPrintedMin_("x = delete { f: y }['f']", "x = delete { f: y }.f");
+      ts.expectPrintedMin_('x = delete "foo"[2]', 'x = delete "foo"[2]');
+      ts.expectPrintedMin_('x = delete "foo".length', 'x = delete "foo".length');
+      // Comma / `?:` / `??` / `||` / `&&` produce a value, not a reference;
+      // when a fold hoists the live arm up to the delete, the printer
+      // re-wraps it using WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS.
+      ts.expectPrinted_("x = delete (true ? a.b : 0)", "x = delete (0, a.b)");
+      ts.expectPrinted_("x = delete (true ? a : 0)", "x = delete (0, a)");
+      ts.expectPrintedMin_("x = delete (0, a.b)", "x = delete (0, a.b)");
+      ts.expectPrintedMin_("x = delete (null ?? a.b)", "x = delete (0, a.b)");
+      ts.expectPrintedMin_("x = delete (0 || a.b)", "x = delete (0, a.b)");
+      ts.expectPrintedMin_("x = delete (1 && a.b)", "x = delete (0, a.b)");
+      // Still inlined outside those positions.
+      ts.expectPrintedMin_('x = "foo".length', "x = 3");
+      ts.expectPrintedMin_("x = delete [y][0].z", "x = delete y.z");
+    });
+    it("does not inline an enum member under delete", () => {
+      const pre = "enum E { A = 1 }\n";
+      const lastLine = out => out.trimEnd().split("\n").at(-1);
+      expect(lastLine(ts.parsed(pre + "x = delete E.A;", false))).toBe("x = delete E.A;");
+      expect(lastLine(ts.parsed(pre + 'x = delete E["A"];', false))).toBe('x = delete E["A"];');
+      expect(lastLine(ts.parsedMin(pre + "x = delete E.A;", false))).toBe("x = delete E.A;");
+      expect(lastLine(ts.parsedMin(pre + 'x = delete E["A"];', false))).toBe("x = delete E.A;");
+      // Still inlined when read.
+      expect(lastLine(ts.parsed(pre + "x = E.A;", false))).toBe("x = 1 /* A */;");
+    });
+    it("does not substitute --define for a delete target", () => {
+      // `user_undefined` is defined as `undefined` in the transpiler config above.
+      ts.expectPrintedMin_("x = delete user_undefined", "x = delete user_undefined");
+      // A later read is still substituted (delete_target is per-node, not per-symbol).
+      ts.expectPrintedMin_(
+        "x = delete user_undefined; y = user_undefined;",
+        "x = delete user_undefined;\ny = void 0;\n",
+      );
+    });
+    it("does not inline import.meta.<prop> under delete or assignment", () => {
+      // Inlining would produce `delete undefined` (strict-mode SyntaxError) or
+      // `undefined = 5` for the HotDisabled value.
+      ts.expectPrinted_("x = delete import.meta.hot", "x = delete import.meta.hot");
+      ts.expectPrinted_("x = delete import.meta.main", "x = delete import.meta.main");
+      ts.expectPrinted_("import.meta.hot = 5", "import.meta.hot = 5");
+      ts.expectPrinted_("import.meta.main = 5", "import.meta.main = 5");
+      ts.expectPrinted_("x = delete import.meta.hot.accept", "x = delete undefined.accept");
+      ts.expectPrinted_("import.meta.hot.accept = fn", "undefined.accept = fn");
+      // Reads are still inlined.
+      ts.expectPrinted_("x = import.meta.hot", "x = undefined");
+    });
+    it("preserves delete semantics at runtime", async () => {
+      const src = `
+        var obj = { p: 1 };
+        var r1 = delete [obj.p][0];
+        var k = { f: 7 };
+        var r2 = delete { f: k.f }.f;
+        var q = { p: 1 };
+        delete (0, q.p);
+        console.log(JSON.stringify([obj.p, r1, k.f, r2, q.p]));
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("[1,true,7,true,1]\n");
+      expect(exitCode).toBe(0);
+    });
     it("bails out when the array item is an optional chain", () => {
       // Folding `[a?.b][0]` to `a?.b` is unsafe when the result lands as the
       // target of a surrounding optional-chain continuation: the two chains

@@ -1047,8 +1047,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let target = e_.target.unwrap_inlined();
         let index = e_.index.unwrap_inlined();
 
-        // `[x][0] = v` writes into the temporary, not `x`.
-        if p.options.features.minify_syntax && in_.assign_target == js_ast::AssignTarget::None {
+        // Folding a property reference to a value is unsafe where the
+        // reference itself is observed (delete result, assign target; the call
+        // receiver case is handled inside via `(0, x)`).
+        if p.options.features.minify_syntax
+            && !is_delete_target
+            && in_.assign_target == js_ast::AssignTarget::None
+        {
             if let Some(number) = index.data.as_e_number() {
                 if number.value() >= 0.0
                     && number.value() < (usize::MAX as f64)
@@ -1214,6 +1219,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             Op::UnDelete => {
+                p.delete_target = e_.value.data;
                 p.visit_expr_in_out(&mut e_.value, ExprIn::default());
             }
             _ => {

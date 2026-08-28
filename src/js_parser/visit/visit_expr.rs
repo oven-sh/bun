@@ -9,7 +9,8 @@ use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
     ExprIn, FnOrArrowDataVisit, IdentifierOpts, PrependTempRefsOpts, ReactRefresh, Ref,
-    StrictModeFeature, ThenCatchChain, TransposeState, VisitArgsOpts, float_to_int32, prefill,
+    StrictModeFeature, ThenCatchChain, TransposeState, VisitArgsOpts, float_to_int32,
+    is_eval_or_arguments, prefill,
 };
 use crate::scan::scan_side_effects::SideEffects;
 use bun_alloc::ArenaVecExt as _;
@@ -46,9 +47,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
-        if in_.assign_target != js_ast::AssignTarget::None && !self.is_valid_assignment_target(e) {
-            self.log()
-                .add_error(Some(self.source), e.loc, b"Invalid assignment target");
+        if in_.assign_target != js_ast::AssignTarget::None {
+            if !self.is_valid_assignment_target(e) {
+                self.log()
+                    .add_error(Some(self.source), e.loc, b"Invalid assignment target");
+            } else if let Data::EIdentifier(id) = &e.data
+                && self.is_strict_mode_output_format()
+            {
+                // Valid in this sloppy file, a SyntaxError once it is bundled into an ES module
+                let name = self.load_name_from_ref(id.ref_);
+                if is_eval_or_arguments(name) {
+                    self.mark_strict_mode_feature(
+                        StrictModeFeature::AssignToEvalOrArguments,
+                        js_lexer::range_of_identifier(self.source, e.loc),
+                        name,
+                    )
+                    .expect("unreachable");
+                }
+            }
         }
 
         // Explicit match over the tags that have a visitor defined below.

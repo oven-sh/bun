@@ -227,6 +227,45 @@ describe("bundler", () => {
     run: { stdout: "1 2" },
   });
 
+  // A sloppy CommonJS dependency keeps these assignments in cjs output. Node
+  // runs the output: bun treats a script without CommonJS markers as an ES
+  // module, which is strict.
+  itBundled("directive/SloppyAssignmentToArgumentsBundledCJS", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs")());
+      `,
+      "/dep.cjs": /* js */ `
+        function f() { arguments = 2; return arguments }
+        module.exports = f;
+      `,
+    },
+    format: "cjs",
+    run: { runtime: "node", stdout: "2" },
+  });
+
+  // An ES module is strict everywhere, so the same assignment cannot be
+  // bundled into esm output. It is an error at build time, not at load time.
+  itBundled("directive/SloppyAssignmentToArgumentsBundledESM", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs")());
+      `,
+      "/dep.cjs": /* js */ `
+        function f() { arguments = 2; return arguments }
+        eval = 3;
+        module.exports = f;
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/dep.cjs": [
+        'Assignments to "arguments" cannot be used with the ESM output format due to strict mode',
+        'Assignments to "eval" cannot be used with the ESM output format due to strict mode',
+      ],
+    },
+  });
+
   itBundled("directive/StrictAssignmentToEvalIsAnError", {
     files: {
       "/entry.js": /* js */ `

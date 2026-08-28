@@ -27,6 +27,8 @@ pub struct Cmd {
     pub(crate) redirection_fd: Option<*mut CowFd>,
     pub(crate) exec: Exec,
     pub(crate) exit_code: Option<ExitCode>,
+    /// A subprocess stdout/stderr relay read failed, so its output was lost.
+    output_relay_failed: bool,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -216,6 +218,7 @@ impl Cmd {
             redirection_fd: None,
             exec: Exec::None,
             exit_code: None,
+            output_relay_failed: false,
         }))
     }
 
@@ -433,6 +436,10 @@ impl Cmd {
                 }
             }
         };
+        // A command name resolved, so the substitution's stashed status is no
+        // longer the result; left in place it would satisfy `has_finished()`
+        // the moment the subprocess's pipes close, before `on_exit` runs.
+        interp.as_cmd_mut(this).exit_code = None;
 
         if let Some(kind) = BuiltinKind::from_argv0(&first_arg) {
             log!("Cmd {} exec builtin={:?}", this, kind);
@@ -1058,6 +1065,7 @@ impl Cmd {
 
     /// Lost relay output turns a successful exit into 1; a nonzero child status wins.
     fn fail_output_relay(&mut self) {
+        self.output_relay_failed = true;
         if matches!(self.exit_code, None | Some(0)) {
             self.exit_code = Some(1);
         }
@@ -1065,9 +1073,8 @@ impl Cmd {
 
     /// Called by `ShellSubprocess::on_process_exit`.
     pub(crate) fn on_exit(&mut self, exit_code: ExitCode) {
-        // A zero exit does not erase a relay failure recorded before it.
-        self.exit_code = Some(if exit_code == 0 {
-            self.exit_code.unwrap_or(0)
+        self.exit_code = Some(if exit_code == 0 && self.output_relay_failed {
+            1
         } else {
             exit_code
         });

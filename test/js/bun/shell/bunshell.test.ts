@@ -121,6 +121,15 @@ describe("bunshell", () => {
       expect({ exitCode, remaining: readdirSync(String(dir)) }).toEqual({ exitCode: 1, remaining: [] });
     });
 
+    // The substitution's own status only stands in when it yields no command
+    // name; once it names one, that command's status is $? (bash agrees).
+    test.skipIf(!isPosix)("a command named by a failing substitution reports its own status", async () => {
+      const subproc = (await $`$(echo env; exit 5)`.quiet().nothrow()).exitCode;
+      const builtin = (await $`$(echo true; exit 5)`.quiet().nothrow()).exitCode;
+      const noName = (await $`$(echo; exit 5)`.quiet().nothrow()).exitCode;
+      expect({ subproc, builtin, noName }).toEqual({ subproc: 0, builtin: 0, noName: 5 });
+    });
+
     // `[[ ]]` takes no redirect and `cat` reads stdin, so their failing write
     // needs the process stdio itself to be /dev/full.
     test.skipIf(!isLinux)("builtins exit 1 when a write to the process stdio fails", async () => {

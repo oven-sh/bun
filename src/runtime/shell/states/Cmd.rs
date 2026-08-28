@@ -1118,7 +1118,9 @@ fn is_assignment_word(atom: &ast::Atom) -> bool {
         return false;
     };
     (head.is_ascii_alphabetic() || head == b'_')
-        && name[1..].iter().all(|&b| b.is_ascii_alphanumeric() || b == b'_')
+        && name[1..]
+            .iter()
+            .all(|&b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
 fn set_stdio_from_redirect(stdio: &mut [Stdio; 3], flags: ast::RedirectFlags, fd: bun_sys::Fd) {

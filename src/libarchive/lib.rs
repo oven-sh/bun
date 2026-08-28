@@ -775,8 +775,7 @@ pub mod lib {
                     b"invalid archive entry size",
                 ));
             };
-            // The header's size only bounds the read. Allocation follows the bytes
-            // libarchive actually produces, so a corrupt header cannot drive it.
+            // Read data incrementally so untrusted entry sizes don't drive allocation.
             let mut buf: Vec<u8> = Vec::new();
             while buf.len() < size {
                 let to_read = (size - buf.len()).min(64 * 1024);

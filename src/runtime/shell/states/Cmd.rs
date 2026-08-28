@@ -403,10 +403,6 @@ impl Cmd {
             }
         }
 
-        // No argv at all → exit with the exit code from a sole command
-        // substitution (stashed by `child_done` from
-        // `Expansion::out_exit_code`), else 0. An empty argv[0] word (`""`,
-        // or an empty brace variant) is a command name that does not exist.
         let first_arg: Vec<u8> = {
             let me = interp.as_cmd(this);
             match me.args.first() {
@@ -414,6 +410,7 @@ impl Cmd {
                     // strip the trailing NUL we just added
                     a[..a.len() - 1].to_vec()
                 }
+                // An empty argv[0] word (`""`, an empty brace variant) is a name that does not exist.
                 Some(_) => {
                     return Builtin::cmd_write_failing_error(
                         interp,
@@ -421,6 +418,7 @@ impl Cmd {
                         format_args!("bun: command not found: \n"),
                     );
                 }
+                // No argv at all runs nothing. A sole `$(...)` argv0 passes its exit code on.
                 None => {
                     let exit = me.exit_code.unwrap_or(0);
                     let parent = me.base.parent;

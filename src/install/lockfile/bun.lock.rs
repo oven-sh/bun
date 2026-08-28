@@ -1328,10 +1328,8 @@ impl Stringifier {
             any = true;
         }
 
-        // Sort by the current dependency name at write time. The parse-time sort can be
-        // stale: a `github:`/`git:`/tarball dep added with no alias is sorted under its
-        // version literal, and `assign_resolution` later rewrites the name in place
-        // without a re-sort.
+        // Re-sort by current name: a no-alias git/tarball dep sorts under its version
+        // literal at parse time, and `assign_resolution` renames it without a re-sort.
         let deps_list = pkg_deps[pkg_id as usize];
         let mut deps_sort_buf: Vec<DependencyID> = (deps_list.begin()..deps_list.end()).collect();
         TreeDepsSortCtx {

@@ -6303,13 +6303,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             _ => {
                 let result = self.find_symbol(loc, first).expect("unreachable");
+                // In `a.b = 1` the target is the chain, so the head `a` is only read
+                let head_opts = if rest.is_empty() {
+                    opts
+                } else {
+                    IdentifierOpts::new().with_was_originally_identifier(true)
+                };
                 self.handle_identifier(
                     loc,
                     E::Identifier::init(result.r#ref)
                         .with_must_keep_due_to_with_stmt(result.is_inside_with_scope)
                         .with_can_be_removed_if_unused(true),
                     None,
-                    opts,
+                    head_opts,
                 )
             }
         };

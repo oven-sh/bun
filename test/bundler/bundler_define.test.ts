@@ -63,7 +63,7 @@ const surfaces: Surface[] = [
   },
 ];
 
-/** One source statement and the statement the output must contain. */
+/** An expression and the expression it must transpile to. */
 type Case = [input: string, output: string];
 
 interface Repro {
@@ -81,21 +81,21 @@ const repros: Repro[] = [
       "process.env.NODE_ENV": '"production"',
     },
     cases: [
-      ["console.log(a.b);", "console.log(c);"],
-      ["console.log(a?.b);", "console.log(c);"],
-      ["console.log(a?.b.c);", "console.log(d);"],
-      ["console.log(a.b?.c);", "console.log(d);"],
-      ['console.log(a?.["b"]);', "console.log(c);"],
-      ['console.log(a["b"]);', "console.log(c);"],
-      ["console.log(process?.env?.NODE_ENV);", 'console.log("production");'],
-      ['console.log(process.env["NODE_ENV"]);', 'console.log("production");'],
-      ['console.log(process["env"]["NODE_ENV"]);', 'console.log("production");'],
-      ['console.log(process["env"].NODE_ENV);', 'console.log("production");'],
+      ["a.b", "c"],
+      ["a?.b", "c"],
+      ["a?.b.c", "d"],
+      ["a.b?.c", "d"],
+      ['a?.["b"]', "c"],
+      ['a["b"]', "c"],
+      ["process?.env?.NODE_ENV", '"production"'],
+      ['process.env["NODE_ENV"]', '"production"'],
+      ['process["env"]["NODE_ENV"]', '"production"'],
+      ['process["env"].NODE_ENV', '"production"'],
       // The rest of a partly replaced optional chain continues on the new value
-      ["console.log(a?.b.x);", "console.log(c.x);"],
-      ["console.log(a?.b());", "console.log(c());"],
-      ['console.log(a?.["b"].x);', "console.log(c.x);"],
-      ["console.log(a.b?.x);", "console.log(c?.x);"],
+      ["a?.b.x", "c.x"],
+      ["a?.b()", "c()"],
+      ['a?.["b"].x', "c.x"],
+      ["a.b?.x", "c?.x"],
     ],
   },
   {
@@ -110,16 +110,16 @@ const repros: Repro[] = [
       U: "undefined",
     },
     cases: [
-      ["console.log(A);", "console.log(import.meta);"],
-      ["console.log(B);", "console.log(import.meta.url);"],
+      ["A", "import.meta"],
+      ["B", "import.meta.url"],
       // A top-level `this` in a CommonJS file is `exports`
-      ["console.log(C);", "console.log(exports.foo);"],
+      ["C", "exports.foo"],
       // Inside a function `this` stays `this`
-      ["console.log(function () { return C; });", "return this.foo;"],
-      ["console.log(F);", "console.log(a.if);"],
-      ["console.log(window.env);", "console.log(import.meta.env);"],
-      ["console.log(N);", "console.log(null);"],
-      ["console.log(U);", "console.log(undefined);"],
+      ["function () { return C; }", "function() { return this.foo; }"],
+      ["F", "a.if"],
+      ["window.env", "import.meta.env"],
+      ["N", "null"],
+      ["U", "undefined"],
     ],
   },
   {
@@ -132,15 +132,15 @@ const repros: Repro[] = [
       'process.env["dotted.name"]': "4",
     },
     cases: [
-      ["((g) => console.log(g))(this);", "((g) => console.log(g))(window);"],
-      ["console.log(FOO);", "console.log(123n);"],
-      ["console.log(HEX);", "console.log(0xffn);"],
-      ['console.log(process.env["SOME-VAR"]);', "console.log(3);"],
-      ["console.log(process.env['SOME-VAR']);", "console.log(3);"],
-      ['console.log(process?.env?.["SOME-VAR"]);', "console.log(3);"],
-      ['console.log(process.env["dotted.name"]);', "console.log(4);"],
+      ["((g) => g)(this)", "((g) => g)(window)"],
+      ["FOO", "123n"],
+      ["HEX", "0xffn"],
+      ['process.env["SOME-VAR"]', "3"],
+      ["process.env['SOME-VAR']", "3"],
+      ['process?.env?.["SOME-VAR"]', "3"],
+      ['process.env["dotted.name"]', "4"],
       // Only a top-level `this` is replaced
-      ["console.log(function () { return this; });", "return this;"],
+      ["function () { return this; }", "function() { return this; }"],
     ],
   },
   {
@@ -152,15 +152,15 @@ const repros: Repro[] = [
       "obj.num": "7",
     },
     cases: [
-      ["FOO = 1;", "FOO = 1;"],
-      ["console.log(FOO);", "console.log(123);"],
+      ["FOO = 1", "FOO = 1"],
+      ["FOO", "123"],
       // An identifier or a member chain is a valid target
-      ["BAR = 2;", "a.b = 2;"],
-      ["obj.key = 3;", "c.d = 3;"],
-      ['obj["key"] = 4;', "c.d = 4;"],
-      ["obj.num = 5;", "obj.num = 5;"],
-      ['obj["num"] = 6;', 'obj["num"] = 6;'],
-      ["console.log(obj.num, obj.key);", "console.log(7, c.d);"],
+      ["BAR = 2", "a.b = 2"],
+      ["obj.key = 3", "c.d = 3"],
+      ['obj["key"] = 4', "c.d = 4"],
+      ["obj.num = 5", "obj.num = 5"],
+      ['obj["num"] = 6', 'obj["num"] = 6'],
+      ["[obj.num, obj.key]", "[7, c.d]"],
     ],
   },
 ];
@@ -168,15 +168,15 @@ const repros: Repro[] = [
 describe.each(surfaces)("$name", surface => {
   for (const repro of repros) {
     describe(repro.name, () => {
-      // One transpile per surface and repro. Every statement is its own line,
-      // so each case can assert on its own output line.
-      const source = repro.cases.map(([input]) => input).join("\n") + "\n";
+      // One transpile per surface and repro. Each expression is logged with its
+      // own index, so an assertion can only match its own statement.
+      const source = repro.cases.map(([input], i) => `console.log(${i}, ${input});`).join("\n") + "\n";
       let output: Promise<string> | undefined;
-      const getOutput = () => (output ??= surface.run(source, repro.defines));
+      const getOutput = async () => (await (output ??= surface.run(source, repro.defines))).replace(/\s+/g, " ");
+      const cases = repro.cases.map(([input, expected], i) => [input, expected, i] as const);
 
-      test.each(repro.cases)("%s => %s", async (_input, expected) => {
-        const lines = (await getOutput()).split("\n").map(line => line.trim());
-        expect(lines).toContain(expected);
+      test.each(cases)("%s => %s", async (_input, expected, i) => {
+        expect(await getOutput()).toContain(`console.log(${i}, ${expected});`);
       });
     });
   }
@@ -217,6 +217,36 @@ describe("define values are symbols, not text", () => {
     expect(stdout).toBe("1 2\n");
     expect(exitCode).toBe(0);
   });
+
+  test("assigning through a member chain does not assign to the import at its head", async () => {
+    using dir = tempDir("bundler-define-assign-import", {
+      "entry.js": `
+        import { settings } from "./settings.js";
+        FLAG = 1;
+        console.log(settings.flag);
+      `,
+      "settings.js": `export const settings = { flag: 0 };`,
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      outdir: join(String(dir), "out"),
+      define: { FLAG: "settings.flag" },
+    });
+    // `settings.flag = 1` writes a property. The bundler must not report an assignment to `settings`.
+    expect(result.logs).toEqual([]);
+    expect(result.success).toBe(true);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), result.outputs[0].path],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("1\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("define key errors", () => {
@@ -237,8 +267,9 @@ describe("define key errors", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain(message);
+    expect(stdout).toBe("");
     expect(exitCode).not.toBe(0);
   });
 

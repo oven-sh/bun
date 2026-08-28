@@ -1,7 +1,7 @@
 import { escapeHTML } from "bun" assert { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { existsSync } from "node:fs";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
   addStrings,
@@ -133,54 +133,68 @@ test("ireturnapromise", async () => {
   expect(await ireturnapromise()).toEqual("aaa");
 });
 
-// A numeric key >= 100000 (JSC's MIN_SPARSE_ARRAY_INDEX) makes the property put inside
-// JSC__JSValue__putToPropertyKey take a path that can throw, so the binding must check for
-// an exception. BUN_JSC_validateExceptionChecks=1 aborts the child if the check is missing.
-test("object argument with a sparse numeric key", async () => {
-  using dir = tempDir("macro-sparse-key", {
-    "take.ts": `export function take(o: any) {\n  return Object.keys(o).join(",");\n}\n`,
-    "index.ts": `import { take } from "./take.ts" with { type: "macro" };\nconsole.log(take({ 200000: 1 }));\n`,
-  });
+// Every test from here on works in its own temp dir (a bun child, or Bun.build in this process), so
+// they all run concurrently. Debug builds print "[macro] call <name>" to stdout for each macro call;
+// it is dropped so stdout can be matched exactly.
+async function runBun(cwd: string, cmd: string[], env: Record<string, string> = {}) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", "index.ts"],
-    env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
-    cwd: String(dir),
+    cmd: [bunExe(), ...cmd],
+    env: { ...bunEnv, ...env },
+    cwd,
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return {
+    stdout: stdout
+      .split("\n")
+      .filter(line => !line.startsWith("[macro]"))
+      .join("\n"),
+    stderr,
+    exitCode,
+    signalCode: proc.signalCode,
+  };
+}
+
+// A numeric key >= 100000 (JSC's MIN_SPARSE_ARRAY_INDEX) makes the property put inside
+// JSC__JSValue__putToPropertyKey take a path that can throw, so the binding must check for
+// an exception. BUN_JSC_validateExceptionChecks=1 aborts the child if the check is missing.
+test.concurrent("object argument with a sparse numeric key", async () => {
+  using dir = tempDir("macro-sparse-key", {
+    "take.ts": `export function take(o: any) {\n  return Object.keys(o).join(",");\n}\n`,
+    "index.ts": `import { take } from "./take.ts" with { type: "macro" };\nconsole.log(take({ 200000: 1 }));\n`,
+  });
   // One combined assertion so stderr (where JSC prints the exception check failure) shows up in
-  // the diff if the child aborts. Debug builds print "[macro] call take" to stdout before the
-  // script's own output, so only the tail of stdout is matched.
-  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
-    stdout: expect.stringMatching(/200000\n$/),
+  // the diff if the child aborts.
+  expect(await runBun(String(dir), ["run", "index.ts"], { BUN_JSC_validateExceptionChecks: "1" })).toEqual({
+    stdout: "200000\n",
+    stderr: "",
     exitCode: 0,
     signalCode: null,
   });
 });
 
-test("object destructuring of a macro result keeps every bound property regardless of key order or repeated keys", async () => {
-  using dir = tempDir("macro-destructure-object", {
-    "m.ts": `export function m() {\n  return { a: 1, c: 2 };\n}\n`,
-    "index.ts": [
-      `import { m } from "./m.ts" with { type: "macro" };`,
-      `const { c, a } = m();`,
-      `const { a: x, a: y, c: z } = m();`,
-      `console.log(JSON.stringify([c, a, x, y, z]));`,
-      ``,
-    ].join("\n"),
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", "index.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({ lastLine: "[2,1,1,1,2]", stderr: "" });
-  expect(exitCode).toBe(0);
-});
+test.concurrent(
+  "object destructuring of a macro result keeps every bound property regardless of key order or repeated keys",
+  async () => {
+    using dir = tempDir("macro-destructure-object", {
+      "m.ts": `export function m() {\n  return { a: 1, c: 2 };\n}\n`,
+      "index.ts": [
+        `import { m } from "./m.ts" with { type: "macro" };`,
+        `const { c, a } = m();`,
+        `const { a: x, a: y, c: z } = m();`,
+        `console.log(JSON.stringify([c, a, x, y, z]));`,
+        ``,
+      ].join("\n"),
+    });
+    expect(await runBun(String(dir), ["run", "index.ts"])).toEqual({
+      stdout: "[2,1,1,1,2]\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+);
 
 // A Response or Blob returned from a macro is inlined by its content type: JSON is parsed into an object
 // literal, text becomes a string, anything else becomes a base64 data URL. The type has to be classified
@@ -381,87 +395,84 @@ describe("event loop routing around macros", () => {
   });
 });
 
-describe("--no-macros", () => {
+describe.concurrent("--no-macros", () => {
+  // The macro leaves MACRO_RAN next to itself when it runs, so whether it ran is checked on disk and
+  // not only through the bundle text.
   const files = {
-    "macro.ts": `
-      import { writeFileSync } from "node:fs";
-      export function f() {
-        writeFileSync("MACRO_RAN", "macro executed");
-        return "INLINED_RESULT";
-      }
-    `,
-    "entry.ts": `
-      import { f } from "./macro.ts" with { type: "macro" };
-      console.log(f());
-    `,
+    "macro.ts": [
+      `import { writeFileSync } from "node:fs";`,
+      `import { join } from "node:path";`,
+      `export function f() {`,
+      `  writeFileSync(join(import.meta.dir, "MACRO_RAN"), "macro executed");`,
+      `  return "INLINED_RESULT";`,
+      `}`,
+    ].join("\n"),
+    "entry.ts": `import { f } from "./macro.ts" with { type: "macro" };\nconsole.log(f());\n`,
   };
 
   test("bun build --no-macros refuses to run macros", async () => {
     using dir = tempDir("bundler-no-macros-cli", files);
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--no-macros", "./entry.ts", "--outdir", "dist"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toMatchObject({
-      stderr: expect.stringContaining("Macros are disabled"),
-      exitCode: 1,
-    });
-    expect(existsSync(path.join(String(dir), "MACRO_RAN"))).toBe(false);
-    expect(existsSync(path.join(String(dir), "dist", "entry.js"))).toBe(false);
+    const { stdout, stderr, exitCode } = await runBun(String(dir), [
+      "build",
+      "--no-macros",
+      "./entry.ts",
+      "--outdir",
+      "dist",
+    ]);
+    expect(normalizeBunSnapshot(stderr, String(dir))).toMatchInlineSnapshot(`
+      "2 | console.log(f());
+                      ^
+      error: Macros are disabled
+          at <dir>/entry.ts:2:13"
+    `);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+    // Neither the macro's side effect nor the bundle was written.
+    expect(readdirSync(String(dir)).sort()).toEqual(["entry.ts", "macro.ts"]);
   });
 
-  test("Bun.build({ macros: false }) refuses to run macros", async () => {
-    using dir = tempDir("bundler-no-macros-api", {
-      ...files,
-      "build.ts": `
-        const result = await Bun.build({
-          entrypoints: ["./entry.ts"],
-          outdir: "./dist",
-          macros: false,
-          throw: false,
-        });
-        console.log(JSON.stringify({
-          success: result.success,
-          logs: result.logs.map(l => l.message),
-        }));
-      `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "build.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const parsed = JSON.parse(stdout.trim().split("\n").pop()!);
-    expect({ parsed, stderr, exitCode }).toMatchObject({
-      parsed: {
+  test.each([
+    [
+      "{ macros: false } refuses to run macros",
+      { macros: false },
+      {
         success: false,
-        logs: expect.arrayContaining([expect.stringContaining("Macros are disabled")]),
+        logs: [{ message: "Macros are disabled", position: { file: "entry.ts", line: 2, column: 13 } }],
+        outputs: [],
+        macroRan: false,
       },
-      exitCode: 0,
+    ],
+    [
+      "no macros option runs macros",
+      {},
+      {
+        success: true,
+        logs: [],
+        outputs: [`console.log("INLINED_RESULT");\n`],
+        macroRan: true,
+      },
+    ],
+  ])("Bun.build() with %s", async (_name, options, expected) => {
+    using dir = tempDir("bundler-no-macros-api", files);
+    const result = await Bun.build({
+      entrypoints: [path.join(String(dir), "entry.ts")],
+      // Without minify the bundle starts with a "// <path>" comment relative to the cwd.
+      minify: true,
+      throw: false,
+      ...options,
     });
-    expect(existsSync(path.join(String(dir), "MACRO_RAN"))).toBe(false);
-  });
-
-  test("bun build without --no-macros still runs macros", async () => {
-    using dir = tempDir("bundler-macros-enabled", files);
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "./entry.ts", "--outdir", "dist"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
-    const out = await Bun.file(path.join(String(dir), "dist", "entry.js")).text();
-    expect(out).toContain("INLINED_RESULT");
-    expect(existsSync(path.join(String(dir), "MACRO_RAN"))).toBe(true);
+    expect({
+      success: result.success,
+      logs: result.logs.map(log => ({
+        message: log.message,
+        position: log.position && {
+          file: path.basename(log.position.file),
+          line: log.position.line,
+          column: log.position.column,
+        },
+      })),
+      outputs: await Promise.all(result.outputs.map(output => output.text())),
+      macroRan: existsSync(path.join(String(dir), "MACRO_RAN")),
+    }).toEqual(expected);
   });
 });

@@ -821,14 +821,12 @@ fn spawn_maybe_sync(
                             Ok(created) => *terminal_info = Some(created),
                             Err(err) => {
                                 return Err(match err {
-                                    TerminalInitError::OpenPtyFailed => {
-                                        global_this.throw(format_args!("Failed to open PTY"))
+                                    TerminalInitError::OpenPtyFailed(err) => {
+                                        global_this.throw_value(err.to_js(global_this))
                                     }
                                     TerminalInitError::DupFailed => global_this.throw(
                                         format_args!("Failed to duplicate PTY file descriptor"),
                                     ),
-                                    TerminalInitError::NotSupported => global_this
-                                        .throw(format_args!("PTY not supported on this platform")),
                                     TerminalInitError::WriterStartFailed => global_this
                                         .throw(format_args!("Failed to start terminal writer")),
                                     TerminalInitError::ReaderStartFailed => global_this

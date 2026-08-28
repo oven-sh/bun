@@ -10,7 +10,7 @@
 //! - Callbacks are stored via `values` in classes.ts, accessed via js.gc
 
 use core::cell::Cell;
-use core::ffi::{c_int, c_void};
+use core::ffi::c_void;
 #[cfg(windows)]
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -303,25 +303,13 @@ pub(crate) struct CreateResult {
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum InitError {
     #[error("OpenPtyFailed")]
-    OpenPtyFailed,
+    OpenPtyFailed(sys::Error),
     #[error("DupFailed")]
     DupFailed,
-    #[error("NotSupported")]
-    NotSupported,
     #[error("WriterStartFailed")]
     WriterStartFailed,
     #[error("ReaderStartFailed")]
     ReaderStartFailed,
-}
-
-impl From<CreatePtyError> for InitError {
-    fn from(e: CreatePtyError) -> Self {
-        match e {
-            CreatePtyError::OpenPtyFailed => InitError::OpenPtyFailed,
-            CreatePtyError::DupFailed => InitError::DupFailed,
-            CreatePtyError::NotSupported => InitError::NotSupported,
-        }
-    }
 }
 
 impl Terminal {
@@ -576,12 +564,11 @@ impl Terminal {
                 Ok(result.terminal.as_ptr())
             }
             Err(err) => Err(match err {
-                InitError::OpenPtyFailed => global_object.throw(format_args!("Failed to open PTY")),
+                InitError::OpenPtyFailed(err) => {
+                    global_object.throw_value(err.to_js(global_object))
+                }
                 InitError::DupFailed => {
                     global_object.throw(format_args!("Failed to duplicate PTY file descriptor"))
-                }
-                InitError::NotSupported => {
-                    global_object.throw(format_args!("PTY not supported on this platform"))
                 }
                 InitError::WriterStartFailed => {
                     global_object.throw(format_args!("Failed to start terminal writer"))
@@ -781,164 +768,17 @@ pub struct PtyResult {
     pub(crate) hpcon: windows::HPCON,
 }
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum CreatePtyError {
-    #[error("OpenPtyFailed")]
-    OpenPtyFailed,
-    #[error("DupFailed")]
-    DupFailed,
-    #[error("NotSupported")]
-    NotSupported,
-}
-
-fn create_pty(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
-    #[cfg(unix)]
-    {
-        return create_pty_posix(cols, rows);
-    }
-    #[cfg(windows)]
-    {
-        return create_pty_windows(cols, rows);
-    }
-    #[cfg(not(any(unix, windows)))]
-    Err(CreatePtyError::NotSupported)
-}
-
-// OpenPtyTermios is required for the openpty() extern signature even though we pass null.
-// Kept for type correctness of the C function declaration.
-#[repr(C)]
-pub struct OpenPtyTermios {
-    pub c_iflag: u32,
-    pub c_oflag: u32,
-    pub c_cflag: u32,
-    pub c_lflag: u32,
-    pub c_cc: [u8; 20],
-    pub c_ispeed: u32,
-    pub c_ospeed: u32,
-}
-
-pub use bun_core::Winsize;
-
-pub type OpenPtyFn = unsafe extern "C" fn(
-    amaster: *mut c_int,
-    aslave: *mut c_int,
-    name: *mut u8,
-    termp: *const OpenPtyTermios,
-    winp: *const Winsize,
-) -> c_int;
-
-/// Dynamic loading of openpty on Linux (it's in libutil which may not be linked)
-#[cfg(any(target_os = "linux", target_os = "android"))]
-mod lib_util {
-    use super::*;
-    use bun_core::ZStr;
-
-    // Per PORTING.md §Global mutable state: the flag is an AtomicBool and the
-    // handle slot an AtomicPtr (null ⇔ None — dlopen never yields a null Some).
-    // JS-thread-only.
-    static HANDLE: core::sync::atomic::AtomicPtr<c_void> =
-        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-    static LOADED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-
-    fn get_handle() -> Option<*mut c_void> {
-        use core::sync::atomic::Ordering::Relaxed;
-        if LOADED.load(Relaxed) {
-            let h = HANDLE.load(Relaxed);
-            return if h.is_null() { None } else { Some(h) };
-        }
-        LOADED.store(true, Relaxed);
-
-        // Try libutil.so first (most common), then libutil.so.1
-        const LIB_NAMES: [&ZStr; 3] = [
-            bun_core::zstr!("libutil.so"),
-            bun_core::zstr!("libutil.so.1"),
-            bun_core::zstr!("libc.so.6"),
-        ];
-        for lib_name in LIB_NAMES {
-            if let Some(h) = sys::dlopen(lib_name, sys::RTLD::LAZY) {
-                HANDLE.store(h, Relaxed);
-                return Some(h);
-            }
-        }
-        None
-    }
-
-    pub(super) fn get_open_pty() -> Option<OpenPtyFn> {
-        sys::dlsym_with_handle!(OpenPtyFn, "openpty", get_handle())
-    }
-}
-
 #[cfg(unix)]
-fn get_open_pty_fn() -> Option<OpenPtyFn> {
-    // openpty is linked directly on macOS (libc) and FreeBSD (libutil, see
-    // scripts/build/bun.ts).
-    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-    {
-        // Declared locally (not via the `libc` crate) so the `OpenPtyFn`
-        // type unifies with the Linux dlsym path.
-        unsafe extern "C" {
-            // SAFETY precondition: out-param fd pointers must be writable and
-            // termp/winp must be null or valid — raw-pointer contract. Kept
-            // `unsafe` so the fn item coerces to `OpenPtyFn` (unsafe fn ptr).
-            pub(crate) fn openpty(
-                amaster: *mut c_int,
-                aslave: *mut c_int,
-                name: *mut u8,
-                termp: *const OpenPtyTermios,
-                winp: *const Winsize,
-            ) -> c_int;
-        }
-        return Some(openpty);
-    }
-
-    // On Linux, openpty is in libutil, which may not be linked
-    // Load it dynamically via dlopen
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
-        return lib_util::get_open_pty();
-    }
-
-    #[cfg(not(any(
-        target_os = "macos",
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd"
-    )))]
-    None
-}
-
-#[cfg(unix)]
-fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
-    let Some(openpty_fn) = get_open_pty_fn() else {
-        return Err(CreatePtyError::NotSupported);
-    };
-
-    let mut master_fd: c_int = -1;
-    let mut slave_fd: c_int = -1;
-
-    let winsize = Winsize {
+fn create_pty(cols: u16, rows: u16) -> Result<PtyResult, InitError> {
+    let winsize = bun_core::Winsize {
         row: rows,
         col: cols,
         xpixel: 0,
         ypixel: 0,
     };
-
-    // SAFETY: openpty writes to master_fd/slave_fd; name/termp are null (allowed).
-    let result = unsafe {
-        openpty_fn(
-            &raw mut master_fd,
-            &raw mut slave_fd,
-            core::ptr::null_mut(),
-            core::ptr::null(),
-            &raw const winsize,
-        )
-    };
-    if result != 0 {
-        return Err(CreatePtyError::OpenPtyFailed);
-    }
-
-    let master_fd_desc = Fd::from_native(master_fd);
-    let slave_fd_desc = Fd::from_native(slave_fd);
+    let (master_fd_desc, slave_fd_desc) =
+        sys::posix::openpty(winsize).map_err(InitError::OpenPtyFailed)?;
+    let slave_fd = slave_fd_desc.native();
 
     // Configure sensible terminal defaults matching node-pty behavior.
     // These are "cooked mode" defaults that most terminal applications expect.
@@ -1018,7 +858,7 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
         sys::Result::Err(_) => {
             master_fd_desc.close();
             slave_fd_desc.close();
-            return Err(CreatePtyError::DupFailed);
+            return Err(InitError::DupFailed);
         }
     };
 
@@ -1028,7 +868,7 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
             master_fd_desc.close();
             slave_fd_desc.close();
             read_fd.close();
-            return Err(CreatePtyError::DupFailed);
+            return Err(InitError::DupFailed);
         }
     };
 
@@ -1040,7 +880,6 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
 
     // Set close-on-exec on master side fds only
     // slave_fd should NOT have close-on-exec since child needs to inherit it
-    let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(master_fd_desc);
     let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(read_fd);
     let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(write_fd);
 
@@ -1078,7 +917,7 @@ fn create_overlapped_pipe_pair(
     // PIPE_ACCESS_INBOUND: server reads, client writes.
     // PIPE_ACCESS_OUTBOUND: server writes, client reads.
     server_access: u32,
-) -> Result<PipePair, CreatePtyError> {
+) -> Result<PipePair, InitError> {
     use windows::kernel32 as k32;
     const FILE_FLAG_FIRST_PIPE_INSTANCE: u32 = 0x00080000;
 
@@ -1097,7 +936,10 @@ fn create_overlapped_pipe_pair(
             ""
         };
         if write!(cursor, r"\\.\pipe\{local}bun-conpty-{pid}-{counter}").is_err() {
-            return Err(CreatePtyError::OpenPtyFailed);
+            return Err(InitError::OpenPtyFailed(sys::Error::from_code(
+                sys::E::ENAMETOOLONG,
+                sys::Tag::openpty,
+            )));
         }
         let written = 96 - cursor.len();
         &name_utf8_buf[..written]
@@ -1122,7 +964,10 @@ fn create_overlapped_pipe_pair(
         )
     };
     if server == windows::INVALID_HANDLE_VALUE {
-        return Err(CreatePtyError::OpenPtyFailed);
+        return Err(InitError::OpenPtyFailed(sys::Error::from_code(
+            windows::get_last_errno(),
+            sys::Tag::openpty,
+        )));
     }
     let server_guard = scopeguard::guard(server, |h| unsafe {
         // SAFETY: h is a valid open HANDLE on the error path.
@@ -1148,7 +993,10 @@ fn create_overlapped_pipe_pair(
         )
     };
     if client == windows::INVALID_HANDLE_VALUE {
-        return Err(CreatePtyError::OpenPtyFailed);
+        return Err(InitError::OpenPtyFailed(sys::Error::from_code(
+            windows::get_last_errno(),
+            sys::Tag::openpty,
+        )));
     }
 
     let server = scopeguard::ScopeGuard::into_inner(server_guard);
@@ -1159,7 +1007,7 @@ fn create_overlapped_pipe_pair(
 static PIPE_SERIAL: AtomicU32 = AtomicU32::new(0);
 
 #[cfg(windows)]
-fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
+fn create_pty(cols: u16, rows: u16) -> Result<PtyResult, InitError> {
     // Track ownership explicitly: handles are nulled out as they are closed or
     // transferred so the errdefer cleanup never double-closes.
     let mut out_server: Option<windows::HANDLE> = None;
@@ -1230,12 +1078,17 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
     {
         let mut pc: windows::HPCON = core::ptr::null_mut();
         // SAFETY: in_client/out_client are valid open HANDLEs; pc is a valid out-ptr.
-        if unsafe {
+        let hr = unsafe {
             windows::CreatePseudoConsole(size, in_client.unwrap(), out_client.unwrap(), 0, &mut pc)
-        } < 0
-        {
+        };
+        if hr < 0 {
             cleanup!();
-            return Err(CreatePtyError::OpenPtyFailed);
+            return Err(InitError::OpenPtyFailed(sys::Error::from_code(
+                sys::SystemErrno::init(windows::HRESULT_CODE(hr) as u32)
+                    .unwrap_or(sys::SystemErrno::EUNKNOWN)
+                    .to_e(),
+                sys::Tag::openpty,
+            )));
         }
         hpcon = Some(pc);
     }
@@ -1259,7 +1112,7 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
         }
         Err(_) => {
             cleanup!();
-            return Err(CreatePtyError::DupFailed);
+            return Err(InitError::DupFailed);
         }
     };
     // errdefer read_fd.close()
@@ -1269,7 +1122,7 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
         Ok(fd) => fd,
         Err(_) => {
             cleanup!();
-            return Err(CreatePtyError::DupFailed);
+            return Err(InitError::DupFailed);
         }
     };
 
@@ -1527,16 +1380,7 @@ impl Terminal {
                 ypixel: 0,
             };
 
-            // SAFETY: master_fd is open (closed flag checked above), TIOCSWINSZ
-            // takes a *const winsize.
-            let ioctl_result = unsafe {
-                libc::ioctl(
-                    self.master_fd.get().native(),
-                    libc::TIOCSWINSZ as _,
-                    &raw const winsize,
-                )
-            };
-            if ioctl_result != 0 {
+            if sys::posix::set_winsize(self.master_fd.get(), winsize).is_err() {
                 return Err(global_object.throw(format_args!("Failed to resize terminal")));
             }
         }

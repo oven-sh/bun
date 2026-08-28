@@ -1389,6 +1389,7 @@ impl Tag {
     #[cfg(not(windows))]
     pub(crate) const setrlimit: Tag = Tag(106);
     pub const clone3: Tag = Tag(107);
+    pub const openpty: Tag = Tag(108);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1396,7 +1397,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 108] = [
+        const NAMES: [&str; 109] = [
             "TODO",
             "dup",
             "access",
@@ -1506,6 +1507,7 @@ impl Tag {
             "getrlimit",
             "setrlimit",
             "clone3",
+            "openpty",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -1605,6 +1607,11 @@ mod safe_libc {
         ) -> c_int;
         pub(crate) safe fn getrlimit(resource: c_int, rlim: &mut libc::rlimit) -> c_int;
         pub(crate) safe fn setrlimit(resource: c_int, rlim: &libc::rlimit) -> c_int;
+        pub(crate) safe fn posix_openpt(flags: c_int) -> c_int;
+        pub(crate) safe fn grantpt(fd: c_int) -> c_int;
+        pub(crate) safe fn unlockpt(fd: c_int) -> c_int;
+        // Not bound by the `libc` crate on macOS. Writes at most `len` bytes.
+        pub(crate) safe fn ptsname_r(fd: c_int, buf: &mut [u8; 128], len: usize) -> c_int;
     }
 }
 
@@ -8059,6 +8066,79 @@ pub mod posix {
             return Err(super::err_with(super::Tag::ioctl));
         }
         Ok(())
+    }
+    #[cfg(unix)]
+    pub fn set_winsize(
+        fd: super::Fd,
+        winsize: bun_core::Winsize,
+    ) -> core::result::Result<(), super::Error> {
+        // SAFETY: TIOCSWINSZ reads `sizeof(winsize)` bytes from the local `winsize`
+        // (same layout as `libc::winsize`); bad fd → ENOTTY/EBADF.
+        let rc = unsafe { libc::ioctl(fd.native(), libc::TIOCSWINSZ as _, &raw const winsize) };
+        if rc != 0 {
+            return Err(super::err_with(super::Tag::ioctl));
+        }
+        Ok(())
+    }
+
+    /// `openpty(3)` over plain libc (no libutil): returns `(master, slave)`.
+    /// The master is close-on-exec; the slave is not, so a child can inherit it.
+    #[cfg(unix)]
+    pub fn openpty(
+        winsize: bun_core::Winsize,
+    ) -> core::result::Result<(super::Fd, super::Fd), super::Error> {
+        use super::{Fd, FdExt as _, O, Tag, err_with};
+        use crate::safe_libc::{grantpt, posix_openpt, ptsname_r, unlockpt};
+
+        let master = posix_openpt(O::RDWR | O::NOCTTY | O::CLOEXEC);
+        if master < 0 {
+            return Err(err_with(Tag::openpty));
+        }
+        let master = Fd::from_native(master);
+        let slave = (|| {
+            if grantpt(master.native()) != 0 || unlockpt(master.native()) != 0 {
+                return Err(err_with(Tag::openpty));
+            }
+            // Linux: get the slave from the master fd itself, so no permission
+            // on the /dev/pts/N path is needed (what glibc's openpty does).
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            {
+                // `_IO('T', 0x41)`; the `libc` crate lacks it on Android.
+                const TIOCGPTPEER: c_int = 0x5441;
+                // SAFETY: TIOCGPTPEER takes open(2) flags by value and returns a new fd.
+                let fd =
+                    unsafe { libc::ioctl(master.native(), TIOCGPTPEER as _, O::RDWR | O::NOCTTY) };
+                if fd >= 0 {
+                    return Ok(Fd::from_native(fd));
+                }
+            }
+            let mut name = [0u8; 128];
+            let len = name.len();
+            // glibc/musl return the error number (musl without setting errno);
+            // macOS/FreeBSD return -1 and set errno.
+            let rc = ptsname_r(master.native(), &mut name, len);
+            if rc != 0 {
+                let errno = if rc > 0 { rc } else { super::last_errno() };
+                return Err(super::Error::from_code_int(errno, Tag::openpty));
+            }
+            let name = bun_core::ZStr::from_cstr(
+                core::ffi::CStr::from_bytes_until_nul(&name).expect("ptsname_r NUL-terminates"),
+            );
+            super::open(name, O::RDWR | O::NOCTTY, 0)
+        })();
+        let slave = match slave {
+            Ok(slave) => slave,
+            Err(err) => {
+                master.close();
+                return Err(err);
+            }
+        };
+        if let Err(err) = set_winsize(slave, winsize) {
+            master.close();
+            slave.close();
+            return Err(err);
+        }
+        Ok((master, slave))
     }
 
     // ── rlimit ──

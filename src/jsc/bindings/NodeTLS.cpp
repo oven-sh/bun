@@ -289,3 +289,15 @@ JSC_DEFINE_HOST_FUNCTION(setDefaultCiphers, (JSC::JSGlobalObject * globalObject,
 }
 
 } // namespace Bun
+
+// ssl.h declares this with C++ linkage only, and not at all under BORINGSSL_NO_CXX (Windows).
+#if defined(BORINGSSL_NO_CXX)
+namespace bssl {
+void SSL_set_aes_hw_override_for_testing(SSL* ssl, bool override_value);
+}
+#endif
+
+extern "C" void Bun__SSL_set_aes_hw_override(SSL* ssl, bool aes_hw)
+{
+    bssl::SSL_set_aes_hw_override_for_testing(ssl, aes_hw);
+}

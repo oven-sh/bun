@@ -256,6 +256,9 @@ impl SSLConfigFromJs for SSLConfig {
 
         result.client_renegotiation_limit = generated.client_renegotiation_limit;
         result.client_renegotiation_window = generated.client_renegotiation_window;
+
+        apply_fingerprint_options(global, generated, &mut result)?;
+
         any = any
             || result.requires_custom_request_ctx
             || result.client_renegotiation_limit != 0
@@ -264,6 +267,121 @@ impl SSLConfigFromJs for SSLConfig {
         // We don't need to deinit `result` if `any` is false.
         if any { Ok(Some(result)) } else { Ok(None) }
     }
+}
+
+/// `ja3` fills in what the caller left unset; an explicit option wins over it.
+fn apply_fingerprint_options(
+    global: &JSGlobalObject,
+    generated: &jsc::generated::SSLConfig,
+    result: &mut SSLConfig,
+) -> JsResult<()> {
+    use bun_http::tls_fingerprint::Ja3;
+    use jsc::generated::{SSLConfigApplicationSettings, SSLConfigCertificateCompression};
+
+    if let Some(ja3) = generated.ja3.as_ref() {
+        let ja3 = match Ja3::parse(ja3.to_owned_slice_z().as_bytes()) {
+            Ok(ja3) => ja3,
+            Err(err) => {
+                return Err(global.throw_invalid_arguments(format_args!("TLSOptions.ja3: {}", err)));
+            }
+        };
+        if result.ssl_ciphers.is_null() && !ja3.ciphers.is_empty() {
+            result.ssl_ciphers = dupe_z(&ja3.ciphers);
+            result.is_using_default_ciphers = false;
+        }
+        // `ecdhCurve: "auto"` leaves `ecdh_curve` null on purpose, so check the option itself.
+        if generated.ecdh_curve.as_ref().is_none() {
+            result.ecdh_curve = dupe_z(&ja3.groups);
+        }
+        if result.ssl_min_version == 0 {
+            result.ssl_min_version = i32::from(ja3.min_version);
+        }
+        if result.ssl_max_version == 0 {
+            result.ssl_max_version = i32::from(ja3.max_version);
+        }
+        result.fingerprint = ja3.fingerprint;
+        // The cipher list alone already differs from the shared context.
+        result.requires_custom_request_ctx = true;
+    }
+
+    let fp = &mut result.fingerprint;
+    if let Some(grease) = generated.grease {
+        fp.grease = grease;
+    }
+    if let Some(permute) = generated.permute_extensions {
+        fp.permute_extensions = permute;
+    }
+    if let Some(ech_grease) = generated.ech_grease {
+        fp.ech_grease = ech_grease;
+    }
+    if let Some(ocsp) = generated.ocsp_stapling {
+        fp.ocsp_stapling = ocsp;
+    }
+    if let Some(sct) = generated.signed_certificate_timestamps {
+        fp.signed_cert_timestamps = sct;
+    }
+    if let Some(tickets) = generated.session_tickets {
+        fp.session_tickets = tickets;
+    }
+
+    match &generated.application_settings {
+        SSLConfigApplicationSettings::None => {}
+        SSLConfigApplicationSettings::Boolean(false) => fp.alps_codepoint = 0,
+        SSLConfigApplicationSettings::Boolean(true) => {
+            fp.alps_codepoint = bun_boringssl::c::TLSEXT_TYPE_application_settings;
+        }
+        SSLConfigApplicationSettings::Codepoint(codepoint) => {
+            if !matches!(
+                *codepoint,
+                bun_boringssl::c::TLSEXT_TYPE_application_settings
+                    | bun_boringssl::c::TLSEXT_TYPE_application_settings_old
+            ) {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "TLSOptions.applicationSettings must be a boolean, 17513 or 17613"
+                )));
+            }
+            fp.alps_codepoint = *codepoint;
+        }
+    }
+
+    match &generated.certificate_compression {
+        SSLConfigCertificateCompression::None => {}
+        SSLConfigCertificateCompression::Boolean(false) => fp.cert_compression = [0; 3],
+        SSLConfigCertificateCompression::Boolean(true) => {
+            fp.cert_compression = [bun_boringssl::c::TLSEXT_cert_compression_brotli as u8, 0, 0];
+        }
+        SSLConfigCertificateCompression::Array(list) => {
+            let mut algs = [0u8; 3];
+            let mut count = 0usize;
+            for item in list.items() {
+                let name = item.as_ref().to_owned_slice_z();
+                let alg = match name.as_bytes() {
+                    b"zlib" => bun_boringssl::c::TLSEXT_cert_compression_zlib,
+                    b"brotli" => bun_boringssl::c::TLSEXT_cert_compression_brotli,
+                    b"zstd" => bun_boringssl::c::TLSEXT_cert_compression_zstd,
+                    _ => {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "TLSOptions.certificateCompression entries must be \"zlib\", \"brotli\" or \"zstd\""
+                        )));
+                    }
+                } as u8;
+                if algs.contains(&alg) {
+                    continue;
+                }
+                if count == algs.len() {
+                    break;
+                }
+                algs[count] = alg;
+                count += 1;
+            }
+            fp.cert_compression = algs;
+        }
+    }
+
+    if !fp.is_default() {
+        result.requires_custom_request_ctx = true;
+    }
+    Ok(())
 }
 
 /// The `SSLConfig` for the `tls: true` shorthand: every option at its

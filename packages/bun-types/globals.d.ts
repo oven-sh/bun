@@ -1920,6 +1920,89 @@ interface BunFetchRequestInitTLS extends Bun.TLSOptions {
    * @returns An error if the server is unauthorized, otherwise undefined
    */
   checkServerIdentity?: NonNullable<import("node:tls").ConnectionOptions["checkServerIdentity"]>;
+
+  /**
+   * Shape the TLS ClientHello after a JA3 fingerprint:
+   * `"version,ciphers,extensions,groups,pointFormats"` with decimal IANA ids.
+   *
+   * Sets the cipher suite order, the supported groups, the TLS version bounds
+   * and the extension toggles below (`ocspStapling`, `signedCertificateTimestamps`,
+   * `sessionTickets`, `certificateCompression`, `applicationSettings`,
+   * `echGrease`) from what the string lists. An explicit option, `ciphers`
+   * included, takes precedence over the value the string implies.
+   *
+   * BoringSSL sends the extensions in its own fixed order (or shuffled with
+   * `permuteExtensions`), so only the set of extensions is reproduced, not
+   * their order. A resumed TLS 1.3 session adds `pre_shared_key` (41) last, as
+   * in browsers. A string whose cipher suites, groups or extension set
+   * BoringSSL cannot reproduce throws a `TypeError`.
+   *
+   * @example
+   * ```ts
+   * await fetch("https://example.com", {
+   *   tls: {
+   *     ja3: "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,0-5-10-11-13-16-18-23-27-35-43-45-51-17613-65037-65281,4588-29-23-24,0",
+   *     grease: true,
+   *     permuteExtensions: true,
+   *   },
+   * });
+   * ```
+   */
+  ja3?: string;
+
+  /**
+   * Send GREASE values (RFC 8701) in the cipher suite, extension, supported
+   * group and supported version lists, as Chrome does.
+   * @default false
+   */
+  grease?: boolean;
+
+  /**
+   * Send the ClientHello extensions in a random order on every connection,
+   * as Chrome 110 and later do.
+   * @default false
+   */
+  permuteExtensions?: boolean;
+
+  /**
+   * Offer TLS certificate compression (RFC 8879, extension 27) with the given
+   * algorithms, in preference order. `true` offers `["brotli"]`, which is what
+   * Chrome sends.
+   * @default false
+   */
+  certificateCompression?: boolean | Array<"brotli" | "zlib" | "zstd">;
+
+  /**
+   * Offer Application-Layer Protocol Settings (ALPS) for `h2`. `true` and
+   * `17613` use the current extension codepoint, `17513` the old one.
+   * @default false
+   */
+  applicationSettings?: boolean | 17513 | 17613;
+
+  /**
+   * Send a GREASE `encrypted_client_hello` extension (65037), as Chrome does
+   * when it has no ECH configuration for the host.
+   * @default false
+   */
+  echGrease?: boolean;
+
+  /**
+   * Request OCSP stapling (`status_request`, extension 5).
+   * @default true
+   */
+  ocspStapling?: boolean;
+
+  /**
+   * Request signed certificate timestamps (extension 18).
+   * @default true
+   */
+  signedCertificateTimestamps?: boolean;
+
+  /**
+   * Offer the `session_ticket` extension (35) for TLS 1.2 resumption.
+   * @default true
+   */
+  sessionTickets?: boolean;
 }
 
 /**

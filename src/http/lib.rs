@@ -45,6 +45,7 @@ pub mod session_cache;
 pub mod signals;
 #[path = "ThreadSafeStreamBuffer.rs"]
 pub mod thread_safe_stream_buffer;
+pub mod tls_fingerprint;
 #[path = "websocket.rs"]
 pub mod websocket;
 
@@ -1109,10 +1110,7 @@ pub enum AlpnOffer {
     H1OrH2,
 }
 
-/// Sets SNI (when `hostname` is non-empty), the legacy-server-connect option,
-/// the ALPN protocol list for `offer`, and enables SCT/OCSP stapling. Called
-/// from `on_open` for every TLS socket — must run even when the hostname is an
-/// IP literal (with empty SNI) so ALPN is still advertised.
+/// SNI (null for IP literals), the ALPN list for `offer` and the ClientHello knobs from `fingerprint`.
 ///
 // `ssl` is the live SSL handle for a just-opened socket (BoringSSL never
 // returns null); `hostname` is null (no SNI for IP literals) or a
@@ -1122,6 +1120,7 @@ pub fn configure_http_client_with_alpn(
     ssl: &mut boringssl::c::SSL,
     hostname: *const core::ffi::c_char,
     offer: AlpnOffer,
+    fingerprint: Option<&ssl_config::Fingerprint>,
 ) {
     // SAFETY: `ssl` is a live `&mut SSL`; `hostname` is null-guarded before deref.
     unsafe {
@@ -1144,8 +1143,11 @@ pub fn configure_http_client_with_alpn(
         let rc = boringssl::c::SSL_set_alpn_protos(ssl, alpns.as_ptr(), alpns.len());
         debug_assert_eq!(rc, 0);
 
-        boringssl::c::SSL_enable_signed_cert_timestamps(ssl);
-        boringssl::c::SSL_enable_ocsp_stapling(ssl);
+        // SAFETY: `ssl` is live and pre-handshake (the socket was just opened).
+        tls_fingerprint::apply_to_ssl(
+            ssl,
+            fingerprint.unwrap_or(&ssl_config::Fingerprint::DEFAULT),
+        );
     }
 }
 
@@ -1842,6 +1844,7 @@ impl<'a> HTTPClient<'a> {
                     unsafe { &mut *ssl_ptr },
                     host_z,
                     self.alpn_offer(),
+                    self.tls_fingerprint(),
                 );
 
                 if crate::session_cache::eligible(self) {
@@ -1997,6 +2000,11 @@ impl<'a> HTTPClient<'a> {
                 .tls_props
                 .as_ref()
                 .is_some_and(|tls| tls.get().requires_custom_request_ctx)
+    }
+
+    /// The ClientHello knobs from this request's `tls` options, if any.
+    pub(crate) fn tls_fingerprint(&self) -> Option<&ssl_config::Fingerprint> {
+        self.tls_props.as_ref().map(|tls| &tls.get().fingerprint)
     }
 
     pub(crate) fn first_call<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {

@@ -20,6 +20,20 @@ export const ALPNProtocols = b.union("ALPNProtocols", {
   buffer: b.ArrayBuffer,
 });
 
+/** `certificateCompression: boolean | ("brotli" | "zlib" | "zstd")[]` */
+export const CertificateCompression = b.union("CertificateCompression", {
+  none: b.null,
+  boolean: b.bool,
+  array: b.Array(b.String),
+});
+
+/** `applicationSettings: boolean | 17513 | 17613` (the ALPS extension codepoint) */
+export const ApplicationSettings = b.union("ApplicationSettings", {
+  none: b.null,
+  boolean: b.bool,
+  codepoint: b.u16,
+});
+
 export const SSLConfig = b.dictionary(
   {
     name: "SSLConfig",
@@ -111,6 +125,37 @@ export const SSLConfig = b.dictionary(
     ecdhCurve: {
       type: b.String.nullable,
       internalName: "ecdh_curve",
+    },
+    // ClientHello fingerprint options; only fetch applies them (src/http/tls_fingerprint.rs).
+    ja3: b.String.nullable,
+    grease: b.bool.nullable,
+    permuteExtensions: {
+      type: b.bool.nullable,
+      internalName: "permute_extensions",
+    },
+    certificateCompression: {
+      type: CertificateCompression,
+      internalName: "certificate_compression",
+    },
+    applicationSettings: {
+      type: ApplicationSettings,
+      internalName: "application_settings",
+    },
+    echGrease: {
+      type: b.bool.nullable,
+      internalName: "ech_grease",
+    },
+    ocspStapling: {
+      type: b.bool.nullable,
+      internalName: "ocsp_stapling",
+    },
+    signedCertificateTimestamps: {
+      type: b.bool.nullable,
+      internalName: "signed_certificate_timestamps",
+    },
+    sessionTickets: {
+      type: b.bool.nullable,
+      internalName: "session_tickets",
     },
   },
 );

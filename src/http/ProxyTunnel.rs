@@ -211,9 +211,15 @@ fn on_open(ctx: *mut HTTPClient) {
 
         // SAFETY: `ssl_ptr` is the live SSL handle from the tunnel's SSLWrapper.
         let ssl = unsafe { &mut *ssl_ptr.as_ptr() };
+        let fingerprint = this.tls_fingerprint();
         if bun_core::ip_address::is_ip_address(_hostname) {
             // SNI is null (IP literal — no SNI).
-            crate::configure_http_client_with_alpn(ssl, core::ptr::null(), AlpnOffer::H1);
+            crate::configure_http_client_with_alpn(
+                ssl,
+                core::ptr::null(),
+                AlpnOffer::H1,
+                fingerprint,
+            );
         } else {
             // SAFETY: TEMP_HOSTNAME is only accessed from the single HTTP thread.
             let temp_hostname = crate::temp_hostname();
@@ -225,12 +231,18 @@ fn on_open(ctx: *mut HTTPClient) {
                     ssl,
                     temp_hostname.as_ptr().cast(),
                     AlpnOffer::H1,
+                    fingerprint,
                 );
             } else {
                 let mut owned = _hostname.to_vec();
                 owned.push(0);
                 // `owned` is NUL-terminated and outlives this call.
-                crate::configure_http_client_with_alpn(ssl, owned.as_ptr().cast(), AlpnOffer::H1);
+                crate::configure_http_client_with_alpn(
+                    ssl,
+                    owned.as_ptr().cast(),
+                    AlpnOffer::H1,
+                    fingerprint,
+                );
                 // owned drops here (was: defer if hostname_needs_free free(hostname))
             }
         }
@@ -593,6 +605,14 @@ impl ProxyTunnel {
                 return;
             }
         };
+        if let Some(ctx) = wrapper.ssl_ctx() {
+            // SAFETY: the wrapper owns this context and its single SSL, whose
+            // handshake starts in `start()` below; GREASE and certificate
+            // compression are read from the context at handshake time.
+            unsafe {
+                crate::tls_fingerprint::apply_to_ssl_ctx(ctx.as_ptr(), &ssl_options.fingerprint)
+            };
+        }
         // `RefPtr::new` owns the tunnel's initial ref (`ref_count == 1` from
         // `Default`); the client holds it until `close_proxy_tunnel` or the
         // hand-off to the keep-alive pool.

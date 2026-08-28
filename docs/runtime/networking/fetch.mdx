@@ -247,6 +247,39 @@ await fetch("https://example.com", {
 
 This avoids SSL errors with self-signed certificates, but it disables TLS validation, so use it with caution.
 
+#### TLS fingerprint
+
+Servers can identify a client by the shape of its TLS ClientHello: the cipher suites, extensions and groups it offers, often summarized as a [JA3](https://github.com/salesforce/ja3) or JA4 hash. The `tls` option can shape the ClientHello that `fetch` sends. A JA3 string sets the cipher suite order, the supported groups, the TLS version bounds and the extensions it lists:
+
+```ts
+await fetch("https://example.com", {
+  tls: {
+    // Chrome on desktop
+    ja3: "771,4865-4866-4867-49195-49199-49196-49200-52393-52392-49171-49172-156-157-47-53,0-5-10-11-13-16-18-23-27-35-43-45-51-17613-65037-65281,4588-29-23-24,0",
+    // Chrome also adds GREASE values and shuffles the extension order
+    grease: true,
+    permuteExtensions: true,
+  },
+});
+```
+
+Each part of the ClientHello can also be set on its own. An explicit option takes precedence over what `ja3` implies:
+
+| Option                        | Default | Effect                                                                                                                            |
+| ----------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `grease`                      | `false` | GREASE values (RFC 8701) in the cipher suite, extension, group and version lists                                                  |
+| `permuteExtensions`           | `false` | Random extension order on every connection                                                                                        |
+| `certificateCompression`      | `false` | Offer certificate compression (extension 27). `true` means `["brotli"]`, or pass `["zlib", "brotli", "zstd"]` in preference order |
+| `applicationSettings`         | `false` | Offer ALPS for `h2`. `true` or `17613` use the current codepoint, `17513` the old one                                             |
+| `echGrease`                   | `false` | A GREASE `encrypted_client_hello` extension (65037)                                                                               |
+| `ocspStapling`                | `true`  | Request OCSP stapling (extension 5)                                                                                               |
+| `signedCertificateTimestamps` | `true`  | Request signed certificate timestamps (extension 18)                                                                              |
+| `sessionTickets`              | `true`  | Offer the `session_ticket` extension (35)                                                                                         |
+
+Bun uses BoringSSL, the same TLS library as Chrome, so a Chrome ClientHello is reproduced up to two things BoringSSL does not let a client configure: the order of the extensions (BoringSSL uses its own fixed order, or a random one with `permuteExtensions`) and the three TLS 1.3 cipher suites, which always come first, either as `4865-4866-4867` or as `4867-4865-4866`. A JA3 string whose cipher suites, groups or extension set BoringSSL cannot reproduce throws a `TypeError`: for example one that names Firefox's `delegated_credentials` extension (34), or one that leaves out an extension BoringSSL always sends, such as `signature_algorithms` (13).
+
+These options apply to `fetch`. A connection that resumes an earlier TLS 1.3 session adds the `pre_shared_key` extension (41), as browsers do. The HTTP/2 part of a browser fingerprint (SETTINGS values, header order) is not covered.
+
 ### Request options
 
 In addition to the standard fetch options, Bun provides several extensions:

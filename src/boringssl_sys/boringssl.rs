@@ -79,6 +79,14 @@ opaque!(
     CRYPTO_BUFFER_POOL
 );
 opaque!(
+    /// `struct crypto_buffer_st` (`typedef ... CRYPTO_BUFFER`).
+    CRYPTO_BUFFER
+);
+opaque!(
+    /// `struct ssl_cipher_st` (`typedef ... SSL_CIPHER`).
+    SSL_CIPHER
+);
+opaque!(
     /// `struct x509_st` (`typedef ... X509`).
     X509
 );
@@ -750,6 +758,20 @@ pub const ssl_renegotiate_explicit: ssl_renegotiate_mode_t = 4;
 /// `SSL_OP_LEGACY_SERVER_CONNECT` — BoringSSL defines this as 0 (no-op flag);
 /// kept so callers can mirror the OpenSSL clear/set dance verbatim.
 pub const SSL_OP_LEGACY_SERVER_CONNECT: u32 = 0;
+/// `#define SSL_OP_NO_TICKET 0x00004000L` — do not offer `session_ticket`.
+pub const SSL_OP_NO_TICKET: u32 = 0x0000_4000;
+
+/// `openssl/tls1.h`. `TLS1_3_VERSION` is declared with the QUIC block below.
+pub const TLS1_2_VERSION: u16 = 0x0303;
+
+/// RFC 8879 certificate compression algorithm ids.
+pub const TLSEXT_cert_compression_zlib: u16 = 1;
+pub const TLSEXT_cert_compression_brotli: u16 = 2;
+pub const TLSEXT_cert_compression_zstd: u16 = 3;
+
+/// The two ALPS extension codepoints (`openssl/tls1.h`).
+pub const TLSEXT_TYPE_application_settings_old: u16 = 17513;
+pub const TLSEXT_TYPE_application_settings: u16 = 17613;
 
 /// `#define RSA_PKCS1_OAEP_PADDING 4` (`openssl/rsa.h`).
 pub const RSA_PKCS1_OAEP_PADDING: c_int = 4;
@@ -838,6 +860,14 @@ pub type SSL_verify_cb = Option<unsafe extern "C" fn(c_int, *mut X509_STORE_CTX)
 pub(crate) type pem_password_cb =
     unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut c_void) -> c_int;
 
+/// `ssl_cert_compression_func_t`; the `CBB*` stays opaque.
+pub type ssl_cert_compression_func_t =
+    unsafe extern "C" fn(*mut SSL, *mut c_void, *const u8, usize) -> c_int;
+
+/// `ssl_cert_decompression_func_t(ssl, out, uncompressed_len, in, in_len)`.
+pub type ssl_cert_decompression_func_t =
+    unsafe extern "C" fn(*mut SSL, *mut *mut CRYPTO_BUFFER, usize, *const u8, usize) -> c_int;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Extern functions — SSL / BIO / ERR / HMAC / RSA / PBKDF2
 // ═══════════════════════════════════════════════════════════════════════════
@@ -920,6 +950,35 @@ unsafe extern "C" {
     pub fn SSL_clear_options(ssl: *mut SSL, options: u32) -> u32;
     pub fn SSL_enable_signed_cert_timestamps(ssl: *mut SSL);
     pub fn SSL_enable_ocsp_stapling(ssl: *mut SSL);
+
+    // ── ClientHello fingerprint knobs (see bun_http::tls_fingerprint) ───
+    pub fn SSL_CTX_set_grease_enabled(ctx: *mut SSL_CTX, enabled: c_int);
+    pub fn SSL_set_permute_extensions(ssl: *mut SSL, enabled: c_int);
+    pub fn SSL_CTX_add_cert_compression_alg(
+        ctx: *mut SSL_CTX,
+        alg_id: u16,
+        compress: Option<ssl_cert_compression_func_t>,
+        decompress: Option<ssl_cert_decompression_func_t>,
+    ) -> c_int;
+    pub fn SSL_add_application_settings(
+        ssl: *mut SSL,
+        proto: *const u8,
+        proto_len: usize,
+        settings: *const u8,
+        settings_len: usize,
+    ) -> c_int;
+    pub fn SSL_set_alps_use_new_codepoint(ssl: *mut SSL, use_new: c_int);
+    pub fn SSL_set_enable_ech_grease(ssl: *mut SSL, enable: c_int);
+    /// Null when `value` is not a cipher suite this BoringSSL knows.
+    pub safe fn SSL_get_cipher_by_value(value: u16) -> *const SSL_CIPHER;
+    /// The IETF name, e.g. `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256`. Static storage.
+    pub fn SSL_CIPHER_standard_name(cipher: *const SSL_CIPHER) -> *const c_char;
+    /// Copies `data`; `pool` may be null.
+    pub fn CRYPTO_BUFFER_new(
+        data: *const u8,
+        len: usize,
+        pool: *mut CRYPTO_BUFFER_POOL,
+    ) -> *mut CRYPTO_BUFFER;
     pub fn SSL_select_next_proto(
         out: *mut *mut u8,
         out_len: *mut u8,

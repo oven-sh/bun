@@ -308,6 +308,20 @@ pub enum SSLConfigFile {
     Array(GenList<SSLConfigSingleFile>),
 }
 
+/// `certificateCompression: boolean | string[]`.
+pub enum SSLConfigCertificateCompression {
+    None,
+    Boolean(bool),
+    Array(GenList<GenVal<GenString>>),
+}
+
+/// `applicationSettings: boolean | number` (the ALPS extension codepoint).
+pub enum SSLConfigApplicationSettings {
+    None,
+    Boolean(bool),
+    Codepoint(u16),
+}
+
 pub struct SSLConfig {
     pub passphrase: GenOpt<GenString>,
     pub dh_params_file: GenOpt<GenString>,
@@ -333,6 +347,15 @@ pub struct SSLConfig {
     pub session_timeout: i32,
     pub sigalgs: GenOpt<GenString>,
     pub ecdh_curve: GenOpt<GenString>,
+    pub ja3: GenOpt<GenString>,
+    pub grease: Option<bool>,
+    pub permute_extensions: Option<bool>,
+    pub certificate_compression: SSLConfigCertificateCompression,
+    pub application_settings: SSLConfigApplicationSettings,
+    pub ech_grease: Option<bool>,
+    pub ocsp_stapling: Option<bool>,
+    pub signed_certificate_timestamps: Option<bool>,
+    pub session_tickets: Option<bool>,
 }
 
 // ── refcount release on drop ──────────────────────────────────────────────
@@ -520,6 +543,84 @@ impl SSLConfigAlpnProtocols {
     }
 }
 
+/// `ExternTaggedUnion(&.{ u8, bool, ExternArrayList<?WTFStringImpl> })`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ExternCertificateCompression {
+    data: ExternCertificateCompressionData,
+    tag: u8,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+union ExternCertificateCompressionData {
+    _0: u8,
+    _1: bool,
+    _2: ExternArrayList<RawWTFStringImpl>,
+}
+
+impl SSLConfigCertificateCompression {
+    fn convert_from_extern(ext: ExternCertificateCompression) -> Self {
+        // SAFETY: each arm reads the union field selected by `tag`.
+        match ext.tag {
+            0 => Self::None,
+            // SAFETY: tag == 1 ⇒ `_1` is the initialized union arm.
+            1 => Self::Boolean(unsafe { ext.data._1 }),
+            2 => {
+                // SAFETY: tag == 2 ⇒ `_2` is the initialized arm.
+                let arr = unsafe { ext.data._2 };
+                let len = arr.length as usize;
+                let mut out = Vec::with_capacity(len);
+                if !arr.data.is_null() {
+                    for i in 0..len {
+                        // SAFETY: `arr.data` points to `length` initialized +1
+                        // `StringImpl*` entries (C++ transferred ownership).
+                        let ptr = unsafe { *arr.data.add(i) };
+                        out.push(GenVal(adopt_string(ptr)));
+                    }
+                    // SAFETY: `arr.data` was allocated by `WTF::fastMalloc` ≡ mimalloc
+                    // (per crate prereq); `mi_free` is size-agnostic.
+                    unsafe { bun_alloc::basic::free_without_size(arr.data.cast()) };
+                }
+                Self::Array(GenList(out))
+            }
+            // SAFETY: tag space is 0..=2 per bindgen contract.
+            _ => unsafe { core::hint::unreachable_unchecked() },
+        }
+    }
+}
+
+/// `ExternTaggedUnion(&.{ u8, bool, u16 })`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ExternApplicationSettings {
+    data: ExternApplicationSettingsData,
+    tag: u8,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+union ExternApplicationSettingsData {
+    _0: u8,
+    _1: bool,
+    _2: u16,
+}
+
+impl SSLConfigApplicationSettings {
+    fn convert_from_extern(ext: ExternApplicationSettings) -> Self {
+        // SAFETY: each arm reads the union field selected by `tag`.
+        match ext.tag {
+            0 => Self::None,
+            // SAFETY: tag == 1 ⇒ `_1` is the initialized union arm.
+            1 => Self::Boolean(unsafe { ext.data._1 }),
+            // SAFETY: tag == 2 ⇒ `_2` is the initialized union arm.
+            2 => Self::Codepoint(unsafe { ext.data._2 }),
+            // SAFETY: tag space is 0..=2 per bindgen contract.
+            _ => unsafe { core::hint::unreachable_unchecked() },
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct ExternSSLConfig {
@@ -547,6 +648,15 @@ struct ExternSSLConfig {
     session_timeout: i32,
     sigalgs: RawWTFStringImpl,
     ecdh_curve: RawWTFStringImpl,
+    ja3: RawWTFStringImpl,
+    grease: ExternOptional<bool>,
+    permute_extensions: ExternOptional<bool>,
+    certificate_compression: ExternCertificateCompression,
+    application_settings: ExternApplicationSettings,
+    ech_grease: ExternOptional<bool>,
+    ocsp_stapling: ExternOptional<bool>,
+    signed_certificate_timestamps: ExternOptional<bool>,
+    session_tickets: ExternOptional<bool>,
 }
 
 // safe: same handle/out-param contract as
@@ -586,6 +696,19 @@ impl SSLConfig {
             session_timeout: ext.session_timeout,
             sigalgs: adopt_opt_string(ext.sigalgs),
             ecdh_curve: adopt_opt_string(ext.ecdh_curve),
+            ja3: adopt_opt_string(ext.ja3),
+            grease: ext.grease.get(),
+            permute_extensions: ext.permute_extensions.get(),
+            certificate_compression: SSLConfigCertificateCompression::convert_from_extern(
+                ext.certificate_compression,
+            ),
+            application_settings: SSLConfigApplicationSettings::convert_from_extern(
+                ext.application_settings,
+            ),
+            ech_grease: ext.ech_grease.get(),
+            ocsp_stapling: ext.ocsp_stapling.get(),
+            signed_certificate_timestamps: ext.signed_certificate_timestamps.get(),
+            session_tickets: ext.session_tickets.get(),
         }
     }
 

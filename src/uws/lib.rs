@@ -517,6 +517,11 @@ pub mod ssl_wrapper {
             Self::init_with_ctx(ssl_ctx, is_client, handlers)
         }
 
+        /// The wrapper-private `SSL_CTX` its `SSL` was created from.
+        pub fn ssl_ctx(&self) -> Option<NonNull<boring_sys::SSL_CTX>> {
+            self.ctx.get()
+        }
+
         /// Mirror `us_socket_adopt_tls`'s server-side `SSL_set_verify` override.
         ///
         /// `us_ssl_ctx_from_options` turns on `SSL_VERIFY_PEER |

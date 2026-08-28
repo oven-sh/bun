@@ -217,6 +217,7 @@ impl WebSocketProxyTunnel {
                         bun_opaque::opaque_deref_mut(ssl_ptr.as_ptr()),
                         hostname_z.as_ptr(),
                         bun_http::AlpnOffer::H1,
+                        None,
                     );
                     // hostname_z dropped here (owned NUL-terminated copy)
                 }

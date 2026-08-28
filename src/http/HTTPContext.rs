@@ -477,13 +477,13 @@ impl<const SSL: bool> HTTPContext<SSL> {
         // Rust cannot reject a const-generic bool branch at compile time on
         // stable, so this is a debug_assert.
         debug_assert!(SSL, "ssl only");
-        let opts = client
-            .tls_props
-            .as_ref()
-            .unwrap()
-            .get()
-            .as_usockets_for_client_verification();
-        self.init_with_opts(&opts)
+        let tls = client.tls_props.as_ref().unwrap().get();
+        let opts = tls.as_usockets_for_client_verification();
+        self.init_with_opts(&opts)?;
+        // SAFETY: `init_with_opts` just created the context and no socket has
+        // been attached to it yet.
+        unsafe { crate::tls_fingerprint::apply_to_ssl_ctx(self.ssl_ctx(), &tls.fingerprint) };
+        Ok(())
     }
 
     fn init_with_opts(

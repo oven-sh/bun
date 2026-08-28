@@ -935,6 +935,11 @@ impl Cmd {
     // `PipeReader::run_yield` without aliasing `&Interpreter` against
     // `&mut self`.
 
+    #[inline]
+    pub(crate) fn is_done(&self) -> bool {
+        matches!(self.state, CmdState::Done)
+    }
+
     /// True once the command has both an exit code and (for subprocesses)
     /// all buffered stdio closed.
     pub(crate) fn has_finished(&self) -> bool {

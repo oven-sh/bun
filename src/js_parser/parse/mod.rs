@@ -554,10 +554,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // function. The ":" after the ")" may be a return type annotation, so we
             // attempt to convert the expressions to bindings first before deciding
             // whether this is an arrow function, and only pick an arrow function if
-            // there were no conversion errors.
+            // there were no conversion errors. A parenthesized item such as
+            // "a ? ((b)) : c => d" is a conversion error too.
             if p.lexer.token == T::TEqualsGreaterThan
                 || (Self::IS_TYPESCRIPT_ENABLED
                     && invalid_log.is_empty()
+                    && errors.invalid_parens.is_empty()
                     && p.try_skip_type_script_arrow_return_type_with_backtracking())
                 || opts.force_arrow_fn
             {

@@ -114,6 +114,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )?;
         p.fn_or_arrow_data_parse.has_argument_decorators = false;
 
+        // Checked before the forward declaration early return so that
+        // TypeScript overload signatures are covered too
+        p.validate_function_name(&func, FnKind::Stmt);
+
         if Self::IS_TYPESCRIPT_ENABLED {
             // Don't output anything if it's just a forward declaration of a function
             if opts.is_typescript_declare
@@ -169,8 +173,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if has_if_scope {
             p.pop_scope();
         }
-
-        p.validate_function_name(&func, FnKind::Stmt);
 
         Ok(p.s(S::Function { func }, loc))
     }

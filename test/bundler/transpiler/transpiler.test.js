@@ -2995,8 +2995,19 @@ console.log(<div {...obj} key="after" />);`),
       expectFirstParseError("x = ({ (y) }) => 0", 'Expected identifier but found "("');
       ts.expectParseError("x = ((y)) => 0", "Unexpected parentheses in binding pattern");
       ts.expectParseError("x = ([ (y) ]) => 0", "Unexpected parentheses in binding pattern");
-      ts.expectParseError("x = ([ (y) ]): void => 0", "Unexpected parentheses in binding pattern");
       ts.expectParseError("x = <T,>([ (y) ]) => 0", "Unexpected parentheses in binding pattern");
+
+      // In TypeScript, a ":" after the ")" may start an arrow function return
+      // type. A parenthesized item rules the arrow function out, so the ":" is
+      // the one of the conditional expression.
+      ts.expectPrinted_("x = cond ? (([a])) : T => 0", "x = cond ? [a] : (T) => 0;\n");
+      ts.expectPrinted_("x = cond ? (({a})) : T => 0", "x = cond ? { a } : (T) => 0;\n");
+      ts.expectPrinted_("x = cond ? ((a)) : T => 0", "x = cond ? a : (T) => 0;\n");
+      ts.expectPrinted_("x = cond ? ([(a)]) : T => 0", "x = cond ? [a] : (T) => 0;\n");
+      ts.expectPrinted_("x = cond ? ([a]) : (T) => 0", "x = cond ? [a] : (T) => 0;\n");
+      ts.expectPrinted_("x = cond ? ([a]): T => 0 : 1", "x = cond ? ([a]) => 0 : 1;\n");
+      ts.expectParseError("x = ([ (y) ]): void => 0", 'Expected ";" but found ":"');
+      ts.expectParseError("x = ((y)): void => 0", 'Expected ";" but found ":"');
     });
 
     it("function declarations named await or yield", () => {
@@ -3033,6 +3044,13 @@ console.log(<div {...obj} key="after" />);`),
       ts.expectParseError("async function await() {}", 'An async function cannot be named "await"');
       ts.expectParseError("async function *await() {}", 'An async function cannot be named "await"');
       ts.expectParseError("(function *yield() {})", 'A generator function expression cannot be named "yield"');
+      // TypeScript overload signatures have no body
+      ts.expectParseError("async function await(): void;", 'An async function cannot be named "await"');
+      ts.expectParseError(
+        "async function foo() { function await(): void; function await(): void {} }",
+        'Cannot use "await" as an identifier here',
+      );
+      ts.expectPrinted_("function foo(): void;\nfunction foo(): void {}", "function foo() {}");
     });
 
     it("import assert", () => {

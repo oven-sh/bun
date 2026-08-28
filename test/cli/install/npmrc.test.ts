@@ -2092,13 +2092,12 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     },
   );
 
-  // A `.npmrc` line is looked up for the tarball's own path only when the server would
-  // resolve that path as written. A `%2f` that splits a dot segment, or a `%5c`, is
-  // left for the server to decode, so the walk matches nothing; the plain and `%2e`
-  // spellings are normalised away before the walk, so they match the resolved path.
+  // A `.npmrc` line is looked up for the tarball's resolved path: dot segments, plain,
+  // `%2e`-spelled or after a backslash, are resolved as the WHATWG parser resolves
+  // them, so a path that leaves `team-a` matches no `team-a` line. A `%2f` that splits
+  // a dot segment, or a `%5c`, is left for the server to decode, so it matches nothing.
   test.each([
     "/npm/team-a/../team-b/x.tgz",
-    "/npm/team-a/./x.tgz",
     "/npm/team-a/%2e%2e/team-b/x.tgz",
     "/npm/team-a/%2E%2E/team-b/x.tgz",
     "/npm/team-a/%2e./team-b/x.tgz",
@@ -2126,6 +2125,29 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     expect(registry.requests[0]).toEqual({ path: "/no-deps", auth: "Bearer registry-token" });
     expect(cdn.requests.map(r => r.auth)).not.toContain("Bearer cdn-a");
     expect(cdn.requests.map(r => r.auth)).not.toContain("Bearer registry-token");
+  });
+
+  // A redundant `/./` resolves within the line's path, so the line applies, as it does
+  // in npm after `new URL()`.
+  test("a redundant dot segment in a cross-host dist.tarball still resolves the line", async () => {
+    using cdn = mockRegistry("Bearer cdn-a", { secure: true, tarballPath: "/npm/team-a/./x.tgz" });
+    using registry = mockRegistry("Bearer registry-token", {
+      tarballOrigin: () => cdn.origin,
+      tarballPath: "/npm/team-a/./x.tgz",
+    });
+    using dir = tempDir("npmrc-url-auth-cdn-single-dot", {
+      "package.json": packageJson,
+      ".npmrc": [
+        `registry=${registry.origin}/`,
+        `//${registry.host}/:_authToken=registry-token`,
+        `//${cdn.host}/npm/team-a/:_authToken=cdn-a`,
+        "",
+      ].join("\n"),
+    });
+
+    await install(String(dir));
+
+    expect(cdn.requests.map(r => r.auth)).toEqual(["Bearer cdn-a"]);
   });
 
   // The `..` in the new URL resolves to a sibling of the default registry, so the

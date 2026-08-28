@@ -377,8 +377,11 @@ fn same_origin(url: &bun_url::URL, base: &bun_url::URL) -> bool {
 fn registry_under(url: &bun_url::URL, base: &bun_url::URL) -> bool {
     bun_core::without_trailing_slash(url.host) == bun_core::without_trailing_slash(base.host)
         && (url.is_https() || !base.is_https())
-        && Npm::registry::path_is_canonical(url.path)
-        && path_under(url.path, base.path)
+        && Npm::registry::path_is_canonical(Npm::registry::query_free_path(url))
+        && path_under(
+            Npm::registry::query_free_path(url),
+            Npm::registry::query_free_path(base),
+        )
 }
 
 /// `base`'s path is a segment-wise prefix of `path`, so `/npm/team-ab/x` is not under

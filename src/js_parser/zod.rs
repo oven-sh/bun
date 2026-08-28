@@ -783,7 +783,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             b"tuple" => {
-                if args.is_empty() || args.len() > 2 {
+                if args.is_empty() || args.len() > 3 {
                     return self.zod_opaque_or_bail(args);
                 }
                 let items = match &args[0].data {
@@ -797,12 +797,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         Extracted::Bail => return Extracted::Bail,
                     }
                 }
+                // `z.tuple(items, params?)` or `z.tuple(items, rest, params?)`: zod takes the second argument as the rest schema only when it is a schema instance, so a literal there is params.
                 let rest = match args.get(1) {
-                    Some(rest_expr) => match self.zod_extract(*rest_expr, refs, false) {
-                        Extracted::Ir(ir) => Some(Box::new(ir)),
-                        Extracted::Bail => return Extracted::Bail,
-                    },
                     None => None,
+                    Some(second)
+                        if matches!(
+                            second.data,
+                            js_ast::ExprData::EObject(_) | js_ast::ExprData::EString(_)
+                        ) =>
+                    {
+                        if args.len() > 2 || !self.zod_is_ignorable_params(*second) {
+                            return self.zod_opaque_or_bail(args);
+                        }
+                        None
+                    }
+                    Some(rest_expr) => {
+                        if !params_ok!(2) {
+                            return self.zod_opaque_or_bail(args);
+                        }
+                        match self.zod_extract(*rest_expr, refs, false) {
+                            Extracted::Ir(ir) => Some(Box::new(ir)),
+                            Extracted::Bail => return Extracted::Bail,
+                        }
+                    }
                 };
                 Extracted::Ir(Ir::Tuple {
                     items: item_irs,
@@ -975,7 +992,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             let value_expr = value?;
             match self.zod_extract(value_expr, refs, false) {
-                Extracted::Ir(ir) => out.push((key_str, ir)),
+                // A duplicate key keeps its first position and takes the last value, as in the object literal zod receives.
+                Extracted::Ir(ir) => match out.iter_mut().find(|(k, _)| *k == key_str) {
+                    Some(existing) => existing.1 = ir,
+                    None => out.push((key_str, ir)),
+                },
                 Extracted::Bail => return Some(Extracted::Bail),
             }
         }

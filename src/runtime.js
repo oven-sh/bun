@@ -345,14 +345,8 @@ var __zodProtoHandler;
 function __zodState(x) {
   // Own symbol property; reading it never hits the lazy prototype proxy.
   var state = x[__zodStateSymbol];
-  // The symbol is a registry symbol, so a stand-in made by another copy of this helper can carry a state this copy does not know. Answering undefined routes such a child through its own _zod accessor instead.
-  if (
-    typeof state !== "object" ||
-    state === null ||
-    typeof state.thunk !== "function" ||
-    typeof state.ir !== "string" ||
-    !Array.isArray(state.refs)
-  ) {
+  // The symbol is a registry symbol, so a stand-in made by another copy of this helper carries a state whose compiled validator answers with that copy's fail sentinel. Only a state that carries this copy's sentinel is used; any other child goes through its own _zod accessor instead.
+  if (typeof state !== "object" || state === null || state.fail !== __zodFail) {
     return undefined;
   }
   return state;
@@ -451,6 +445,7 @@ export var __zod = (thunk, ir, refs) => {
     node: undefined,
     compiled: undefined,
     real: undefined,
+    fail: __zodFail,
   };
   var wrapper = {
     parse: (data, params) => __zodRun(state, wrapper, data, params, 0),
@@ -658,10 +653,11 @@ function __zodRunRef(child, v) {
     }
     __zodMaterialize(state, child);
   }
+  // A ref holds whatever const the schema was built with, so the protocol is checked before use; anything that does not follow it is left to zod.
   var zi = child._zod;
-  if (!zi) return __zodFail;
+  if (!zi || typeof zi.run !== "function") return __zodFail;
   var result = zi.run({ value: v, issues: [] }, { async: false });
-  if (result instanceof Promise) return __zodFail;
+  if (result instanceof Promise || !__zodIsObject(result) || !Array.isArray(result.issues)) return __zodFail;
   if (result.issues.length !== 0) return __zodFail;
   return result.value;
 }
@@ -1054,9 +1050,9 @@ function __zodCompile(n) {
           }
         }
         if (keySet !== null) {
-          // Mirrors zod's handleCatchall: for-in, inherited enumerable keys included.
+          // Mirrors zod's handleCatchall: for-in, inherited enumerable keys included. An own "__proto__" key is left to the installed zod (4.4 skips it, earlier 4.x validates it).
           for (var uk in v) {
-            if (uk === "__proto__") continue;
+            if (uk === "__proto__") return __zodFail;
             if (keySet.has(uk)) continue;
             if (caNever) return __zodFail;
             var cr = caFn(v[uk], refs);
@@ -1126,14 +1122,16 @@ function __zodCompile(n) {
       if (recVal === null) return null;
       return (v, refs) => {
         if (!__zodIsPlainObject(v)) return __zodFail;
+        // Inputs that zod 4.x releases treat differently are left to the installed zod: an own non-function `constructor` (a plain object since 4.2), an own "__proto__" key and non-enumerable keys (skipped since 4.4).
+        var ctor = v.constructor;
+        if (ctor !== undefined && typeof ctor !== "function") return __zodFail;
         var keys = Reflect.ownKeys(v);
         var out = {};
         for (var i = 0; i < keys.length; i++) {
           var key = keys[i];
           // Symbol keys fail string key schemas in zod; delegate.
-          if (typeof key !== "string") return __zodFail;
-          if (key === "__proto__") continue;
-          if (!Object.prototype.propertyIsEnumerable.call(v, key)) continue;
+          if (typeof key !== "string" || key === "__proto__") return __zodFail;
+          if (!Object.prototype.propertyIsEnumerable.call(v, key)) return __zodFail;
           var r = recVal(v[key], refs);
           if (r === __zodFail) return __zodFail;
           out[key] = r;

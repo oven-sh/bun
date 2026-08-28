@@ -35,7 +35,8 @@ test.concurrent(
     }
     expect(Object.keys(onReport).sort()).toEqual(Object.keys(offReport).sort());
   },
-  120_000,
+  // About 160 schemas times 95 inputs, each on a fresh instance, in both modes: a minute under ASAN.
+  240_000,
 );
 
 test.concurrent(

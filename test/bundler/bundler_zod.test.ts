@@ -405,9 +405,20 @@ itBundled("zod/ForeignStateOnAChildIsIgnored", {
     "/entry.ts": /* ts */ `
       import { z } from "zod";
       // .describe() keeps Inner a real zod schema. Give it the helper's
-      // registry symbol with a state shaped like another helper version's.
+      // registry symbol with a state shaped like this helper's own, as a
+      // second copy of the helper in the same process would: its compiled
+      // validator answers with that copy's fail sentinel.
       const Inner = z.string().describe("inner");
-      (Inner as any)[Symbol.for("__bunZodLazy")] = { version: 2 };
+      const foreignFail = {};
+      (Inner as any)[Symbol.for("__bunZodLazy")] = {
+        thunk: () => Inner,
+        ir: '{"v":1,"n":{"k":"str"}}',
+        refs: [],
+        node: undefined,
+        compiled: () => foreignFail,
+        real: undefined,
+        fail: foreignFail,
+      };
       const Outer = z.object({ x: Inner });
       console.log(JSON.stringify(Outer.parse({ x: "a" })), Outer.safeParse({ x: 1 }).success);
     `,
@@ -445,4 +456,61 @@ itBundled("zod/LiteralHeldByReferenceMayBeAnArray", {
     // Both literals compile to reference slots; the primitive one keeps its fast path.
     expect(api.readFile("/out.js").split('"k":"lit","vs":[],"rs":[0]')).toHaveLength(4);
   },
+});
+
+itBundled("zod/TupleParamsAreNotARestSchema", {
+  install: ["zod@4.4.3"],
+  backend: "cli",
+  zodCompiler: true,
+  target: "bun",
+  files: {
+    "/entry.ts": /* ts */ `
+      import { z } from "zod";
+      // zod reads the second argument as a rest schema only when it is a
+      // schema; a params object or message there configures errors.
+      const Pair = z.tuple([z.string(), z.number()], { error: "pair" });
+      const Rest = z.tuple([z.string()], z.number(), { error: "rest" });
+      const Msg = z.tuple([z.string()], "msg");
+      console.log(JSON.stringify(Pair.parse(["a", 1])), Pair.safeParse(["a", 1, 2]).error!.issues[0].message);
+      console.log(JSON.stringify(Rest.parse(["a", 1, 2])), Rest.safeParse("x").error!.issues[0].message);
+      console.log(JSON.stringify(Msg.parse(["a"])), Msg.safeParse(["a", "b"]).error!.issues[0].message);
+    `,
+  },
+  run: { stdout: '["a",1] pair\n["a",1,2] rest\n["a"] msg' },
+  onAfterBundle(api) {
+    const code = api.readFile("/out.js");
+    // No tuple captures its params as a runtime ref.
+    expect(code).not.toContain('"k":"ref"');
+    expect(code).toContain('"k":"tup","it":[{"k":"str"},{"k":"num"}]}');
+    expect(code).toContain('"k":"tup","it":[{"k":"str"}],"rest":{"k":"num"}}');
+    expect(code).toContain('"k":"tup","it":[{"k":"str"}]}');
+  },
+});
+
+// The compiled validator mirrors zod 4.4. Where earlier 4.x releases answer
+// differently, it has to hand the input to the zod that is installed: 4.1
+// validates an own "__proto__" key in catchall objects, validates
+// non-enumerable record keys, and rejects a record whose own `constructor` is
+// not a function. 4.4 skips the first two and accepts the third.
+itBundled("zod/ReleaseDependentInputsGoToTheInstalledZod", {
+  install: ["zod@4.1.0"],
+  backend: "cli",
+  zodCompiler: true,
+  target: "bun",
+  files: {
+    "/entry.ts": /* ts */ `
+      import { z } from "zod";
+      const Strict = z.strictObject({ a: z.string() });
+      const Loose = z.looseObject({ a: z.string() });
+      const Rec = z.record(z.string(), z.number());
+      const protoKey = JSON.parse('{"__proto__": {"p": 1}, "a": "s"}');
+      const hidden = { k: 1 };
+      Object.defineProperty(hidden, "hidden", { value: 9, enumerable: false });
+      console.log(Strict.safeParse(protoKey).success, Strict.safeParse({ a: "s" }).success);
+      console.log(Object.getPrototypeOf(Loose.parse(protoKey)) === Object.prototype);
+      console.log(JSON.stringify(Rec.parse(hidden)), JSON.stringify(Rec.parse({ k: 1 })));
+      console.log(Rec.safeParse(JSON.parse('{"constructor": 0, "k": 1}')).success);
+    `,
+  },
+  run: { stdout: 'false true\nfalse\n{"k":1,"hidden":9} {"k":1}\nfalse' },
 });

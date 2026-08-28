@@ -381,6 +381,179 @@ describe("event loop routing around macros", () => {
   });
 });
 
+// A macro produces a value for the file being bundled, nothing else: it cannot take the process down,
+// every failure is a located build error, and what it returns has to fit in the output.
+describe("a hostile macro", () => {
+  async function build(files: Record<string, string>) {
+    using dir = tempDir("macro-hostile", {
+      ...files,
+      "index.ts": `import { m } from "./m.ts" with { type: "macro" };\nexport const v = m();\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      // Each of these hung or exited the process before its fix. Bounded so a regression fails instead.
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      // Debug builds print "[macro] call <name>" to stdout before the output.
+      stdout: stdout
+        .split("\n")
+        .filter(line => !line.startsWith("[macro]"))
+        .join("\n"),
+      stderr: stderr.replaceAll(String(dir), "[dir]").replaceAll("\\", "/"),
+      exitCode,
+      signalCode: proc.signalCode,
+    };
+  }
+
+  test.concurrent.each([
+    ["process.exit()", `process.exit(42)`, "process.exit() cannot be called from a macro"],
+    ["process.reallyExit()", `process.reallyExit(42)`, "process.reallyExit() cannot be called from a macro"],
+    ["process.abort()", `process.abort()`, "process.abort() cannot be called from a macro"],
+  ])("%s inside a macro fails the build instead of the process", async (_name, call, message) => {
+    const { stderr, exitCode, signalCode } = await build({ "m.ts": `export function m() { ${call}; }` });
+    expect({ exitCode, signalCode, stderr }).toEqual({
+      exitCode: 1,
+      signalCode: null,
+      stderr: expect.stringContaining(message),
+    });
+    expect(stderr).toContain("error: macro threw exception");
+  });
+
+  // Bun.build() runs macros on its bundler threads; the program that called it must outlive them.
+  test.concurrent("process.exit() inside a macro does not exit the Bun.build() caller", async () => {
+    using dir = tempDir("macro-hostile-api", {
+      "m.ts": `export function m() { process.exit(42); }`,
+      "user.ts": `import { m } from "./m.ts" with { type: "macro" };\nexport const v = m();\n`,
+      "build.ts": [
+        `const result = await Bun.build({ entrypoints: ["./user.ts"], throw: false });`,
+        `console.log(JSON.stringify({ success: result.success, logs: result.logs.map(log => log.message) }));`,
+      ].join("\n"),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "build.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ lastLine: stdout.trim().split("\n").pop(), stderr, exitCode }).toEqual({
+      lastLine: JSON.stringify({ success: false, logs: ["macro threw exception"] }),
+      stderr: expect.stringContaining("process.exit() cannot be called from a macro"),
+      exitCode: 0,
+    });
+  });
+
+  // Before: the error was printed and the call was left in the output, with its import gone.
+  test.concurrent("returning an Error fails the build instead of leaving the call in the output", async () => {
+    const { stdout, stderr, exitCode } = await build({
+      "m.ts": `export function m() { return new Error("returned, not thrown"); }`,
+    });
+    expect({ exitCode, stdout, stderr }).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: expect.stringContaining("error: returned, not thrown"),
+    });
+    expect(stderr).toContain("error: macro threw exception");
+  });
+
+  // Every index up to `length` becomes an element of the literal. JSC only backs a dense array's length
+  // with storage; a sparse one (length set past its elements, or an index in the sparse map) would
+  // inflate without bound: `[,,1]` with `length = 1e9` is a billion `undefined`s.
+  test.concurrent.each([
+    [
+      "length set past its elements",
+      `const a = [, , 1]; a.length = 200000; return a;`,
+      "its length is 200000 but it holds 1 element",
+    ],
+    [
+      "an element in the sparse map",
+      `const a = []; a[150000] = 1; return a;`,
+      "its length is 150001 but it holds 1 element",
+    ],
+    [
+      "an arguments object whose length was overwritten",
+      `return (function () { "use strict"; arguments.length = 200000; return arguments; })(4, 5);`,
+      "its length is 200000 but it holds 2 elements",
+    ],
+  ])("a sparse array (%s) is refused with a located error", async (_name, body, message) => {
+    const { stderr, exitCode } = await build({ "m.ts": `export function m() { ${body} }` });
+    expect({ exitCode, stderr }).toEqual({
+      exitCode: 1,
+      stderr: expect.stringContaining(`error: cannot coerce a sparse array to Bun's AST: ${message}\n`),
+    });
+    expect(stderr).toContain("at [dir]/index.ts:2:18");
+    expect(stderr).toContain("note: return a dense array");
+  });
+
+  test.concurrent("dense arrays with holes, arguments objects, and doubles are still inlined", async () => {
+    const { stdout, stderr, exitCode } = await build({
+      "m.ts": [
+        `export function m() {`,
+        `  return [[1, , 3], new Array(3), (function () { return arguments; })(4, 5), [1.5, , 2.5], new Array(200000).fill(7).length];`,
+        `}`,
+      ].join("\n"),
+    });
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(stdout.replace(/\s+/g, "")).toContain(
+      "varv=[[1,undefined,3],[undefined,undefined,undefined],[4,5],[1.5,undefined,2.5],200000];",
+    );
+  });
+
+  // Before: the parse spun on the promise forever (100% CPU). A program in the same state, a pending await
+  // with nothing keeping the event loop alive, would have exited; the macro fails the same way.
+  test.concurrent("a returned promise that can never settle is a located error", async () => {
+    const { stderr, exitCode, signalCode } = await build({
+      "m.ts": `export function m() { return new Promise(() => {}); }`,
+    });
+    expect({ exitCode, signalCode, stderr }).toEqual({
+      exitCode: 1,
+      signalCode: null,
+      stderr: expect.stringContaining(
+        "error: macro returned a promise that never settles: no timer, I/O, or task is keeping the event loop alive",
+      ),
+    });
+    expect(stderr).toContain("at [dir]/index.ts:2:18");
+  });
+
+  test.concurrent("a macro module whose top-level await can never settle is a located error", async () => {
+    const { stderr, exitCode, signalCode } = await build({
+      "m.ts": `await new Promise(() => {});\nexport function m() { return 1; }`,
+    });
+    expect({ exitCode, signalCode, stderr }).toEqual({
+      exitCode: 1,
+      signalCode: null,
+      stderr: expect.stringContaining(
+        `error: macro "./m.ts" never finished loading: its top-level await is pending and nothing is keeping the event loop alive`,
+      ),
+    });
+    expect(stderr).toContain("at [dir]/index.ts:1:19");
+  });
+
+  // Promises that do settle keep working, including ones nothing on the loop holds open for: JSC posts
+  // an Atomics.waitAsync timeout itself, and it does not keep the event loop alive.
+  test.concurrent("a returned promise that will settle is awaited", async () => {
+    const { stdout, stderr, exitCode } = await build({
+      "m.ts": [
+        `export async function m() {`,
+        `  const { value } = Atomics.waitAsync(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);`,
+        `  await new Promise(resolve => setTimeout(resolve, 10));`,
+        `  return [await value, await Bun.file(import.meta.path).text().then(text => text.length > 0)];`,
+        `}`,
+      ].join("\n"),
+    });
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(stdout.replace(/\s+/g, "")).toContain(`varv=["timed-out",true];`);
+  });
+});
+
 describe("--no-macros", () => {
   const files = {
     "macro.ts": `

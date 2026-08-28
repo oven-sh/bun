@@ -2557,6 +2557,25 @@ impl JSValue {
             index => Some(index as u32),
         }
     }
+    /// `Ok(())` when `self` (an object) backs `length` indexed slots with storage (a dense array,
+    /// holes included). `Err(stored)` when `length` runs past that storage (a sparse array, or a
+    /// `length` property written past the elements), with the number of elements it does hold.
+    pub fn indexed_storage_covers(self, length: u32) -> Result<(), u32> {
+        debug_assert!(self.is_object());
+        unsafe extern "C" {
+            safe fn Bun__JSObject__indexedStorageCovers(
+                this: JSValue,
+                length: u32,
+                out_stored_count: &mut u32,
+            ) -> bool;
+        }
+        let mut stored: u32 = 0;
+        if Bun__JSObject__indexedStorageCovers(self, length, &mut stored) {
+            Ok(())
+        } else {
+            Err(stored)
+        }
+    }
     /// `JSValue.getNameProperty` — the value's `.name` (function/class
     /// name). Empty for empty/`undefined`/`null`.
     pub fn get_name_property(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {

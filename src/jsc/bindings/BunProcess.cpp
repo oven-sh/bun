@@ -857,11 +857,22 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUptime, (JSC::JSGlobalObject * lexicalG
     return JSC::JSValue::encode(JSC::jsNumber(result));
 }
 
+// A macro runs in the transpiling thread's VM (a bundler worker, or the program
+// itself mid-require()): exiting from one would exit the build or the program.
+static bool isRunningMacro(Zig::GlobalObject* globalObject)
+{
+    return Bun__VM__currentLoopKind(globalObject->bunVM()) == BunLoopKind::Macro;
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionExit, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* zigGlobal = defaultGlobalObject(globalObject);
+    if (isRunningMacro(zigGlobal)) [[unlikely]] {
+        throwTypeError(globalObject, throwScope, "process.exit() cannot be called from a macro"_s);
+        return {};
+    }
     auto process = zigGlobal->processObject();
 
     auto code = callFrame->argument(0);
@@ -1823,6 +1834,12 @@ static void restoreDefaultSignalDisposition(int signalNumber)
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, CallFrame*))
 {
+    if (isRunningMacro(defaultGlobalObject(globalObject))) [[unlikely]] {
+        auto& vm = JSC::getVM(globalObject);
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwTypeError(globalObject, throwScope, "process.abort() cannot be called from a macro"_s);
+        return {};
+    }
 #if OS(WINDOWS)
     // Raising SIGABRT is handled in the CRT in windows, calling _exit() with ambiguous code "3" by default.
     // This adjustment to the abort behavior gives a more sane exit code on abort, by calling _exit directly with code 134.
@@ -3698,6 +3715,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
 {
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+    if (isRunningMacro(defaultGlobalObject(globalObject))) [[unlikely]] {
+        throwTypeError(globalObject, throwScope, "process.reallyExit() cannot be called from a macro"_s);
+        return {};
+    }
     uint8_t exitCode = 0;
     JSValue arg0 = callFrame->argument(0);
     if (arg0.isAnyInt()) {

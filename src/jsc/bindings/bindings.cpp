@@ -38,6 +38,8 @@
 #include "JavaScriptCore/BytecodeIndex.h"
 #include "JavaScriptCore/CodeBlock.h"
 #include "JavaScriptCore/Completion.h"
+#include "JavaScriptCore/DirectArguments.h"
+#include "JavaScriptCore/ScopedArguments.h"
 #include "JavaScriptCore/ErrorInstance.h"
 #include "JavaScriptCore/ExceptionHelpers.h"
 #include "JavaScriptCore/ExceptionScope.h"
@@ -7243,6 +7245,65 @@ extern "C" uint64_t Bun__JSArray__nextPresentIndex(
     default:
         ASSERT_NOT_REACHED();
         return start;
+    }
+}
+
+// Whether `value` backs `length` indexed slots with storage: a dense array does
+// (holes included); `[,,1]` with `length = 1e9` or `a[2**32 - 2] = 1` does not.
+// Arguments objects keep their elements off the butterfly, and their `length`
+// property can be written past them. `*outStoredCount` is the element count.
+extern "C" bool Bun__JSObject__indexedStorageCovers(
+    JSC::EncodedJSValue encodedValue,
+    uint32_t length,
+    uint32_t* outStoredCount)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (!value.isObject())
+        return false;
+    JSC::JSObject* object = value.getObject();
+
+    switch (object->type()) {
+    case JSC::DirectArgumentsType:
+        *outStoredCount = uncheckedDowncast<JSC::DirectArguments>(object)->internalLength();
+        return length <= *outStoredCount;
+    case JSC::ScopedArgumentsType:
+        *outStoredCount = uncheckedDowncast<JSC::ScopedArguments>(object)->internalLength();
+        return length <= *outStoredCount;
+    default:
+        break;
+    }
+
+    switch (object->indexingType() & JSC::IndexingShapeMask) {
+    case JSC::UndecidedShape:
+    case JSC::Int32Shape:
+    case JSC::DoubleShape:
+    case JSC::ContiguousShape:
+        *outStoredCount = object->butterfly()->publicLength();
+        return length <= *outStoredCount;
+
+    case JSC::ArrayStorageShape:
+    case JSC::SlowPutArrayStorageShape: {
+        JSC::ArrayStorage* storage = object->butterfly()->arrayStorage();
+        unsigned usedVectorLength = std::min(storage->length(), storage->vectorLength());
+        // Vector slots are backed whether or not they are filled.
+        uint64_t backed = usedVectorLength;
+        uint64_t stored = 0;
+        for (unsigned i = 0; i < usedVectorLength; ++i) {
+            if (storage->m_vector[i])
+                stored++;
+        }
+        if (JSC::SparseArrayValueMap* map = storage->m_sparseMap.get()) {
+            backed += map->size();
+            stored += map->size();
+        }
+        *outStoredCount = static_cast<uint32_t>(std::min<uint64_t>(stored, std::numeric_limits<uint32_t>::max()));
+        return length <= backed;
+    }
+
+    default:
+        // No indexed storage at all.
+        *outStoredCount = 0;
+        return length == 0;
     }
 }
 

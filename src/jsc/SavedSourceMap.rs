@@ -231,6 +231,8 @@ impl SavedSourceMap {
     pub(crate) fn put_value(&mut self, path: &[u8], value: Value) -> bun_js_printer::Result<()> {
         use bun_collections::zig_hash_map::MapEntry as Entry;
 
+        // The table owns `value`'s allocation through a tagged pointer, which LeakSanitizer cannot follow.
+        bun_core::asan::lsan_ignore_object(value.as_uintptr() as usize as *const c_void);
         self.lock();
         // Note: reshaped for borrowck — explicit unlock paired manually.
 
@@ -283,6 +285,8 @@ impl SavedSourceMap {
             // the returned `Arc`.
             let result = Arc::new(ParsedSourceMap::from_internal(ism));
             *mapping = Value::init(Arc::into_raw(Arc::clone(&result))).ptr();
+            // As in `put_value`: owned by the table through a tagged pointer.
+            bun_core::asan::lsan_ignore_object(Arc::as_ptr(&result).cast());
             self.unlock();
             return SourceMap::ParseUrl {
                 map: Some(result),

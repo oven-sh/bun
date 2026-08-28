@@ -1295,20 +1295,29 @@ impl VirtualMachine {
         }
     }
 
-    pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
+    /// Something can still run JS on the current loop: [`Self::is_event_loop_alive`] without
+    /// `unhandled_error_counter`, plus JSC's deferred work (an `Atomics.waitAsync` timeout does
+    /// not keep the loop alive).
+    pub fn has_pending_work(&self) -> bool {
         let el = self.event_loop_shared();
-        let active = self
-            .platform_loop_opt()
-            .map(|h| h.is_active())
-            .unwrap_or(false);
-        self.unhandled_error_counter == 0
-            && ((active as usize)
-                + self.active_tasks
-                + el.tasks.readable_length()
-                + el.yield_tasks.len()
-                + (el.has_concurrent_tasks() as usize)
-                + (el.has_pending_refs() as usize)
-                > 0)
+        self.has_pending_work_excluding_immediates()
+            || !el.immediate_tasks.is_empty()
+            || !el.next_immediate_tasks.is_empty()
+            || self.jsc_vm().has_pending_deferred_work()
+    }
+
+    fn has_pending_work_excluding_immediates(&self) -> bool {
+        let el = self.event_loop_shared();
+        self.platform_loop_opt().is_some_and(|h| h.is_active())
+            || self.active_tasks > 0
+            || el.tasks.readable_length() > 0
+            || !el.yield_tasks.is_empty()
+            || el.has_concurrent_tasks()
+            || el.has_pending_refs()
+    }
+
+    pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
+        self.unhandled_error_counter == 0 && self.has_pending_work_excluding_immediates()
     }
 
     pub fn is_event_loop_alive(&self) -> bool {
@@ -1548,7 +1557,7 @@ impl VirtualMachine {
         function_name: &[u8],
         specifier: &[u8],
         hash: i32,
-    ) -> crate::CrateResult<*mut JSInternalPromise> {
+    ) -> crate::CrateResult<(*mut JSInternalPromise, Result<(), jsc::Unsettled>)> {
         use bun_bundler::entry_points::{Fs, MacroEntryPoint};
         use bun_collections::hash_map::Entry;
         let entry_point: *mut MacroEntryPoint = match self.macro_entry_points.entry(hash) {
@@ -1578,11 +1587,11 @@ impl VirtualMachine {
         // SAFETY: `entry_point` was just inserted (heap-allocated) or fetched
         // from the cache; it lives for the VM lifetime.
         let path: &[u8] = unsafe { &*entry_point }.source.path.text;
-        let promise = self.run_with_api_lock(|| {
+        let loaded = self.run_with_api_lock(|| {
             // SAFETY: per-thread VM; the API lock guarantees JSC is held.
             VirtualMachine::get().as_mut()._load_macro_entry_point(path)
         });
-        promise.ok_or(crate::CrateError::JSError)
+        loaded.ok_or(crate::CrateError::JSError)
     }
 
     pub fn is_watcher_enabled(&self) -> bool {
@@ -2774,6 +2783,15 @@ impl VirtualMachine {
     #[inline]
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
         self.event_loop_mut().wait_for_promise(promise)
+    }
+
+    /// Forwarder for [`crate::event_loop::EventLoop::wait_for_promise_until_idle`].
+    #[inline]
+    pub fn wait_for_promise_until_idle(
+        &mut self,
+        promise: jsc::AnyPromise,
+    ) -> Result<(), jsc::Unsettled> {
+        self.event_loop_mut().wait_for_promise_until_idle(promise)
     }
 
     /// `eventLoop().autoTick()` — dispatched through the runtime hook
@@ -5202,18 +5220,19 @@ impl VirtualMachine {
         }
     }
 
-    /// Loads and evaluates a macro entry module, waiting for its promise.
+    /// Loads and evaluates a macro entry module. The promise is still pending on return when the
+    /// wait gave up (`Idle`: its top-level `await` can never settle; `Stopped`: the VM stopped).
     #[inline]
     pub(crate) fn _load_macro_entry_point(
         &mut self,
         entry_path: &[u8],
-    ) -> Option<*mut JSInternalPromise> {
+    ) -> Option<(*mut JSInternalPromise, Result<(), jsc::Unsettled>)> {
         let path_str = bun_core::String::from_bytes(entry_path);
         let promise =
             jsc::JSModuleLoader::load_and_evaluate_module_ptr(self.global, Some(&path_str))?
                 .as_ptr();
-        let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
-        Some(promise)
+        let waited = self.wait_for_promise_until_idle(jsc::AnyPromise::Internal(promise));
+        Some((promise, waited))
     }
 
     /// Prints an error-like JS value to the console via the error handler.

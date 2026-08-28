@@ -195,6 +195,35 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The cached module record carries each name as Latin-1 or UTF-16; the second file links from that record.
+  test("with --isolate, cached module records keep short, Latin-1 and UTF-16 names", async () => {
+    using dir = tempDir("isolate-module-names", {
+      "names.ts": `export const a = 1, ab = 2, abc = 3, abcd = 4, café = 5, слово = 6; export { a as é, ab as ф };`,
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        import { a, ab, abc, abcd, café, слово, é, ф } from "./names";
+        test("first", () => {
+          (globalThis as any).__a_ran = true;
+          expect([a, ab, abc, abcd, café, слово, é, ф].join()).toBe("1,2,3,4,5,6,1,2");
+        });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
+        import { a, ab, abc, abcd, café, слово, é, ф } from "./names";
+        test("from cache", () => {
+          expect((globalThis as any).__a_ran).toBeUndefined();
+          expect(isolatedModuleCacheSourceType(require.resolve("./names"))).toBe("BunTranspiledModule");
+          expect([a, ab, abc, abcd, café, слово, é, ф].join()).toBe("1,2,3,4,5,6,1,2");
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], ["./a.test.ts", "./b.test.ts"]);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
   test("with --isolate, leaked outbound socket is closed before next file", async () => {
     using dir = tempDir("isolate-socket", {
       "a-connect.test.ts": `

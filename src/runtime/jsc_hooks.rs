@@ -306,7 +306,11 @@ pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCt
             )),
         }
     }
-    rare.default_client_ssl_ctx.unwrap()
+    rare.default_client_ssl_ctx
+        .as_ref()
+        .unwrap()
+        .as_ptr()
+        .cast()
 }
 
 /// `RareData.sslCtxCache().getOrCreateOpts(opts, &err)` — RuntimeHooks slot
@@ -326,10 +330,7 @@ fn ssl_ctx_cache_get_or_create(
     // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a stable
     // address for the VM's lifetime and is only touched from the JS thread.
     let cache = unsafe { &mut (*state).ssl_ctx_cache };
-    cache
-        .get_or_create_opts(opts, err)
-        // SAFETY: `get_or_create_opts` returns a +1 ref.
-        .and_then(|ctx| unsafe { bun_boringssl::c::OwnedSslCtx::from_raw(ctx) })
+    cache.get_or_create_opts(opts, err)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -3790,7 +3791,7 @@ export default db;
             bytecode_cache: Bytecode::persistent(bytecode),
             source_code_hash: file.source_hash,
             module_info: if !module_info.is_empty() {
-                let decoded = bun_bundler::analyze_transpiled_module::ModuleInfoStringTable::parse(
+                let decoded = bun_bundler::analyze_transpiled_module::ModuleInfoSlotTable::parse(
                     module_info_strings,
                 )
                 .ok()

@@ -333,7 +333,8 @@ describe("transpiler cache", () => {
 //   esm_record_byte_length @ 86, esm_record_hash @ 94. Payload follows @ 102.
 // Serialized module record layout (ModuleInfoStringTable + body, see
 // `ModuleInfoDeserialized::serialize` in src/js_printer/lib.rs):
-//   table: [offset_width u8][0;3][count u32][(count+1) offsets][bytes]
+//   table: [offset_width u8][0;3][count u32][(count+1) offsets][pad to even][bytes]
+//   each string in bytes: [encoding u8: 1 Latin-1, 0 UTF-16LE after pad to even]
 //   body:  [flags u8][id_width u8][0;2][n_requested u32][n_records u32]
 //          [n_records tag bytes][n_requested tag bytes][string ids @ id_width ...]
 const ESM_RECORD_BYTE_OFFSET_AT = 78;
@@ -370,13 +371,17 @@ function readModuleRecord(file: string): { kind: string; name: string }[] | null
   const offsetWidth = data.readUInt8(esmOff);
   const count = data.readUInt32LE(esmOff + 4);
   const offsetsAt = esmOff + 8;
-  const bytesAt = offsetsAt + (count + 1) * offsetWidth;
+  const offsetsLen = (count + 1) * offsetWidth;
+  const bytesAt = offsetsAt + offsetsLen + (offsetsLen % 2);
   const string = (id: number) => {
     if (id === count) return "*namespace";
     if (id === count + 1) return "*default";
     const start = readUint(offsetsAt + id * offsetWidth, offsetWidth);
     const end = readUint(offsetsAt + (id + 1) * offsetWidth, offsetWidth);
-    return data.toString("utf8", bytesAt + start, bytesAt + end);
+    let at = start + 1; // encoding byte
+    if (data.readUInt8(bytesAt + start) === 1) return data.toString("latin1", bytesAt + at, bytesAt + end);
+    if (at % 2 !== 0) at += 1; // UTF-16 bodies are 2-aligned within the blob
+    return data.toString("utf16le", bytesAt + at, bytesAt + end);
   };
   const total = readUint(offsetsAt + count * offsetWidth, offsetWidth);
 
@@ -482,7 +487,8 @@ test("rejects cached module records containing out-of-range string indices", () 
     const count = data.readUInt32LE(esmOff + 4);
     const offsetsAt = esmOff + 8;
     const total = readUint(offsetsAt + count * offsetWidth, offsetWidth);
-    const bodyAt = offsetsAt + (count + 1) * offsetWidth + total;
+    const offsetsLen = (count + 1) * offsetWidth;
+    const bodyAt = offsetsAt + offsetsLen + (offsetsLen % 2) + total;
     const nRequested = data.readUInt32LE(bodyAt + 4);
     const nRecords = data.readUInt32LE(bodyAt + 8);
     const idsAt = bodyAt + 12 + nRecords + nRequested;

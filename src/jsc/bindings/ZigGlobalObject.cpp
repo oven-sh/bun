@@ -3648,7 +3648,7 @@ static JSC::JSPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject
 }
 
 JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
-    JSModuleLoader* loader, JSValue key,
+    JSModuleLoader* loader, JSValue key, const WTF::String&,
     RefPtr<JSC::ScriptFetchParameters> parameters, RefPtr<JSC::ScriptFetcher>)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3802,7 +3802,7 @@ static void collectStandaloneClosure(Zig::GlobalObject* globalObject, JSModuleLo
                 continue;
             if (auto* entry = loader->registryEntry(key)) {
                 // Usable as a loaded dependency only if the loader already finished loading that module's own subgraph.
-                if (entry->record() && entry->loadPromise() && entry->loadPromise()->status() == JSPromise::Status::Fulfilled)
+                if (entry->record() && entry->isLoaded())
                     closure.records.add(key.impl(), entry->record());
                 else
                     closure.complete = false;
@@ -3854,7 +3854,7 @@ static void collectStandaloneClosure(Zig::GlobalObject* globalObject, JSModuleLo
 }
 
 // Register the collected modules as fetched. When the closure is complete, every module any of them can reach is in it,
-// so they are marked loaded outright — [[LoadedModules]] filled and loadPromise settled — and JSC's graph walk finishes
+// so they are marked loaded outright — [[LoadedModules]] filled and the entry marked loaded — and JSC's graph walk finishes
 // without a HostLoadImportedModule call or microtask per edge. Otherwise they are left the way JSC's own
 // fetch -> makeModule chain leaves them and JSC runs one load step per module to finish the job.
 static void registerStandaloneClosure(Zig::GlobalObject* globalObject, JSModuleLoader* loader, StandaloneClosure& closure)
@@ -3866,8 +3866,7 @@ static void registerStandaloneClosure(Zig::GlobalObject* globalObject, JSModuleL
         auto* entry = loader->ensureRegistered(globalObject, m.key, ScriptFetchParameters::Type::JavaScript);
         RETURN_IF_EXCEPTION(scope, void());
         RELEASE_ASSERT(!entry->record()); // nothing between collect and register can register one of these keys
-        entry->provideModule(globalObject, m.source, m.record);
-        RETURN_IF_EXCEPTION(scope, void());
+        entry->provideModule(vm, m.record);
         releaseModuleInfo(globalObject, m.source);
     }
     if (!closure.complete)
@@ -3881,17 +3880,11 @@ static void registerStandaloneClosure(Zig::GlobalObject* globalObject, JSModuleL
             RETURN_IF_EXCEPTION(scope, void());
         }
     }
-    for (auto& m : closure.modules) {
-        auto* entry = loader->registryEntry(m.key);
-        if (!entry->loadPromise()) {
-            JSPromise* loaded = JSPromise::create(vm, globalObject->promiseStructure());
-            loaded->fulfill(vm, m.record);
-            entry->setLoadPromise(vm, loaded);
-        }
-    }
+    for (auto& m : closure.modules)
+        loader->registryEntry(m.key)->markLoaded();
 }
 
-JSC::JSPromise* StandaloneGlobalObject::moduleLoaderFetch(JSGlobalObject* jsGlobalObject, JSModuleLoader* loader, JSValue key, RefPtr<JSC::ScriptFetchParameters> parameters, RefPtr<JSC::ScriptFetcher> fetcher)
+JSC::JSPromise* StandaloneGlobalObject::moduleLoaderFetch(JSGlobalObject* jsGlobalObject, JSModuleLoader* loader, JSValue key, const WTF::String& referrer, RefPtr<JSC::ScriptFetchParameters> parameters, RefPtr<JSC::ScriptFetcher> fetcher)
 {
     auto* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
     auto& vm = globalObject->vm();
@@ -3899,20 +3892,20 @@ JSC::JSPromise* StandaloneGlobalObject::moduleLoaderFetch(JSGlobalObject* jsGlob
 
     bool plainJS = !parameters || parameters->type() == ScriptFetchParameters::Type::JavaScript;
     if (!plainJS || globalObject->onLoadPlugins.hasVirtualModules() || Bun__hasPluginRunner(globalObject->bunVM()))
-        RELEASE_AND_RETURN(scope, GlobalObject::moduleLoaderFetch(jsGlobalObject, loader, key, WTF::move(parameters), WTF::move(fetcher)));
+        RELEASE_AND_RETURN(scope, GlobalObject::moduleLoaderFetch(jsGlobalObject, loader, key, referrer, WTF::move(parameters), WTF::move(fetcher)));
 
     JSString* keyJS = key.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     String keyString = keyJS->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (!keyString.is8Bit() || keyString.endsWith(".node"_s) || !Bun__standaloneModuleHasModuleInfo(keyString.span8().data(), keyString.length()))
-        RELEASE_AND_RETURN(scope, GlobalObject::moduleLoaderFetch(jsGlobalObject, loader, key, WTF::move(parameters), WTF::move(fetcher)));
+        RELEASE_AND_RETURN(scope, GlobalObject::moduleLoaderFetch(jsGlobalObject, loader, key, referrer, WTF::move(parameters), WTF::move(fetcher)));
 
     Identifier rootKey = Identifier::fromString(vm, keyString);
     JSSourceCode* rootSource = fetchSourceSync(globalObject, rootKey);
     RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
     if (!rootSource)
-        RELEASE_AND_RETURN(scope, GlobalObject::moduleLoaderFetch(jsGlobalObject, loader, key, WTF::move(parameters), WTF::move(fetcher)));
+        RELEASE_AND_RETURN(scope, GlobalObject::moduleLoaderFetch(jsGlobalObject, loader, key, referrer, WTF::move(parameters), WTF::move(fetcher)));
 
     auto* provider = transpiledModuleProvider(rootSource);
     if (!provider)

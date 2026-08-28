@@ -59,6 +59,7 @@
         "jsonwebtoken": "9.0.2",
         "jws": "4.0.0",
         "lodash": "4.17.21",
+        "lodash-es": "4.17.21",
         "mongodb": "6.0.0",
         "msw": "2.3.0",
         "mysql2": "3.7.0",
@@ -75,7 +76,9 @@
         "prompts": "2.4.2",
         "proxy": "2.2.0",
         "react": "file:../node_modules/react",
+        "react-19-canary": "npm:react@19.2.0-canary-b94603b9-20250513",
         "react-dom": "18.3.1",
+        "react-dom-19-canary": "npm:react-dom@19.2.0-canary-b94603b9-20250513",
         "reflect-metadata": "0.2.2",
         "rollup": "4.4.1",
         "sass": "1.79.4",
@@ -2051,7 +2054,11 @@
 
     "react": ["react@file:../node_modules/react", { "dependencies": { "loose-envify": "^1.1.0" } }],
 
+    "react-19-canary": ["react@19.2.0-canary-b94603b9-20250513", "", {}, "sha512-kb318UHCIzKpTmYcPmJqYtmre2c8CC0tRm677Jup/ClbJi1B1gp5UXQ4eo3a30LjK2bI/BB2v/pzpCuHAar1tw=="],
+
     "react-dom": ["react-dom@18.3.1", "", { "dependencies": { "loose-envify": "^1.1.0", "scheduler": "^0.23.2" }, "peerDependencies": { "react": "^18.3.1" } }, "sha512-5m4nQKp+rZRb09LNH59GM4BxTh9251/ylbKIbpe7TpGxfJ+9kv6BLkLBXIjjspbgbnIBNqlI23tRnTWT0snUIw=="],
+
+    "react-dom-19-canary": ["react-dom@19.2.0-canary-b94603b9-20250513", "", { "dependencies": { "scheduler": "0.27.0-canary-b94603b9-20250513" }, "peerDependencies": { "react": "19.2.0-canary-b94603b9-20250513" } }, "sha512-T1iSkHZR5QHLDMByEg4EnVYtKsAMktxc5iheGwbb94uoKDqAwOyD/M+BGjR6cywU1ogzX4pxcRixKAh97qzOFg=="],
 
     "react-is": ["react-is@17.0.2", "", {}, "sha512-w2GsyukL62IJnlaff/nRegPQR94C/XXamvMWmSHRJ4y7Ts/4ocGRmTHvOs8PSE6pB3dWOrD/nueuU5sduBsQ4w=="],
 
@@ -2910,6 +2917,10 @@
     "raw-body/iconv-lite": ["iconv-lite@0.4.24", "", { "dependencies": { "safer-buffer": ">= 2.1.2 < 3" } }, "sha512-v3MXnZAcvnywkTUEZomIActle7RXXeedOR31wwl7VlyoXO4Qi9arvSenNQWne1TcRwhCL1HwLI21bEqdpj8/rA=="],
 
     "react-dom/react": ["react@file:../node_modules/react", { "dependencies": { "loose-envify": "^1.1.0" } }],
+
+    "react-dom-19-canary/react": ["react@file:../node_modules/react", {}],
+
+    "react-dom-19-canary/scheduler": ["scheduler@0.27.0-canary-b94603b9-20250513", "", {}, "sha512-w7pgQ/X6wUqnlKH3rJX3tzHyu/csKYPhPrbZo5Swpf8OOFVuq7NUpvO3i1CxhreZUxdnmtuoO5Woh0BQsYMzUw=="],
 
     "react-router/react": ["react@file:../node_modules/react", { "dependencies": { "loose-envify": "^1.1.0" } }],
 

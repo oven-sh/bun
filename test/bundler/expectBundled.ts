@@ -6,7 +6,17 @@ import { callerSourceOrigin } from "bun:jsc";
 import type { Matchers } from "bun:test";
 import * as esbuild from "esbuild";
 import filenamify from "filenamify";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "fs";
 import { bunEnv, bunExe, isCI, isDebug } from "harness";
 import { tmpdir } from "os";
 import path from "path";
@@ -75,6 +85,55 @@ export function decodeSourceMappingsLine(line: string) {
     segs.push({ gen, src, ol, oc });
   }
   return segs;
+}
+
+const testDirectory = path.join(import.meta.dir, "..");
+let testPackageJson: Record<string, Record<string, string>> | undefined;
+
+/**
+ * Finds `name@version` in `test/node_modules`: the dependency of that name
+ * declared in `test/package.json`, or an `npm:name@version` alias declared
+ * there. Returns the real path of the package directory.
+ */
+function findInstalledPackage(name: string, version: string): string | undefined {
+  testPackageJson ??= JSON.parse(readFileSync(path.join(testDirectory, "package.json"), "utf8"));
+  const candidates: string[] = [];
+  for (const field of ["dependencies", "devDependencies", "optionalDependencies"]) {
+    for (const [alias, spec] of Object.entries(testPackageJson![field] ?? {})) {
+      if (alias === name || spec === `npm:${name}@${version}`) candidates.push(alias);
+    }
+  }
+  for (const candidate of candidates) {
+    const dir = path.join(testDirectory, "node_modules", candidate);
+    const packageJsonPath = path.join(dir, "package.json");
+    if (!existsSync(packageJsonPath)) continue;
+    const installed = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+    if (installed.name === name && installed.version === version) return realpathSync(dir);
+  }
+  return undefined;
+}
+
+/** Implements the `install` option: copies each `name@version` into `root/node_modules`. */
+function installFromTestNodeModules(root: string, specs: string[]) {
+  const dependencies: Record<string, string> = {};
+  for (const spec of specs) {
+    const at = spec.lastIndexOf("@");
+    if (at <= 0) throw new Error(`install: "${spec}" must be name@version`);
+    const name = spec.slice(0, at);
+    const version = spec.slice(at + 1);
+    const source = findInstalledPackage(name, version);
+    if (!source) {
+      throw new Error(
+        `install: ${spec} is not in test/node_modules. Add "${name}": "${version}" or an "npm:${spec}" alias ` +
+          `to test/package.json and run bun install in test/.`,
+      );
+    }
+    const destination = path.join(root, "node_modules", name);
+    mkdirSync(path.dirname(destination), { recursive: true });
+    cpSync(source, destination, { recursive: true });
+    dependencies[name] = version;
+  }
+  writeFileSync(path.join(root, "package.json"), JSON.stringify({ dependencies }, null, 2) + "\n");
 }
 
 let currentFile: string | undefined;
@@ -270,6 +329,13 @@ export interface BundlerTestInput {
   useDefineForClassFields?: boolean;
   sourceMap?: "inline" | "external" | "linked" | "none";
   plugins?: BunPlugin[] | ((builder: PluginBuilder) => void | Promise<void>);
+  /**
+   * Packages to place in `node_modules` of the bundle root before bundling, as
+   * `name@version`. Each one is copied from `test/node_modules`, so the exact
+   * version has to be a dependency of `test/package.json`, directly or through
+   * an `npm:` alias. Nothing is fetched from a registry. Only the listed
+   * packages are copied, so list every package the bundle resolves.
+   */
   install?: string[];
   production?: boolean;
 
@@ -711,16 +777,7 @@ function expectBundled(
     }
     mkdirSync(root, { recursive: true });
     if (install) {
-      const installProcess = Bun.spawn({
-        cmd: [bunExe(), "install", ...install, "--linker=hoisted"],
-        cwd: root,
-        stdio: ["ignore", "inherit", "inherit"],
-      });
-      const installExitCode = await installProcess.exited;
-      if (installExitCode !== 0) {
-        const reason = installProcess.signalCode || `code ${installExitCode}`;
-        throw new Error(`Failed to install dependencies: ${reason}`);
-      }
+      installFromTestNodeModules(root, install);
     }
     for (const [file, contents] of Object.entries(files)) {
       const filename = path.join(root, file);

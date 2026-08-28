@@ -2625,10 +2625,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
-        if TYPESCRIPT {
-            p.lower_class_expr_auto_accessors(&mut e_);
-        }
-
         // Remove unused class names when minifying (only when bundling is enabled)
         // unless --keep-names is specified
         if p.options.features.minify_syntax

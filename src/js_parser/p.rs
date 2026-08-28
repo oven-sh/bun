@@ -6389,7 +6389,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut class_properties = BumpVec::<G::Property>::new_in(self.arena);
 
                 let temp_refs_before = self.temp_refs_to_declare.len();
-                let mut accessor_storage_names = self.private_names_in_class(&s_class.class);
 
                 for prop in s_class.class.properties.slice_mut().iter_mut() {
                     if prop.kind == PropertyKind::ClassStaticBlock {
@@ -6399,7 +6398,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     let is_method = prop.flags.contains(Flags::Property::IsMethod);
                     let is_static = prop.flags.contains(Flags::Property::IsStatic);
-                    let is_auto_accessor = prop.kind == PropertyKind::AutoAccessor;
 
                     // merge parameter decorators with method decorators
                     if is_method {
@@ -6445,8 +6443,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
 
-                    let is_decorated = prop.ts_decorators.len_u32() > 0;
-                    if !is_decorated && !is_auto_accessor {
+                    if prop.ts_decorators.len_u32() == 0 {
                         class_properties.push(core::mem::take(prop));
                         continue;
                     }
@@ -6454,9 +6451,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let key_loc = prop.key.expect("infallible: prop has key").loc;
                     let (key_for_reuse, captured_key) = self.capture_computed_key(prop);
 
-                    if is_decorated {
+                    {
                         // Only a field has no property descriptor to pass along.
-                        let descriptor_kind: Expr = if is_method || is_auto_accessor {
+                        let descriptor_kind: Expr = if is_method {
                             self.new_expr(E::Null {}, key_loc)
                         } else {
                             self.new_expr(E::Undefined {}, key_loc)
@@ -6524,16 +6521,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         } else {
                             instance_decorators.push(decorator_stmt);
                         }
-                    }
-
-                    if is_auto_accessor {
-                        self.lower_ts_auto_accessor(
-                            prop,
-                            key_for_reuse,
-                            &mut accessor_storage_names,
-                            &mut class_properties,
-                        );
-                        continue;
                     }
 
                     // A "declare" or "abstract" member emits nothing but its key.
@@ -6678,8 +6665,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `accessor` members of a class expression (a class statement uses `lower_class`).
-    pub(crate) fn lower_class_expr_auto_accessors(&mut self, class: &mut G::Class) {
+    /// Lowers the `accessor` members of a TypeScript class under
+    /// `experimentalDecorators`. Runs in `visit_class`, before the
+    /// `useDefineForClassFields: false` pass moves field initializers.
+    pub(crate) fn lower_ts_auto_accessors(&mut self, class: &mut G::Class) {
         use js_ast::g::PropertyKind;
         if !class
             .properties
@@ -6689,8 +6678,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
-        // A computed key temporary needs a statement list to be declared in.
+        // A computed key temporary is a `var` of the scope around the class, and
+        // needs a statement list to be declared in.
         let can_declare_temps = self.nearest_stmt_list.is_some();
+        let class_body_scope = self.current_scope;
+        let mut enclosing_scope = class_body_scope;
+        while matches!(
+            enclosing_scope.kind,
+            js_ast::scope::Kind::ClassBody | js_ast::scope::Kind::ClassName
+        ) && let Some(parent) = enclosing_scope.parent
+        {
+            enclosing_scope = parent;
+        }
         let temp_refs_before = self.temp_refs_to_declare.len();
         let mut storage_names = self.private_names_in_class(class);
         let mut properties =
@@ -6701,7 +6700,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
             let key_for_reuse = if can_declare_temps {
-                self.capture_computed_key(prop).0
+                self.current_scope = enclosing_scope;
+                let (key, _) = self.capture_computed_key(prop);
+                self.current_scope = class_body_scope;
+                key
             } else {
                 prop.key.expect("infallible: prop has key")
             };
@@ -6737,6 +6739,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )
         {
             return (key, None);
+        }
+        // Already captured, by the `accessor` lowering in `visit_class`.
+        if let js_ast::ExprData::EBinary(binary) = key.data
+            && binary.op == js_ast::OpCode::BinAssign
+            && let js_ast::ExprData::EIdentifier(temp) = binary.left.data
+        {
+            self.record_usage(temp.ref_);
+            return (binary.left, None);
         }
         let temp_ref = self.generate_temp_ref(Some(b"_key"));
         self.record_declared_symbol(temp_ref);
@@ -6891,11 +6901,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut accessor_flags = prop.flags;
         accessor_flags.insert(Flags::Property::IsMethod);
+        let mut getter_flags = accessor_flags;
+        getter_flags.insert(Flags::Property::IsAutoAccessorGetter);
         out.push(G::Property {
             kind: PropertyKind::Get,
-            flags: accessor_flags,
+            flags: getter_flags,
             key: prop.key,
             value: Some(get_fn),
+            ts_decorators: bun_alloc::AstAlloc::take(&mut prop.ts_decorators),
+            ts_metadata: prop.ts_metadata.clone(),
             ..Default::default()
         });
         out.push(G::Property {
@@ -6977,6 +6991,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
             }
+            PropertyKind::Get if prop.flags.contains(Flags::Property::IsAutoAccessorGetter) => {
+                // typescript only sets design:type for an auto-accessor.
+                let v = self
+                    .serialize_metadata(prop.ts_metadata.clone())
+                    .expect("unreachable");
+                push_metadata!(b"design:type", v);
+            }
             PropertyKind::Get => {
                 if prop.flags.contains(Flags::Property::IsMethod) {
                     // typescript sets design:type to the return value & design:paramtypes to [].
@@ -7044,15 +7065,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
             }
-            PropertyKind::AutoAccessor => {
-                // typescript only sets design:type for an auto-accessor.
-                let v = self
-                    .serialize_metadata(prop.ts_metadata.clone())
-                    .expect("unreachable");
-                push_metadata!(b"design:type", v);
-            }
-            PropertyKind::Spread => {}           // not allowed in a class
-            PropertyKind::ClassStaticBlock => {} // not allowed to decorate this
+            PropertyKind::Spread | PropertyKind::AutoAccessor => {} // lowered before this runs
+            PropertyKind::ClassStaticBlock => {}                    // not allowed to decorate this
         }
     }
 

@@ -67,6 +67,23 @@ const fixtures: Record<string, Fixture> = {
     `,
     expected: 'dec k1\ndec d\n1 ["x"]\n',
   },
+  "useDefineForClassFields false: accessor initializers keep their place": {
+    useDefineForClassFields: false,
+    source: `
+      function dec(t: any, k: any, d: any) { console.log("dec", k, typeof d.get) }
+      const log: string[] = [];
+      class C {
+        a = (log.push("a"), 1);
+        @dec accessor x = (log.push("x"), 2);
+        b = (log.push("b"), 3);
+        static accessor s = (log.push("s"), 4);
+      }
+      const c = new C();
+      c.x = 5;
+      console.log(log.join(","), c.x, C.s, JSON.stringify(Object.getOwnPropertyNames(c)));
+    `,
+    expected: 'dec x function\ns,a,x,b 5 4 ["a","b"]\n',
+  },
   "useDefineForClassFields false: decorated fields next to a computed key": {
     useDefineForClassFields: false,
     source: `

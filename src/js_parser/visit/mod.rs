@@ -1016,6 +1016,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .is_some();
 
             if Self::IS_TYPESCRIPT_ENABLED {
+                if !class.should_lower_standard_decorators {
+                    self.lower_ts_auto_accessors(class);
+                }
+
                 // `lower_standard_decorators_stmt` owns field placement for such classes.
                 let use_define = self.options.use_define_for_class_fields
                     || class.should_lower_standard_decorators;

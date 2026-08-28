@@ -4361,9 +4361,11 @@ pub mod bv2_impl {
 
                         let output_path: Box<[u8]> = {
                             // TODO: outbase
+                            // Native platform: on Windows the two paths may differ in case (`TEMP` / `Temp`),
+                            // which only the Windows comparison treats as equal; the result is `/`-normalized below.
                             let pathname =
                                 Fs::PathName::init(bun_paths::resolve_path::relative_platform::<
-                                    bun_paths::resolve_path::platform::Loose,
+                                    bun_paths::resolve_path::platform::Auto,
                                     false,
                                 >(
                                     &self.transpiler.options.root_dir,

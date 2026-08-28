@@ -16,9 +16,7 @@ use crate::json_stage2::Parser;
 pub struct JSONOptions {
     pub allow_comments: bool,
     pub allow_trailing_commas: bool,
-    /// Accept the JavaScript number forms that JSON lacks: `0x10`, `0o17`,
-    /// `0b101`, legacy octal `017`, `1_000`, `.5`, `5.`, and a gap between
-    /// `-` and its digits. Strict JSON rejects each of them, like `JSON.parse`.
+    /// Accept the JavaScript number forms JSON lacks: `0x10`, `017`, `1_000`, `.5`, `5.`, `- 1`.
     pub allow_js_number_syntax: bool,
     pub ignore_leading_escape_sequences: bool,
     pub json_warn_duplicate_keys: bool,
@@ -1431,8 +1429,7 @@ mod tests {
 
     #[test]
     fn strict_numbers() {
-        // Plain `.json` agrees with `JSON.parse`: the JavaScript-only number
-        // forms are errors, and the message names the construct.
+        // Plain `.json` agrees with `JSON.parse`, and each message names the construct.
         for (src, msg) in [
             ("[0x10]", "JSON does not support hexadecimal numbers"),
             ("[0X10]", "JSON does not support hexadecimal numbers"),

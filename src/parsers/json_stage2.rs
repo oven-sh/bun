@@ -1342,8 +1342,7 @@ fn ident_len(t: &[u8]) -> usize {
         .max(1)
 }
 
-/// Length of the number-like token at the start of `t` (digits, letters, `_`,
-/// `.`, and an exponent sign), for the range of a number syntax error.
+/// Length of the number-like token at the start of `t`, for the range of a syntax error.
 fn number_token_len(t: &[u8]) -> usize {
     t.iter()
         .take_while(|&&c| is_identifier_continue(c) || matches!(c, b'.' | b'+' | b'-'))

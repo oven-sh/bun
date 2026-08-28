@@ -451,6 +451,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             // empty" invariant makes that drop a no-op today, but
                             // `ptr::write` enforces it structurally.
                             let key = prop.key;
+                            // Keep the computed flag a "__proto__" key carries so
+                            // the property stays an own property of the object.
+                            let flags = prop.flags;
                             let value_loc =
                                 prop.value.as_ref().expect("infallible: prop has value").loc;
                             // SAFETY: `prop` is a valid `&mut G::Property` slot;
@@ -461,6 +464,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                                     prop,
                                     G::Property {
                                         key,
+                                        flags,
                                         value: Some(Expr::init_identifier(export_ref, value_loc)),
                                         ..Default::default()
                                     },

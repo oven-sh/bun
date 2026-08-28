@@ -232,6 +232,40 @@ devTest("export * as namespace", {
     await c.expectMessage("PASS");
   },
 });
+// The exports of a module become keys of an object literal. A key named
+// "__proto__" has to be a computed key, or it sets the prototype of that
+// object and the export disappears.
+devTest("export named __proto__", {
+  framework: minimalFramework,
+  files: {
+    "moved.ts": `
+      export const __proto__ = { moved: true };
+    `,
+    "clause.ts": `
+      function p() { return "clause"; }
+      export { p as __proto__, p as other };
+    `,
+    "star.ts": `
+      export * as __proto__ from './clause';
+    `,
+    "routes/index.ts": `
+      import * as moved from '../moved';
+      import * as clause from '../clause';
+      import * as star from '../star';
+      import { __proto__ as p } from '../clause';
+      export default function(req, meta) {
+        return new Response(JSON.stringify([
+          Object.hasOwn(moved, "__proto__") && moved.__proto__.moved,
+          Object.hasOwn(clause, "__proto__") && clause.__proto__ === p && p() === "clause",
+          Object.hasOwn(star, "__proto__") && star.__proto__.other === p,
+        ]));
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("[true,true,true]");
+  },
+});
 devTest("ESM <-> CJS sync", {
   files: {
     "index.html": emptyHtmlFile({

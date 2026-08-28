@@ -602,7 +602,6 @@ async function runOneFile(
         continue;
       }
       if (event?.data == null || typeof event.data !== "object") continue;
-      if (event.type === "test:plan" && event.data.nesting === 0) continue;
       republishChildEvent(event, absolute, reporter, fileCounts, state);
     }
 
@@ -790,10 +789,7 @@ const runChildReporterEnabled = process.env[kRunChildEnv] === kRunChildEnvValue;
 
 const registerRunChild = $newRustFunction("jest.rs", "jsNodeTestRegisterChild", 0);
 
-if (runChildReporterEnabled) {
-  registerRunChild();
-  process.on("exit", emitRunChildPlanOnExit);
-}
+if (runChildReporterEnabled) registerRunChild();
 
 let standaloneSink: ((type: string, data: unknown) => void) | null = null;
 
@@ -811,13 +807,6 @@ function emitRunChildEvent(type: string, data: unknown) {
   try {
     process.stdout.write(kRunEventPrefix + JSON.stringify({ type, data: wire }) + "\n");
   } catch {}
-}
-
-function emitRunChildPlanOnExit() {
-  const count = rootNode?.reportedCount ?? 0;
-  if (count > 0) {
-    emitRunChildEvent("test:plan", { __proto__: null, nesting: 0, count });
-  }
 }
 
 function runEventsEnabled(): boolean {
@@ -2120,9 +2109,12 @@ class TestNode {
   }
 
   // True while user code reached from this node should treat new tests as
-  // inline subtests instead of bun:test registrations.
+  // inline subtests instead of registrations. Never true for the root: an
+  // in-process run() marks it started so file-level before() hooks fire at
+  // import, but a test declared from one of those hooks still has to register
+  // (as it does in standalone mode), since nothing awaits the root's chain.
   isRunning(): boolean {
-    return (this.started && !this.finished) || this.isExecutionPhase;
+    return this.parent !== undefined && ((this.started && !this.finished) || this.isExecutionPhase);
   }
 }
 
@@ -3410,6 +3402,9 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     callerRoot.hooks = savedRootHooks;
     callerRoot.reportedCount = savedRootReportedCount;
     runTestIdCounter = savedTestIdCounter;
+    // On the error path the queue still holds this run's entries; they must
+    // not leak into the caller's own standalone run.
+    standaloneQueue.length = 0;
     standaloneQueue.push(...callerEntries);
     standaloneActive = wasStandaloneActive || callerEntries.length > 0;
     standaloneScheduled = wasScheduled;

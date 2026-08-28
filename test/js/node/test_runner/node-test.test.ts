@@ -781,7 +781,8 @@ test.concurrent("run(): verdict numbering, file ordinals, causes, and summary ke
       import { fileURLToPath } from 'node:url';
       const files = ['./one.test.mjs', './two.test.mjs'].map(f => fileURLToPath(new URL(f, import.meta.url)));
       const stream = run({ files });
-      const out = { verdicts: [], completes: [], causes: {}, summaryKeys: null };
+      const out = { verdicts: [], completes: [], plans: [], causes: {}, summaryKeys: null };
+      stream.on('test:plan', function onPlan(t) { out.plans.push([t.nesting, t.count]); });
       stream.on('test:pass', function onPass(t) { out.verdicts.push([t.name, t.testNumber]); });
       stream.on('test:fail', function onFail(t) {
         out.verdicts.push([t.name.split(/[\\\\/]/).pop(), t.testNumber]);
@@ -824,6 +825,8 @@ test.concurrent("run(): verdict numbering, file ordinals, causes, and summary ke
         ["two-b", 2],
         ["two.test.mjs", 2],
       ],
+      // One run-level plan from the parent; the children send none of their own.
+      plans: [[0, 4]],
       causes: {
         twoA: { type: "number", value: 42 },
         twoB: { name: "AssertionError", nameEnumerable: false, actual: 1, expected: 2, operator: "strictEqual" },
@@ -1030,6 +1033,139 @@ test.concurrent.each([
         success: true,
       },
       afterRan: true,
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
+test.concurrent(
+  "tests declared from a root-level before() register the same way in-process and standalone",
+  async () => {
+    // run({isolation:'none'}) marks the shared root started (its before() hooks
+    // fire at import), which used to make a test declared inside such a hook an
+    // inline subtest of the root that nothing awaited or reported. Standalone
+    // mode always registered it as a top-level entry. Node's own reporting of
+    // this shape is inconsistent, so this pins agreement between bun's modes:
+    // the same set in both (in-process earlier, since the hook fires at import),
+    // and the after()-declared one dropped in both, as node does.
+    using dir = tempDir("node-test-root-hook-declared", {
+      "f.test.mjs": `
+      import { before, after, test, describe } from 'node:test';
+      before(() => {
+        test('from-before', () => {});
+        describe('suite-from-before', () => { test('nested-from-before', () => {}); });
+      });
+      before((t) => { t.test('ctx-from-before', () => {}); });
+      after(() => { test('from-after', () => {}); });
+      test('regular', () => {});
+    `,
+      "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./f.test.mjs', import.meta.url))], isolation: 'none' });
+      const out = { verdicts: [], tests: null, suites: null, success: null };
+      stream.on('test:pass', t => out.verdicts.push(['ok', t.name]));
+      stream.on('test:fail', t => out.verdicts.push(['not ok', t.name]));
+      stream.on('test:summary', t => {
+        if (t.file === undefined) { out.tests = t.counts.tests; out.suites = t.counts.suites; out.success = t.success; }
+      });
+      for await (const _ of stream);
+      console.log(JSON.stringify(out));
+    `,
+    });
+    async function spawnAndCollect(cmd: string[]) {
+      await using proc = Bun.spawn({ cmd, env: bunEnv, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+      return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    }
+    const [[inProcessOut, inProcessErr, inProcessExit], [tapOut, tapErr, tapExit]] = await Promise.all([
+      spawnAndCollect([bunExe(), "run", join(String(dir), "driver.mjs")]),
+      spawnAndCollect([bunExe(), "--test-reporter=tap", join(String(dir), "f.test.mjs")]),
+    ]);
+    const tapVerdicts = Array.from(tapOut.matchAll(/^ *(ok|not ok) \d+ - (.+)$/gm), m => [m[1], m[2]]);
+    const tapCount = (key: string) => Number(new RegExp(`^# ${key} (\\d+)$`, "m").exec(tapOut)?.[1]);
+    expect({
+      inProcess: { result: JSON.parse(inProcessOut.trim() || "null"), stderr: inProcessErr, exitCode: inProcessExit },
+      standalone: {
+        verdicts: tapVerdicts,
+        tests: tapCount("tests"),
+        suites: tapCount("suites"),
+        fail: tapCount("fail"),
+        stderr: tapErr,
+        exitCode: tapExit,
+      },
+    }).toEqual({
+      inProcess: {
+        result: {
+          verdicts: [
+            ["ok", "from-before"],
+            ["ok", "nested-from-before"],
+            ["ok", "suite-from-before"],
+            ["ok", "ctx-from-before"],
+            ["ok", "regular"],
+          ],
+          tests: 4,
+          suites: 1,
+          success: true,
+        },
+        stderr: "",
+        exitCode: 0,
+      },
+      standalone: {
+        verdicts: [
+          ["ok", "regular"],
+          ["ok", "from-before"],
+          ["ok", "nested-from-before"],
+          ["ok", "suite-from-before"],
+          ["ok", "ctx-from-before"],
+        ],
+        tests: 4,
+        suites: 1,
+        fail: 0,
+        stderr: "",
+        exitCode: 0,
+      },
+    });
+  },
+);
+
+test.concurrent(
+  "run({isolation:'none'}): a run destroyed by a throwing listener does not leak its tests into the caller",
+  async () => {
+    // A listener that throws synchronously unwinds executeStandaloneQueue before
+    // it clears the queue. restoreAfterInProcessRun used to append the caller's
+    // entries behind the run's, so the caller's own standalone pass at beforeExit
+    // ran 'inner' a second time.
+    using dir = tempDir("node-test-inprocess-destroyed-run", {
+      "f.test.mjs": `
+      import { test } from 'node:test';
+      test('inner', () => { console.log('MARK inner ran'); });
+    `,
+      "caller.mjs": `
+      import { test, run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      test('caller-own', () => { console.log('MARK caller-own ran'); });
+      const stream = run({ files: [fileURLToPath(new URL('./f.test.mjs', import.meta.url))], isolation: 'none' });
+      stream.on('test:pass', () => { throw new Error('listener boom'); });
+      try {
+        for await (const _ of stream);
+        console.log('MARK stream ended');
+      } catch (err) {
+        console.log('MARK stream error: ' + err.message);
+      }
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", join(String(dir), "caller.mjs")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const marks = stdout.split("\n").filter(line => line.startsWith("MARK "));
+    expect({ marks, stderr, exitCode }).toEqual({
+      marks: ["MARK inner ran", "MARK stream error: listener boom", "MARK caller-own ran"],
       stderr: "",
       exitCode: 0,
     });

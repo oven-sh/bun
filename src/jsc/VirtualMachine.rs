@@ -1345,6 +1345,10 @@ impl VirtualMachine {
     /// [`Self::clear_watch_exit_termination`].
     pub fn request_watch_exit_termination(&mut self) {
         self.watch_exit_requested = true;
+        // A termination that escapes script implies a closed gate
+        // (`takeTerminationOutsideScript` asserts it), and no more JS may
+        // enter before the re-exec anyway.
+        self.forbid_script();
         // The main thread builds the termination-exception singleton lazily
         // (workers build it at startup), so create it before firing the trap.
         self.global().request_termination();

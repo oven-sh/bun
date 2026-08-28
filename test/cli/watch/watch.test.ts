@@ -317,8 +317,9 @@ for (const [variant, handler] of [
 }
 
 // SIGINT while the watcher is parked after a watch exit: the handler's
-// deferred continuation can never fire there, so the watcher ends with the
-// completed run's exit code instead of trapping Ctrl+C forever.
+// run's handlers can never run there (the run is over and its script gate is
+// closed), so the watcher ends like the no-handler case instead of trapping
+// Ctrl+C forever.
 it.skipIf(isWindows)("--watch: SIGINT after a watch exit ends the parked watcher", async () => {
   using dir = tempDir("watch-sigint-parked", {
     "index.ts": `process.on("SIGINT", () => { setTimeout(() => process.exit(7), 10); });\nconsole.log("READY");\nprocess.exit(3);\n`,
@@ -344,7 +345,7 @@ it.skipIf(isWindows)("--watch: SIGINT after a watch exit ends the parked watcher
   expect(proc.exitCode).toBeNull();
 
   proc.kill("SIGINT");
-  expect(await proc.exited).toBe(3);
+  expect(await proc.exited).toBe(0);
   await waiter.cancel();
   expect(await stderrText).toBe("");
 });

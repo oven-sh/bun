@@ -1,5 +1,6 @@
 import { S3Client, type S3Options } from "bun";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 // `S3Client.file()` and the other per-key methods share the client's
 // credentials with the returned S3 file when the call passes no credential
@@ -80,42 +81,66 @@ describe("S3Client credentials", () => {
   });
 
   test("requests sign with the shared or the overridden credentials", async () => {
-    const requests: string[] = [];
-    using server = Bun.serve({
-      port: 0,
-      fetch(req) {
-        const accessKeyId = req.headers.get("authorization")!.match(/Credential=([^/]+)\//)![1];
-        requests.push(`${req.method} ${new URL(req.url).pathname} ${accessKeyId}`);
-        return new Response("", {
-          status: 200,
-          headers: {
-            "Content-Type": "text/plain",
-            "Content-Length": "5",
-            "Last-Modified": "Thu, 01 Jan 2026 00:00:00 GMT",
-            "ETag": '"etag"',
-          },
-        });
-      },
+    // The fake S3 endpoint is a server in the child process. The child runs
+    // without the proxy variables of this environment so the requests reach it.
+    const env = { ...bunEnv };
+    for (const name of ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]) delete env[name];
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const requests = [];
+          const server = Bun.serve({
+            port: 0,
+            fetch(req) {
+              const accessKeyId = req.headers.get("authorization").match(/Credential=([^/]+)\\//)[1];
+              requests.push(req.method + " " + new URL(req.url).pathname + " " + accessKeyId);
+              return new Response("", {
+                status: 200,
+                headers: {
+                  "Content-Type": "text/plain",
+                  "Content-Length": "5",
+                  "Last-Modified": "Thu, 01 Jan 2026 00:00:00 GMT",
+                  "ETag": '"etag"',
+                },
+              });
+            },
+          });
+          const client = new Bun.S3Client({ ...${JSON.stringify(clientOptions)}, endpoint: server.url.href });
+          const override = { accessKeyId: "other-key", secretAccessKey: "other-secret", bucket: "other-bucket" };
+          const results = [
+            await client.file("dir/file.txt").exists(),
+            await client.file("dir/file.txt", override).exists(),
+            await client.exists("dir/file.txt"),
+            await client.size("dir/file.txt", override),
+            await client.file("dir/file.txt").write("hello"),
+            await client.unlink("dir/file.txt"),
+            (await client.file("dir/file.txt").stat()).size,
+          ];
+          server.stop(true);
+          console.log(JSON.stringify({ results, requests }));
+        `,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
     });
-    const client = new S3Client({ ...clientOptions, endpoint: server.url.href });
-    const override = { accessKeyId: "other-key", secretAccessKey: "other-secret", bucket: "other-bucket" };
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(await client.file("dir/file.txt").exists()).toBe(true);
-    expect(await client.file("dir/file.txt", override).exists()).toBe(true);
-    expect(await client.exists("dir/file.txt")).toBe(true);
-    expect(await client.size("dir/file.txt", override)).toBe(5);
-    expect(await client.file("dir/file.txt").write("hello")).toBe(5);
-    expect(await client.unlink("dir/file.txt")).toBe(true);
-    expect((await client.file("dir/file.txt").stat()).size).toBe(5);
-
-    expect(requests).toEqual([
-      "HEAD /client-bucket/dir/file.txt client-key",
-      "HEAD /other-bucket/dir/file.txt other-key",
-      "HEAD /client-bucket/dir/file.txt client-key",
-      "HEAD /other-bucket/dir/file.txt other-key",
-      "PUT /client-bucket/dir/file.txt client-key",
-      "DELETE /client-bucket/dir/file.txt client-key",
-      "HEAD /client-bucket/dir/file.txt client-key",
-    ]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      results: [true, true, true, 5, 5, true, 5],
+      requests: [
+        "HEAD /client-bucket/dir/file.txt client-key",
+        "HEAD /other-bucket/dir/file.txt other-key",
+        "HEAD /client-bucket/dir/file.txt client-key",
+        "HEAD /other-bucket/dir/file.txt other-key",
+        "PUT /client-bucket/dir/file.txt client-key",
+        "DELETE /client-bucket/dir/file.txt client-key",
+        "HEAD /client-bucket/dir/file.txt client-key",
+      ],
+    });
+    expect(exitCode).toBe(0);
   });
 });

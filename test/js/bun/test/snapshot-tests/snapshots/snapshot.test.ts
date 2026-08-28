@@ -371,6 +371,161 @@ test("basic unchanging inline snapshot", () => {
   );
 });
 
+// Jest puts the line breaks around a multi-line snapshot once, at the top level.
+// A multi-line string, Map, Set or String object nested in another value stays
+// inline after its key. https://github.com/oven-sh/bun/issues/40656
+describe("jest snapshot compatibility", () => {
+  const jestCompatFixture = /*js*/ `
+    import { test, expect } from "bun:test";
+    test("array with multi-line string", () => { expect(["A\\nB", "C"]).toMatchSnapshot(); });
+    test("map in object", () => { expect({ m: new Map([["a", 1]]) }).toMatchSnapshot(); });
+    test("map with multi-line key and value", () => { expect(new Map([["A\\nB", "C\\nD"]])).toMatchSnapshot(); });
+    test("object with crlf string", () => { expect({ x: "A\\r\\nB", y: "C\\rD" }).toMatchSnapshot(); });
+    test("object with multi-line string", () => { expect({ x: "A\\nB" }).toMatchSnapshot(); });
+    test("set in object", () => { expect({ s: new Set(["a", "B\\nC"]) }).toMatchSnapshot(); });
+    test("string object in object", () => { expect({ s: new String("A\\nB") }).toMatchSnapshot(); });
+    test("top-level multi-line string", () => { expect("A\\nB").toMatchSnapshot(); });
+  `;
+
+  // Written by jest 29 (escapeString: false, printBasicPrototype: false) for the fixture above.
+  const jestSnapshotFile = `// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[\`array with multi-line string 1\`] = \`
+[
+  "A
+B",
+  "C",
+]
+\`;
+
+exports[\`map in object 1\`] = \`
+{
+  "m": Map {
+    "a" => 1,
+  },
+}
+\`;
+
+exports[\`map with multi-line key and value 1\`] = \`
+Map {
+  "A
+B" => "C
+D",
+}
+\`;
+
+exports[\`object with crlf string 1\`] = \`
+{
+  "x": "A
+B",
+  "y": "C
+D",
+}
+\`;
+
+exports[\`object with multi-line string 1\`] = \`
+{
+  "x": "A
+B",
+}
+\`;
+
+exports[\`set in object 1\`] = \`
+{
+  "s": Set {
+    "a",
+    "B
+C",
+  },
+}
+\`;
+
+exports[\`string object in object 1\`] = \`
+{
+  "s": String {
+    "0": "A",
+    "1": "
+",
+    "2": "B",
+  },
+}
+\`;
+
+exports[\`top-level multi-line string 1\`] = \`
+"A
+B"
+\`;
+`;
+
+  async function runFixture(dir: string, env: NodeJS.Dict<string>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "jest-compat.test.ts"],
+      env,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("a snapshot file written by jest passes unchanged", async () => {
+    using dir = tempDir("jest-snapshot-compat", {
+      "jest-compat.test.ts": jestCompatFixture,
+      "__snapshots__/jest-compat.test.ts.snap": jestSnapshotFile,
+    });
+
+    // bunEnv sets CI=1, so bun cannot create a missing snapshot: every entry must match.
+    const { stderr, exitCode } = await runFixture(String(dir), bunEnv);
+    expect(stderr).toContain(" 8 pass\n");
+    expect(stderr).toContain(" 0 fail\n");
+    expect(exitCode).toBe(0);
+    expect(await Bun.file(`${dir}/__snapshots__/jest-compat.test.ts.snap`).text()).toBe(jestSnapshotFile);
+  });
+
+  test("bun writes the same snapshot file as jest", async () => {
+    using dir = tempDir("jest-snapshot-compat", {
+      "jest-compat.test.ts": jestCompatFixture,
+    });
+
+    const { stderr, exitCode } = await runFixture(String(dir), { ...bunEnv, CI: "false" });
+    expect(stderr).toContain("snapshots: +8 added\n");
+    expect(exitCode).toBe(0);
+    const written = await Bun.file(`${dir}/__snapshots__/jest-compat.test.ts.snap`).text();
+    const [bunHeader, ...rest] = written.split("\n");
+    expect(bunHeader).toBe("// Bun Snapshot v1, https://bun.sh/docs/test/snapshots");
+    expect(["// Jest Snapshot v1, https://goo.gl/fbAQLP", ...rest].join("\n")).toBe(jestSnapshotFile);
+  });
+
+  test("a multi-line string nested in an object stays inline", () => {
+    expect({ x: "A\nB" }).toMatchInlineSnapshot(`
+      {
+        "x": "A
+      B",
+      }
+    `);
+    expect({ a: { b: ["A\nB", "C"] }, m: new Map([["k", "V\nW"]]), s: new Set(["X\nY"]) }).toMatchInlineSnapshot(`
+      {
+        "a": {
+          "b": [
+            "A
+      B",
+            "C",
+          ],
+        },
+        "m": Map {
+          "k" => "V
+      W",
+        },
+        "s": Set {
+          "X
+      Y",
+        },
+      }
+    `);
+  });
+});
+
 class InlineSnapshotTester {
   tmpdir: string;
   tmpid: number;

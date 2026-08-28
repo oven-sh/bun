@@ -1124,8 +1124,12 @@ impl<'a> Formatter<'a> {
                             }
                         }
                         self.reset_line();
-                        writer.write_all(b"}\n");
                         self.indent = self.indent.saturating_sub(1);
+                        self.write_indent(writer.ctx).expect("unreachable");
+                        writer.write_all(b"}");
+                        if self.indent == 0 {
+                            writer.write_all(b"\n");
+                        }
                         return Ok(());
                     }
 
@@ -1139,10 +1143,11 @@ impl<'a> Formatter<'a> {
                             writer.write_all(pretty_fmt_const!(true, "<r><green>").as_bytes());
                         }
 
-                        let mut has_newline = false;
-
-                        if str.index_of_any(b"\n\r").is_some() {
-                            has_newline = true;
+                        // Jest wraps a multi-line snapshot in line breaks once, at the top
+                        // level. A nested string stays inline after its key.
+                        let wrap_in_newlines =
+                            self.indent == 0 && str.index_of_any(b"\n\r").is_some();
+                        if wrap_in_newlines {
                             writer.write_all(b"\n");
                         }
 
@@ -1186,7 +1191,7 @@ impl<'a> Formatter<'a> {
                         writer.print(format_args!("{}", remaining));
                         writer.write_all(b"\"");
 
-                        if has_newline {
+                        if wrap_in_newlines {
                             writer.write_all(b"\n");
                         }
                         // The `<r>` reset must come AFTER the trailing `\n`
@@ -1732,7 +1737,10 @@ impl<'a> Formatter<'a> {
                         return Ok(());
                     }
 
-                    writer.print(format_args!("\n{} {{\n", map_name));
+                    if self.indent == 0 {
+                        writer.write_all(b"\n");
+                    }
+                    writer.print(format_args!("{} {{\n", map_name));
                     {
                         self.indent += 1;
                         // hoist global_this (Copy &ref) before iter mutably
@@ -1756,7 +1764,9 @@ impl<'a> Formatter<'a> {
                     }
                     let _ = self.write_indent(writer.ctx);
                     writer.write_all(b"}");
-                    writer.write_all(b"\n");
+                    if self.indent == 0 {
+                        writer.write_all(b"\n");
+                    }
                 }
                 Tag::Set => {
                     let length_value = value
@@ -1767,8 +1777,6 @@ impl<'a> Formatter<'a> {
                     let prev_quote_strings = self.quote_strings;
                     self.quote_strings = true;
 
-                    let _ = self.write_indent(writer.ctx);
-
                     let set_name: &str =
                         if value.js_type() == JSType::WeakSet { "WeakSet" } else { "Set" };
 
@@ -1778,7 +1786,10 @@ impl<'a> Formatter<'a> {
                         return Ok(());
                     }
 
-                    writer.print(format_args!("\n{} {{\n", set_name));
+                    if self.indent == 0 {
+                        writer.write_all(b"\n");
+                    }
+                    writer.print(format_args!("{} {{\n", set_name));
                     {
                         self.indent += 1;
                         let global = self.global_this;
@@ -1799,7 +1810,9 @@ impl<'a> Formatter<'a> {
                     }
                     let _ = self.write_indent(writer.ctx);
                     writer.write_all(b"}");
-                    writer.write_all(b"\n");
+                    if self.indent == 0 {
+                        writer.write_all(b"\n");
+                    }
                 }
                 Tag::JSON => {
                     let str = value.json_stringify(self.global_this, self.indent)?;

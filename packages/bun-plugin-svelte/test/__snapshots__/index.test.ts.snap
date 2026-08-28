@@ -26,49 +26,41 @@ exports[`Bun.plugin Generates server-side code: foo.svelte - body 1`] = `
 
 exports[`Bun.build Generates server-side code when targeting "node" or "bun": foo.svelte - server-side (node) 1`] = `
 {
-  "body": 
-"<!--[--><!---->
+  "body": "<!--[--><!---->
 
 <main class="app svelte-30r5b3lexyb64">
   <h1 class="svelte-30r5b3lexyb64">Hello World!</h1>
 </main>
 
-<!--]-->"
-,
+<!--]-->",
   "head": "",
-  "html": 
-"<!--[--><!---->
+  "html": "<!--[--><!---->
 
 <main class="app svelte-30r5b3lexyb64">
   <h1 class="svelte-30r5b3lexyb64">Hello World!</h1>
 </main>
 
-<!--]-->"
-,
+<!--]-->",
 }
 `;
 
 exports[`Bun.build Generates server-side code when targeting "node" or "bun": foo.svelte - server-side (bun) 1`] = `
 {
-  "body": 
-"<!--[--><!---->
+  "body": "<!--[--><!---->
 
 <main class="app svelte-30r5b3lexyb64">
   <h1 class="svelte-30r5b3lexyb64">Hello World!</h1>
 </main>
 
-<!--]-->"
-,
+<!--]-->",
   "head": "",
-  "html": 
-"<!--[--><!---->
+  "html": "<!--[--><!---->
 
 <main class="app svelte-30r5b3lexyb64">
   <h1 class="svelte-30r5b3lexyb64">Hello World!</h1>
 </main>
 
-<!--]-->"
-,
+<!--]-->",
 }
 `;
 

@@ -1315,7 +1315,8 @@ describe("bun build --metafile", () => {
       stdout: "pipe",
     });
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("console.log(1);");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
 

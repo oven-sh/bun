@@ -981,7 +981,16 @@ it.skipIf(!isLinux)("a writer whose poll registration fails closes its fd exactl
       } catch {
         sentinelIntact = false;
       }
-      console.log(JSON.stringify({ code, remaining, sentinelIntact }));
+      // \`keep\` still owns the number \`dup\` and closes it when the process tears
+      // down. If nothing occupies that number by now, give it a live file so the
+      // teardown close has a descriptor to close.
+      let dupOccupied = true;
+      try {
+        fstatSync(dup);
+      } catch {
+        dupOccupied = openSync("/dev/null", "r") === dup;
+      }
+      console.log(JSON.stringify({ code, remaining, sentinelIntact, dupOccupied }));
       `,
     ],
     env: bunEnv,
@@ -991,7 +1000,7 @@ it.skipIf(!isLinux)("a writer whose poll registration fails closes its fd exactl
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: JSON.stringify({ code: "EEXIST", remaining: 0, sentinelIntact: true }) + "\n",
+    stdout: JSON.stringify({ code: "EEXIST", remaining: 0, sentinelIntact: true, dupOccupied: true }) + "\n",
     stderr: "",
     exitCode: 0,
   });

@@ -782,9 +782,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         return Ok(());
                     }
 
-                    // `unexpected` only records the error. Fail here too, so a type
-                    // argument list such as "Array<>" or "Array<number,>" that is tried
-                    // with backtracking is rejected instead of accepted.
                     self.lexer.unexpected()?;
                     return Err(crate::Error::SyntaxError);
                 }

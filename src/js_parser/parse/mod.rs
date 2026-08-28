@@ -242,10 +242,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 has_decorators = has_decorators || opts.has_argument_decorators;
             } else {
-                // The property was dropped (e.g. a TypeScript overload signature,
-                // "declare" field or abstract method), which drops its decorators and
-                // computed key too. Decorators on such a member are an error in
-                // TypeScript, except inside a "declare class" body which is erased.
+                // The property was dropped (e.g. a TypeScript overload signature or
+                // "declare" field), which drops its decorators and computed key too.
                 if !class_opts.is_type_script_declare && opts.ts_decorators.len() > 0 {
                     p.log().add_range_error(
                         Some(p.source),

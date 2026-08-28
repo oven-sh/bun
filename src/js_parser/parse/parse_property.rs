@@ -438,10 +438,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             if let Some(mut prop) =
                                                 p.parse_property(kind, opts, None)?
                                             {
-                                                // A "declare" field only survives when
-                                                // TypeScript experimental decorators need
-                                                // to run on it. Standard decorators are
-                                                // rejected on it (see parse_class).
+                                                // Only experimental decorators keep the field
                                                 if prop.kind == PropertyKind::Normal
                                                     && prop.value.is_none()
                                                     && opts.ts_decorators.len() > 0
@@ -649,8 +646,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
-            // Parse a class field with an optional initial value. A definite assignment
-            // assertion ("foo!") forces the field path, so "foo!() {}" fails on the "(".
+            // Parse a class field with an optional initial value
             if opts.is_class
                 && (kind == PropertyKind::Normal || kind == PropertyKind::AutoAccessor)
                 && !opts.is_async

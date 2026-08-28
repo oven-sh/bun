@@ -69,10 +69,8 @@ pub struct Parser<'a> {
 pub struct Options<'a> {
     pub jsx: options::JSX::Pragma,
     pub ts: bool,
-    /// Set for the ".mts" and ".cts" extensions (TypeScript 4.5). In those files an
-    /// expression that starts with "<" and that a ".tsx" file would read as a JSX
-    /// element is a syntax error: the "<T>x" cast and the "<T>() => {}" arrow
-    /// function. "<T,>() => {}" and "<T extends U>() => {}" stay allowed.
+    /// ".mts" and ".cts" files reject the JSX-ambiguous "<T>x" cast and "<T>() => {}"
+    /// arrow function. "<T,>() => {}" and "<T extends U>() => {}" stay valid.
     pub ts_no_ambiguous_less_than: bool,
     pub keep_names: bool,
     pub ignore_dce_annotations: bool,

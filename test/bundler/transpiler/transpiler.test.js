@@ -2828,6 +2828,33 @@ console.log(<div {...obj} key="after" />);`),
       expectPrinted_(`export * as "" from "m"`, `export * as "" from "m"`);
     });
 
+    it("unpaired surrogate in an import/export clause alias is a syntax error", () => {
+      // ModuleExportName must be well-formed Unicode (IsStringWellFormedUnicode).
+      const loneHigh = "\\uD800";
+      const loneLow = "\\uDC00";
+      const pair = "\\uD83D\\uDE00";
+
+      const importError = "This import alias is invalid because it contains the unpaired Unicode surrogate U+";
+      const exportError = "This export alias is invalid because it contains the unpaired Unicode surrogate U+";
+
+      expectParseError(`import { "${loneHigh}" as y } from "m"`, importError + "D800");
+      expectParseError(`import { "${loneLow}" as y } from "m"`, importError + "DC00");
+      expectParseError(`import { "a${loneHigh}b" as y } from "m"`, importError + "D800");
+      expectParseError(`import { "${loneLow}${loneHigh}" as y } from "m"`, importError + "DC00");
+      expectParseError(`let x = 1; export { x as '${loneHigh}' }`, exportError + "D800");
+      expectParseError(`let x = 1; export { x as "${loneLow}" }`, exportError + "DC00");
+      expectParseError(`export { "${loneHigh}" as y } from "m"`, exportError + "D800");
+      expectParseError(`export { y as "${loneLow}" } from "m"`, exportError + "DC00");
+      expectParseError(`export * as "${loneHigh}" from "m"`, exportError + "D800");
+      expectParseError(`export * as "${pair}${loneLow}" from "m"`, exportError + "DC00");
+
+      // A well-formed pair is a valid alias (printed as its UTF-8 encoding).
+      expectPrinted_(`import { "${pair}" as y } from "m"; y`, `import { "😀" as y } from "m";\ny`);
+      expectPrinted_(`let x = 1; export { x as "${pair}" }`, `let x = 1;\n\nexport { x as "😀" }`);
+      expectPrinted_(`export * as "${pair}" from "m"`, `export * as "😀" from "m"`);
+      expectPrinted_(`export { "${pair}" as y } from "m"`, `export { "😀" as y } from "m"`);
+    });
+
     it("string quote selection", () => {
       expectPrinted_(`console.log("\\n")`, "console.log(`\n`)");
       expectPrinted_(`console.log("\\"")`, `console.log('"')`);

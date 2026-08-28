@@ -1583,6 +1583,21 @@ pub(crate) mod strings_impl {
         (c0 as u32, 1)
     }
 
+    /// The first surrogate code unit in `input` that is not part of a
+    /// well-formed pair, or `None` when `input` is well-formed UTF-16
+    /// (`IsStringWellFormedUnicode` in the ECMAScript spec).
+    pub fn first_unpaired_surrogate(input: &[u16]) -> Option<u16> {
+        let mut i = 0;
+        while i < input.len() {
+            let (cp, adv) = decode_wtf16_raw(&input[i..]);
+            if (0xD800..=0xDFFF).contains(&cp) {
+                return Some(cp as u16);
+            }
+            i += adv as usize;
+        }
+        None
+    }
+
     #[inline]
     pub fn latin1_to_codepoint_bytes_assume_not_ascii(c: u8) -> [u8; 2] {
         debug_assert!(c >= 0x80);

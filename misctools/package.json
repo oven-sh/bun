@@ -9,6 +9,6 @@
     "semver": "^7.3.7"
   },
   "dependencies": {
-    "@unicode/unicode-15.1.0": "^1.6.5"
+    "@unicode/unicode-16.0.0": "^1.6.5"
   }
 }

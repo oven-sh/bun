@@ -741,23 +741,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    pub(crate) fn parse_clause_alias(&mut self, _kind: &[u8]) -> Result<&'a [u8], Error> {
+    pub(crate) fn parse_clause_alias(&mut self, kind: &[u8]) -> Result<&'a [u8], Error> {
         let p = self;
         let loc = p.lexer.loc();
 
-        // The alias may now be a utf-16 (not wtf-16) string (see https://github.com/tc39/ecma262/pull/2154)
+        // The alias may now be a string (see https://github.com/tc39/ecma262/pull/2154).
+        // It must be well-formed UTF-16: an unpaired surrogate is a syntax error.
         if p.lexer.token == T::TStringLiteral {
             let estr = p.lexer.to_e_string()?;
             if estr.is_utf8() {
                 // SAFETY: E::String slices are arena-owned for 'a.
                 return Ok(unsafe { bun_collections::detach_lifetime(estr.slice8()) });
-            } else {
-                // Lone surrogates are replaced with U+FFFD; the surrogate-error
-                // diagnostic path is dropped until the strict variant lands.
-                let alias_utf8 = strings::to_utf8_alloc_with_type(estr.slice16());
-                let leaked: &'a [u8] = p.arena.alloc_slice_copy(&alias_utf8);
-                return Ok(leaked);
             }
+            let utf16 = estr.slice16();
+            if let Some(surrogate) = strings::first_unpaired_surrogate(utf16) {
+                let r = p.source.range_of_string(loc);
+                p.lexer.add_range_error(
+                    r,
+                    format_args!(
+                        "This {} alias is invalid because it contains the unpaired Unicode surrogate U+{:X}",
+                        bstr::BStr::new(kind),
+                        surrogate
+                    ),
+                )?;
+                return Err(crate::Error::SyntaxError);
+            }
+            let alias_utf8 = strings::to_utf8_alloc_with_type(utf16);
+            let leaked: &'a [u8] = p.arena.alloc_slice_copy(&alias_utf8);
+            return Ok(leaked);
         }
 
         // The alias may be a keyword

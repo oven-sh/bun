@@ -1670,7 +1670,10 @@ pub mod lexer {
     pub fn is_identifier_part(c: u32) -> bool {
         is_identifier_continue(c)
     }
-    pub use crate::string::identifier::{is_identifier, is_identifier_utf16};
+    pub use crate::string::identifier::{
+        is_identifier, is_identifier_es5_and_es_next, is_identifier_es5_and_es_next_utf16,
+        is_identifier_utf16,
+    };
 }
 
 pub mod lexer_tables {

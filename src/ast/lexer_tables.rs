@@ -800,7 +800,10 @@ pub fn is_identifier_continue(codepoint: i32) -> bool {
     bun_core::identifier::is_identifier_part(codepoint)
 }
 
-pub use bun_core::identifier::{is_identifier, is_identifier_utf16};
+pub use bun_core::identifier::{
+    is_identifier, is_identifier_es5_and_es_next, is_identifier_es5_and_es_next_utf16,
+    is_identifier_utf16,
+};
 
 pub fn is_latin1_identifier<B: AsRef<[u8]>>(name: B) -> bool {
     // The UTF-16 counterpart is [`is_latin1_identifier_u16`].

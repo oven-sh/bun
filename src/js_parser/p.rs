@@ -2605,6 +2605,49 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Annex B allows `<!--` and a line-start `-->` as single-line comments in
+    /// scripts only. The lexer accepts them with a warning and records the first
+    /// one. Once the parse pass has seen the whole file and knows whether it is
+    /// an ECMAScript module, that comment becomes an error.
+    pub(crate) fn check_legacy_html_comment_in_module(&mut self) {
+        let r = self.lexer.legacy_html_comment_range;
+        if r.len == 0 {
+            return;
+        }
+        let (why, where_): (&str, bun_ast::Range) = if self.esm_import_keyword.len > 0 {
+            ("of the \"import\" keyword here", self.esm_import_keyword)
+        } else if self.esm_export_keyword.len > 0 {
+            ("of the \"export\" keyword here", self.esm_export_keyword)
+        } else if self.top_level_await_keyword.len > 0 {
+            (
+                "of the top-level \"await\" keyword here",
+                self.top_level_await_keyword,
+            )
+        } else if self.options.module_type == options::ModuleType::Esm {
+            (
+                "the file extension or the enclosing package.json sets its type to \"module\"",
+                bun_ast::Range::NONE,
+            )
+        } else {
+            return;
+        };
+        let notes: Box<[bun_ast::Data]> = Box::new([bun_ast::range_data(
+            Some(self.source),
+            where_,
+            format!(
+                "This file is considered to be an ECMAScript module because {}",
+                why
+            )
+            .into_bytes(),
+        )]);
+        self.log().add_range_error_fmt_with_notes(
+            Some(self.source),
+            r,
+            notes,
+            format_args!("Legacy HTML single-line comments are not allowed in ECMAScript modules"),
+        );
+    }
+
     pub(crate) fn prepare_for_visit_pass(&mut self) -> Result<(), crate::Error> {
         {
             // The wrapper stores only the arena and a non-capturing

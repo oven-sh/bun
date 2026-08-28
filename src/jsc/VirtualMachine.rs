@@ -999,7 +999,7 @@ impl VirtualMachine {
 
     /// Hand the executable's shared bytecode string table (if any) to JSC as this VM's `DecoderStringTable`, and let the
     /// heap take the initial module graph without collecting: everything allocated while it loads is live, so collections
-    /// before it finishes only re-mark it. The budget scales with the embedded payload; after the first collection JSC's
+    /// before it finishes only re-mark it. The budget is the size of the embedded payload (capped); after the first collection JSC's
     /// usual sizing applies.
     fn install_bytecode_string_table(
         &self,
@@ -1011,7 +1011,7 @@ impl VirtualMachine {
         }
         const MIN_BUDGET: usize = 8 * 1024 * 1024;
         const MAX_BUDGET: usize = 128 * 1024 * 1024;
-        let budget = (graph.payload_len() / 4).clamp(MIN_BUDGET, MAX_BUDGET);
+        let budget = graph.payload_len().clamp(MIN_BUDGET, MAX_BUDGET);
         if budget > MIN_BUDGET {
             JSC__Heap__setInitialAllocationBudget(self.jsc_vm(), budget);
         }

@@ -16,6 +16,9 @@ function unchanged(rows: [name: string, source: string, printed?: string][]): Ca
 const stringLengthTargets = unchanged([
   ["assignment", `"foo".length = 4;`],
   ["compound assignment", `"foo".length += 1;`],
+  ["nullish assignment", `"foo".length ??= 1;`],
+  ["logical or assignment", `"foo".length ||= 1;`],
+  ["logical and assignment", `"foo".length &&= 1;`],
   ["postfix increment", `"foo".length++;`],
   ["prefix increment", `++"foo".length;`],
   ["postfix decrement", `"foo".length--;`],
@@ -41,6 +44,9 @@ const stringLengthReads: Case[] = [
 const defineTargets = unchanged([
   ["assignment", `X = 1;`],
   ["compound assignment", `X += 1;`],
+  ["nullish assignment", `X ??= 1;`],
+  ["logical or assignment", `X ||= 1;`],
+  ["logical and assignment", `X &&= 1;`],
   ["postfix increment", `X++;`],
   ["prefix increment", `++X;`],
   ["postfix decrement", `X--;`],
@@ -71,6 +77,7 @@ const defineReads: Case[] = [
 const defineIdentifierTargets: Case[] = [
   ["assignment", `X = 1;`, `FOO = 1;`],
   ["compound assignment", `X += 1;`, `FOO += 1;`],
+  ["nullish assignment", `X ??= 1;`, `FOO ??= 1;`],
   ["postfix increment", `X++;`, `FOO++;`],
   ["for-of head", `for (X of y);`, `for (FOO of y)\n  ;`],
   ["array destructuring", `[X] = [1];`, `[FOO] = [1];`],
@@ -182,9 +189,12 @@ describe("bun build", () => {
 
 describe("bun run", () => {
   // The runtime transpiler folds `"str".length`. The module must load; each
-  // write is a run-time TypeError in strict mode, as in node.
+  // write is a run-time TypeError in strict mode, as in node. `??=` and `||=`
+  // never write because `"foo".length` is 3.
   test.concurrent(`"str".length as an assignment target is a run-time TypeError`, async () => {
+    const shortCircuits = new Set(["nullish assignment", "logical or assignment"]);
     const writes = stringLengthTargets.map(c => c[1]);
+    const expected = stringLengthTargets.map(([name]) => (shortCircuits.has(name) ? "ok" : "TypeError"));
     using dir = tempDir("length-target-run", {
       "entry.mjs": `
         const results = [];
@@ -199,7 +209,7 @@ describe("bun run", () => {
     const { stdout, stderr, exitCode } = await run([bunExe(), "entry.mjs"], String(dir));
 
     expect(stderr).toBe("");
-    expect(stdout).toBe(`${writes.map(() => "TypeError").join(",")}\n3\n`);
+    expect(stdout).toBe(`${expected.join(",")}\n3\n`);
     expect(exitCode).toBe(0);
   });
 

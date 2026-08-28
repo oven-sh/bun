@@ -138,8 +138,6 @@ pub enum Error {
     InvalidJSXRuntime,
     #[error("ThreadSpawnFailed")]
     ThreadSpawnFailed,
-    #[error("CouldntReadCurrentDirectory")]
-    CouldntReadCurrentDirectory,
     #[error("FailedToGetTempPath")]
     FailedToGetTempPath,
     #[error("UnexpectedCreatingStdin")]
@@ -465,7 +463,6 @@ impl Error {
             Self::InvalidLoader => "InvalidLoader",
             Self::InvalidJSXRuntime => "InvalidJSXRuntime",
             Self::ThreadSpawnFailed => "ThreadSpawnFailed",
-            Self::CouldntReadCurrentDirectory => "CouldntReadCurrentDirectory",
             Self::FailedToGetTempPath => "FailedToGetTempPath",
             Self::UnexpectedCreatingStdin => "UnexpectedCreatingStdin",
             Self::UnableToEncode => "UnableToEncode",

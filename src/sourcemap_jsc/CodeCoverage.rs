@@ -350,6 +350,23 @@ impl MergedReport {
     }
 }
 
+/// The name a module is reported under: its path relative to `base_path`, or its id as it is.
+pub fn file_name<'a>(source_url: &'a [u8], base_path: &[u8]) -> &'a [u8] {
+    if base_path.is_empty() || !bun_paths::is_absolute(source_url) {
+        return source_url;
+    }
+    // `relative` answers with up to one `/..` per component of `base_path`, then the name.
+    let mut separators = bun_core::strings::count_char(base_path, b'/');
+    if cfg!(windows) {
+        separators += bun_core::strings::count_char(base_path, b'\\');
+    }
+    let fits = source_url.len() + 3 * separators + 2 <= bun_paths::MAX_PATH_BYTES;
+    if !fits {
+        return source_url;
+    }
+    bun_paths::resolve_path::relative(base_path, source_url)
+}
+
 pub mod text {
     use super::*;
     // The `pretty_fmt!` macro only accepts literal `true`/`false` today,
@@ -428,10 +445,7 @@ pub mod text {
         base_path: &[u8],
         writer: &mut impl bun_io::Write,
     ) -> bun_io::Result<()> {
-        let mut filename: &[u8] = &report.source_url;
-        if !base_path.is_empty() {
-            filename = bun_paths::resolve_path::relative(base_path, filename);
-        }
+        let filename = file_name(&report.source_url, base_path);
 
         write_format_with_values::<ENABLE_COLORS>(
             filename,
@@ -501,10 +515,7 @@ pub mod lcov {
         base_path: &[u8],
         writer: &mut impl bun_io::Write,
     ) -> bun_io::Result<()> {
-        let mut filename: &[u8] = &report.source_url;
-        if !base_path.is_empty() {
-            filename = bun_paths::resolve_path::relative(base_path, filename);
-        }
+        let filename = file_name(&report.source_url, base_path);
 
         // TN: test name
         // Empty value appears fine. For example, `TN:`.

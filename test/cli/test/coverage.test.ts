@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import path from "path";
 
@@ -697,3 +697,141 @@ test("calls second", () => {
   expect(record).toMatch(/FNF:2\nFNH:2\n/);
   expect(exitCode).toBe(0);
 });
+
+// MAX_PATH_BYTES in src/bun_core/util.rs: the size of the buffers the report relativizes paths in.
+const pathBufferSize = isWindows ? 32767 * 3 + 1 : isLinux ? 4096 : 1024;
+const longerThanAPathBuffer = 128 * 1024;
+
+// `virtualId` and `dataUrl` are JavaScript expressions. The virtual module is a
+// Bun.plugin `build.module()` module, which the report lists under its id.
+function virtualModuleFixture(virtualId: string, dataUrl: string) {
+  return {
+    "bunfig.toml": `
+[test]
+coverageSkipTestFiles = false
+`,
+    "helper.ts": `
+export function helper() {
+  return "helper";
+}
+`,
+    "virtual.test.ts": `
+import { test, expect } from "bun:test";
+import { helper } from "./helper";
+
+const virtualId = ${virtualId};
+const dataUrl = ${dataUrl};
+
+Bun.plugin({
+  name: "virtual",
+  setup(build) {
+    build.module(virtualId, () => ({
+      contents: "export function used() { return 'virtual'; }\\nexport function unused() { return 0; }\\n",
+      loader: "js",
+    }));
+  },
+});
+
+test("imports modules that are not files", async () => {
+  expect((await import(virtualId)).used()).toBe("virtual");
+  expect((await import(dataUrl)).default).toBe("data");
+  expect(helper()).toBe("helper");
+});
+`,
+  };
+}
+
+async function runCoverage(dir: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter", "text", "--coverage-reporter", "lcov"],
+    cwd: dir,
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  return { stderr, exitCode };
+}
+
+function lcovSourceFiles(dir: string) {
+  return readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8")
+    .split("\n")
+    .filter(line => line.startsWith("SF:"));
+}
+
+test.concurrent("virtual modules are reported under their id and data: URL modules are left out", async () => {
+  using dir = tempDir(
+    "cov",
+    virtualModuleFixture(
+      `"virtual-module"`,
+      `"data:text/javascript," + encodeURIComponent("export default 'data'; //" + Buffer.alloc(${longerThanAPathBuffer}, "x"))`,
+    ),
+  );
+
+  const { stderr, exitCode } = await runCoverage(String(dir));
+
+  expect(normalizeBunSnapshot(stderr, dir)).toMatchInlineSnapshot(`
+    "virtual.test.ts:
+    (pass) imports modules that are not files
+    -----------------|---------|---------|-------------------
+    File             | % Funcs | % Lines | Uncovered Line #s
+    -----------------|---------|---------|-------------------
+    All files        |   83.33 |  100.00 |
+     helper.ts       |  100.00 |  100.00 | 
+     virtual.test.ts |  100.00 |  100.00 | 
+     virtual-module  |   50.00 |  100.00 | 
+    -----------------|---------|---------|-------------------
+
+     1 pass
+     0 fail
+     3 expect() calls
+    Ran 1 test across 1 file."
+  `);
+  expect(lcovSourceFiles(String(dir))).toEqual(["SF:helper.ts", "SF:virtual.test.ts", "SF:virtual-module"]);
+  expect(exitCode).toBe(0);
+});
+
+// Ids that do not fit the path buffers: a plain id, an id that looks like an absolute path, and
+// one that fits by itself but not once the report puts a `../` per directory of the cwd before it.
+const longIds = [
+  { shape: "a plain id", prefix: "virtual-", length: longerThanAPathBuffer },
+  { shape: "an absolute path", prefix: "/virtual/", length: longerThanAPathBuffer },
+  { shape: "an absolute path that almost fills the buffer", prefix: "/virtual/", length: pathBufferSize - 4 },
+];
+for (const { shape, prefix, length } of longIds) {
+  test.concurrent(`a virtual module id too long to relativize is reported as it is (${shape})`, async () => {
+    const virtualId = prefix + Buffer.alloc(length - prefix.length, "x").toString();
+    using dir = tempDir(
+      "cov",
+      virtualModuleFixture(
+        `${JSON.stringify(prefix)} + Buffer.alloc(${length - prefix.length}, "x").toString()`,
+        `"data:text/javascript,export default 'data';"`,
+      ),
+    );
+
+    const { stderr, exitCode } = await runCoverage(String(dir));
+
+    // Every table line is padded to the width of the id, so compare the lines with the id and
+    // the padding taken out. The entries are sorted by their full name, which is platform specific.
+    const rows = stderr
+      .split("\n")
+      .filter(line => line.includes(" | "))
+      .map(line => line.replace(virtualId, "<id>").replace(/ {2,}/g, " "))
+      .sort();
+    expect(rows).toEqual(
+      [
+        "File | % Funcs | % Lines | Uncovered Line #s",
+        "All files | 83.33 | 100.00 |",
+        " helper.ts | 100.00 | 100.00 | ",
+        " virtual.test.ts | 100.00 | 100.00 | ",
+        " <id> | 50.00 | 100.00 | ",
+      ].sort(),
+    );
+    expect(
+      lcovSourceFiles(String(dir))
+        .map(line => line.replace(virtualId, "<id>"))
+        .sort(),
+    ).toEqual(["SF:<id>", "SF:helper.ts", "SF:virtual.test.ts"].sort());
+    expect(exitCode).toBe(0);
+  });
+}

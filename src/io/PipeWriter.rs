@@ -1051,8 +1051,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
         match poll.register_with_fd(event_loop, FilePollKind::Writable, fd) {
             sys::Result::Err(err) => {
-                // A fresh poll holds `fd` and closes it with the writer. A poll kept
-                // from an earlier `start` still holds that fd, so `fd` is closed here.
+                // A poll reused from an earlier start() keeps its own fd, so nothing else closes this one.
                 if poll.fd() != fd {
                     fd.close();
                 }

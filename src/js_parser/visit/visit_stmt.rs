@@ -1332,7 +1332,41 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let name = p.load_name_from_ref(data.name.ref_);
         let ref_ = p.new_symbol(js_ast::symbol::Kind::Label, name);
         data.name.ref_ = ref_;
+
+        // Duplicate labels are an error. Labels are only visible within the
+        // function they are defined in, so the walk stops at a function boundary.
+        let mut parent = p.current_scope_ref().parent;
+        while let Some(scope) = parent {
+            if scope.kind_stops_hoisting() {
+                break;
+            }
+            if scope.kind == js_ast::scope::Kind::Label
+                && let Some(label_ref) = scope.label_ref.to_nullable()
+                && bun_core::strings::eql(
+                    name,
+                    p.symbols[label_ref.inner_index() as usize]
+                        .original_name
+                        .slice(),
+                )
+            {
+                let notes: Box<[bun_ast::Data]> = Box::new([bun_ast::range_data(
+                    Some(p.source),
+                    js_lexer::range_of_identifier(p.source, scope.label_loc),
+                    format!("The original label \"{}\" is here:", bstr::BStr::new(name)),
+                )]);
+                p.log().add_range_error_fmt_with_notes(
+                    Some(p.source),
+                    js_lexer::range_of_identifier(p.source, data.name.loc),
+                    notes,
+                    format_args!("Duplicate label \"{}\"", bstr::BStr::new(name)),
+                );
+                break;
+            }
+            parent = scope.parent;
+        }
+
         p.cur_scope().label_ref = ref_;
+        p.cur_scope().label_loc = data.name.loc;
         match data.stmt.data {
             StmtData::SFor(_)
             | StmtData::SForIn(_)

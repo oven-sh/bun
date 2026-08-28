@@ -3512,6 +3512,96 @@ class Foo {
     expectParseError("class Foo { #x() { this.#x += 1 } }", 'Writing to read-only method "#x" will throw');
   });
 
+  it("a class cannot have more than one constructor", () => {
+    const message = "Classes cannot contain more than one constructor";
+    expectParseError("class A { constructor() {} constructor() {} }", message);
+    expectParseError('class A { constructor() {} "constructor"() {} }', message);
+    expectParseError("(class { constructor() {} constructor() {} })", message);
+    expectParseError("class A { constructor() {} x = 1; constructor() {} }", message);
+
+    // A static method, a computed key, and a TypeScript overload signature are
+    // not a second constructor.
+    expectPrinted_(
+      "class A { constructor() {} static constructor() {} }",
+      "class A {\n  constructor() {}\n  static constructor() {}\n}",
+    );
+    expectPrinted_(
+      'class A { constructor() {} ["constructor"]() {} }',
+      'class A {\n  constructor() {}\n  ["constructor"]() {}\n}',
+    );
+    ts.expectPrinted_(
+      "class A { constructor(a: string); constructor(a: number); constructor(a: any) {} }",
+      "class A {\n  constructor(a) {}\n}",
+    );
+    ts.expectParseError("class A { constructor(a: string); constructor(a: any) {} constructor() {} }", message);
+    expectPrinted_(
+      "class A { constructor() {} } class B { constructor() {} }",
+      "class A {\n  constructor() {}\n}\n\nclass B {\n  constructor() {}\n}",
+    );
+  });
+
+  it("the target of new cannot be an unparenthesized optional chain", () => {
+    const message = 'Cannot use an unparenthesized optional chain inside the target of "new"';
+    expectParseError("new a?.b()", message);
+    expectParseError("new a?.b", message);
+    expectParseError("new a?.[0]()", message);
+    expectParseError("new a?.()", message);
+    expectParseError("new a.b?.c()", message);
+    expectParseError("new a?.b.c()", message);
+    expectParseError("new a?.b?.c()", message);
+    expectParseError("new (a?.b)?.c()", message);
+    expectParseError("new new a?.b()()", message);
+
+    // Parenthesized chains, and chains that start after the arguments, are
+    // fine. The printer must keep the parentheses.
+    expectPrinted_("new (a?.b)()", "new (a?.b)");
+    expectPrinted_("new (a?.b)(1)", "new (a?.b)(1)");
+    expectPrinted_("new (a?.[0])()", "new (a?.[0])");
+    expectPrinted_("new (a?.())()", "new (a?.())");
+    expectPrinted_("new (a?.b.c)()", "new (a?.b.c)");
+    expectPrinted_("new (a?.b).c()", "new (a?.b).c");
+    expectPrinted_("new (a().b)()", "new (a()).b");
+    expectPrinted_("new a()?.b", "new a()?.b");
+    expectPrinted_("new a()?.()", "new a()?.()");
+    expectPrinted_("new a.b()", "new a.b");
+
+    // A call inside a tagged template tag is still the target of "new", so it
+    // keeps its parentheses too. "new foo()`x`()" is a different program.
+    expectPrinted_("new (foo()`x`)()", "new (foo())`x`");
+    expectPrinted_("new (foo()`x`)(1)", "new (foo())`x`(1)");
+    expectPrinted_("new (foo.bar()`x`)()", "new (foo.bar())`x`");
+    expectPrinted_("new (foo`x`)()", "new foo`x`");
+    expectPrinted_("new (a?.b)`x`()", "new (a?.b)`x`");
+  });
+
+  it("a parenthesized optional chain used as a template tag keeps its parentheses", () => {
+    expectPrinted_("(a?.b)`x`", "(a?.b)`x`");
+    expectPrinted_("(a?.[0])`x`", "(a?.[0])`x`");
+    expectPrinted_("(a?.())`x`", "(a?.())`x`");
+    expectPrinted_("(a?.b.c)`x`", "(a?.b.c)`x`");
+    expectPrinted_("(a?.b)`x${y}z`", "(a?.b)`x${y}z`");
+    expectPrinted_("a.b`x`", "a.b`x`");
+    expectParseError("a?.b`x`", "Template literals cannot have an optional chain as a tag");
+  });
+
+  it("duplicate labels are an error", () => {
+    expectParseError("outer: { outer: ; }", 'Duplicate label "outer"');
+    expectParseError("a: b: a: ;", 'Duplicate label "a"');
+    expectParseError("a: for (;;) { a: ; }", 'Duplicate label "a"');
+    expectParseError("a: { b: { a: ; } }", 'Duplicate label "a"');
+    expectParseError("function f() { a: { a: ; } }", 'Duplicate label "a"');
+
+    // Labels may repeat in sibling statements and in a nested function,
+    // arrow function, or class static block.
+    expectPrinted_("a: { } a: { }", "a: {}\na: {}");
+    expectPrinted_("a: { (function() { a: ; })() }", "a: {\n  (function() {\n    a:\n      ;\n  })();\n}");
+    expectPrinted_("a: { (() => { a: ; })() }", "a: {\n  (() => {\n    a:\n      ;\n  })();\n}");
+    expectPrinted_(
+      "a: { class X { static { a: ; } } }",
+      "a: {\n  class X {\n    static {\n      a:\n        ;\n    }\n  }\n}",
+    );
+  });
+
   it("class bodies keep `this` and the class name as written", () => {
     expectPrinted_(
       "class Foo { static x = this; static { this.y = Foo } z = () => this }",

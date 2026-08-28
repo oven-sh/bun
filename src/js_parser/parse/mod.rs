@@ -44,12 +44,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         errors: Option<&mut DeferredErrors>,
         expr: &mut Expr,
     ) -> Result<(), Error> {
-        self.parse_expr_common(level, errors, EFlags::None, expr)
+        self.parse_expr_common(level, errors, EFlags::empty(), expr)
     }
     #[inline]
     pub fn parse_expr(&mut self, level: Level) -> Result<Expr, Error> {
         let mut expr = Expr::EMPTY;
-        self.parse_expr_common(level, None, EFlags::None, &mut expr)?;
+        self.parse_expr_common(level, None, EFlags::empty(), &mut expr)?;
         Ok(expr)
     }
     #[inline]
@@ -187,6 +187,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let scope_index = p
             .push_scope_for_parse_pass(js_ast::scope::Kind::ClassBody, body_loc)
             .expect("unreachable");
+        let mut has_constructor = false;
 
         while !p.lexer.token.is_close_brace_or_eof() {
             if p.lexer.token == T::TSemicolon {
@@ -221,22 +222,38 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // read fields before move (G::Property is not Copy).
                 let prop_kind = property.kind;
                 let prop_key = property.key;
+                let prop_flags = property.flags;
                 properties.push(property);
                 has_auto_accessor =
                     has_auto_accessor || prop_kind == js_ast::g::PropertyKind::AutoAccessor;
 
-                // Forbid decorators on class constructors
-                if opts.ts_decorators.len() > 0 {
-                    if let Some(key) = prop_key {
-                        if let js_ast::expr::Data::EString(str_) = &key.data {
-                            if str_.eql_comptime(b"constructor") {
-                                p.log().add_error(
-                                    Some(p.source),
-                                    first_decorator_loc,
-                                    b"TypeScript does not allow decorators on class constructors",
-                                );
-                            }
+                if let Some(key) = prop_key
+                    && let js_ast::expr::Data::EString(str_) = &key.data
+                    && str_.eql_comptime(b"constructor")
+                {
+                    // Forbid decorators on class constructors
+                    if opts.ts_decorators.len() > 0 {
+                        p.log().add_error(
+                            Some(p.source),
+                            first_decorator_loc,
+                            b"TypeScript does not allow decorators on class constructors",
+                        );
+                    }
+
+                    // A computed key ["constructor"] and a static method named
+                    // "constructor" are ordinary methods, not the constructor.
+                    if prop_flags.contains(Flags::Property::IsMethod)
+                        && !prop_flags.contains(Flags::Property::IsStatic)
+                        && !prop_flags.contains(Flags::Property::IsComputed)
+                    {
+                        if has_constructor {
+                            p.log().add_range_error(
+                                Some(p.source),
+                                crate::lexer::range_of_identifier(p.source, key.loc),
+                                b"Classes cannot contain more than one constructor",
+                            );
                         }
+                        has_constructor = true;
                     }
                 }
 
@@ -935,9 +952,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.lexer.token == T::TAsteriskAsterisk {
                 p.lexer.unexpected()?;
             }
-            p.parse_suffix(&mut value, Level::Prefix, None, EFlags::None)?;
+            p.parse_suffix(&mut value, Level::Prefix, None, EFlags::empty())?;
             let mut expr = p.new_expr(E::Await { value }, token_range.loc);
-            p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::None)?;
+            p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::empty())?;
             return Ok(ExprOrLetStmt {
                 stmt_or_expr: js_ast::StmtOrExpr::Expr(expr),
                 ..Default::default()
@@ -962,7 +979,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ..Default::default()
         };
         if let js_ast::StmtOrExpr::Expr(ref mut e) = result.stmt_or_expr {
-            p.parse_suffix(e, Level::Lowest, None, EFlags::None)?;
+            p.parse_suffix(e, Level::Lowest, None, EFlags::empty())?;
         }
         Ok(result)
     }

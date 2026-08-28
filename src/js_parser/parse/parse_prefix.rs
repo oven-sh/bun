@@ -682,7 +682,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // This will become the new expr
         // Parse target into a local, then construct E::New once.
         let mut target = Expr::EMPTY;
-        p.parse_expr_with_flags(Level::Member, flags, &mut target)?;
+        p.parse_expr_with_flags(Level::Member, flags | EFlags::IS_NEW_TARGET, &mut target)?;
 
         if Self::IS_TYPESCRIPT_ENABLED {
             // Skip over TypeScript type arguments here if there are any

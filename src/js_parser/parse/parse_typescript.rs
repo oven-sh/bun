@@ -59,7 +59,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 //
                 // This matches the behavior of the TypeScript compiler.
                 let mut expr = Expr::EMPTY;
-                p.parse_expr_with_flags(Level::New, EFlags::TsDecorator, &mut expr)?;
+                p.parse_expr_with_flags(Level::New, EFlags::TS_DECORATOR, &mut expr)?;
                 decorators.push(expr);
             }
         }

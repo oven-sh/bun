@@ -3628,11 +3628,15 @@ pub(crate) mod __gated_printer {
                             return;
                         }
                     } else {
-                        if flags.contains(ExprFlag::HasNonOptionalChainParent) {
+                        // "(a?.b).c" and "new (a?.b)()" need the parentheses
+                        if !flags
+                            .is_disjoint(ExprFlag::HasNonOptionalChainParent | ExprFlag::ForbidCall)
+                        {
                             wrap = true;
                             self.print(b"(");
                         }
-                        flags.remove(ExprFlag::HasNonOptionalChainParent);
+                        flags
+                            .remove_all(ExprFlag::HasNonOptionalChainParent | ExprFlag::ForbidCall);
                     }
                     flags &= ExprFlag::HasNonOptionalChainParent | ExprFlag::ForbidCall;
 
@@ -3682,11 +3686,15 @@ pub(crate) mod __gated_printer {
                             }
                         }
                     } else {
-                        if flags.contains(ExprFlag::HasNonOptionalChainParent) {
+                        // "(a?.[b]).c" and "new (a?.[b])()" need the parentheses
+                        if !flags
+                            .is_disjoint(ExprFlag::HasNonOptionalChainParent | ExprFlag::ForbidCall)
+                        {
                             wrap = true;
                             self.print(b"(");
                         }
-                        flags.remove(ExprFlag::HasNonOptionalChainParent);
+                        flags
+                            .remove_all(ExprFlag::HasNonOptionalChainParent | ExprFlag::ForbidCall);
                     }
 
                     // The index target is not directly followed by `of`.
@@ -4126,9 +4134,8 @@ pub(crate) mod __gated_printer {
 
                     if let Some(tag) = &e.tag {
                         self.add_source_mapping(expr.loc);
-                        // Optional chains are forbidden in template tags
-                        // `Expr::is_optional_chain` is gated upstream; inline its body.
-                        let is_optional_chain = match &expr.data {
+                        // Optional chains are forbidden in template tags: "(a?.b)`x`"
+                        let is_optional_chain = match &tag.data {
                             ExprData::EDot(d) => d.optional_chain.is_some(),
                             ExprData::EIndex(i) => i.optional_chain.is_some(),
                             ExprData::ECall(c) => c.optional_chain.is_some(),
@@ -4139,7 +4146,9 @@ pub(crate) mod __gated_printer {
                             self.print_expr(*tag, Level::Lowest, ExprFlag::none());
                             self.print(b")");
                         } else {
-                            self.print_expr(*tag, Level::Postfix, ExprFlag::none());
+                            // Inside "new", a call in the tag keeps its parentheses:
+                            // "new (foo())`x`()" and not "new foo()`x`()"
+                            self.print_expr(*tag, Level::Postfix, flags & ExprFlag::ForbidCall);
                         }
                     } else {
                         self.add_source_mapping(expr.loc);

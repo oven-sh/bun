@@ -1025,7 +1025,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let default_name = p.create_default_name(loc);
 
                     let mut expr = p.parse_async_prefix_expr(async_range, Level::Comma)?;
-                    p.parse_suffix(&mut expr, Level::Comma, None, EFlags::None)?;
+                    p.parse_suffix(&mut expr, Level::Comma, None, EFlags::empty())?;
                     p.lexer.expect_or_insert_semicolon()?;
                     let value = js_ast::StmtOrExpr::Expr(expr);
                     return Ok(p.s(
@@ -1414,7 +1414,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             T::TOpenParen | T::TDot => {
                 p.esm_import_keyword = previous_import_keyword; // this wasn't an esm import statement after all
                 let mut expr = p.parse_import_expr(loc, Level::Lowest)?;
-                p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::None)?;
+                p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::empty())?;
                 p.lexer.expect_or_insert_semicolon()?;
                 return Ok(p.s(
                     S::SExpr {
@@ -1704,7 +1704,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             expr = p.parse_async_prefix_expr(async_range, Level::Lowest)?;
-            p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::None)?;
+            p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::empty())?;
         } else {
             let expr_or_let = p.parse_expr_or_let_stmt(opts)?;
             match expr_or_let.stmt_or_expr {

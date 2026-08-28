@@ -99,6 +99,8 @@ pub struct InitOptions {
     /// `top_level_dir`, so it threads through `init_runtime_state`.
     pub store_fd: bool,
     pub smol: bool,
+    /// `bun_dns::Order` as its `u8` repr, like `VirtualMachine::dns_result_order`.
+    pub dns_result_order: u8,
     pub eval_mode: bool,
     pub is_main_thread: bool,
     /// Forwarded to `Zig__GlobalObject__create` so the C++ ZigGlobalObject is
@@ -124,6 +126,7 @@ impl Default for InitOptions {
             graph: None,
             store_fd: false,
             smol: false,
+            dns_result_order: 0,
             eval_mode: false,
             is_main_thread: false,
             worker_ptr: core::ptr::null_mut(),
@@ -2610,6 +2613,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).origin_timer).write(std::time::Instant::now());
             addr_of_mut!((*vm).origin_timestamp).write(get_origin_timestamp());
             addr_of_mut!((*vm).smol).write(opts.smol);
+            addr_of_mut!((*vm).dns_result_order).write(opts.dns_result_order);
             // `Option<{CPU,Heap}ProfilerConfig>` are NOT zero-valid: each
             // payload contains a `bool`, and rustc picks that field's invalid
             // range (not the `&[u8]` null-ptr) as the enum niche, so all-zero
@@ -4054,6 +4058,7 @@ impl VirtualMachine {
             env_loader: opts.env_loader,
             smol: opts.smol,
             mini_mode: opts.smol,
+            dns_result_order: opts.dns_result_order,
             eval_mode: false,
             is_main_thread: opts.is_main_thread,
             ..Default::default()
@@ -4061,7 +4066,6 @@ impl VirtualMachine {
         let vm = Self::init(init_opts)?;
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
-        vm_ref.dns_result_order = opts.dns_result_order;
         vm_ref.transpiler.resolver.standalone_module_graph = Some(graph);
         vm_ref.install_bytecode_string_table(graph);
         // Avoid reading from tsconfig.json & package.json when in standalone mode

@@ -65,8 +65,6 @@ impl ReplCommand {
         // is `MimallocArena` (a per-heap mimalloc wrapper).
         let arena = Arena::new();
 
-        // Validate DNS result order before VM init; wired onto the VM
-        // post-init below, like run_command.rs.
         let dns_order = DnsOrder::from_string(&ctx.runtime_options.dns_result_order)
             .unwrap_or_else(|| {
                 bun_core::pretty_errorln!("<r><red>error<r><d>:<r> Invalid DNS result order.");
@@ -81,6 +79,7 @@ impl ReplCommand {
             debugger: core::mem::take(&mut ctx.runtime_options.debugger),
             log: core::ptr::NonNull::new(ctx.log),
             smol: ctx.runtime_options.smol,
+            dns_result_order: dns_order as u8,
             eval_mode: true,
             is_main_thread: true,
             ..Default::default()
@@ -92,9 +91,6 @@ impl ReplCommand {
         unsafe {
             (*vm).preload = core::mem::take(&mut ctx.preloads);
             (*vm).argv = core::mem::take(&mut ctx.passthrough);
-            // `vm.dns_result_order` is a `u8` (see VirtualMachine.rs); set
-            // post-init like run_command.rs since InitOptions doesn't carry it.
-            (*vm).dns_result_order = dns_order as u8;
         }
         // There is no per-VM allocator handle; the `vm.arena` assignment itself happens below
         // ReplRunner construction to avoid a move-after-borrow.

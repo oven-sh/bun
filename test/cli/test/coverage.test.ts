@@ -715,7 +715,22 @@ export function run(flag: boolean) {
 `,
   };
 
-  async function runWithBail(dir: string) {
+  const failingTest = `
+import { test, expect } from "bun:test";
+import { run } from "./mod";
+
+test("runs", () => {
+  expect(run(false)).toBe(1);
+});
+test("fails", () => {
+  throw new Error("stop here");
+});
+test("never runs", () => {
+  expect(run(true)).toBe(1);
+});
+`;
+
+  async function runWithBail(dir: string, ...extraArgs: string[]) {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -725,6 +740,7 @@ export function run(flag: boolean) {
         "--coverage-reporter=text",
         "--coverage-reporter=lcov",
         "--coverage-dir=cov",
+        ...extraArgs,
       ],
       cwd: dir,
       env: {
@@ -742,23 +758,7 @@ export function run(flag: boolean) {
   }
 
   test("a failing test still reports coverage for what ran", async () => {
-    using dir = tempDir("cov-bail", {
-      ...files,
-      "bail.test.ts": `
-import { test, expect } from "bun:test";
-import { run } from "./mod";
-
-test("runs", () => {
-  expect(run(false)).toBe(1);
-});
-test("fails", () => {
-  throw new Error("stop here");
-});
-test("never runs", () => {
-  expect(run(true)).toBe(1);
-});
-`,
-    });
+    using dir = tempDir("cov-bail", { ...files, "bail.test.ts": failingTest });
 
     const { stderr, exitCode } = await runWithBail(String(dir));
 
@@ -856,6 +856,18 @@ throw new Error("stop here");
       end_of_record
       "
     `);
+    expect(exitCode).toBe(1);
+  });
+
+  test("an lcov write failure does not stop the other reports", async () => {
+    // A plain file where --coverage-dir points makes the lcov write fail.
+    using dir = tempDir("cov-bail", { ...files, "bail.test.ts": failingTest, cov: "not a directory" });
+
+    const { stderr, exitCode } = await runWithBail(String(dir), "--reporter=junit", "--reporter-outfile=junit.xml");
+
+    expect(stderr).toContain("Failed to write lcov.info");
+    expect(stderr).toContain("Bailed out after 1 failure");
+    expect(readFileSync(path.join(String(dir), "junit.xml"), "utf-8")).toContain('<testcase name="fails"');
     expect(exitCode).toBe(1);
   });
 });

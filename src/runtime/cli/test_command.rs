@@ -1453,7 +1453,10 @@ impl CommandLineReporter {
         Output::flush();
         let mut coverage_options: CodeCoverageOptions = self.jest.test_options.coverage.clone();
         if coverage_options.enabled {
-            self.generate_code_coverage(vm, &mut coverage_options);
+            // The process exits 1 either way; the other reports must still be written.
+            if let Err(err) = self.generate_code_coverage(vm, &mut coverage_options) {
+                Output::err(err, "Failed to write lcov.info", ());
+            }
         }
         self.print_summary();
         pretty_error!(
@@ -1497,24 +1500,22 @@ impl CommandLineReporter {
         }
     }
 
+    /// Errors only from writing `lcov.info`; the caller decides whether that ends the run.
     pub(crate) fn generate_code_coverage(
         &mut self,
         vm: &VirtualMachine,
         opts: &mut CodeCoverageOptions,
-    ) {
+    ) -> bun_sys::Result<()> {
         let _trace = bun::perf::trace("TestCommand.printCodeCoverage");
         if ByteRangeMapping::map().is_none_or(|m| {
             // SAFETY: see `for_each_coverage_report`.
             unsafe { m.as_ref() }.is_empty()
         }) {
-            return;
+            return Ok(());
         }
         let mut reports: Vec<CodeCoverageReport<'static>> = Vec::new();
         Self::for_each_coverage_report(vm, opts, |report| reports.push(report.into_owned()));
-        if let Err(err) = print_coverage_reports(opts, &reports) {
-            Output::err(err, "Failed to write lcov.info", ());
-            Global::exit(1);
-        }
+        print_coverage_reports(opts, &reports)
     }
 }
 
@@ -2496,7 +2497,10 @@ impl TestCommand {
             pretty_error!("\n");
 
             if coverage_options.enabled && !ran_parallel {
-                reporter.generate_code_coverage(vm, &mut coverage_options);
+                if let Err(err) = reporter.generate_code_coverage(vm, &mut coverage_options) {
+                    Output::err(err, "Failed to write lcov.info", ());
+                    Global::exit(1);
+                }
             }
 
             // `Summary` is `Copy`; take a value snapshot so the `&mut` from

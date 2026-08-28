@@ -1367,8 +1367,7 @@ impl MySQLConnection {
                     error_message: Data::create(err.error_message.slice())
                         .map_err(|_| AnyMySQLError::OutOfMemory)?,
                 };
-                // The request still holds its own ref, so dropping the map's RefPtr
-                // cannot free the statement.
+                // The request still holds another ref; this cannot drop to 0.
                 let stmt_ptr: *const MySQLStatement = core::ptr::from_ref(&*statement);
                 let name = &statement.signature.name[..];
                 if self.statements.get(name).is_some_and(|p| {

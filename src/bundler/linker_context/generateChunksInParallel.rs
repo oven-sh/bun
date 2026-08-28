@@ -1407,7 +1407,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 }
 
 /// `--compile --bytecode`: the executable also carries ahead-of-time bytecode for the internal modules (node:fs, …) the
-/// bundle imports and everything those require while loading, so their first `require` decodes instead of parsing. One
+/// bundle imports and everything those can require (while loading or lazily later), so their first `require` decodes
+/// instead of parsing. One
 /// `OutputKind::BuiltinBytecode` per module; StandaloneModuleGraph::to_bytes lays them out and InternalModuleRegistry
 /// picks them up by id. The modules, their ids and (when compiling for another platform) their sources come from the
 /// builtins section of the executable the bundle is going into.

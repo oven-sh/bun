@@ -5,10 +5,23 @@ export var __using = (stack, value, async) => {
   if (value != null) {
     if (typeof value !== "object" && typeof value !== "function")
       throw TypeError('Object expected to be assigned to "using" declaration');
-    let dispose;
+    let dispose, inner;
     if (async) dispose = value[Symbol.asyncDispose];
-    if (dispose === void 0) dispose = value[Symbol.dispose];
+    if (dispose === void 0) {
+      dispose = value[Symbol.dispose];
+      if (async) inner = dispose;
+    }
     if (typeof dispose !== "function") throw TypeError("Object not disposable");
+    // An "await using" that falls back to Symbol.dispose must not await the
+    // disposer's return value, and a synchronous throw must become a rejection.
+    if (inner)
+      dispose = function () {
+        try {
+          inner.call(this);
+        } catch (e) {
+          return Promise.reject(e);
+        }
+      };
     stack.push([async, dispose, value]);
   } else if (async) {
     stack.push([async]);

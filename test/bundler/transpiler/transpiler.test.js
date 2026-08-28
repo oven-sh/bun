@@ -1733,6 +1733,23 @@ export default class {
       exp("declare let x: number; var y", "var y");
       exp("declare var x: number; var y", "var y");
     });
+
+    it("'using of' in a for-loop head", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      // `using` is the loop variable unless `of` is a binding with an initializer or a type annotation.
+      exp("for (using of xs) ;", "for (using of xs)\n  ;\n");
+      exp("for (using of = x;;) break", "for (using of = x;; )\n  break;\n");
+      exp("for (using of: T = x;;) break", "for (using of = x;; )\n  break;\n");
+      exp("for (using c: T = x;;) break", "for (using c = x;; )\n  break;\n");
+      err(
+        "switch (k) { case 0: using a: T = r(); break; }",
+        'Cannot use a "using" declaration directly inside a switch case',
+      );
+      err("for (using b: T in o) ;", '"using" declarations are not allowed here');
+      err("for (using c: T;;) break", 'The declaration "c" must be initialized');
+    });
   });
 
   describe("generated closures", () => {
@@ -4737,6 +4754,70 @@ console.log("boop");
     expectBunPrinted_("await using instanceof o", "await using instanceof o");
   });
 
+  it("'using' followed by 'of' in a for-loop head is the identifier 'using'", () => {
+    expectPrintedNoTrim("for (using of x) console.log(using)", "for (using of x)\n  console.log(using);\n");
+    expectPrintedNoTrim("for (using of of) ;", "for (using of of)\n  ;\n");
+    // The iterable is the element access `of[2]`.
+    expectPrintedNoTrim("for (using of of [0, 1, 2]) ;", "for (using of of[0, 1, 2])\n  ;\n");
+    expectPrintedNoTrim("for (using\nof x) ;", "for (using of x)\n  ;\n");
+    expectPrintedNoTrim("for (using in x) ;", "for (using in x)\n  ;\n");
+    expectPrintedNoTrim(
+      "async function g(s) { for await (using of s) console.log(using) }",
+      "async function g(s) {\n  for await (using of s)\n    console.log(using);\n}\n",
+    );
+  });
+
+  it("using declarations in for-loop heads", () => {
+    // JavaScriptCore runs `using` natively, so target=bun prints the declaration as is.
+    const bun = new Bun.Transpiler({ loader: "js", target: "bun" });
+    const printed = code => bun.transformSync(code).trim();
+
+    // A classic for loop may declare `using` / `await using`, but only with an initializer.
+    expect(printed("for (using c = x;;) break")).toBe("for (using c = x;; )\n  break;");
+    expect(printed("async function h() { for (await using d = y;;) break }")).toBe(
+      "async function h() {\n  for (await using d = y;; )\n    break;\n}",
+    );
+    // `using of = x` binds `of`: 'of' followed by '=' is not the for-of keyword.
+    expect(printed("for (using of = x;;) break")).toBe("for (using of = x;; )\n  break;");
+    expect(printed("async function h() { for (await using of = y;;) break }")).toBe(
+      "async function h() {\n  for (await using of = y;; )\n    break;\n}",
+    );
+    // `await using` has no lookahead restriction on `of`.
+    expect(printed("async function h() { for (await using of of xs) ; }")).toBe(
+      "async function h() {\n  for (await using of of xs)\n    ;\n}",
+    );
+  });
+
+  it("rejects using declarations in positions the grammar forbids", () => {
+    const firstParseError = code => {
+      try {
+        parsed(code, false, false);
+      } catch (e) {
+        return (e instanceof AggregateError ? e.errors[0] : e).message;
+      }
+      throw new Error("Expected parse error for code\n\t" + code);
+    };
+    const inSwitch = 'Cannot use a "using" declaration directly inside a switch case';
+    expectParseError("switch (k) { case 0: using a = r(); break; }", inSwitch);
+    expectParseError("switch (k) { default: using a = r(); break; }", inSwitch);
+    expectParseError("async function f() { switch (k) { case 0: await using a = r(); break; } }", inSwitch);
+    expectParseError("for (using b in o) ;", '"using" declarations are not allowed here');
+    expectParseError(
+      "async function h() { for (await using e in o) ; }",
+      '"await using" declarations are not allowed here',
+    );
+    expectParseError("for (using c;;) break", 'The declaration "c" must be initialized');
+    expectParseError("for (using c = x, d;;) break", 'The declaration "d" must be initialized');
+    expectParseError("async function h() { for (await using d;;) break }", 'The declaration "d" must be initialized');
+    // `using of of xs` is the identifier `using`, the `of` keyword, the iterable `of`, then `xs`.
+    expect(firstParseError("for (using of of xs) ;")).toBe('Expected ")" but found "xs"');
+    expect(firstParseError("for (using of of of) ;")).toBe('Expected ")" but found "of"');
+    // `await using of o` binds `of`, which then lacks an initializer.
+    expect(firstParseError("async function h() { for (await using of o) ; }")).toBe(
+      'The declaration "of" must be initialized',
+    );
+  });
+
   it("using top level", () => {
     expectPrintedSnapshot(`
       using a = b;
@@ -5252,21 +5333,32 @@ describe("export of a block-scoped function declaration", () => {
 });
 
 describe("using declarations in switch statements", () => {
-  const reparse = out => new Bun.Transpiler({ loader: "js" }).transformSync(out);
+  const message = 'Cannot use a "using" declaration directly inside a switch case';
+  const parseErrors = (transpiler, code) => {
+    try {
+      transpiler.transformSync(code);
+    } catch (e) {
+      return e instanceof AggregateError ? e.errors.map(error => error.message) : [e.message];
+    }
+    throw new Error("Expected parse error for code\n\t" + code);
+  };
 
-  it("lowers by wrapping the entire switch in a single try/finally", () => {
+  it("is a syntax error directly inside a case or default clause", () => {
     const input =
       "switch (dom()) {\n case 0:\n using d23 = { [Se]() {} };\n default:\n using d24 = { [ose]() {} };\n }";
 
-    for (const minifyWhitespace of [false, true]) {
-      const out = new Bun.Transpiler({ loader: "jsx", target: "node", minifyWhitespace }).transformSync(input);
-      expect(() => reparse(out)).not.toThrow();
-      expect(out).toMatch(/try\s*\{\s*switch\s*\(dom\(\)\)/);
-      expect(out.match(/finally/g)).toHaveLength(1);
+    for (const target of ["node", "bun"]) {
+      for (const minifyWhitespace of [false, true]) {
+        const transpiler = new Bun.Transpiler({ loader: "jsx", target, minifyWhitespace });
+        expect(parseErrors(transpiler, input)).toEqual([message, message]);
+      }
     }
+    expect(parseErrors(new Bun.Transpiler({ loader: "js" }), "switch (k) { default: using a = r(); }")).toEqual([
+      message,
+    ]);
   });
 
-  it("lowers `await using` in switch cases the same way", () => {
+  it("is a syntax error for `await using` directly inside a case clause", () => {
     const input = `async function f(x) {
       switch (x()) {
         case 0:
@@ -5275,40 +5367,10 @@ describe("using declarations in switch statements", () => {
           await using b = z();
       }
     }`;
-    const out = new Bun.Transpiler({ loader: "js", target: "node" }).transformSync(input);
-    expect(() => reparse(out)).not.toThrow();
-    expect(out).toMatch(/try\s*\{\s*switch\s*\(x\(\)\)/);
-    expect(out.match(/finally/g)).toHaveLength(1);
+    expect(parseErrors(new Bun.Transpiler({ loader: "js", target: "node" }), input)).toEqual([message, message]);
   });
 
-  it("keeps generated temp refs unique across sibling switches in the same scope", () => {
-    const input = `
-      switch (a()) { case 0: using x = { [s]() {} }; }
-      switch (b()) { case 1: using y = { [t]() {} }; }
-    `;
-    const out = new Bun.Transpiler({ loader: "js", target: "node", minifyWhitespace: true }).transformSync(input);
-    expect(() => reparse(out)).not.toThrow();
-    expect(out.match(/finally/g)).toHaveLength(2);
-  });
-
-  it("keeps case bindings const when combined with top-level using declarations", () => {
-    const input = `
-      using top = r();
-      switch (a()) {
-        case 0:
-          using x = { [s]() {} };
-        default:
-          using y = { [t]() {} };
-      }
-    `;
-    const out = new Bun.Transpiler({ loader: "js", target: "node", minifyWhitespace: true }).transformSync(input);
-    expect(() => reparse(out)).not.toThrow();
-    expect(out).toMatch(/const x\s*=\s*__using/);
-    expect(out).toMatch(/const y\s*=\s*__using/);
-    expect(out).not.toMatch(/var [xy]\b/);
-  });
-
-  it("disposes at switch exit in reverse order and keeps bindings visible across cases", async () => {
+  it("lowers each block-wrapped case body on its own and disposes at block exit", async () => {
     const source = `
       const order = [];
       function resource(name) {
@@ -5316,12 +5378,14 @@ describe("using declarations in switch statements", () => {
       }
       function run(value) {
         switch (value) {
-          case 0:
+          case 0: {
             using a = resource("a");
             order.push("case 0");
-          default:
+          }
+          default: {
             using b = resource("b");
-            order.push("default sees a: " + (a !== undefined));
+            order.push("default");
+          }
         }
         order.push("after switch");
       }
@@ -5331,6 +5395,8 @@ describe("using declarations in switch statements", () => {
 
     const lowered = new Bun.Transpiler({ loader: "js", target: "node" }).transformSync(source);
     expect(lowered).toContain("__using");
+    expect(lowered.match(/finally/g)).toHaveLength(2);
+    expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(lowered)).not.toThrow();
 
     using dir = tempDir("using-switch-lowering", { "lowered.mjs": lowered });
     await using proc = Bun.spawn({
@@ -5342,7 +5408,7 @@ describe("using declarations in switch statements", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual(["case 0", "default sees a: true", "dispose b", "dispose a", "after switch"]);
+    expect(JSON.parse(stdout)).toEqual(["case 0", "dispose a", "default", "dispose b", "after switch"]);
     expect(exitCode).toBe(0);
   });
 });

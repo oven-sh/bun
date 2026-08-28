@@ -3450,6 +3450,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         );
     }
 
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn forbid_using_in_switch(&mut self, loc: bun_ast::Loc) {
+        let r = js_lexer::range_of_identifier(self.source, loc);
+        self.log().add_range_error(
+            Some(self.source),
+            r,
+            b"Cannot use a \"using\" declaration directly inside a switch case",
+        );
+    }
+
     /// If we attempt to parse TypeScript syntax outside of a TypeScript file
     /// make it a compile error
     #[inline]

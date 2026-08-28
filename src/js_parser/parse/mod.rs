@@ -828,8 +828,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             p.lexer.next()?;
 
-            if p.lexer.token == T::TIdentifier && !p.lexer.has_newline_before {
-                if opts.lexical_decl != LexicalDecl::AllowAll {
+            // In a for-loop head, "using of" is the identifier "using" followed
+            // by the "of" keyword ("for (using of xs)"), unless "of" is itself a
+            // binding with an initializer ("for (using of = x;;)", or
+            // "for (using of: T = x;;)" in TypeScript).
+            if p.lexer.token == T::TIdentifier
+                && !p.lexer.has_newline_before
+                && (!opts.is_for_loop_init
+                    || p.lexer.raw() != b"of"
+                    || p.next_token_matches(|p| {
+                        p.lexer.token == T::TEquals
+                            || (Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon)
+                    }))
+            {
+                if opts.is_case_body {
+                    p.forbid_using_in_switch(token_range.loc);
+                } else if opts.lexical_decl != LexicalDecl::AllowAll {
                     p.forbid_lexical_decl(token_range.loc);
                 }
                 // p.markSyntaxFeature(.using, token_range.loc);
@@ -888,7 +902,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.next()?;
                     if p.lexer.token == T::TIdentifier && !p.lexer.has_newline_before {
                         // It's an "await using" declaration if we get here
-                        if opts.lexical_decl != LexicalDecl::AllowAll {
+                        if opts.is_case_body {
+                            p.forbid_using_in_switch(using_range.loc);
+                        } else if opts.lexical_decl != LexicalDecl::AllowAll {
                             p.forbid_lexical_decl(using_range.loc);
                         }
                         // p.markSyntaxFeature(.using, using_range.loc);

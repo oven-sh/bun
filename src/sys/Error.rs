@@ -21,6 +21,9 @@ const RETRY_ERRNO: Int = E::EAGAIN as Int;
 
 const TODO_ERRNO: Int = Int::MAX - 1;
 
+/// Printed in place of the errno tag when `errno` decodes to no `SystemErrno`.
+const UNKNOWN_TAG_NAME: &[u8] = b"UNKNOWN";
+
 pub(crate) type Int = u16;
 
 #[derive(Clone, Debug)]
@@ -318,8 +321,7 @@ impl Error {
 
     pub fn name(&self) -> &'static [u8] {
         self.get_error_code_tag_name()
-            .map(|(n, _)| n.as_bytes())
-            .unwrap_or(b"UNKNOWN")
+            .map_or(UNKNOWN_TAG_NAME, |(n, _)| n.as_bytes())
     }
 
     pub fn to_zig_err(&self) -> SystemErrno {
@@ -520,9 +522,16 @@ impl bun_core::output::ErrName for Error {
         Error::name(self)
     }
     fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo> {
+        // Resolve once and hand over the `SystemErrno` discriminant: with
+        // `from_libuv` the stored `errno` is a raw `UV_E*` magnitude, which the
+        // coreutils label table does not know.
+        let (tag_name, errno) = match self.get_error_code_tag_name() {
+            Some((name, e)) => (name.as_bytes(), e as i32),
+            None => (UNKNOWN_TAG_NAME, i32::from(self.errno)),
+        };
         Some(bun_core::output::SysErrInfo {
-            tag_name: Error::name(self),
-            errno: i32::from(self.errno),
+            tag_name,
+            errno,
             syscall: <&'static str>::from(self.syscall),
         })
     }

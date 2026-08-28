@@ -2451,6 +2451,8 @@ pub fn err_generic(fmt: &str, args: impl FmtTuple) {
 #[derive(Clone, Copy)]
 pub struct SysErrInfo {
     pub tag_name: &'static [u8],
+    /// The resolved `SystemErrno` discriminant that `tag_name` was derived
+    /// from, so `coreutils_error_map::get` finds the label for it.
     pub errno: i32,
     pub syscall: &'static str,
 }

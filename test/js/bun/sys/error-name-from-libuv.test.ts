@@ -8,7 +8,34 @@
 
 import { sysErrorNameFromLibuv } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
+
+// Runs `Output.err(sys_error, "sysErrorOutputErr", ())` in a child bun and
+// returns the stderr line it printed.
+async function outputErr(errno: number, fromLibuv: boolean): Promise<string> {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `require("bun:internal-for-testing").sysErrorOutputErr(${errno}, ${fromLibuv})`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(0);
+  return stderr;
+}
+
+test.concurrent("Output.err prints the errno label before the message", async () => {
+  expect(await outputErr(2, false)).toBe("ENOENT: No such file or directory: sysErrorOutputErr (open)\n");
+});
+
+// The label lookup must use the translated errno. With from_libuv=true the
+// stored errno is the negated UV code, which names `UV_ENOENT` in the
+// SystemErrno table, and that has no coreutils label.
+test.concurrent.skipIf(!isWindows)("Output.err prints the errno label for a from_libuv error", async () => {
+  expect(await outputErr(4058, true)).toBe("ENOENT: No such file or directory: sysErrorOutputErr (open)\n"); // -UV_ENOENT
+  expect(await outputErr(4092, true)).toBe("EACCES: Permission denied: sysErrorOutputErr (open)\n"); // -UV_EACCES
+});
 
 test.skipIf(!isWindows)("Error.name() with from_libuv=true does not overflow", () => {
   // errno values as stored by node_fs.zig: @intCast(-rc) where rc is the

@@ -1,6 +1,6 @@
 import { $ as Shell, fileURLToPath } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, makeTree } from "harness";
+import { bunEnv, bunExe, isDebug, isOhos, makeTree } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -405,7 +405,12 @@ describe("@types/bun integration test", () => {
 
   // Runs on debug builds too, same as the Bun.mmap block above.
   describe("TextDecoder", () => {
-    test("accepts the encoding labels the runtime supports", async () => {
+    // OHOS: the fixture's typescript is the native preview (@typescript/
+    // typescript-linux-arm64) whose ELF launcher has no OHOS codesign
+    // section, so exec fails EACCES and the launcher's error leaks to
+    // stderr. The encoding labels are still exercised by
+    // "the fixture label table matches the runtime".
+    test.skipIf(isOhos)("accepts the encoding labels the runtime supports", async () => {
       const checkDir = join(TEMP_DIR, "text-decoder-encoding-check");
       const tsconfig = structuredClone(sourceTsconfig);
       tsconfig.include = ["text-decoder-encodings.ts"];

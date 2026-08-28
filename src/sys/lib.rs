@@ -2954,8 +2954,11 @@ mod posix_impl {
             // Plain chmod(2) follows symlinks, which would let a bin-link
             // chmod reach the file a package's symlinked bin target points at
             // (symlink-path-traversal). fchmodat(AT_SYMLINK_NOFOLLOW) either
-            // sets the link's own mode or fails without touching the target —
-            // both are safe. OHOS's musl provides fchmodat.
+            // sets the link's own mode or fails without touching the target.
+            // The sandbox's fchmodat fails even for regular files, so fall
+            // back to lstat: chmod regular files normally (safe — no
+            // symlink traversal), skip symlinks entirely (the traversal
+            // defense).
             const AT_SYMLINK_NOFOLLOW: libc::c_int = 0x100;
             let rc = unsafe {
                 libc::fchmodat(
@@ -2966,9 +2969,14 @@ mod posix_impl {
                 )
             };
             if rc < 0 {
-                // EOPNOTSUPP/ENOSYS: no nofollow chmod on this kernel — skip
-                // rather than fall through to a target-following chmod.
-                return Ok(());
+                let mut st: libc::stat = unsafe { core::mem::zeroed() };
+                if unsafe { libc::lstat(path.as_ptr(), &mut st) } == 0
+                    && (st.st_mode & libc::S_IFMT) == libc::S_IFLNK
+                {
+                    // Symlink: do not follow (the traversal defense).
+                    return Ok(());
+                }
+                return chmod(path, mode);
             }
             Ok(())
         }

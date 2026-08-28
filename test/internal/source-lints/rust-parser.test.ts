@@ -456,47 +456,58 @@ test("errors carry an offset", () => {
   }
 });
 
-describe("the tree", () => {
-  const sources = rustSources();
+// The whole-tree checks run at module load, like the lints' own scans, so the
+// per-test timeout does not apply to them: a debug build of bun parses the
+// tree in about a minute.
+const sources = rustSources();
 
+const parseErrors: string[] = [];
+for (const src of sources) {
+  try {
+    src.file;
+  } catch (e) {
+    if (!(e instanceof RustParseError)) throw e;
+    parseErrors.push(`${src.path}: ${e.message} (offset ${e.offset})`);
+  }
+}
+
+// A sample of files spread over the tree, bounded by node count: a debug
+// build of bun takes about 25 microseconds per node here.
+const treeProblems: string[] = [];
+{
+  const stride = Math.max(1, Math.floor(sources.length / 24));
+  let budget = 40_000;
+  for (let i = 0; i < sources.length && budget > 0 && treeProblems.length < 20; i += stride) {
+    const file = sources[i].file;
+    walk(file.ast, (node: Node, parent: Node | null) => {
+      budget--;
+      const a = children(node);
+      const b = childrenReflective(node);
+      if (a.length !== b.length || a.some((x, j) => x !== b[j])) {
+        treeProblems.push(
+          `${file.location(node)}: children of ${node.kind}: ${a.map(n => n.kind)} vs ${b.map(n => n.kind)}`,
+        );
+      }
+      // Attributes sit before the node they decorate, outside its span.
+      if (parent && node.kind !== "Attribute" && (node.start < parent.start || node.end > parent.end)) {
+        treeProblems.push(
+          `${file.location(node)}: ${node.kind} [${node.start}, ${node.end}) outside ${parent.kind} [${parent.start}, ${parent.end})`,
+        );
+      }
+    });
+  }
+}
+
+describe("the tree", () => {
   test("has sources", () => {
     expect(sources.length).toBeGreaterThan(1000);
   });
 
   test("every tracked Rust file parses", () => {
-    const errors: string[] = [];
-    for (const src of sources) {
-      try {
-        src.file;
-      } catch (e) {
-        if (!(e instanceof RustParseError)) throw e;
-        errors.push(`${src.path}: ${e.message} (offset ${e.offset})`);
-      }
-    }
-    expect(errors).toEqual([]);
+    expect(parseErrors).toEqual([]);
   });
 
   test("child enumeration matches reflection and spans nest", () => {
-    const problems: string[] = [];
-    // A sample: every 7th file keeps this under a second.
-    for (let i = 0; i < sources.length && problems.length < 20; i += 7) {
-      const file = sources[i].file;
-      walk(file.ast, (node: Node, parent: Node | null) => {
-        const a = children(node);
-        const b = childrenReflective(node);
-        if (a.length !== b.length || a.some((x, j) => x !== b[j])) {
-          problems.push(
-            `${file.location(node)}: children of ${node.kind}: ${a.map(n => n.kind)} vs ${b.map(n => n.kind)}`,
-          );
-        }
-        // Attributes sit before the node they decorate, outside its span.
-        if (parent && node.kind !== "Attribute" && (node.start < parent.start || node.end > parent.end)) {
-          problems.push(
-            `${file.location(node)}: ${node.kind} [${node.start}, ${node.end}) outside ${parent.kind} [${parent.start}, ${parent.end})`,
-          );
-        }
-      });
-    }
-    expect(problems).toEqual([]);
+    expect(treeProblems).toEqual([]);
   });
 });

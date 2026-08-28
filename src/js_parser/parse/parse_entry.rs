@@ -69,6 +69,11 @@ pub struct Parser<'a> {
 pub struct Options<'a> {
     pub jsx: options::JSX::Pragma,
     pub ts: bool,
+    /// Set for the ".mts" and ".cts" extensions (TypeScript 4.5). In those files an
+    /// expression that starts with "<" and that a ".tsx" file would read as a JSX
+    /// element is a syntax error: the "<T>x" cast and the "<T>() => {}" arrow
+    /// function. "<T,>() => {}" and "<T extends U>() => {}" stay allowed.
+    pub ts_no_ambiguous_less_than: bool,
     pub keep_names: bool,
     pub ignore_dce_annotations: bool,
     pub preserve_unused_imports_ts: bool,
@@ -124,6 +129,7 @@ impl<'a> Default for Options<'a> {
         Options {
             jsx: options::JSX::Pragma::default(),
             ts: false,
+            ts_no_ambiguous_less_than: false,
             keep_names: true,
             ignore_dce_annotations: false,
             preserve_unused_imports_ts: false,
@@ -174,6 +180,7 @@ impl<'a> Options<'a> {
         Options {
             jsx: self.jsx.clone(),
             ts: self.ts,
+            ts_no_ambiguous_less_than: self.ts_no_ambiguous_less_than,
             keep_names: self.keep_names,
             ignore_dce_annotations: self.ignore_dce_annotations,
             preserve_unused_imports_ts: self.preserve_unused_imports_ts,
@@ -256,6 +263,10 @@ impl<'a> Options<'a> {
             hasher.update(b"NO_TS");
         }
 
+        if self.ts_no_ambiguous_less_than {
+            hasher.update(b"TS_NO_AMBIGUOUS_LESS_THAN");
+        }
+
         if self.ignore_dce_annotations {
             hasher.update(b"no_dce");
         }
@@ -278,6 +289,7 @@ impl<'a> Options<'a> {
         // (see field comment); caller overwrites before use.
         let mut opts = Options {
             ts: loader.is_typescript(),
+            ts_no_ambiguous_less_than: false,
             jsx,
             keep_names: true,
             ignore_dce_annotations: false,

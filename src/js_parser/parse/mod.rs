@@ -242,8 +242,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 has_decorators = has_decorators || opts.has_argument_decorators;
             } else {
-                // The property was dropped (e.g. a TypeScript overload signature or
-                // abstract method), which drops its decorators and computed key too.
+                // The property was dropped (e.g. a TypeScript overload signature,
+                // "declare" field or abstract method), which drops its decorators and
+                // computed key too. Decorators on such a member are an error in
+                // TypeScript, except inside a "declare class" body which is erased.
+                if !class_opts.is_type_script_declare && opts.ts_decorators.len() > 0 {
+                    p.log().add_range_error(
+                        Some(p.source),
+                        bun_ast::Range {
+                            loc: first_decorator_loc,
+                            len: 1,
+                        },
+                        b"Decorators are not valid here",
+                    );
+                }
                 // Discard any scopes recorded while parsing them or the visit pass
                 // will hit a scope order mismatch.
                 p.discard_scopes_up_to(property_scope_index);

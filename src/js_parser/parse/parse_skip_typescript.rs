@@ -108,6 +108,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             if self.lexer.token != T::TIdentifier {
                                 self.lexer.unexpected()?;
+                                return Err(crate::Error::SyntaxError);
                             }
 
                             found_identifier = true;
@@ -126,6 +127,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 self.lexer.next()?;
                             } else {
                                 self.lexer.unexpected()?;
+                                return Err(crate::Error::SyntaxError);
                             }
                         }
                     }
@@ -145,8 +147,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.lexer.expect(T::TCloseBrace)?;
             }
             _ => {
-                // try p.lexer.unexpected();
-                return Err(crate::Error::Backtrack);
+                self.lexer.unexpected()?;
+                return Err(crate::Error::SyntaxError);
             }
         }
         Ok(())
@@ -769,6 +771,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     {
                         if self.lexer.token != T::TFunction {
                             self.lexer.unexpected()?;
+                            return Err(crate::Error::SyntaxError);
                         }
                         self.lexer.next()?;
 
@@ -779,7 +782,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         return Ok(());
                     }
 
+                    // `unexpected` only records the error. Fail here too, so a type
+                    // argument list such as "Array<>" or "Array<number,>" that is tried
+                    // with backtracking is rejected instead of accepted.
                     self.lexer.unexpected()?;
+                    return Err(crate::Error::SyntaxError);
                 }
             }
             break;

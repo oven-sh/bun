@@ -47,15 +47,25 @@ unsafe extern "C" {
     fn DNSServiceRefSockFD(sd_ref: DNSServiceRef) -> c_int;
     fn DNSServiceProcessResult(sd_ref: DNSServiceRef) -> DNSServiceErrorType;
     fn DNSServiceRefDeallocate(sd_ref: DNSServiceRef);
-    fn DNSServiceGetAddrInfo(
+    // SPI (macOS 12+): DNSServiceGetAddrInfo plus the attribute libinfo's getaddrinfo passes.
+    fn DNSServiceGetAddrInfoEx(
         sd_ref: *mut DNSServiceRef,
         flags: DNSServiceFlags,
         interface_index: u32,
         protocol: DNSServiceProtocol,
         hostname: *const c_char,
+        attr: *const DNSServiceAttribute,
         callback: GetAddrInfoReply,
         context: *mut c_void,
     ) -> DNSServiceErrorType;
+    /// Lets mDNSResponder fail a query over to other resolvers (scoped/supplemental), as getaddrinfo does.
+    #[allow(non_upper_case_globals)]
+    static kDNSServiceAttrAllowFailover: DNSServiceAttribute;
+}
+
+#[repr(C)]
+pub(crate) struct DNSServiceAttribute {
+    _opaque: [u8; 0],
 }
 
 /// Map a DNSServiceErrorType to the EAI_* code the existing error paths expect.
@@ -437,18 +447,19 @@ impl SharedConnection {
         let mut sub: DNSServiceRef = self.main_ref;
         // SAFETY: FFI; `hostname` is NUL-terminated (copied by dns_sd); `context` is only stored.
         let err = unsafe {
-            DNSServiceGetAddrInfo(
+            DNSServiceGetAddrInfoEx(
                 &raw mut sub,
                 FLAGS_SHARE_CONNECTION | FLAGS_TIMEOUT | FLAGS_RETURN_INTERMEDIATES | suppress,
                 0,
                 protocol,
                 hostname.as_ptr().cast::<c_char>(),
+                &raw const kDNSServiceAttrAllowFailover,
                 callback,
                 context,
             )
         };
         if err != ERR_NO_ERROR {
-            bun_output::scoped_log!(dns, "DNSServiceGetAddrInfo failed: {}", err);
+            bun_output::scoped_log!(dns, "DNSServiceGetAddrInfoEx failed: {}", err);
             return None;
         }
         Some(sub)

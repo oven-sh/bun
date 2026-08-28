@@ -177,7 +177,6 @@ pub(crate) fn __bun_jsc_generate_cached_bytecode(
     depth: u32,
     external_strings: Option<NonNull<EncoderStringTable>>,
 ) -> Option<Box<[u8]>> {
-    crate::virtual_machine::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.set(true);
     crate::initialize(crate::InitializeOptions::default());
     let (bytes, handle) =
         CachedBytecode::generate(format, source, source_provider_url, depth, external_strings)?;
@@ -216,7 +215,6 @@ pub(crate) fn __bun_jsc_encoder_string_table_slot(
 
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_jsc_encoder_string_table_new() -> NonNull<EncoderStringTable> {
-    crate::virtual_machine::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.set(true);
     crate::initialize(crate::InitializeOptions::default());
     EncoderStringTable::new()
 }
@@ -257,7 +255,6 @@ pub(crate) fn __bun_jsc_generate_internal_module_bytecode(
     depth: u32,
     external_strings: Option<NonNull<EncoderStringTable>>,
 ) -> Option<Box<[u8]>> {
-    crate::virtual_machine::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.set(true);
     crate::initialize(crate::InitializeOptions::default());
     let mut bytes: Option<NonNull<u8>> = None;
     let mut size: usize = 0;
@@ -287,7 +284,6 @@ pub(crate) fn __bun_jsc_generate_internal_module_bytecode_from_source(
     depth: u32,
     external_strings: Option<NonNull<EncoderStringTable>>,
 ) -> Option<Box<[u8]>> {
-    crate::virtual_machine::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.set(true);
     crate::initialize(crate::InitializeOptions::default());
     let mut bytes: Option<NonNull<u8>> = None;
     let mut size: usize = 0;

@@ -173,10 +173,14 @@ extern "C" void us_load_system_certificates_linux(STACK_OF(X509) **system_certs)
   // The distro's bundle is one file that several of these paths usually alias (Fedora/Amazon Linux symlink four of them
   // to the same tls-ca-bundle.pem, whose contents the hashed directory repeats again), so take the first bundle that
   // yields certificates — as OpenSSL's default verify paths and Node's --use-system-ca do — and only walk the
-  // directories when no bundle did.
+  // directories when no bundle did. The directories are distinct stores (Android: apex, system, user-added), not
+  // aliases, so all of them are read.
   size_t loaded = 0;
   for (const char** path = bundle_paths; *path != NULL && !loaded; path++) {
     loaded = load_certs_from_bundle(*path, *system_certs);
+  }
+  if (loaded) {
+    return;
   }
   
 #ifdef __ANDROID__
@@ -184,9 +188,8 @@ extern "C" void us_load_system_certificates_linux(STACK_OF(X509) **system_certs)
 #else
   const bool accept_hashed = false;
 #endif
-  for (const char** path = dir_paths; *path != NULL && !loaded; path++) {
+  for (const char** path = dir_paths; *path != NULL; path++) {
     load_certs_from_directory(*path, *system_certs, accept_hashed);
-    loaded = sk_X509_num(*system_certs);
   }
 }
 

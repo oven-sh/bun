@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import fs, { readdirSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isOhos, isWindows, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 // Whether `bun init` emits CLAUDE.md depends on a `claude` binary being on
@@ -315,7 +315,9 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
   // Every template declares `typescript: "^7"`, so the `bun install` that
   // `bun init` runs installs TypeScript 7. Typecheck and build with that
   // exact install. https://github.com/oven-sh/bun/issues/33050
-  test.each(["-y", "--react", "--react=tailwind", "--react=shadcn"])(
+  test.skipIf(isOhos).each(["-y", "--react", "--react=tailwind", "--react=shadcn"])(
+    // OHOS: the installed TypeScript 7 native launcher has no codesign
+    // section, so tsc cannot exec (EACCES leaked to stderr).
     "bun init %s installs TypeScript 7, typechecks, and builds",
     async flag => {
       await using temp = tempDir(`bun-init-ts7${flag.replace(/[^a-z]+/g, "-")}`, {});

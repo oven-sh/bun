@@ -483,20 +483,16 @@ impl LinkerContext<'_> {
                 stmts: stmts_eat1!(Stmt::allocate(arena, S::Return { value: Some(value) }, loc,)),
                 loc,
             };
-            let key = Expr::allocate(
-                arena,
-                // TODO: test emoji work as expected (relevant for WASM exports)
-                // SAFETY: `alias` borrows the worker arena which outlives the
-                // link pass; `E::String::data: &'static [u8]` is the arena
-                // erasure used throughout the AST.
-                E::String::init(unsafe { bun_ptr::detach_lifetime(alias) }),
-                loc,
-            );
-            properties.push(G::Property {
-                // An export named "__proto__" must not become the prototype of
-                // the "__export(exports, { ... })" object literal.
-                flags: E::own_key_property_flags(&key),
-                key: Some(key),
+            let mut property = G::Property {
+                key: Some(Expr::allocate(
+                    arena,
+                    // TODO: test emoji work as expected (relevant for WASM exports)
+                    // SAFETY: `alias` borrows the worker arena which outlives the
+                    // link pass; `E::String::data: &'static [u8]` is the arena
+                    // erasure used throughout the AST.
+                    E::String::init(unsafe { bun_ptr::detach_lifetime(alias) }),
+                    loc,
+                )),
                 value: Some(Expr::allocate(
                     arena,
                     E::Arrow {
@@ -507,7 +503,12 @@ impl LinkerContext<'_> {
                     loc,
                 )),
                 ..Default::default()
-            });
+            };
+            // An export named "__proto__" must not become the prototype of the
+            // "__export(exports, { ... })" object literal.
+            property.flags =
+                E::own_key_property_flags(property.key.as_ref().expect("infallible: prop has key"));
+            properties.push(property);
             ns_export_symbol_uses
                 .put_assume_capacity(exp_data.import_ref, SymbolUse { count_estimate: 1 });
 

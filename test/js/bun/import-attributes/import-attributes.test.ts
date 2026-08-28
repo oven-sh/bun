@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import * as path from "path";
 
@@ -411,6 +412,54 @@ describe.concurrent("with clause at runtime", () => {
     ).toEqual({ stdout: '1 string {"a":1}\n', stderr: "", exitCode: 0 });
   });
 
+  // Without the attribute, an unknown extension gets the "file" loader.
+  test("a sqlite re-export exposes both the default and db names", async () => {
+    const db = new Database(":memory:");
+    db.exec("create table messages (message text)");
+    db.exec("insert into messages values ('Hello, world!')");
+    expect(
+      await run({
+        "entry.js": `
+          import { db, sameDb } from "./reexport.js";
+          console.log(db.query("select message from messages").get().message, db === sameDb);
+        `,
+        "reexport.js": `export { default as db, db as sameDb } from "./app.unknownext" with { type: "sqlite" };`,
+        "app.unknownext": db.serialize(),
+      }),
+    ).toEqual({ stdout: "Hello, world! true\n", stderr: "", exitCode: 0 });
+  });
+
+  // `bun test --isolate` builds the module record from the transpiler's
+  // ModuleInfo instead of letting JSC re-parse the printed source.
+  test("re-exports carry the clause under bun test --isolate", async () => {
+    using dir = tempDir("import-attributes-isolate", {
+      "text.unknownext": "hello from data",
+      "json.unknownext": `{ "answer": 42 }`,
+      "reexport.ts": `
+        export { default as text } from "./text.unknownext" with { type: "text" };
+        export * as ns from "./text.unknownext" with { type: "text" };
+        export * from "./json.unknownext" with { type: "json" };
+      `,
+      "reexport.test.ts": `
+        import { expect, test } from "bun:test";
+        import { answer, ns, text } from "./reexport.ts";
+        test("re-exports honor the type attribute", () => {
+          expect([text, ns.default, answer]).toEqual(["hello from data", "hello from data", 42]);
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "reexport.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(" 1 pass");
+    expect(exitCode).toBe(0);
+  });
+
   test("a newline before `with` is allowed and `assert` still works", async () => {
     expect(
       await run({
@@ -451,6 +500,33 @@ describe.concurrent("with clause at runtime", () => {
     expect(stderr).toContain('Importing with a type attribute of "nope" is not supported');
     expect(stderr).toContain("ERR_IMPORT_ATTRIBUTE_UNSUPPORTED");
     expect(exitCode).toBe(1);
+  });
+
+  test("an unknown type rejects import() and require() with ERR_IMPORT_ATTRIBUTE_UNSUPPORTED", async () => {
+    expect(
+      await run({
+        "entry.js": `
+          import { createRequire } from "node:module";
+          const require = createRequire(import.meta.url);
+          for (const load of [
+            () => import("./data.json", { with: { type: "nope" } }),
+            () => require("./data.json", { type: "nope" }),
+          ]) {
+            try {
+              await load();
+              console.log("loaded");
+            } catch (err) {
+              console.log(err.constructor.name, err.code);
+            }
+          }
+        `,
+        "data.json": `{"a":1}`,
+      }),
+    ).toEqual({
+      stdout: "TypeError ERR_IMPORT_ATTRIBUTE_UNSUPPORTED\nTypeError ERR_IMPORT_ATTRIBUTE_UNSUPPORTED\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("type: bytes gives the file's bytes as a Uint8Array", async () => {

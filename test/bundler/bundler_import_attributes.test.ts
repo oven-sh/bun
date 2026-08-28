@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
 import { dirname, join } from "path";
 import { itBundled } from "./expectBundled";
@@ -137,6 +138,42 @@ describe("bundler", () => {
     });
   }
 
+  // The two importers are separate files, so neither parse order nor the
+  // resolver's dedup of one file's records decides the loader.
+  itBundled("import-attributes/same-path-different-type-across-modules", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        import { asText } from "./as-text.js";
+        import { asJson } from "./as-json.js";
+        console.log(JSON.stringify({ text: asText.trim(), json: asJson }));
+      `,
+      "/as-text.js": /* js */ `
+        import data from "./data.json" with { type: "text" };
+        export const asText = data;
+      `,
+      "/as-json.js": /* js */ `
+        import data from "./data.json";
+        export const asJson = data;
+      `,
+      "/data.json": `{"a":1}`,
+    },
+    run: { stdout: '{"text":"{\\"a\\":1}","json":{"a":1}}' },
+  });
+
+  // The entry point is registered by path alone. Importing it with an
+  // attribute is a second module, not a self-import.
+  itBundled("import-attributes/entry-point-imports-itself-as-text", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        import source from "./entry.js" with { type: "text" };
+        console.log(typeof source, source.includes('with { type: "text" }'));
+      `,
+    },
+    run: { stdout: "string true" },
+  });
+
   itBundled("import-attributes/same-path-different-type-dynamic", {
     target: "bun",
     files: {
@@ -218,6 +255,29 @@ describe("bundler", () => {
       "/data.json": `{"a":1}`,
     },
     run: { stdout: 'string {"a":1}' },
+  });
+
+  // `embed` is a non-type key the sqlite loader reads; a re-export carries it too.
+  itBundled("import-attributes/bundled-re-export-embedded-sqlite", {
+    target: "bun",
+    outfile: "",
+    outdir: "/out",
+    files: {
+      "/entry.js": /* js */ `
+        import { db } from "./db.js";
+        console.log(db.query("select message from messages").get().message);
+      `,
+      "/db.js": /* js */ `
+        export { default as db } from "./app.db" with { type: "sqlite", embed: "true" };
+      `,
+      "/app.db": (() => {
+        const db = new Database(":memory:");
+        db.exec("create table messages (message text)");
+        db.exec("insert into messages values ('Hello, world!')");
+        return db.serialize();
+      })(),
+    },
+    run: { stdout: "Hello, world!" },
   });
 
   // An unknown `type` is an error for a file the bundler loads, and is left

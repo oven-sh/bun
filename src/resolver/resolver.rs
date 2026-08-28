@@ -258,7 +258,7 @@ use crate::fs as Fs;
 use crate::fs::FilenameStoreAppender;
 use crate::node_fallbacks as NodeFallbackModules;
 use crate::package_json::{BrowserMap, ESModule, PackageJSON};
-use crate::tsconfig_json::TSConfigJSON;
+use crate::tsconfig_json::{TSConfigExtends, TSConfigJSON};
 
 pub use crate::data_url::DataURL;
 pub use crate::dir_info as DirInfo;
@@ -989,7 +989,7 @@ impl<'a> Resolver<'a> {
         let Some(tsconfig) = dir_info.enclosing_tsconfig_json else {
             return MatchStatus::NotFound;
         };
-        if tsconfig.paths.count() == 0 {
+        if !tsconfig.has_paths() {
             return MatchStatus::NotFound;
         }
         self.match_tsconfig_paths(tsconfig, import_path, kind, out)
@@ -1589,10 +1589,12 @@ impl<'a> Resolver<'a> {
             if let Some(tsconfig) = dir.enclosing_tsconfig_json {
                 result.jsx = tsconfig.merge_jsx(core::mem::take(&mut result.jsx));
                 result.flags.set_emit_decorator_metadata(
-                    result.flags.emit_decorator_metadata() || tsconfig.emit_decorator_metadata,
+                    result.flags.emit_decorator_metadata()
+                        || tsconfig.emit_decorator_metadata == Some(true),
                 );
                 result.flags.set_experimental_decorators(
-                    result.flags.experimental_decorators() || tsconfig.experimental_decorators,
+                    result.flags.experimental_decorators()
+                        || tsconfig.experimental_decorators == Some(true),
                 );
                 if let Some(v) = tsconfig.use_define_for_class_fields {
                     result.flags.set_use_define_for_class_fields(v);
@@ -1780,7 +1782,7 @@ impl<'a> Resolver<'a> {
             // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
             if let Ok(Some(dir_info)) = self.dir_info_cached(source_dir) {
                 if let Some(tsconfig) = dir_info.enclosing_tsconfig_json {
-                    if tsconfig.paths.count() > 0 {
+                    if tsconfig.has_paths() {
                         let mut res = MatchResult::default();
                         if self
                             .match_tsconfig_paths(tsconfig, import_path, kind, &mut res)
@@ -2520,7 +2522,7 @@ impl<'a> Resolver<'a> {
 
         if let Some(tsconfig) = dir_info.enclosing_tsconfig_json {
             // Try path substitutions first
-            if tsconfig.paths.count() > 0 {
+            if tsconfig.has_paths() {
                 if self
                     .match_tsconfig_paths(tsconfig, import_path, kind, out)
                     .is_success()
@@ -4016,11 +4018,34 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// Parses `file` and merges in its `extends` chain. The returned config is
+    /// the one `dir_info_uncached` interns for the directory.
     pub(crate) fn parse_tsconfig(
         &mut self,
         file: &[u8],
         dirname_fd: FD,
     ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
+        let mut chain = TSConfigChain {
+            config_dir: Box::default(),
+            visiting: Vec::new(),
+            sources: Vec::new(),
+        };
+        self.parse_tsconfig_in_chain(file, dirname_fd, &mut chain)
+    }
+
+    /// One level of an `extends` chain: parses `file`, resolves and merges each
+    /// of its bases (recursively), then layers the file's own settings on top.
+    /// This is the shape of esbuild's `parseTSConfig`.
+    fn parse_tsconfig_in_chain(
+        &mut self,
+        file: &[u8],
+        dirname_fd: FD,
+        chain: &mut TSConfigChain,
+    ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
+        if chain.visiting.iter().any(|visiting| *visiting == file) {
+            return Err(crate::Error::ParseErrorImportCycle);
+        }
+
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
         let mut entry = self.caches.fs.read_file_with_allocator(
@@ -4060,45 +4085,373 @@ impl<'a> Resolver<'a> {
         };
 
         let source = bun_ast::Source::init_path_string_owned(key_path, contents);
-        let file_dir = source.path.source_dir();
+
+        let is_root = chain.visiting.is_empty();
+        if is_root {
+            chain.config_dir = Box::from(source.path.source_dir());
+        }
+        chain.visiting.push(key_path);
 
         // SAFETY: BACKREF — `self.log` (see `log()` NOTE); disjoint from `self.caches`,
         // narrow `&mut` for this call only.
-        let mut result =
-            match TSConfigJSON::parse(unsafe { &mut *self.log() }, &source, &mut self.caches.json)?
-            {
-                Some(r) => r,
-                None => return Ok(None),
-            };
+        let parsed = TSConfigJSON::parse(
+            unsafe { &mut *self.log() },
+            &source,
+            &mut self.caches.json,
+            &chain.config_dir,
+        );
+        let mut own = match parsed {
+            Ok(Some(own)) => own,
+            Ok(None) => {
+                chain.visiting.pop();
+                return Ok(None);
+            }
+            Err(err) => {
+                chain.visiting.pop();
+                return Err(err);
+            }
+        };
 
-        if result.has_base_url() {
-            // this might leak
-            if !bun_paths::is_absolute(&result.base_url) {
-                // NOTE: `base_url: Box<[u8]>` owns its bytes, so
-                // copy `abs_buf`'s thread-local result directly instead of
-                // double-copying through the `dirname_store` arena.
-                let abs = self
+        let extends = core::mem::take(&mut own.extends);
+        let merged = self.merge_tsconfig_extends(&source, own, &extends, chain);
+        chain.visiting.pop();
+        let mut result = merged?;
+
+        // A relative "baseUrl" resolves against the file that declares it. An
+        // inherited one is already absolute.
+        if result.has_base_url() && !bun_paths::is_absolute(&result.base_url) {
+            // NOTE: `base_url: Box<[u8]>` owns its bytes, so
+            // copy `abs_buf`'s thread-local result directly instead of
+            // double-copying through the `dirname_store` arena.
+            let abs = self.fs_ref().abs_buf(
+                &[source.path.source_dir(), &result.base_url[..]],
+                bufs!(tsconfig_base_url),
+            );
+            result.base_url = Box::from(abs);
+        }
+
+        // Kept until the root returns: the check below needs the source of
+        // whichever file in the chain declared "paths".
+        chain.sources.push(source);
+
+        if is_root {
+            let paths_source = result.paths.as_ref().and_then(|paths| {
+                chain
+                    .sources
+                    .iter()
+                    .find(|s| s.path.text == &*paths.source_path)
+            });
+            // SAFETY: BACKREF — `self.log` (see `log()` NOTE), narrow `&mut` for this call only.
+            result.remove_paths_that_need_base_url(unsafe { &mut *self.log() }, paths_source);
+        }
+
+        Ok(Some(result))
+    }
+
+    /// Bases apply in `extends` order, so a later one overrides an earlier one,
+    /// and the file's own settings override every base.
+    fn merge_tsconfig_extends(
+        &mut self,
+        source: &bun_ast::Source,
+        own: Box<TSConfigJSON>,
+        extends: &[TSConfigExtends],
+        chain: &mut TSConfigChain,
+    ) -> crate::CrateResult<Box<TSConfigJSON>> {
+        if extends.is_empty() {
+            return Ok(own);
+        }
+        let mut merged = TSConfigJSON::new(TSConfigJSON {
+            abs_path: own.abs_path.clone(),
+            ..Default::default()
+        });
+        for extends_entry in extends {
+            if let Some(base) = self.resolve_tsconfig_extends(source, extends_entry, chain)? {
+                merged.apply_extended_config(base);
+            }
+        }
+        merged.apply_extended_config(own);
+        Ok(merged)
+    }
+
+    /// Finds and parses one `extends` entry of `source` the way tsc's
+    /// `getExtendsConfigPath` does: a relative or absolute path is tried as
+    /// written and then with ".json" added, anything else is a package
+    /// specifier looked up in the `node_modules` of each ancestor directory.
+    /// `None` means the base is unusable, and the reason is already logged.
+    fn resolve_tsconfig_extends(
+        &mut self,
+        source: &bun_ast::Source,
+        extends: &TSConfigExtends,
+        chain: &mut TSConfigChain,
+    ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
+        let spec: &[u8] = &extends.spec;
+        if !spec.is_empty() {
+            if bun_paths::is_package_path(spec) {
+                match self.resolve_tsconfig_extends_package(source, extends, chain)? {
+                    TSConfigProbe::Found(base) => return Ok(Some(base)),
+                    TSConfigProbe::Failed => return Ok(None),
+                    // Bun used to resolve every `extends` value against the
+                    // file's directory, so a bare sibling name ("base.json")
+                    // keeps working through the fallback below.
+                    TSConfigProbe::Missing => {}
+                }
+            }
+            match self.resolve_tsconfig_extends_relative(source, extends, chain)? {
+                TSConfigProbe::Found(base) => return Ok(Some(base)),
+                TSConfigProbe::Failed => return Ok(None),
+                TSConfigProbe::Missing => {}
+            }
+        }
+        self.warn_missing_tsconfig_base(source, extends);
+        Ok(None)
+    }
+
+    /// The path arm of [`Self::resolve_tsconfig_extends`]: the value as written,
+    /// relative to the file, then with ".json" added.
+    fn resolve_tsconfig_extends_relative(
+        &mut self,
+        source: &bun_ast::Source,
+        extends: &TSConfigExtends,
+        chain: &mut TSConfigChain,
+    ) -> crate::CrateResult<TSConfigProbe> {
+        let spec: &[u8] = &extends.spec;
+        let file_dir = source.path.source_dir();
+        let mut buf = bun_paths::path_buffer_pool::get();
+        // "." and ".." name a directory, and TypeScript reads its tsconfig.json.
+        let extends_file: &[u8] = if spec == b"." || spec == b".." {
+            self.fs_ref()
+                .abs_buf(&[file_dir, spec, b"tsconfig.json"], &mut buf[..])
+        } else if bun_paths::is_absolute(spec) {
+            self.fs_ref().abs_buf(&[spec], &mut buf[..])
+        } else {
+            self.fs_ref().abs_buf(&[file_dir, spec], &mut buf[..])
+        };
+        match self.probe_tsconfig_extends(source, extends, extends_file, false, chain)? {
+            TSConfigProbe::Missing => {}
+            found_or_failed => return Ok(found_or_failed),
+        }
+
+        // tsc adds ".json" only when the path as written is not a file (a
+        // directory of the same name does not count) and does not already end
+        // in ".json".
+        if extends_file.ends_with(b".json") {
+            return Ok(TSConfigProbe::Missing);
+        }
+        let mut with_json_buf = bun_paths::path_buffer_pool::get();
+        let Some(with_json) = concat_path_into(&mut with_json_buf[..], &[extends_file, b".json"])
+        else {
+            return Ok(TSConfigProbe::Missing);
+        };
+        self.probe_tsconfig_extends(source, extends, with_json, false, chain)
+    }
+
+    /// The package-specifier arm of [`Self::resolve_tsconfig_extends`]. This
+    /// walks `node_modules` directories by hand instead of going through
+    /// `dir_info_cached`: the caller is inside `dir_info_uncached`, which holds
+    /// the directory cache locks, and the rules differ from module resolution
+    /// anyway (only ".json" files, `require` conditions, no directory matches).
+    fn resolve_tsconfig_extends_package(
+        &mut self,
+        source: &bun_ast::Source,
+        extends: &TSConfigExtends,
+        chain: &mut TSConfigChain,
+    ) -> crate::CrateResult<TSConfigProbe> {
+        use crate::package_json::{IncludeDependencies, IncludeScripts, Package, Status};
+
+        let spec: &[u8] = &extends.spec;
+        let Some(package_name) = Package::parse_name(spec) else {
+            return Ok(TSConfigProbe::Missing);
+        };
+        let package_subpath = &spec[package_name.len()..];
+
+        let mut current: &[u8] = source.path.source_dir();
+        loop {
+            // A `node_modules` directory has no `node_modules` of its own.
+            if bun_paths::basename(current) != b"node_modules" {
+                let mut pkg_dir_buf = bun_paths::path_buffer_pool::get();
+                let pkg_dir: &[u8] = self.fs_ref().abs_buf(
+                    &[current, b"node_modules", package_name],
+                    &mut pkg_dir_buf[..],
+                );
+                let mut join_buf = bun_paths::path_buffer_pool::get();
+                let mut join: &[u8] = self
                     .fs_ref()
-                    .abs_buf(&[file_dir, &result.base_url[..]], bufs!(tsconfig_base_url));
-                result.base_url = Box::from(abs);
+                    .abs_buf(&[current, b"node_modules", spec], &mut join_buf[..]);
+
+                let mut package_json_buf = bun_paths::path_buffer_pool::get();
+                let package_json_path: &[u8] = self
+                    .fs_ref()
+                    .abs_buf(&[pkg_dir, b"package.json"], &mut package_json_buf[..]);
+                // `PackageJSON::parse` logs an error for a missing file, so
+                // check first. The parsed value is dropped at the end of this
+                // block: the directory cache parses its own copy later if the
+                // package is ever resolved as a module.
+                let package_json = if bun_sys::exists(package_json_path) {
+                    PackageJSON::parse::<{ IncludeDependencies::None }>(
+                        self,
+                        pkg_dir,
+                        FD::INVALID,
+                        None,
+                        IncludeScripts::IgnoreScripts,
+                    )
+                } else {
+                    None
+                };
+                if let Some(package_json) = package_json.as_ref() {
+                    if let Some(exports_map) = package_json.exports.as_ref() {
+                        // TypeScript resolves the subpath through "exports" as a
+                        // `require`, and an "exports" map that does not name it
+                        // ends the search: there is no file system fallback.
+                        let mut subpath_buf = bun_paths::path_buffer_pool::get();
+                        let Some(esm_subpath) =
+                            concat_path_into(&mut subpath_buf[..], &[b".", package_subpath])
+                        else {
+                            return Ok(TSConfigProbe::Missing);
+                        };
+                        let mut module_type = package_json.module_type;
+                        let resolution = ESModule {
+                            conditions: &self.opts.conditions.require,
+                            debug_logs: self.debug_logs.as_mut(),
+                            module_type: &mut module_type,
+                        }
+                        .resolve(b"/", esm_subpath, &exports_map.root);
+                        if !(matches!(resolution.status, Status::Exact | Status::ExactEndsWithStar)
+                            && resolution.path.first() == Some(&SEP))
+                        {
+                            return Ok(TSConfigProbe::Missing);
+                        }
+                        let mut target_buf = bun_paths::path_buffer_pool::get();
+                        let target: &[u8] = self.fs_ref().abs_buf(
+                            &[
+                                pkg_dir,
+                                strings::without_leading_path_separator(&resolution.path),
+                            ],
+                            &mut target_buf[..],
+                        );
+                        return self.probe_tsconfig_extends(source, extends, target, true, chain);
+                    }
+
+                    // The "tsconfig" field names the base a bare package name loads.
+                    if let Some(tsconfig_field) = package_json.tsconfig.as_deref() {
+                        join = if bun_paths::is_absolute(tsconfig_field) {
+                            self.fs_ref().abs_buf(&[tsconfig_field], &mut join_buf[..])
+                        } else {
+                            self.fs_ref()
+                                .abs_buf(&[pkg_dir, tsconfig_field], &mut join_buf[..])
+                        };
+                    }
+                }
+
+                // tsc's order: the tsconfig.json of a directory, the path as
+                // written, then the path with ".json" added.
+                let mut candidate_buf = bun_paths::path_buffer_pool::get();
+                let candidates: [&[&[u8]]; 3] = [
+                    &[join, SEP_STR.as_bytes(), b"tsconfig.json"],
+                    &[join],
+                    &[join, b".json"],
+                ];
+                for parts in candidates {
+                    let Some(candidate) = concat_path_into(&mut candidate_buf[..], parts) else {
+                        continue;
+                    };
+                    match self.probe_tsconfig_extends(source, extends, candidate, true, chain)? {
+                        TSConfigProbe::Missing => {}
+                        found_or_failed => return Ok(found_or_failed),
+                    }
+                }
+            }
+
+            match bun_paths::dirname(current) {
+                Some(parent) if parent.len() < current.len() => current = parent,
+                _ => break,
             }
         }
 
-        if result.paths.count() > 0
-            && (result.base_url_for_paths.is_empty()
-                || !bun_paths::is_absolute(&result.base_url_for_paths))
-        {
-            // this might leak
-            let abs = self
-                .fs_ref()
-                .abs_buf(&[file_dir, &result.base_url[..]], bufs!(tsconfig_base_url));
-            result.base_url_for_paths = Box::from(abs);
-        }
+        Ok(TSConfigProbe::Missing)
+    }
 
-        // NOTE: return the `Box` so the caller (`dir_info_uncached`) takes
-        // ownership — intermediate configs in an extends-chain are dropped via
-        // `heap::take`, the final one is interned into the DirInfo cache.
-        Ok(Some(result))
+    /// Tries one candidate path for an `extends` base. With `follow_symlinks`,
+    /// the file is parsed under its real path, so a symlinked workspace package
+    /// (how every package manager installs one) interprets its own relative
+    /// "baseUrl" and "paths" from where it lives, like tsc and esbuild do.
+    fn probe_tsconfig_extends(
+        &mut self,
+        source: &bun_ast::Source,
+        extends: &TSConfigExtends,
+        candidate: &[u8],
+        follow_symlinks: bool,
+        chain: &mut TSConfigChain,
+    ) -> crate::CrateResult<TSConfigProbe> {
+        use bun_errno::SystemErrno as E;
+        // Only files count. Users name directories after their configs
+        // ("./config/base" next to "config/base.json"), and a bare package name
+        // is tried as a path too.
+        if is_directory(candidate) {
+            return Ok(TSConfigProbe::Missing);
+        }
+        let mut real_path_buf = bun_paths::path_buffer_pool::get();
+        let candidate: &[u8] = if follow_symlinks && !self.opts.preserve_symlinks {
+            match realpath(candidate, &mut real_path_buf) {
+                Some(real) => real,
+                // Only a missing file fails to resolve here. The read below
+                // reports anything else.
+                None => candidate,
+            }
+        } else {
+            candidate
+        };
+        match self.parse_tsconfig_in_chain(candidate, FD::INVALID, chain) {
+            Ok(Some(base)) => Ok(TSConfigProbe::Found(base)),
+            // The JSON did not parse. The parser logged the error.
+            Ok(None) | Err(crate::Error::ParseErrorAlreadyLogged) => Ok(TSConfigProbe::Failed),
+            // Not a file at that path. A directory of the same name is not a match.
+            Err(crate::Error::Sys(E::ENOENT | E::ENOTDIR | E::EISDIR)) => {
+                Ok(TSConfigProbe::Missing)
+            }
+            Err(crate::Error::ParseErrorImportCycle) => {
+                // SAFETY: BACKREF — `self.log` (see `log()` NOTE), narrow `&mut` for this call only.
+                unsafe { &mut *self.log() }.add_range_warning_fmt(
+                    Some(source),
+                    source.range_of_string(extends.loc),
+                    format_args!(
+                        "Base config file {} forms cycle",
+                        bun_core::fmt::quote(&extends.spec)
+                    ),
+                );
+                Ok(TSConfigProbe::Failed)
+            }
+            Err(err @ (crate::Error::Alloc(_) | crate::Error::Overflow(_))) => Err(err),
+            Err(err) => {
+                // SAFETY: BACKREF — `self.log` (see `log()` NOTE), narrow `&mut` for this call only.
+                unsafe { &mut *self.log() }.add_range_error_fmt(
+                    Some(source),
+                    source.range_of_string(extends.loc),
+                    format_args!(
+                        "Cannot read file {}: {}",
+                        bun_core::fmt::quote(candidate),
+                        bstr::BStr::new(err.name())
+                    ),
+                );
+                Ok(TSConfigProbe::Failed)
+            }
+        }
+    }
+
+    fn warn_missing_tsconfig_base(&mut self, source: &bun_ast::Source, extends: &TSConfigExtends) {
+        // Packages ship tsconfig.json files that extend bases they do not
+        // depend on. Nothing the user can do about those, so stay quiet.
+        if source.path.is_node_module() {
+            return;
+        }
+        // SAFETY: BACKREF — `self.log` (see `log()` NOTE), narrow `&mut` for this call only.
+        unsafe { &mut *self.log() }.add_range_warning_fmt(
+            Some(source),
+            source.range_of_string(extends.loc),
+            format_args!(
+                "Cannot find base config file {}",
+                bun_core::fmt::quote(&extends.spec)
+            ),
+        );
     }
 
     pub fn bin_dirs(&self) -> &[&'static [u8]] {
@@ -4788,14 +5141,10 @@ impl<'a> Resolver<'a> {
             ));
         }
 
-        let mut abs_base_url: &[u8] = &tsconfig.base_url_for_paths;
-
-        // The explicit base URL should take precedence over the implicit base URL
-        // if present. This matters when a tsconfig.json file overrides "baseUrl"
-        // from another extended tsconfig.json file but doesn't override "paths".
-        if tsconfig.has_base_url() {
-            abs_base_url = &tsconfig.base_url;
-        }
+        let Some(paths) = tsconfig.paths.as_ref() else {
+            return MatchStatus::NotFound;
+        };
+        let abs_base_url: &[u8] = tsconfig.paths_base_dir();
 
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
@@ -4808,18 +5157,14 @@ impl<'a> Resolver<'a> {
         {
             // NOTE: ArrayHashMap has no `&self` (key,value) iterator; zip the
             // parallel `keys()`/`values()` slices (insertion order).
-            for (key, value) in tsconfig
-                .paths
-                .keys()
-                .iter()
-                .zip(tsconfig.paths.values().iter())
-            {
+            for (key, value) in paths.map.keys().iter().zip(paths.map.values().iter()) {
                 if strings::eql_long(key, path, true) {
                     for original_path in value.iter() {
+                        let original_path: &[u8] = &original_path.text;
                         let mut absolute_original_path: &[u8] = original_path;
 
                         if !bun_paths::is_absolute(absolute_original_path) {
-                            let parts: [&[u8]; 2] = [abs_base_url, original_path.as_ref()];
+                            let parts: [&[u8]; 2] = [abs_base_url, original_path];
                             absolute_original_path =
                                 self.fs_ref().abs_buf(&parts, bufs!(tsconfig_path_abs));
                         }
@@ -4838,19 +5183,14 @@ impl<'a> Resolver<'a> {
         struct TSConfigMatch<'b> {
             prefix: &'b [u8],
             suffix: &'b [u8],
-            original_paths: &'b [Box<[u8]>],
+            original_paths: &'b [crate::tsconfig_json::TSConfigPath],
         }
 
         let mut longest_match: Option<TSConfigMatch> = None;
         let mut longest_match_prefix_length: i32 = -1;
         let mut longest_match_suffix_length: i32 = -1;
 
-        for (key, original_paths) in tsconfig
-            .paths
-            .keys()
-            .iter()
-            .zip(tsconfig.paths.values().iter())
-        {
+        for (key, original_paths) in paths.map.keys().iter().zip(paths.map.values().iter()) {
             if let Some(star) = strings::index_of_char(key, b'*') {
                 let star = star as usize;
                 let prefix: &[u8] = if star == 0 { b"" } else { &key[0..star] };
@@ -4897,6 +5237,7 @@ impl<'a> Resolver<'a> {
             }
 
             for original_path in longest_match.original_paths.iter() {
+                let original_path: &[u8] = &original_path.text;
                 // Swap out the "*" in the original path for whatever the "*" matched
                 let matched_text =
                     &path[longest_match.prefix.len()..path.len() - longest_match.suffix.len()];
@@ -6515,114 +6856,11 @@ impl<'a> Resolver<'a> {
                         None
                     }
                 };
-                // NOTE: assigning info.tsconfig_json here and then freeing that
-                // allocation in the merge loop below before reassigning would
-                // leave a briefly-dangling reference
-                // (Option<&'static TSConfigJSON>, dir_info.rs) — UB.
-                // Defer the assignment to after the merge —
-                // it is always overwritten when parsed_tsconfig.is_some(), and DirInfo defaults
-                // tsconfig_json to None otherwise.
+                // `parse_tsconfig` already merged the `extends` chain. The Box is
+                // interned into DirInfo and outlives the resolver.
                 if let Some(tsconfig_json) = parsed_tsconfig {
-                    let mut parent_configs: BoundedArray<*mut TSConfigJSON, 64> =
-                        BoundedArray::default();
-                    parent_configs.append(tsconfig_json)?;
-                    // `current`/`parent_config_ptr`/`merged_config` are heap TSConfigJSON
-                    // allocations from `parse_tsconfig` (heap::alloc); uniquely owned by
-                    // this extends-chain walk and freed via heap::take below. Hold as
-                    // `BackRef` (pointee outlives holder) so the loop body reads via safe
-                    // `Deref` instead of three open-coded raw-ptr derefs.
-                    let mut current = bun_ptr::BackRef::from(
-                        core::ptr::NonNull::new(tsconfig_json).expect("heap alloc"),
-                    );
-                    while !current.extends.is_empty() {
-                        let ts_dir_name = Dirname::dirname(&current.abs_path);
-                        let abs_path = ResolvePath::join_abs_string_buf(
-                            ts_dir_name,
-                            bufs!(tsconfig_path_abs),
-                            &[ts_dir_name, &current.extends],
-                            bun_paths::Platform::AUTO,
-                        );
-                        let parent_config_maybe: Option<*mut TSConfigJSON> =
-                            match self.parse_tsconfig(abs_path, FD::INVALID) {
-                                Ok(v) => v.map(bun_core::heap::into_raw),
-                                Err(err) => {
-                                    let _ = self.log_mut().add_debug_fmt(
-                                        None,
-                                        bun_ast::Loc::EMPTY,
-                                        format_args!(
-                                            "{} loading tsconfig.json extends {}",
-                                            bstr::BStr::new(err.name()),
-                                            bun_core::fmt::quote(abs_path)
-                                        ),
-                                    );
-                                    break;
-                                }
-                            };
-                        if let Some(parent_config) = parent_config_maybe {
-                            parent_configs.append(parent_config)?;
-                            current = bun_ptr::BackRef::from(
-                                core::ptr::NonNull::new(parent_config).expect("heap alloc"),
-                            );
-                        } else {
-                            break;
-                        }
-                    }
-
-                    let merged_config = parent_configs.pop().unwrap();
-                    // starting from the base config (end of the list)
-                    // successively apply the inheritable attributes to the next config
-                    while let Some(parent_config_ptr) = parent_configs.pop() {
-                        // SAFETY: see loop-wide note above.
-                        let parent_config = unsafe { &mut *parent_config_ptr };
-                        // SAFETY: see loop-wide note above.
-                        let mc = unsafe { &mut *merged_config };
-                        mc.emit_decorator_metadata =
-                            mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
-                        if let Some(v) = parent_config.use_define_for_class_fields {
-                            mc.use_define_for_class_fields = Some(v);
-                        }
-                        if !parent_config.base_url.is_empty() {
-                            mc.base_url = core::mem::take(&mut parent_config.base_url);
-                        }
-                        mc.jsx = parent_config.merge_jsx(mc.jsx.clone());
-                        mc.jsx_flags.insert_all(parent_config.jsx_flags);
-
-                        if let Some(value) = parent_config.preserve_imports_not_used_as_values {
-                            mc.preserve_imports_not_used_as_values = Some(value);
-                        }
-
-                        // TypeScript replaces paths across extends (child overrides parent
-                        // entirely), so when a more-specific config defines paths, replace
-                        // rather than merge. base_url_for_paths is set whenever the paths
-                        // key is present in the JSON (even if empty), so it discriminates
-                        // "not defined" from "defined as {}" — the latter clears inherited
-                        // paths per TypeScript semantics.
-                        if !parent_config.base_url_for_paths.is_empty() {
-                            // The previous merged_config.paths is being replaced;
-                            // dropping the map frees the values automatically, so the
-                            // PathsMap from the deeper config doesn't leak.
-                            mc.paths = core::mem::take(&mut parent_config.paths);
-                            mc.base_url_for_paths =
-                                core::mem::take(&mut parent_config.base_url_for_paths);
-                        } else {
-                            // paths were not moved to merged_config, so they're still owned
-                            // by parent_config. base_url_for_paths.len == 0 implies the map
-                            // is empty (it's only set when the `paths` key is present in the
-                            // JSON), so this is a no-op but documents the ownership.
-                            // (Drop handles parent_config.paths.)
-                        }
-                        // Every scalar/reference we need has been copied into merged_config
-                        // (strings live in dirname_store or default_allocator and outlive the
-                        // struct). The heap-allocated TSConfigJSON itself is no longer needed;
-                        // without this, every intermediate config in an extends chain leaks on
-                        // each dir_info_uncached() call, which is especially bad under HMR where
-                        // bust_dir_cache triggers a re-parse of the whole chain on every reload.
-                        // SAFETY: parent_config_ptr came from TSConfigJSON::new (heap::alloc)
-                        TSConfigJSON::destroy(unsafe { bun_core::heap::take(parent_config_ptr) });
-                    }
-                    // `merged_config` is a leaked Box (heap::alloc) interned into DirInfo; outlives the resolver.
                     info.tsconfig_json = Some(
-                        core::ptr::NonNull::new(merged_config).expect("heap::alloc is non-null"),
+                        core::ptr::NonNull::new(tsconfig_json).expect("heap::alloc is non-null"),
                     );
                 }
                 info.enclosing_tsconfig_json = info.tsconfig_json();
@@ -6634,6 +6872,32 @@ impl<'a> Resolver<'a> {
 }
 
 // ─── nested helper types ───────────────────────────────────────────────────
+
+/// One walk of a tsconfig.json `extends` chain, rooted at the file that
+/// `dir_info_uncached` (or `--tsconfig-override`) named.
+struct TSConfigChain {
+    /// Directory of the root config. Every "${configDir}" in the chain expands
+    /// to it, the way tsc substitutes the template after the merge.
+    config_dir: Box<[u8]>,
+    /// Files being parsed right now, root first. A base that is already on the
+    /// stack forms a cycle. A diamond (two branches that share one base) does
+    /// not, because a finished branch pops its entry.
+    visiting: Vec<&'static [u8]>,
+    /// Every file parsed so far, kept alive until the root returns so the
+    /// post-merge "paths" check can point its warnings at the file that
+    /// declared the offending entry.
+    sources: Vec<bun_ast::Source>,
+}
+
+/// Outcome of trying one candidate path for an `extends` base.
+enum TSConfigProbe {
+    Found(Box<TSConfigJSON>),
+    /// Nothing usable at that path. Try the next candidate.
+    Missing,
+    /// The file exists but cannot be used. The reason is already logged, and
+    /// the search stops.
+    Failed,
+}
 
 enum DependencyToResolve {
     NotFound,
@@ -6781,6 +7045,46 @@ bun_core::comptime_string_map! {
 #[inline]
 fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
     MODULE_TYPE_FROM_EXT.get(ext).copied()
+}
+
+/// `stat` for one `extends` candidate. False for a missing path.
+fn is_directory(path: &[u8]) -> bool {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let Some(path_z) = nul_terminate_into(&mut buf, path) else {
+        return false;
+    };
+    matches!(
+        bun_sys::exists_at_type(FD::cwd(), path_z),
+        Ok(bun_sys::ExistsAtType::Directory)
+    )
+}
+
+/// `realpath` for one `extends` candidate. `None` when the path does not
+/// resolve (it does not exist, or a component is not a directory).
+fn realpath<'b>(path: &[u8], out: &'b mut PathBuffer) -> Option<&'b [u8]> {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let path_z = nul_terminate_into(&mut buf, path)?;
+    bun_sys::realpath(path_z, out).ok()
+}
+
+/// Copies `path` into `buf` with a NUL terminator. `None` when it does not fit.
+fn nul_terminate_into<'b>(buf: &'b mut PathBuffer, path: &[u8]) -> Option<&'b bun_core::ZStr> {
+    if path.len() >= buf.len() {
+        return None;
+    }
+    buf[..path.len()].copy_from_slice(path);
+    buf[path.len()] = 0;
+    Some(bun_core::ZStr::from_buf(&buf[..], path.len()))
+}
+
+/// Byte-concatenates `parts` into `buf` (no separator handling). `None` when
+/// the result does not fit.
+fn concat_path_into<'b>(buf: &'b mut [u8], parts: &[&[u8]]) -> Option<&'b [u8]> {
+    let len: usize = parts.iter().map(|p| p.len()).sum();
+    if len > buf.len() {
+        return None;
+    }
+    Some(::bun_core::concat_into(buf, parts))
 }
 
 pub struct Dirname;

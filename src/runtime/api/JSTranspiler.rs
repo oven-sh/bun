@@ -309,10 +309,13 @@ impl Config {
                 // TODO: JSC -> Ast conversion
                 // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
                 let vm = VirtualMachine::get().as_mut();
+                let source =
+                    bun_ast::Source::init_path_string(b"tsconfig.json", &self.tsconfig_buf[..]);
                 if let Ok(Some(parsed_tsconfig)) = TSConfigJSON::parse(
                     &mut self.log,
-                    &bun_ast::Source::init_path_string(b"tsconfig.json", &self.tsconfig_buf[..]),
+                    &source,
                     &mut vm.transpiler.resolver.caches.json,
+                    source.path.source_dir(),
                 ) {
                     self.tsconfig = Some(parsed_tsconfig);
                 }
@@ -775,8 +778,10 @@ impl TransformTask {
             path: source.path,
             virtual_source: Some(source),
             replace_exports: self.replace_exports.entries.clone().expect("OOM"),
-            experimental_decorators: tsconfig.is_some_and(|ts| ts.experimental_decorators),
-            emit_decorator_metadata: tsconfig.is_some_and(|ts| ts.emit_decorator_metadata),
+            experimental_decorators: tsconfig
+                .is_some_and(|ts| ts.experimental_decorators == Some(true)),
+            emit_decorator_metadata: tsconfig
+                .is_some_and(|ts| ts.emit_decorator_metadata == Some(true)),
             use_define_for_class_fields: tsconfig
                 .and_then(|ts| ts.use_define_for_class_fields)
                 .unwrap_or(true),
@@ -1234,11 +1239,11 @@ impl JSTranspiler {
             experimental_decorators: config
                 .tsconfig
                 .as_deref()
-                .is_some_and(|ts| ts.experimental_decorators),
+                .is_some_and(|ts| ts.experimental_decorators == Some(true)),
             emit_decorator_metadata: config
                 .tsconfig
                 .as_deref()
-                .is_some_and(|ts| ts.emit_decorator_metadata),
+                .is_some_and(|ts| ts.emit_decorator_metadata == Some(true)),
             use_define_for_class_fields: config
                 .tsconfig
                 .as_deref()

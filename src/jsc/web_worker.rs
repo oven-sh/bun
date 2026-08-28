@@ -128,7 +128,7 @@ pub struct WebWorker {
 /// `start_vm()` on the worker thread.
 struct WorkerVmInit {
     transform_options: bun_options_types::schema::api::TransformOptions,
-    env_map: bun_dotenv::Map,
+    env_loader: bun_dotenv::Loader,
     proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
 }
 
@@ -374,21 +374,21 @@ impl WebWorker {
         // parent's proxy_env_storage: snapshot slots + map under its lock so
         // every slice copied is backed by a ref the snapshot holds.
         let mut proxy_env_slots = jsc::rare_data::ProxyEnvSlots::default();
-        let mut env_map = {
+        let mut env_loader = {
             let parent_slots = parent_ref.proxy_env_storage.lock();
             proxy_env_slots.clone_from(&parent_slots);
-            match parent_ref.env_loader().map.clone_with_allocator() {
-                Ok(m) => m,
+            match parent_ref.env_loader().clone_for_worker() {
+                Ok(loader) => loader,
                 Err(_) => {
                     *error_message = BunString::static_("Out of memory");
                     return core::ptr::null_mut();
                 }
             }
         };
-        proxy_env_slots.sync_into(&mut env_map);
+        proxy_env_slots.sync_into(&mut env_loader.map);
         let init = WorkerVmInit {
             transform_options,
-            env_map,
+            env_loader,
             proxy_env_slots,
         };
 
@@ -664,7 +664,7 @@ impl WebWorker {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         let WorkerVmInit {
             transform_options,
-            env_map,
+            env_loader,
             proxy_env_slots,
         } = init;
 
@@ -674,8 +674,7 @@ impl WebWorker {
         // `heap::alloc`'d and stashed on `self` so `shutdown()` step 5 reclaims
         // it on every path — including the early-terminate checkpoint below,
         // which calls `shutdown()` before the VM exists.
-        let loader_ptr: *mut bun_dotenv::Loader =
-            bun_core::heap::into_raw(Box::new(bun_dotenv::Loader::init_with_map(env_map)));
+        let loader_ptr: *mut bun_dotenv::Loader = bun_core::heap::into_raw(Box::new(env_loader));
         self.worker_env_loader.set(loader_ptr);
 
         // Checkpoint before the expensive part: initWorker builds a full JSC

@@ -981,7 +981,7 @@ describe("cross-compile executable cache", () => {
   }
 
   // A gzipped ustar archive with one entry, `package/bin/bun`, like the npm tarballs.
-  function tarball(): Buffer {
+  const tarball: Buffer = (() => {
     const body = Buffer.from(placeholder);
     const header = Buffer.alloc(512, 0);
     header.write("package/bin/bun", 0, 100, "utf8");
@@ -999,7 +999,7 @@ describe("cross-compile executable cache", () => {
     header.write(octal(sum, 8), 148);
     const pad = Buffer.alloc((512 - (body.length % 512)) % 512, 0);
     return gzipSync(Buffer.concat([header, body, pad, Buffer.alloc(1024, 0)]));
-  }
+  })();
 
   // Runs the cross-compile of `<dir>/project/app.js`. `env` sets the variables the cache directory
   // comes from; `null` unsets one. HOME points into `dir`, so a wrongly placed download shows up
@@ -1008,7 +1008,7 @@ describe("cross-compile executable cache", () => {
     await using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
-      fetch: () => new Response(tarball(), { headers: { "Content-Type": "application/octet-stream" } }),
+      fetch: () => new Response(tarball, { headers: { "Content-Type": "application/octet-stream" } }),
     });
     const childEnv: Record<string, string | undefined> = {
       ...bunEnv,

@@ -212,11 +212,12 @@ impl CompileTarget {
             return version_str;
         }
 
-        let cache_dir = env.install_cache_directory_path(None);
+        let mut cache_dir_buf = path::path_buffer_pool::get();
+        let cache_dir = env.install_cache_directory_path(None, &mut cache_dir_buf[..]);
         let dest = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
             path::fs::FileSystem::instance().top_level_dir(),
             &mut buf[..],
-            &[cache_dir.as_slice(), version_str.as_bytes()],
+            &[cache_dir, version_str.as_bytes()],
         );
 
         if bun_sys::exists_at(Fd::cwd(), dest) {

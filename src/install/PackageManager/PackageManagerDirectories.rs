@@ -332,12 +332,14 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
             // SAFETY: caller-provided provenance root; `env_mut()` itself
             // encapsulates the BackRef deref + singleton-liveness invariant.
             let env = unsafe { &*this }.env_mut();
+            let mut buf = path::path_buffer_pool::get();
             // SAFETY: shared read of `options`; disjoint from `cache_directory_path`.
-            let cache_dir = fetch_cache_directory_path(env, Some(unsafe { &(*this).options }));
+            let cache_dir =
+                fetch_cache_directory_path(env, Some(unsafe { &(*this).options }), &mut buf[..]);
             // SAFETY: see fn safety contract.
-            unsafe { (*this).cache_directory_path = ZBox::from_bytes(&cache_dir.path) };
+            unsafe { (*this).cache_directory_path = ZBox::from_bytes(cache_dir) };
 
-            match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
+            match Dir::cwd().make_open_path(cache_dir, Default::default()) {
                 Ok(d) => return d,
                 Err(_) => {
                     // SAFETY: narrow `&mut enable` projection; disjoint from
@@ -372,14 +374,12 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
     }
 }
 
-pub struct CacheDir {
-    pub path: Vec<u8>,
-}
-
-pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Options>) -> CacheDir {
-    CacheDir {
-        path: env.install_cache_directory_path(options.map(|opts| opts.cache_directory)),
-    }
+pub fn fetch_cache_directory_path<'b>(
+    env: &DotEnvLoader,
+    options: Option<&Options>,
+    buf: &'b mut [u8],
+) -> &'b [u8] {
+    env.install_cache_directory_path(options.map(|opts| opts.cache_directory), buf)
 }
 
 // ─────────────────────── cached folder name printers ──────────────────────────

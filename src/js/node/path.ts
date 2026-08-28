@@ -7,8 +7,6 @@ const { validateString } = require("internal/validators");
 // property lookups on the user's object).
 const [nativePosix, nativeWin32] = $rust("path.rs", "createNodePathBinding");
 
-const ArrayIsArray = Array.isArray;
-
 const CHAR_FORWARD_SLASH = 47;
 const CHAR_BACKWARD_SLASH = 92;
 const CHAR_COLON = 58;
@@ -32,7 +30,7 @@ function formatExt(ext) {
 }
 
 function _format(sep, pathObject) {
-  if (pathObject === null || ArrayIsArray(pathObject) || typeof pathObject !== "object") {
+  if (pathObject === null || $isArray(pathObject) || typeof pathObject !== "object") {
     throw $ERR_INVALID_ARG_TYPE("pathObject", "object", pathObject);
   }
   const dir = pathObject.dir || pathObject.root;

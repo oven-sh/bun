@@ -90,6 +90,7 @@ describe("path.parse", () => {
       { method: "format", input: [""] },
       { method: "format", input: [true] },
       { method: "format", input: [1] },
+      { method: "format", input: [[]] },
     ];
 
     checkParseFormat(path.win32, winPaths);

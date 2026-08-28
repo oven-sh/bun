@@ -376,10 +376,7 @@ pub mod registry {
     /// underscore is left alone, since a plain path segment may hold `=`.
     fn last_unknown_credential_marker(pathname: &[u8]) -> Option<usize> {
         let mut end = pathname.len();
-        while let Some(start) = pathname[..end]
-            .iter()
-            .rposition(|&c| c == b':' || c == b'/')
-        {
+        while let Some(start) = strings::last_index_of_any(&pathname[..end], b":/") {
             let rest = &pathname[start + 1..];
             if let Some(eq) = strings::index_of_char_usize(rest, b'=') {
                 let word = &rest[..eq];

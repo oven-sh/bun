@@ -2177,10 +2177,7 @@ pub mod parse_worker {
                                 len: wrapper.result.source_len,
                             }
                         };
-                    // The plugin buffer has exactly one owner:
-                    // `self.task.external_free_function` (set above),
-                    // released via `BundleV2.finalizers` or, for an emitted
-                    // asset, by the `OutputFile` that adopts the buffer.
+                    // `self.task.external_free_function` (set above) is the plugin buffer's only owner.
                     return Ok(CacheEntry {
                         contents,
                         fd: wrapper.original_source_fd,

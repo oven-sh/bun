@@ -7145,8 +7145,7 @@ pub mod bv2_impl {
             if parse_result.external.function.is_some() {
                 let external = core::mem::take(&mut parse_result.external);
                 match &parse_result.value {
-                    // A plugin that kept the fetched (worker-arena) source and only set a free
-                    // context does not own `source.contents`: copy it, free the context at teardown.
+                    // A plugin that kept the fetched (worker-arena) source does not own `source.contents`.
                     parse_task::ResultValue::Success(result)
                         if parse_result.plugin_owns_source
                             && result.loader.should_copy_for_bundling() =>

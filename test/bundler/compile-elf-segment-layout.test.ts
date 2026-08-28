@@ -16,8 +16,8 @@
 // https://github.com/oven-sh/bun/issues/40752
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isFreeBSD, isLinux, readElf64ProgramHeaders, tempDir } from "harness";
 import type { Elf64ProgramHeader } from "harness";
+import { bunEnv, bunExe, isFreeBSD, isLinux, readElf64ProgramHeaders, tempDir } from "harness";
 import { join } from "node:path";
 
 type LoadSegment = Pick<Elf64ProgramHeader, "vaddr" | "memsz" | "align">;

@@ -896,7 +896,7 @@ pub(crate) fn set_key_cert(
     };
     // SAFETY: `sc` is a live SecureContext; SSL_set_SSL_CTX takes its own reference.
     unsafe {
-        let ctx = (*sc).borrow();
+        let ctx = &(*sc).ctx;
         ffi::SSL_set_SSL_CTX(ssl_ptr.cast(), ctx.as_ptr().cast());
         // SSL_set_SSL_CTX stops retargeting the certificate once ClientHello
         // processing has reached ALPN selection, and Node supports calling

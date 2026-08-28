@@ -362,13 +362,6 @@ impl SecureContext {
         }))
     }
 
-    /// Another ref on the context, for callers that want to outlive this
-    /// wrapper's GC. Most paths just pass `this.ctx` directly and let `SSL_new`
-    /// take its own ref.
-    pub(crate) fn borrow(&self) -> boringssl::OwnedSslCtx {
-        self.ctx.clone()
-    }
-
     /// `secureContext.context._external` — Node exposes the SSL_CTX here as an
     /// opaque V8 External. Bun has nothing meaningful to hand out, so the
     /// getter exists only so the property behaves like an accessor (a foreign

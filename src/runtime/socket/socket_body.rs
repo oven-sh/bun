@@ -877,7 +877,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             if let Some(sc) =
                 ctx_arg.as_class_ref::<crate::api::bun_secure_context::SecureContext>()
             {
-                sc.borrow().into_raw()
+                sc.ctx.clone().into_raw()
             } else {
                 core::ptr::null_mut()
             }
@@ -3449,7 +3449,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     sc_js,
                 ));
             };
-            owned_ctx = Some(sc.borrow());
+            owned_ctx = Some(sc.ctx.clone());
             // servername / ALPN still come from the surrounding tls config.
             if let Some(t) = opts.get_truthy(global, "tls")? {
                 if !t.is_boolean() {
@@ -4613,7 +4613,7 @@ pub fn js_upgrade_duplex_to_tls(
                 sc_js,
             ));
         };
-        owned_ctx = Some(sc.borrow());
+        owned_ctx = Some(sc.ctx.clone());
     }
 
     // Still parse SSLConfig for servername/ALPN (those live on the JS-side

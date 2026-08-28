@@ -756,7 +756,7 @@ impl Listener {
         // The dict branch is defensive for the internal binding's raw form.
         let sni_ctx: boring_sys::OwnedSslCtx = if let Some(sc) = tls.as_class_ref::<SecureContext>()
         {
-            sc.borrow()
+            sc.ctx.clone()
         } else if let Some(ssl_config) = {
             // SAFETY: per-thread VM; valid for program lifetime.
             let vm = VirtualMachine::get().as_mut();
@@ -1151,7 +1151,7 @@ impl Listener {
                 sc_js.as_class_ref::<SecureContext>()
             };
             if let Some(sc) = native_sc {
-                owned_ssl_ctx = Some(sc.borrow());
+                owned_ssl_ctx = Some(sc.ctx.clone());
             }
         }
 
@@ -2026,7 +2026,7 @@ fn decode_sni_result(result: JSValue, abort_handshake: *mut core::ffi::c_int) ->
     }
     if let Some(sc) = result.as_class_ref::<SecureContext>() {
         // The C dispatcher frees this +1 after `SSL_set_SSL_CTX` takes its own.
-        return sc.borrow().into_raw().cast();
+        return sc.ctx.clone().into_raw().cast();
     }
     // Anything else is not a SecureContext: Node treats this as an invalid SNI
     // context and drops the connection.

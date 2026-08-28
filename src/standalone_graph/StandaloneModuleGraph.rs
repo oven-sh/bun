@@ -337,7 +337,11 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
             .iter()
             .map(|f| if f.bytecode.is_empty() { f.contents.len() } else { f.bytecode.len() } + f.module_info.len())
             .sum();
-        let builtins: usize = self.builtin_bytecode.iter().map(|&(_, bytes)| bytes.len()).sum();
+        let builtins: usize = self
+            .builtin_bytecode
+            .iter()
+            .map(|&(_, bytes)| bytes.len())
+            .sum();
         modules + builtins + self.bytecode_string_table.len()
     }
 }

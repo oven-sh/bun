@@ -1010,7 +1010,9 @@ impl VirtualMachine {
         }
         const MIN_BUDGET: usize = 8 * 1024 * 1024;
         const MAX_BUDGET: usize = 128 * 1024 * 1024;
-        let budget = graph.module_graph_load_bytes().clamp(MIN_BUDGET, MAX_BUDGET);
+        let budget = graph
+            .module_graph_load_bytes()
+            .clamp(MIN_BUDGET, MAX_BUDGET);
         if budget > MIN_BUDGET {
             JSC__Heap__setInitialAllocationBudget(self.jsc_vm(), budget);
         }

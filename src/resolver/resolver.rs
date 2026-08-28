@@ -4894,6 +4894,10 @@ impl<'a> Resolver<'a> {
             }
 
             for original_path in longest_match.original_paths.iter() {
+                if self.is_type_only_tsconfig_path(original_path) {
+                    continue;
+                }
+
                 // Swap out the "*" in the original path for whatever the "*" matched
                 let matched_text =
                     &path[longest_match.prefix.len()..path.len() - longest_match.suffix.len()];
@@ -4946,10 +4950,6 @@ impl<'a> Resolver<'a> {
                     continue;
                 };
 
-                if self.is_type_only_tsconfig_path(absolute_original_path) {
-                    continue;
-                }
-
                 if self
                     .load_as_file_or_directory(absolute_original_path, kind, out)
                     .is_success()
@@ -4962,8 +4962,10 @@ impl<'a> Resolver<'a> {
         MatchStatus::NotFound
     }
 
-    /// A `paths` substitution that names a declaration file exists for type checking
+    /// A `paths` substitution written as a declaration file exists for type checking
     /// only. Skip it, like esbuild's `matchTSConfigPaths` (which checks `.d.ts` only).
+    /// This looks at the tsconfig text, not the `*` expansion: `"@/*": ["./src/*"]`
+    /// must still resolve `import "@/env.d.ts"`.
     fn is_type_only_tsconfig_path(&mut self, substitution: &[u8]) -> bool {
         const DECLARATION_EXTS: [&[u8]; 3] = [b".d.ts", b".d.mts", b".d.cts"];
         let Some(ext) = DECLARATION_EXTS.iter().find(|ext| {

@@ -897,6 +897,33 @@ describe("bundler", () => {
       "/Users/user/project/entry.ts": [`Could not resolve: "types-only". Maybe you need to "bun install"?`],
     },
   });
+  // Only the tsconfig text counts. A catch-all alias still resolves a specifier
+  // that names a declaration file itself.
+  itBundled("tsconfig/PathsCatchAllResolvesDeclarationSpecifier", {
+    files: {
+      "/Users/user/project/entry.ts": /* ts */ `
+        import "@/env.d.ts";
+        console.log("ok");
+      `,
+      "/Users/user/project/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "baseUrl": ".",
+            "paths": {
+              "@/*": ["./src/*"]
+            }
+          }
+        }
+      `,
+      "/Users/user/project/src/env.d.ts": /* ts */ `
+        declare global { interface Env { FOO: string } }
+        export {};
+      `,
+    },
+    run: {
+      stdout: "ok",
+    },
+  });
   return;
   itBundled("tsconfig/NestedJSX", {
     // GENERATED

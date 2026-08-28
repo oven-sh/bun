@@ -1715,6 +1715,27 @@ describe("tsconfig paths skip `.d.ts` substitutions", () => {
     });
   });
 
+  // Only the tsconfig text counts. A catch-all alias still resolves a specifier
+  // that names a declaration file itself.
+  test.concurrent("a `.d.ts` specifier through a catch-all alias still resolves", async () => {
+    using dir = tempDir("tsconfig-paths-dts-specifier", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { "@/*": ["./src/*"] } },
+      }),
+      "src/env.d.ts": `declare global { interface Env { FOO: string } }\nexport {};`,
+      "entry.ts": `
+        import "@/env.d.ts";
+        console.log("ok");
+      `,
+    });
+
+    expect(await runWildcardScript(String(dir), "entry.ts")).toEqual({
+      stdout: "ok",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test.concurrent("a `.d.ts`-only alias with no real module still reports the original specifier", async () => {
     using dir = tempDir("tsconfig-paths-dts-missing", {
       "tsconfig.json": JSON.stringify({

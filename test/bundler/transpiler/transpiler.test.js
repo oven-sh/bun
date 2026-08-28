@@ -323,9 +323,24 @@ describe("Bun.Transpiler", () => {
       both("let x = (true && y)();\n", "let x = y();\n");
       both("let x = (1 ? y : 2)();\n", "let x = y();\n");
 
+      // A test that is statically known but classed as side-effecting (typeof, a
+      // dropped `||`) folds through a different path than a plain constant.
+      both("let x = (typeof y ? y.z : 2)();\n", "let x = (0, y.z)();\n");
+      both("let x = (typeof y && 0 ? 2 : y.z)();\n", "let x = (0, y.z)();\n");
+      both("let x = (sideEffect() || 1 ? y.z : 2)();\n", "let x = (sideEffect(), y.z)();\n");
+
+      // A call nested in the left operand of the comma
+      ts.expectPrintedMin_("let x = ((() => f()), y.z)();\n", "let x = (0, y.z)();\n");
+
+      // The `{}.x ??= v` fold
+      both("let x = ({}.x ??= y.z)();\n", "let x = (0, y.z)();\n");
+      both("let x = ({}.x ||= y.z)();\n", "let x = (0, y.z)();\n");
+      both("let x = ({}.x ??= y)();\n", "let x = y();\n");
+
       // Object and array literal inlining
       ts.expectPrintedMin_("({ f: y }).f();\n", "({ f: y }).f();\n");
       ts.expectPrintedMin_("({ f: y.z }).f();\n", "({ f: y.z }).f();\n");
+      ts.expectPrintedMin_('({ f: y.z })["f"]();\n', "({ f: y.z }).f();\n");
       ts.expectPrintedMin_("[y.z][0]();\n", "(0, y.z)();\n");
       ts.expectPrintedMin_("[y][0]();\n", "y();\n");
 
@@ -367,10 +382,27 @@ describe("Bun.Transpiler", () => {
       both("(1 ? y[z] : 2)``;\n", "(0, y[z])``;\n");
       both("(true && y)``;\n", "y``;\n");
       both("(1 ? y : 2)``;\n", "y``;\n");
+      both("(0 ? 1 : y[z])``;\n", "(0, y[z])``;\n");
+
+      // A test that is statically known but classed as side-effecting
+      both("(typeof y ? y.z : 2)``;\n", "(0, y.z)``;\n");
+      both("(typeof y && 0 ? 2 : y.z)``;\n", "(0, y.z)``;\n");
+      both("(sideEffect() || 1 ? y.z : 2)``;\n", "(sideEffect(), y.z)``;\n");
+
+      // A template tag nested in the left operand of the comma
+      ts.expectPrintedMin_("((() => f``), y.z)``;\n", "(0, y.z)``;\n");
+      both("((true ? 0 : f``), y.z)``;\n", "(0, y.z)``;\n");
+
+      // The `{}.x ??= v` fold
+      both("({}.x ??= y.z)``;\n", "(0, y.z)``;\n");
+      both("({}.x ||= y.z)``;\n", "(0, y.z)``;\n");
+      both("({}.x ??= y)``;\n", "y``;\n");
 
       // Object and array literal inlining
       ts.expectPrintedMin_("({ f: y }).f``;\n", "({ f: y }).f``;\n");
       ts.expectPrintedMin_("({ f: y.z }).f``;\n", "({ f: y.z }).f``;\n");
+      ts.expectPrintedMin_('({ f: y.z })["f"]``;\n', "({ f: y.z }).f``;\n");
+      ts.expectPrintedMin_('({ f: y })["f"]``;\n', "({ f: y }).f``;\n");
       ts.expectPrintedMin_("[y.z][0]``;\n", "(0, y.z)``;\n");
       ts.expectPrintedMin_("[y][0]``;\n", "y``;\n");
 

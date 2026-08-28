@@ -288,16 +288,18 @@ describe("this binding for call targets and template tags", () => {
           ${describeThis}
           function single() { const t = o.f; return t\`x\`; }
           function singleIndex() { const t = o["f"]; return t\`x\`; }
-          console.log(o.f\`x\`, (o.f)\`x\`, o["f"]\`x\`, { foo: f }.foo\`\`, ({ foo: f }).foo\`\`);
+          console.log(o.f\`x\`, (o.f)\`x\`, o["f"]\`x\`, { foo: f }.foo\`\`, ({ foo: f }).foo\`\`, ({ foo: f })["foo"]\`\`);
           console.log((0, o.f)\`x\`, (true && o.f)\`x\`, (false || o.f)\`x\`, (null ?? o.f)\`x\`, (1 ? o.f : 0)\`x\`, (0 ? 1 : o.f)\`x\`);
+          console.log((typeof o ? o.f : 0)\`x\`, (typeof o && 0 ? 0 : o.f)\`x\`, ((() => f\`\`), o.f)\`x\`, ({}.x ??= o.f)\`x\`, ({}.x ||= o.f)\`x\`);
           console.log(single(), singleIndex(), (0, f)\`\`, (true && f)\`\`);
         `,
       },
       "entry.mjs",
     );
     expect(lines).toEqual([
-      "o o o object object",
+      "o o o object object object",
       "undefined undefined undefined undefined undefined undefined",
+      "undefined undefined undefined undefined undefined",
       "undefined undefined undefined undefined",
     ]);
   });
@@ -309,16 +311,18 @@ describe("this binding for call targets and template tags", () => {
           ${describeThis}
           function single() { const t = o.f; return t(); }
           function singleIndex() { const t = o["f"]; return t(); }
-          console.log(o.f(), (o.f)(), o["f"](), o.f?.(), o?.f(), { foo: f }.foo(), ({ foo: f }).foo());
+          console.log(o.f(), (o.f)(), o["f"](), o.f?.(), o?.f(), { foo: f }.foo(), ({ foo: f }).foo(), ({ foo: f })["foo"]());
           console.log((0, o.f)(), (true && o.f)(), (false || o.f)(), (null ?? o.f)(), (1 ? o.f : 0)(), (0 ? 1 : o.f)());
+          console.log((typeof o ? o.f : 0)(), (typeof o && 0 ? 0 : o.f)(), ((() => f()), o.f)(), ({}.x ??= o.f)(), ({}.x ||= o.f)());
           console.log(single(), singleIndex(), (0, f)(), (true && f)());
         `,
       },
       "entry.mjs",
     );
     expect(lines).toEqual([
-      "o o o o o object object",
+      "o o o o o object object object",
       "undefined undefined undefined undefined undefined undefined",
+      "undefined undefined undefined undefined undefined",
       "undefined undefined undefined undefined",
     ]);
   });

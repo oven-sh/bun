@@ -2618,7 +2618,7 @@ pub(crate) mod __gated_printer {
 
         /// Whether `import_ns.fn` for `e` needs the `(0, ...)` wrap. Exact by ref: the
         /// call and template arms clear `unbound_call_target` before the arguments print.
-        fn is_unbound_call_target(&self, e: &E::ImportIdentifier) -> bool {
+        fn is_unbound_call_target(&self, e: E::ImportIdentifier) -> bool {
             matches!(
                 self.unbound_call_target,
                 Some(ExprData::EImportIdentifier(target)) if target.ref_.eql(e.ref_)
@@ -4263,7 +4263,7 @@ pub(crate) mod __gated_printer {
                                 self.import_record(namespace.import_record_index as usize);
                             if namespace.was_originally_property_access {
                                 did_print = true;
-                                let wrap = self.is_unbound_call_target(e);
+                                let wrap = self.is_unbound_call_target(*e);
 
                                 if wrap {
                                     self.print_whitespacer(ws!(b"(0, "));
@@ -4296,7 +4296,7 @@ pub(crate) mod __gated_printer {
 
                         if !did_print {
                             did_print = true;
-                            let wrap = self.is_unbound_call_target(e);
+                            let wrap = self.is_unbound_call_target(*e);
 
                             if wrap {
                                 self.print_whitespacer(ws!(b"(0, "));

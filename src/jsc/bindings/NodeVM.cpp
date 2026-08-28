@@ -38,6 +38,10 @@
 #include "JavaScriptCore/JSGlobalProxyInlines.h"
 #include "GCDefferalContext.h"
 #include "JSBuffer.h"
+#include "xxhash3.h"
+
+#include <wtf/MallocSpan.h>
+#include <JavaScriptCore/JSCBytecodeCacheVersion.h>
 
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
 #include <JavaScriptCore/DFGAbstractHeap.h>
@@ -125,6 +129,77 @@ bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedD
     }
 
     return false;
+}
+
+// Integrity header verified by unwrapCachedData before decodeCodeBlock sees the payload; same role as V8's SerializedCodeData header.
+struct CachedDataHeader {
+    uint32_t magic;
+    uint32_t payloadLength;
+    uint32_t sourceHash;
+    uint32_t jscVersion;
+    uint64_t payloadHash;
+};
+static_assert(sizeof(CachedDataHeader) == 24, "header layout is part of the cachedData format");
+
+static constexpr uint32_t cachedDataMagic = 0x436E7542; // "BunC"
+
+static uint64_t hashCachedDataPayload(std::span<const uint8_t> payload)
+{
+    return highway_xxhash3_64(payload.data(), payload.size(), 0);
+}
+
+JSC::JSUint8Array* createCachedDataBuffer(JSGlobalObject* globalObject, const JSC::SourceCode& source, std::span<const uint8_t> bytecode)
+{
+    JSC::JSUint8Array* buffer = WebCore::createUninitializedBuffer(globalObject, sizeof(CachedDataHeader) + bytecode.size());
+    if (!buffer) [[unlikely]] {
+        return nullptr;
+    }
+
+    const CachedDataHeader header {
+        .magic = cachedDataMagic,
+        .payloadLength = static_cast<uint32_t>(bytecode.size()),
+        .sourceHash = source.hash(),
+        .jscVersion = JSC::computeJSCBytecodeCacheVersion(),
+        .payloadHash = hashCachedDataPayload(bytecode),
+    };
+    uint8_t* data = buffer->typedVector();
+    memcpy(data, &header, sizeof(header));
+    if (!bytecode.empty()) {
+        memcpy(data + sizeof(header), bytecode.data(), bytecode.size());
+    }
+    return buffer;
+}
+
+RefPtr<JSC::CachedBytecode> unwrapCachedData(const JSC::SourceCode& source, std::span<const uint8_t> cachedData)
+{
+    if (cachedData.size() < sizeof(CachedDataHeader)) {
+        return nullptr;
+    }
+
+    CachedDataHeader header;
+    memcpy(&header, cachedData.data(), sizeof(header));
+    if (header.magic != cachedDataMagic) {
+        return nullptr;
+    }
+
+    std::span<const uint8_t> payload = cachedData.subspan(sizeof(CachedDataHeader));
+    if (payload.size() != header.payloadLength) {
+        return nullptr;
+    }
+    if (header.sourceHash != source.hash()) {
+        return nullptr;
+    }
+    if (header.jscVersion != JSC::computeJSCBytecodeCacheVersion()) {
+        return nullptr;
+    }
+    if (header.payloadHash != hashCachedDataPayload(payload)) {
+        return nullptr;
+    }
+
+    // Copy: decoded functions retain the Decoder for lazy code block decoding, so a borrowed span would dangle.
+    auto payloadCopy = WTF::MallocSpan<uint8_t, JSC::VMMalloc>::malloc(payload.size());
+    memcpySpan(payloadCopy.mutableSpan(), payload);
+    return JSC::CachedBytecode::create(WTF::move(payloadCopy), {});
 }
 
 JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, CompileFunctionOptions&& options, JSC::SourceTaintedOrigin sourceTaintOrigin, JSC::JSScope* scope)
@@ -218,10 +293,13 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
 
     TriState bytecodeAccepted = TriState::Indeterminate;
 
-    if (!options.cachedData.isEmpty()) {
-        cachedBytecode = CachedBytecode::create(std::span(options.cachedData), nullptr, {});
-        SourceCodeKey key(sourceCode, {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
-        unlinkedProgramCodeBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, *cachedBytecode);
+    // Node treats a provided-but-empty cachedData buffer as rejected, not absent.
+    if (options.cachedDataProvided) {
+        cachedBytecode = unwrapCachedData(sourceCode, std::span(options.cachedData));
+        if (cachedBytecode) {
+            SourceCodeKey key(sourceCode, {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
+            unlinkedProgramCodeBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, *cachedBytecode);
+        }
         if (unlinkedProgramCodeBlock == nullptr) {
             bytecodeAccepted = TriState::False;
         } else {
@@ -262,7 +340,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
         if (options.produceCachedData) {
             RefPtr<JSC::CachedBytecode> producedBytecode = getBytecode(globalObject, JSC::SourceCodeType::ProgramType, sourceCode);
             if (producedBytecode) {
-                JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, producedBytecode->span());
+                JSC::JSUint8Array* buffer = createCachedDataBuffer(globalObject, sourceCode, producedBytecode->span());
                 RETURN_IF_EXCEPTION(throwScope, nullptr);
                 Bun::putDirectNamed(vm, function, "cachedData"_s, buffer);
                 Bun::putDirectNamed(vm, function, "cachedDataProduced"_s, jsBoolean(true));
@@ -476,8 +554,7 @@ JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::So
         return throwVMError(globalObject, scope, "createCachedData failed"_s);
     }
 
-    std::span<const uint8_t> bytes = bytecode->span();
-    JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, bytes);
+    JSC::JSUint8Array* buffer = createCachedDataBuffer(globalObject, source, bytecode->span());
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!buffer) {
@@ -1959,8 +2036,10 @@ bool CompileFunctionOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& 
         // The validators return false both for "absent" and for "threw".
         RETURN_IF_EXCEPTION(scope, false);
 
-        if (validateCachedData(globalObject, vm, scope, options, this->cachedData))
+        if (validateCachedData(globalObject, vm, scope, options, this->cachedData)) {
+            this->cachedDataProvided = true;
             any = true;
+        }
         RETURN_IF_EXCEPTION(scope, false);
 
         JSValue parsingContextValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "parsingContext"_s));

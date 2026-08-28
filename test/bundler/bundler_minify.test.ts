@@ -390,6 +390,34 @@ describe("bundler", () => {
     },
     run: { stdout: "1 2 3 4 3 3 4" },
   });
+  // A `using` declaration admits only identifier bindings, so the transform
+  // must not rewrite its declarators into an object pattern.
+  itBundled("minify/SameTargetDestructuringSkipsUsingDecls", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = { x: null, y: null };
+        function mk() {
+          return { r: null, w: null, v: 1, [Symbol.dispose]() {} };
+        }
+        function f() {
+          using a = obj.x, b = obj.y;
+          return [a, b];
+        }
+        function g() {
+          using db = mk(), a = db.r, b = db.w;
+          return [db.v, a, b];
+        }
+        console.log(JSON.stringify(f()), JSON.stringify(g()));
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("using a = obj.x, b = obj.y");
+      api.expectFile("/out.js").toContain("using db = mk(), a = db.r, b = db.w");
+    },
+    run: { stdout: "[null,null] [1,null,null]" },
+  });
   itBundled("minify/InlineArraySpread", {
     files: {
       "/entry.js": /* js */ `

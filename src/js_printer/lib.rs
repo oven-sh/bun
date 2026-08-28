@@ -2205,6 +2205,12 @@ pub(crate) mod __gated_printer {
                 unreachable!();
             }
 
+            // A `using` or `await using` declaration admits only identifier
+            // bindings, never a binding pattern.
+            let allow_destructuring = bun_core::FeatureFlags::SAME_TARGET_BECOMES_DESTRUCTURING
+                && keyword != b"using"
+                && keyword != b"await using";
+
             let mut needs_comma = false;
             'decls: while !decls.is_empty() {
                 if needs_comma {
@@ -2213,7 +2219,7 @@ pub(crate) mod __gated_printer {
                 }
                 needs_comma = true;
 
-                if bun_core::FeatureFlags::SAME_TARGET_BECOMES_DESTRUCTURING {
+                if allow_destructuring {
                     // Minify each run of
                     //
                     //    a = obj.foo, b = obj.bar, c = obj.baz

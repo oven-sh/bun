@@ -44,9 +44,18 @@ Identifier getFromIdentifierArray(VM& vm, Identifier* identifierArray, uint32_t 
 extern "C" JSModuleRecord* zig__ModuleInfoDeserialized__toJSModuleRecord(JSGlobalObject* globalObject, VM& vm, const Identifier& module_key, const SourceCode& source_code, bun_ModuleInfoDeserialized* module_info);
 extern "C" void zig__renderDiff(const char* expected_ptr, size_t expected_len, const char* received_ptr, size_t received_len, JSGlobalObject* globalObject);
 
-extern "C" void JSC__IdentifierArray__setFromUtf8(Identifier* identifierArray, size_t n, VM& vm, char* str, size_t len)
+// AtomStringImpl::add copies the characters; the record they came from is freed once the JSModuleRecord is built.
+extern "C" void JSC__IdentifierArray__setFromChars(Identifier* identifierArray, size_t n, VM& vm, const uint8_t* chars, size_t len, bool is8Bit)
 {
-    identifierArray[n] = Identifier::fromString(vm, AtomString::fromUTF8(std::span<const char>(str, len)));
+    RefPtr<AtomStringImpl> atom;
+    if (is8Bit)
+        atom = AtomStringImpl::add(std::span { reinterpret_cast<const Latin1Character*>(chars), len });
+    else {
+        Vector<char16_t, 64> units(len / sizeof(char16_t));
+        memcpy(units.mutableSpan().data(), chars, len);
+        atom = AtomStringImpl::add(units.span());
+    }
+    identifierArray[n] = Identifier::fromUid(vm, atom.get());
 }
 extern "C" bool JSC__IdentifierArray__isNull(Identifier* identifierArray, size_t n)
 {

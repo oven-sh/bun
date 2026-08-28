@@ -227,35 +227,66 @@ pub mod analyze_transpiled_module {
         }
     }
 
-    fn serialize_string_table<W: std::io::Write>(
+    /// A self-contained record's strings, as `WTF::StringImpl` bodies:
+    ///
+    /// ```text
+    /// u8   offset width W ∈ {1,2,4}; u8 0, 0, 0
+    /// u32  count
+    /// uW   × (count + 1): byte offset of each string's record, then the blob length
+    /// blob: per string, u8 is8Bit then the characters (UTF-16 little-endian, unaligned)
+    /// ```
+    fn serialize_string_table<'a, W: std::io::Write>(
         w: &mut W,
-        offsets: impl ExactSizeIterator<Item = u32>,
-        buf: &[u8],
+        strings: impl ExactSizeIterator<Item = &'a [u8]>,
     ) -> std::io::Result<()> {
-        let total = u32::try_from(buf.len()).unwrap();
-        let width = int_width(total);
+        let count = strings.len();
+        let mut offsets: Vec<u32> = Vec::with_capacity(count + 1);
+        let mut blob: Vec<u8> = Vec::new();
+        for wtf8 in strings {
+            match bun_core::strings::wtf8_to_utf16_alloc(wtf8) {
+                None => {
+                    offsets.push(blob.len() as u32);
+                    blob.push(1);
+                    blob.extend_from_slice(wtf8);
+                }
+                Some(units) if units.iter().all(|&u| u <= 0xFF) => {
+                    offsets.push(blob.len() as u32);
+                    blob.push(1);
+                    blob.extend(units.iter().map(|&u| u as u8));
+                }
+                Some(units) => {
+                    offsets.push(blob.len() as u32);
+                    blob.push(0);
+                    for u in units {
+                        blob.extend_from_slice(&u.to_le_bytes());
+                    }
+                }
+            }
+        }
+        offsets.push(blob.len() as u32);
+        let width = int_width(blob.len() as u32);
         w.write_all(&[width, 0, 0, 0])?;
-        w.write_all(&u32::try_from(offsets.len()).unwrap().to_le_bytes())?;
+        w.write_all(&(count as u32).to_le_bytes())?;
         for offset in offsets {
             put(w, width, offset)?;
         }
-        put(w, width, total)?;
-        w.write_all(buf)
+        w.write_all(&blob)
     }
 
     impl<'a> ModuleInfoDeserialized<'a> {
         /// Self-contained form: this module's own string table, then its body.
         pub(crate) fn serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
-            let mut offset = 0u32;
-            serialize_string_table(
-                w,
-                self.strings_lens.iter().map(|&len| {
-                    let at = offset;
-                    offset += len;
-                    at
-                }),
-                self.strings_buf,
-            )?;
+            let mut offset = 0usize;
+            let strings: Vec<&[u8]> = self
+                .strings_lens
+                .iter()
+                .map(|&len| {
+                    let s = &self.strings_buf[offset..offset + len as usize];
+                    offset += len as usize;
+                    s
+                })
+                .collect();
+            serialize_string_table(w, strings.into_iter())?;
             self.serialize_body(w, self.strings_lens.len() as u32, |id| id)
         }
 

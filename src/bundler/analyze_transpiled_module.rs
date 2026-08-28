@@ -125,25 +125,41 @@ pub enum ModuleInfoError {
 /// as `self`.
 pub struct ModuleInfoDeserialized {
     body: Body<'static>,
-    table: Table<'static>,
+    table: ModuleInfoStrings<'static>,
     pub flags: Flags,
     /// Backing storage for `body`/`table`: `None` when they live in the
     /// executable's mapped section.
     _owned: Option<Box<[u8]>>,
 }
 
-/// A self-contained record carries its own WTF-8 strings; a record inside an
-/// executable indexes one slot table shared by every module of the executable.
+/// Where a record's names come from: a self-contained record carries its own
+/// strings (`WTF::StringImpl` bodies the runtime atomizes); a record inside an
+/// executable indexes the slot table every module of the executable shares,
+/// resolved by JSC as the bytecode's own string slots are.
 #[derive(Clone, Copy)]
-enum Table<'a> {
-    Strings(ModuleInfoStringTable<'a>),
-    Slots(ModuleInfoSlotTable<'a>),
+pub enum ModuleInfoStrings<'a> {
+    Owned(ModuleInfoStringTable<'a>),
+    Shared(ModuleInfoSlotTable<'a>),
 }
-impl Table<'_> {
-    fn count(&self) -> u32 {
+/// One name of a record, as the runtime resolves it.
+pub enum ModuleInfoString<'a> {
+    /// `is_8bit` Latin-1 bytes, else little-endian UTF-16 (not necessarily aligned).
+    Chars { chars: &'a [u8], is_8bit: bool },
+    /// `EncoderStringTable::slotFor`.
+    Slot(u32),
+}
+impl<'a> ModuleInfoStrings<'a> {
+    pub fn count(&self) -> u32 {
         match self {
-            Table::Strings(t) => t.count,
-            Table::Slots(t) => t.count(),
+            Self::Owned(t) => t.count,
+            Self::Shared(t) => t.count(),
+        }
+    }
+    /// String `id`, or `None` if out of bounds (corrupt input).
+    pub fn get(&self, id: u32) -> Option<ModuleInfoString<'a>> {
+        match self {
+            Self::Owned(t) => t.get(id),
+            Self::Shared(t) => t.get(id).map(ModuleInfoString::Slot),
         }
     }
 }
@@ -247,30 +263,16 @@ impl ModuleInfoDeserialized {
     /// VM-wide identifier slots).
     #[inline]
     pub fn shared(&self) -> bool {
-        matches!(self.table, Table::Slots(_))
+        matches!(self.table, ModuleInfoStrings::Shared(_))
     }
     /// Ids below this are strings; the rest are sentinels.
     #[inline]
     pub fn strings_count(&self) -> usize {
         self.table.count() as usize
     }
-    /// The WTF-8 bytes of string `id` of a self-contained record, or `None`
-    /// if out of bounds (corrupt input) or the record is shared.
     #[inline]
-    pub fn string(&self, id: u32) -> Option<&[u8]> {
-        match &self.table {
-            Table::Strings(t) => t.get(id),
-            Table::Slots(_) => None,
-        }
-    }
-    /// The slot of string `id` of a shared record (`ModuleInfoSlotTable`), or
-    /// `None` if out of bounds or the record is self-contained.
-    #[inline]
-    pub fn slot(&self, id: u32) -> Option<u32> {
-        match &self.table {
-            Table::Strings(_) => None,
-            Table::Slots(t) => t.get(id),
-        }
+    pub fn string(&self, id: u32) -> Option<ModuleInfoString<'_>> {
+        self.table.get(id)
     }
 
     /// Consumes the heap allocation containing `self`.
@@ -295,7 +297,7 @@ impl ModuleInfoDeserialized {
         let (flags, body) = Body::parse(&bytes[table.byte_len..])?;
         Ok(Box::new(ModuleInfoDeserialized {
             body,
-            table: Table::Strings(table),
+            table: ModuleInfoStrings::Owned(table),
             flags,
             _owned: Some(owned),
         }))
@@ -317,7 +319,7 @@ impl ModuleInfoDeserialized {
         let (flags, body) = Body::parse(body).ok()?;
         Some(Box::new(ModuleInfoDeserialized {
             body,
-            table: Table::Slots(*table),
+            table: ModuleInfoStrings::Shared(*table),
             flags,
             _owned: None,
         }))
@@ -355,7 +357,7 @@ fn width(b: u8) -> Result<usize, ModuleInfoError> {
     }
 }
 
-/// Borrowed view over a self-contained record's WTF-8 string table
+/// Borrowed view over a self-contained record's string table
 /// (`bun_js_printer::serialize_string_table`).
 #[derive(Clone, Copy)]
 pub struct ModuleInfoStringTable<'a> {
@@ -414,9 +416,20 @@ impl<'a> ModuleInfoStringTable<'a> {
         Some([start, end - start])
     }
     #[inline]
-    pub fn get(&self, id: u32) -> Option<&'a [u8]> {
+    pub fn get(&self, id: u32) -> Option<ModuleInfoString<'a>> {
         let [offset, len] = self.range(id)?;
-        Some(&self.buf[offset as usize..(offset + len) as usize])
+        let record = &self.buf[offset as usize..(offset + len) as usize];
+        match *record {
+            [1, ref chars @ ..] => Some(ModuleInfoString::Chars {
+                chars,
+                is_8bit: true,
+            }),
+            [0, ref chars @ ..] if chars.len() % 2 == 0 => Some(ModuleInfoString::Chars {
+                chars,
+                is_8bit: false,
+            }),
+            _ => None,
+        }
     }
 }
 

@@ -353,6 +353,7 @@ pub struct Bufs {
     pub(crate) field_abs_path: PathBuffer,
     pub(crate) tsconfig_path_abs: PathBuffer,
     pub(crate) check_browser_map: PathBuffer,
+    pub(crate) browser_map_index: PathBuffer,
     pub(crate) remap_path: PathBuffer,
     pub(crate) load_as_file: PathBuffer,
     pub(crate) remap_path_trailing_slash: PathBuffer,
@@ -6761,7 +6762,7 @@ impl<'b> BrowserMapPath<'b> {
         }
 
         // If that failed, try assuming this is a directory and looking for an "index" file
-        let index_buf = bufs!(tsconfig_base_url);
+        let index_buf = bufs!(browser_map_index);
         let trimmed = strings::trim_right(path_to_check, b"/");
         let Some(index_path) = (if trimmed.is_empty() || trimmed == b"." {
             concat_into(index_buf, &[b"./index"])

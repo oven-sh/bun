@@ -313,33 +313,43 @@ describe("bundler", () => {
   // When an onResolve plugin matches but declines, the default resolver runs
   // from the plugin path. A disabled import still becomes the shared empty
   // module there, the same as without a plugin.
-  itBundled("browser/BrowserFieldDisabledModuleWithDecliningOnResolvePlugin", {
-    files: {
-      "/entry.js": /* js */ `
-        import info from "pkg";
-        console.log(JSON.stringify(info));
-      `,
-      "/node_modules/pkg/package.json": `{ "main": "index.js", "browser": { "./node.js": false, "nodeonly": false } }`,
-      "/node_modules/pkg/index.js": /* js */ `
-        import * as ns from "./node.js";
-        import nodeonly from "nodeonly";
-        export default [typeof ns, typeof ns.default, typeof nodeonly, require("./node.js") === require("./node.js")];
-      `,
-      "/node_modules/pkg/node.js": `throw 'fail'`,
-      "/node_modules/nodeonly/index.js": `throw 'fail'`,
-    },
-    target: "browser",
-    plugins: [
-      {
-        name: "decline",
-        setup(builder) {
-          builder.onResolve({ filter: /.*/ }, () => undefined);
-        },
+  itBundled("browser/BrowserFieldDisabledModuleWithDecliningOnResolvePlugin", () => {
+    const declined: string[] = [];
+    return {
+      files: {
+        "/entry.js": /* js */ `
+          import info from "pkg";
+          console.log(JSON.stringify(info));
+        `,
+        "/node_modules/pkg/package.json": `{ "main": "index.js", "browser": { "./node.js": false, "nodeonly": false } }`,
+        "/node_modules/pkg/index.js": /* js */ `
+          import * as ns from "./node.js";
+          import nodeonly from "nodeonly";
+          export default [typeof ns, typeof ns.default, typeof nodeonly, require("./node.js") === require("./node.js")];
+        `,
+        "/node_modules/pkg/node.js": `throw 'fail'`,
+        "/node_modules/nodeonly/index.js": `throw 'fail'`,
       },
-    ],
-    run: {
-      stdout: `["object","object","object",true]`,
-    },
+      target: "browser",
+      plugins: [
+        {
+          name: "decline",
+          setup(builder) {
+            builder.onResolve({ filter: /.*/ }, args => {
+              declined.push(args.path);
+              return undefined;
+            });
+          },
+        },
+      ],
+      onAfterBundle() {
+        expect(declined).toContain("./node.js");
+        expect(declined).toContain("nodeonly");
+      },
+      run: {
+        stdout: `["object","object","object",true]`,
+      },
+    };
   });
 
   // #4928: a package.json "browser": {"<builtin>": false} must win over the

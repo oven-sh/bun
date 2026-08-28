@@ -23,11 +23,11 @@ pub(crate) fn replay_test_records(coord: &mut Coordinator) {
         let rel = junit_file_name(coord.files[idx].as_bytes());
         for payload in &file.tests {
             if let Some(test) = runner::decode_test_case(&mut Reader { p: payload }, rel) {
-                let _ = junit.record_test_case(&test);
+                junit.record_test_case(&test).expect("oom");
             }
         }
         if coord.crashed_files.contains(&(idx as u32)) {
-            let _ = junit.record_test_case(&TestCaseReport {
+            let crashed = TestCaseReport {
                 file: rel,
                 scopes: Vec::new(),
                 name: b"(worker crashed)",
@@ -39,9 +39,10 @@ pub(crate) fn replay_test_records(coord: &mut Coordinator) {
                     message: b"worker process crashed before reporting results".to_vec(),
                     ..Default::default()
                 }),
-            });
+            };
+            junit.record_test_case(&crashed).expect("oom");
         }
-        let _ = junit.end_file(Some(file.elapsed_ns));
+        junit.end_file(Some(file.elapsed_ns)).expect("oom");
     }
 }
 

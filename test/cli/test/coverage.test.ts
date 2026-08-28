@@ -690,10 +690,10 @@ test("calls second", () => {
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toMatch(/ subject\.ts +\| +100\.00 +\| +100\.00 +\| +\n/);
   const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
   const record = lcov.split("end_of_record").find(r => r.includes("SF:subject.ts"));
   expect(record).toMatch(/FNF:2\nFNH:2\n/);
-  expect(stderr).toMatch(/ subject\.ts +\| +100\.00 +\| +100\.00 +\| +\n/);
-  expect(stderr).toContain("2 pass");
   expect(exitCode).toBe(0);
 });

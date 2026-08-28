@@ -30,10 +30,10 @@ for (let backend of ["api", "cli"] as const) {
     // A variable from the process environment (not a .env file) is inlined at build time. It has to be one this
     // process started with (the api backend builds in-process), spelled as the environment spells it (on Windows the
     // inlined name is case-sensitive even though process.env is not: `Path`, not `PATH`).
-    const [systemKey, systemValue] = Object.entries(process.env).find(
-      ([key, value]) =>
-        /^[A-Z][A-Z0-9_]*$/.test(key) && value && /^[\x20-\x7e]+$/.test(value) && !/["`$\\]/.test(value),
-    ) ?? ["PATH", process.env.PATH!];
+    const systemKey = ["HOME", "OS", "NUMBER_OF_PROCESSORS", "COMPUTERNAME", "USER", "LANG"].find(
+      key => process.env[key] && /^[\x20-\x7e]+$/.test(process.env[key]!) && !/["`$\\]/.test(process.env[key]!),
+    )!;
+    const systemValue = process.env[systemKey]!;
     itBundled("env/inline system", {
       env: {
         [systemKey]: systemValue,

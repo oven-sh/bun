@@ -233,9 +233,7 @@ describe("bundler", () => {
           const name = { offset: file.readUInt32LE(record), length: file.readUInt32LE(record + 4) };
           names.push(file.toString("latin1", base + name.offset, base + name.offset + name.length));
         }
-        // The entry's module name carries the outfile name, which has an
-        // ".exe" suffix on Windows.
-        const chunks = names.filter(name => !/\/root\/out(\.exe)?$/.test(name));
+        const chunks = names.filter(name => !name.endsWith("/root/out"));
         expect(chunks).toHaveLength(2);
         for (const name of chunks) {
           expect(name).toMatch(/^(\/\$bunfs|B:\/~BUN)\/root\/chunk-[0-9a-z]+\.js$/);

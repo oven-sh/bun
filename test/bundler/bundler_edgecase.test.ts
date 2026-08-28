@@ -2765,7 +2765,7 @@ describe("bundler", () => {
       ...deepChainFiles,
     },
     backend: "cli",
-    // writing 7000 fixture files is slow on Windows; the build itself is well under a second
+    // (local runs: writing 7000 fixture files is slow on Windows; the build itself is well under a second)
     timeoutScale: 6,
     run: { stdout: String(deepChainDepth) },
   });

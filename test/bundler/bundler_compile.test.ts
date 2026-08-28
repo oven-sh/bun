@@ -654,9 +654,8 @@ describe("bundler", () => {
       stdout:
         process.platform !== "win32"
           ? `file:///$bunfs/root/out /$bunfs/root/out`
-          : // pathToFileURL percent-encodes '~' (matches Node.js); the
-            // harness names the Windows outfile "out.exe".
-            `file:///B:/%7EBUN/root/out.exe B:\\~BUN\\root\\out.exe`,
+          : // pathToFileURL percent-encodes '~' (matches Node.js)
+            `file:///B:/%7EBUN/root/out B:\\~BUN\\root\\out`,
       setCwd: true,
     },
   });

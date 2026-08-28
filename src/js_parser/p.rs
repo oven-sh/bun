@@ -6314,11 +6314,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-// `bun_paths::fs::Path` lacks a package-name method
-// (it lives on the resolver `Path`, which `bun_js_parser` cannot depend on), so
-// the slice logic is inlined here. Mirrors `src/resolver/fs.rs::Path::packageName`.
-/// The npm package a specifier (`react/jsx-runtime`) or a resolved file path (`.../node_modules/@scope/pkg/x.js`,
-/// in the platform's syntax) belongs to.
+/// The (unscoped) npm package a specifier (`react/jsx-runtime`) or a resolved file path
+/// (`.../node_modules/react/index.js`, in the platform's syntax) belongs to; `None` for scoped and non-package paths.
 fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
     // A specifier separates with `/`; the part of a file path after `node_modules<sep>` separates with the
     // platform's separators.

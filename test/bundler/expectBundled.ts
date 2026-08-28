@@ -680,8 +680,9 @@ function expectBundled(
     if (generateOutput === false) outputPaths = [];
 
     outfile = useOutFile ? path.join(root, outfile ?? (compile ? "/out" : "/out.js")) : undefined;
-    // `bun build --compile` appends `.exe` on Windows unless the name already ends with it; that is the file tests read.
-    if (outfile && compile && isWindows && !outfile.endsWith(".exe")) outfile += ".exe";
+    // The file `bun build --compile` writes: on Windows it appends `.exe` unless the name already ends with it.
+    const outfileOnDisk =
+      outfile && compile && isWindows && !outfile.endsWith(".exe") ? outfile + ".exe" : outfile;
     outdir = !useOutFile && generateOutput ? path.join(root, outdir ?? "/out") : undefined;
     metafile = metafile ? path.join(root, metafile) : undefined;
     outputPaths = (
@@ -1402,7 +1403,7 @@ for (const [key, blob] of build.outputs) {
     };
     const api = {
       root,
-      outfile: outfile!,
+      outfile: outfileOnDisk!,
       outdir: outdir!,
       join: (...paths: string[]) => path.join(root, ...paths),
       readFile,
@@ -1470,11 +1471,11 @@ for (const [key, blob] of build.outputs) {
     // TODO: clean up this entire bit into one main loop\
     if (!compile) {
       if (outfile) {
-        if (!existsSync(outfile)) {
+        if (!existsSync(outfileOnDisk!)) {
           throw new Error("Bundle was not written to disk: " + outfile);
         } else {
           if (dce) {
-            const content = readFileSync(outfile).toUnixString();
+            const content = readFileSync(outfileOnDisk!).toUnixString();
             const dceFails = [...content.matchAll(/FAIL|FAILED|DROP|REMOVE/gi)];
             if (dceFails.length) {
               throw new Error("DCE test did not remove all expected code in " + outfile + ".");
@@ -1734,7 +1735,7 @@ for (const [key, blob] of build.outputs) {
         if (file) {
           file = path.join(root, file);
         } else if (entryPaths.length === 1) {
-          file = outfile ?? outputPaths[0];
+          file = outfileOnDisk ?? outputPaths[0];
         } else {
           throw new Error(prefix + "run.file is required when there is more than one entrypoint.");
         }

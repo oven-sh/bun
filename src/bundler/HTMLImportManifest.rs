@@ -313,7 +313,6 @@ pub(crate) fn write<W: Write + ?Sized>(
                     root_dir,
                     sources[source_index.get() as usize].path.text,
                 );
-                let path_for_key: &[u8] = &path_for_key;
 
                 let path: &[u8] = if inject_compiler_filesystem_prefix {
                     temp_buffer.clear();
@@ -328,7 +327,7 @@ pub(crate) fn write<W: Write + ?Sized>(
 
                 write_entry_item(
                     writer,
-                    path_for_key,
+                    &path_for_key,
                     path,
                     output_file.hash,
                     output_file.loader,

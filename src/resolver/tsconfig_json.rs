@@ -123,17 +123,14 @@ pub(crate) type PathsMap = ArrayHashMap<Box<[u8]>, Vec<TSConfigPath>>;
 /// One fallback entry of a `compilerOptions.paths` array.
 pub(crate) struct TSConfigPath {
     pub(crate) text: Box<[u8]>,
-    /// Position of the string in the file that declared it, for the warning
-    /// when a non-relative entry survives to a merged config without `baseUrl`.
+    /// Position of the string in the file that declared it, for diagnostics after the merge.
     pub(crate) loc: bun_ast::Loc,
 }
 
-/// `compilerOptions.paths` together with the file that declared it. Across an
-/// `extends` chain the whole map is inherited or replaced as one unit.
+/// `compilerOptions.paths` and the file that declared it.
 pub(crate) struct TSConfigPaths {
     pub(crate) map: PathsMap,
-    /// Absolute path of the tsconfig file whose `paths` this is. When no file in
-    /// the chain sets `baseUrl`, relative entries resolve against its directory.
+    /// Without a "baseUrl" anywhere in the chain, relative entries resolve against its directory.
     pub(crate) source_path: Box<[u8]>,
 }
 
@@ -143,11 +140,9 @@ impl TSConfigPaths {
     }
 }
 
-/// One entry of the top-level `extends` field (a string, or one item of a
-/// TypeScript 5.0 array).
+/// One entry of the top-level `extends` field (a string, or one item of a TypeScript 5.0 array).
 pub(crate) struct TSConfigExtends {
     pub(crate) spec: Box<[u8]>,
-    /// Position of the string in the file, for diagnostics about the base.
     pub(crate) loc: bun_ast::Loc,
 }
 
@@ -163,18 +158,15 @@ pub(crate) enum JsxField {
 
 pub(crate) type JsxFieldSet = EnumSet<JsxField>;
 
-/// The settings bun reads from one tsconfig.json, after its `extends` chain is
-/// merged in. Every field that a base config can supply has an "unset" state
-/// (`None`, an empty `Box`, or a missing `jsx_flags` bit), so a later file in the
-/// chain overrides an earlier one only where it sets the field.
+/// Every field a base config can supply has an "unset" state (`None`, an empty `Box`,
+/// a missing `jsx_flags` bit), so a file in an `extends` chain only overrides what it sets.
 pub struct TSConfigJSON {
     pub(crate) abs_path: Box<[u8]>,
 
     /// The absolute path of "compilerOptions.baseUrl". Empty when unset.
     pub(crate) base_url: Box<[u8]>,
 
-    /// The `extends` entries of this file, in order. `Resolver::parse_tsconfig`
-    /// drains them while it merges the chain, so a merged config has none.
+    /// Drained by `Resolver::parse_tsconfig`, so a merged config has none.
     pub(crate) extends: Vec<TSConfigExtends>,
     /// The verbatim values of "compilerOptions.paths". The keys are patterns to
     /// match and the values are arrays of fallback paths to search. Each key and
@@ -182,12 +174,9 @@ pub struct TSConfigJSON {
     /// If both the key and the value have a wildcard, the substring matched by
     /// the wildcard is substituted into the fallback path. The keys represent
     /// module-style path names and the fallback paths are relative to the
-    /// "baseUrl" value in the "tsconfig.json" file, or to the directory of the
-    /// file that declared "paths" when no file in the chain sets "baseUrl"
-    /// (the TypeScript 4.1 "paths without baseUrl" feature,
-    /// https://github.com/microsoft/TypeScript/issues/31869).
-    /// `Some` whenever the "paths" key is present, even as `{}`: an empty object
-    /// in a derived file clears inherited paths.
+    /// "baseUrl" value in the "tsconfig.json" file, or to the declaring file's
+    /// directory without one (https://github.com/microsoft/TypeScript/issues/31869).
+    /// `Some` whenever the key is present: `"paths": {}` clears inherited paths.
     pub(crate) paths: Option<TSConfigPaths>,
 
     pub jsx: options::jsx::Pragma,
@@ -261,15 +250,11 @@ impl TSConfigJSON {
         !self.base_url.is_empty()
     }
 
-    /// True when "paths" has at least one usable entry.
     pub(crate) fn has_paths(&self) -> bool {
         self.paths.as_ref().is_some_and(|p| p.map.count() > 0)
     }
 
-    /// The directory that relative "paths" entries resolve against: "baseUrl"
-    /// when any file in the chain sets it, otherwise the directory of the file
-    /// that declared "paths". This matters when a derived config overrides
-    /// "baseUrl" but inherits "paths".
+    /// What relative "paths" entries resolve against.
     pub(crate) fn paths_base_dir(&self) -> &[u8] {
         if self.has_base_url() {
             return &self.base_url;
@@ -280,17 +265,12 @@ impl TSConfigJSON {
         }
     }
 
-    /// Layers `other` on top of `self`: every setting `other` has is copied,
-    /// every setting it lacks keeps the value already in `self`. The resolver
-    /// calls this once per base config (in `extends` order) and then once with
-    /// the file's own settings, so the file overrides its bases and a later
-    /// base overrides an earlier one, the way tsc merges a chain.
+    /// Copies every setting `other` has onto `self`.
     pub(crate) fn apply_extended_config(&mut self, mut other: Box<TSConfigJSON>) {
         if other.has_base_url() {
             self.base_url = core::mem::take(&mut other.base_url);
         }
-        // TypeScript replaces "paths" across extends rather than merging the
-        // maps, so the whole map moves as one unit.
+        // tsc replaces "paths" across extends instead of merging the maps.
         if other.paths.is_some() {
             self.paths = other.paths.take();
         }
@@ -311,11 +291,8 @@ impl TSConfigJSON {
         TSConfigJSON::destroy(other);
     }
 
-    /// Drops the non-relative "paths" entries of a merged config that has no
-    /// "baseUrl", with a warning for each. tsc allows "baseUrl" and "paths" to
-    /// come from different files of an `extends` chain, so this check has to
-    /// wait until the chain is merged. `source` is the file that declared
-    /// "paths", so the warnings point at the offending strings.
+    /// Drops non-relative "paths" entries when no file in the merged chain set "baseUrl".
+    /// `source` is the file that declared "paths".
     pub(crate) fn remove_paths_that_need_base_url(
         &mut self,
         log: &mut bun_ast::Log,
@@ -381,9 +358,7 @@ impl TSConfigJSON {
     // We convert it to an absolute path during module resolution, so we shouldn't need to do that here.
     // https://github.com/microsoft/TypeScript/blob/ef802b1e4ddaf8d6e61d6005614dd796520448f8/src/compiler/commandLineParser.ts#L3243-L3245
     //
-    // `config_dir` is the directory of the root config of the `extends` chain,
-    // not of the file that contains the template: tsc substitutes after the
-    // merge, so a base config's "${configDir}" means the extending project.
+    // `config_dir` is the root config's directory: tsc substitutes after the merge.
     fn str_replacing_templates(
         input: Box<[u8]>,
         config_dir: &[u8],
@@ -426,10 +401,7 @@ impl TSConfigJSON {
         Ok(Box::from(&written[..len]))
     }
 
-    /// Parses one file. `extends` is recorded, not followed: the resolver
-    /// walks the chain and merges with [`Self::apply_extended_config`].
-    /// `config_dir` is what "${configDir}" expands to (the directory of the
-    /// root config of the chain).
+    /// Parses one file. `extends` is recorded, not followed.
     pub fn parse(
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
@@ -761,10 +733,8 @@ impl TSConfigJSON {
                                                 Ok(v) => v,
                                                 Err(_) => return Ok(None),
                                             };
-                                            // Non-relative entries are only valid with a
-                                            // "baseUrl", which another file of the chain can
-                                            // supply. `remove_paths_that_need_base_url` checks
-                                            // that once the chain is merged.
+                                            // Another file of the chain can supply "baseUrl":
+                                            // `remove_paths_that_need_base_url` checks later.
                                             if Self::is_valid_tsconfig_path_pattern(
                                                 &str, log, source, item_loc,
                                             ) {
@@ -869,8 +839,6 @@ impl TSConfigJSON {
         Some(strings::tokenize(text, b".").map(Box::from).collect())
     }
 
-    /// The "paths" entries tsc accepts without a "baseUrl": relative (`./x`,
-    /// `../x`, `.`, `..`) or absolute (POSIX or DOS drive) paths.
     fn is_relative_or_absolute_path(text: &[u8]) -> bool {
         let c0: u8;
         let c1: u8;

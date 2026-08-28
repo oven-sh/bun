@@ -4018,8 +4018,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Parses `file` and merges in its `extends` chain. The returned config is
-    /// the one `dir_info_uncached` interns for the directory.
+    /// Parses `file` and merges in its `extends` chain.
     pub(crate) fn parse_tsconfig(
         &mut self,
         file: &[u8],
@@ -4033,9 +4032,7 @@ impl<'a> Resolver<'a> {
         self.parse_tsconfig_in_chain(file, dirname_fd, &mut chain)
     }
 
-    /// One level of an `extends` chain: parses `file`, resolves and merges each
-    /// of its bases (recursively), then layers the file's own settings on top.
-    /// This is the shape of esbuild's `parseTSConfig`.
+    /// One level of an `extends` chain, the shape of esbuild's `parseTSConfig`.
     fn parse_tsconfig_in_chain(
         &mut self,
         file: &[u8],
@@ -4117,12 +4114,8 @@ impl<'a> Resolver<'a> {
         chain.visiting.pop();
         let mut result = merged?;
 
-        // A relative "baseUrl" resolves against the file that declares it. An
-        // inherited one is already absolute.
+        // A relative "baseUrl" is relative to the file that declares it.
         if result.has_base_url() && !bun_paths::is_absolute(&result.base_url) {
-            // NOTE: `base_url: Box<[u8]>` owns its bytes, so
-            // copy `abs_buf`'s thread-local result directly instead of
-            // double-copying through the `dirname_store` arena.
             let abs = self.fs_ref().abs_buf(
                 &[source.path.source_dir(), &result.base_url[..]],
                 bufs!(tsconfig_base_url),
@@ -4130,8 +4123,7 @@ impl<'a> Resolver<'a> {
             result.base_url = Box::from(abs);
         }
 
-        // Kept until the root returns: the check below needs the source of
-        // whichever file in the chain declared "paths".
+        // The check below may need the source of the base that declared "paths".
         chain.sources.push(source);
 
         if is_root {
@@ -4148,8 +4140,7 @@ impl<'a> Resolver<'a> {
         Ok(Some(result))
     }
 
-    /// Bases apply in `extends` order, so a later one overrides an earlier one,
-    /// and the file's own settings override every base.
+    /// A later base overrides an earlier one. The file's own settings override every base.
     fn merge_tsconfig_extends(
         &mut self,
         source: &bun_ast::Source,
@@ -4173,10 +4164,7 @@ impl<'a> Resolver<'a> {
         Ok(merged)
     }
 
-    /// Finds and parses one `extends` entry of `source` the way tsc's
-    /// `getExtendsConfigPath` does: a relative or absolute path is tried as
-    /// written and then with ".json" added, anything else is a package
-    /// specifier looked up in the `node_modules` of each ancestor directory.
+    /// Finds and parses one `extends` entry the way tsc's `getExtendsConfigPath` does.
     /// `None` means the base is unusable, and the reason is already logged.
     fn resolve_tsconfig_extends(
         &mut self,
@@ -4190,9 +4178,7 @@ impl<'a> Resolver<'a> {
                 match self.resolve_tsconfig_extends_package(source, extends, chain)? {
                     TSConfigProbe::Found(base) => return Ok(Some(base)),
                     TSConfigProbe::Failed => return Ok(None),
-                    // Bun used to resolve every `extends` value against the
-                    // file's directory, so a bare sibling name ("base.json")
-                    // keeps working through the fallback below.
+                    // Older Bun resolved every value as a path, so a bare "base.json" still works.
                     TSConfigProbe::Missing => {}
                 }
             }
@@ -4206,8 +4192,7 @@ impl<'a> Resolver<'a> {
         Ok(None)
     }
 
-    /// The path arm of [`Self::resolve_tsconfig_extends`]: the value as written,
-    /// relative to the file, then with ".json" added.
+    /// The path arm: the value as written, relative to the file, then with ".json" added.
     fn resolve_tsconfig_extends_relative(
         &mut self,
         source: &bun_ast::Source,
@@ -4231,9 +4216,7 @@ impl<'a> Resolver<'a> {
             found_or_failed => return Ok(found_or_failed),
         }
 
-        // tsc adds ".json" only when the path as written is not a file (a
-        // directory of the same name does not count) and does not already end
-        // in ".json".
+        // tsc adds ".json" only when the value is not a file and does not end in ".json".
         if extends_file.ends_with(b".json") {
             return Ok(TSConfigProbe::Missing);
         }
@@ -4245,11 +4228,8 @@ impl<'a> Resolver<'a> {
         self.probe_tsconfig_extends(source, extends, with_json, false, chain)
     }
 
-    /// The package-specifier arm of [`Self::resolve_tsconfig_extends`]. This
-    /// walks `node_modules` directories by hand instead of going through
-    /// `dir_info_cached`: the caller is inside `dir_info_uncached`, which holds
-    /// the directory cache locks, and the rules differ from module resolution
-    /// anyway (only ".json" files, `require` conditions, no directory matches).
+    /// The package arm. It walks ancestor `node_modules` by hand: the caller is
+    /// inside `dir_info_uncached`, which holds the directory cache locks.
     fn resolve_tsconfig_extends_package(
         &mut self,
         source: &bun_ast::Source,
@@ -4282,10 +4262,7 @@ impl<'a> Resolver<'a> {
                 let package_json_path: &[u8] = self
                     .fs_ref()
                     .abs_buf(&[pkg_dir, b"package.json"], &mut package_json_buf[..]);
-                // `PackageJSON::parse` logs an error for a missing file, so
-                // check first. The parsed value is dropped at the end of this
-                // block: the directory cache parses its own copy later if the
-                // package is ever resolved as a module.
+                // `PackageJSON::parse` logs an error for a missing file, so check first.
                 let package_json = if bun_sys::exists(package_json_path) {
                     PackageJSON::parse::<{ IncludeDependencies::None }>(
                         self,
@@ -4299,9 +4276,7 @@ impl<'a> Resolver<'a> {
                 };
                 if let Some(package_json) = package_json.as_ref() {
                     if let Some(exports_map) = package_json.exports.as_ref() {
-                        // TypeScript resolves the subpath through "exports" as a
-                        // `require`, and an "exports" map that does not name it
-                        // ends the search: there is no file system fallback.
+                        // tsc resolves through "exports" as a `require`, with no fallback.
                         let mut subpath_buf = bun_paths::path_buffer_pool::get();
                         let Some(esm_subpath) =
                             concat_path_into(&mut subpath_buf[..], &[b".", package_subpath])
@@ -4342,8 +4317,7 @@ impl<'a> Resolver<'a> {
                     }
                 }
 
-                // tsc's order: the tsconfig.json of a directory, the path as
-                // written, then the path with ".json" added.
+                // tsc's order: <dir>/tsconfig.json, the path as written, then with ".json".
                 let mut candidate_buf = bun_paths::path_buffer_pool::get();
                 let candidates: [&[&[u8]]; 3] = [
                     &[join, SEP_STR.as_bytes(), b"tsconfig.json"],
@@ -4370,10 +4344,8 @@ impl<'a> Resolver<'a> {
         Ok(TSConfigProbe::Missing)
     }
 
-    /// Tries one candidate path for an `extends` base. With `follow_symlinks`,
-    /// the file is parsed under its real path, so a symlinked workspace package
-    /// (how every package manager installs one) interprets its own relative
-    /// "baseUrl" and "paths" from where it lives, like tsc and esbuild do.
+    /// Tries one candidate path. With `follow_symlinks`, a symlinked workspace package
+    /// is parsed under its real path, so its relative "paths" resolve from where it lives.
     fn probe_tsconfig_extends(
         &mut self,
         source: &bun_ast::Source,
@@ -4383,9 +4355,7 @@ impl<'a> Resolver<'a> {
         chain: &mut TSConfigChain,
     ) -> crate::CrateResult<TSConfigProbe> {
         use bun_errno::SystemErrno as E;
-        // Only files count. Users name directories after their configs
-        // ("./config/base" next to "config/base.json"), and a bare package name
-        // is tried as a path too.
+        // Only files count: "./config/base" can be a directory next to "config/base.json".
         if is_directory(candidate) {
             return Ok(TSConfigProbe::Missing);
         }
@@ -4393,8 +4363,6 @@ impl<'a> Resolver<'a> {
         let candidate: &[u8] = if follow_symlinks && !self.opts.preserve_symlinks {
             match realpath(candidate, &mut real_path_buf) {
                 Some(real) => real,
-                // Only a missing file fails to resolve here. The read below
-                // reports anything else.
                 None => candidate,
             }
         } else {
@@ -4402,14 +4370,13 @@ impl<'a> Resolver<'a> {
         };
         match self.parse_tsconfig_in_chain(candidate, FD::INVALID, chain) {
             Ok(Some(base)) => Ok(TSConfigProbe::Found(base)),
-            // The JSON did not parse. The parser logged the error.
+            // The JSON did not parse, and the parser logged the error.
             Ok(None) | Err(crate::Error::ParseErrorAlreadyLogged) => Ok(TSConfigProbe::Failed),
-            // Not a file at that path. A directory of the same name is not a match.
             Err(crate::Error::Sys(E::ENOENT | E::ENOTDIR | E::EISDIR)) => {
                 Ok(TSConfigProbe::Missing)
             }
             Err(crate::Error::ParseErrorImportCycle) => {
-                // SAFETY: BACKREF — `self.log` (see `log()` NOTE), narrow `&mut` for this call only.
+                // SAFETY: BACKREF — `self.log` (see `log()` NOTE), narrow `&mut` for this call.
                 unsafe { &mut *self.log() }.add_range_warning_fmt(
                     Some(source),
                     source.range_of_string(extends.loc),
@@ -4422,7 +4389,7 @@ impl<'a> Resolver<'a> {
             }
             Err(err @ (crate::Error::Alloc(_) | crate::Error::Overflow(_))) => Err(err),
             Err(err) => {
-                // SAFETY: BACKREF — `self.log` (see `log()` NOTE), narrow `&mut` for this call only.
+                // SAFETY: BACKREF — `self.log` (see `log()` NOTE), narrow `&mut` for this call.
                 unsafe { &mut *self.log() }.add_range_error_fmt(
                     Some(source),
                     source.range_of_string(extends.loc),
@@ -4438,8 +4405,7 @@ impl<'a> Resolver<'a> {
     }
 
     fn warn_missing_tsconfig_base(&mut self, source: &bun_ast::Source, extends: &TSConfigExtends) {
-        // Packages ship tsconfig.json files that extend bases they do not
-        // depend on. Nothing the user can do about those, so stay quiet.
+        // A package's own config is not actionable for the user.
         if source.path.is_node_module() {
             return;
         }
@@ -6856,8 +6822,7 @@ impl<'a> Resolver<'a> {
                         None
                     }
                 };
-                // `parse_tsconfig` already merged the `extends` chain. The Box is
-                // interned into DirInfo and outlives the resolver.
+                // Interned into DirInfo, so it outlives the resolver.
                 if let Some(tsconfig_json) = parsed_tsconfig {
                     info.tsconfig_json = Some(
                         core::ptr::NonNull::new(tsconfig_json).expect("heap::alloc is non-null"),
@@ -6873,19 +6838,13 @@ impl<'a> Resolver<'a> {
 
 // ─── nested helper types ───────────────────────────────────────────────────
 
-/// One walk of a tsconfig.json `extends` chain, rooted at the file that
-/// `dir_info_uncached` (or `--tsconfig-override`) named.
+/// One walk of a tsconfig.json `extends` chain.
 struct TSConfigChain {
-    /// Directory of the root config. Every "${configDir}" in the chain expands
-    /// to it, the way tsc substitutes the template after the merge.
+    /// Directory of the root config: what "${configDir}" means in every file of the chain.
     config_dir: Box<[u8]>,
-    /// Files being parsed right now, root first. A base that is already on the
-    /// stack forms a cycle. A diamond (two branches that share one base) does
-    /// not, because a finished branch pops its entry.
+    /// Files being parsed, root first. A base already on the stack forms a cycle.
     visiting: Vec<&'static [u8]>,
-    /// Every file parsed so far, kept alive until the root returns so the
-    /// post-merge "paths" check can point its warnings at the file that
-    /// declared the offending entry.
+    /// Every parsed file, kept until the root returns for the post-merge "paths" warnings.
     sources: Vec<bun_ast::Source>,
 }
 
@@ -6894,8 +6853,7 @@ enum TSConfigProbe {
     Found(Box<TSConfigJSON>),
     /// Nothing usable at that path. Try the next candidate.
     Missing,
-    /// The file exists but cannot be used. The reason is already logged, and
-    /// the search stops.
+    /// The file exists but cannot be used. The reason is logged, and the search stops.
     Failed,
 }
 
@@ -7047,7 +7005,6 @@ fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
     MODULE_TYPE_FROM_EXT.get(ext).copied()
 }
 
-/// `stat` for one `extends` candidate. False for a missing path.
 fn is_directory(path: &[u8]) -> bool {
     let mut buf = bun_paths::path_buffer_pool::get();
     let Some(path_z) = nul_terminate_into(&mut buf, path) else {
@@ -7059,8 +7016,7 @@ fn is_directory(path: &[u8]) -> bool {
     )
 }
 
-/// `realpath` for one `extends` candidate. `None` when the path does not
-/// resolve (it does not exist, or a component is not a directory).
+/// `None` when the path does not resolve.
 fn realpath<'b>(path: &[u8], out: &'b mut PathBuffer) -> Option<&'b [u8]> {
     let mut buf = bun_paths::path_buffer_pool::get();
     let path_z = nul_terminate_into(&mut buf, path)?;
@@ -7077,8 +7033,7 @@ fn nul_terminate_into<'b>(buf: &'b mut PathBuffer, path: &[u8]) -> Option<&'b bu
     Some(bun_core::ZStr::from_buf(&buf[..], path.len()))
 }
 
-/// Byte-concatenates `parts` into `buf` (no separator handling). `None` when
-/// the result does not fit.
+/// Byte concatenation, no separator handling. `None` when the result does not fit.
 fn concat_path_into<'b>(buf: &'b mut [u8], parts: &[&[u8]]) -> Option<&'b [u8]> {
     let len: usize = parts.iter().map(|p| p.len()).sum();
     if len > buf.len() {

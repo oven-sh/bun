@@ -115,8 +115,7 @@ pub struct PackageJSON {
     pub(crate) exports: Option<ExportsMap>,
     pub(crate) imports: Option<ExportsMap>,
 
-    /// The "tsconfig" field: the config file a tsconfig.json `extends` of this
-    /// package's bare name loads, relative to the package directory.
+    /// The "tsconfig" field: the file `extends: "<this package>"` loads.
     pub(crate) tsconfig: Option<Box<[u8]>>,
 }
 

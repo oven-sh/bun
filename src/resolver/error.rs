@@ -14,8 +14,7 @@ pub enum Error {
     VersionSpecifierNotAllowedHere,
     #[error("ParseErrorAlreadyLogged")]
     ParseErrorAlreadyLogged,
-    /// A tsconfig.json `extends` chain reached a file that is already being
-    /// parsed higher up the same chain.
+    /// A tsconfig.json `extends` chain reached a file it is already parsing.
     #[error("ParseErrorImportCycle")]
     ParseErrorImportCycle,
     #[error(transparent)]

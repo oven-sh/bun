@@ -94,7 +94,9 @@ describe("IOWriter file output redirection", () => {
         `,
       });
       const fifo = join(String(dir), "out.fifo");
-      await using mk = Bun.spawn({ cmd: [Bun.which("mkfifo")!, fifo], env: bunEnv });
+      // mkfifo is not on the sandbox PATH on OHOS (/system/bin)
+      const mkfifo = Bun.which("mkfifo") ?? "/system/bin/mkfifo";
+      await using mk = Bun.spawn({ cmd: [mkfifo, fifo], env: bunEnv });
       await mk.exited;
 
       // Hold a read end in the parent so the FIFO survives a child abort

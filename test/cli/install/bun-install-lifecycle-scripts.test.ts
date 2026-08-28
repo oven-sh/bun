@@ -2128,54 +2128,46 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       }
 
       for (const linker of ["hoisted", "isolated"] as const) {
-        // On Windows the isolated store path of a git dependency embeds the whole repository URL
-        // (here: a temp dir path) plus the commit, which puts the package past MAX_PATH, and every
-        // lifecycle script of such a package then fails to spawn with ENOENT, with or without this
-        // feature. That is a separate isolated-linker bug; `pm trust` and the tests below still
-        // cover the nested install on Windows through the hoisted linker.
-        test.skipIf(isWindows && linker === "isolated")(
-          `${linker} linker: installs them for the prepare script and removes them afterwards`,
-          async () => {
-            using ctx = await setupTest();
-            const { packageDir, packageJson, env } = ctx;
-            const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
-            await verdaccio.writeBunfig(packageDir, { linker });
+        test(`${linker} linker: installs them for the prepare script and removes them afterwards`, async () => {
+          using ctx = await setupTest();
+          const { packageDir, packageJson, env } = ctx;
+          const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+          await verdaccio.writeBunfig(packageDir, { linker });
 
-            const spec = await createGitDependency(packageDir, gitDependency, { files: gitDependencyFiles });
-            await writeFile(
-              packageJson,
-              JSON.stringify({
-                name: "foo",
-                version: "1.0.0",
-                dependencies: { [gitDependency.name]: spec },
-                trustedDependencies: [gitDependency.name],
-              }),
-            );
+          const spec = await createGitDependency(packageDir, gitDependency, { files: gitDependencyFiles });
+          await writeFile(
+            packageJson,
+            JSON.stringify({
+              name: "foo",
+              version: "1.0.0",
+              dependencies: { [gitDependency.name]: spec },
+              trustedDependencies: [gitDependency.name],
+            }),
+          );
 
-            await using proc = spawn({
-              cmd: [bunExe(), "install"],
-              cwd: packageDir,
-              stdout: "pipe",
-              stdin: "ignore",
-              stderr: "pipe",
-              env: testEnv,
-            });
-            const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          await using proc = spawn({
+            cmd: [bunExe(), "install"],
+            cwd: packageDir,
+            stdout: "pipe",
+            stdin: "ignore",
+            stderr: "pipe",
+            env: testEnv,
+          });
+          const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-            expect(err).not.toContain("error:");
-            expect(err).not.toContain("warn:");
-            expect(out).toContain(`+ ${gitDependency.name}@git+file://`);
-            expect(exitCode).toBe(0);
+          expect(err).not.toContain("error:");
+          expect(err).not.toContain("warn:");
+          expect(out).toContain(`+ ${gitDependency.name}@git+file://`);
+          expect(exitCode).toBe(0);
 
-            expect(await installedState(packageDir, gitDependency.name)).toEqual({
-              prepareOutput: "what-bin@1.0.0",
-              // neither the nested install's `node_modules` nor the `bun.lock` it migrated are left behind
-              depDirEntries: preparedDepDirEntries,
-              hoistedDevDependency: false,
-              lockfileMentionsDevDependency: false,
-            });
-          },
-        );
+          expect(await installedState(packageDir, gitDependency.name)).toEqual({
+            prepareOutput: "what-bin@1.0.0",
+            // neither the nested install's `node_modules` nor the `bun.lock` it migrated are left behind
+            depDirEntries: preparedDepDirEntries,
+            hoistedDevDependency: false,
+            lockfileMentionsDevDependency: false,
+          });
+        });
       }
 
       test("the dependencies bun already nested under the package survive", async () => {

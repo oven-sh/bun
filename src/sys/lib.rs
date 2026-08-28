@@ -1819,8 +1819,6 @@ mod posix_impl {
             unsafe { libc::send(fd, buf, n, flags) }
         }
     }
-    // `check*!` retries on EINTR. The macOS `$NOCANCEL` arms use the
-    // single-shot `check_once_*!` variants and surface EINTR to the caller.
     macro_rules! check {
         ($rc:expr, $tag:expr) => {{
             loop {

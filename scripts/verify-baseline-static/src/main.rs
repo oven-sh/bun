@@ -53,6 +53,7 @@ const NEHALEM_ALLOWED: &[CpuidFeature] = &[
     CpuidFeature::FXSR,  // FXSAVE/FXRSTOR
     CpuidFeature::SYSCALL,
     CpuidFeature::RDTSCP, // Nehalem has this (K8 introduced it, Intel added in Nehalem)
+    CpuidFeature::RDPMC,  // P6 (1995); on every x86-64 CPU
     // LAHF/SAHF in 64-bit: iced doesn't tag these with a distinct feature
     // (they're just INTEL8086 or X64). If it ever does, we'd add it here.
     CpuidFeature::CMPXCHG16B, // Nehalem has it, required by x86-64-v2
@@ -1236,7 +1237,8 @@ mod tests {
         0x43, 0x0f, 0xb6, 0x44, 0x05, 0x00, 0x48, 0x8d, 0x35, 0x2f, 0x33, 0x21, 0x01, 0xff, 0x24, 0xc6,
         // .int 710 (op_jmp_wide32), then llint_op_jmp_wide32 at +0x14
         0xc6, 0x02, 0x00, 0x00, 0x4b, 0x63, 0x44, 0x05, 0x02, 0x85, 0xc0, 0x74, 0x13, 0x49, 0x01, 0xc0,
-        // lea rsi,[rip+0x121330f]: the displacement bytes 0f 33 spell RDPMC
+        // lea rsi,[rip+0x121330f] at +0x26; the desynced sweep lands on its
+        // displacement at +0x29, where `0f 33` spelled RDPMC in build 107029
         0x43, 0x0f, 0xb6, 0x44, 0x05, 0x00, 0x48, 0x8d, 0x35, 0x0f, 0x33, 0x21, 0x01, 0xff, 0x24, 0xc6,
         0x4d, 0x01, 0xe8, 0x48, 0x89, 0xef, 0x4c, 0x89, 0xc6, 0xe8, 0x52, 0x4d, 0x7f, 0x00, 0x49, 0x89,
         0xc0, 0x4d, 0x29, 0xe8, 0x43, 0x0f, 0xb6, 0x44, 0x05, 0x00, 0x48, 0x8d, 0x35, 0xeb, 0x32, 0x21,
@@ -1246,6 +1248,11 @@ mod tests {
     const BASE: u64 = 0x3590cc4;
     const WIDE32: u64 = 0x3590cd8;
     const JTRUE: u64 = 0x3590d1c;
+    /// Offset of the lea displacement the desynced sweep reads as an opcode.
+    const LEA_DISP: usize = 0x29;
+    /// `vmovdqa xmm0,xmm1`: a 4-byte VEX instruction, the cheapest real
+    /// post-Nehalem encoding to splice into the fixture.
+    const VMOVDQA: [u8; 4] = [0xc5, 0xf9, 0x6f, 0xc1];
 
     fn sym(addr: u64, end: u64, name: &str) -> Sym {
         Sym {
@@ -1262,13 +1269,22 @@ mod tests {
         ]
     }
 
-    fn violation_names(res: &ScanResult) -> Vec<String> {
+    /// The fixture with `patch` written over the bytes at `offset`.
+    fn patched(offset: usize, patch: &[u8]) -> Vec<u8> {
+        let mut bytes = LLINT_JMP_WIDE32.to_vec();
+        bytes[offset..offset + patch.len()].copy_from_slice(patch);
+        bytes
+    }
+
+    /// Every violating instruction as (symbol, ip, mnemonic, feature), in
+    /// report order.
+    fn violation_hits(res: &ScanResult) -> Vec<(&str, u64, &str, &str)> {
         res.violations
             .iter()
-            .map(|(sym, rep)| {
-                let mut feats: Vec<_> = rep.features.iter().copied().collect();
-                feats.sort();
-                format!("{sym} [{}]", feats.join(", "))
+            .flat_map(|(sym, rep)| {
+                rep.hits
+                    .iter()
+                    .map(move |h| (sym.as_str(), h.ip, h.mnemonic, h.feature))
             })
             .collect()
     }
@@ -1276,25 +1292,106 @@ mod tests {
     #[test]
     fn without_symbol_starts_the_sweep_desyncs_into_the_next_handler() {
         // No symbols: a single decode unit, i.e. the plain linear sweep. The
-        // `.int 0x2c6` desyncs it into the next handler and it reads `0f 33`
-        // out of the lea displacement. This is the false positive CI saw.
-        let res = scan_x86_64(LLINT_JMP_WIDE32, BASE, &[], &Allowlist::new());
+        // `.int 0x2c6` desyncs it into the next handler, where it reads the
+        // lea displacement as an opcode. The displacement is link-layout
+        // dependent; here it is set to spell an AVX instruction, the shape
+        // #32744 and #39597 saw (build 107029 got RDPMC out of the same slot,
+        // which Nehalem decodes, so it is not a violation on its own).
+        let bytes = patched(LEA_DISP, &VMOVDQA);
+        let res = scan_x86_64(&bytes, BASE, &[], &Allowlist::new());
         assert_eq!(
-            violation_names(&res),
-            vec![format!("<no-symbol@{:#x}> [RDPMC]", 0x3590ced_u64)]
+            violation_hits(&res),
+            vec![(
+                "<no-symbol@0x3590ced>",
+                BASE + LEA_DISP as u64,
+                "Vmovdqa",
+                "AVX"
+            )]
         );
+        // The same bytes, decoded per symbol: the lea is one instruction and
+        // its displacement is never looked at.
+        let res = scan_x86_64(&bytes, BASE, &llint_syms(), &Allowlist::new());
+        assert_eq!(violation_hits(&res), vec![]);
     }
 
     #[test]
     fn sweep_restarts_at_each_symbol_start() {
         let res = scan_x86_64(LLINT_JMP_WIDE32, BASE, &llint_syms(), &Allowlist::new());
-        assert!(res.violations.is_empty(), "{:?}", violation_names(&res));
+        assert_eq!(violation_hits(&res), vec![]);
         assert!(res.allowlisted.is_empty());
         // 3 real instructions in the wide16 tail, the `mov byte ptr [rdx],0`
         // that the first three id bytes spell (the fourth is truncated at the
         // symbol start and dropped), 16 in llint_op_jmp_wide32, and the
         // `.int 0x47` tail that decodes as `add [r8],r8b` plus a truncated byte.
         assert_eq!(res.total_insns, 3 + 1 + 16 + 1);
+        // The whole-section sweep decodes one more: the straddler and its
+        // garbage successors replace the handler's first six instructions.
+        let res = scan_x86_64(LLINT_JMP_WIDE32, BASE, &[], &Allowlist::new());
+        assert_eq!(res.total_insns, 22);
+    }
+
+    #[test]
+    fn a_real_violation_is_reported_from_every_position_in_a_unit() {
+        // Positive controls: the restart must not lose or misattribute a real
+        // post-Nehalem instruction, wherever it sits relative to the unit
+        // boundaries. Each variant replaces whole instructions of the fixture
+        // with vmovdqa (plus nop padding) so the decoder stays in sync around
+        // the splice; `insns` is the resulting instruction count (21 for the
+        // unpatched fixture).
+        let cases: [(&str, usize, &[u8], &str, u64); 3] = [
+            // Middle of llint_op_jmp_wide32: over `mov r8,rax / sub r8,r13`
+            // (two instructions, replaced by two).
+            (
+                "mid-unit",
+                0x3e,
+                &[0xc5, 0xf9, 0x6f, 0xc1, 0x66, 0x90],
+                "llint_op_jmp_wide32",
+                21,
+            ),
+            // Last instruction of the wide16 unit, ending exactly at the next
+            // symbol start: over the `.int 0x2c6` bytes (one instruction plus
+            // a truncated byte, replaced by one). Pins that a unit's tail is
+            // decoded in full and not truncated early.
+            (
+                "last-before-boundary",
+                0x10,
+                &VMOVDQA,
+                "llint_op_jmp_wide16",
+                21,
+            ),
+            // First instruction of the wide32 unit: over `movsxd rax,[r13+r8+2]`
+            // (one instruction, replaced by two). Pins the ip base of a
+            // non-first unit and its attribution.
+            (
+                "first-of-unit",
+                0x14,
+                &[0xc5, 0xf9, 0x6f, 0xc1, 0x90],
+                "llint_op_jmp_wide32",
+                22,
+            ),
+        ];
+        for (name, offset, patch, expect_sym, insns) in cases {
+            let bytes = patched(offset, patch);
+            let res = scan_x86_64(&bytes, BASE, &llint_syms(), &Allowlist::new());
+            assert_eq!(
+                violation_hits(&res),
+                vec![(expect_sym, BASE + offset as u64, "Vmovdqa", "AVX")],
+                "{name}"
+            );
+            assert_eq!(res.total_insns, insns, "{name}");
+        }
+    }
+
+    #[test]
+    fn an_embedded_opcode_id_decoded_on_its_own_is_never_a_violation() {
+        // With the restart, the 4 id bytes before each handler are the tail
+        // of the previous unit and decode in isolation. Check every value the
+        // `.int` could hold (real ids are below 1000; 2^16 covers any opcode
+        // count) so no layout can turn an id into a false positive.
+        for id in 0..=u16::MAX as u32 {
+            let res = scan_x86_64(&id.to_le_bytes(), 0x1000, &[], &Allowlist::new());
+            assert_eq!(violation_hits(&res), vec![], "opcode id {id}");
+        }
     }
 
     #[test]

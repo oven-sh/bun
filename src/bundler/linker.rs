@@ -42,15 +42,20 @@ pub struct Linker {
 const RUNTIME_SOURCE_PATH: &[u8] = b"bun:wrap";
 
 // ── relative_paths_list singleton ────────────────────────────────────────
-// `bun_alloc::BSSStringList<COUNT, ITEM_LENGTH>` encodes the parameters as
-// `COUNT = _COUNT * 2`, `ITEM_LENGTH = _ITEM_LENGTH + 1` (see `bun_alloc/lib.rs`).
+// `bun_alloc::BSSStringList<COUNT, ITEM_LENGTH, OVERFLOW_BLOCK_SIZE>` encodes the
+// parameters as `COUNT = _COUNT * 2`, `ITEM_LENGTH = _ITEM_LENGTH + 1`,
+// `OVERFLOW_BLOCK_SIZE = bss_overflow_block_size(COUNT)` (see `bun_alloc/lib.rs`).
 // `bss_string_list!` would be the canonical declare-site macro but
 // expands to `core::cell::SyncUnsafeCell`, and `bun_bundler` does not (yet)
 // enable `#![feature(sync_unsafe_cell)]`. Use the heap-allocating `init()`
 // fallback under a `LazyLock` instead — same lifetime semantics
 // (process-static, never freed), just not BSS-backed. Swap to the macro once
 // the crate-level feature flag lands.
-type ImportPathsList = bun_alloc::BSSStringList<{ 512 * 2 }, { 128 + 1 }>;
+type ImportPathsList = bun_alloc::BSSStringList<
+    { 512 * 2 },
+    { 128 + 1 },
+    { bun_alloc::bss_overflow_block_size(512 * 2) },
+>;
 
 /// `Send + Sync` newtype around the leaked `BSSStringList` heap allocation so
 /// it can sit inside a `LazyLock`. The underlying list serializes its own

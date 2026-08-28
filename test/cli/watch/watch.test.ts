@@ -221,6 +221,11 @@ function linkBunExe(dir: string): string {
 // deliberate crashes below must not upload there.
 const noCrashReportEnv = { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" };
 
+// The children below die from a deliberate crash. On the coredump-upload CI
+// lane the runner flags a leaked core file as a failure, so run them with core
+// dumps disabled. RLIMIT_CORE is inherited across exec.
+const noCoreCmd = (argv: string[]) => ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...argv];
+
 it.skipIf(isWindows)(
   "--watch names the errno when the re-exec of the binary fails",
   async () => {
@@ -232,7 +237,7 @@ it.skipIf(isWindows)(
     const proc = spawn({
       // --debug-crash-handler-use-trace-string skips the debug build's slow
       // backtrace symbolication so the child exits promptly.
-      cmd: [exe, "--debug-crash-handler-use-trace-string", "--watch", "app.js"],
+      cmd: noCoreCmd([exe, "--debug-crash-handler-use-trace-string", "--watch", "app.js"]),
       cwd: String(dir),
       env: noCrashReportEnv,
       stdout: "pipe",
@@ -272,7 +277,7 @@ it.skipIf(isWindows)(
     const exe = linkBunExe(String(dir));
 
     const proc = spawn({
-      cmd: [exe, "--debug-crash-handler-use-trace-string", "--watch", "app.js"],
+      cmd: noCoreCmd([exe, "--debug-crash-handler-use-trace-string", "--watch", "app.js"]),
       cwd: String(dir),
       env: noCrashReportEnv,
       stdin: "pipe",

@@ -77,6 +77,14 @@ const GUARDED: Guarded[] = [
   },
 ];
 
+// The errno enums (`#[repr(u16)]`, an undeclared value is an invalid enum
+// value the moment it exists) are only ever built from a discriminant through
+// `strum::FromRepr` (`SystemErrno::from_raw`, Windows `E::from_raw`); a
+// transmute from the raw integer is the unchecked shape this lint keeps out.
+// `bun_sys::E` is an alias of `SystemErrno` on POSIX, so both spellings are
+// covered.
+const ERRNO_TRANSMUTE = /\btransmute::<\s*u16\s*,\s*(?:[\w:]+::)?(?:E|SystemErrno)\s*>/;
+
 const DEBUG_ASSERT = /\bdebug_assert(?:_eq|_ne)?!/;
 // A check that survives release: `assert!`-family or an explicit `panic!`
 // arm (the `match check(..) { None => panic!(..) }` shape).
@@ -122,6 +130,7 @@ function stripComments(content: string): string {
 }
 
 const definitions = new Map<string, Definition[]>(GUARDED.map(g => [g.name, []]));
+const transmutes: string[] = [];
 let scanned = 0;
 for (const abs of rustSources) {
   const source = path.relative(root, abs).replaceAll(path.sep, "/");
@@ -133,6 +142,9 @@ for (const abs of rustSources) {
   const content = stripComments(await file(abs).text());
   for (const g of GUARDED) {
     definitions.get(g.name)!.push(...findDefinitions(source, content, g));
+  }
+  for (const [index, line] of content.split("\n").entries()) {
+    if (ERRNO_TRANSMUTE.test(line)) transmutes.push(`${source}:${index + 1}: ${line.trim()}`);
   }
 }
 
@@ -213,6 +225,12 @@ test("the extractor and the check classify the shapes it claims to", () => {
           unsafe { Self::from_raw(buf.as_ptr(), len) }
       }`),
   ).toEqual([]);
+
+  expect(ERRNO_TRANSMUTE.test("unsafe { core::mem::transmute::<u16, SystemErrno>(n) }")).toBe(true);
+  expect(ERRNO_TRANSMUTE.test("unsafe { core::mem::transmute::<u16, E>(int as u16) }")).toBe(true);
+  expect(ERRNO_TRANSMUTE.test("unsafe { transmute::<u16, bun_errno::SystemErrno>(n) }")).toBe(true);
+  expect(ERRNO_TRANSMUTE.test("unsafe { transmute::<u16, Endian>(n) }")).toBe(false);
+  expect(ERRNO_TRANSMUTE.test("SystemErrno::from_repr(n)")).toBe(false);
 });
 
 test.each(GUARDED)("$name checks its precondition in release builds", g => {
@@ -221,4 +239,8 @@ test.each(GUARDED)("$name checks its precondition in release builds", g => {
   // rather than silently dropping the function out of the lint.
   expect(defs.map(d => d.source)).toHaveLength(1);
   expect(violations(defs[0])).toEqual([]);
+});
+
+test("no errno enum is built by transmuting a raw u16", () => {
+  expect(transmutes).toEqual([]);
 });

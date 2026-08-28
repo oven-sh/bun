@@ -165,22 +165,21 @@ server_exports = {
       for (const uid of componentManifestAdd) {
         try {
           const exports = await loadExports<{}>(uid);
+          const exportNames = Object.keys(exports);
 
-          // Keyed by user export names. A null prototype keeps an export named
-          // "__proto__" an own key instead of hitting the Object.prototype setter.
-          const client = Object.create(null);
-          for (const exportName of Object.keys(exports)) {
+          for (const exportName of exportNames) {
             serverManifest[uid + "#" + exportName] = {
               id: uid,
               name: exportName,
               chunks: [],
             };
-            client[exportName] = {
-              specifier: "ssr:" + uid,
-              name: exportName,
-            };
           }
-          ssrManifest[uid] = client;
+          // Object.fromEntries defines own keys, so an export named "__proto__"
+          // does not hit the Object.prototype setter like `client[exportName] = ...`
+          // would. The result is a plain object like the production manifest entry.
+          ssrManifest[uid] = Object.fromEntries(
+            exportNames.map(exportName => [exportName, { specifier: "ssr:" + uid, name: exportName }]),
+          );
         } catch (err) {
           console.log(err);
         }

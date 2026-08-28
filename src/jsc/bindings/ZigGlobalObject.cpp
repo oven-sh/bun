@@ -2713,8 +2713,7 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, 
     return JSValue::encode(result);
 }
 
-// `console.createTask`. The builtin returns the createTask function with its
-// per-global closure state, so it is materialized once on first access.
+// `console.createTask`, materialized on first access
 JSC_DEFINE_CUSTOM_GETTER(getConsoleCreateTask, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
 {
     auto& vm = JSC::getVM(globalObject);

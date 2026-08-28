@@ -136,15 +136,11 @@ export function write(this: Console, input) {
   return wrote;
 }
 
-// Returns the `console.createTask` function. Called lazily from a custom
-// getter in ZigGlobalObject.cpp so the shared `run` method is created once per
-// global object. Node implements this in the V8 inspector (v8-console.cc);
-// `run` brackets the callback with async-stack tagging for an attached
-// inspector frontend. Bun has no equivalent inspector hook, so the task only
-// validates its arguments and invokes the callback, which is the observable
-// behavior when no frontend is attached. Tasks are marked with a private name,
-// like Node's internal slot, so user code cannot forge or break the receiver
-// check.
+// Node implements createTask in the V8 inspector (v8-console.cc), where `run`
+// brackets the callback with async-stack tagging for an attached frontend.
+// Bun has no such inspector hook, so `run` validates and invokes the callback,
+// Node's observable behavior with no frontend attached. The private name
+// mirrors Node's internal-slot receiver check.
 export function createCreateTask() {
   function run(f) {
     if (!$isCallable(f)) {

@@ -885,6 +885,70 @@ it.concurrent("a no-op onResolve that returns args.path unchanged is transparent
   expect(exitCode).toBe(0);
 });
 
+// An import() leaves k.ts with a pending onLoad. A require() of a module that imports k.ts then re-issues the fetch
+// synchronously, and that onLoad call itself require()s another importer of k.ts, which re-issues the fetch a third
+// time. The loader must keep one record for k.ts, the one the nested (third) fetch produced: both importers see the
+// same namespace and read k = 3, and the outer fetch does not settle the entry a second time (a debug build asserts on
+// that). Two shapes: the pending fetch belongs to a dependency edge (a.ts imports k.ts, so k.ts has a registry entry
+// while its fetch is pending) or to the top-level import() of k.ts itself (no entry exists until the require() creates
+// one).
+describe.concurrent("an onLoad hook that loads another importer of the module it is loading keeps one record", () => {
+  for (const [shape, pendingImport] of [
+    ["a dependency edge", "./a.ts"],
+    ["a top-level import()", "./k.ts"],
+  ] as const) {
+    it(`the pending fetch comes from ${shape}`, async () => {
+      using dir = tempDir("plugin-onload-reentrant-fetch", {
+        "k.ts": `export const k = 0;`,
+        "a.ts": `import * as kns from "./k.ts"; export const a = kns.k;`,
+        "m.ts": `import * as kns from "./k.ts"; export const k = kns.k; export { kns };`,
+        "n.ts": `import * as kns from "./k.ts"; export const k = kns.k; export { kns };`,
+        "entry.ts": `
+          let calls = 0;
+          const { promise: firstFetchStarted, resolve: markFirstFetch } = Promise.withResolvers();
+          Bun.plugin({
+            name: "k-loader",
+            setup(build) {
+              build.onLoad({ filter: /[\\\\/]k\\.ts$/ }, () => {
+                // The nested require() below re-enters this hook and bumps calls before this call returns, so
+                // each call keeps its own number: the record from call 2 says k = 2, the one from call 3 says k = 3.
+                const thisCall = ++calls;
+                if (thisCall === 1) {
+                  markFirstFetch();
+                  return new Promise(() => {});
+                }
+                if (thisCall === 2) globalThis.n = require("./n.ts");
+                return { contents: "export const k = " + thisCall + ";", loader: "ts" };
+              });
+            },
+          });
+          import(${JSON.stringify(pendingImport)});
+          await firstFetchStarted;
+          const m = require("./m.ts");
+          const n = globalThis.n;
+          console.log(JSON.stringify({ calls, mK: m.k, nK: n.k, sameNamespace: m.kns === n.kns }));
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
+        calls: 3,
+        mK: 3,
+        nK: 3,
+        sameNamespace: true,
+      });
+      expect(exitCode).toBe(0);
+    });
+  }
+});
+
 // Spawned in a subprocess because clearAll() would wipe the plugins the rest of this file relies on.
 describe.concurrent("Bun.plugin.clearAll()", () => {
   async function run(src: string) {

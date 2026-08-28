@@ -1399,6 +1399,71 @@ function foo() {}
       // err("async <const const T extends X>() => {}", "Unexpected const");
     });
 
+    it("a non-binding token in a method signature parameter is a syntax error at that token", () => {
+      // Method, call and construct signatures in a type literal or interface skip
+      // their parameters outside every backtracking region. A token that cannot
+      // start a binding there used to surface as the bare "Backtrack" error with
+      // no position.
+      const parseError = code => {
+        try {
+          transpiler.transformSync(code, "ts");
+        } catch (e) {
+          const err = e instanceof AggregateError ? e.errors[0] : e;
+          return { message: err.message, line: err.position.line, column: err.position.column };
+        }
+        throw new Error("Expected parse error for code\n\t" + code);
+      };
+
+      expect(parseError("const a = 1;\ntype T = { foo(1): void };\nconsole.log(a);\n")).toEqual({
+        message: "Unexpected 1",
+        line: 2,
+        column: 16,
+      });
+      expect(parseError("interface I { foo(1): void }")).toEqual({ message: "Unexpected 1", line: 1, column: 19 });
+      expect(parseError("let x: { foo(1): void }")).toEqual({ message: "Unexpected 1", line: 1, column: 14 });
+      expect(parseError("let x: { foo(]): void }")).toEqual({ message: "Unexpected ]", line: 1, column: 14 });
+      expect(parseError("let x: { foo(...1): void }")).toEqual({ message: "Unexpected 1", line: 1, column: 17 });
+      // Nested destructuring patterns recurse through the same binding skipper.
+      expect(parseError("let x: { foo([a, 1]): void }")).toEqual({ message: "Unexpected 1", line: 1, column: 18 });
+      expect(parseError("let x: { foo({ a: 1 }): void }")).toEqual({ message: "Unexpected 1", line: 1, column: 19 });
+      // Call and construct signatures take the same path as a method signature.
+      expect(parseError("type T = { (1): void }")).toEqual({ message: "Unexpected 1", line: 1, column: 13 });
+      expect(parseError("type T = { new (1): T }")).toEqual({ message: "Unexpected 1", line: 1, column: 17 });
+
+      // A function type tries its parameters with backtracking, so the same token
+      // stays silent there and "(1)" is re-read as a parenthesized type.
+      expect(parseError("let x: (1) => void")).toEqual({
+        message: 'Expected ";" but found "=>"',
+        line: 1,
+        column: 12,
+      });
+
+      // Valid parameter patterns in these positions still parse.
+      ts.expectPrinted_("let x: { foo(a, [, b, ...c], { d, e: f }): void }", "let x;\n");
+      ts.expectPrinted_(
+        "interface I { foo(this: I, a?: A, { 'b': c, 1: [d] }: B): void; new (...e: E[]): I; (): void }",
+        "",
+      );
+    });
+
+    it("a non-binding token in a method signature parameter is reported with its location by the runtime", async () => {
+      using dir = tempDir("ts-method-signature-binding", {
+        "bad.ts": "const a = 1;\ntype T = { foo(1): void };\nconsole.log(a);\n",
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "bad.ts"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("");
+      expect(stderr).toContain("error: Unexpected 1\n");
+      expect(stderr).toContain("bad.ts:2:16");
+      expect(exitCode).toBe(1);
+    });
+
     it("non-null assertion with new operator", () => {
       const exp = ts.expectPrinted_;
 

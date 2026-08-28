@@ -145,8 +145,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.lexer.expect(T::TCloseBrace)?;
             }
             _ => {
-                // try p.lexer.unexpected();
-                return Err(crate::Error::Backtrack);
+                self.lexer.unexpected()?;
+                return Err(crate::Error::SyntaxError);
             }
         }
         Ok(())

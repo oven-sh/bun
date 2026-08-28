@@ -1834,6 +1834,55 @@ it.skipIf(isWindows)("promises.readdir({recursive: true}) settles when multiple 
   });
 });
 
+// After the first subtask failed, the walker kept scheduling a subtask for every
+// directory it found and only settled once that frontier drained. Two symlinks
+// back to the root make the frontier 2^41 directories (the kernel follows 40
+// symlinks before ELOOP), so the promise and the callback never settled.
+it.skipIf(isWindows)(
+  "readdir({recursive: true}) settles with the first error while symlink loops are still being walked",
+  async () => {
+    using dir = tempDir("readdir-recursive-loop", {
+      "a/b/keep.txt": "x",
+    });
+    const root = String(dir);
+    // Opening this one with O_DIRECTORY fails with ELOOP at once.
+    fs.symlinkSync(join(root, "bad"), join(root, "bad"));
+    fs.symlinkSync(".", join(root, "loop1"));
+    fs.symlinkSync(".", join(root, "loop2"));
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          const root = ${JSON.stringify(root)};
+          const viaPromise = await fs.promises.readdir(root, { recursive: true }).then(
+            r => "resolved " + r.length,
+            e => "rejected " + e.code,
+          );
+          console.log("promise", viaPromise);
+          const { promise, resolve } = Promise.withResolvers();
+          fs.readdir(root, { recursive: true }, (e, r) => resolve(e ? "rejected " + e.code : "resolved " + r.length));
+          console.log("callback", await promise);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      timeout: 10_000,
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "promise rejected ELOOP\ncallback rejected ELOOP",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+);
+
 describe("readSync", () => {
   it("rejects the read when the length argument detaches the destination buffer during coercion", () => {
     const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");

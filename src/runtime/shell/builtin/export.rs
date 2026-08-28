@@ -26,8 +26,6 @@ impl Export {
             // No args: print all exported vars.
             return Self::print_all(interp, cmd);
         }
-        // Like bash: an invalid name is reported but does not stop the
-        // remaining arguments from being exported. Exit 1 if any failed.
         let mut errors: Vec<u8> = Vec::new();
         for i in 0..argc {
             let s = Builtin::of(interp, cmd).arg_bytes(i);

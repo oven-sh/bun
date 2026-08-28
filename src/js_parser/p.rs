@@ -4665,12 +4665,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Visit-pass check, since ESM and class bodies only become strict after parsing.
     pub(crate) fn validate_declared_symbol_name(&mut self, loc: bun_ast::Loc, name: &[u8]) {
         if js_lexer::is_strict_mode_reserved_word(name) {
-            self.mark_strict_mode_feature(
-                StrictModeFeature::ReservedWord,
-                js_lexer::range_of_identifier(self.source, loc),
-                name,
-            )
-            .expect("unreachable");
+            // The bundler renames a bound reserved word (`package` to `_package`).
+            if self.is_strict_mode() {
+                self.mark_strict_mode_feature(
+                    StrictModeFeature::ReservedWord,
+                    js_lexer::range_of_identifier(self.source, loc),
+                    name,
+                )
+                .expect("unreachable");
+            }
         } else if is_eval_or_arguments(name) {
             self.mark_strict_mode_feature(
                 StrictModeFeature::EvalOrArguments,

@@ -3269,6 +3269,54 @@ describe("bundler", () => {
     format: "cjs",
     run: { stdout: "foo" },
   });
+  // Sloppy-mode constructs that the bundler rewrites are not an error for ESM
+  // output: the renamer renames bound reserved words, and block-level function
+  // declarations in an `if` or a label are lowered to `let` plus a `var`.
+  itBundled("edgecase/SloppyReservedWordBindingsESMOutputAreRenamed", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs"));
+      `,
+      "/dep.cjs": /* js */ `
+        var package = 1, interface = 2;
+        function f(static) { return static + package + interface }
+        function protected() {}
+        try {} catch (private) {}
+        module.exports = f(3) + typeof protected;
+      `,
+    },
+    format: "esm",
+    run: { stdout: "6function" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var _package = 1");
+    },
+  });
+  itBundled("edgecase/SloppyBlockLevelFunctionsESMOutputAreLowered", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs"));
+      `,
+      "/dep.cjs": /* js */ `
+        lbl: function f() {}
+        if (0) function g() {}
+        module.exports = typeof f + typeof g;
+      `,
+    },
+    format: "esm",
+    run: { stdout: "functionundefined" },
+  });
+  // Labels are not renamed, so a reserved word as a label is still an error.
+  itBundled("edgecase/SloppyReservedWordLabelESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        package: for (;;) break package;
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/entry.js": ['"package" is a reserved word and cannot be used with the ESM output format due to strict mode'],
+    },
+  });
   // A for-in initializer is lowered to an assignment before the loop, so it is
   // not an error for any output format.
   itBundled("edgecase/SloppyForInInitializerIsLowered", {

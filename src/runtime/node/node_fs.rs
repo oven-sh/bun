@@ -4432,6 +4432,17 @@ impl Default for NodeFS {
     }
 }
 
+impl NodeFS {
+    /// A fresh `NodeFS` on the heap. `sync_error_buf` makes the struct
+    /// `MAX_PATH_BYTES` large (96 KB on Windows), so a stack local of it costs
+    /// that much frame in every caller, taken or not.
+    pub(crate) fn new_boxed() -> Box<Self> {
+        // SAFETY: all-zero bytes are a valid `NodeFS`: `sync_error_buf` is a
+        // `u8` array and a null `Option<NonNull<_>>` is `None`.
+        unsafe { Box::<Self>::new_zeroed().assume_init() }
+    }
+}
+
 /// Encode a path returned by the OS (`mkdtemp`/`readlink`/`realpath`) using the
 /// caller's `encoding` option, matching Node.js: `"buffer"` yields a `Buffer`
 /// of the raw bytes, any other encoding is `Buffer.from(bytes).toString(enc)`.

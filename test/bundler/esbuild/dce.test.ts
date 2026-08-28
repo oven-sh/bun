@@ -1,5 +1,4 @@
 import { describe, expect } from "bun:test";
-import { isWindows } from "harness";
 import { dedent, itBundled } from "../expectBundled";
 
 // Tests ported from:

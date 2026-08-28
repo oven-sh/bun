@@ -31,7 +31,8 @@ for (let backend of ["api", "cli"] as const) {
     // process started with (the api backend builds in-process), spelled as the environment spells it (on Windows the
     // inlined name is case-sensitive even though process.env is not: `Path`, not `PATH`).
     const [systemKey, systemValue] = Object.entries(process.env).find(
-      ([key, value]) => /^[A-Z][A-Z0-9_]*$/.test(key) && value && /^[\x20-\x7e]+$/.test(value) && !/["`$\\]/.test(value),
+      ([key, value]) =>
+        /^[A-Z][A-Z0-9_]*$/.test(key) && value && /^[\x20-\x7e]+$/.test(value) && !/["`$\\]/.test(value),
     )!;
     itBundled("env/inline system", {
       env: {

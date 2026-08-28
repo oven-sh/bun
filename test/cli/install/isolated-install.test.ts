@@ -514,6 +514,42 @@ test("can install folder dependencies", async () => {
   ).toBe("module.exports = 'hello from pkg-1';");
 });
 
+test("a failed install removes the store entry's package so the next install builds it again", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  const storePackage = join(packageDir, "node_modules", ".bun", "folder-dep@file+pkg-1", "node_modules", "folder-dep");
+
+  await Promise.all([
+    write(packageJson, JSON.stringify({ name: "test-pkg-failed-link", dependencies: { "folder-dep": "file:./pkg-1" } })),
+    write(join(packageDir, "pkg-1", "package.json"), JSON.stringify({ name: "folder-dep", version: "1.0.0" })),
+    write(join(packageDir, "pkg-1", "lib"), "module.exports = 'file';"),
+  ]);
+
+  await runBunInstall(bunEnv, packageDir);
+  expect(statSync(join(storePackage, "lib")).isFile()).toBe(true);
+
+  // `lib` becomes a directory. The relink keeps the old `lib` file in the store
+  // entry, so linking `lib/index.js` into it fails with ENOTDIR.
+  await rm(join(packageDir, "pkg-1", "lib"));
+  await write(join(packageDir, "pkg-1", "lib", "index.js"), "module.exports = 'dir';");
+
+  const { err } = await runBunInstall(bunEnv, packageDir, {
+    allowErrors: true,
+    expectedExitCode: 1,
+    savesLockfile: false,
+  });
+  expect(err).toContain("failed to link package: folder-dep@pkg-1");
+
+  // The failed entry is gone from the store, so nothing stale is left for the next install to trip on.
+  expect(existsSync(storePackage)).toBe(false);
+
+  await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+  expect(readlinkSync(join(packageDir, "node_modules", "folder-dep"))).toBe(
+    join(".bun", "folder-dep@file+pkg-1", "node_modules", "folder-dep"),
+  );
+  expect(await file(join(storePackage, "lib", "index.js")).text()).toBe("module.exports = 'dir';");
+});
+
 test("can install folder dependencies on root package", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 

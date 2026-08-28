@@ -398,40 +398,39 @@ impl<'a> Installer<'a> {
 
         // Clean up the staging directory so a half-built global-store entry
         // doesn't leak in the cache (it would never be reused — the suffix is
-        // random — but it's wasted disk).
+        // random — but it's wasted disk). The published entry was never
+        // touched, so there is nothing else to remove.
         if self.entry_uses_global_store(entry_id) {
             let mut staging = AutoAbsPath::init();
             self.append_global_store_entry_path(&mut staging, entry_id, Which::Staging);
             let _ = Fd::cwd().delete_tree(staging.slice());
-        }
+        } else {
+            // Remove the project-local package directory
+            // (`node_modules/.bun/<storepath>/node_modules/<pkg>`), whatever
+            // state the failed steps left it in. Its absence is what makes the
+            // next install build this entry again, from scratch, instead of
+            // skipping it as installed.
+            match pkg_res.tag {
+                ResolutionTag::Uninitialized
+                | ResolutionTag::SingleFileModule
+                | ResolutionTag::Root
+                | ResolutionTag::Workspace
+                | ResolutionTag::Symlink => {}
 
-        // attempt deleting the package so the next install will install it again
-        match pkg_res.tag {
-            ResolutionTag::Uninitialized
-            | ResolutionTag::SingleFileModule
-            | ResolutionTag::Root
-            | ResolutionTag::Workspace
-            | ResolutionTag::Symlink => {}
+                // to be safe make sure we only delete packages in the store
+                ResolutionTag::Npm
+                | ResolutionTag::Git
+                | ResolutionTag::Github
+                | ResolutionTag::LocalTarball
+                | ResolutionTag::RemoteTarball
+                | ResolutionTag::Folder => {
+                    let mut store_path = AutoPath::init_top_level_dir();
+                    self.append_real_store_path(&mut store_path, entry_id, Which::Final);
+                    let _ = Fd::cwd().delete_tree(store_path.slice());
+                }
 
-            // to be safe make sure we only delete packages in the store
-            ResolutionTag::Npm
-            | ResolutionTag::Git
-            | ResolutionTag::Github
-            | ResolutionTag::LocalTarball
-            | ResolutionTag::RemoteTarball
-            | ResolutionTag::Folder => {
-                let mut store_path = AutoRelPath::init();
-
-                // OOM/capacity: fire-and-forget
-                let _ = store_path.append_fmt(format_args!(
-                    "node_modules/{}",
-                    store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
-                ));
-
-                let _ = sys::unlink(store_path.slice_z());
+                _ => {}
             }
-
-            _ => {}
         }
 
         if self.manager().options.enable.fail_early() {

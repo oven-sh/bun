@@ -2640,10 +2640,10 @@ pub fn wtf8_to_utf16_alloc(bytes: &[u8]) -> Option<Vec<u16>> {
 /// invalid byte there falls to a scalar loop (invalid byte → U+FFFD, lone surrogate kept).
 ///
 /// # Safety
-/// `dst` must be valid for `2 * bytes.len()` bytes of writes (every input byte yields at most one unit);
-/// `first_non_ascii <= bytes.len()` and `bytes[..first_non_ascii]` is ASCII.
+/// `dst` must be 2-byte aligned and valid for `2 * bytes.len()` bytes of writes (every input byte yields at
+/// most one unit); `first_non_ascii <= bytes.len()` and `bytes[..first_non_ascii]` is ASCII.
 pub unsafe fn write_wtf8_as_utf16le(bytes: &[u8], first_non_ascii: usize, dst: *mut u8) -> usize {
-    debug_assert!(is_all_ascii(&bytes[..first_non_ascii]));
+    debug_assert!(dst.addr().is_multiple_of(2) && is_all_ascii(&bytes[..first_non_ascii]));
     for (i, &b) in bytes[..first_non_ascii].iter().enumerate() {
         // SAFETY: `2 * i + 1 < 2 * bytes.len()`.
         unsafe {
@@ -2654,6 +2654,10 @@ pub unsafe fn write_wtf8_as_utf16le(bytes: &[u8], first_non_ascii: usize, dst: *
     }
     let mut written = 2 * first_non_ascii;
     let bytes = &bytes[first_non_ascii..];
+    #[expect(
+        clippy::cast_ptr_alignment,
+        reason = "caller contract: dst is 2-byte aligned"
+    )]
     // SAFETY: caller contract; simdutf writes at most `utf16_length_from_utf8(bytes) <= bytes.len()` units.
     let res = unsafe {
         simdutf::simdutf__convert_utf8_to_utf16le_with_errors(

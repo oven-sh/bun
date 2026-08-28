@@ -596,18 +596,28 @@ impl File {
             && (self.side == FileSide::Client || !self.loader.is_javascript_like())
     }
 
+    /// An `Encoding::Utf16` body as code units.
+    fn utf16_units(&self) -> &'static [u16] {
+        debug_assert!(self.encoding == Encoding::Utf16);
+        let bytes = self.contents.as_bytes();
+        debug_assert!(bytes.as_ptr().addr().is_multiple_of(align_of::<u16>()));
+        #[expect(
+            clippy::cast_ptr_alignment,
+            reason = "`to_bytes` writes UTF-16 at an even offset and the section base is page-aligned (the 128-byte bytecode alignment relies on the same property)"
+        )]
+        // SAFETY: even byte count at a 2-byte-aligned offset of a section that is never freed.
+        unsafe {
+            core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2)
+        }
+    }
+
     /// `contents` as the file's bytes: the section itself, or a UTF-8 transcode of a UTF-16 body made once.
     pub fn utf8_contents(&self) -> &[u8] {
         if self.encoding != Encoding::Utf16 {
             return self.contents.as_bytes();
         }
         self.utf8.get_or_init(|| {
-            let bytes = self.contents.as_bytes();
-            // SAFETY: even byte count at a 2-byte-aligned offset of a section that is never freed.
-            let units = unsafe {
-                core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2)
-            };
-            bun_core::strings::to_utf8_alloc_with_type(units).into_boxed_slice()
+            bun_core::strings::to_utf8_alloc_with_type(self.utf16_units()).into_boxed_slice()
         })
     }
 
@@ -654,20 +664,7 @@ impl File {
                         BunString::create_static_external(self.contents.as_bytes(), true)
                     }
                     Encoding::Utf16 => {
-                        let bytes = self.contents.as_bytes();
-                        debug_assert!(bytes.as_ptr().addr().is_multiple_of(align_of::<u16>()));
-                        #[expect(
-                            clippy::cast_ptr_alignment,
-                            reason = "`to_bytes` writes UTF-16 at an even offset and the section base is page-aligned (the 128-byte bytecode alignment relies on the same property)"
-                        )]
-                        // SAFETY: even byte count at a 2-byte-aligned offset of a
-                        // section that is never freed.
-                        let units = unsafe {
-                            core::slice::from_raw_parts(
-                                bytes.as_ptr().cast::<u16>(),
-                                bytes.len() / 2,
-                            )
-                        };
+                        let units = self.utf16_units();
                         if self.source_hash != 0 {
                             return BunString::create_static_external_utf16_with_hash(
                                 units,
@@ -1164,6 +1161,10 @@ fn encode_text_module(
     };
     dst[byte_len] = 0;
     dst[byte_len + 1] = 0;
+    #[expect(
+        clippy::cast_ptr_alignment,
+        reason = "written at an even offset just above"
+    )]
     // SAFETY: `byte_len` initialized bytes at an even offset of the (page-aligned) section buffer.
     let hash = unsafe { Bun__WTFStringHashUTF16(dst.as_ptr().cast::<u16>(), byte_len / 2) };
     string_builder.len += byte_len + 2;

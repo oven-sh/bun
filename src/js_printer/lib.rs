@@ -232,8 +232,10 @@ pub mod analyze_transpiled_module {
     /// ```text
     /// u8   offset width W ∈ {1,2,4}; u8 0, 0, 0
     /// u32  count
-    /// uW   × (count + 1): byte offset of each string's record, then the blob length
-    /// blob: per string, u8 is8Bit then the characters (Latin-1 bytes, or unaligned UTF-16LE)
+    /// uW   × (count + 1): byte offset of each string's record within the blob, then the blob length
+    /// u8   0 if needed to start the blob at an even offset
+    /// blob: per string, u8 is8Bit then the characters: Latin-1 bytes, or UTF-16LE units starting at
+    ///       the next even blob offset
     /// ```
     fn serialize_string_table<'a, W: std::io::Write>(
         w: &mut W,
@@ -251,6 +253,9 @@ pub mod analyze_transpiled_module {
                 }
                 Some(first_non_ascii) => {
                     blob.push(0);
+                    if !blob.len().is_multiple_of(2) {
+                        blob.push(0);
+                    }
                     blob.reserve(2 * wtf8.len());
                     // SAFETY: `2 * wtf8.len()` spare bytes reserved, the bound `write_wtf8_as_utf16le` requires.
                     unsafe {
@@ -270,6 +275,9 @@ pub mod analyze_transpiled_module {
         w.write_all(&(count as u32).to_le_bytes())?;
         for offset in offsets {
             put(w, width, offset)?;
+        }
+        if !((count + 1) * width as usize).is_multiple_of(2) {
+            w.write_all(&[0])?;
         }
         w.write_all(&blob)
     }

@@ -139,10 +139,11 @@ impl CachedBytecode {
         };
         // An executable stores the chunk as `encode_text_module` writes it (Latin-1, or UTF-16 when non-ASCII) and
         // aliases it at runtime; a `.jsc` next to a bundle is keyed on the file's bytes read as Latin-1.
-        let source = match external_strings.and(bun_core::strings::wtf8_to_utf16_alloc(input)) {
-            Some(units) => BunString::create_external_globally_allocated_utf16(units),
-            None => BunString::clone_latin1(input),
-        };
+        let source =
+            match external_strings.and_then(|_| bun_core::strings::wtf8_to_utf16_alloc(input)) {
+                Some(units) => BunString::create_external_globally_allocated_utf16(units),
+                None => BunString::clone_latin1(input),
+            };
         let mut this: Option<NonNull<CachedBytecode>> = None;
         let mut out_size: usize = 0;
         let mut out_ptr: Option<NonNull<u8>> = None;

@@ -142,8 +142,9 @@ pub enum ModuleInfoStrings<'a> {
     Shared(ModuleInfoSlotTable<'a>),
 }
 /// One name of a record, as the runtime resolves it.
+#[derive(Clone, Copy)]
 pub enum ModuleInfoString<'a> {
-    /// `is_8bit` Latin-1 bytes, else little-endian UTF-16 (not necessarily aligned).
+    /// `is_8bit` Latin-1 bytes, else 2-byte-aligned little-endian UTF-16.
     Chars { chars: &'a [u8], is_8bit: bool },
     /// `EncoderStringTable::slotFor`.
     Slot(u32),
@@ -391,6 +392,9 @@ impl<'a> ModuleInfoStringTable<'a> {
             .and_then(|n| n.checked_mul(offset_width))
             .ok_or(ModuleInfoError::BadModuleInfo)?;
         let offsets = r.bytes(offsets_len)?;
+        if !offsets_len.is_multiple_of(2) {
+            r.bytes(1)?;
+        }
         let total = read_uint(&offsets[offsets_len - offset_width..], offset_width) as usize;
         let buf = r.bytes(total)?;
         Ok(Self {
@@ -418,16 +422,22 @@ impl<'a> ModuleInfoStringTable<'a> {
     #[inline]
     pub fn get(&self, id: u32) -> Option<ModuleInfoString<'a>> {
         let [offset, len] = self.range(id)?;
-        let record = &self.buf[offset as usize..(offset + len) as usize];
-        match *record {
-            [1, ref chars @ ..] => Some(ModuleInfoString::Chars {
-                chars,
+        let (offset, end) = (offset as usize, (offset + len) as usize);
+        match *self.buf.get(offset)? {
+            1 => Some(ModuleInfoString::Chars {
+                chars: &self.buf[offset + 1..end],
                 is_8bit: true,
             }),
-            [0, ref chars @ ..] if chars.len() % 2 == 0 => Some(ModuleInfoString::Chars {
-                chars,
-                is_8bit: false,
-            }),
+            0 => {
+                let chars = self.buf.get((offset + 2) & !1..end)?;
+                chars
+                    .len()
+                    .is_multiple_of(2)
+                    .then_some(ModuleInfoString::Chars {
+                        chars,
+                        is_8bit: false,
+                    })
+            }
             _ => None,
         }
     }

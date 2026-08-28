@@ -54,6 +54,7 @@ bun_core::declare_scope!(cache, visible);
 /// Version 26: ModuleInfo wire format is a string table (u8/u16/u32
 /// offsets picked by a header byte) plus a body of tagged records with
 /// u8/u16/u32 ids and implied slots dropped, instead of fixed u32 arrays.
+/// Version 27: ModuleInfo string table holds Latin-1 / UTF-16 bodies, not WTF-8.
 const EXPECTED_VERSION: u32 = 27;
 
 /// Source files smaller than this are not written to / read from the on-disk

@@ -98,6 +98,12 @@ test("discovers from filesystem paths", () => {
         children: [],
       },
       {
+        part: "/hello",
+        page: path.join(dir, "hello.tsx"),
+        layout: null,
+        children: [],
+      },
+      {
         part: "/meow",
         page: null,
         layout: path.join(dir, "meow/_layout.tsx"),
@@ -124,12 +130,28 @@ test("discovers from filesystem paths", () => {
           },
         ],
       },
-      {
-        part: "/hello",
-        page: path.join(dir, "hello.tsx"),
-        layout: null,
-        children: [],
-      },
     ],
   });
+});
+
+test("route children are ordered by file name", () => {
+  // The files are listed in an order that is neither sorted nor the order a
+  // hash table walk produces, so the result only matches when the scan sorts.
+  using dir = tempDir("fsr-order", {
+    "zeta.tsx": "1",
+    "alpha.tsx": "1",
+    "[id].tsx": "1",
+    "Beta.tsx": "1",
+    "gamma/index.tsx": "1",
+    "delta/[slug].tsx": "1",
+    "delta/about.tsx": "1",
+    "delta/Zed.tsx": "1",
+    "[...rest].tsx": "1",
+    "epsilon.tsx": "1",
+  });
+  const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
+  const parts = (route: { children: { part: string }[] }) => route.children.map(child => child.part);
+  const root = router.toJSON();
+  expect(parts(root)).toEqual(["/Beta", "/:*rest", "/:id", "/alpha", "/delta", "/epsilon", "/gamma", "/zeta"]);
+  expect(parts(root.children.find(child => child.part === "/delta"))).toEqual(["/Zed", "/:slug", "/about"]);
 });

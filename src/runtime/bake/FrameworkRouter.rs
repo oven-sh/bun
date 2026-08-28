@@ -1449,29 +1449,6 @@ pub trait InsertionHandler {
     ) -> Result<(), AllocError>;
 }
 
-/// Hash context (wyhash final4, seed 0) for the `zig_hash_map` rebuild below.
-///
-/// `scan_inner` walks `DirEntry.data` to discover routes; the resulting child
-/// order is the map's iteration order, and the linear-probe bucket walk is
-/// what `test/bake/framework-router.test.ts` snapshots. `EntryMap` is a
-/// `std::collections::HashMap`, which has a different layout, so we rebuild
-/// into a `zig_hash_map` keyed/hashed deterministically before iterating.
-struct ZigStringHashContext;
-impl bun_collections::zig_hash_map::HashContext<Box<[u8]>> for ZigStringHashContext {
-    #[inline]
-    fn ctx_hash(key: &Box<[u8]>) -> u64 {
-        // `bun_wyhash::hash` is the wyhash final4 variant with seed 0.
-        // (Don't route through `auto_hash`/`OneShotHasher`
-        // here: Rust's `<[u8] as Hash>` mixes in a length prefix, which would
-        // shift the bucket layout the snapshot below depends on.)
-        bun_wyhash::hash(key)
-    }
-    #[inline]
-    fn ctx_eql(a: &Box<[u8]>, b: &Box<[u8]>) -> bool {
-        a[..] == b[..]
-    }
-}
-
 impl FrameworkRouter {
     pub(crate) fn scan(
         &mut self,
@@ -1507,33 +1484,25 @@ impl FrameworkRouter {
         let fs_impl = unsafe { core::ptr::addr_of_mut!((*fs).fs) };
 
         {
-            // Note: `entries.data` is backed by `std::collections::HashMap`,
-            // whose iteration order is unspecified. The route-tree child order
-            // is this iteration order (see `insert`), and
-            // `test/bake/framework-router.test.ts` snapshots it. Rebuild into a
-            // `zig_hash_map` (fixed wyhash/seed/probe) so the walk order is
-            // deterministic. Absent hash collisions (the common case for small
-            // dirs) the bucket order is fully determined by the hash, so
-            // re-insertion order is irrelevant.
-            let mut zig_order: bun_collections::zig_hash_map::HashMap<
-                Box<[u8]>,
-                *mut bun_resolver::fs::Entry,
-                ZigStringHashContext,
-            > = Default::default();
-            {
-                // Copy under `entries_mutex`: other threads rewrite the cached
-                // `DirEntry` map in place under that lock. Dropped before the
-                // walk so the `read_dir_info_ignore_error` recursion can re-lock.
+            // Snapshot the cached `DirEntry`'s entry pointers under `entries_mutex`
+            // (other threads rewrite the map in place under that lock), then drop
+            // the guard: the `read_dir_info_ignore_error` recursion below re-locks it.
+            let mut entry_ptrs: Vec<*mut bun_resolver::fs::Entry> = {
                 let _entries_lock = fs_ref.fs.entries_mutex.lock_guard();
-                if let Some(entries) = dir_info.get_entries_const() {
-                    for (k, &v) in entries.data.iter() {
-                        let _ = zig_order.put(Box::from(&**k), v);
-                    }
+                match dir_info.get_entries_const() {
+                    Some(entries) => entries.data.values().copied().collect(),
+                    None => return Ok(()),
                 }
-            }
-            let mut it = zig_order.iter();
-            'outer: while let Some(entry) = it.next() {
-                let file_ptr: *mut bun_resolver::fs::Entry = *entry.1;
+            };
+            // The scan order is the insertion order, which `insert` turns into
+            // the sibling order of the route tree and the precedence of
+            // `dynamic_routes` in `match_slow`. Sort by basename so neither
+            // depends on the hash table layout or on the readdir order.
+            bun_collections::index_sort::sort_slice_unstable_by(&mut entry_ptrs, |&a, &b| {
+                // SAFETY: EntryStore-owned pointers, valid for the process lifetime.
+                unsafe { (*a).base().cmp((*b).base()) }
+            });
+            'outer: for file_ptr in entry_ptrs {
                 // SAFETY: EntryMap stores `*mut Entry` into the EntryStore singleton
                 // (process lifetime); the lazy-stat rewrite in `kind()` below is
                 // serialized on the per-entry `Entry.mutex`.

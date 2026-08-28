@@ -595,9 +595,8 @@ impl Loader {
         }
     }
 
-    /// The loader a `Worker` starts from. Its map is a copy of this one, so the
-    /// `--env-file` entries loaded here count as loaded there too and the worker
-    /// does not open them again: a pipe can be read once.
+    /// A `Worker`'s loader: the map plus the explicit entries already marked
+    /// loaded, so a pipe is not read twice.
     pub fn clone_for_worker(&self) -> Result<Loader, AllocError> {
         Ok(Loader {
             map: self.map.clone_with_allocator()?,
@@ -674,8 +673,6 @@ impl Loader {
             }
         }
 
-        // A worker's loader starts with the parent's files already loaded and
-        // has nothing to report.
         if !self.quiet && self.loaded_count() > loaded_before {
             self.print_loaded(start);
         }
@@ -877,8 +874,7 @@ impl Loader {
             return Ok(());
         }
 
-        // No `O_NONBLOCK`: the user named this path, so a FIFO waits for its
-        // writer here, as in Node and `cat`.
+        // No `O_NONBLOCK`: an explicit FIFO waits for its writer, as in Node.
         let file = match bun_sys::File::openat(
             bun_sys::Fd::cwd(),
             file_path,
@@ -914,8 +910,7 @@ impl Loader {
     }
 }
 
-/// Open flags for a default `.env*` entry. `O_NONBLOCK`: a blocking `open` of
-/// a FIFO waits for a writer.
+/// `O_NONBLOCK`: a blocking `open` of a FIFO named `.env` waits for a writer.
 #[cfg(unix)]
 const DEFAULT_ENV_FILE_OPEN_FLAGS: i32 =
     bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
@@ -923,21 +918,18 @@ const DEFAULT_ENV_FILE_OPEN_FLAGS: i32 =
 #[cfg(not(unix))]
 const DEFAULT_ENV_FILE_OPEN_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
 
-/// Where an env file came from. Decides what happens when it is not a regular file.
+/// Decides what happens to an env file that is not a regular file.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum EnvFileSource {
-    /// A `.env*` name found in the cwd listing. A directory, FIFO, socket or
-    /// device under that name is not an env file and is skipped.
+    /// A `.env*` name from the cwd listing: skipped.
     Default,
-    /// An `--env-file` argument. Read whatever its kind, as in Node:
-    /// `--env-file=<(cmd)`, `/dev/stdin`, a FIFO.
+    /// An `--env-file` argument: read whatever its kind, as in Node.
     Explicit,
 }
 
 /// Shared post-open tail of `load_env_file` / `load_env_file_dynamic`.
 enum ReadEnvFile {
-    /// Zero-length, or a default entry that is not a regular file. The caller
-    /// marks the slot and returns.
+    /// Zero-length, or a default entry that is not a regular file. The caller marks the slot.
     Empty,
     /// Recoverable read errno (ENOMEM/EPIPE/EACCES/EISDIR) — caller prints
     /// (unless `quiet`), marks the slot, and returns.

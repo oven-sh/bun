@@ -346,8 +346,7 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     }
     // Was `inline for` over a heterogeneous-ish tuple; all elements are
     // (&'static [u8], &[Box<[u8]>]) so a const array + plain for suffices.
-    // `--env-file` and `--no-env-file` are not forwarded: a worker loads no env
-    // file (see `TestCommand::exec`), its environment is the coordinator's map.
+    // No `--env-file`: a worker loads no env file (see `TestCommand::exec`).
     let multi_value_flags: [(&'static [u8], &[Box<[u8]>]); 5] = [
         (b"--conditions\0", &ctx.args.conditions),
         (b"--drop\0", &ctx.args.drop),

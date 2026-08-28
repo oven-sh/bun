@@ -1906,10 +1906,8 @@ impl TestCommand {
             reporter.reporters.only_failures = true; // only-failures defaults to true for ai agents
         }
 
-        // A `--parallel` worker's environment is the coordinator's env map, which
-        // already holds every `.env` and `--env-file` value. A pipe can be read
-        // once, so the worker opens no env file. `--env-file` also arrives through
-        // `BUN_OPTIONS` in that environment, so the worker decides this itself.
+        // A worker's environment is the coordinator's env map, env files included.
+        // A pipe can be read once, and `BUN_OPTIONS` in that map can carry `--env-file`.
         if ctx.test_options.test_worker {
             ctx.args.env_files.clear();
             ctx.args.disable_default_env_files = true;

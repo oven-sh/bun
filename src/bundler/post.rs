@@ -1,10 +1,11 @@
 //! Events other threads deliver to the bundle thread: a worker finished a
 //! parse, a plugin on the JS thread settled a resolve or a load or called
-//! `defer()`. A bundle runs either on the JS event loop of the VM that owns it
-//! (dev server) or on a mini event loop of its own (`Bun.build`, `bun build`);
-//! the two loops queue work differently. [`post`] is the only place that
-//! knows which loop a bundle is on, so every event has exactly one handler,
-//! [`Event::run`], and cannot behave differently depending on the loop.
+//! `defer()`, the `.defer()` hop came back from that thread. A bundle runs
+//! either on the JS event loop of the VM that owns it (dev server) or on a
+//! mini event loop of its own (`Bun.build`, `bun build`); the two loops queue
+//! work differently. [`post`] is the only place that knows which loop a bundle
+//! is on, so every event has exactly one handler, [`Event::run`], and cannot
+//! behave differently depending on the loop.
 
 use core::ptr::addr_of;
 

@@ -239,17 +239,6 @@ impl<'a> LinkerContext<'a> {
             .get()
     }
 
-    /// Mutable projection of the `r#loop` BACKREF, for the bundle thread's own
-    /// use of its loop (`BundleV2::any_loop_mut`). Other threads post to the
-    /// loop through `crate::post`, which reads the field raw.
-    #[inline]
-    pub(crate) fn any_loop_mut(&mut self) -> Option<&mut bun_event_loop::AnyEventLoop> {
-        // SAFETY: BACKREF — set once in `BundleV2::init` from a loop that
-        // outlives the bundle pass; the pointee is disjoint from `*self`
-        // (see [`EventLoop`]).
-        self.r#loop.map(|p| unsafe { &mut *p.as_ptr() })
-    }
-
     /// Shared-read accessor for the bundler log.
     ///
     /// `log` is a backref into `Transpiler.log`, assigned in [`Self::load`]

@@ -172,16 +172,6 @@ impl<'a> BundleV2<'a> {
         &mut self.linker.r#loop
     }
 
-    /// `switch (this.loop().*)` — `linker.loop` is a non-owning backref to the
-    /// `AnyEventLoop` that owns this bundle pass and outlives it.
-    #[inline]
-    pub(crate) fn any_loop_mut(&mut self) -> &mut bun_event_loop::AnyEventLoop {
-        // BACKREF deref centralised in `LinkerContext::any_loop_mut`.
-        self.linker
-            .any_loop_mut()
-            .expect("BundleV2.linker.loop must be set before plugins run")
-    }
-
     #[inline]
     pub(crate) fn dev_server_handle(&self) -> Option<&dispatch::DevServerHandle> {
         self.dev_server.as_ref()

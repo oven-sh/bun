@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { SourceMapConsumer } from "source-map";
 
@@ -392,7 +392,7 @@ body { color: blue; }`,
 
     expect(result.success).toBe(true);
     expect(result.outputs.length).toBe(1);
-    expect(existsSync(`${dir}/app${process.platform === "win32" ? ".exe" : ""}`)).toBe(true);
+    expect(existsSync(`${dir}/app${isWindows ? ".exe" : ""}`)).toBe(true);
   });
 
   test("CLI --compile --target=browser with non-HTML falls back to normal compile", async () => {
@@ -411,7 +411,7 @@ body { color: blue; }`,
     const [_stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // Non-HTML entrypoints with --compile --target=browser should fall back to normal bun compile
     expect(exitCode).toBe(0);
-    expect(existsSync(`${dir}/app${process.platform === "win32" ? ".exe" : ""}`)).toBe(true);
+    expect(existsSync(`${dir}/app${isWindows ? ".exe" : ""}`)).toBe(true);
   });
 
   test("fails with splitting", async () => {

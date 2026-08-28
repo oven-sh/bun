@@ -175,8 +175,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .expect("infallible: variant checked")
                     .ref_,
             );
-        // Parse-time refs: `p.call_target` and `p.template_tag` hold the node
-        // as it was before this visit resolved `e_.ref_`.
+        // Both hold the parse-time ref, so compare before `find_symbol` resolves `e_.ref_`.
         let is_call_target = matches!(p.call_target, Data::EIdentifier(ct) if ct.ref_.eql(e_.ref_));
         let is_template_tag =
             matches!(p.template_tag, Data::EIdentifier(tt) if tt.ref_.eql(e_.ref_));
@@ -276,9 +275,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         || in_.assign_target == js_ast::AssignTarget::None
                     {
                         p.ignore_usage(e_.ref_);
-                        // A dotted define value ("--define foo=a.b") is one
-                        // identifier named "a.b" that prints as a property
-                        // access. "foo()" => "(0, a.b)()" keeps `this` undefined.
+                        // "--define foo=a.b" is one identifier named "a.b": "foo()" => "(0, a.b)()"
                         let is_dotted_name = matches!(newvalue.data.tag(), Tag::EIdentifier)
                             && def
                                 .original_name()

@@ -1652,10 +1652,8 @@ pub(crate) mod __gated_printer {
         pub(crate) prev_op_end: i32,
         pub(crate) prev_num_end: i32,
         pub(crate) prev_reg_exp_end: i32,
-        /// The call target or template tag that is being printed right now,
-        /// when the source did not write it as a property access. An import
-        /// item in this position prints as `(0, import_ns.fn)` so that `this`
-        /// stays undefined. `None` outside of a target or tag.
+        /// The call target or template tag being printed, while the source did
+        /// not write it as a property access. See `is_unbound_call_target`.
         pub(crate) unbound_call_target: Option<ExprData>,
         pub(crate) writer: W,
 
@@ -2619,14 +2617,10 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// True when `e` is the call target or template tag being printed and
-        /// the source did not write that position as a property access. The
-        /// import item now prints as `import_ns.fn`, so it needs the
-        /// `(0, import_ns.fn)` wrap to keep `this` undefined.
-        ///
-        /// `unbound_call_target` holds the target's data only while the target
-        /// itself prints (the call and template arms clear it before the
-        /// arguments), so comparing refs here can only match the target node.
+        /// `e` is a call target or template tag that the source did not write
+        /// as a property access, so `import_ns.fn` needs the `(0, ...)` wrap.
+        /// The ref compare is exact because the call and template arms clear
+        /// `unbound_call_target` before they print the arguments.
         fn is_unbound_call_target(&self, e: &E::ImportIdentifier) -> bool {
             matches!(
                 self.unbound_call_target,
@@ -3480,12 +3474,8 @@ pub(crate) mod __gated_printer {
                         && self.is_unbound_eval_identifier(e.target)
                         && e.optional_chain.is_none();
 
-                    // "(0, a.b)()" must not become "a.b()": a property access
-                    // that only became the call target through a rewrite
-                    // (comma, logical, or conditional folding, single-use
-                    // inlining, defines) prints as "(0, a.b)()" to keep
-                    // `this` undefined. An import item in that position is
-                    // wrapped the same way by the EImportIdentifier arm.
+                    // A target that a fold or inlining turned into "a.b" keeps
+                    // its undefined `this`: "(0, a.b)()", never "a.b()".
                     let target_was_originally_property_access =
                         e.target_was_originally_property_access;
                     let must_preserve_this = !target_was_originally_property_access
@@ -4162,8 +4152,7 @@ pub(crate) mod __gated_printer {
 
                     if let Some(tag) = &e.tag {
                         self.add_source_mapping(expr.loc);
-                        // The tag binds `this` like a call target does. See
-                        // the ECall arm for the two wrap paths.
+                        // A tag binds `this` like a call target; same two wraps as ECall.
                         self.unbound_call_target =
                             (!e.tag_was_originally_property_access).then_some(tag.data);
                         let is_optional_chain = match &tag.data {

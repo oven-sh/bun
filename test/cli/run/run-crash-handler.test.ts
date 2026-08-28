@@ -21,7 +21,13 @@ test.if(isPosix)("unexpected root errors are not diagnosed as file descriptor ex
       bunExe(),
       path.join(import.meta.dir, "fixture-crash.js"),
     ],
-    env: noReportEnv,
+    env: {
+      ...noReportEnv,
+      // The rootError hook exits through handle_root_error without VM teardown.
+      // On the LSAN lane the live VM's allocations are reported as leaks and
+      // abort_on_error turns the expected exit(1) into SIGABRT.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

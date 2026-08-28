@@ -430,19 +430,19 @@ pub(crate) fn generate_code_for_lazy_export(
                     }
 
                     // SAFETY: `LinkerContext::arena()` returns a stable `&Arena` valid for the
-                    // link pass; detach via raw-pointer round-trip so `name` doesn't borrow `this`
+                    // link pass; detach via raw-pointer round-trip so `alias` doesn't borrow `this`
                     // across the `&mut self` call to `generate_named_export_in_file` below.
                     let alloc: &bun_alloc::Arena =
                         unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(this.arena()) };
-                    let name: &[u8] = bun_core::handle_oom(key_str.flattened(alloc).string(alloc));
+                    let alias: &[u8] = bun_core::handle_oom(key_str.flattened(alloc).string(alloc));
 
                     // Any string is a valid export name (`export { a_b as "a b" }`),
                     // but the variable that holds the value needs an identifier.
-                    let symbol_name: &[u8] = if js_lexer::is_identifier(name) {
-                        name
+                    let name: &[u8] = if js_lexer::is_identifier(alias) {
+                        alias
                     } else {
                         alloc.alloc_slice_copy(&bun_core::MutableString::ensure_valid_identifier(
-                            name,
+                            alias,
                         )?)
                     };
 
@@ -457,12 +457,8 @@ pub(crate) fn generate_code_for_lazy_export(
                     // that actually end up being used, and we don't know which ones will
                     // end up actually being used at this point (since import binding hasn't
                     // happened yet). So we need to wait until after tree shaking happens.
-                    let generated = this.generate_named_export_in_file(
-                        source_index,
-                        module_ref,
-                        symbol_name,
-                        name,
-                    )?;
+                    let generated =
+                        this.generate_named_export_in_file(source_index, module_ref, name, alias)?;
                     let new_stmts: &mut [Stmt] =
                         alloc.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(
                             S::Local {

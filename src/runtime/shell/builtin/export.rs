@@ -15,6 +15,7 @@ enum State {
     #[default]
     Idle,
     WaitingIo,
+    WaitingWriteErr,
     Done,
 }
 
@@ -25,6 +26,9 @@ impl Export {
             // No args: print all exported vars.
             return Self::print_all(interp, cmd);
         }
+        // Like bash: an invalid name is reported but does not stop the
+        // remaining arguments from being exported. Exit 1 if any failed.
+        let mut errors: Vec<u8> = Vec::new();
         for i in 0..argc {
             let s = Builtin::of(interp, cmd).arg_bytes(i);
             if s.is_empty() {
@@ -32,8 +36,14 @@ impl Export {
             }
             let eq = bun_core::strings::index_of_char_usize(s, b'=');
             if eq.is_none() && !is_valid_var_name(s) {
-                let arg = s.to_vec();
-                return Self::write_invalid_identifier(interp, cmd, &arg);
+                use std::io::Write as _;
+                let _ = writeln!(
+                    &mut errors,
+                    "{}: `{}`: not a valid identifier",
+                    Kind::Export.as_str(),
+                    bstr::BStr::new(s),
+                );
+                continue;
             }
             let (name, value) = match eq {
                 Some(eq) => (&s[..eq], &s[eq + 1..]),
@@ -50,36 +60,18 @@ impl Export {
             label.deref();
             val.deref();
         }
-        Builtin::done(interp, cmd, 0)
-    }
-
-    fn write_invalid_identifier(interp: &Interpreter, cmd: NodeId, arg: &[u8]) -> Yield {
-        let inner = Builtin::fmt_error_arena(
-            interp,
-            cmd,
-            Some(Kind::Export),
-            format_args!("`{}`: not a valid identifier", bstr::BStr::new(arg)),
-        )
-        .to_vec();
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-            Self::state_mut(interp, cmd).state = State::WaitingIo;
-            let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd).stderr.enqueue_fmt(
-                child,
-                Some(Kind::Export),
-                format_args!("{}\n", bstr::BStr::new(&inner)),
-                safeguard,
-            );
+        if errors.is_empty() {
+            return Builtin::done(interp, cmd, 0);
         }
-        let buf = Builtin::fmt_error_arena(
-            interp,
-            cmd,
-            Some(Kind::Export),
-            format_args!("{}\n", bstr::BStr::new(&inner)),
-        )
-        .to_vec();
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &buf);
-        Builtin::done(interp, cmd, 0)
+        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+            Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
+            let child = ChildPtr::new(cmd, WriterTag::Builtin);
+            return Builtin::of_mut(interp, cmd)
+                .stderr
+                .enqueue(child, &errors, safeguard);
+        }
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &errors);
+        Builtin::done(interp, cmd, 1)
     }
 
     fn print_all(interp: &Interpreter, cmd: NodeId) -> Yield {
@@ -115,7 +107,8 @@ impl Export {
         _: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
+        let failed = matches!(Self::state_mut(interp, cmd).state, State::WaitingWriteErr);
         Self::state_mut(interp, cmd).state = State::Done;
-        Builtin::done(interp, cmd, err.map_or(0, |_| 1))
+        Builtin::done(interp, cmd, if failed || err.is_some() { 1 } else { 0 })
     }
 }

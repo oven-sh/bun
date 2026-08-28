@@ -1400,9 +1400,14 @@ describe("deno_task", () => {
       .runAsTest("exported vars 2");
 
     TestBuilder.command`export 1FOO`
-      .stderr("export: export: `1FOO`: not a valid identifier\n")
-      .exitCode(0)
+      .stderr("export: `1FOO`: not a valid identifier\n")
+      .exitCode(1)
       .runAsTest("export rejects invalid identifier");
+
+    TestBuilder.command`export A=1 2B C=3 3D || echo "failed A=$A C=$C"`
+      .stdout("failed A=1 C=3\n")
+      .stderr("export: `2B`: not a valid identifier\nexport: `3D`: not a valid identifier\n")
+      .runAsTest("export reports every invalid identifier and still exports the valid ones");
 
     TestBuilder.command`export FOO`.stderr("").exitCode(0).runAsTest("export accepts bare valid identifier");
   });

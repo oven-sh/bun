@@ -121,9 +121,13 @@ impl Cd {
         interp: &Interpreter,
         cmd: NodeId,
         _: usize,
-        _err: Option<bun_sys::SystemError>,
+        err: Option<bun_sys::SystemError>,
     ) -> Yield {
         Self::state_mut(interp, cmd).state = State::Done;
-        Builtin::done(interp, cmd, 1)
+        Builtin::done(
+            interp,
+            cmd,
+            err.map_or(1, |e| e.get_errno() as crate::shell::ExitCode),
+        )
     }
 }

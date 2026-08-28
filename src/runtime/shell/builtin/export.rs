@@ -82,6 +82,10 @@ impl Export {
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
         Self::state_mut(interp, cmd).state = State::Done;
-        Builtin::done(interp, cmd, err.map_or(0, |_| 1))
+        Builtin::done(
+            interp,
+            cmd,
+            err.map_or(0, |e| e.get_errno() as crate::shell::ExitCode),
+        )
     }
 }

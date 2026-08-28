@@ -1328,8 +1328,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             loader: None,
         };
 
-        // An import or export statement makes the file a module, and the module
-        // scope only becomes strict after the parse pass, so report this here.
+        // An import or export path makes the file a module; the scope is only strict after parsing.
         if p.lexer.legacy_octal_loc.start > path.loc.start {
             let notes = p.why_es_module();
             p.log().add_range_error_fmt_with_notes(

@@ -344,8 +344,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return;
             }
 
-            // The renamer rewrites a bound reserved word, but an unbound one is
-            // printed as written and the ESM output would not parse.
+            // The renamer leaves an unbound reserved word as written; ESM output would not parse.
             if !p.is_strict_mode()
                 && p.is_strict_mode_output_format()
                 && js_lexer::is_strict_mode_reserved_word(name)

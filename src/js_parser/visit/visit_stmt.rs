@@ -170,7 +170,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// An import makes the file a module, so a reserved word cannot be an imported binding.
-    /// `eval` and `arguments` are rejected in the parse pass.
     fn validate_import_name(&mut self, loc: bun_ast::Loc, ref_: Ref) -> Result<(), Error> {
         let name = self.load_name_from_ref(ref_);
         if js_lexer::is_strict_mode_reserved_word(name) {

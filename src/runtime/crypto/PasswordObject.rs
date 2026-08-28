@@ -266,8 +266,7 @@ impl Algorithm {
 pub(crate) type HashError = crate::Error;
 
 impl PasswordObject {
-    /// Scratch buffer for the encoded hash. The longest output, an argon2 PHC
-    /// string with ten-digit cost parameters, is about 133 bytes.
+    /// Room for the longest encoded hash, an argon2 PHC string of about 133 bytes.
     const OUTPUT_BUFFER_LEN: usize = 4096;
 
     // This is purposely simple because nobody asked to make it more complicated
@@ -876,10 +875,7 @@ fn js_password_object_verify_sync(
     )
 }
 
-/// `bun:internal-for-testing`'s `hashPasswordIntoBufferForTesting(password,
-/// algorithm, bufferLength)`: `Bun.password.hashSync` with an output buffer of
-/// `bufferLength` bytes (at most `OUTPUT_BUFFER_LEN`), so the `NoSpaceLeft`
-/// error of `pwhash::*::str_hash` is reachable.
+/// `bun:internal-for-testing`: `Bun.password.hashSync` with a caller-sized output buffer.
 #[bun_jsc::host_fn]
 pub(crate) fn hash_password_into_buffer_for_testing(
     global_object: &JSGlobalObject,

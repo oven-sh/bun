@@ -179,9 +179,7 @@ export const setMaxMarkdownBlockBytesForTesting: (limit: number) => number = $ne
   1,
 );
 
-// `Bun.password.hashSync` with an output buffer of `bufferLength` bytes
-// (at most the 4096 the real call uses), so the `NoSpaceLeft` error for an
-// encoded hash that does not fit is reachable.
+// `Bun.password.hashSync` with a caller-sized output buffer (at most 4096 bytes).
 export const hashPasswordIntoBufferForTesting: (
   password: string | ArrayBufferView,
   algorithm: Parameters<typeof Bun.password.hashSync>[1],

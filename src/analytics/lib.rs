@@ -44,8 +44,7 @@ pub fn set_enabled(v: TriState) {
     ENABLED.store(v as u8, Ordering::Relaxed);
 }
 
-/// An explicit bunfig `telemetry = true|false` sets `Yes`/`No` and wins over
-/// the environment. `DO_NOT_TRACK` only decides the `Unknown` state.
+/// An explicit bunfig `telemetry` value wins over `DO_NOT_TRACK`.
 pub fn is_enabled() -> bool {
     match enabled() {
         TriState::Yes => true,

@@ -229,8 +229,6 @@ pub(crate) mod js_bindings {
         BunString::clone_latin1(buf.slice()).into_js(global)
     }
 
-    /// The value the crash reporter consults before an upload: bunfig
-    /// `telemetry`, else `DO_NOT_TRACK`.
     #[bun_jsc::host_fn]
     fn js_is_analytics_enabled(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         Ok(JSValue::js_boolean(analytics::is_enabled()))

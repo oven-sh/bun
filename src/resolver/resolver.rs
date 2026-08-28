@@ -476,10 +476,8 @@ pub struct Resolver<'a> {
     /// Read the "browser" field in package.json files?
     /// For Bun's runtime, we don't.
     pub(crate) care_about_browser_field: bool,
-    /// How many "browser" map targets are being resolved through
-    /// `load_node_modules` on the current call stack. A map can send a subpath
-    /// back to itself (`"./x": "pkg/x"`), so the chain is cut at
-    /// `MAX_BROWSER_REMAP_DEPTH`.
+    /// Nested "browser" map targets being resolved on the current call stack;
+    /// a map can send a subpath back to itself (`"./x": "pkg/x"`).
     browser_remap_depth: u8,
 
     pub debug_logs: Option<DebugLogs>,
@@ -6699,9 +6697,8 @@ enum ImplicitExtensions {
     Skip,
 }
 
-/// Longest chain of "browser" map targets that are themselves package subpaths
-/// (`"./x": "pkg-b/y"` in pkg-a, `"./y": "pkg-c/z"` in pkg-b, ...). A real chain
-/// has one or two hops. A longer one is a cycle, and the remap stops applying.
+/// Longest chain of "browser" map targets that are themselves package subpaths.
+/// A real chain has one or two hops; a longer one is a cycle, and the remap stops applying.
 const MAX_BROWSER_REMAP_DEPTH: u8 = 16;
 
 /// Result of `Resolver::load_package_subpath_from_browser_map`.

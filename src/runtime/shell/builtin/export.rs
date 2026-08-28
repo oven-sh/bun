@@ -2,7 +2,7 @@ use crate::shell::builtin::{Builtin, BuiltinState, IoKind};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
-use crate::shell::{EnvStr, is_valid_var_name};
+use crate::shell::{EnvStr, ExitCode, is_valid_var_name};
 use bun_collections::index_sort;
 
 #[derive(Default)]
@@ -92,8 +92,15 @@ impl Export {
         _: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        let failed = err.is_some() || matches!(Self::state_mut(interp, cmd).state, State::Err);
+        let failed = matches!(Self::state_mut(interp, cmd).state, State::Err);
         Self::state_mut(interp, cmd).state = State::Done;
-        Builtin::done(interp, cmd, if failed { 1 } else { 0 })
+        Builtin::done(
+            interp,
+            cmd,
+            match err {
+                Some(_err) => 1,
+                None => ExitCode::from(failed),
+            },
+        )
     }
 }

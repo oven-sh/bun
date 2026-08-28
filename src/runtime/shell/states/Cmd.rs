@@ -436,9 +436,7 @@ impl Cmd {
                 }
             }
         };
-        // A command name resolved, so the substitution's stashed status is no
-        // longer the result; left in place it would satisfy `has_finished()`
-        // the moment the subprocess's pipes close, before `on_exit` runs.
+        // The stashed substitution status would otherwise satisfy has_finished() at pipe close.
         interp.as_cmd_mut(this).exit_code = None;
 
         if let Some(kind) = BuiltinKind::from_argv0(&first_arg) {

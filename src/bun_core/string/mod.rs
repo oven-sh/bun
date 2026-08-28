@@ -1786,7 +1786,9 @@ pub mod printer {
         }
     }
 
-    /// Same algorithm as `bun_js_printer::write_pre_quoted_string`.
+    const MALFORMED: i32 = -1;
+
+    /// Same algorithm as `bun_js_printer::write_pre_quoted_string`, except malformed UTF-8 becomes U+FFFD.
     /// PERF: (quote_char, ascii_only, json, encoding) are runtime params —
     /// profile if it shows up on a hot path.
     pub fn write_pre_quoted_string<W: PrinterWriter + ?Sized>(
@@ -1821,9 +1823,18 @@ pub mod printer {
             let clamped_width = (width as usize).min(n.saturating_sub(i));
             let c: i32 = match encoding {
                 StrEncoding::Utf8 => {
-                    let mut buf = [0u8; 4];
-                    buf[..clamped_width].copy_from_slice(&text_in[i..i + clamped_width]);
-                    strings::decode_wtf8_rune_t::<i32>(buf, width, 0)
+                    if width == 1 {
+                        // width 1 with a byte >= 0x80 is a stray continuation byte or an invalid lead.
+                        if text_in[i] >= 0x80 {
+                            MALFORMED
+                        } else {
+                            text_in[i] as i32
+                        }
+                    } else {
+                        let mut buf = [0u8; 4];
+                        buf[..clamped_width].copy_from_slice(&text_in[i..i + clamped_width]);
+                        strings::decode_wtf8_rune_t::<i32>(buf, width, MALFORMED)
+                    }
                 }
                 StrEncoding::Ascii => {
                     debug_assert!(text_in[i] <= 0x7F);
@@ -1832,6 +1843,17 @@ pub mod printer {
                 StrEncoding::Latin1 => text_in[i] as i32,
                 StrEncoding::Utf16 => text16[i] as i32,
             };
+
+            if c == MALFORMED {
+                if ascii_only {
+                    writer.write_all(&bmp_escape(0xFFFD))?;
+                } else {
+                    writer.write_all("\u{FFFD}".as_bytes())?;
+                }
+                // One byte, not `width`, so the bytes after a truncated sequence survive.
+                i += 1;
+                continue;
+            }
 
             if can_print_without_escape(c, ascii_only) {
                 match encoding {

@@ -4268,9 +4268,9 @@ pub(crate) fn which<'a>(
 }
 
 // ── auto_reload_on_crash / reload_process group ───────────────────────────
-// Full body of `reloadProcess` depends on
-// `bun.spawn` (tier-4); the crash-handler only needs the flag + the
-// thread-coordination helpers + a best-effort POSIX `execve` path.
+// Lives in tier-0 because the crash handler reloads too. The platform-specific
+// exec itself is in C++ (`bun_reload_process_exec`, c-bindings.cpp), so this
+// needs no `bun_spawn_sys`.
 use core::sync::atomic::{AtomicBool, Ordering as AOrdering};
 static AUTO_RELOAD_ON_CRASH: AtomicBool = AtomicBool::new(false);
 static RELOAD_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
@@ -4355,7 +4355,9 @@ pub fn maybe_handle_panic_during_process_reload() {
 
 /// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → panics.
 /// `on_before_reload_process_posix` clears CLOEXEC on stdio/IPC and resets caught signal
-/// dispositions on all POSIX; the close_range sweep is Linux/BSD only.
+/// dispositions on all POSIX; the close_range sweep is Linux/BSD only. `bun_reload_process_exec`
+/// is `execve` there and, on macOS (no close_range), `posix_spawn` with `POSIX_SPAWN_SETEXEC |
+/// POSIX_SPAWN_CLOEXEC_DEFAULT`, which closes every fd but stdio/IPC in the new image.
 pub fn reload_process(clear_terminal: bool, may_return: bool) {
     // Exactly one thread may perform the reload: the JS thread and the watcher's grace-window
     // fallback can both reach here, and concurrent execve prep crashes on musl. The swap elects a
@@ -4413,7 +4415,8 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
 
     #[cfg(unix)]
     // SAFETY: FFI calls receive only locally-built NUL-terminated argv/envp arrays; on success
-    // `execve` never returns, on failure errno is read. No borrowed Rust state observed after.
+    // the exec never returns, on failure the errno is returned. No borrowed Rust state observed
+    // after.
     unsafe {
         {
             unsafe extern "C" {
@@ -4447,9 +4450,15 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         // we must clone selfExePath in case argv[0] was not an absolute path
         let exec_path = self_exe_path().expect("unreachable").as_ptr();
 
-        libc::execve(exec_path, newargv.as_ptr().cast(), envp.as_ptr().cast());
-        // execve only returns on error.
-        let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
+        unsafe extern "C" {
+            fn bun_reload_process_exec(
+                path: *const core::ffi::c_char,
+                argv: *const *const core::ffi::c_char,
+                envp: *const *const core::ffi::c_char,
+            ) -> core::ffi::c_int;
+        }
+        // Returns only on failure, with the errno.
+        let errno = bun_reload_process_exec(exec_path, newargv.as_ptr(), envp.as_ptr());
         if may_return {
             crate::output::pretty_errorln(format_args!(
                 "error: Failed to reload process: errno {}",

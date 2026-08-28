@@ -373,6 +373,66 @@ it("NODE_COMPILE_CACHE persists across a --watch reload", async () => {
   expect(entries.filter(e => e.isFile()).length).toBeGreaterThan(0);
 }, 30000);
 
+// The reload must not carry fds that user code opened into the new image.
+// fs.openSync does not set O_CLOEXEC, so this relies on the pre-exec
+// close_range sweep on Linux and on POSIX_SPAWN_CLOEXEC_DEFAULT on macOS,
+// which has no close_range(2). Before the macOS path existed, every such fd
+// survived each reload and the count grew by one per restart.
+it.skipIf(isWindows)(
+  "fds opened by the script are closed across a --watch reload",
+  async () => {
+    using dir = tempDir("watch-fd-leak", {
+      "app.js": `
+        const fs = require("fs");
+        const fd = fs.openSync("leak.txt", "w");
+        fs.writeFileSync("fd.txt", String(fd));
+        console.log("iter first");
+        setInterval(() => {}, 1000);
+      `,
+    });
+
+    watchee = spawn({
+      cmd: [bunExe(), "--watch", "app.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stderr = watchee.stderr.text();
+
+    const { waitFor, release, output } = stdoutWaiter(watchee);
+
+    await waitFor("iter first");
+    // The number may be reused by the new process, so compare identities
+    // instead of checking for EBADF: a leaked fd still names leak.txt.
+    await Bun.write(
+      join(String(dir), "app.js"),
+      `
+        const fs = require("fs");
+        const fd = Number(fs.readFileSync("fd.txt", "utf8"));
+        const target = fs.statSync("leak.txt");
+        let leaked = false;
+        try {
+          const { dev, ino } = fs.fstatSync(fd);
+          leaked = dev === target.dev && ino === target.ino;
+        } catch {}
+        console.log("leaked=" + leaked);
+        console.error("stderr after reload");
+        console.log("iter second");
+      `,
+    );
+    await waitFor("iter second");
+
+    release();
+    watchee.kill("SIGKILL");
+    await watchee.exited;
+
+    expect(output()).toContain("leaked=false");
+    expect(await stderr).toContain("stderr after reload");
+  },
+  30000,
+);
+
 // NODE_CHANNEL_FD survives in environ across execve; the fd it names must
 // survive too, so the reloaded image re-attaches to a live socket instead
 // of a closed one and the parent keeps receiving 'message' events.

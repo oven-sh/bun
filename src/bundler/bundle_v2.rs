@@ -2575,23 +2575,29 @@ pub mod bv2_impl {
             let mut path: Fs::Path<'static> = match resolve_result.path() {
                 Some(p) => *p,
                 None => {
-                    let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
-                        [import_record.importer_source_index as usize]
-                        .as_mut_slice()[import_record.import_record_index as usize];
-                    // Disable failing packages from being printed.
-                    // This may cause broken code to write.
-                    // However, doing this means we tell them all the resolve errors
-                    // Rather than just the first one.
-                    record.path.is_disabled = true;
-                    return;
+                    // A disabled import becomes an empty module, as in
+                    // `resolve_import_records`. The DevServer keeps the external form.
+                    if self.dev_server.is_some() {
+                        let record: &mut ImportRecord =
+                            &mut self.graph.ast.items_import_records_mut()
+                                [import_record.importer_source_index as usize]
+                                .as_mut_slice()
+                                [import_record.import_record_index as usize];
+                        record.path.is_disabled = true;
+                        return;
+                    }
+                    resolve_result.path_pair.primary
                 }
             };
+            let is_disabled = path.is_disabled;
 
             if resolve_result.flags.is_external() {
                 return;
             }
 
-            if path.pretty.as_ptr() == path.text.as_ptr() {
+            if is_disabled {
+                path = self.disabled_path_with_pretty(&path).expect("oom");
+            } else if path.pretty.as_ptr() == path.text.as_ptr() {
                 // TODO: outbase
                 let rel = bun_paths::resolve_path::relative_platform::<
                     bun_paths::resolve_path::platform::Loose,
@@ -2605,24 +2611,35 @@ pub mod bv2_impl {
                     unsafe { bun_ptr::detach_lifetime(self.arena().alloc_slice_copy(rel)) };
             }
             path.assert_pretty_is_valid();
-            path.assert_file_path_is_absolute();
+            if !is_disabled {
+                // A disabled bare specifier ("nodeonly") has no file behind it.
+                path.assert_file_path_is_absolute();
+            }
 
             // borrowck: get-then-put (instead of a single get-or-put) so the map
             // borrow doesn't span `enqueue_parse_task` (which needs `&mut self`).
-            if let Some(existing) = self.path_to_source_index_map(target).get(path.text) {
+            if let Some(existing) = self.path_to_source_index_map(target).get(path.source_key()) {
                 out_source_index = Some(Index::init(existing));
             } else {
-                path = self
-                    .path_with_pretty_initialized(&path, target)
-                    .expect("oom");
+                if !is_disabled {
+                    path = self
+                        .path_with_pretty_initialized(&path, target)
+                        .expect("oom");
+                }
                 // The borrowck-reshape above cloned
                 // `path` out, so write the prettified path back so
                 // `ParseTask::init(&resolve_result, ..)` (via `enqueue_parse_task`)
                 // sees the relativized `pretty`.
-                if let Some(p) = resolve_result.path() {
+                if is_disabled {
+                    resolve_result.path_pair.primary = path;
+                } else if let Some(p) = resolve_result.path() {
                     *p = path;
                 }
                 let loader: Loader = 'brk: {
+                    if is_disabled {
+                        // Empty module, whatever the extension (or lack of one) says.
+                        break 'brk Loader::Js;
+                    }
                     let record: &ImportRecord = &self.graph.ast.items_import_records()
                         [import_record.importer_source_index as usize]
                         .as_slice()[import_record.import_record_index as usize];
@@ -2649,7 +2666,7 @@ pub mod bv2_impl {
                     )
                     .expect("oom");
                 self.path_to_source_index_map(target)
-                    .put(path.text, idx)
+                    .put(path.source_key(), idx)
                     .expect("oom");
                 out_source_index = Some(Index::init(idx));
 
@@ -5970,7 +5987,6 @@ pub mod bv2_impl {
             path: &Fs::Path<'static>,
         ) -> Result<Fs::Path<'static>, Error> {
             use crate::bun_fs::PathResolverExt as _;
-            use bun_io::Write as _;
 
             debug_assert!(path.is_disabled);
             // SAFETY: arena outlives the bundle pass; see `path_with_pretty_initialized`.
@@ -5991,14 +6007,13 @@ pub mod bv2_impl {
                 path.text
             };
 
-            let mut pretty_buf = bun_paths::path_buffer_pool::get();
-            let mut fbs = bun_io::FixedBufferStream::new_mut(&mut pretty_buf.0[..]);
-            let _ = fbs.write_all(b"(disabled):");
-            let _ = fbs.write_all(rel);
-            let written = fbs.pos;
+            const PREFIX: &[u8] = b"(disabled):";
+            let mut pretty = Vec::with_capacity(PREFIX.len() + rel.len());
+            pretty.extend_from_slice(PREFIX);
+            pretty.extend_from_slice(rel);
 
             let mut with_pretty: Fs::Path<'_> = *path;
-            with_pretty.pretty = &pretty_buf.0[..written];
+            with_pretty.pretty = &pretty;
             with_pretty.dupe_alloc_fix_pretty(bump).map_err(Into::into)
         }
 
@@ -6857,11 +6872,6 @@ pub mod bv2_impl {
                 resolve_task.jsx.development = transpiler.options.forced_jsx_development();
 
                 resolve_task.loader = Some(import_record_loader);
-                if is_disabled {
-                    // Nothing is read from disk: the path may not exist, and when it
-                    // does, its contents are exactly what the "browser" field excludes.
-                    resolve_task.contents_or_fd = parse_task::ContentsOrFd::Contents(b"");
-                }
                 *resolve_entry.value_ptr = resolve_task;
                 if let Some(secondary) = &resolve_result.path_pair.secondary {
                     if !secondary.is_disabled

@@ -332,7 +332,6 @@ pub struct Bufs {
     pub(crate) tsconfig_match_full_buf2: PathBuffer,
     pub(crate) tsconfig_match_full_buf3: PathBuffer,
 
-    pub(crate) esm_subpath: [u8; 512],
     pub(crate) esm_absolute_package_path: PathBuffer,
     pub(crate) esm_absolute_package_path_joined: PathBuffer,
 
@@ -2522,7 +2521,10 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        let esm_ = crate::package_json::Package::parse(import_path, bufs!(esm_subpath));
+        // Stack, not `bufs!`: a "browser" remap to another package re-enters this
+        // function while `esm.subpath` is still in use.
+        let mut esm_subpath_buf = [0u8; 512];
+        let esm_ = crate::package_json::Package::parse(import_path, &mut esm_subpath_buf);
 
         let source_dir_info = dir_info;
         let mut any_node_modules_folder = false;
@@ -2731,22 +2733,28 @@ impl<'a> Resolver<'a> {
                             }
 
                             // Check the "browser" map
-                            if self.care_about_browser_field
-                                && self
-                                    .load_package_subpath_from_browser_map(
-                                        pkg_dir_info,
-                                        abs_path,
-                                        kind,
-                                        global_cache,
-                                        out,
-                                    )
-                                    .is_success()
-                            {
-                                self.extension_order = prev_extension_order;
-                                if let Some(d) = self.debug_logs.as_mut() {
-                                    d.decrease_indent();
+                            if self.care_about_browser_field {
+                                match self.load_package_subpath_from_browser_map(
+                                    pkg_dir_info,
+                                    abs_path,
+                                    kind,
+                                    global_cache,
+                                    out,
+                                ) {
+                                    BrowserMapSubpath::NoEntry => {}
+                                    BrowserMapSubpath::Found => {
+                                        self.extension_order = prev_extension_order;
+                                        if let Some(d) = self.debug_logs.as_mut() {
+                                            d.decrease_indent();
+                                        }
+                                        return MatchStatus::Success;
+                                    }
+                                    BrowserMapSubpath::NotFound => {
+                                        // `abs_path` is stale now; move on to the parent directory.
+                                        self.extension_order = prev_extension_order;
+                                        break 'node_modules;
+                                    }
                                 }
-                                return MatchStatus::Success;
                             }
                         }
                     }
@@ -3231,9 +3239,24 @@ impl<'a> Resolver<'a> {
                                 ));
                             }
 
-                            if self
-                                .load_as_file_or_directory(abs_path, kind, out)
-                                .is_success()
+                            // Check the "browser" map
+                            let browser_map_subpath = if self.care_about_browser_field {
+                                self.load_package_subpath_from_browser_map(
+                                    pkg_dir_info,
+                                    abs_path,
+                                    kind,
+                                    global_cache,
+                                    out,
+                                )
+                            } else {
+                                BrowserMapSubpath::NoEntry
+                            };
+
+                            if browser_map_subpath == BrowserMapSubpath::Found
+                                || (browser_map_subpath == BrowserMapSubpath::NoEntry
+                                    && self
+                                        .load_as_file_or_directory(abs_path, kind, out)
+                                        .is_success())
                             {
                                 out.is_node_module = true;
                                 if let Some(d) = self.debug_logs.as_mut() {
@@ -5014,6 +5037,11 @@ impl<'a> Resolver<'a> {
     /// `abs_path` is the subpath joined onto the package directory, without an
     /// implicit extension, so a key like "./foo/bar" matches even when
     /// "foo/bar.js" does not exist.
+    ///
+    /// Resolving a remap target can re-enter `load_node_modules`, which reuses
+    /// the threadlocal scratch buffers the caller's `abs_path` may live in. So on
+    /// `BrowserMapSubpath::NotFound` the fallback file lookup for `abs_path` has
+    /// already run here, and the caller must not use `abs_path` again.
     fn load_package_subpath_from_browser_map(
         &mut self,
         pkg_dir_info: DirInfoRef,
@@ -5021,11 +5049,11 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
         global_cache: GlobalCache,
         out: &mut MatchResult,
-    ) -> MatchStatus {
+    ) -> BrowserMapSubpath {
         let Some(remap) =
             self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(pkg_dir_info, abs_path)
         else {
-            return MatchStatus::NotFound;
+            return BrowserMapSubpath::NoEntry;
         };
         let browser_scope = pkg_dir_info
             .get_enclosing_browser_scope()
@@ -5047,10 +5075,31 @@ impl<'a> Resolver<'a> {
                 package_json: browser_scope.package_json().map(std::ptr::from_ref),
                 ..Default::default()
             };
-            return MatchStatus::Success;
+            return BrowserMapSubpath::Found;
         }
 
-        self.resolve_without_remapping(browser_scope, remap, kind, global_cache, out)
+        // The copy survives the re-entrant lookup below.
+        let mut abs_path_buf = bun_paths::path_buffer_pool::get();
+        let Some(abs_path) = concat_into(&mut **abs_path_buf, &[abs_path]) else {
+            return BrowserMapSubpath::NotFound;
+        };
+
+        if self
+            .resolve_without_remapping(browser_scope, remap, kind, global_cache, out)
+            .is_success()
+        {
+            return BrowserMapSubpath::Found;
+        }
+
+        // Like esbuild, a target that does not resolve falls back to the file itself.
+        if self
+            .load_as_file_or_directory(abs_path, kind, out)
+            .is_success()
+        {
+            return BrowserMapSubpath::Found;
+        }
+
+        BrowserMapSubpath::NotFound
     }
 
     /// Looks `input_path` up in the "browser" map of the package that encloses
@@ -6651,6 +6700,17 @@ pub enum BrowserMapPathKind {
 enum ImplicitExtensions {
     Include,
     Skip,
+}
+
+/// Result of `Resolver::load_package_subpath_from_browser_map`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BrowserMapSubpath {
+    /// The map has no entry for the subpath. The caller runs node's file lookup.
+    NoEntry,
+    /// `out` holds the module: the remap target, or the disabled path.
+    Found,
+    /// The map has an entry, but neither its target nor the subpath itself resolves.
+    NotFound,
 }
 
 pub(crate) struct BrowserMapPath<'b> {

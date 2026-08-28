@@ -282,6 +282,21 @@ describe("bundler", () => {
     },
     run: { stdout: "works" },
   });
+  // A remap to a package that does not exist falls back to the subpath's own
+  // file. When that is missing too, the lookup moves on to the parent
+  // node_modules, where the other copy of the package resolves the subpath
+  // through "exports".
+  itBundled("extra/BrowserFieldSubpathRemapToMissingPackage", {
+    files: {
+      "src/entry.js": `require('pkg/foo'); require('pkg2/bar')`,
+      "src/node_modules/pkg/package.json": `{ "browser": { "./foo": "missing-pkg" } }`,
+      "src/node_modules/pkg/foo.js": `console.log('fallback')`,
+      "src/node_modules/pkg2/package.json": `{ "browser": { "./bar": "missing-pkg" } }`,
+      "node_modules/pkg2/package.json": `{ "exports": { "./bar": "./bar.js" } }`,
+      "node_modules/pkg2/bar.js": `console.log('parent')`,
+    },
+    run: { stdout: "fallback\nparent" },
+  });
   // From a subdirectory of the package, the bare path is matched against the
   // key spelled relative to the importer's directory.
   itBundled("extra/BrowserFieldBarePathFromSubdirectory", {

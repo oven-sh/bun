@@ -255,12 +255,20 @@ impl ParseTask {
         // live `&mut BundleV2` coerced to `*mut`.
         let ctx_ref = unsafe { bun_ptr::ParentRef::from_raw_mut(ctx.cast::<BundleV2<'static>>()) };
         let known_target = ctx_ref.get().transpiler().options.target;
+        let path = resolve_result.path_pair.primary;
         ParseTask {
             ctx: Some(ctx_ref),
-            path: resolve_result.path_pair.primary,
-            contents_or_fd: ContentsOrFd::Fd {
-                dir: resolve_result.dirname_fd,
-                file: resolve_result.file_fd,
+            path,
+            // A path the "browser" field disabled is an empty module. Nothing is read
+            // from disk: the path may not exist, and when it does, its contents are
+            // exactly what the field excludes.
+            contents_or_fd: if path.is_disabled {
+                ContentsOrFd::Contents(b"")
+            } else {
+                ContentsOrFd::Fd {
+                    dir: resolve_result.dirname_fd,
+                    file: resolve_result.file_fd,
+                }
             },
             side_effects: resolve_result.primary_side_effects_data,
             // D042: resolver-side and bundler-side `jsx::Pragma` are the SAME

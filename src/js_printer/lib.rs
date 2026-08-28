@@ -6077,6 +6077,10 @@ pub(crate) mod __gated_printer {
                             self.print(b" ");
                         }
                         self.print_whitespacer(ws!(b"from "));
+                    } else {
+                        // Bare `import "x"`: no binding above printed the space
+                        // after the keyword.
+                        self.print_space();
                     }
 
                     self.print_import_record_path(record);

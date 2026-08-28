@@ -252,6 +252,39 @@ describe("bundler", () => {
       stdout: "1",
     },
   });
+  itBundled("edgecase/ExternalSideEffectImportSpace", {
+    files: {
+      "/entry.js": /* js */ `
+        import "side";
+        import { a } from "named";
+        import * as ns from "star";
+        console.log(a, ns);
+      `,
+    },
+    external: ["side", "named", "star"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain(`import "side";\n`);
+      expect(out).toContain(`import { a } from "named";\n`);
+      expect(out).toContain(`import * as ns from "star";\n`);
+    },
+  });
+  itBundled("edgecase/ExternalSideEffectImportSpaceMinified", {
+    files: {
+      "/entry.js": /* js */ `
+        import "side";
+        import { a } from "named";
+        import * as ns from "star";
+        console.log(a, ns);
+      `,
+    },
+    external: ["side", "named", "star"],
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain(`import"side";import{a}from"named";import*as ns from"star";`);
+    },
+  });
   itBundled("edgecase/ValidLoaderSeenAsInvalid", {
     files: {
       "/entry.js": /* js */ `console.log(1)`,

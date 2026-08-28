@@ -806,7 +806,7 @@ describe("Bun.Transpiler", () => {
       exp("x<true> y", "x < true > y;\n");
       exp("x<true>\ny", "x;\ny;\n");
       exp("x<true>\nif (y) {}", "x;\nif (y)");
-      exp("x<true>\nimport 'y'", 'x;\nimport"y";\n');
+      exp("x<true>\nimport 'y'", 'x;\nimport "y";\n');
       exp("x<true>\nimport('y')", 'x;\nimport("y");\n');
       exp("x<true>\na(import.meta)", "x;\na(import.meta);\n");
       exp("x<true> import('y')", 'x < true > import("y");\n');
@@ -814,7 +814,7 @@ describe("Bun.Transpiler", () => {
       exp("new x<number> y", "new x < number > y");
       exp("new x<number>\ny", "new x;\ny");
       exp("new x<number>\nif (y) {}", "new x;\nif (y)");
-      exp("new x<true>\nimport 'y'", 'new x;\nimport"y"');
+      exp("new x<true>\nimport 'y'", 'new x;\nimport "y"');
       exp("new x<true>\nimport('y')", 'new x;\nimport("y")');
       exp("new x<true>\na(import.meta)", "new x;\na(import.meta)");
       exp("new x<true> import('y')", 'new x < true > import("y")');
@@ -2807,12 +2807,47 @@ console.log(<div {...obj} key="after" />);`),
       expectPrinted_(`import { name } from '".ts';`, `import { name } from '".ts'`);
     });
 
+    it("import statement whitespace for every binding shape", () => {
+      const code = [
+        `import "side";`,
+        `import def from "def";`,
+        `import { a, b as c } from "named";`,
+        `import def2, { d } from "both";`,
+        `import * as ns from "star";`,
+        `import def3, * as ns2 from "defstar";`,
+        `import defer * as lazy from "deferred";`,
+        `console.log(def, a, c, def2, d, ns, def3, ns2, lazy);`,
+      ].join("\n");
+
+      const pretty = new Bun.Transpiler({ loader: "js" }).transformSync(code);
+      expect(pretty).toBe(
+        [
+          `import "side";`,
+          `import def from "def";`,
+          `import { a, b as c } from "named";`,
+          `import def2, { d } from "both";`,
+          `import * as ns from "star";`,
+          `import def3, * as ns2 from "defstar";`,
+          `import defer * as lazy from "deferred";`,
+          `console.log(def, a, c, def2, d, ns, def3, ns2, lazy);`,
+          ``,
+        ].join("\n"),
+      );
+
+      const minified = new Bun.Transpiler({ loader: "js", minifyWhitespace: true }).transformSync(code);
+      expect(minified).toBe(
+        `import"side";import def from"def";import{a,b as c}from"named";import def2,{d}from"both";` +
+          `import*as ns from"star";import def3,*as ns2 from"defstar";import defer*as lazy from"deferred";` +
+          `console.log(def,a,c,def2,d,ns,def3,ns2,lazy);`,
+      );
+    });
+
     it("import with separator-only or trailing-separator path", () => {
-      expectPrinted_(`import "/"`, `import"/"`);
-      expectPrinted_(`import "//"`, `import"//"`);
-      expectPrinted_(`import "///"`, `import"///"`);
-      expectPrinted_(`import "foo//"`, `import"foo//"`);
-      expectPrinted_(`import "foo///"`, `import"foo///"`);
+      expectPrinted_(`import "/"`, `import "/"`);
+      expectPrinted_(`import "//"`, `import "//"`);
+      expectPrinted_(`import "///"`, `import "///"`);
+      expectPrinted_(`import "foo//"`, `import "foo//"`);
+      expectPrinted_(`import "foo///"`, `import "foo///"`);
       expectPrinted_(`export * from "/"`, `export * from "/"`);
       expectPrinted_(`export * from "foo//"`, `export * from "foo//"`);
       expectPrinted_(`export { a } from "/"`, `export { a } from "/"`);

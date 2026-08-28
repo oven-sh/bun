@@ -1836,6 +1836,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn e_call(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_call().expect("infallible: variant checked");
+        p.record_commonjs_static_export_call(&e_);
         p.call_target = e_.target.data;
 
         p.then_catch_chain = ThenCatchChain {

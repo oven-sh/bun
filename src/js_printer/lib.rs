@@ -7747,6 +7747,13 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
                 .serialize(&mut srlz_res)
                 .map_err(|_| crate::Error::WriteFailed)?;
         }
+        // CommonJS entries keep their static export names in the record slot.
+        let module_record: &[u8] = if tree.exports_kind == js_ast::ExportsKind::Cjs {
+            debug_assert!(!have_module_info);
+            tree.commonjs_static_exports.slice()
+        } else {
+            &srlz_res
+        };
         // SAFETY: caller guarantees the cache outlives the print call.
         unsafe { &mut *cache.as_ptr() }.put(
             printer.writer.slice(),
@@ -7754,7 +7761,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
                 .as_ref()
                 .map(|c| c.buffer.list.as_slice())
                 .unwrap_or(b""),
-            &srlz_res,
+            module_record,
         );
     }
 

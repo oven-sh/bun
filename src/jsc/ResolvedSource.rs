@@ -42,6 +42,8 @@ pub struct ResolvedSource {
     /// was used at build time. If empty, the origin is derived from source_url.
     /// This is converted to a file:// URL on the C++ side.
     pub bytecode_origin_path: BunString,
+    /// `Ast.commonjs_static_exports`; `Zig::SourceProvider` / `JSCommonJSModule` take it.
+    pub commonjs_static_exports: BunString,
 }
 
 /// `ResolvedSource.bytecode_cache`: C++ sees `{ uint8_t* ptr; size_t len; bool owned; }`.
@@ -119,4 +121,4 @@ extern "C" fn ResolvedSource__freeBytecode(bytecode: *mut u8) {
     unsafe { bun_alloc::default_alloc::free(bytecode.cast()) };
 }
 
-bun_core::assert_ffi_layout!(ResolvedSource, 136, 8);
+bun_core::assert_ffi_layout!(ResolvedSource, 160, 8);

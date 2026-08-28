@@ -9,6 +9,7 @@
 
 namespace Zig {
 class GlobalObject;
+class SourceProvider;
 }
 namespace JSC {
 class SourceCode;
@@ -76,6 +77,8 @@ public:
     mutable JSC::WriteBarrier<Unknown> m_overriddenCompile;
 
     bool ignoreESModuleAnnotation { false };
+    // ResolvedSource::commonjs_static_exports, decoded by toSyntheticSource.
+    WTF::String m_staticExports;
     JSC::SourceCode sourceCode = JSC::SourceCode();
 
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
@@ -88,7 +91,13 @@ public:
     static JSC::Structure* createStructure(JSC::JSGlobalObject* globalObject);
 
     void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource, bool isBuiltIn);
-    void evaluate(Zig::GlobalObject* globalObject, Ref<JSC::SourceProvider>&& sourceProvider, bool ignoreESModuleAnnotation);
+    // Provider served by IsolatedModuleCache.
+    void evaluate(Zig::GlobalObject* globalObject, Zig::SourceProvider&);
+
+    // ignoreESModuleAnnotation and m_staticExports, from the source's ResolvedSource.
+    void setSourceMetadata(const Zig::SourceProvider&);
+    // Same, taking commonjs_static_exports out of a ResolvedSource that gets no provider.
+    void takeSourceMetadata(ResolvedSource&);
     void evaluateWithPotentiallyOverriddenCompile(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, JSValue keyJSString, ResolvedSource& resolvedSource);
     inline void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource)
     {
@@ -159,11 +168,11 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     ResolvedSource& source,
     bool isBuiltIn);
 
+// Provider served by IsolatedModuleCache.
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSC::JSString* specifierValue,
-    Ref<JSC::SourceProvider>&& provider,
-    bool ignoreESModuleAnnotation);
+    Zig::SourceProvider& provider);
 
 inline std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,

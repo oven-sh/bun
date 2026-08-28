@@ -253,11 +253,7 @@ fn const_default_define_value(value_str: &[u8]) -> Option<ExprData> {
     }
 }
 
-/// True when a define value names a member chain, as esbuild's
-/// `ParseDefineExpr` decides it: every `.`-separated part is an identifier,
-/// and the first part is not a keyword, except `null`, `this`, and `import`
-/// when `import.meta` follows. A keyword is a valid property name later in
-/// the chain (`a.if`).
+/// A member chain value such as `globalThis.foo`; only the first part is keyword-checked, as in esbuild.
 fn is_member_chain_define_value(value_str: &[u8]) -> bool {
     let mut splitter = strings::split(value_str, b".");
     let Some(first) = splitter.next() else {
@@ -284,8 +280,7 @@ fn is_member_chain_define_value(value_str: &[u8]) -> bool {
     true
 }
 
-/// The digits of a BigInt literal define value (`123n`, `0xffn`), without the
-/// `n` suffix. This is what `E::BigInt.value` stores.
+/// `123n` or `0xffn` without the `n` suffix, the form `E::BigInt.value` stores.
 fn bigint_define_value(value_str: &[u8]) -> Option<&[u8]> {
     let digits = value_str.strip_suffix(b"n")?;
     let (radix, body): (u32, &[u8]) = match digits {
@@ -415,14 +410,12 @@ impl DefineDataExt for DefineData {
             ),
         };
 
-        // Special-case undefined. it's not an identifier here
-        // https://github.com/evanw/esbuild/issues/1407
+        // Special-case undefined, it's not an identifier here: https://github.com/evanw/esbuild/issues/1407
         if value_is_undefined || value_str == b"undefined" {
             return Ok(finish(ExprData::EUndefined(bun_ast::E::Undefined), true));
         }
 
-        // `globalThis.foo`, `this.x`, `import.meta.env`, ... The parser builds
-        // the member chain from `original_name` when it substitutes the define.
+        // The parser builds the chain from `original_name` when it substitutes the define
         if is_member_chain_define_value(value_str) {
             // `null` alone is a constant. `null.x` stays a member chain.
             let value = if value_str == b"null" {
@@ -512,8 +505,7 @@ impl DefineDataExt for DefineData {
         }
 
         for drop_item in drop {
-            // `--drop=debugger` removes a statement, not an identifier. The
-            // caller reads it into `Define.drop_debugger`.
+            // `--drop=debugger` is a statement drop, the caller sets `Define.drop_debugger` for it
             if !drop_item.is_empty() && *drop_item != b"debugger" {
                 <Self as DefineDataExt>::from_mergeable_input_entry(
                     &mut user_defines,

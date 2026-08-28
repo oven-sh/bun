@@ -103,7 +103,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn e_this(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let is_delete_target = matches!(p.delete_target, Data::EThis(..));
-        if let Some(exp) = p.value_for_this(e.loc, in_.assign_target, is_delete_target) {
+        if let Some(exp) = p.value_for_this_with_defines(e.loc, in_.assign_target, is_delete_target)
+        {
             *e = exp;
         }
     }
@@ -269,9 +270,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let newvalue: Expr =
                         p.value_for_define(expr.loc, in_.assign_target, is_delete_target, def);
 
-                    // Don't substitute a constant if this is an assignment
-                    // target, since "0 = 1" is a syntax error. An identifier or
-                    // a property access is still a valid target.
+                    // A constant is not a valid assignment target ("0 = 1"), an identifier or property access is
                     if in_.assign_target == js_ast::AssignTarget::None
                         || matches!(newvalue.data.tag(), Tag::EIdentifier | Tag::EDot)
                     {
@@ -884,8 +883,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let is_call_target = matches!(p.call_target, Data::EIndex(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
         let is_delete_target = matches!(p.delete_target, Data::EIndex(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
 
-        // Check user-specified defines and known globals: `a["b"]` matches the
-        // same define as `a.b`. See `is_dot_define_match` for the UTF-8 gate.
+        // `a["b"]` matches the same define as `a.b` (UTF-8 literals only, see `is_dot_define_match`)
         if let Some(mut s) = e_.index.data.e_string().filter(|s| s.is_utf8()) {
             let defines = p.define;
             if let Some(dot_defines) = defines.dots.get(s.slice(p.arena)) {
@@ -1034,9 +1032,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
             }
             _ => {
-                // The target visit sets this flag when the target is a `--drop`
-                // name. A call inside the index (`console[foo()]()`) must not
-                // consume it, so hide it while the index is visited.
+                // Hide the `--drop` flag from the target visit so a call in the index (`console[foo()]()`) does not consume it
                 let target_is_dropped_method_call =
                     core::mem::replace(&mut p.method_call_must_be_replaced_with_undefined, false);
                 p.visit_expr(&mut e_.index);

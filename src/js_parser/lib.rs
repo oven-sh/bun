@@ -518,9 +518,7 @@ pub mod defines {
             key: &[u8],
             value: DefineData,
         ) -> Result<(), bun_alloc::AllocError> {
-            // User keys were validated by `parse_define_key` already. Keys that
-            // fail it here come from the environment (`process.env.MY-VAR`), so
-            // fall back to a plain split on `.` for those.
+            // An environment key such as `process.env.MY-VAR` fails the grammar, split it on `.` as before
             let parts: Vec<Box<[u8]>> = match parse_define_key(key) {
                 Ok(parts) => parts,
                 Err(_) => {
@@ -560,18 +558,13 @@ pub mod defines {
     /// Why [`parse_define_key`] rejected a key.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum DefineKeyError<'a> {
-        /// This `.`-separated part is not an identifier. For the first part
-        /// this also covers keywords other than `this` and `import.meta`.
+        /// A `.` part that is not an identifier, or a first part that is a keyword other than `this`/`import`.
         InvalidIdentifier(&'a [u8]),
-        /// A `[` is not followed by a quoted string and a `]`, or a `]` is not
-        /// followed by `.`, `[`, or the end of the key.
+        /// A `[` without a quoted string and `]`, or a `]` not followed by `.`, `[`, or the end of the key.
         InvalidIndex,
     }
 
-    /// Splits a define key into its property path, the same grammar esbuild
-    /// accepts for a define name: an identifier, `this`, or `import.meta`,
-    /// followed by any number of `.name` or `["quoted"]` parts. So
-    /// `process.env["NODE-ENV"]` becomes `["process", "env", "NODE-ENV"]`.
+    /// Splits a define key such as `process.env["NODE-ENV"]` into its parts, with esbuild's `ParseGlobalName` grammar.
     pub fn parse_define_key(key: &[u8]) -> Result<Vec<Box<[u8]>>, DefineKeyError<'_>> {
         use crate::lexer::{is_identifier, keyword};
 

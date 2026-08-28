@@ -1463,6 +1463,12 @@ describe("deno_task", () => {
       .stdout("Test1\nTest: 1\nCommandSub\n$\n$VAR\n")
       .stderr("bun: command not found: 1\n")
       .runAsTest("shell var 3");
+
+    // Assignment values are not field split (POSIX 2.9.1), so the command
+    // substitution output keeps its interior whitespace.
+    TestBuilder.command`VAR=$(echo a && echo b) && echo "$VAR"`
+      .stdout("a\nb\n")
+      .runAsTest("assignment keeps command substitution newlines");
   });
 
   describe("env variables", async () => {
@@ -1473,6 +1479,22 @@ describe("deno_task", () => {
     TestBuilder.command`export VAR=1 VAR2=testing VAR3="test this out" && echo $VAR $VAR2 $VAR3`
       .stdout("1 testing test this out\n")
       .runAsTest("exported vars 2");
+
+    // `export` is a declaration utility: a `NAME=value` operand expands like
+    // an assignment, with no field splitting of the substitution output.
+    TestBuilder.command`export NAME=$(echo "hello world") && echo "NAME=[$NAME] world=[$world]"`
+      .stdout("NAME=[hello world] world=[]\n")
+      .runAsTest("export does not field split command substitution");
+
+    TestBuilder.command`export A=$(echo one two) B=$(echo three four) && echo "$A,$B"`
+      .stdout("one two,three four\n")
+      .runAsTest("export does not field split multiple assignment operands");
+
+    // A word that is not a literal `NAME=` assignment keeps the normal
+    // field splitting, matching bash.
+    TestBuilder.command`export $(echo "SPLIT=hello world") && echo "SPLIT=[$SPLIT]"`
+      .stdout("SPLIT=[hello]\n")
+      .runAsTest("export splits a non-assignment word");
   });
 
   describe("pipeline", async () => {

@@ -253,7 +253,7 @@ impl Cmd {
                     match &n.redirect_file {
                         Some(ast::Redirect::Atom(atom)) if idx == 0 => {
                             let atom: *const ast::Atom = atom;
-                            let child = Expansion::init(interp, shell, atom, this);
+                            let child = Expansion::init(interp, shell, atom, this, false);
                             return Expansion::start(interp, child);
                         }
                         // JsBuf redirects don't need expansion; nor does the
@@ -269,8 +269,14 @@ impl Cmd {
                         interp.as_cmd_mut(this).state = CmdState::Exec;
                         continue;
                     }
+                    // Operands of a declaration builtin that are syntactically
+                    // assignments (`export NAME=$(cmd)`) expand like assignment
+                    // words: no field splitting on the substitution output.
+                    let assign_ctx = idx > 0
+                        && is_declaration_utility(&args[0])
+                        && is_assignment_word(&args[idx as usize]);
                     let atom: *const ast::Atom = &raw const args[idx as usize];
-                    let child = Expansion::init(interp, shell, atom, this);
+                    let child = Expansion::init(interp, shell, atom, this, assign_ctx);
                     return Expansion::start(interp, child);
                 }
                 CmdState::Exec => {
@@ -1080,6 +1086,39 @@ impl Cmd {
             Yield::Next(this_id).run(unsafe { &*interp });
         }
     }
+}
+
+/// True when argv0 is the literal word `export`, the only declaration
+/// builtin the Bun shell has. Bash extends the same assignment-word
+/// treatment to `declare`, `local`, `readonly`, and `typeset`.
+fn is_declaration_utility(argv0: &ast::Atom) -> bool {
+    matches!(argv0, ast::Atom::Simple(ast::SimpleAtom::Text(t)) if **t == b"export"[..])
+}
+
+/// True when the word starts with a literal `NAME=` prefix where `NAME` is a
+/// valid shell identifier, i.e. the word is syntactically an assignment. A
+/// word whose name comes from an expansion (`export $name=$(cmd)`) is not an
+/// assignment word and keeps the normal field splitting, like in bash.
+fn is_assignment_word(atom: &ast::Atom) -> bool {
+    let first = match atom {
+        ast::Atom::Simple(s) => s,
+        ast::Atom::Compound(c) => match c.atoms.first() {
+            Some(s) => s,
+            None => return false,
+        },
+    };
+    let ast::SimpleAtom::Text(text) = first else {
+        return false;
+    };
+    let Some(eq) = bun_core::strings::index_of_char_usize(text, b'=') else {
+        return false;
+    };
+    let name = &text[..eq];
+    let Some(&head) = name.first() else {
+        return false;
+    };
+    (head.is_ascii_alphabetic() || head == b'_')
+        && name[1..].iter().all(|&b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
 fn set_stdio_from_redirect(stdio: &mut [Stdio; 3], flags: ast::RedirectFlags, fd: bun_sys::Fd) {

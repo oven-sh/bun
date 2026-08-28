@@ -597,6 +597,32 @@ impl ShellCpTask {
         }
     }
 
+    /// One entry under two names (hard links too), or one file behind a symlink on either side.
+    fn is_same_file(src: &bun_core::ZStr, tgt: &bun_core::ZStr) -> bool {
+        fn same_inode(a: &bun_sys::Stat, b: &bun_sys::Stat) -> bool {
+            // An inode number of 0 means the filesystem reports no identity.
+            a.st_ino != 0 && a.st_ino == b.st_ino && a.st_dev == b.st_dev
+        }
+        if src.as_bytes() == tgt.as_bytes() {
+            return true;
+        }
+        // A `tgt` that does not exist is created by the copy.
+        let (Ok(src_stat), Ok(tgt_stat)) = (bun_sys::lstat(src), bun_sys::lstat(tgt)) else {
+            return false;
+        };
+        if same_inode(&src_stat, &tgt_stat) {
+            return true;
+        }
+        if !bun_sys::S::ISLNK(src_stat.st_mode as _) && !bun_sys::S::ISLNK(tgt_stat.st_mode as _) {
+            return false;
+        }
+        // `stat` fails on a dangling link: nothing behind it to compare.
+        let (Ok(src_file), Ok(tgt_file)) = (bun_sys::stat(src), bun_sys::stat(tgt)) else {
+            return false;
+        };
+        same_inode(&src_file, &tgt_file)
+    }
+
     /// Resolves src/tgt to absolute paths, classifies them per the three
     /// POSIX `cp` synopses
     /// (<https://man7.org/linux/man-pages/man1/cp.1p.html>), then hands off to
@@ -649,17 +675,6 @@ impl ShellCpTask {
             ));
         }
 
-        if !src_is_dir && src.as_bytes() == tgt.as_bytes() {
-            return Some(ShellErr::Custom(
-                format!(
-                    "{0} and {0} are identical (not copied)",
-                    bstr::BStr::new(&self.src)
-                )
-                .into_bytes()
-                .into_boxed_slice(),
-            ));
-        }
-
         let (tgt_is_dir, tgt_exists) = match Self::is_dir(tgt) {
             Ok(is_dir) => (is_dir, true),
             Err(e) if e.get_errno() == bun_sys::E::ENOENT => {
@@ -670,6 +685,8 @@ impl ShellCpTask {
         };
 
         let mut _copying_many = false;
+        // For error messages: names the path the copy would land on.
+        let mut appended_basename: Option<&[u8]> = None;
 
         // The following logic is based on the POSIX spec.
         if !src_is_dir && !tgt_is_dir && self.operands == 2 {
@@ -682,6 +699,7 @@ impl ShellCpTask {
                     buf3.as_mut_slice(),
                     &[tgt.as_bytes(), basename],
                 );
+                appended_basename = Some(basename);
             } else if self.operands == 2 {
                 // source_dir -> new_target_dir.
             } else {
@@ -713,7 +731,31 @@ impl ShellCpTask {
                 buf3.as_mut_slice(),
                 &[tgt.as_bytes(), basename],
             );
+            appended_basename = Some(basename);
             _copying_many = true;
+        }
+
+        if Self::is_same_file(src, tgt) {
+            // As cp(1) prints it: the operand as given, plus the appended basename.
+            let mut shown_tgt = self.tgt.clone();
+            if let Some(basename) = appended_basename {
+                while shown_tgt.len() > 1 && Self::has_trailing_sep(&shown_tgt) {
+                    shown_tgt.pop();
+                }
+                if !Self::has_trailing_sep(&shown_tgt) {
+                    shown_tgt.push(bun_paths::SEP);
+                }
+                shown_tgt.extend_from_slice(basename);
+            }
+            return Some(ShellErr::Custom(
+                format!(
+                    "{} and {} are identical (not copied)",
+                    bstr::BStr::new(&self.src),
+                    bstr::BStr::new(&shown_tgt)
+                )
+                .into_bytes()
+                .into_boxed_slice(),
+            ));
         }
 
         let args = crate::node::fs::args::Cp::owned(

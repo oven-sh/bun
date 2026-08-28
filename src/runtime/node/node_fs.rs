@@ -4721,6 +4721,14 @@ impl NodeFS {
             let dest = args.dest.slice_z(&mut dest_buf);
 
             if args.mode.is_force_clone() {
+                // A copy onto itself is a Node no-op; under EXCL, clonefile reports the EEXIST.
+                if !args.mode.shouldnt_overwrite() {
+                    if let Ok(src_stat) = Syscall::stat(src) {
+                        if Self::copy_file_onto_itself(&src_stat, &Syscall::stat(dest)) {
+                            return Ok(());
+                        }
+                    }
+                }
                 // https://www.manpagez.com/man/2/clonefile/
                 return Maybe::<ret::CopyFile>::errno_sys_p(
                     bun_sys::c::clonefile_rc(src, dest, 0),
@@ -4740,6 +4748,13 @@ impl NodeFS {
                         syscall: sys::Tag::copyfile,
                         ..Default::default()
                     });
+                }
+
+                // A copy onto itself is a Node no-op; the unlink below would delete it.
+                if !args.mode.shouldnt_overwrite()
+                    && Self::copy_file_onto_itself(&stat_, &Syscall::stat(dest))
+                {
+                    return Ok(());
                 }
 
                 // 64 KB is about the break-even point for clonefile() to be worth it
@@ -4856,18 +4871,9 @@ impl NodeFS {
             };
             let _close_dest = scopeguard::guard(dest_fd, |fd| fd.close());
 
-            // Don't O_TRUNC at open: if src and dest resolve to the same
-            // inode, that would zero the file before the first read. Match
-            // Node by checking inodes after both are open and refusing.
-            if let Ok(dst_stat) = Syscall::fstat(dest_fd) {
-                if stat_.st_ino == dst_stat.st_ino && stat_.st_dev == dst_stat.st_dev {
-                    return Err(sys::Error {
-                        errno: SystemErrno::EINVAL as _,
-                        syscall: sys::Tag::copyfile,
-                        path: args.src.slice().into(),
-                        ..Default::default()
-                    });
-                }
+            // No O_TRUNC at open: a copy onto itself is a Node no-op, not a zeroed file.
+            if Self::copy_file_onto_itself(&stat_, &Syscall::fstat(dest_fd)) {
+                return Ok(());
             }
             let _ = Syscall::ftruncate(dest_fd, 0);
 
@@ -4958,6 +4964,12 @@ impl NodeFS {
             }
 
             let dest_fd = Syscall::open(dest, flags, stat_.st_mode as Mode)?;
+
+            // A copy onto itself is a Node no-op; the force-clone arm would unlink it.
+            if Self::copy_file_onto_itself(&stat_, &Syscall::fstat(dest_fd)) {
+                dest_fd.close();
+                return Ok(());
+            }
 
             let mut size: usize = stat_.st_size.max(0) as usize;
 
@@ -8375,6 +8387,9 @@ impl NodeFS {
                 });
             }
 
+            // The unlink below would remove the only name of a file copied onto itself.
+            self.cp_refuse_onto_itself(src, &stat_, &Syscall::stat(dest))?;
+
             // 64 KB is about the break-even point for clonefile() to be worth it
             // at least, on an M1 with an NVME SSD.
             if stat_.st_size > 128 * 1024 {
@@ -8503,6 +8518,11 @@ impl NodeFS {
             }
 
             let dest_fd = Self::cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode)?;
+            // Opened without O_TRUNC, so nothing has happened to the file yet.
+            if let Err(err) = self.cp_refuse_onto_itself(src, &stat_, &Syscall::fstat(dest_fd)) {
+                dest_fd.close();
+                return Err(err);
+            }
 
             let mut size: usize = stat_.st_size.max(0) as usize;
 
@@ -8679,19 +8699,10 @@ impl NodeFS {
                     Err(e) => return Err(e),
                 };
 
-            // No O_TRUNC at open: if src and dest resolve to the same inode,
-            // that would zero the file before the first read.
-            if let Ok(dst_stat) = Syscall::fstat(dest_fd) {
-                if stat_.st_ino == dst_stat.st_ino && stat_.st_dev == dst_stat.st_dev {
-                    dest_fd.close();
-                    self.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
-                    return Err(sys::Error {
-                        errno: SystemErrno::EINVAL as _,
-                        syscall: sys::Tag::copyfile,
-                        path: self.sync_error_buf[..src.len()].into(),
-                        ..Default::default()
-                    });
-                }
+            // Opened without O_TRUNC, so nothing has happened to the file yet.
+            if let Err(err) = self.cp_refuse_onto_itself(src, &stat_, &Syscall::fstat(dest_fd)) {
+                dest_fd.close();
+                return Err(err);
             }
 
             let _close_dest = scopeguard::guard(
@@ -8948,6 +8959,38 @@ impl NodeFS {
                 Err(err.with_path(&self.sync_error_buf[..dest.len()]))
             }
         }
+    }
+
+    /// The destination (`dest_stat`) exists and is the file `src_stat` describes.
+    #[cfg(not(windows))]
+    fn copy_file_onto_itself(src_stat: &sys::Stat, dest_stat: &Maybe<sys::Stat>) -> bool {
+        let Ok(dest_stat) = dest_stat else {
+            return false;
+        };
+        // An inode number of 0 means the filesystem reports no identity.
+        dest_stat.st_ino != 0
+            && dest_stat.st_ino == src_stat.st_ino
+            && dest_stat.st_dev == src_stat.st_dev
+    }
+
+    /// EINVAL when the destination exists (`dest_stat`) and is the file `src_stat` describes.
+    #[cfg(not(windows))]
+    fn cp_refuse_onto_itself(
+        &mut self,
+        src: &ZStr,
+        src_stat: &sys::Stat,
+        dest_stat: &Maybe<sys::Stat>,
+    ) -> Maybe<()> {
+        if !Self::copy_file_onto_itself(src_stat, dest_stat) {
+            return Ok(());
+        }
+        self.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
+        Err(sys::Error {
+            errno: SystemErrno::EINVAL as _,
+            syscall: sys::Tag::copyfile,
+            path: self.sync_error_buf[..src.len()].into(),
+            ..Default::default()
+        })
     }
 
     /// Const-generic dispatch from `NodeFSFunctionEnum` to the matching

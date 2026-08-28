@@ -1,8 +1,8 @@
-use crate::shell::EnvStr;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
+use crate::shell::{EnvStr, is_valid_var_name};
 use bun_collections::index_sort;
 
 #[derive(Default)]
@@ -15,6 +15,7 @@ enum State {
     #[default]
     Idle,
     WaitingIo,
+    Err,
     Done,
 }
 
@@ -25,6 +26,9 @@ impl Export {
             // No args: print all exported vars.
             return Self::print_all(interp, cmd);
         }
+        // Like bash: every invalid word is reported, the valid ones are still
+        // exported, and the exit code is 1 if any word was rejected.
+        let mut errors = Vec::new();
         for i in 0..argc {
             let s = Builtin::of(interp, cmd).arg_bytes(i);
             if s.is_empty() {
@@ -34,6 +38,12 @@ impl Export {
                 Some(eq) => (&s[..eq], &s[eq + 1..]),
                 None => (s, &b""[..]),
             };
+            if !is_valid_var_name(name) {
+                errors.extend_from_slice(b"export: `");
+                errors.extend_from_slice(s);
+                errors.extend_from_slice(b"`: not a valid identifier\n");
+                continue;
+            }
             // The argv backing is freed when the Cmd retires,
             // so the key/value MUST be duplicated into ref-counted storage —
             // `init_slice` here would leave dangling EnvStr in `export_env`.
@@ -45,7 +55,11 @@ impl Export {
             label.deref();
             val.deref();
         }
-        Builtin::done(interp, cmd, 0)
+        if errors.is_empty() {
+            return Builtin::done(interp, cmd, 0);
+        }
+        Self::state_mut(interp, cmd).state = State::Err;
+        Builtin::write_failing_error(interp, cmd, &errors, 1)
     }
 
     fn print_all(interp: &Interpreter, cmd: NodeId) -> Yield {
@@ -81,7 +95,8 @@ impl Export {
         _: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
+        let failed = err.is_some() || matches!(Self::state_mut(interp, cmd).state, State::Err);
         Self::state_mut(interp, cmd).state = State::Done;
-        Builtin::done(interp, cmd, err.map_or(0, |_| 1))
+        Builtin::done(interp, cmd, if failed { 1 } else { 0 })
     }
 }

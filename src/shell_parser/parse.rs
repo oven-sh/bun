@@ -3785,7 +3785,7 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
 /// - a-zA-Z
 /// - _
 /// - 0-9 (but can't be first char)
-pub(crate) fn is_valid_var_name(var_name: &[u8]) -> bool {
+pub fn is_valid_var_name(var_name: &[u8]) -> bool {
     if is_all_ascii(var_name) {
         return is_valid_var_name_ascii(var_name);
     }

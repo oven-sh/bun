@@ -1398,6 +1398,24 @@ describe("deno_task", () => {
     TestBuilder.command`export VAR=1 VAR2=testing VAR3="test this out" && echo $VAR $VAR2 $VAR3`
       .stdout("1 testing test this out\n")
       .runAsTest("exported vars 2");
+
+    TestBuilder.command`export 1abc a-b=5 =x ok=1; ${BUN} -e ${"console.log(JSON.stringify([process.env['1abc'], process.env['a-b'], process.env.ok]))"}`
+      .stdout('[null,null,"1"]\n')
+      .stderr(
+        "export: `1abc`: not a valid identifier\n" +
+          "export: `a-b=5`: not a valid identifier\n" +
+          "export: `=x`: not a valid identifier\n",
+      )
+      .testMini()
+      .runAsTest("export rejects invalid identifiers and keeps the valid ones");
+
+    TestBuilder.command`export 1abc`
+      .stderr("export: `1abc`: not a valid identifier\n")
+      .exitCode(1)
+      .testMini()
+      .runAsTest("export exits 1 on an invalid identifier");
+
+    TestBuilder.command`export _ok OK2=1 && echo done`.stdout("done\n").runAsTest("export accepts valid identifiers");
   });
 
   describe("pipeline", async () => {

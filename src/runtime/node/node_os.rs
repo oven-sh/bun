@@ -770,8 +770,13 @@ mod _impl {
 
             if ret != 0 {
                 return Err(global.throw_value(
-                    // `getpwuid_r` returns the errno as its result.
-                    bun_sys::Error::from_code_int(ret, bun_sys::Tag::uv_os_homedir).to_js(global),
+                    bun_sys::Error::from_code(
+                        // `ret` is a libc errno; `E::from_raw` is the centralized
+                        // `@enumFromInt` (debug-asserts the discriminant).
+                        bun_sys::E::from_raw(ret as u16),
+                        bun_sys::Tag::uv_os_homedir,
+                    )
+                    .to_js(global),
                 ));
             }
 

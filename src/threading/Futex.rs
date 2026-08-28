@@ -247,8 +247,9 @@ mod darwin_impl {
         if status >= 0 {
             return Ok(());
         }
-        // ULF_NO_ERRNO: the kernel returns `-errno` directly.
-        match bun_sys::e_from_negated(status) {
+        // ULF_NO_ERRNO: kernel returns `-errno` directly. `c::E` is `#[repr(u16)]`,
+        // so cast (no transmute — sizes differ).
+        match c::E::from_raw((-status) as u16) {
             // Wait was interrupted by the OS or other spurious signalling.
             c::E::EINTR => Ok(()),
             // Address of the futex was paged out. This is unlikely, but possible in theory, and
@@ -283,7 +284,7 @@ mod darwin_impl {
             if status >= 0 {
                 return;
             }
-            match bun_sys::e_from_negated(status) {
+            match c::E::from_raw((-status) as u16) {
                 c::E::EINTR => continue, // spurious wake()
                 c::E::EFAULT => panic!("__ulock_wake() returned EFAULT unexpectedly"), // __ulock_wake doesn't generate EFAULT according to darwin pthread_cond_t
                 c::E::ENOENT => return, // nothing was woken up

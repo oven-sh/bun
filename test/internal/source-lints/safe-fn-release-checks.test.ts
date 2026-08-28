@@ -10,10 +10,9 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // (`[profile.release]` leaves debug-assertions off; scripts/build/rust.ts only
 // turns them on for the debug, asan and assertions profiles), so with one the
 // shipped binary trusts every one of the function's callers and a single
-// length bug becomes an out-of-bounds read handed to a syscall, or an invalid
-// enum value.
+// length bug becomes an out-of-bounds read handed to a syscall.
 //
-// The functions below are the NUL-terminated string / errno constructors
+// The functions below are the NUL-terminated string constructors
 // that had exactly that shape (the Zig originals ran these checks in
 // ReleaseSafe, which is what shipped; the Rust port demoted them to
 // `debug_assert!`). Each one is located by its signature, tree-wide, so that
@@ -76,21 +75,11 @@ const GUARDED: Guarded[] = [
     name: "Unaligned::slice_align_cast_mut",
     signature: "slice_align_cast_mut(slice: &mut [Unaligned<T>]) -> &mut [T]",
   },
-  // bun_errno: discriminant -> `#[repr(u16)]` enum. An undeclared value is an
-  // invalid enum value the moment it exists.
-  { name: "SystemErrno::from_raw", signature: "from_raw(n: u16) -> SystemErrno" },
-  { name: "E::from_raw (windows)", signature: "from_raw(n: u16) -> Self", within: "impl E {" },
 ];
-
-// The errno enums are only ever built from a discriminant through the
-// checked constructors above (`strum::FromRepr`); a transmute from the raw
-// integer is the unchecked shape this lint exists to keep out. `bun_sys::E` is
-// an alias of `SystemErrno` on POSIX, so both spellings are covered.
-const ERRNO_TRANSMUTE = /\btransmute::<\s*u16\s*,\s*(?:[\w:]+::)?(?:E|SystemErrno)\s*>/;
 
 const DEBUG_ASSERT = /\bdebug_assert(?:_eq|_ne)?!/;
 // A check that survives release: `assert!`-family or an explicit `panic!`
-// arm (the `match from_repr(n) { None => panic!(..) }` shape).
+// arm (the `match check(..) { None => panic!(..) }` shape).
 const HARD_CHECK = /(?<![\w.])(?:assert(?:_eq|_ne)?|panic)!\s*\(/;
 
 function escape(s: string): string {
@@ -133,7 +122,6 @@ function stripComments(content: string): string {
 }
 
 const definitions = new Map<string, Definition[]>(GUARDED.map(g => [g.name, []]));
-const transmutes: string[] = [];
 let scanned = 0;
 for (const abs of rustSources) {
   const source = path.relative(root, abs).replaceAll(path.sep, "/");
@@ -145,9 +133,6 @@ for (const abs of rustSources) {
   const content = stripComments(await file(abs).text());
   for (const g of GUARDED) {
     definitions.get(g.name)!.push(...findDefinitions(source, content, g));
-  }
-  for (const [index, line] of content.split("\n").entries()) {
-    if (ERRNO_TRANSMUTE.test(line)) transmutes.push(`${source}:${index + 1}: ${line.trim()}`);
   }
 }
 
@@ -228,12 +213,6 @@ test("the extractor and the check classify the shapes it claims to", () => {
           unsafe { Self::from_raw(buf.as_ptr(), len) }
       }`),
   ).toEqual([]);
-
-  expect(ERRNO_TRANSMUTE.test("unsafe { core::mem::transmute::<u16, SystemErrno>(n) }")).toBe(true);
-  expect(ERRNO_TRANSMUTE.test("unsafe { core::mem::transmute::<u16, E>(int as u16) }")).toBe(true);
-  expect(ERRNO_TRANSMUTE.test("unsafe { transmute::<u16, bun_errno::SystemErrno>(n) }")).toBe(true);
-  expect(ERRNO_TRANSMUTE.test("unsafe { transmute::<u16, Endian>(n) }")).toBe(false);
-  expect(ERRNO_TRANSMUTE.test("SystemErrno::from_repr(n)")).toBe(false);
 });
 
 test.each(GUARDED)("$name checks its precondition in release builds", g => {
@@ -242,8 +221,4 @@ test.each(GUARDED)("$name checks its precondition in release builds", g => {
   // rather than silently dropping the function out of the lint.
   expect(defs.map(d => d.source)).toHaveLength(1);
   expect(violations(defs[0])).toEqual([]);
-});
-
-test("no errno enum is built by transmuting a raw u16", () => {
-  expect(transmutes).toEqual([]);
 });

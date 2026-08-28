@@ -11,29 +11,27 @@ use crate::api::bun::process::sync;
 
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Program that hands a URL or a file to the system's default handler.
+/// argv prefix that hands its next argument (a URL or a file) to the system's
+/// default handler.
 #[cfg(target_os = "macos")]
-const OPENER: &[u8] = b"/usr/bin/open";
+const OPENER: &[&[u8]] = &[b"/usr/bin/open"];
 #[cfg(windows)]
-const OPENER: &[u8] = b"start";
-#[cfg(not(any(target_os = "macos", windows)))]
-const OPENER: &[u8] = b"xdg-open";
+const OPENER: &[&[u8]] = &[b"start"];
+#[cfg(target_os = "android")]
+const OPENER: &[&[u8]] = &[
+    b"/system/bin/am",
+    b"start",
+    b"-a",
+    b"android.intent.action.VIEW",
+    b"-d",
+];
+#[cfg(not(any(target_os = "macos", windows, target_os = "android")))]
+const OPENER: &[&[u8]] = &[b"xdg-open"];
 
 /// Returns `false` when the opener is missing or exits non-zero (headless, CI).
 pub(crate) fn try_open_url(url: &[u8]) -> bool {
-    // Android has no `xdg-open`; `am start` sends the URL to the default handler.
-    #[cfg(target_os = "android")]
-    let argv: &[&[u8]] = &[
-        b"/system/bin/am",
-        b"start",
-        b"-a",
-        b"android.intent.action.VIEW",
-        b"-d",
-        url,
-    ];
-    #[cfg(not(target_os = "android"))]
-    let argv: &[&[u8]] = &[OPENER, url];
-    matches!(bun_core::spawn_sync_inherit(argv), Ok(status) if status.is_ok())
+    let argv: Vec<&[u8]> = OPENER.iter().copied().chain([url]).collect();
+    matches!(bun_core::spawn_sync_inherit(&argv), Ok(status) if status.is_ok())
 }
 
 /// [`try_open_url`], and print the URL when that fails.
@@ -204,7 +202,9 @@ impl Editor {
         }
 
         if matches!(self, Editor::Vim | Editor::Emacs | Editor::Neovim) {
-            push_arg!(OPENER);
+            for arg in OPENER {
+                push_arg!(arg);
+            }
             push_arg!(binary);
 
             #[cfg(target_os = "macos")]

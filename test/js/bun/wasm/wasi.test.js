@@ -229,9 +229,9 @@ it("fd_write on an append fd leaves the offset at EOF", () => {
   const resPtr = 8200;
 
   const len = memory.write("file.txt", pathPtr);
-  expect(
-    wasi.wasiImport.path_open(preopenFd, 0, pathPtr, len, 0, rights, BigInt(0), WASI_FDFLAG_APPEND, fdPtr),
-  ).toBe(WASI_ESUCCESS);
+  expect(wasi.wasiImport.path_open(preopenFd, 0, pathPtr, len, 0, rights, BigInt(0), WASI_FDFLAG_APPEND, fdPtr)).toBe(
+    WASI_ESUCCESS,
+  );
   const fd = view.getUint32(fdPtr, true);
 
   memory.write("de", dataPtr);

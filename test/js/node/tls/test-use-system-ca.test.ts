@@ -78,7 +78,7 @@ describe.skipIf(!isLinux)("tls.getCACertificates('system')", () => {
     readFileSync(join(import.meta.dir, "../test/fixtures/keys", `${name}-cert.pem`), "utf8");
   const fingerprint = (pem: string) => new X509Certificate(pem).fingerprint256;
 
-  async function systemFingerprints(env: Record<string, string | undefined>): Promise<string[]> {
+  async function systemFingerprints(env: Record<string, string | undefined>, stdin?: Blob): Promise<string[]> {
     await using proc = spawn({
       cmd: [
         bunExe(),
@@ -88,6 +88,7 @@ describe.skipIf(!isLinux)("tls.getCACertificates('system')", () => {
          console.log(JSON.stringify(certs.map(pem => new X509Certificate(pem).fingerprint256)));`,
       ],
       env: { ...bunEnv, SSL_CERT_FILE: undefined, SSL_CERT_DIR: undefined, ...env },
+      stdin,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -132,6 +133,12 @@ describe.skipIf(!isLinux)("tls.getCACertificates('system')", () => {
     expect(await systemFingerprints({ SSL_CERT_FILE: join(String(dir), "bundle.pem"), SSL_CERT_DIR: "" })).toEqual(
       [ca1, ca2].map(fingerprint),
     );
+  });
+
+  test("SSL_CERT_FILE can be a pipe", async () => {
+    const ca1 = fixtureCert("ca1");
+    const fingerprints = await systemFingerprints({ SSL_CERT_FILE: "/dev/stdin", SSL_CERT_DIR: "" }, new Blob([ca1]));
+    expect(fingerprints).toEqual([fingerprint(ca1)]);
   });
 
   test.skipIf(!existsSync("/etc/ssl/certs"))("SSL_CERT_FILE alone keeps the default directory", async () => {

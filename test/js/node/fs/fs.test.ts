@@ -5880,8 +5880,9 @@ describe("fd-based fs errors carry err.fd", () => {
   const cases: { name: string; syscall: string; op: () => unknown; skip?: boolean }[] = [
     { name: "readSync", syscall: "read", op: () => fs.readSync(BAD_FD, buf) },
     { name: "writeSync", syscall: "write", op: () => fs.writeSync(BAD_FD, buf) },
-    { name: "readvSync", syscall: "readv", op: () => fs.readvSync(BAD_FD, [buf]) },
-    { name: "writevSync", syscall: "writev", op: () => fs.writevSync(BAD_FD, [buf]) },
+    // libuv has no readv/writev, so Windows reports the underlying read/write.
+    { name: "readvSync", syscall: isWindows ? "read" : "readv", op: () => fs.readvSync(BAD_FD, [buf]) },
+    { name: "writevSync", syscall: isWindows ? "write" : "writev", op: () => fs.writevSync(BAD_FD, [buf]) },
     { name: "fstatSync", syscall: "fstat", op: () => fs.fstatSync(BAD_FD) },
     { name: "ftruncateSync", syscall: "ftruncate", op: () => fs.ftruncateSync(BAD_FD, 0) },
     { name: "fchmodSync", syscall: "fchmod", op: () => fs.fchmodSync(BAD_FD, 0o644) },

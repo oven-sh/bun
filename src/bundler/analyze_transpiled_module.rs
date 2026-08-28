@@ -423,9 +423,10 @@ impl<'a> ModuleInfoStringTable<'a> {
     pub fn get(&self, id: u32) -> Option<ModuleInfoString<'a>> {
         let [offset, len] = self.range(id)?;
         let (offset, end) = (offset as usize, (offset + len) as usize);
-        match *self.buf.get(offset)? {
+        let (&tag, rest) = self.buf[offset..end].split_first()?;
+        match tag {
             1 => Some(ModuleInfoString::Chars {
-                chars: &self.buf[offset + 1..end],
+                chars: rest,
                 is_8bit: true,
             }),
             0 => {

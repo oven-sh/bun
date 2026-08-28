@@ -189,7 +189,7 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
             let _ = write!(
                 &mut msg,
                 "Failed to read process output: {}",
-                <&'static str>::from(err.get_errno())
+                bstr::BStr::new(err.name())
             );
             self.err_msg().set(Some(msg));
         }
@@ -393,7 +393,7 @@ impl CronJobBase for CronRegisterJob {
             Status::Err(err) => {
                 self.set_err(format_args!(
                     "Process error: {}",
-                    <&'static str>::from(err.get_errno())
+                    bstr::BStr::new(err.name())
                 ));
                 return JobAction::Finish;
             }
@@ -1125,7 +1125,7 @@ impl CronJobBase for CronRemoveJob {
             Status::Err(err) => {
                 self.set_err(format_args!(
                     "Process error: {}",
-                    <&'static str>::from(err.get_errno())
+                    bstr::BStr::new(err.name())
                 ));
                 return JobAction::Finish;
             }

@@ -4134,20 +4134,12 @@ pub enum ViewTransitionPartName {
 
 impl ViewTransitionPartName {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // `CustomIdentFns::to_css` is CSS-modules-gated via
-        // `Printer::{css_module,write_ident}`; inline the
-        // `write_ident(v, false)` body (CSS-modules custom-ident scoping is a
-        // serializer concern, not a grammar concern — the gated impl just
-        // toggles the second arg).
-        let write_ci = |name: &CustomIdent, dest: &mut Printer| -> Result<(), PrintErr> {
-            dest.serialize_identifier(name.v())
-        };
         match self {
             Self::All => dest.write_str("*"),
-            Self::Name(name) => write_ci(name, dest),
+            Self::Name(name) => name.to_css(dest),
             Self::Class(name) => {
                 dest.write_char(b'.')?;
-                write_ci(name, dest)
+                name.to_css(dest)
             }
         }
     }

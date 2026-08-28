@@ -9408,8 +9408,6 @@ bun_core::link_impl_OutputSink! {
             core::ptr::write((&raw mut out).cast::<SysQuietWriterAdapter>(), concrete);
             out
         },
-        // QuietWriter itself is unbuffered (buffering lives in the Adapter).
-        quiet_writer_flush(_qw) => (),
         quiet_writer_write_all(qw, bytes) => fd_write_all_quiet(qw_fd(qw), bytes),
         quiet_writer_fd(qw) => qw_fd(qw),
         tty_winsize(fd) => sink_tty_winsize(fd),

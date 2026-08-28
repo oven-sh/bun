@@ -453,7 +453,7 @@ impl WorkspaceMap {
                             loc,
                             "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
                             BStr::new(user_pattern),
-                            <&'static str>::from(e.get_errno()),
+                            BStr::new(e.name()),
                         );
                         return Err(crate::Error::GlobError);
                     }
@@ -469,7 +469,7 @@ impl WorkspaceMap {
                         loc,
                         "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
                         BStr::new(user_pattern),
-                        <&'static str>::from(e.get_errno()),
+                        BStr::new(e.name()),
                     );
                     return Err(crate::Error::GlobError);
                 }
@@ -485,7 +485,7 @@ impl WorkspaceMap {
                                 loc,
                                 "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
                                 BStr::new(user_pattern),
-                                <&'static str>::from(e.get_errno()),
+                                BStr::new(e.name()),
                             );
                             return Err(crate::Error::GlobError);
                         }

@@ -368,3 +368,47 @@ export {
 };
 "
 `;
+
+exports[`bundler react-compiler/ZeroMemoSlotsNoRuntimeImport 1`] = `
+"// entry.jsx
+import { useState } from "react";
+function Counter() {
+  let [count] = useState(0);
+  return count + 2;
+}
+export {
+  Counter
+};
+"
+`;
+
+exports[`bundler react-compiler/ZeroMemoSlotsBeforeMemoizedComponent 1`] = `
+"// entry.jsx
+import { useState } from "react";
+import { jsxDEV } from "react/jsx-dev-runtime";
+import { c as _c } from "react/compiler-runtime";
+function Counter() {
+  let [count] = useState(0);
+  return count + 2;
+}
+function Hello(t0) {
+  let $ = _c(2);
+  let { name } = t0;
+  let t1;
+  if ($[0] !== name)
+    t1 = /* @__PURE__ */ jsxDEV("div", {
+      children: [
+        "Hello ",
+        name
+      ]
+    }, undefined, true, undefined, this), $[0] = name, $[1] = t1;
+  else
+    t1 = $[1];
+  return t1;
+}
+export {
+  Counter,
+  Hello
+};
+"
+`;

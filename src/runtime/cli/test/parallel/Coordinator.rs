@@ -945,7 +945,7 @@ fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] 
                 &buf[..buf.len() - remaining]
             }
         }
-        SpawnStatus::Err(e) => <&'static str>::from(e.get_errno()).as_bytes(),
+        SpawnStatus::Err(e) => e.name(),
         SpawnStatus::Running => b"running",
     }
 }

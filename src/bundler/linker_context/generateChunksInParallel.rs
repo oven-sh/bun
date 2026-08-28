@@ -505,9 +505,14 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     // cross-chunk import specifiers. During printing, cross-chunk imports use
     // unique_key placeholders as paths. Now that final paths are known, replace
     // those placeholders with the resolved paths and serialize.
-    let mut module_info_strings =
-        bun_js_printer::analyze_transpiled_module::ModuleInfoStringTable::default();
+    let external_string_table = (c.options.generate_bytecode_cache
+        && c.options.compile_mode.is_executable())
+    .then(crate::bundle_v2::dispatch::EncoderStringTableHandle::new);
+    let mut module_info_strings = analyze_transpiled_module::ModuleInfoSlotTableBuilder::default();
     if c.options.generates_module_info() {
+        let external_string_table = external_string_table
+            .as_ref()
+            .expect("module_info is only generated for --compile --bytecode");
         // Build map from unique_key -> final resolved path
         // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
         let b: &mut BundleV2 =
@@ -581,7 +586,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 js.module_info = None;
                 continue;
             }
-            table_ids.push(module_info_strings.intern_all(mi));
+            table_ids.push(module_info_strings.intern_all(mi, |s| external_string_table.slot(s)));
         }
         let mut table_ids = table_ids.iter();
         for chunk in chunks.iter_mut() {
@@ -620,9 +625,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     let resolver = c.resolver.expect("resolver set in load()");
     let root_path: &[u8] = &resolver.opts.output_dir;
     let is_standalone = c.options.compile_mode.is_standalone_html();
-    let external_string_table = (c.options.generate_bytecode_cache
-        && c.options.compile_mode.is_executable())
-    .then(crate::bundle_v2::dispatch::EncoderStringTableHandle::new);
     let more_than_one_output = !is_standalone
         && (c.parse_graph().additional_output_files.len() > 0
             || c.options.generate_bytecode_cache
@@ -1361,10 +1363,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         );
     }
     if c.options.generates_module_info() {
-        let mut bytes = Vec::new();
-        module_info_strings
-            .serialize(&mut bytes)
-            .expect("Vec<u8> write");
+        let bytes = module_info_strings.serialize();
         debug!(
             "module_info string table: {} strings, {} bytes",
             module_info_strings.count(),

@@ -1064,18 +1064,18 @@ unsafe extern "C" {
 fn expr_from_blob(
     bytes: &[u8],
     bump: &bun_alloc::Arena,
-    mime_type: &[u8],
+    content_type: &[u8],
     log: &mut Log,
     loc: bun_ast::Loc,
 ) -> crate::Result<Expr> {
     use bun_ast::{E, ExprData, StoreStr as Str};
+    use bun_http_types::MimeType::{Category, Dupe, MimeType};
 
-    // MimeType::Category::Json — `application/json` or `+json`/`/json` suffix.
-    let is_json = mime_type == b"application/json"
-        || mime_type.ends_with(b"+json")
-        || mime_type.ends_with(b"/json");
+    // `Response.json()` and most servers send parameters (`;charset=utf-8`),
+    // so classify through the same parser the runtime uses for blob types.
+    let mime_type = MimeType::init(content_type, Dupe::No, None);
 
-    if is_json {
+    if mime_type.category == Category::Json {
         let source = &Source::init_path_string(b"fetch.json", bytes);
         let mut out_expr: Expr = match bun_parsers::json::parse_for_macro(source, log, bump) {
             Ok(e) => e,
@@ -1090,14 +1090,7 @@ fn expr_from_blob(
         return Ok(out_expr);
     }
 
-    // MimeType::Category::isTextLike — text/*, application/javascript-ish, xml.
-    let is_text_like = mime_type.starts_with(b"text/")
-        || mime_type == b"application/javascript"
-        || mime_type == b"application/x-javascript"
-        || mime_type == b"application/ecmascript"
-        || mime_type == b"application/xml";
-
-    if is_text_like {
+    if mime_type.category.is_text_like() {
         let mut output = bun_core::MutableString::init_empty();
         bun_core::quote_for_json(bytes, &mut output, bun_core::printer::AsciiOnly::Yes)?;
         let owned = output.to_owned_slice();
@@ -1122,13 +1115,13 @@ fn expr_from_blob(
     let prefix = b"data:";
     let mid = b";base64,";
     let encoded_len = bun_base64::encode_len(bytes);
-    let total = prefix.len() + mime_type.len() + mid.len() + encoded_len;
+    let total = prefix.len() + content_type.len() + mid.len() + encoded_len;
     let buf: &mut [u8] = bump.alloc_slice_fill_copy(total, 0u8);
     let mut i = 0usize;
     buf[i..i + prefix.len()].copy_from_slice(prefix);
     i += prefix.len();
-    buf[i..i + mime_type.len()].copy_from_slice(mime_type);
-    i += mime_type.len();
+    buf[i..i + content_type.len()].copy_from_slice(content_type);
+    i += content_type.len();
     buf[i..i + mid.len()].copy_from_slice(mid);
     i += mid.len();
     let n = bun_base64::encode(&mut buf[i..], bytes);

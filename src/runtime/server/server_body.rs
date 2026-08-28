@@ -341,9 +341,15 @@ pub(super) trait RespLike {
     fn timeout(&mut self, seconds: u8);
     fn on_timeout_warn(&mut self, ud: *mut c_void);
     fn to_any_response(&mut self) -> uws::AnyResponse;
+    /// HTTP/2 only: END_STREAM on the HEADERS frame, or `content-length: 0`.
+    fn request_body_ended(&mut self) -> bool;
 }
 impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
     const IS_MUX: bool = false;
+    #[inline]
+    fn request_body_ended(&mut self) -> bool {
+        false
+    }
     #[inline]
     fn write_status(&mut self, s: &[u8]) {
         uws_sys::NewAppResponse::<SSL>::write_status(self, s)
@@ -384,6 +390,11 @@ impl<const SSL: bool> RespLike for uws_sys::NewAppResponse<SSL> {
 }
 impl RespLike for uws_sys::h3::Response {
     const IS_MUX: bool = true;
+    /// The QUIC FIN is only seen by a read after dispatch.
+    #[inline]
+    fn request_body_ended(&mut self) -> bool {
+        false
+    }
     #[inline]
     fn write_status(&mut self, s: &[u8]) {
         uws_sys::h3::Response::write_status(self, s)
@@ -411,6 +422,10 @@ impl RespLike for uws_sys::h3::Response {
 }
 impl RespLike for uws_sys::h2::Response {
     const IS_MUX: bool = true;
+    #[inline]
+    fn request_body_ended(&mut self) -> bool {
+        uws_sys::h2::Response::request_body_ended(self)
+    }
     #[inline]
     fn write_status(&mut self, s: &[u8]) {
         uws_sys::h2::Response::write_status(self, s)
@@ -3070,7 +3085,15 @@ where
             if !path.is_empty() && path[0] == b'/' {
                 if let Some(mut s) = prefix {
                     s.extend_from_slice(path);
-                    request_object.url.set(BunString::clone_utf8(&s));
+                    // Same WHATWG pass as `Request::ensure_url` for HTTP/1.
+                    let href = bun_url::href_from_string(&BunString::from_bytes(&s));
+                    request_object.url.set(if href.is_empty() {
+                        BunString::clone_utf8(&s)
+                    } else if core::ptr::eq(href.byte_slice().as_ptr(), s.as_ptr()) {
+                        BunString::clone_latin1(&s[..href.length()])
+                    } else {
+                        href
+                    });
                 } else {
                     request_object.url.set(BunString::clone_utf8(path));
                 }
@@ -3095,11 +3118,8 @@ where
             ctx.set_request_body_content_len(req_len);
             let is_te = ReqLike::has_transfer_encoding(req);
             ctx.set_is_transfer_encoding(is_te);
-            // HTTP/2 and HTTP/3: Content-Length is optional and
-            // Transfer-Encoding is forbidden; the body is terminated by
-            // END_STREAM / the QUIC stream FIN, so always arm onData for
-            // body methods.
-            if req_len > 0 || is_te || Ctx::IS_MUX {
+            // HTTP/2 and HTTP/3 frame the body by END_STREAM or QUIC FIN, not Content-Length.
+            if req_len > 0 || is_te || (Ctx::IS_MUX && !RespLike::request_body_ended(resp)) {
                 // we defer pre-allocating the body until we receive the first chunk
                 // that way if the client is lying about how big the body is or the client aborts
                 // we don't waste memory

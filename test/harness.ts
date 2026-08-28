@@ -2308,3 +2308,63 @@ export const rss: () => number =
   process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
     ? (Bun.unsafe.memoryFootprint as () => number)
     : process.memoryUsage.rss;
+
+/** Read exactly `len` bytes from `fd` at absolute `offset`. */
+export function preadExact(fd: number, offset: number, len: number): Buffer {
+  const buf = Buffer.alloc(len);
+  let got = 0;
+  while (got < len) {
+    const n = fs.readSync(fd, buf, got, len - got, offset + got);
+    if (n === 0) throw new Error(`short read at ${offset}`);
+    got += n;
+  }
+  return buf;
+}
+
+/** One ELF64 program header, fields as in Elf64_Phdr. */
+export interface Elf64ProgramHeader {
+  type: number;
+  flags: number;
+  offset: bigint;
+  vaddr: bigint;
+  paddr: bigint;
+  filesz: bigint;
+  memsz: bigint;
+  align: bigint;
+}
+
+/** Program headers of an ELF64 binary (either endianness). */
+export function readElf64ProgramHeaders(path: string): Elf64ProgramHeader[] {
+  const fd = openSync(path, "r");
+  try {
+    const ehdr = preadExact(fd, 0, 64);
+    if (ehdr.readUInt32BE(0) !== 0x7f454c46) throw new Error("not ELF");
+    if (ehdr[4] !== 2) throw new Error("only ELF64 supported"); // EI_CLASS
+    const le = ehdr[5] === 1; // EI_DATA
+    const u16 = (b: Buffer, o: number) => (le ? b.readUInt16LE(o) : b.readUInt16BE(o));
+    const u32 = (b: Buffer, o: number) => (le ? b.readUInt32LE(o) : b.readUInt32BE(o));
+    const u64 = (b: Buffer, o: number) => (le ? b.readBigUInt64LE(o) : b.readBigUInt64BE(o));
+
+    const e_phoff = Number(u64(ehdr, 32));
+    const e_phentsize = u16(ehdr, 54);
+    const e_phnum = u16(ehdr, 56);
+
+    const headers: Elf64ProgramHeader[] = [];
+    for (let i = 0; i < e_phnum; i++) {
+      const ph = preadExact(fd, e_phoff + i * e_phentsize, e_phentsize);
+      headers.push({
+        type: u32(ph, 0),
+        flags: u32(ph, 4),
+        offset: u64(ph, 8),
+        vaddr: u64(ph, 16),
+        paddr: u64(ph, 24),
+        filesz: u64(ph, 32),
+        memsz: u64(ph, 40),
+        align: u64(ph, 48),
+      });
+    }
+    return headers;
+  } finally {
+    closeSync(fd);
+  }
+}

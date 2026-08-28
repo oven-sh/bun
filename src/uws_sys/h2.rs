@@ -148,6 +148,10 @@ impl Response {
     pub(crate) fn is_closed(&self) -> bool {
         c::uws_h2_res_is_closed(self)
     }
+    /// END_STREAM on the HEADERS frame, or `content-length: 0`.
+    pub fn request_body_ended(&self) -> bool {
+        c::uws_h2_res_request_body_ended(self)
+    }
     pub(crate) fn is_corked(&self) -> bool {
         false
     }
@@ -621,6 +625,7 @@ mod c {
         pub(super) safe fn uws_h2_res_end_stream(res: &mut Response, close: bool);
         pub(super) safe fn uws_h2_res_force_close(res: &mut Response);
         pub(super) safe fn uws_h2_res_is_closed(res: &Response) -> bool;
+        pub(super) safe fn uws_h2_res_request_body_ended(res: &Response) -> bool;
         pub(super) fn uws_h2_res_try_end(
             res: *mut Response,
             p: *const u8,

@@ -12,7 +12,7 @@ use crate::repository::Repository;
 use crate::{Dependency, DependencyID, Npm, Origin, PackageID, invalid_package_id};
 
 use super::package::scripts::Scripts as PackageScripts;
-use super::tree::{DepthBuf, IteratorPathStyle, MAX_DEPTH};
+use super::tree::IteratorPathStyle;
 use super::{FormatVersion, Lockfile, Package, package_index, tree};
 
 // Since this output is debug-only and an error mid-stream already yields malformed JSON,
@@ -229,7 +229,7 @@ where
         let dependencies = this.buffers.dependencies.as_slice();
         let hoisted_deps = this.buffers.hoisted_dependencies.as_slice();
         let resolutions = this.buffers.resolutions.as_slice();
-        let mut depth_buf: DepthBuf = [0; MAX_DEPTH];
+        let mut depth_buf = tree::depth_buf_uninit();
         let mut path_buf = PathBuffer::uninit();
         path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
 

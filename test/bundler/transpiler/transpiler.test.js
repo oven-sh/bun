@@ -5347,6 +5347,145 @@ describe("using declarations in switch statements", () => {
   });
 });
 
+// A function declared directly in a case clause is a binding of the whole
+// switch block, created when the switch is entered. It used to be lowered to
+// a `let` at the top of its own clause, which every other clause saw in TDZ.
+describe("function declarations in switch case clauses", () => {
+  const faces = /* js */ `
+    function crossClause(v) {
+      switch (v) {
+        case 1: function g() { return 4 } break;
+        case 2: return [typeof g, g()];
+      }
+      return "no match";
+    }
+    function fromDefault(v) {
+      switch (v) {
+        default: return [typeof g, g()];
+        case 1: function g() { return "d" }
+      }
+    }
+    function fallthrough(v) {
+      switch (v) {
+        case 1: function g() { return "f" }
+        case 2: return g();
+      }
+    }
+    function switchTrue(x) {
+      switch (true) {
+        case x > 0: function g() { return "pos" }
+        case x < 0: return g();
+      }
+    }
+    function nestedBlock(v) {
+      switch (v) {
+        case 1: { function g() { return "nested" } return g(); }
+        case 2: return typeof g;
+      }
+    }
+    function closesOverCaseLet(v) {
+      switch (v) {
+        case 1: let x = "x1"; function g() { return x } return g();
+        case 2: try { return g(); } catch (e) { return [typeof g, e.constructor.name]; }
+      }
+    }
+    console.log(JSON.stringify([
+      crossClause(1), crossClause(2), crossClause(3),
+      fromDefault(0), fromDefault(1),
+      fallthrough(1), fallthrough(2),
+      switchTrue(1), switchTrue(-1),
+      nestedBlock(1), nestedBlock(2),
+      closesOverCaseLet(1), closesOverCaseLet(2),
+    ]));
+  `;
+  const expected = [
+    "no match",
+    ["function", 4],
+    "no match",
+    ["function", "d"],
+    null,
+    "f",
+    "f",
+    "pos",
+    "pos",
+    "nested",
+    "undefined",
+    "x1",
+    ["function", "ReferenceError"],
+  ];
+
+  it("keeps the declaration in the clause", () => {
+    const out = new Bun.Transpiler({ loader: "js" }).transformSync(
+      "function f(v) {\n switch (v) {\n case 1: function g() {} break;\n case 2: g();\n }\n}",
+    );
+    expect(out).toMatch(/case 1:\s*function g\(\)/);
+    expect(out).not.toContain("let g");
+  });
+
+  it("can be called from every clause in a strict mode module", async () => {
+    using dir = tempDir("switch-case-fn-strict", { "faces.mjs": faces + "\nexport {};\n" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "faces.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  it("can be called from every clause in a sloppy mode script", async () => {
+    using dir = tempDir("switch-case-fn-sloppy", { "faces.cjs": faces });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "faces.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  // Annex B: in sloppy mode the declaration also assigns a `var` of the same
+  // name in the enclosing function when the clause runs.
+  it("is visible after the switch in sloppy mode", async () => {
+    using dir = tempDir("switch-case-fn-annex-b", {
+      "annex-b.cjs": /* js */ `
+        function h(v) {
+          let r;
+          switch (v) {
+            case 1: function g() { return 4 } break;
+            case 2: r = [typeof g, g()]; break;
+          }
+          return [r, typeof g];
+        }
+        console.log(JSON.stringify([h(1), h(2), h(3)]));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "annex-b.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([
+      [null, "function"],
+      [["function", 4], "undefined"],
+      [null, "undefined"],
+    ]);
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("minifyWhitespace keeps the space before keyword operators", () => {
   const minifier = new Bun.Transpiler({ loader: "js", minifyWhitespace: true });
 

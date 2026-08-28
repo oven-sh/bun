@@ -3275,6 +3275,47 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("var arguments = 1;");
     },
   });
+  // A function declared directly in a case clause is a binding of the whole
+  // switch block, so every clause can call it. Lowering it to a `let` at the
+  // top of its own clause left it in TDZ for the other clauses. In sloppy mode
+  // the declaration also assigns a `var` of the same name in the enclosing
+  // function (Annex B). The bundler keeps that `var` as its own renamed symbol
+  // and assigns it where the declaration is.
+  for (const minifySyntax of [false, true]) {
+    itBundled(`edgecase/SwitchCaseFunctionDeclaration${minifySyntax ? "MinifySyntax" : ""}`, {
+      files: {
+        "/entry.cjs": /* js */ `
+          function h(v) {
+            let r;
+            switch (v) {
+              case 1: function g() { return 4 } break;
+              case 2: r = [typeof g, g()]; break;
+            }
+            return [r, typeof g];
+          }
+          function strict(v) {
+            "use strict";
+            switch (v) {
+              default: return [typeof g, g()];
+              case 1: function g() { return "d" }
+            }
+          }
+          console.log(JSON.stringify([h(1), h(2), h(3), strict(0), strict(1)]));
+        `,
+      },
+      format: "esm",
+      target: "bun",
+      minifySyntax,
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toMatch(/case 1:\s*function g\d*\(\)/);
+        expect(out).not.toMatch(/let g\d* = function/);
+      },
+      run: {
+        stdout: '[[null,"function"],[["function",4],"undefined"],[null,"undefined"],["function","d"],null]',
+      },
+    });
+  }
 });
 
 for (const backend of ["api", "cli"] as const) {

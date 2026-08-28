@@ -1578,19 +1578,6 @@ impl Task {
                         continue;
                     }
 
-                    // The eligibility check excludes any package whose
-                    // lifecycle scripts are trusted to run, so a global-store
-                    // entry should never reach script enqueueing. Guard it
-                    // anyway: `meta.hasInstallScript` can be a false negative
-                    // (yarn-migrated lockfiles force it to `.false`), and a
-                    // script running with cwd inside a shared content-
-                    // addressed directory would mutate every other project's
-                    // copy.
-                    if installer.entry_uses_global_store(self.entry_id) {
-                        step = self.next_step(current_step);
-                        continue;
-                    }
-
                     let string_buf = lockfile.buffers.string_bytes.as_slice();
 
                     let dep = &lockfile.buffers.dependencies[dep_id as usize];
@@ -1616,6 +1603,45 @@ impl Task {
 
                     let mut pkg_cwd = AutoAbsPath::init_top_level_dir();
                     installer.append_store_path(&mut pkg_cwd, self.entry_id);
+
+                    let default_trust_denied = if is_trusted {
+                        None
+                    } else {
+                        lockfile
+                            .default_trust_denied_by_registry(pkg_name.slice(string_buf), &pkg_res)
+                    };
+                    if let Some(warning) = default_trust_denied {
+                        // A default-trusted package lost its grant. Read its
+                        // scripts so the user learns why they did not run.
+                        let mut pkg_scripts: package::scripts::Scripts =
+                            pkg_script_lists[pkg_id as usize];
+                        let mut log = Log::init();
+                        if let Ok(Some(list)) = pkg_scripts.get_list(
+                            &mut log,
+                            lockfile,
+                            &mut pkg_cwd,
+                            dep.name.slice(string_buf),
+                            &pkg_res,
+                        ) {
+                            if list.total > 0 {
+                                bun_core::warn!("{}", warning);
+                                Output::flush();
+                            }
+                        }
+                    }
+
+                    // The eligibility check excludes any package whose
+                    // lifecycle scripts are trusted to run, so a global-store
+                    // entry should never reach script enqueueing. Guard it
+                    // anyway: `meta.hasInstallScript` can be a false negative
+                    // (yarn-migrated lockfiles force it to `.false`), and a
+                    // script running with cwd inside a shared content-
+                    // addressed directory would mutate every other project's
+                    // copy.
+                    if installer.entry_uses_global_store(self.entry_id) {
+                        step = self.next_step(current_step);
+                        continue;
+                    }
 
                     'enqueue_lifecycle_scripts: {
                         if !(pkg_res.tag != ResolutionTag::Root

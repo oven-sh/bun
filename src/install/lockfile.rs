@@ -24,6 +24,7 @@ use bun_resolver::fs::{self as Fs, FileSystem};
 use bun_semver::{self as Semver, ExternalString, String as SemverString};
 use bun_sha_hmac as Crypto;
 use bun_sys::{self as sys, Fd, File};
+use bun_url::URL;
 
 use crate::config_version::ConfigVersion;
 use crate::migration;
@@ -3247,38 +3248,66 @@ impl Lockfile {
             return self.declared_by_root_or_workspace(alias, resolution);
         }
 
-        // Only allow default trusted dependencies for npm packages. Check the
-        // resolved package's real name, not the dependency alias, so an
-        // `npm:`-aliased package can't inherit trust from a default-trusted
-        // name.
-        if resolution.tag != ResolutionTag::Npm || !default_trusted_dependencies::has(pkg_name) {
-            return false;
-        }
+        self.is_default_trusted_name(pkg_name, resolution)
+            && self.npm_tarball_is_from_configured_registry(pkg_name, resolution)
+    }
 
-        let buf = self.buffers.string_bytes.as_slice();
-        let npm = resolution.npm();
-        let url = npm.url.slice(buf);
+    /// `true` when the default trusted dependencies list applies to this
+    /// package: it resolves to npm and its real name is on the list. The
+    /// dependency alias is not consulted, so an `npm:`-aliased package cannot
+    /// inherit trust from a default-trusted name.
+    fn is_default_trusted_name(&self, pkg_name: &[u8], resolution: &Resolution) -> bool {
+        resolution.tag == ResolutionTag::Npm && default_trusted_dependencies::has(pkg_name)
+    }
+
+    /// `true` when the tarball URL recorded for an npm package has the same
+    /// origin as the registry configured for its scope. Default trust is keyed
+    /// on the package name, and a lockfile can pair a default-trusted name
+    /// with a tarball on any host, so the grant only applies when the tarball
+    /// comes from the configured registry. Only the origin is compared:
+    /// registries such as Artifactory serve tarballs from a path that differs
+    /// from `<registry>/<name>/-/<name>-<version>.tgz`.
+    fn npm_tarball_is_from_configured_registry(
+        &self,
+        pkg_name: &[u8],
+        resolution: &Resolution,
+    ) -> bool {
+        let url = resolution
+            .npm()
+            .url
+            .slice(self.buffers.string_bytes.as_slice());
         if url.is_empty() {
             return true;
         }
-        let registry = PackageManager::get()
-            .scope_for_package_name(pkg_name)
-            .url
-            .href();
-        let Ok(canonical_url) = crate::extract_tarball::build_url_with_printer(
-            registry,
-            &strings::StringOrTinyString::init(pkg_name),
-            npm.version,
-            buf,
-            |args| -> Result<Vec<u8>, std::io::Error> {
-                let mut out: Vec<u8> = Vec::new();
-                out.write_fmt(args)?;
-                Ok(out)
-            },
-        ) else {
-            return false;
-        };
-        url == canonical_url.as_slice()
+        let registry = &PackageManager::get().scope_for_package_name(pkg_name).url;
+        URL::parse(url).has_same_origin(&registry.url())
+    }
+
+    /// When `has_trusted_dependency` denies `pkg_name` only because its tarball
+    /// is not on the configured registry (`package.json` has no
+    /// `trustedDependencies` list, the name is on the default trusted list, and
+    /// the lockfile tarball URL has another origin), the warning that tells the
+    /// user why the lifecycle scripts did not run.
+    pub fn default_trust_denied_by_registry<'a>(
+        &'a self,
+        pkg_name: &'a [u8],
+        resolution: &'a Resolution,
+    ) -> Option<DefaultTrustDeniedByRegistry<'a>> {
+        if self.trusted_dependencies.is_some()
+            || !self.is_default_trusted_name(pkg_name, resolution)
+            || self.npm_tarball_is_from_configured_registry(pkg_name, resolution)
+        {
+            return None;
+        }
+        Some(DefaultTrustDeniedByRegistry {
+            pkg_name,
+            resolution,
+            buf: self.buffers.string_bytes.as_slice(),
+            registry: PackageManager::get()
+                .scope_for_package_name(pkg_name)
+                .url
+                .href(),
+        })
     }
 
     fn declared_by_root_or_workspace(&self, alias: &[u8], resolution: &Resolution) -> bool {
@@ -3308,6 +3337,29 @@ impl Lockfile {
         }
 
         false
+    }
+}
+
+/// See `Lockfile::default_trust_denied_by_registry`.
+pub struct DefaultTrustDeniedByRegistry<'a> {
+    pkg_name: &'a [u8],
+    resolution: &'a Resolution,
+    buf: &'a [u8],
+    registry: &'a [u8],
+}
+
+impl fmt::Display for DefaultTrustDeniedByRegistry<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = bstr::BStr::new(self.pkg_name);
+        write!(
+            f,
+            "\"{}@{}\" is on the default trusted dependencies list, but its tarball URL \"{}\" is not on the configured registry \"{}\", so its lifecycle scripts did not run. Add \"{}\" to \"trustedDependencies\" in package.json to run them.",
+            name,
+            self.resolution.fmt(self.buf, PathSep::Posix),
+            bstr::BStr::new(self.resolution.npm().url.slice(self.buf)),
+            bstr::BStr::new(self.registry),
+            name,
+        )
     }
 }
 

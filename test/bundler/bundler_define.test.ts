@@ -177,26 +177,27 @@ describe.each(surfaces)("$name", surface => {
 
 describe("define values are symbols, not text", () => {
   test("a member chain follows a renamed local and a renamed import", async () => {
+    // Long names: the minifier generates short names, so these cannot come back.
     using dir = tempDir("bundler-define-link", {
       "entry.js": `
-        import { x } from "./x.js";
-        const local = { b: { c: 1 } };
+        import { importedObject } from "./imported.js";
+        const localObject = { b: { c: 1 } };
         console.log(A, B.y);
       `,
-      "x.js": `export const x = { y: 2 };`,
+      "imported.js": `export const importedObject = { y: 2 };`,
     });
     const result = await Bun.build({
       entrypoints: [join(String(dir), "entry.js")],
       outdir: join(String(dir), "out"),
-      define: { A: "local.b.c", B: "x" },
+      define: { A: "localObject.b.c", B: "importedObject" },
       minify: { identifiers: true },
     });
     expect(result.logs).toEqual([]);
     expect(result.success).toBe(true);
     const output = await result.outputs[0].text();
-    // `local` and `x` were renamed, so the define values must not print verbatim
-    expect(output).not.toContain("local.b.c");
-    expect(output).not.toContain("x.y");
+    // Both names were renamed, so the define values must not print verbatim
+    expect(output).not.toContain("localObject");
+    expect(output).not.toContain("importedObject");
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), result.outputs[0].path],

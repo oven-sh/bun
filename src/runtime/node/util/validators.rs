@@ -1,5 +1,6 @@
 use core::fmt;
 
+use bun_core::fmt::double;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
 
 #[cold]
@@ -43,17 +44,13 @@ pub(crate) fn throw_err_invalid_arg_type(
 }
 
 #[cold]
-fn throw_range_error(global_this: &JSGlobalObject, args: fmt::Arguments<'_>) -> JsError {
-    global_this.err(jsc::ErrorCode::OUT_OF_RANGE, args).throw()
-}
-
-#[inline]
 fn throw_range_error_msg(
     global_this: &JSGlobalObject,
     value: f64,
-    name: &str,
+    name: impl fmt::Display,
     msg: &[u8],
 ) -> JsError {
+    let name = format!("{name}");
     global_this.throw_range_error(
         value,
         jsc::RangeErrorOptions {
@@ -62,6 +59,21 @@ fn throw_range_error_msg(
             ..Default::default()
         },
     )
+}
+
+// Node's validators spell a two-sided range `>= min && <= max`
+// (lib/internal/validators.js). The shared formatter's `min`/`max` fields
+// spell it `and` (the Buffer and zlib wording), so the range goes in as `msg`.
+#[cold]
+fn throw_range_error_between(
+    global_this: &JSGlobalObject,
+    value: f64,
+    name: impl fmt::Display,
+    min: impl fmt::Display,
+    max: impl fmt::Display,
+) -> JsError {
+    let range = format!(">= {min} && <= {max}");
+    throw_range_error_msg(global_this, value, name, range.as_bytes())
 }
 
 // `Option<i64>` is not a valid const-generic type on stable, so the bounds
@@ -99,19 +111,13 @@ pub(crate) fn validate_integer(
         );
     }
 
-    let min: f64 = min_value.unwrap_or(jsc::MIN_SAFE_INTEGER) as f64;
-    let max: f64 = max_value.unwrap_or(jsc::MAX_SAFE_INTEGER) as f64;
+    let min = min_value.unwrap_or(jsc::MIN_SAFE_INTEGER);
+    let max = max_value.unwrap_or(jsc::MAX_SAFE_INTEGER);
 
     let num = value.as_number();
 
-    if num < min || num > max {
-        return Err(throw_range_error(
-            global_this,
-            format_args!(
-                "The value of \"{}\" is out of range. It must be >= {} && <= {}. Received {}",
-                name, min, max, num
-            ),
-        ));
+    if num < min as f64 || num > max as f64 {
+        return Err(throw_range_error_between(global_this, num, name, min, max));
     }
 
     Ok(num as i64)
@@ -139,29 +145,11 @@ pub(crate) fn validate_int32(
     // Number.isInteger semantics like Node's validateInt32: -0 and integral doubles
     // outside the int52 range are integers; the range check below rejects out-of-range.
     if !num.is_finite() || num.fract() != 0.0 {
-        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
-        return Err(throw_range_error(
-            global_this,
-            format_args!(
-                "The value of \"{}\" is out of range. It must be an integer. Received {}",
-                name,
-                value.to_fmt(&mut formatter)
-            ),
-        ));
+        return Err(throw_range_error_msg(global_this, num, name, b"an integer"));
     }
     // Use floating point comparison here to ensure values out of i32 range get caught instead of clamp/truncated.
-    if num < (min as f64) || num > (max as f64) {
-        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
-        return Err(throw_range_error(
-            global_this,
-            format_args!(
-                "The value of \"{}\" is out of range. It must be >= {} && <= {}. Received {}",
-                name,
-                min,
-                max,
-                value.to_fmt(&mut formatter)
-            ),
-        ));
+    if num < f64::from(min) || num > f64::from(max) {
+        return Err(throw_range_error_between(global_this, num, name, min, max));
     }
     Ok(num as i32)
 }
@@ -182,30 +170,12 @@ pub(crate) fn validate_uint32(
     }
     let num = value.as_number();
     if !num.is_finite() || num.fract() != 0.0 {
-        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
-        return Err(throw_range_error(
-            global_this,
-            format_args!(
-                "The value of \"{}\" is out of range. It must be an integer. Received {}",
-                name,
-                value.to_fmt(&mut formatter)
-            ),
-        ));
+        return Err(throw_range_error_msg(global_this, num, name, b"an integer"));
     }
-    let min: f64 = if greater_than_zero { 1.0 } else { 0.0 };
-    let max: f64 = f64::from(u32::MAX);
-    if num < min || num > max {
-        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
-        return Err(throw_range_error(
-            global_this,
-            format_args!(
-                "The value of \"{}\" is out of range. It must be >= {} && <= {}. Received {}",
-                name,
-                min,
-                max,
-                value.to_fmt(&mut formatter)
-            ),
-        ));
+    let min: u32 = if greater_than_zero { 1 } else { 0 };
+    let max = u32::MAX;
+    if num < f64::from(min) || num > f64::from(max) {
+        return Err(throw_range_error_between(global_this, num, name, min, max));
     }
     Ok(num as u32)
 }
@@ -254,28 +224,28 @@ pub(crate) fn validate_number(
     }
     if !valid {
         if let (Some(min), Some(max)) = (maybe_min, maybe_max) {
-            return Err(throw_range_error(
+            return Err(throw_range_error_between(
                 global_this,
-                format_args!(
-                    "The value of \"{}\" is out of range. It must be >= {} && <= {}. Received {}",
-                    name, min, max, num
-                ),
+                num,
+                name,
+                double(min),
+                double(max),
             ));
         } else if let Some(min) = maybe_min {
-            return Err(throw_range_error(
+            let range = format!(">= {}", double(min));
+            return Err(throw_range_error_msg(
                 global_this,
-                format_args!(
-                    "The value of \"{}\" is out of range. It must be >= {}. Received {}",
-                    name, min, num
-                ),
+                num,
+                name,
+                range.as_bytes(),
             ));
         } else if let Some(max) = maybe_max {
-            return Err(throw_range_error(
+            let range = format!("<= {}", double(max));
+            return Err(throw_range_error_msg(
                 global_this,
-                format_args!(
-                    "The value of \"{}\" is out of range. It must be <= {}. Received {}",
-                    name, max, num
-                ),
+                num,
+                name,
+                range.as_bytes(),
             ));
         }
     }

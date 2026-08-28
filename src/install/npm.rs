@@ -686,13 +686,15 @@ pub mod registry {
         &pathname[..strings::index_of_char_usize(pathname, b'?').unwrap_or(pathname.len())]
     }
 
-    /// A path only the server can resolve: a `%5c`, or a `%2f` that splits a segment
-    /// into pieces one of which is a dot segment. Plain dot segments (and their `%2e`
-    /// spellings) are resolved by the WHATWG serialisation the key is built from, so
-    /// they are fine here; a plain `%2f` inside a name, the `@scope%2fpkg` form
-    /// manifests are requested with, is fine too.
+    /// A path the request sends as written but the key would resolve differently: a
+    /// backslash (the WHATWG serialisation reads it as `/`; the wire request keeps it),
+    /// a `%5c`, or a `%2f` that splits a segment into pieces one of which is a dot
+    /// segment. Plain dot segments (and their `%2e` spellings) are resolved the same
+    /// way on both sides, so they are fine here; a plain `%2f` inside a name, the
+    /// `@scope%2fpkg` form manifests are requested with, is fine too.
     pub(crate) fn is_opaque_path(path: &[u8]) -> bool {
-        contains_percent_encoded(path, b'5', b'c')
+        strings::contains_char(path, b'\\')
+            || contains_percent_encoded(path, b'5', b'c')
             || strings::split(path, b"/").any(|segment| {
                 contains_percent_encoded(segment, b'2', b'f') && is_unsafe_segment(segment)
             })

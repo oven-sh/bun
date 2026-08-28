@@ -517,6 +517,20 @@ describe("tsconfig extends", () => {
       expect(stdout).toBe(jsxExpected);
       expect(exitCode).toBe(0);
     });
+
+    test.concurrent("a missing entry is a warning and its siblings still apply", async () => {
+      using dir = tempDir("tsconfig-extends-array-missing", {
+        ...noAutoInstall,
+        "real.json": JSON.stringify({ compilerOptions: { paths: { "@lib/*": ["./lib/*"] } } }),
+        "tsconfig.json": JSON.stringify({ extends: ["./missing.json", "./real.json"] }),
+        "lib/mod.ts": `export default "from-lib";`,
+        "index.ts": `import x from "@lib/mod"; console.log(x);`,
+      });
+      const { stdout, stderr, exitCode } = await runFile(String(dir), "index.ts");
+      expect(stderr).toContain('Cannot find base config file "./missing.json"');
+      expect(stdout).toBe("from-lib\n");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("nested chains", () => {

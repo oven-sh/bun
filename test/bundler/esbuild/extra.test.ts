@@ -297,6 +297,35 @@ describe("bundler", () => {
     },
     run: { stdout: "fallback\nparent" },
   });
+  // A remap target that leads back to the same subpath is a cycle. The remap
+  // stops applying: the subpath's own file is used, or the import fails.
+  itBundled("extra/BrowserFieldSubpathRemapCycleToSelf", {
+    files: {
+      "entry.js": `require('pkg-a/x')`,
+      "node_modules/pkg-a/package.json": `{ "browser": { "./x": "pkg-a/x" } }`,
+    },
+    bundleErrors: {
+      "/entry.js": [`Could not resolve: "pkg-a/x"`],
+    },
+  });
+  itBundled("extra/BrowserFieldSubpathRemapCycleToSelfWithFile", {
+    files: {
+      "entry.js": `require('pkg-a/x')`,
+      "node_modules/pkg-a/package.json": `{ "browser": { "./x": "pkg-a/x" } }`,
+      "node_modules/pkg-a/x.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("extra/BrowserFieldSubpathRemapCycleBetweenPackages", {
+    files: {
+      "entry.js": `import 'pkg-a/x'`,
+      "node_modules/pkg-a/package.json": `{ "browser": { "./x": "pkg-b/y" } }`,
+      "node_modules/pkg-b/package.json": `{ "browser": { "./y": "pkg-a/x" } }`,
+    },
+    bundleErrors: {
+      "/entry.js": [`Could not resolve: "pkg-a/x"`],
+    },
+  });
   // From a subdirectory of the package, the bare path is matched against the
   // key spelled relative to the importer's directory.
   itBundled("extra/BrowserFieldBarePathFromSubdirectory", {

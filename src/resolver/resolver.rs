@@ -476,6 +476,11 @@ pub struct Resolver<'a> {
     /// Read the "browser" field in package.json files?
     /// For Bun's runtime, we don't.
     pub(crate) care_about_browser_field: bool,
+    /// How many "browser" map targets are being resolved through
+    /// `load_node_modules` on the current call stack. A map can send a subpath
+    /// back to itself (`"./x": "pkg/x"`), so the chain is cut at
+    /// `MAX_BROWSER_REMAP_DEPTH`.
+    browser_remap_depth: u8,
 
     pub debug_logs: Option<DebugLogs>,
     pub elapsed: u64, // tracing
@@ -614,6 +619,7 @@ impl<'a> Resolver<'a> {
             care_about_bin_folder: from.care_about_bin_folder,
             care_about_scripts: from.care_about_scripts,
             care_about_browser_field: from.care_about_browser_field,
+            browser_remap_depth: 0,
             // `DebugLogs` owns Vecs — per-worker fresh.
             debug_logs: None,
             elapsed: 0,
@@ -913,6 +919,7 @@ impl<'a> Resolver<'a> {
             log,
             extension_order: options::ExtOrder::DefaultDefault,
             care_about_browser_field,
+            browser_remap_depth: 0,
             care_about_bin_folder: false,
             care_about_scripts: false,
             debug_logs: None,
@@ -5077,11 +5084,15 @@ impl<'a> Resolver<'a> {
             return BrowserMapSubpath::NotFound;
         };
 
-        if self
-            .resolve_without_remapping(browser_scope, remap, kind, global_cache, out)
-            .is_success()
-        {
-            return BrowserMapSubpath::Found;
+        if self.browser_remap_depth < MAX_BROWSER_REMAP_DEPTH {
+            self.browser_remap_depth += 1;
+            let resolved = self
+                .resolve_without_remapping(browser_scope, remap, kind, global_cache, out)
+                .is_success();
+            self.browser_remap_depth -= 1;
+            if resolved {
+                return BrowserMapSubpath::Found;
+            }
         }
 
         // Like esbuild, an unresolved target falls back to the file itself.
@@ -6687,6 +6698,11 @@ enum ImplicitExtensions {
     Include,
     Skip,
 }
+
+/// Longest chain of "browser" map targets that are themselves package subpaths
+/// (`"./x": "pkg-b/y"` in pkg-a, `"./y": "pkg-c/z"` in pkg-b, ...). A real chain
+/// has one or two hops. A longer one is a cycle, and the remap stops applying.
+const MAX_BROWSER_REMAP_DEPTH: u8 = 16;
 
 /// Result of `Resolver::load_package_subpath_from_browser_map`.
 #[derive(Clone, Copy, PartialEq, Eq)]

@@ -9,8 +9,8 @@ use crate::bun_string_jsc::{ErrorKind, error_instance};
 use crate::error_code::ErrorBuilder;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
-    CommonStrings, DOMExceptionCode, ErrorableString, JSValue, JsError, JsResult,
-    MAX_SAFE_INTEGER, MIN_SAFE_INTEGER, VM,
+    CommonStrings, DOMExceptionCode, ErrorableString, JSValue, JsError, JsResult, MAX_SAFE_INTEGER,
+    MIN_SAFE_INTEGER, VM,
 };
 use bun_core::EncodedSlice;
 use bun_core::StringView;

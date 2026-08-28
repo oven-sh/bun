@@ -7248,15 +7248,10 @@ extern "C" uint64_t Bun__JSArray__nextPresentIndex(
     }
 }
 
-// Whether `value` holds storage for `length` indexed slots. A dense array's
-// butterfly backs every slot of its length (holes included), so whatever is
-// built from its elements is proportional to the JS heap it already occupies.
-// A sparse array is not: `[,,1]` with `length = 1e9` keeps one element in a
-// vector of three and `a[2**32 - 2] = 1` keeps one in the sparse map, yet
-// iterating `length` indices yields a billion `undefined`s. Arguments objects
-// keep their elements off the butterfly and their `length` property can be
-// written past them. When the storage falls short, `*outStoredCount` is the
-// number of elements it does hold.
+// Whether `value` backs `length` indexed slots with storage: a dense array does
+// (holes included); `[,,1]` with `length = 1e9` or `a[2**32 - 2] = 1` does not.
+// Arguments objects keep their elements off the butterfly, and their `length`
+// property can be written past them. `*outStoredCount` is the element count.
 extern "C" bool Bun__JSObject__indexedStorageCovers(
     JSC::EncodedJSValue encodedValue,
     uint32_t length,
@@ -7290,8 +7285,7 @@ extern "C" bool Bun__JSObject__indexedStorageCovers(
     case JSC::SlowPutArrayStorageShape: {
         JSC::ArrayStorage* storage = object->butterfly()->arrayStorage();
         unsigned usedVectorLength = std::min(storage->length(), storage->vectorLength());
-        // The vector backs its slots whether or not they are filled; only
-        // what lies past it (or lives in the map) is unbacked.
+        // Vector slots are backed whether or not they are filled.
         uint64_t backed = usedVectorLength;
         uint64_t stored = 0;
         for (unsigned i = 0; i < usedVectorLength; ++i) {

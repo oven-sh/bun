@@ -857,9 +857,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUptime, (JSC::JSGlobalObject * lexicalG
     return JSC::JSValue::encode(JSC::jsNumber(result));
 }
 
-// A macro runs in the VM of whichever thread is transpiling: a bundler worker,
-// or the program's own main thread mid-`require()`. Exiting from inside one
-// would take down the build, or the program that is only importing the file.
+// A macro runs in the transpiling thread's VM (a bundler worker, or the program
+// itself mid-require()): exiting from one would exit the build or the program.
 static bool isRunningMacro(Zig::GlobalObject* globalObject)
 {
     return Bun__VM__currentLoopKind(globalObject->bunVM()) == BunLoopKind::Macro;
@@ -3717,7 +3716,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     if (isRunningMacro(defaultGlobalObject(globalObject))) [[unlikely]] {
-        throwTypeError(globalObject, throwScope, "process.exit() cannot be called from a macro"_s);
+        throwTypeError(globalObject, throwScope, "process.reallyExit() cannot be called from a macro"_s);
         return {};
     }
     uint8_t exitCode = 0;

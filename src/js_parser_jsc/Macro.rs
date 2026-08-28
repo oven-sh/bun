@@ -465,7 +465,7 @@ impl Macro {
         }
 
         // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
-        let loaded_result = unsafe {
+        let (loaded_result, waited) = unsafe {
             (*vm).load_macro_entry_point(input_specifier, function_name, specifier, hash)
         }?;
 
@@ -483,11 +483,14 @@ impl Macro {
                 }
                 return Err(crate::Error::MacroLoadError);
             }
-            // The wait gave up: nothing keeps the loop alive for the module's
-            // top-level await (or the VM was stopped). A `Macro` returned here
-            // would have its first call find no registered function and leave
-            // the call in the output as an unbound reference.
-            jsc::PromiseResult::Pending => return Err(crate::Error::MacroLoadStalled),
+            // A `Macro` returned here would leave its first call in the output as an
+            // unbound reference.
+            jsc::PromiseResult::Pending => {
+                return Err(match waited {
+                    Err(jsc::Unsettled::Idle) => crate::Error::MacroLoadStalled,
+                    _ => crate::Error::JSError,
+                });
+            }
             jsc::PromiseResult::Fulfilled(_) => {}
         }
 
@@ -605,9 +608,7 @@ impl<'a> Run<'a> {
         // `runner.visited` dropped at scope exit (was `defer runner.visited.deinit(allocator)`)
 
         match runner.run(result) {
-            // Converting the macro's return value threw (a getter, an iterator, a toString): report it the
-            // way a throw from the macro function itself is reported above, rather than leaving it pending
-            // under the parser.
+            // A throw while converting the result (a getter) is reported like a throw from the macro.
             Err(MacroError::Js(JsError::Thrown)) => {
                 let err = global.take_exception(JsError::Thrown);
                 vm.as_mut().uncaught_exception(global, err, false);
@@ -661,9 +662,7 @@ impl<'a> Run<'a> {
         use ConsoleObject::formatter::Tag as T;
         match tag {
             T::Error => {
-                // Report it the way a throw is reported, then fail the
-                // expansion. Returning `self.caller` here would leave the call
-                // in the output with its import gone: an unbound reference.
+                // Returning `self.caller` would leave the call in the output with its import gone.
                 // SAFETY: `vm()` is the per-thread VM; uniquely accessed here.
                 let _ =
                     unsafe { (*self.macro_.vm()).uncaught_exception(self.global, value, false) };
@@ -738,16 +737,22 @@ impl<'a> Run<'a> {
 
                 let mut iter = JSArrayIterator::init(value, self.global)?;
 
-                // Every index up to `length` becomes an element of the literal,
-                // holes as `undefined`. Only a length the JS heap actually backs
-                // keeps that proportional: `[,,1]` with `length = 1e9` would
-                // otherwise become a billion `undefined`s.
+                // Every index below `length` becomes an element (holes as `undefined`), so
+                // `[,,1]` with `length = 1e9` would be a billion `undefined`s.
                 if let Err(stored) = value.indexed_storage_covers(iter.len) {
-                    self.log.add_error_fmt(
+                    self.log.add_range_error_fmt_with_notes(
                         Some(self.source),
-                        self.caller.loc,
+                        Range {
+                            loc: self.caller.loc,
+                            ..Default::default()
+                        },
+                        Box::new([bun_ast::range_data(
+                            None,
+                            Range::NONE,
+                            b"return a dense array",
+                        )]),
                         format_args!(
-                            "cannot coerce a sparse array to Bun's AST: its length is {} but it holds {} element{}. Please return a dense array",
+                            "cannot coerce a sparse array to Bun's AST: its length is {} but it holds {} element{}",
                             iter.len,
                             stored,
                             if stored == 1 { "" } else { "s" },
@@ -900,8 +905,7 @@ impl<'a> Run<'a> {
                     Err(jsc::Unsettled::Stopped(stopped)) => {
                         return Err(MacroError::Js(stopped.throw(self.global)));
                     }
-                    // Node's exit-13 condition, applied to the macro: nothing
-                    // keeps the loop alive, so waiting on it would be a hang.
+                    // Node's exit-13 condition: the wait would never end.
                     Err(jsc::Unsettled::Idle) => {
                         self.log.add_error_fmt(
                             Some(self.source),

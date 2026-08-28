@@ -414,7 +414,7 @@ describe("a hostile macro", () => {
 
   test.concurrent.each([
     ["process.exit()", `process.exit(42)`, "process.exit() cannot be called from a macro"],
-    ["process.reallyExit()", `process.reallyExit(42)`, "process.exit() cannot be called from a macro"],
+    ["process.reallyExit()", `process.reallyExit(42)`, "process.reallyExit() cannot be called from a macro"],
     ["process.abort()", `process.abort()`, "process.abort() cannot be called from a macro"],
   ])("%s inside a macro fails the build instead of the process", async (_name, call, message) => {
     const { stderr, exitCode, signalCode } = await build({ "m.ts": `export function m() { ${call}; }` });
@@ -487,11 +487,10 @@ describe("a hostile macro", () => {
     const { stderr, exitCode } = await build({ "m.ts": `export function m() { ${body} }` });
     expect({ exitCode, stderr }).toEqual({
       exitCode: 1,
-      stderr: expect.stringContaining(
-        `error: cannot coerce a sparse array to Bun's AST: ${message}. Please return a dense array`,
-      ),
+      stderr: expect.stringContaining(`error: cannot coerce a sparse array to Bun's AST: ${message}\n`),
     });
     expect(stderr).toContain("at [dir]/index.ts:2:18");
+    expect(stderr).toContain("note: return a dense array");
   });
 
   test.concurrent("dense arrays with holes, arguments objects, and doubles are still inlined", async () => {

@@ -207,8 +207,7 @@ impl Stopped {
 pub enum Unsettled {
     #[error(transparent)]
     Stopped(Stopped),
-    /// Nothing keeps the loop alive any more ([`VirtualMachine::has_pending_work`]):
-    /// the condition under which a program would have exited with it unsettled.
+    /// Nothing keeps the loop alive ([`VirtualMachine::has_pending_work`]): a program would have exited here.
     #[error("Idle")]
     Idle,
 }
@@ -1131,29 +1130,31 @@ impl EventLoop {
         Ok(())
     }
 
-    /// [`Self::wait_for_promise`], but gives up once nothing keeps the loop
-    /// alive ([`VirtualMachine::has_pending_work`]): where a program would have
-    /// exited with `promise` unsettled, this returns `Idle` with it pending. A
-    /// wait that has to finish (a macro, whose caller holds the parse) uses this
-    /// so such a promise is an error rather than a hang.
+    /// [`Self::wait_for_promise`], but returns `Idle` with `promise` still pending once nothing
+    /// keeps the loop alive ([`VirtualMachine::has_pending_work`]), where a program would have exited.
     pub fn wait_for_promise_until_idle(
         &mut self,
         promise: jsc::AnyPromise,
     ) -> Result<(), Unsettled> {
         let jsc_vm = self.vm_ref().jsc_vm();
+        let stopped = |this: &Self| {
+            jsc_vm.execution_forbidden()
+                || !this.vm_ref().script_allowed()
+                || this.global_ref().has_pending_termination_exception()
+        };
         while promise.status() == PromiseStatus::Pending {
-            if jsc_vm.execution_forbidden()
-                || !self.vm_ref().script_allowed()
-                || self.global_ref().has_pending_termination_exception()
-            {
+            if stopped(self) {
                 return Err(Unsettled::Stopped(Stopped));
             }
             self.tick();
             if promise.status() != PromiseStatus::Pending {
                 break;
             }
-            // After the drain, so a reaction queued by the last task (or a
-            // handle it opened) counts.
+            // A task in that tick may have requested the stop; a stop is never idle.
+            if stopped(self) {
+                return Err(Unsettled::Stopped(Stopped));
+            }
+            // After the drain, so what the last task queued or opened counts.
             if !self.vm_ref().has_pending_work() {
                 return Err(Unsettled::Idle);
             }

@@ -1295,13 +1295,9 @@ impl VirtualMachine {
         }
     }
 
-    /// Something keeps the current loop alive: an active platform handle (a
-    /// socket, a ref'd timer, a keep-alive ref), a task in flight or queued, a
-    /// posting from another thread, or deferred work JSC holds for this VM. The
-    /// same question as [`Self::is_event_loop_alive`] minus whether the program
-    /// already failed, plus JSC's tickets that do not hold the loop open (an
-    /// `Atomics.waitAsync` timeout): what a wait on a pending promise asks
-    /// before it concludes that nothing will settle it.
+    /// Something can still run JS on the current loop: [`Self::is_event_loop_alive`] without
+    /// `unhandled_error_counter`, plus JSC's deferred work (an `Atomics.waitAsync` timeout does
+    /// not keep the loop alive).
     pub fn has_pending_work(&self) -> bool {
         let el = self.event_loop_shared();
         self.has_pending_work_excluding_immediates()
@@ -1561,7 +1557,7 @@ impl VirtualMachine {
         function_name: &[u8],
         specifier: &[u8],
         hash: i32,
-    ) -> crate::CrateResult<*mut JSInternalPromise> {
+    ) -> crate::CrateResult<(*mut JSInternalPromise, Result<(), jsc::Unsettled>)> {
         use bun_bundler::entry_points::{Fs, MacroEntryPoint};
         use bun_collections::hash_map::Entry;
         let entry_point: *mut MacroEntryPoint = match self.macro_entry_points.entry(hash) {
@@ -1591,11 +1587,11 @@ impl VirtualMachine {
         // SAFETY: `entry_point` was just inserted (heap-allocated) or fetched
         // from the cache; it lives for the VM lifetime.
         let path: &[u8] = unsafe { &*entry_point }.source.path.text;
-        let promise = self.run_with_api_lock(|| {
+        let loaded = self.run_with_api_lock(|| {
             // SAFETY: per-thread VM; the API lock guarantees JSC is held.
             VirtualMachine::get().as_mut()._load_macro_entry_point(path)
         });
-        promise.ok_or(crate::CrateError::JSError)
+        loaded.ok_or(crate::CrateError::JSError)
     }
 
     pub fn is_watcher_enabled(&self) -> bool {
@@ -5224,20 +5220,19 @@ impl VirtualMachine {
         }
     }
 
-    /// Loads and evaluates a macro entry module, waiting for its promise. The
-    /// promise is still pending on return when the module's top-level `await`
-    /// can never settle (nothing left on the loop) or the VM was stopped.
+    /// Loads and evaluates a macro entry module. The promise is still pending on return when the
+    /// wait gave up (`Idle`: its top-level `await` can never settle; `Stopped`: the VM stopped).
     #[inline]
     pub(crate) fn _load_macro_entry_point(
         &mut self,
         entry_path: &[u8],
-    ) -> Option<*mut JSInternalPromise> {
+    ) -> Option<(*mut JSInternalPromise, Result<(), jsc::Unsettled>)> {
         let path_str = bun_core::String::from_bytes(entry_path);
         let promise =
             jsc::JSModuleLoader::load_and_evaluate_module_ptr(self.global, Some(&path_str))?
                 .as_ptr();
-        let _ = self.wait_for_promise_until_idle(jsc::AnyPromise::Internal(promise));
-        Some(promise)
+        let waited = self.wait_for_promise_until_idle(jsc::AnyPromise::Internal(promise));
+        Some((promise, waited))
     }
 
     /// Prints an error-like JS value to the console via the error handler.

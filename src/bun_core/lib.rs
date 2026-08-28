@@ -2887,8 +2887,7 @@ pub mod asan {
         #[cfg(not(bun_asan))]
         let _ = (ptr, size);
     }
-    /// The heap allocation containing `ptr` is owned through a reference LeakSanitizer cannot follow (e.g. a
-    /// tagged pointer); do not report it. Its owner is still responsible for freeing it.
+    /// Do not report the allocation containing `ptr`: its owner holds it through a reference LSAN cannot follow (a tagged pointer).
     #[inline]
     pub fn lsan_ignore_object(ptr: *const c_void) {
         #[cfg(bun_asan)]

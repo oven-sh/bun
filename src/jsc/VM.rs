@@ -103,10 +103,8 @@ impl VM {
         JSC__VM__executionForbidden(self)
     }
 
-    /// JSC still holds deferred work it will post to this VM's loop later: an
-    /// `Atomics.waitAsync` timeout, a `FinalizationRegistry` callback, a wasm
-    /// compile. Only some of those keep the loop alive, so a promise waiting
-    /// on one can still settle with nothing else pending.
+    /// JSC will still post deferred work to this VM (an `Atomics.waitAsync` timeout, a wasm
+    /// compile); not all of it keeps the loop alive.
     pub fn has_pending_deferred_work(&self) -> bool {
         Bun__JSCTaskScheduler__hasPendingWork(self)
     }

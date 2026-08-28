@@ -2557,13 +2557,9 @@ impl JSValue {
             index => Some(index as u32),
         }
     }
-    /// `Ok(())` when `self` (an object) holds storage for `length` indexed
-    /// slots, so iterating them yields at most as much as the JS heap already
-    /// holds: a dense array, holes included, or an arguments object of that
-    /// many arguments. `Err(stored)` when `length` runs past its storage, which
-    /// is a sparse array (`[,,1]` with `length = 1e9`, `a[2**32 - 2] = 1`) or an
-    /// array-like whose `length` property was written past its elements;
-    /// `stored` is the number of elements it does hold.
+    /// `Ok(())` when `self` (an object) backs `length` indexed slots with storage (a dense array,
+    /// holes included). `Err(stored)` when `length` runs past that storage (a sparse array, or a
+    /// `length` property written past the elements), with the number of elements it does hold.
     pub fn indexed_storage_covers(self, length: u32) -> Result<(), u32> {
         debug_assert!(self.is_object());
         unsafe extern "C" {

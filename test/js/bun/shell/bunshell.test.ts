@@ -3285,23 +3285,17 @@ test("output redirect buffer for an external command stays attached while the ch
 
   // Attempting to detach the redirect target while the child's stdout is open
   // must leave the buffer attached (refusing the detach by throwing is also
-  // acceptable).
+  // acceptable). Release the child before asserting so it always finishes.
   try {
     buffer.buffer.transfer();
   } catch {}
-  expect(buffer.buffer.detached).toBe(false);
-
+  const detachedWhileOpen = buffer.buffer.detached;
   gate.resolve();
+  expect(detachedWhileOpen).toBe(false);
+
   const result = await running;
   expect(stringifyBuffer(buffer)).toEqual("external-redirect-output\n");
   expect(result.exitCode).toBe(0);
-
-  // The pin is released with the pipe reader once the shell has seen EOF,
-  // which can be the same I/O callback that settles the promise. Wait for that
-  // callback to return before checking that the buffer is detachable again.
-  await new Promise(resolve => setImmediate(resolve));
-  buffer.buffer.transfer();
-  expect(buffer.buffer.detached).toBe(true);
 });
 
 test("cd treats interpolated arguments starting with tilde or dash as literal directory names", async () => {

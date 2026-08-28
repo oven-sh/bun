@@ -7701,6 +7701,56 @@ describe("css tests", () => {
     minify_test(".foo{grid-template-areas:none}", ".foo{grid-template-areas:none}");
   });
 
+  describe("color(a98-rgb)", () => {
+    // A color() that fails to parse is kept as an unparsed token stream, so the
+    // alpha percentage, the channel percentages and the uppercase ident would
+    // be printed verbatim instead of being folded.
+    minify_test(".foo { color: color(a98-rgb 0 1 0 / 50%) }", ".foo{color:color(a98-rgb 0 1 0/.5)}");
+    minify_test(".foo { color: color(A98-RGB 100% 50% 0%) }", ".foo{color:color(a98-rgb 1 .5 0)}");
+    minify_test(
+      ".foo { color: color(from #c86432 a98-rgb r g b) }",
+      ".foo{color:color(a98-rgb .695066 .391898 .220089)}",
+    );
+    minify_test(
+      ".foo { color: color(from #c86432 a98-rgb r g b / 50%) }",
+      ".foo{color:color(a98-rgb .695066 .391898 .220089/.5)}",
+    );
+    minify_test(".foo { color: rgb(from color(a98-rgb .5 .25 .125) r g b) }", ".foo{color:#923e17}");
+    // "a99-rgb" is not a color space.
+    minify_test(".foo { color: color(a99-rgb 1 0 0) }", ".foo{color:color(a99-rgb 1 0 0)}");
+
+    prefix_test(
+      ".foo { color: color(a98-rgb 1 0 0) }",
+      indoc`
+        .foo {
+          color: #ff6251;
+          color: color(a98-rgb 1 0 0);
+        }
+      `,
+      { chrome: 90 << 16 },
+    );
+    prefix_test(
+      ".foo { color: color(a98-rgb 1 0 0) }",
+      indoc`
+        .foo {
+          color: #ff6251;
+          color: color(display-p3 1.0633 .238564 .167582);
+          color: color(a98-rgb 1 0 0);
+        }
+      `,
+      { chrome: 87 << 16, safari: 14 << 16 },
+    );
+    prefix_test(
+      ".foo { color: color(a98-rgb 1 0 0) }",
+      indoc`
+        .foo {
+          color: color(a98-rgb 1 0 0);
+        }
+      `,
+      { chrome: 111 << 16 },
+    );
+  });
+
   describe("edge cases", () => {
     describe("invalid gradient", () => {
       cssTest(

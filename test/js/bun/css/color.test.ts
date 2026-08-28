@@ -763,4 +763,36 @@ describe("conversions between color spaces", () => {
       4,
     );
   });
+
+  test("a98-rgb to xyz applies the 563/256 gamma before the matrix", () => {
+    // XYZ of the a98-rgb primaries, i.e. the columns of the matrix in
+    // https://www.w3.org/TR/css-color-4/#color-conversion-code.
+    const red = [0.576669, 0.297345, 0.027031];
+    const green = [0.185558, 0.627364, 0.070689];
+    const blue = [0.188229, 0.075291, 0.991338];
+    const g = 0.5 ** (563 / 256);
+    const b = 0.002 ** (563 / 256);
+    const out = same("xyz", "color(a98-rgb 1 0.5 0.002)");
+    expect(out).toStartWith("color(xyz ");
+    expectChannels(
+      out,
+      [0, 1, 2].map(i => red[i] + g * green[i] + b * blue[i]),
+      4,
+    );
+  });
+});
+
+describe("color(a98-rgb)", () => {
+  test.each([
+    ["color(a98-rgb 0 1 0 / 50%)", "color(a98-rgb 0 1 0 / .5)"],
+    ["color(A98-RGB 100% 50% 0%)", "color(a98-rgb 1 .5 0)"],
+    ["color(from #c86432 a98-rgb r g b)", "color(a98-rgb .695066 .391898 .220089)"],
+    ["rgb(from color(a98-rgb .5 .25 .125) r g b)", "#923e17"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  test("a99-rgb is not a color space", () => {
+    expect(color("color(a99-rgb 1 0 0)", "css")).toBeNull();
+  });
 });

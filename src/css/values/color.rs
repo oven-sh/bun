@@ -2352,8 +2352,7 @@ pub(crate) fn parse_predefined_relative(
         b"srgb" => PredefinedColor::Srgb(SRGB { r: a, g: b, b: c, alpha }),
         b"srgb-linear" => PredefinedColor::SrgbLinear(SRGBLinear { r: a, g: b, b: c, alpha }),
         b"display-p3" => PredefinedColor::DisplayP3(P3 { r: a, g: b, b: c, alpha }),
-        // "a99-rgb" (sic) — kept for behavioral compatibility.
-        b"a99-rgb" => PredefinedColor::A98(A98 { r: a, g: b, b: c, alpha }),
+        b"a98-rgb" => PredefinedColor::A98(A98 { r: a, g: b, b: c, alpha }),
         b"prophoto-rgb" => PredefinedColor::Prophoto(ProPhoto { r: a, g: b, b: c, alpha }),
         b"rec2020" => PredefinedColor::Rec2020(Rec2020 { r: a, g: b, b: c, alpha }),
         b"xyz-d50" => PredefinedColor::XyzD50(XYZd50 { x: a, y: b, z: c, alpha }),

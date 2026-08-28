@@ -788,11 +788,6 @@ impl ByteRangeMapping {
                     ) else {
                         continue;
                     };
-                    let line_start_byte_offset = line_starts[new_line_index];
-                    if (line_start_byte_offset as usize) >= byte_offset {
-                        continue;
-                    }
-
                     let line: u32 = u32::try_from(new_line_index).expect("int cast");
                     min_line = min_line.min(line);
                     max_line = max_line.max(line);
@@ -926,10 +921,6 @@ impl ByteRangeMapping {
                         continue;
                     };
                     let line_start_byte_offset = line_starts[new_line_index];
-                    if (line_start_byte_offset as usize) >= byte_offset {
-                        continue;
-                    }
-
                     let column_position =
                         byte_offset.saturating_sub(line_start_byte_offset as usize);
 

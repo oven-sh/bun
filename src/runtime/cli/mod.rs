@@ -522,12 +522,6 @@ impl colon_list_type::ColonListValue for &'static [u8] {
     }
 }
 
-#[cold]
-fn invalid_target(diag: &mut bun_clap::Diagnostic, _target: &[u8]) -> ! {
-    let _ = diag.report(Output::error_writer(), bun_clap::Error::InvalidArgument);
-    Global::exit(1);
-}
-
 // ─── Cli (entry point) ───────────────────────────────────────────────────────
 pub mod cli {
     use super::*;

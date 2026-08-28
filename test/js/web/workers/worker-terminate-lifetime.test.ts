@@ -994,9 +994,8 @@ test(
                 .then((r) => {
                   keep.push(r.body); const rd = r.body.getReader(); rd.read(); keep.push(rd);
                   // Exit with that state alive: every response touched while its request body is
-                  // still streaming. The per-worker offset only varies where the exit lands
-                  // relative to the 5ms enqueue cadence.
-                  if (++touched === \${J}) setTimeout(() => process.exit(0), \${(i * 13) % 60});
+                  // still streaming.
+                  if (++touched === \${J}) setTimeout(() => process.exit(0), 0);
                 })
                 .catch((e) => { console.error("fetch failed:", e); process.exit(3); });
               keep.push(p, ctrl);

@@ -987,8 +987,7 @@ var require_wasi = __commonJS({
                 const IS_REGULAR = stats.filetype === constants_1.WASI_FILETYPE_REGULAR_FILE;
                 let w = 0;
                 while (w < iov.byteLength) {
-                  // An append fd writes at EOF: pass null so the O_APPEND
-                  // open flag positions the write.
+                  // an append fd passes null so O_APPEND positions the write at EOF
                   const position = stats.append || stats.offset === void 0 ? null : Number(stats.offset);
                   const i = fs.writeSync(stats.real, iov, w, iov.byteLength - w, position);
                   if (IS_REGULAR && !stats.append) {

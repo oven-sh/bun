@@ -224,9 +224,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let prop_kind = property.kind;
                 let prop_key = property.key;
 
-                // TypeScript's experimental decorators are lowered to statements
-                // after the class declaration. There is no place to put them for a
-                // class expression, so reject them like tsc and esbuild do.
+                // tsc and esbuild reject them too: the lowering needs a statement.
                 if Self::IS_TYPESCRIPT_ENABLED
                     && !p.options.features.standard_decorators
                     && class_opts.is_class_expr

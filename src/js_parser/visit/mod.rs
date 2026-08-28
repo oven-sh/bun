@@ -218,10 +218,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         for arg in args.iter_mut() {
             if arg.ts_decorators.len_u32() > 0 {
-                // A TypeScript parameter decorator is evaluated with the other
-                // decorators of the class, not inside the method, so a name in it
-                // refers to the class body scope. `parse_fn` parsed it in that scope
-                // and it is the parent of this function's argument scope.
+                // Parsed in the class body scope (see `parse_fn`), so visit it there.
                 let args_scope = self.current_scope;
                 let class_body_scope = args_scope
                     .parent
@@ -857,9 +854,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.push_scope_for_visit_pass(ScopeKind::ClassBody, class.body_loc)
                 .expect("unreachable");
 
-            // Set by `visit_ts_decorators` when a member or parameter decorator of
-            // this class reads a `#private` name. Class decorators were visited
-            // above and do not count: they run outside the class either way.
+            // Class decorators were visited above and do not count.
             let outer_ts_decorators_use_private_names =
                 core::mem::replace(&mut self.ts_decorators_use_private_names, false);
 
@@ -1158,10 +1153,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             };
                             injected.push(Stmt::assign(target, init));
                         }
-                        // Keep `#x;` for brand; keep decorated props for `lower_class`.
-                        if is_private || prop.ts_decorators.len_u32() > 0 {
+                        // Keep `#x;` for brand. A decorated field stays only for its
+                        // decorator call and emits nothing itself, like `declare`.
+                        if is_private {
                             class_body.push(G::Property {
                                 initializer: None,
+                                ..prop
+                            });
+                        } else if prop.ts_decorators.len_u32() > 0 {
+                            class_body.push(G::Property {
+                                initializer: None,
+                                kind: PropertyKind::Declare,
                                 ..prop
                             });
                         }

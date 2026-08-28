@@ -464,9 +464,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         }
                                     }
                                     PropertyModifierKeyword::PAccessor => {
-                                        // "accessor" keyword for auto-accessor fields. Part of the
-                                        // TC39 decorators proposal, but TypeScript accepts it with
-                                        // "experimentalDecorators" too.
+                                        // "accessor" keyword for auto-accessor fields
                                         if opts.is_class
                                             && !p.lexer.has_newline_before
                                             && PropertyModifierKeyword::find(raw)

@@ -228,25 +228,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let mut ts_decorators = bun_alloc::AstAlloc::vec();
             if opts.allow_ts_decorators {
-                // TypeScript parameter decorators are not evaluated where they are
-                // written. The lowering moves them after the class declaration:
-                //
-                //   class Foo {
-                //     foo(@bar() baz) {}
-                //   }
-                //
-                // becomes
-                //
-                //   class Foo {
-                //     foo(baz) {}
-                //   }
-                //   __legacyDecorateClassTS([
-                //     __legacyDecorateParamTS(0, bar())
-                //   ], Foo.prototype, "foo", null);
-                //
-                // so "await" inside a parameter decorator follows the context that
-                // encloses the class, not the method, and a name in it is looked up
-                // from the class body scope, not from the argument scope.
+                // The lowering evaluates a parameter decorator with the class's
+                // decorators, outside the method: parse it in that context.
                 let inner_allow_await = p.fn_or_arrow_data_parse.allow_await;
                 let inner_needs_async_loc = p.fn_or_arrow_data_parse.needs_async_loc;
                 let inner_scope = p.current_scope;

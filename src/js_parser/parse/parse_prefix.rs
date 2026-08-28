@@ -590,10 +590,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn pfx_t_at(p: &mut Self) -> PResult<Expr> {
         // Parse decorators before a class expression: @dec class { ... }
-        //
-        // TypeScript's experimental decorators only work on class declarations.
-        // The lowering emits the decorator calls as statements after the class,
-        // which has no equivalent for an expression.
         if Self::IS_TYPESCRIPT_ENABLED && !p.options.features.standard_decorators {
             p.log().add_range_error(
                 Some(p.source),

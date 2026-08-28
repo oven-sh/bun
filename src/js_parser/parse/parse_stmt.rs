@@ -83,7 +83,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let ts_decorators = p.parse_type_script_decorators()?;
 
             // "@x export @y class Foo {}"
-            // "@x export default @y class Foo {}"
             if opts.ts_decorators.is_some() {
                 p.log().add_range_error(
                     Some(p.source),
@@ -1055,13 +1054,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ));
                 }
 
-                // "export default class {}"
-                // "export default class Foo {}"
-                // "export default @x class {}"
-                // "export default @x class Foo {}"
-                // "export default function() {}"
-                // "export default function foo() {}"
-                // "export default interface Foo {}"
+                // "export default @x class Foo {}" is a class declaration too
                 if p.lexer.token == T::TFunction
                     || p.lexer.token == T::TClass
                     || p.lexer.token == T::TAt
@@ -1098,9 +1091,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     };
                                 }
 
-                                // "export default @x class {}" with standard decorators:
-                                // the class keeps the name "default", as the spec says,
-                                // when it is lowered as an anonymous class expression.
+                                // Lowered as an expression the class is named "default".
                                 if class.class.should_lower_standard_decorators {
                                     let mut class_ref = *class;
                                     let class_value = core::mem::take(&mut class_ref.class);

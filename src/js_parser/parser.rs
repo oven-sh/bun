@@ -1217,9 +1217,7 @@ pub struct FnOrArrowDataParse {
     /// Allow TypeScript decorators in function arguments
     pub(crate) allow_ts_decorators: bool,
 
-    /// The class body scope. TypeScript parameter decorators are parsed in it,
-    /// not in the argument scope, because they are evaluated with the other
-    /// decorators of the class.
+    /// The class body scope, where TypeScript parameter decorators are parsed.
     pub(crate) decorator_scope: Option<js_ast::StoreRef<js_ast::Scope>>,
 }
 

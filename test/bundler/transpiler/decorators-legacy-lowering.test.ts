@@ -243,7 +243,7 @@ describe("experimentalDecorators lowering", () => {
     );
   }
 
-  test.concurrent("decorated auto-accessor gets design:type metadata", async () => {
+  test.concurrent("decorated auto-accessor and declare fields get design:type metadata", async () => {
     using dir = tempDir("legacy-dec-metadata", {
       "tsconfig.json": JSON.stringify({
         compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true },
@@ -256,13 +256,14 @@ describe("experimentalDecorators lowering", () => {
         class Acc {
           @dec accessor n: number = 1;
           @dec accessor s: string;
+          @dec declare d: boolean;
         }
-        console.log(new Acc().n);
+        console.log(new Acc().n, "d" in new Acc());
       `,
     });
     const { stdout, stderr, exitCode } = await run([bunExe(), "index.ts"], String(dir));
     expect(stderr).toBe("");
-    expect(stdout).toBe("n design:type Number\ns design:type String\n1\n");
+    expect(stdout).toBe("n design:type Number\ns design:type String\nd design:type Boolean\n1 false\n");
     expect(exitCode).toBe(0);
   });
 

@@ -64,8 +64,6 @@ pub struct Class {
     pub has_decorators: bool,
     pub should_lower_standard_decorators: bool,
     /// A member or parameter decorator reads a `#private` name of this class.
-    /// The TypeScript experimental decorator calls then have to run inside the
-    /// class body (a trailing static block), where the name is in scope.
     pub ts_decorators_use_private_names: bool,
 }
 

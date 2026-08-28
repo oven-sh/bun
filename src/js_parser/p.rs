@@ -536,10 +536,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) temp_refs_to_declare: List<'a, TempRef>,
     pub(crate) temp_ref_count: i32,
 
-    /// Counts every `obj.#name` and `#name in obj` the visit pass resolves.
-    /// `visit_ts_decorators` compares it before and after the visit and sets
-    /// `ts_decorators_use_private_names` when a decorator read a private name.
+    /// Every `obj.#name` and `#name in obj` the visit pass resolves.
     pub(crate) private_name_use_count: u32,
+    /// Set by `visit_ts_decorators` when a decorator read a `#private` name.
     pub(crate) ts_decorators_use_private_names: bool,
 
     // When bundling, hoisted top-level local variables declared with "var" in
@@ -6383,35 +6382,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 let class_loc = stmt.loc;
-                let use_define = self.options.use_define_for_class_fields;
                 let mut constructor_function: Option<bun_ast::StoreRef<E::Function>> = None;
 
                 let mut static_decorators = BumpVec::<Stmt>::new_in(self.arena);
                 let mut instance_decorators = BumpVec::<Stmt>::new_in(self.arena);
                 let mut class_properties = BumpVec::<G::Property>::new_in(self.arena);
 
-                // Temporaries that capture computed keys. They are declared in a
-                // `var` statement right before the class.
                 let temp_refs_before = self.temp_refs_to_declare.len();
                 let mut accessor_storage_counter: usize = 0;
-
-                // With "useDefineForClassFields: false", `visit_class` moved the
-                // instance field initializers into the constructor and left a
-                // decorated field in the list, without its initializer, only for the
-                // decorator call. It skips that lowering when an instance field has a
-                // computed key it cannot hoist. Mirror the decision here.
-                let instance_fields_lowered = !use_define
-                    && !s_class.class.properties.iter().any(|p| {
-                        p.kind == PropertyKind::Normal
-                            && !p.flags.contains(Flags::Property::IsMethod)
-                            && !p.flags.contains(Flags::Property::IsStatic)
-                            && p.flags.contains(Flags::Property::IsComputed)
-                            && p.value.is_none()
-                            && !matches!(
-                                p.key.map(|k| k.data),
-                                Some(js_ast::ExprData::EString(_) | js_ast::ExprData::ENumber(_))
-                            )
-                    });
 
                 for prop in s_class.class.properties.slice_mut().iter_mut() {
                     if prop.kind == PropertyKind::ClassStaticBlock {
@@ -6475,17 +6453,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     let key = prop.key.expect("infallible: prop has key");
                     let key_loc = key.loc;
-                    let is_private_key =
-                        matches!(key.data, js_ast::ExprData::EPrivateIdentifier(_));
 
-                    // A computed key is evaluated once, where the member is defined.
-                    // The decorator call (and the setter of an auto-accessor) then
-                    // read it back from a temporary:
-                    //
-                    //   class Foo {
-                    //     [_a = key()]() {}
-                    //   }
-                    //   __legacyDecorateClassTS([dec], Foo.prototype, _a, null);
+                    // `[_key = expr]() {}` so the decorator call can reuse `_key`.
                     let mut key_for_reuse = key;
                     let mut captured_key: Option<Expr> = None;
                     if prop.flags.contains(Flags::Property::IsComputed)
@@ -6506,8 +6475,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     if is_decorated {
-                        // A method, getter, setter or auto-accessor has a property
-                        // descriptor for the decorator to receive. A field does not.
+                        // Only a field has no property descriptor to pass along.
                         let descriptor_kind: Expr = if is_method || is_auto_accessor {
                             self.new_expr(E::Null {}, key_loc)
                         } else {
@@ -6579,12 +6547,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     if is_auto_accessor {
-                        // `accessor x = init` becomes a private storage field plus a
-                        // getter/setter pair:
-                        //
-                        //   #x_accessor_storage = init;
-                        //   get x() { return this.#x_accessor_storage; }
-                        //   set x(v) { this.#x_accessor_storage = v; }
+                        // `#x_accessor_storage = init; get x() {...} set x(v) {...}`
                         let storage_name: &'a [u8] = 'storage_name: {
                             let base: &'a [u8] = match key.data {
                                 js_ast::ExprData::EString(s)
@@ -6734,20 +6697,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         continue;
                     }
 
-                    // A "declare" or "abstract" member emits nothing. It is only in
-                    // the list because of its decorators, which ran above. A field
-                    // without an initializer is omitted the same way when
-                    // `visit_class` applied "useDefineForClassFields: false".
-                    if matches!(prop.kind, PropertyKind::Declare | PropertyKind::Abstract)
-                        || (instance_fields_lowered
-                            && !is_method
-                            && !is_static
-                            && !is_private_key
-                            && prop.kind == PropertyKind::Normal
-                            && prop.initializer.is_none())
-                    {
-                        // The key expression still runs, for its side effects and
-                        // because the decorator call reads the temporary.
+                    // A "declare" or "abstract" member emits nothing but its key.
+                    if matches!(prop.kind, PropertyKind::Declare | PropertyKind::Abstract) {
                         if let Some(captured_key) = captured_key {
                             class_properties.push(self.make_static_block(captured_key, key_loc));
                         }
@@ -6759,10 +6710,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     class_properties.push(core::mem::take(prop));
                 }
 
-                // The decorator calls run after the class. When one of them reads a
-                // `#private` name, they have to run inside the class body instead, so
-                // they go into a static block at the end of the body. Static blocks run
-                // in order, so this one runs after every field initializer.
+                // A decorator that reads a `#private` name only works inside the body.
                 let decorators_in_static_block = s_class.class.ts_decorators_use_private_names
                     && (!instance_decorators.is_empty() || !static_decorators.is_empty());
                 if decorators_in_static_block {
@@ -6902,7 +6850,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         match prop.kind {
-            PropertyKind::Normal | PropertyKind::Abstract => {
+            PropertyKind::Normal | PropertyKind::Abstract | PropertyKind::Declare => {
                 {
                     // design:type
                     let v = self
@@ -7021,8 +6969,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .expect("unreachable");
                 push_metadata!(b"design:type", v);
             }
-            PropertyKind::Spread | PropertyKind::Declare => {} // not allowed in a class
-            PropertyKind::ClassStaticBlock => {}               // not allowed to decorate this
+            PropertyKind::Spread => {}           // not allowed in a class
+            PropertyKind::ClassStaticBlock => {} // not allowed to decorate this
         }
     }
 

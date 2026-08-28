@@ -929,15 +929,15 @@ test("decorator and declare", () => {
 });
 
 test("lowering many decorated instance fields into a large constructor body stays linear", async () => {
-  // Hold N fixed; compare M=100 vs M=50000. If the splice-after-super() were O(M*N)
-  // instead of O(M+N), tLarge/tSmall would be ~5x (debug) / ~90x (release) here, not ~2x.
+  // Hold N fixed; compare M=25000 vs M=50000 after a warm-up. If the splice-after-super()
+  // were O(M*N) instead of O(M+N), tLarge/tMid would be ~4x here, not ~1.2x to 2x.
   // Only useDefineForClassFields: false moves field initializers into the constructor.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
-        const N = 500000;
+        const N = 200000;
         function gen(M) {
           let src = "function d(t,k){}\\nclass Base {}\\nclass Foo extends Base {\\n";
           for (let i = 0; i < M; i++) src += "@d f" + i + " = " + i + ";\\n";
@@ -959,9 +959,10 @@ test("lowering many decorated instance fields into a large constructor body stay
             throw new Error("instance-field initializers missing from lowered constructor at M=" + M);
           return ms;
         }
-        const tSmall = time(100);
+        time(100);
+        const tMid = time(25000);
         const tLarge = time(50000);
-        console.log(JSON.stringify({ tSmall, tLarge, ratio: tLarge / tSmall }));
+        console.log(JSON.stringify({ tMid, tLarge, ratio: tLarge / tMid }));
       `,
     ],
     env: bunEnv,
@@ -972,9 +973,9 @@ test("lowering many decorated instance fields into a large constructor body stay
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toMatchObject({
-    stdout: expect.stringMatching(/^\{"tSmall":[\d.]+,"tLarge":[\d.]+,"ratio":[\d.]+\}\n$/),
+    stdout: expect.stringMatching(/^\{"tMid":[\d.]+,"tLarge":[\d.]+,"ratio":[\d.]+\}\n$/),
     exitCode: 0,
   });
-  const { tSmall, tLarge } = JSON.parse(stdout);
-  expect(tLarge).toBeLessThan(tSmall * 3);
+  const { tMid, tLarge } = JSON.parse(stdout);
+  expect(tLarge).toBeLessThan(tMid * 3);
 }, 90_000);

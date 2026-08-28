@@ -6731,8 +6731,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             return (key, None);
         }
-        // Already captured, by the `accessor` lowering in `visit_class`.
-        if let js_ast::ExprData::EBinary(binary) = key.data
+        // The `accessor` lowering in `visit_class` captured this key already.
+        if prop.flags.contains(Flags::Property::IsAutoAccessorGetter)
+            && let js_ast::ExprData::EBinary(binary) = key.data
             && binary.op == js_ast::OpCode::BinAssign
             && let js_ast::ExprData::EIdentifier(temp) = binary.left.data
         {

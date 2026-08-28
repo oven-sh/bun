@@ -55,8 +55,12 @@ const fixtures: Record<string, Fixture> = {
       class F { @d2 [key()]() {}  @d2 [key()] = 1 }
       new F(); new F();
       console.log(n, JSON.stringify(Object.getOwnPropertyNames(F.prototype)), JSON.stringify(Object.keys(new F())));
+      let k: any;
+      class G { @d2 [k = "a"]() {} @d2 [k = "b"]() {} @d2 accessor [k = "c"] = 1 }
+      console.log(k, Object.getOwnPropertyNames(G.prototype).join(","));
     `,
-    expected: 'decorating k1\ndecorating k2\n2 ["constructor","k1"] ["k2"]\n',
+    expected:
+      'decorating k1\ndecorating k2\n2 ["constructor","k1"] ["k2"]\ndecorating a\ndecorating b\ndecorating c\nc constructor,a,b,c\n',
   },
   "a decorated declare field is dropped but its computed key still runs once": {
     source: `

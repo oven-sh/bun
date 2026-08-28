@@ -629,11 +629,13 @@ function expectBundled(
     skipIfWeDidNotImplementWildcardSideEffects,
     stdin,
     targetFromAPI,
-    mode,
   })) {
     if (!ESBUILD && value !== undefined) {
       throw new UnsupportedOptionError(`${name} not implemented in bun build`);
     }
+  }
+  if (mode !== undefined) {
+    throw new UnsupportedOptionError(`mode: "${mode}" not implemented in this harness`);
   }
   if (!ESBUILD && unsupportedJSFeatures && unsupportedJSFeatures.length) {
     throw new UnsupportedOptionError("unsupportedJSFeatures not implemented in bun build");

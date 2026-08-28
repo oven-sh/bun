@@ -100,8 +100,6 @@ use crate::array_buffer::TypedArrayType;
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, core::marker::ConstParamTy)]
 pub struct JSType(pub u8);
 
-/// Prints the tag name (`String`, `FinalObject`, ...), like a derived `Debug`
-/// on a Rust enum would. A tag without a name prints as `JSType(<u8>)`.
 impl core::fmt::Display for JSType {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self.name() {
@@ -570,9 +568,7 @@ impl JSType {
     pub const MIN_TYPED_ARRAY: JSType = JSType::Int8Array;
     pub const MAX_TYPED_ARRAY: JSType = JSType::DataView;
 
-    /// The tag name for diagnostics (`JSType::String` is `"String"`). `None`
-    /// for a tag this file does not name: any `u8` read from `JSCell::m_type`
-    /// is a valid `JSType`, including embedder-defined ones.
+    /// The tag name for diagnostics (`JSType::String` is `"String"`).
     pub fn name(self) -> Option<&'static str> {
         Some(match self {
             JSType::Cell => "Cell",
@@ -665,9 +661,6 @@ impl JSType {
         })
     }
 
-    /// `name()` of an `is_array_buffer_like()` tag, as bytes for the console
-    /// and `bun:test` formatters. `"TypedArray"` for any other tag, which no
-    /// real `ArrayBuffer.typed_array_type` is.
     pub fn typed_array_name(self) -> &'static [u8] {
         match self.name() {
             Some(name) if self.is_array_buffer_like() => name.as_bytes(),

@@ -269,7 +269,7 @@ it.skipIf(isWindows)(
   async () => {
     using dir = tempDir("watch-crash-reexec-fails", {
       "app.js": `
-        const { crash_handler } = require("bun:internal-for-testing");
+        import { crash_handler } from "bun:internal-for-testing";
         console.log("iter first");
         process.stdin.on("data", () => crash_handler.segfault());
       `,

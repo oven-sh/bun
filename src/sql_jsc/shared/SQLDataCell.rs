@@ -468,7 +468,7 @@ impl SQLDataCell {
     }
 }
 
-/// Coercion helper for `raw()` call sites. Lets callers pass `&Data`, `&mut Data`,
+/// Coercion helper for `raw()` call sites. Lets callers pass `&Data`,
 /// `Option<&Data>`, or `Option<&mut Data>` without wrapping.
 pub trait IntoOptionalData<'a> {
     fn into_optional_data(self) -> Option<&'a Data>;
@@ -477,12 +477,6 @@ impl<'a> IntoOptionalData<'a> for &'a Data {
     #[inline]
     fn into_optional_data(self) -> Option<&'a Data> {
         Some(self)
-    }
-}
-impl<'a> IntoOptionalData<'a> for &'a mut Data {
-    #[inline]
-    fn into_optional_data(self) -> Option<&'a Data> {
-        Some(&*self)
     }
 }
 impl<'a> IntoOptionalData<'a> for Option<&'a Data> {

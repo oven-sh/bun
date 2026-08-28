@@ -41,10 +41,6 @@ for (let id = 0; id < jsclasses.length; id++) {
 // These rules are run on the entire file, including within strings.
 export const globalReplacements: ReplacementRule[] = [
   {
-    from: /\bnotImplementedIssue\(\s*([0-9]+)\s*,\s*((?:"[^"]*"|'[^']+'))\s*\)/g,
-    toRaw: "__intrinsic__makeTypeError(`${$2} is not implemented yet. See https://github.com/oven-sh/bun/issues/$1`)",
-  },
-  {
     from: /\bnotImplementedIssueFn\(\s*([0-9]+)\s*,\s*((?:"[^"]*"|'[^']+'))\s*\)/g,
     toRaw:
       "() => void __intrinsic__throwTypeError(`${$2} is not implemented yet. See https://github.com/oven-sh/bun/issues/$1`)",

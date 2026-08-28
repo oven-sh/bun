@@ -1,5 +1,4 @@
 use crate::SmallList;
-use crate::css_parser as css;
 use crate::css_parser::{CssResult, Parser, PrintErr, Printer, Token};
 
 use bun_ast::Ref;
@@ -68,108 +67,39 @@ macro_rules! arena_slice_newtype {
 }
 
 // ───────────────────────── DashedIdentReference ──────────────────────────
-// `properties::css_modules::Specifier` is real (parse/to_css/eql/hash); the
-// `from` field below uses it directly. `parse_with_options` honors
-// `ParserOptions.css_modules.dashed_idents`. `to_css` resolves the
-// import-record path up front and hands it to `CssModule::reference_dashed`
-// (borrowck — see the comment on that method).
 
 /// A CSS [`<dashed-ident>`](https://www.w3.org/TR/css-values-4/#dashed-idents) reference.
 ///
 /// Dashed idents are used in cases where an identifier can be either author defined _or_ CSS-defined.
 /// Author defined idents must start with two dash characters ("--") or parsing will fail.
-///
-/// In CSS modules, when the `dashed_idents` option is enabled, the identifier may be followed by the
-/// `from` keyword and an argument indicating where the referenced identifier is declared (e.g. a filename).
 #[derive(Debug, Clone, Copy)]
 pub struct DashedIdentReference {
     /// The referenced identifier.
     pub(crate) ident: DashedIdent,
-    /// CSS modules extension: the filename where the variable is defined.
-    /// Only enabled when the CSS modules `dashed_idents` option is turned on.
-    pub(crate) from: Option<crate::properties::css_modules::Specifier>,
 }
 
 impl DashedIdentReference {
     pub(crate) fn eql(&self, rhs: &Self) -> bool {
-        // Field-wise over `ident` and `from`.
         use crate::generics::CssEql;
-        self.ident.eql(&rhs.ident) && self.from.eql(&rhs.from)
+        self.ident.eql(&rhs.ident)
     }
 
     pub(crate) fn hash(&self, hasher: &mut Wyhash) {
         self.ident.hash(hasher);
-        if let Some(from) = &self.from {
-            from.hash(hasher);
-        }
     }
 
     pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        // Both fields are `Copy` (arena-slice pointer + tagged enum of Copy payloads).
+        // `ident` is `Copy` (arena-slice pointer).
         *self
     }
 
-    pub(crate) fn parse_with_options(
-        input: &mut Parser,
-        options: &css::ParserOptions,
-    ) -> CssResult<DashedIdentReference> {
+    pub(crate) fn parse(input: &mut Parser) -> CssResult<DashedIdentReference> {
         let ident = DashedIdent::parse(input)?;
-        let from = if options
-            .css_modules
-            .as_ref()
-            .is_some_and(|m| m.dashed_idents)
-        {
-            if input
-                .try_parse(|i| i.expect_ident_matching(b"from"))
-                .is_ok()
-            {
-                Some(crate::properties::css_modules::Specifier::parse(input)?)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        Ok(DashedIdentReference { ident, from })
+        Ok(DashedIdentReference { ident })
     }
 
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        let dashed_idents = match &dest.css_module {
-            Some(m) => m.config.dashed_idents,
-            None => false,
-        };
-        if dashed_idents {
-            // NOTE: cannot use `self.ident.v()` here — `reference_dashed` requires
-            // `&'a [u8]` (arena lifetime), but the safe accessor ties the borrow
-            // to `&self`. Raw deref yields the unbounded arena borrow.
-            // SAFETY: arena-owned slice; see `DashedIdent::v`.
-            let ident_v = unsafe { crate::arena_str(self.ident.v) };
-            let source_index = dest.loc.source_index;
-            let bump = dest.arena;
-            // Borrowck forbids handing
-            // `dest` to a method on `dest.css_module`, so resolve the path
-            // here and pass the slice down. The `?` propagates the
-            // `import_record` error path.
-            use crate::properties::css_modules::Specifier;
-            let specifier_path: Option<&[u8]> = match &self.from {
-                Some(Specifier::ImportRecordIndex(idx)) => {
-                    Some(dest.import_record(*idx)?.path.text)
-                }
-                _ => None,
-            };
-            let name = dest.css_module.as_mut().unwrap().reference_dashed(
-                bump,
-                ident_v,
-                self.from,
-                specifier_path,
-                source_index,
-            );
-            if let Some(name) = name {
-                dest.write_str(b"--")?;
-                return dest.serialize_name(name);
-            }
-        }
-        dest.write_dashed_ident(&self.ident, false)
+        dest.write_dashed_ident(&self.ident)
     }
 }
 
@@ -196,7 +126,7 @@ impl DashedIdent {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        dest.write_dashed_ident(self, true)
+        dest.write_dashed_ident(self)
     }
 }
 

@@ -9,7 +9,6 @@ use crate::{JSGlobalObject, JSValue};
 pub enum WeakRefType {
     None = 0,
     FetchResponse = 1,
-    PostgreSQLQueryClient = 2,
 }
 
 bun_opaque::opaque_ffi! {

@@ -11,9 +11,9 @@
 //!
 //! Upstream's `ProgramContext` carries `timing` / `debug_enabled` /
 //! `log_debug` / `log_event`; the Bun port's [`ProgramContext`] does not (Bun
-//! has no Babel-shim debug surface), so the per-pass timing and
-//! `log_debug(DebugLogEntry::new(...))` calls are dropped. The pass *sequence*
-//! and gating predicates are kept byte-identical with upstream.
+//! has no Babel-shim debug surface), so the per-pass timing and debug log
+//! calls are dropped. The pass *sequence* and gating predicates are kept
+//! byte-identical with upstream.
 
 #![allow(
     clippy::disallowed_types,
@@ -153,11 +153,6 @@ pub(crate) fn compile_fn(
         "Lowering",
         lowering::lower(func, fn_name, &*host, &mut env, import_bindings)
     )?;
-
-    // Copy renames from lowering to context (keep on env for codegen to apply to type annotations)
-    if !env.renames.is_empty() {
-        context.renames.extend(env.renames.iter().cloned());
-    }
 
     // Upstream `lower()` ends with `if (builder.errors.hasAnyErrors()) return Err(...)`
     // before `builder.build()`, so any error recorded during lowering — Todo

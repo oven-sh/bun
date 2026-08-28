@@ -917,17 +917,6 @@ impl<'h> HirBuilder<'h> {
         } else {
             StoreStr::new(bun_ast::data_store_dupe_str(candidate.as_bytes()))
         };
-        if candidate != name {
-            if let Some(start) = loc.as_ref().and_then(|l| l.start.index) {
-                self.env
-                    .renames
-                    .push(crate::hir::environment::BindingRename {
-                        original: stored_name,
-                        renamed: stored_candidate,
-                        declaration_start: start,
-                    });
-            }
-        }
 
         let id = self.env.next_identifier_id();
         self.env.identifiers[id.0 as usize].name = Some(IdentifierName::Named(stored_candidate));

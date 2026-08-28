@@ -47,9 +47,7 @@ pub(crate) fn compute_chunks(
     // Keys borrow from `temp`; the map and the arena are both dropped at end of fn.
     let mut js_chunks: ArrayHashMap<&[u8], Chunk> = ArrayHashMap::new();
     js_chunks.reserve(this.graph.entry_points.len());
-    // Parallel to `js_chunks.values()`: whether a file in the chunk prints code.
-    // A code-splitting chunk with none is dropped below instead of becoming an
-    // empty output file (two of those share a content hash).
+    // Per `js_chunks` entry: whether a file in it prints code; a chunk with none is dropped.
     let mut js_chunk_has_code: Vec<bool> = Vec::with_capacity(this.graph.entry_points.len());
 
     // Key is the hash of the CSS order. This deduplicates identical CSS files.

@@ -679,9 +679,7 @@ impl RuntimeTranspilerCache {
         }
     }
 
-    /// `<tmpdir>/bun-<euid>/@t@`, or 0 (disabled) when another user could
-    /// replace the root or any directory above it: a planted entry would run
-    /// as code.
+    /// `<tmpdir>/bun-<euid>/@t@`, or 0 when another user could swap a directory on that path.
     #[cfg(unix)]
     fn tmpdir_cache_dir(top: &[u8], buf: &mut PathBuffer) -> usize {
         let euid = sys::c::geteuid();
@@ -728,9 +726,7 @@ impl RuntimeTranspilerCache {
             return 0;
         }
 
-        // Later opens resolve the path again, so use the real path of the
-        // directory that was checked: a symlink on the way there could live
-        // in a directory the check never saw.
+        // Real path: later opens must not resolve a symlink the check never saw.
         let Ok(real_parent) = sys::get_fd_path(parent_fd, buf) else {
             return 0;
         };
@@ -749,8 +745,7 @@ impl RuntimeTranspilerCache {
         len
     }
 
-    /// Whether `dir_fd` and every directory above it can only be modified by
-    /// us or root, so a path through them keeps resolving to the same inodes.
+    /// Whether only us or root can modify `dir_fd` and every directory above it.
     #[cfg(unix)]
     fn dir_chain_is_stable(dir_fd: Fd, euid: libc::uid_t) -> bool {
         let Ok(mut st) = sys::fstat(dir_fd) else {
@@ -759,8 +754,7 @@ impl RuntimeTranspilerCache {
         if Self::entries_replaceable_by_others(&st, euid) {
             return false;
         }
-        // "..", "../..", ... relative to `dir_fd`: needs only search
-        // permission, and follows the directory if it was moved.
+        // "..", "../..", ... from `dir_fd`: only needs search permission.
         let mut dots = paths::path_buffer_pool::get();
         let mut len = 0;
         loop {

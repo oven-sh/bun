@@ -1,6 +1,6 @@
 import type { Subprocess } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isCI, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -461,6 +461,10 @@ describe("bundler", () => {
 // on (the inspector, the DNS result order) must survive that hand-off, not
 // just show up in `process.execArgv`.
 describe("compile-exec-argv runtime flags reach the VM", () => {
+  // Each test rewrites a whole executable (the debug binary is ~800 MB), so
+  // give them the budget `itBundled` gives its compile tests.
+  const compileTest = (name: string, fn: () => Promise<void>) => test.concurrent(name, fn, isCI ? undefined : 30_000);
+
   // Where the flags come from: baked into the executable, or the environment.
   const sources = [
     ["--compile-exec-argv", (flags: readonly string[]) => ({ execArgv: flags, env: {} })],
@@ -560,7 +564,7 @@ describe("compile-exec-argv runtime flags reach the VM", () => {
     // `Inspector.initialized`, so the shape is deterministic either way: the
     // fixed binary prints the listening URL and waits, a binary that drops the
     // flag runs to completion and its stderr ends without a URL.
-    test.concurrent(`--inspect-wait and --dns-result-order from ${source}`, async () => {
+    compileTest(`--inspect-wait and --dns-result-order from ${source}`, async () => {
       const flags = ["--inspect-wait=127.0.0.1:0", "--dns-result-order=ipv4first"];
       const { execArgv, env } = via(flags);
       using dir = tempDir("compile-exec-argv-vm-flags", {
@@ -596,15 +600,15 @@ describe("compile-exec-argv runtime flags reach the VM", () => {
     });
 
     // Plain `--inspect` must not block the program. The inspectee holds itself
-    // open for the client the way `test/cli/inspect/inspectee.js` does. When
-    // the flag is dropped that timer is all that is pending, so the process
-    // exits on its own and stderr ends without a URL.
-    test.concurrent(`--inspect from ${source} starts the inspector without blocking the program`, async () => {
+    // open long enough for the client to connect; a connected client then keeps
+    // the process alive. When the flag is dropped that timer is all that is
+    // pending, so the process exits on its own and stderr ends without a URL.
+    compileTest(`--inspect from ${source} starts the inspector without blocking the program`, async () => {
       const { execArgv, env } = via(["--inspect=127.0.0.1:0"]);
       using dir = tempDir("compile-exec-argv-inspect", {
         "entry.js": /* js */ `
           console.log("started");
-          setTimeout(() => {}, 30_000);
+          setTimeout(() => {}, 10_000);
         `,
       });
       const exe = await compile(String(dir), execArgv);

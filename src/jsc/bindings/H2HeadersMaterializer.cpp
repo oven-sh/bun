@@ -49,8 +49,7 @@ static bool h2IsSingleValueHeader(WTF::StringView name)
         || name == "x-content-type-options"_s;
 }
 
-// One latin-1 code unit per wire byte, as node does (node_http2.cc builds
-// header values as one-byte strings). UTF-8 decoding would lose obs-text.
+// Latin-1, one code unit per wire byte, like node (node_http2.cc). Not UTF-8.
 static JSString* h2ValueToJS(VM& vm, const uint8_t* ptr, size_t length)
 {
     if (length == 0)

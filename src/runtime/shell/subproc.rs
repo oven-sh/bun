@@ -124,56 +124,6 @@ pub type StdioResult = WindowsStdioResult;
 #[cfg(not(windows))]
 pub type StdioResult = Option<Fd>;
 
-/// RAII handle owning one intrusive ref on a heap `FileSink`. `FileSink`
-/// carries its own `#[derive(CellRefCounted)]` refcount and is allocated via
-/// `Box::into_raw` in `FileSink::create*`, so it cannot live behind an `Arc`.
-/// Drop derefs (and frees on last ref) on teardown.
-pub struct FileSinkPtr(core::ptr::NonNull<FileSink>);
-
-impl FileSinkPtr {
-    /// Adopt the +1 ref returned by `FileSink::create*`.
-    ///
-    /// # Safety
-    /// `ptr` is non-null, points to a live `FileSink` from
-    /// `FileSink::create*`, and the caller transfers its single owned ref to
-    /// this handle.
-    #[cfg(windows)]
-    #[inline]
-    unsafe fn adopt(ptr: *mut FileSink) -> Self {
-        // SAFETY: caller contract — `ptr` is non-null.
-        Self(unsafe { core::ptr::NonNull::new_unchecked(ptr) })
-    }
-}
-
-impl core::ops::Deref for FileSinkPtr {
-    type Target = FileSink;
-    #[inline]
-    fn deref(&self) -> &FileSink {
-        // SAFETY: `adopt` contract — `self.0` is a live `FileSink` from
-        // `FileSink::create*`; the held intrusive ref keeps it alive for `'_`.
-        unsafe { self.0.as_ref() }
-    }
-}
-
-impl core::ops::DerefMut for FileSinkPtr {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut FileSink {
-        // SAFETY: `adopt` contract — `self.0` is live; `&mut self` is exclusive
-        // on this owning handle (FileSinkPtr is non-`Copy`, single-threaded
-        // shell), so no other `&`/`&mut` to the `FileSink` overlaps.
-        unsafe { self.0.as_mut() }
-    }
-}
-
-impl Drop for FileSinkPtr {
-    #[inline]
-    fn drop(&mut self) {
-        // SAFETY: `adopt` contract — `self.0` is live with one owned intrusive
-        // ref; `FileSink::deref` (CellRefCounted derive) frees on zero.
-        unsafe { FileSink::deref(self.0.as_ptr()) };
-    }
-}
-
 bun_output::define_scoped_log!(log, SHELL_SUBPROC, visible);
 
 /// Used for captured writer
@@ -247,6 +197,8 @@ pub struct ShellSubprocess {
     pub(crate) stderr: Readable,
 
     pub closed: EnumSet<StdioKind>,
+
+    ctrl_c_child: Option<bun_spawn::ctrl_c::Child>,
 }
 
 pub(crate) type SignalCode = bun_core::SignalCode;
@@ -396,22 +348,16 @@ impl ShellSubprocess {
         match kind {
             StdioKind::Stdin => match &mut self.stdin {
                 Writable::Pipe(pipe) => {
-                    // DerefMut on the owning `&mut FileSinkPtr` encapsulates
-                    // the access.
                     pipe.source.with_mut(|s| s.clear());
-                    // FileSinkPtr::drop derefs.
                     self.stdin = Writable::Ignore;
                 }
                 Writable::Buffer(_) => {
                     self.on_static_pipe_writer_done();
-                    // RefPtr has no Drop — move it out before reassigning so the
-                    // create ref is actually released.
                     if let Writable::Buffer(buffer) =
                         core::mem::replace(&mut self.stdin, Writable::Ignore)
                     {
                         // SAFETY: single-threaded; sole borrow of the payload.
                         unsafe { buffer_mut(&buffer) }.source.detach();
-                        buffer.deref();
                     }
                 }
                 _ => {}
@@ -462,7 +408,9 @@ impl ShellSubprocess {
     fn abort_after_failed_start(this: *mut Self) {
         #[cfg(windows)]
         {
-            let _ = this;
+            // SAFETY: `this` is the live allocation; it is deliberately leaked below,
+            // so release the Ctrl+C accounting by hand.
+            unsafe { (*this).ctrl_c_child = None };
             return;
         }
         #[cfg(not(windows))]
@@ -561,13 +509,13 @@ impl ShellSubprocess {
     }
 
     /// `Heap::lastChanceToFinalize` deletes the `JSC::ArrayBuffer` impls
-    /// before the sweep that reaches us, so the `> ${arraybuffer}` unpin in
-    /// `BufferedOutput::drop` would write to a freed impl. Clear the value
-    /// so the drop skips it; the `Strong` handle still releases normally.
+    /// before the sweep that reaches us, so dropping the redirect target's
+    /// [`PinnedArrayBuffer`](jsc::PinnedArrayBuffer) would write to a
+    /// freed impl; defuse it.
     ///
     /// # Safety
     /// Same contract as [`Self::deinit_in_flight_io`]; VM-shutdown finalizer
-    /// only (on a live heap this would leak the pin).
+    /// only (on a live heap this would leak the pin and GC root).
     #[cfg(not(windows))]
     pub(crate) unsafe fn defuse_array_buffer_unpins(this: *mut Self) {
         // SAFETY: disjoint field projections of the live subprocess.
@@ -582,9 +530,7 @@ impl ShellSubprocess {
             // borrow of the `PipeReader` is live.
             unsafe {
                 if let BufferedOutput::ArrayBuffer { buf, .. } = &mut (*pipe).buffered_output {
-                    // `Default` has `value: JSValue::ZERO`, which
-                    // `BufferedOutput::drop` reads as "nothing to unpin".
-                    let _ = core::mem::take(&mut buf.array_buffer);
+                    buf.defuse();
                 }
             }
         }
@@ -655,8 +601,9 @@ impl ShellSubprocess {
         let _ = &inherited_env_storage;
 
         // Until ownership transfers into Writable/Readable, deinit any caller-provided
-        // stdio resources (memfd, ArrayBuffer.Strong, Blob) on early return so they
-        // aren't leaked. Defused via `ScopeGuard::into_inner` once consumed.
+        // stdio resources (memfd, Blob) on early return so they aren't leaked
+        // (`redirect_stdout`/`redirect_stderr` drop with `spawn_args`). Defused via
+        // `ScopeGuard::into_inner` once consumed.
         let mut stdio_guard = scopeguard::guard(&mut spawn_args.stdio, |stdio| {
             for s in stdio.iter_mut() {
                 // Stdio's Drop impl handles resource teardown.
@@ -730,6 +677,9 @@ impl ShellSubprocess {
 
         spawn_args.env_array.push(core::ptr::null());
 
+        // SAFETY: `interp` is the live owning interpreter (see `SpawnArgs::interp`).
+        let foreground = !unsafe { &*interp }.in_background(cmd_parent.id);
+        let ctrl_c_child = foreground.then(bun_spawn::ctrl_c::Child::enter);
         // SAFETY: `spawn_args.argv` / `env_array` are local null-terminated
         // C-string arrays with argv[0] non-null; valid for this call.
         let spawn_result = match unsafe {
@@ -812,6 +762,7 @@ impl ShellSubprocess {
         let stdout = Readable::init(
             OutKind::Stdout,
             stdio1,
+            spawn_args.redirect_stdout.take(),
             shellio.stdout.clone(),
             event_loop,
             subprocess,
@@ -823,6 +774,7 @@ impl ShellSubprocess {
         let stderr = Readable::init(
             OutKind::Stderr,
             stdio2,
+            spawn_args.redirect_stderr.take(),
             shellio.stderr.clone(),
             event_loop,
             subprocess,
@@ -843,6 +795,7 @@ impl ShellSubprocess {
                 stderr,
                 cmd_parent,
                 closed: EnumSet::empty(),
+                ctrl_c_child,
             });
         }
         // Ownership of the now-initialised Box is released as a raw pointer
@@ -887,7 +840,7 @@ impl ShellSubprocess {
                 // SAFETY: shell is single-threaded; the FileSink allocation is
                 // disjoint from `*stdin_ptr`. `stdin_ptr` outlives the sink —
                 // the Subprocess owns both and `Writable::on_close` is the only
-                // path that drops the FileSinkPtr.
+                // path that drops it.
                 pipe.source
                     .set(webcore::streams::SourceHandle::ShellWritable(
                         // SAFETY: `stdin_ptr` is the live `&raw mut` writable (write provenance).
@@ -960,8 +913,14 @@ impl ShellSubprocess {
 
     pub(crate) fn on_process_exit(&mut self, _: &Process, status: &Status, _: &Rusage) {
         log!("onProcessExit({:x})", std::ptr::from_mut(self) as usize);
+        let interrupted =
+            self.ctrl_c_child.take().is_some() && bun_spawn::ctrl_c::child_died_of_it(status);
         let exit_code: Option<u8> = 'brk: {
             if let Status::Exited(exited) = &status {
+                #[cfg(windows)]
+                if exited.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT {
+                    break 'brk SignalCode::SIGINT.to_exit_code();
+                }
                 break 'brk Some(exited.code);
             }
 
@@ -984,6 +943,7 @@ impl ShellSubprocess {
             // through the node arena so it survives `Vec<Node>` reallocation.
             // `&mut self` is dead by NLL before `on_exit` re-enters interp.
             let cmd = unsafe { handle.cmd_mut() };
+            cmd.base.interrupted |= interrupted;
             if cmd.exit_code.is_none() {
                 cmd.on_exit(code.into());
             }
@@ -1002,7 +962,7 @@ pub enum WritableInitError {
 }
 
 pub enum Writable {
-    Pipe(FileSinkPtr),
+    Pipe(RefPtr<FileSink>),
     Fd(Fd),
     Buffer(RefPtr<StaticPipeWriter>),
     Memfd(Fd),
@@ -1066,8 +1026,8 @@ impl Writable {
                         // subprocess.flags.has_stdin_destructor_called = false;
 
                         // SAFETY: `create_with_pipe` returns non-null with one
-                        // owned ref; `adopt` takes it over.
-                        return Ok(Writable::Pipe(unsafe { FileSinkPtr::adopt(pipe_ptr) }));
+                        // owned ref, taken over here.
+                        return Ok(Writable::Pipe(unsafe { RefPtr::from_raw(pipe_ptr) }));
                     }
                     return Ok(Writable::Inherit);
                 }
@@ -1090,14 +1050,6 @@ impl Writable {
                         subprocess,
                         result,
                         JscSubprocess::source_from_blob(blob),
-                    )));
-                }
-                Stdio::ArrayBuffer(array_buffer) => {
-                    return Ok(Writable::Buffer(StaticPipeWriter::create(
-                        event_loop,
-                        subprocess,
-                        result,
-                        JscSubprocess::source_from_array_buffer(core::mem::take(array_buffer)),
                     )));
                 }
                 Stdio::Fd(fd) => {
@@ -1153,12 +1105,6 @@ impl Writable {
                         JscSubprocess::source_from_blob(blob),
                     )))
                 }
-                Stdio::ArrayBuffer(array_buffer) => Ok(Writable::Buffer(StaticPipeWriter::create(
-                    event_loop,
-                    subprocess,
-                    result,
-                    JscSubprocess::source_from_array_buffer(core::mem::take(array_buffer)),
-                ))),
                 Stdio::Memfd(memfd) => {
                     debug_assert!(memfd.is_valid());
                     let fd = *memfd;
@@ -1196,12 +1142,14 @@ impl Writable {
                 // deref via drop-on-reassign
                 *self = Writable::Ignore;
             }
-            Writable::Buffer(buffer) => {
+            Writable::Buffer(_) => {
+                let Writable::Buffer(buffer) = core::mem::replace(self, Writable::Ignore) else {
+                    unreachable!()
+                };
                 // SAFETY: single-threaded; temporary `&mut` for the call only.
-                unsafe { buffer_mut(buffer) }.update_ref(false);
-                // Intentionally does NOT reassign `*self` — the variant tag is
-                // left as `Writable::Buffer`. RefPtr's Drop (on
-                // Subprocess teardown) handles the final deref.
+                unsafe { buffer_mut(&buffer) }.update_ref(false);
+                // `buffer` drops here with the variant already `Ignore`, so a
+                // re-entrant `on_close_io` from the writer's drop is a no-op.
             }
             Writable::Memfd(fd) => {
                 fd.close();
@@ -1289,6 +1237,7 @@ impl Readable {
     pub(crate) fn init(
         out_type: OutKind,
         stdio: Stdio,
+        redirect_buf: Option<jsc::PinnedArrayBuffer>,
         shellio: Option<Arc<IOWriter>>,
         event_loop: EventLoopHandle,
         process: *mut ShellSubprocess,
@@ -1299,8 +1248,12 @@ impl Readable {
     ) -> Readable {
         assert_stdio_result!(result);
 
-        // Note: `Stdio` impls Drop, so dispatch on `&mut` and `mem::take`
-        // Default-able payloads instead of partial moves (E0509).
+        debug_assert!(redirect_buf.is_none() || matches!(stdio, Stdio::Pipe | Stdio::Capture(_)));
+        let buffered_output = match redirect_buf {
+            Some(buf) => BufferedOutput::ArrayBuffer { buf, i: 0 },
+            None => BufferedOutput::default(),
+        };
+        // Note: `Stdio` impls Drop, so dispatch on `&mut` instead of partial moves (E0509).
         let mut stdio = stdio;
         #[cfg(windows)]
         {
@@ -1314,24 +1267,22 @@ impl Readable {
                 Stdio::Blob(_) => Readable::Ignore,
                 Stdio::Memfd(_) => Readable::Ignore,
                 Stdio::Pipe => Readable::Pipe(PipeReader::create(
-                    event_loop, process, result, None, out_type, interp,
+                    event_loop,
+                    process,
+                    result,
+                    None,
+                    buffered_output,
+                    out_type,
+                    interp,
                 )),
-                Stdio::ArrayBuffer(array_buffer) => {
-                    let mut pipe =
-                        PipeReader::create(event_loop, process, result, None, out_type, interp);
-                    // The Arc was just created by `PipeReader::create` and is
-                    // uniquely held (strong=1, weak=0) — `get_mut` is the
-                    // safe route to set `buffered_output` before it's shared.
-                    Arc::get_mut(&mut pipe)
-                        .expect("fresh PipeReader Arc")
-                        .buffered_output = BufferedOutput::ArrayBuffer {
-                        buf: core::mem::take(array_buffer),
-                        i: 0,
-                    };
-                    Readable::Pipe(pipe)
-                }
                 Stdio::Capture(_) => Readable::Pipe(PipeReader::create(
-                    event_loop, process, result, shellio, out_type, interp,
+                    event_loop,
+                    process,
+                    result,
+                    shellio,
+                    buffered_output,
+                    out_type,
+                    interp,
                 )),
                 Stdio::ReadableStream(_) => Readable::Ignore, // Shell doesn't use readable_stream
                 // The shell never uses this; rejected at i < 3 anyway.
@@ -1359,24 +1310,22 @@ impl Readable {
                     Readable::Memfd(fd)
                 }
                 Stdio::Pipe => Readable::Pipe(PipeReader::create(
-                    event_loop, process, result, None, out_type, interp,
+                    event_loop,
+                    process,
+                    result,
+                    None,
+                    buffered_output,
+                    out_type,
+                    interp,
                 )),
-                Stdio::ArrayBuffer(array_buffer) => {
-                    let mut pipe =
-                        PipeReader::create(event_loop, process, result, None, out_type, interp);
-                    // The Arc was just created by `PipeReader::create` and is
-                    // uniquely held (strong=1, weak=0) — `get_mut` is the safe
-                    // route to set `buffered_output` before it's shared.
-                    Arc::get_mut(&mut pipe)
-                        .expect("fresh PipeReader Arc")
-                        .buffered_output = BufferedOutput::ArrayBuffer {
-                        buf: core::mem::take(array_buffer),
-                        i: 0,
-                    };
-                    Readable::Pipe(pipe)
-                }
                 Stdio::Capture(_) => Readable::Pipe(PipeReader::create(
-                    event_loop, process, result, shellio, out_type, interp,
+                    event_loop,
+                    process,
+                    result,
+                    shellio,
+                    buffered_output,
+                    out_type,
+                    interp,
                 )),
                 Stdio::ReadableStream(_) => Readable::Ignore, // Shell doesn't use readable_stream
                 // The shell never uses this; rejected at i < 3 anyway.
@@ -1431,6 +1380,9 @@ pub struct SpawnArgs<'a> {
     pub(crate) env_array: Vec<*const c_char>,
     pub(crate) cwd: &'a [u8],
     pub(crate) stdio: [Stdio; 3],
+    /// `> ${arraybuffer}` redirect targets; the matching `stdio` slot is `Pipe`.
+    pub(crate) redirect_stdout: Option<jsc::PinnedArrayBuffer>,
+    pub(crate) redirect_stderr: Option<jsc::PinnedArrayBuffer>,
     pub(crate) lazy: bool,
     pub path: &'a [u8],
     // ipc_mode: IPCMode,
@@ -1452,6 +1404,8 @@ impl<'a> SpawnArgs<'a> {
             env_array: Vec::new(),
             cwd: event_loop.top_level_dir(),
             stdio: [Stdio::Ignore, Stdio::Pipe, Stdio::Inherit],
+            redirect_stdout: None,
+            redirect_stderr: None,
             lazy: false,
             // PATH unset → fall back to _PATH_DEFPATH on POSIX (Android often
             // has no PATH). PATH="" (explicit empty) is preserved — that's a
@@ -1556,10 +1510,7 @@ pub struct PipeReader {
 
 pub enum BufferedOutput {
     Bytelist(Vec<u8>),
-    ArrayBuffer {
-        buf: jsc::array_buffer::ArrayBufferStrong,
-        i: u32,
-    },
+    ArrayBuffer { buf: jsc::PinnedArrayBuffer, i: u32 },
 }
 
 impl Default for BufferedOutput {
@@ -1599,21 +1550,6 @@ impl BufferedOutput {
                 let length = (array_buf_slice.len() - idx).min(bytes.len());
                 array_buf_slice[idx..idx + length].copy_from_slice(&bytes[..length]);
                 *i += u32::try_from(length).expect("int cast");
-            }
-        }
-    }
-}
-
-impl Drop for BufferedOutput {
-    fn drop(&mut self) {
-        match self {
-            BufferedOutput::Bytelist(_b) => {
-                // Vec<u8> drops its own storage.
-            }
-            BufferedOutput::ArrayBuffer { buf, .. } => {
-                if !buf.array_buffer.value.is_empty() {
-                    buf.array_buffer.unpin();
-                }
             }
         }
     }
@@ -1786,6 +1722,7 @@ impl PipeReader {
         process: *mut ShellSubprocess,
         result: StdioResult,
         capture: Option<Arc<IOWriter>>,
+        buffered_output: BufferedOutput,
         out_type: OutKind,
         interp: *mut crate::shell::interpreter::Interpreter,
     ) -> Arc<PipeReader> {
@@ -1812,7 +1749,7 @@ impl PipeReader {
                 reader.set_source(bun_io::Source::File(bun_io::Source::open_file(fd)));
                 StdioResult::BufferFd(fd)
             }
-            StdioResult::Unavailable => panic!("Shouldn't happen."),
+            StdioResult::UnownedFd(_) | StdioResult::Unavailable => panic!("Shouldn't happen."),
         };
 
         // Allocate directly into the Arc so the address is stable BEFORE we
@@ -1834,7 +1771,7 @@ impl PipeReader {
             out_type,
             state: PipeReaderState::Pending,
             captured_writer,
-            buffered_output: BufferedOutput::default(),
+            buffered_output,
             interp,
         });
         let this_ptr: *mut PipeReader = Arc::as_ptr(&arc).cast_mut();

@@ -30,7 +30,7 @@ fn value_to_bytes(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Ve
     }
     if value.is_string() {
         return Ok(Some(
-            bun_core::String::from_js(value, global)?.to_utf8_bytes(),
+            bun_core::String::from_js(value, global)?.to_owned_slice(),
         ));
     }
     if let Some(buf) = value.as_array_buffer(global) {
@@ -116,7 +116,7 @@ impl TlsConfig {
             }
         }
         if let Some(v) = tls.get(global, "servername")?.filter(|v| v.is_string()) {
-            let mut bytes = bun_core::String::from_js(v, global)?.to_utf8_bytes();
+            let mut bytes = bun_core::String::from_js(v, global)?.to_owned_slice();
             bytes.push(0);
             config.servername = Some(bytes);
         }
@@ -148,10 +148,10 @@ impl TlsConfig {
             config.enable_early_data = v.to_boolean();
         }
         if let Some(v) = tls.get(global, "ciphers")?.filter(|v| v.is_string()) {
-            config.ciphers = Some(bun_core::String::from_js(v, global)?.to_utf8_bytes());
+            config.ciphers = Some(bun_core::String::from_js(v, global)?.to_owned_slice());
         }
         if let Some(v) = tls.get(global, "groups")?.filter(|v| v.is_string()) {
-            let mut bytes = bun_core::String::from_js(v, global)?.to_utf8_bytes();
+            let mut bytes = bun_core::String::from_js(v, global)?.to_owned_slice();
             bytes.push(0);
             config.groups = Some(bytes);
         }

@@ -277,8 +277,7 @@ impl MySQLQuery {
         columns_value: JSValue,
         binding_value: JSValue,
     ) -> crate::Result<()> {
-        let mut query_str: Option<bun_core::zig_string::Slice> = None;
-        // `defer if (query_str) |str| str.deinit()` — deleted: `Utf8Slice` impls `Drop`.
+        let mut query_str: Option<bun_core::Utf8Bytes<'_>> = None;
 
         if self.statement.is_null() {
             let query = self.query.to_utf8();
@@ -415,8 +414,7 @@ impl MySQLQuery {
         Ok(())
     }
 
-    /// Takes ownership of `query` (caller must have already ref'd it, e.g. via
-    /// `JSValue.toBunString`). `cleanup()` will deref it exactly once.
+    /// Takes ownership of `query`; `cleanup()` releases it.
     pub(crate) fn init(query: BunString, bigint: UseBigint, simple: SimpleQuery) -> Self {
         Self {
             statement: core::ptr::null_mut(),
@@ -489,10 +487,7 @@ impl MySQLQuery {
             // SAFETY: `s` is a live boxed `MySQLStatement` we held one intrusive ref on.
             unsafe { MySQLStatement::deref(s) };
         }
-        // `BunString` is `Copy` (no `Drop`); assigning `empty()` would NOT deref
-        // the old value, so release the +1 from `to_bun_string` explicitly.
-        let q = core::mem::replace(&mut self.query, BunString::empty());
-        q.deref();
+        self.query = BunString::EMPTY;
     }
 
     #[inline]

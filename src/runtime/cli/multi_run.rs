@@ -25,6 +25,7 @@ use crate::api::bun::process::{
     self as spawn, Process, Rusage, SpawnOptions, SpawnProcessResult, Status,
     event_loop_handle_to_ctx,
 };
+use bun_collections::index_sort;
 use bun_dotenv::Loader as DotEnvLoader;
 type OutputWriter = bun_core::io::Writer;
 
@@ -989,7 +990,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         }
 
         // Phase 2: Sort by package name, then by path as tiebreaker for deterministic ordering
-        matched_packages.sort_by(|a, b| {
+        index_sort::sort_slice_by(&mut matched_packages, |a, b| {
             let name_order = a.name.cmp(&b.name);
             if name_order != core::cmp::Ordering::Equal {
                 return name_order;
@@ -1008,7 +1009,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                             matches.push(key);
                         }
                     }
-                    matches.as_mut_slice().sort();
+                    index_sort::sort_slice_by(&mut matches, |a, b| a.cmp(b));
                     for matched_name in &matches {
                         add_script_configs(
                             &mut configs,
@@ -1099,7 +1100,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                     }
 
                     // Sort alphabetically
-                    matches.as_mut_slice().sort();
+                    index_sort::sort_slice_by(&mut matches, |a, b| a.cmp(b));
 
                     if matches.is_empty() {
                         bun_core::pretty_errorln!(

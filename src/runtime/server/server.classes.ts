@@ -229,10 +229,6 @@ export default [
       upgraded: {
         getter: "getUpgraded",
       },
-      // ontimeout: {
-      //   getter: "getOnTimeout",
-      //   setter: "setOnTimeout",
-      // },
       onwritable: {
         getter: "getOnWritable",
         setter: "setOnWritable",

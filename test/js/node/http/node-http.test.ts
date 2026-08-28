@@ -27,7 +27,7 @@ import type { AddressInfo } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { duplexPair, PassThrough, Writable } from "node:stream";
+import { Duplex, duplexPair, PassThrough, Writable } from "node:stream";
 import { connect as tlsConnect } from "node:tls";
 import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
@@ -158,6 +158,108 @@ describe("node:http", () => {
       });
       await promise;
       server.close();
+    });
+
+    // Like net.Server, http.Server reports the listen() result from process.nextTick, not a timer.
+    // No host argument: with one, Node resolves it through dns.lookup first, which adds a tick.
+    it("emits 'listening' on the next tick, before the event loop polls", async () => {
+      const server = createServer();
+      const order: string[] = [];
+      server.on("listening", () => order.push("listening"));
+      server.listen(0);
+      // The socket is bound when listen() returns, so the flag does not wait for the event.
+      const listeningAtOnce = server.listening;
+      process.nextTick(() => order.push("nextTick"));
+      await once(server, "listening");
+      server.close();
+      await once(server, "close");
+      expect({ order, listeningAtOnce }).toEqual({ order: ["listening", "nextTick"], listeningAtOnce: true });
+    });
+
+    it("emits a listen() error on the next tick, before the event loop polls", async () => {
+      const occupant = createServer();
+      occupant.listen(0);
+      await once(occupant, "listening");
+      const { port } = occupant.address() as AddressInfo;
+
+      const server = createServer();
+      const order: string[] = [];
+      server.on("error", (err: NodeJS.ErrnoException) => order.push("error:" + err.code));
+      server.listen(port);
+      const listeningAtOnce = server.listening;
+      process.nextTick(() => order.push("nextTick"));
+      await once(server, "error");
+      occupant.close();
+      await once(occupant, "close");
+      expect({ order, listeningAtOnce, listening: server.listening }).toEqual({
+        order: ["error:EADDRINUSE", "nextTick"],
+        listeningAtOnce: false,
+        listening: false,
+      });
+    });
+
+    // vite's port auto-increment (#27406): the callback of the failed listen() belongs to the
+    // server, not to that attempt, so the retry from the 'error' handler calls it.
+    it("calls the listen() callback after a retry from the EADDRINUSE 'error' handler", async () => {
+      const occupant = createServer();
+      occupant.listen(0);
+      await once(occupant, "listening");
+      const { port } = occupant.address() as AddressInfo;
+
+      const server = createServer();
+      const events: string[] = [];
+      server.on("error", (err: NodeJS.ErrnoException) => {
+        events.push("error:" + err.code);
+        server.listen(0);
+      });
+      // Not events.once(): it would reject on the expected 'error'.
+      const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+      server.listen(port, () => events.push("callback"));
+      server.on("listening", () => onListening());
+      await listening;
+      const address = server.address() as AddressInfo;
+      server.close();
+      occupant.close();
+      await Promise.all([once(server, "close"), once(occupant, "close")]);
+      expect({ events, retriedPort: address.port !== port }).toEqual({
+        events: ["error:EADDRINUSE", "callback"],
+        retriedPort: true,
+      });
+    });
+
+    // Node's server.close() completes the handle's uv_close() on the next loop turn, so a server
+    // listened and closed from a 'beforeExit' handler revives the loop once and 'beforeExit' fires
+    // again (upstream test-process-beforeexit, with net). 'listening' is a nextTick now, so the turn
+    // has to come from close() itself.
+    describe.each([
+      ["http", {}],
+      ["https", { key: tlsCert.key, cert: tlsCert.cert }],
+    ])("%s: closing a server listened from 'beforeExit'", (mod, options) => {
+      it("re-emits 'beforeExit'", async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+              const { createServer } = require(${JSON.stringify(mod)});
+              process.once("beforeExit", () => {
+                createServer(${JSON.stringify(options)})
+                  .listen(0)
+                  .on("listening", function () {
+                    this.close();
+                    process.once("beforeExit", () => console.log("beforeExit again"));
+                  });
+              });
+            `,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr }).toEqual({ stdout: "beforeExit again\n", stderr: "" });
+        expect(exitCode).toBe(0);
+      });
     });
 
     it("should use the provided port", async () => {
@@ -4137,5 +4239,57 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     await closed;
     expect(requestHandlerRan).toBe(false);
     expect(serverSide.destroyed).toBe(true);
+  }
+});
+
+// A TLS client that is mid-handshake when an https server with a 'clientError' listener is closed still
+// belongs to that server: once its handshake completes, a malformed request from it reaches 'clientError'
+// (as in Node). The connection used to go uncounted until the handshake finished, so close() considered the
+// server drained and released its wrapper — the dispatch was dropped, or under GC pressure went through freed
+// handler slots.
+test("https 'clientError' for a connection whose handshake completes after close()", async () => {
+  const events: string[] = [];
+  let server: https.Server | null = createHttpsServer(tlsCert, (req, res) => res.end("ok"));
+  server.on("clientError", (err: any, socket) => {
+    events.push("clientError " + (err.code || err.message));
+    socket.destroy();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+  const raw = connect(port, "127.0.0.1");
+  let client: ReturnType<typeof tlsConnect> | undefined;
+  try {
+    await once(raw, "connect");
+    // Client→server bytes flow; server→client bytes are held, so the server has answered the ClientHello and
+    // is waiting mid-handshake when close() runs.
+    let hold = true;
+    const held: Buffer[] = [];
+    const wire = new Duplex({
+      read() {},
+      write(chunk, enc, cb) {
+        raw.write(chunk, cb);
+      },
+    });
+    raw.on("data", d => (hold ? held.push(d) : wire.push(d)));
+    raw.on("close", () => wire.push(null));
+    const c = (client = tlsConnect({ socket: wire, rejectUnauthorized: false }));
+    c.on("error", () => {});
+    for (const t = Date.now(); held.length === 0 && Date.now() - t < 10_000; ) await Bun.sleep(5);
+    expect(held.length).toBeGreaterThan(0);
+
+    const closed = new Promise<void>(r => server!.close(() => r()));
+    server = null;
+    Bun.gc(true);
+
+    hold = false;
+    for (const d of held) wire.push(d);
+    c.write("NOT A VALID REQUEST LINE\r\n\r\n");
+    await new Promise<void>(res => (c.on("data", () => {}), c.on("end", () => res()), c.on("close", () => res())));
+    expect(events).toEqual([expect.stringMatching(/^clientError HPE_INVALID/)]);
+    await closed;
+  } finally {
+    server?.close();
+    client?.destroy();
+    raw.destroy();
   }
 });

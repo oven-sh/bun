@@ -13,25 +13,12 @@ pub const MAX_WBITS: c_int = 15;
 unsafe extern "C" {
     pub safe fn zlibVersion() -> *const c_char;
 
-    pub fn compress(
-        dest: *mut Bytef,
-        dest_len: *mut uLongf,
-        source: *const Bytef,
-        source_len: uLong,
-    ) -> c_int;
     pub fn compress2(
         dest: *mut Bytef,
         dest_len: *mut uLongf,
         source: *const Bytef,
         source_len: uLong,
         level: c_int,
-    ) -> c_int;
-    pub safe fn compressBound(source_len: uLong) -> uLong;
-    pub fn uncompress(
-        dest: *mut Bytef,
-        dest_len: *mut uLongf,
-        source: *const Bytef,
-        source_len: uLong,
     ) -> c_int;
 }
 
@@ -40,8 +27,7 @@ pub use bun_zlib_sys::shared::{Bytef, uInt, uLong, uLongf};
 // typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));
 // typedef void   (*free_func)  OF((voidpf opaque, voidpf address));
 
-pub use crate::internal::z_stream;
-pub use crate::internal::z_streamp;
+pub use bun_zlib_sys::shared::{z_stream, z_streamp};
 
 // typedef struct z_stream_s {
 //     z_const Bytef *next_in;  /* next input byte */
@@ -65,18 +51,13 @@ pub use crate::internal::z_streamp;
 //     uLong   reserved;   /* reserved for future use */
 // } z_stream;
 
-pub use crate::internal::FlushValue;
-pub use crate::internal::ReturnCode;
+pub use bun_zlib_sys::shared::{FlushValue, ReturnCode};
 
-use crate::internal::{DataType, zStream_struct};
+use bun_zlib_sys::shared::{DataType, zStream_struct};
 
 // ZEXTERN int ZEXPORT inflateInit OF((z_streamp strm));
 
 unsafe extern "C" {
-    /// Initializes the internal stream state for decompression. The fields next_in, avail_in, zalloc, zfree and opaque must be initialized before by the caller. In the current version of inflate, the provided input is not read or consumed. The allocation of a sliding window will be deferred to the first call of inflate (if the decompression does not complete on the first call). If zalloc and zfree are set to Z_NULL, inflateInit updates them to use default allocation functions.
-    ///
-    /// inflateInit returns Z_OK if success, Z_MEM_ERROR if there was not enough memory, Z_VERSION_ERROR if the zlib library version is incompatible with the version assumed by the caller, or Z_STREAM_ERROR if the parameters are invalid, such as a null pointer to the structure. msg is set to null if there is no error message. inflateInit does not perform any decompression. Actual decompression will be done by inflate(). So next_in, and avail_in, next_out, and avail_out are unused and unchanged. The current implementation of inflateInit() does not process any header information—that is deferred until inflate() is called.
-    pub fn inflateInit_(strm: z_streamp, version: *const u8, stream_size: c_int) -> ReturnCode;
     pub fn inflateInit2_(
         strm: z_streamp,
         window_size: c_int,
@@ -165,18 +146,15 @@ pub enum ZlibError {
 
 bun_core::impl_tag_error!(ZlibError);
 
-// zlib `alloc_func`/`free_func` thunks → mimalloc. Shared by `ZlibReader` and
-// `ZlibCompressorArrayList`. Intentionally
-// `mi_malloc`, NOT `mi_calloc` (see `ZlibAllocator::alloc` for the zeroing
-// heap-breakdown variant used by `ZlibReaderArrayList`).
 pub(crate) use bun_alloc::c_thunks::{
     mi_free_opaque as zlib_mi_free, mi_malloc_items as zlib_mi_malloc,
 };
 
+// zlib `alloc_func`/`free_func` thunks tagged with the "zlib" heap-breakdown zone.
 #[allow(non_snake_case)]
 mod ZlibAllocator {
     bun_alloc::c_thunks_for_zone!("zlib");
-    pub(crate) use calloc_items as alloc;
+    pub(crate) use malloc_items as alloc;
 }
 
 pub struct ZlibReaderArrayList<'a> {
@@ -335,11 +313,16 @@ impl<'a> ZlibReaderArrayList<'a> {
                         self.state = ZlibReaderArrayListState::Error;
                         return Err(ZlibError::ZlibError);
                     }
+                    if self
+                        .list_ptr
+                        .try_reserve(remaining_budget.min(4096))
+                        .is_err()
+                    {
+                        self.state = ZlibReaderArrayListState::Error;
+                        return Err(ZlibError::OutOfMemory);
+                    }
                     // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
-                    let (next_out, avail_out) = unsafe {
-                        self.list_ptr
-                            .reserve_expand_tail(remaining_budget.min(4096))
-                    };
+                    let (next_out, avail_out) = unsafe { self.list_ptr.reserve_expand_tail(0) };
                     self.zlib.next_out = next_out;
                     // Clamp so a single inflate call cannot write past `max_output_size`.
                     self.zlib.avail_out = avail_out.min(remaining_budget) as uInt;
@@ -387,7 +370,6 @@ impl<'a> ZlibReaderArrayList<'a> {
             Ok(())
         })();
 
-        // defer epilogue (runs unconditionally):
         let total_out = self.zlib.total_out as usize;
         if self.list_ptr.len() > total_out {
             self.list_ptr.truncate(total_out);
@@ -424,31 +406,6 @@ impl Default for Options {
 }
 
 unsafe extern "C" {
-    ///
-    ///     Initializes the internal stream state for compression.  The fields
-    ///   zalloc, zfree and opaque must be initialized before by the caller.  If
-    ///   zalloc and zfree are set to Z_NULL, deflateInit updates them to use default
-    ///   allocation functions.
-    ///
-    ///     The compression level must be Z_DEFAULT_COMPRESSION, or between 0 and 9:
-    ///   1 gives best speed, 9 gives best compression, 0 gives no compression at all
-    ///   (the input data is simply copied a block at a time).  Z_DEFAULT_COMPRESSION
-    ///   requests a default compromise between speed and compression (currently
-    ///   equivalent to level 6).
-    ///
-    ///     deflateInit returns Z_OK if success, Z_MEM_ERROR if there was not enough
-    ///   memory, Z_STREAM_ERROR if level is not a valid compression level, or
-    ///   Z_VERSION_ERROR if the zlib library version (zlib_version) is incompatible
-    ///   with the version assumed by the caller (ZLIB_VERSION).  msg is set to null
-    ///   if there is no error message.  deflateInit does not perform any compression:
-    ///   this will be done by deflate().
-    pub fn deflateInit_(
-        strm: z_streamp,
-        level: c_int,
-        version: *const c_char,
-        stream_size: c_int,
-    ) -> ReturnCode;
-
     ///
     ///    deflate compresses as much data as possible, and stops when the input
     ///  buffer becomes empty or the output buffer becomes full.  It may introduce
@@ -780,9 +737,11 @@ impl<'a> ZlibCompressorArrayList<'a> {
                         uLong::try_from(input.len()).expect("int cast"),
                     )
                 };
-                // ensureTotalCapacityPrecise → reserve_exact
                 let need = (bound as usize).saturating_sub(zlib_reader.list_ptr.len());
-                zlib_reader.list_ptr.reserve_exact(need);
+                if zlib_reader.list_ptr.try_reserve_exact(need).is_err() {
+                    drop(zlib_reader);
+                    return Err(ZlibError::OutOfMemory);
+                }
                 zlib_reader.zlib.avail_out = zlib_reader.list_ptr.capacity() as uInt;
                 zlib_reader.zlib.next_out = zlib_reader.list_ptr.as_mut_ptr();
 
@@ -846,8 +805,13 @@ impl<'a> ZlibCompressorArrayList<'a> {
                 //   flush parameter).
 
                 if self.zlib.avail_out == 0 {
+                    if self.list_ptr.try_reserve(4096).is_err() {
+                        self.end();
+                        self.state = ZlibCompressorArrayListState::Error;
+                        return Err(ZlibError::OutOfMemory);
+                    }
                     // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
-                    let (next_out, avail_out) = unsafe { self.list_ptr.reserve_expand_tail(4096) };
+                    let (next_out, avail_out) = unsafe { self.list_ptr.reserve_expand_tail(0) };
                     self.zlib.next_out = next_out;
                     self.zlib.avail_out = avail_out as uInt;
                 }
@@ -966,7 +930,7 @@ impl DeflateEncoder {
     /// spare, calls `deflate(flush)`, and advances `out.len()` by the bytes
     /// produced. Returns `(bytes_consumed_from_input, return_code)`. Inputs
     /// larger than `u32::MAX` are clamped; callers loop and advance `input`
-    /// by `consumed`.
+    /// by `consumed`. A failed growth of `out` is `MemError` with nothing consumed.
     pub fn step(
         &mut self,
         input: &[u8],
@@ -1180,11 +1144,14 @@ fn step(
     flush: FlushValue,
     op: unsafe extern "C" fn(*mut zStream_struct, FlushValue) -> ReturnCode,
 ) -> (usize, ReturnCode) {
+    if out.try_reserve(reserve).is_err() {
+        return (0, ReturnCode::MemError);
+    }
+
     let in_len = input.len().min(u32::MAX as usize);
     strm.next_in = input.as_ptr();
     strm.avail_in = in_len as uInt;
 
-    out.reserve(reserve);
     let spare = out.spare_capacity_mut();
     let out_len = spare.len().min(u32::MAX as usize);
     strm.next_out = spare.as_mut_ptr().cast::<u8>();
@@ -1200,16 +1167,4 @@ fn step(
     unsafe { bun_core::vec::commit_spare(out, produced) };
     let consumed = in_len - strm.avail_in as usize;
     (consumed, rc)
-}
-
-// Re-export from bun_zlib_sys, platform-selected.
-mod internal {
-    #[cfg(not(windows))]
-    pub(super) use bun_zlib_sys::posix::{DataType, zStream_struct};
-    #[cfg(not(windows))]
-    pub use bun_zlib_sys::posix::{FlushValue, ReturnCode, z_stream, z_streamp};
-    #[cfg(windows)]
-    pub(super) use bun_zlib_sys::win32::{DataType, zStream_struct};
-    #[cfg(windows)]
-    pub use bun_zlib_sys::win32::{FlushValue, ReturnCode, z_stream, z_streamp};
 }

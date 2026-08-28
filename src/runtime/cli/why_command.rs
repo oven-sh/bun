@@ -16,6 +16,7 @@ use bun_semver as semver;
 
 use crate::command;
 use crate::package_manager_command::PackageManagerCommand;
+use bun_collections::index_sort;
 
 pub(crate) struct WhyCommand;
 
@@ -498,7 +499,7 @@ impl WhyCommand {
                     // Clone the slice so it can be sorted while `ctx_data`
                     // still borrows `all_dependents`.
                     let mut sorted: Vec<DependentInfo> = dependents.clone();
-                    sorted.sort_by(cmp_dependents);
+                    index_sort::sort_slice_by(&mut sorted, cmp_dependents);
 
                     let mut ctx_data = TreeContext::init(&all_dependents);
 
@@ -613,7 +614,7 @@ fn print_dependency_tree(
 
     if let Some(dependents) = ctx.all_dependents.get(&current_pkg_id) {
         let mut sorted_dependents: Vec<DependentInfo> = dependents.clone();
-        sorted_dependents.sort_by(cmp_dependents);
+        index_sort::sort_slice_by(&mut sorted_dependents, cmp_dependents);
 
         let len = sorted_dependents.len();
         for (dep_idx, dep) in sorted_dependents.iter().enumerate() {

@@ -210,6 +210,26 @@ impl WindowsNamedPipe {
         }
     }
 
+    /// Holds a ref on the owning context until the returned guard drops.
+    ///
+    /// The context frees itself from a task it queues when [`on_close`] releases
+    /// the connection's ref. A handler can close the socket and then spin the
+    /// event loop before it returns (`expect().resolves` blocks on a promise
+    /// that way), which runs that task. A callback that uses `self` after it
+    /// dispatched to a handler holds this guard, so the free waits until the
+    /// callback is done. The writer does the same around an in-flight write,
+    /// and `connect`/`open` around the connect.
+    ///
+    /// Only for paths that cannot run after `on_close` released the
+    /// connection's ref (reads stop and the wrapper goes away in
+    /// `release_resources`): a ref taken at zero would queue the free twice.
+    ///
+    /// [`on_close`]: Self::on_close
+    fn keep_alive(&self) -> impl Drop + '_ {
+        self.r#ref();
+        scopeguard::guard(self, |this| this.deref())
+    }
+
     fn on_writable(&self) {
         bun_output::scoped_log!(WindowsNamedPipe, "onWritable");
         // flush pending data
@@ -221,6 +241,7 @@ impl WindowsNamedPipe {
     #[cfg(windows)]
     fn on_read(&self, nread: usize) {
         bun_output::scoped_log!(WindowsNamedPipe, "onRead ({})", nread);
+        let _keep_alive = self.keep_alive();
         // SAFETY: `nread` bytes written by libuv into on_read_alloc's slice.
         self.incoming
             .with_mut(|incoming| unsafe { incoming.uv_commit(nread) });
@@ -299,6 +320,7 @@ impl WindowsNamedPipe {
     #[cfg(windows)]
     fn on_read_error(&self, err: bun_sys::E) {
         bun_output::scoped_log!(WindowsNamedPipe, "onReadError");
+        let _keep_alive = self.keep_alive();
         // `E::EOF` only exists in the Windows errno table (libuv UV_EOF mapping);
         // this type is Windows-only at runtime so the comparison is gated.
         #[cfg(windows)]
@@ -314,6 +336,7 @@ impl WindowsNamedPipe {
 
     fn on_error(&self, err: bun_sys::Error) {
         bun_output::scoped_log!(WindowsNamedPipe, "onError");
+        let _keep_alive = self.keep_alive();
         (self.handlers.on_error)(self.handlers.ctx, err);
         self.close();
     }
@@ -387,6 +410,7 @@ impl WindowsNamedPipe {
 
     fn on_handshake(&self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
         bun_output::scoped_log!(WindowsNamedPipe, "onHandshake");
+        let _keep_alive = self.keep_alive();
 
         self.ssl_error.set(CertError {
             error_no: ssl_error.error_no,
@@ -400,6 +424,10 @@ impl WindowsNamedPipe {
                 .map(Into::into),
         });
         (self.handlers.on_handshake)(self.handlers.ctx, handshake_success, ssl_error);
+        // Retry writes parked during the handshake; a TLS 1.2 client's completion sends nothing.
+        if handshake_success && !self.is_shutdown() {
+            (self.handlers.on_writable)(self.handlers.ctx);
+        }
     }
 
     fn on_close(&self) {
@@ -588,15 +616,16 @@ impl WindowsNamedPipe {
         }
 
         if let Some(err) = status.to_error(bun_sys::Tag::connect) {
-            // On async connect failure the
-            // leaked `Box<uv::Pipe>` was never adopted by `writer.source`
-            // (`start_with_pipe` only runs on the success branch below), so
-            // `on_error → close → writer.end()` is a no-op for it. Reclaim it
-            // here via `discard_unadopted_pipe` (which schedules `uv_close` and
-            // `Box::from_raw`s in the callback), mirroring the synchronous
-            // early-error paths in `connect`/`open`/`get_accepted_by`.
+            // The writer never adopted the pipe (`start_with_pipe` only runs on
+            // the success branch below), so `on_error → close → writer.end()`
+            // has no source to close: it neither frees the pipe nor reports
+            // `on_close`. Do both here. `discard_unadopted_pipe` schedules the
+            // `uv_close` that frees the `Box`, like the synchronous early-error
+            // paths in `connect`/`open`/`get_accepted_by`, and `on_close` is
+            // what makes the owner (`handlers.on_close`) release its ref.
             self.discard_unadopted_pipe();
             self.on_error(err);
+            self.on_close();
             self.deref();
             return;
         }
@@ -623,6 +652,7 @@ impl WindowsNamedPipe {
     ) -> bun_sys::Result<()> {
         #[cfg(windows)]
         debug_assert!(self.pipe.get().is_some());
+        let _keep_alive = self.keep_alive();
         self.update_flags(|f| f.set(Flags::DISCONNECTED, true));
 
         if let Some(tls) = ssl_ctx {

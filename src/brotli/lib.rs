@@ -121,7 +121,10 @@ impl StreamingDecoder {
             self.state,
             ReaderState::Uninitialized | ReaderState::Inflating
         ) {
-            out.reserve(4096);
+            if out.try_reserve(4096).is_err() {
+                self.state = ReaderState::Error;
+                return Err(crate::Error::OutOfMemory);
+            }
             let spare = out.spare_capacity_mut();
             let out_len = spare.len();
             let mut next_out: *mut u8 = spare.as_mut_ptr().cast::<u8>();
@@ -161,7 +164,13 @@ impl StreamingDecoder {
                 }
                 c::BrotliDecoderResult::err => {
                     self.state = ReaderState::Error;
-                    return Err(crate::Error::BrotliDecompressionError);
+                    return Err(
+                        if c::BrotliDecoderGetErrorCode(self.brotli_mut()).is_alloc_failure() {
+                            crate::Error::OutOfMemory
+                        } else {
+                            crate::Error::BrotliDecompressionError
+                        },
+                    );
                 }
                 c::BrotliDecoderResult::needs_more_input => {
                     self.state = ReaderState::Inflating;
@@ -220,4 +229,36 @@ pub fn encode(
         )
     };
     (ok != 0).then_some(out_len)
+}
+
+/// [`encode`] into `out`'s spare capacity (callers reserve the bound first), advancing `out.len()`.
+pub fn encode_append(
+    quality: core::ffi::c_int,
+    lgwin: core::ffi::c_int,
+    mode: c::BrotliEncoderMode,
+    input: &[u8],
+    out: &mut Vec<u8>,
+) -> Option<usize> {
+    let spare = out.spare_capacity_mut();
+    let mut out_len = spare.len();
+    // SAFETY: input/spare are valid for their lengths; BrotliEncoderCompress
+    // only reads `input` and writes at most `out_len` bytes into spare,
+    // updating `out_len` to the number written.
+    let ok = unsafe {
+        c::BrotliEncoderCompress(
+            quality,
+            lgwin,
+            mode,
+            input.len(),
+            input.as_ptr(),
+            &raw mut out_len,
+            spare.as_mut_ptr().cast::<u8>(),
+        )
+    };
+    if ok == 0 {
+        return None;
+    }
+    // SAFETY: brotli initialized the first `out_len` bytes of spare.
+    unsafe { bun_core::vec::commit_spare(out, out_len) };
+    Some(out_len)
 }

@@ -732,8 +732,6 @@ impl bun_collections::PriorityCompare<DependencyID> for PriorityQueueContext {
 // Min-heap keyed by `PriorityQueueContext::less_than` (string-order of dep names).
 pub(crate) type PriorityQueue = bun_collections::PriorityQueue<DependencyID, PriorityQueueContext>;
 
-// `inherent_associated_types` is unstable, so callers use `Bin::PriorityQueueContext`.
-
 // https://github.com/npm/npm-normalize-package-bin/blob/574e6d7cd21b2f3dee28a216ec2053c2551f7af9/lib/index.js#L38
 fn normalized_bin_name(name: &[u8]) -> &[u8] {
     let name = match strings::last_index_of_any(name, b"/\\:") {
@@ -1527,18 +1525,23 @@ impl<'a> Linker<'a> {
         resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target])
     }
 
-    /// uses `self.abs_target_buf`
-    pub(crate) fn build_target_package_dir(&mut self) -> &[u8] {
+    /// Length of `<node_modules>/<package>/` in `abs_target_buf`, `None` if a NUL no longer fits.
+    pub(crate) fn build_target_package_dir(&mut self) -> Option<usize> {
         // SAFETY: `target_node_modules_path` is set at construction to either
         // a caller-owned `AbsPath` or the same buffer as `node_modules_path`;
         // both outlive `self` and are not mutated for the duration of this
         // read.
         let dest_dir_without_trailing_slash =
             strings::without_trailing_slash(unsafe { (*self.target_node_modules_path).slice() });
+        let package_name = self.target_package_name.slice();
+
+        let buf = &mut *self.abs_target_buf;
+        if dest_dir_without_trailing_slash.len() + 1 + package_name.len() + 1 >= buf.len() {
+            return None;
+        }
 
         // reshaped for borrowck — track offset instead of remain.ptr arithmetic
         let mut off: usize = 0;
-        let buf = &mut *self.abs_target_buf;
 
         buf[off..off + dest_dir_without_trailing_slash.len()]
             .copy_from_slice(dest_dir_without_trailing_slash);
@@ -1546,52 +1549,58 @@ impl<'a> Linker<'a> {
         buf[off] = SEP;
         off += 1;
 
-        let package_name = self.target_package_name.slice();
         buf[off..off + package_name.len()].copy_from_slice(package_name);
         off += package_name.len();
         buf[off] = SEP;
         off += 1;
 
-        &self.abs_target_buf[0..off]
+        Some(off)
     }
 
-    /// Returns the offset into `self.abs_dest_buf` where the destination dir ends
-    /// (i.e. where the bin name should be written).
-    // Returning an offset (rather than a slice into abs_dest_buf) avoids
-    // overlapping &mut borrows of self.
-    pub(crate) fn build_destination_dir(&mut self, global: Scope) -> usize {
-        let dest_dir_without_trailing_slash =
-            strings::without_trailing_slash(self.node_modules_path.slice());
+    /// Length of the `.bin/` (or global bin) dir in `abs_dest_buf`, `None` if a NUL no longer fits.
+    pub(crate) fn build_destination_dir(&mut self, global: Scope) -> Option<usize> {
+        let dest_dir_without_trailing_slash = if global == Scope::Global {
+            strings::without_trailing_slash(self.global_bin_path.as_bytes())
+        } else {
+            strings::without_trailing_slash(self.node_modules_path.slice())
+        };
+        let suffix_len = if global == Scope::Global {
+            b"/".len()
+        } else {
+            b"/.bin/".len()
+        };
 
         let buf = &mut *self.abs_dest_buf;
-        let mut off: usize = 0;
-        if global == Scope::Global {
-            let global_bin_path_without_trailing_slash =
-                strings::without_trailing_slash(self.global_bin_path.as_bytes());
-            buf[off..off + global_bin_path_without_trailing_slash.len()]
-                .copy_from_slice(global_bin_path_without_trailing_slash);
-            off += global_bin_path_without_trailing_slash.len();
-            buf[off] = SEP;
-            off += 1;
-        } else {
-            buf[off..off + dest_dir_without_trailing_slash.len()]
-                .copy_from_slice(dest_dir_without_trailing_slash);
-            off += dest_dir_without_trailing_slash.len();
-            // sep_str ++ ".bin" ++ sep_str
-            buf[off] = SEP;
-            buf[off + 1..off + 1 + b".bin".len()].copy_from_slice(b".bin");
-            buf[off + 1 + b".bin".len()] = SEP;
-            off += b"/.bin/".len();
+        if dest_dir_without_trailing_slash.len() + suffix_len >= buf.len() {
+            return None;
         }
 
-        off
+        let mut off: usize = 0;
+        buf[off..off + dest_dir_without_trailing_slash.len()]
+            .copy_from_slice(dest_dir_without_trailing_slash);
+        off += dest_dir_without_trailing_slash.len();
+        buf[off] = SEP;
+        off += 1;
+        if global == Scope::Local {
+            buf[off..off + b".bin".len()].copy_from_slice(b".bin");
+            off += b".bin".len();
+            buf[off] = SEP;
+            off += 1;
+        }
+
+        Some(off)
     }
 
     // target: what the symlink points to
     // destination: where the symlink exists on disk
     pub fn link(&mut self, global: Scope) {
-        let package_dir_len = self.build_target_package_dir().len();
-        let mut dest_off = self.build_destination_dir(global);
+        let (Some(package_dir_len), Some(mut dest_off)) = (
+            self.build_target_package_dir(),
+            self.build_destination_dir(global),
+        ) else {
+            self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+            return;
+        };
         let is_redirect = self.is_native_binlink_redirect();
 
         debug_assert!(self.bin.tag != Tag::None);
@@ -1858,8 +1867,13 @@ impl<'a> Linker<'a> {
     }
 
     pub fn unlink(&mut self, global: Scope) {
-        let package_dir_len = self.build_target_package_dir().len();
-        let mut dest_off = self.build_destination_dir(global);
+        let (Some(package_dir_len), Some(mut dest_off)) = (
+            self.build_target_package_dir(),
+            self.build_destination_dir(global),
+        ) else {
+            self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+            return;
+        };
 
         debug_assert!(self.bin.tag != Tag::None);
 

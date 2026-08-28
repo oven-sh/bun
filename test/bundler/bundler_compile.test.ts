@@ -536,6 +536,36 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!", setCwd: true },
   });
+  itBundled("compile/EmbeddedFileNamesPerThread", {
+    compile: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import { isMainThread, Worker } from "node:worker_threads";
+        import "./asset.file";
+        import txt from "./t.txt" with { type: "text" };
+        function probe() {
+          const f = [...Bun.embeddedFiles][0];
+          const p = {};
+          p[f.name] = 1;
+          const o = {};
+          o[txt] = 1;
+          return p[f.name.split("").join("")] + " " + o[["embedded", "text", "module"].join("-")];
+        }
+        console.log(probe());
+        if (isMainThread) {
+          const w = new Worker(new URL(import.meta.url));
+          await new Promise(resolve => w.on("exit", resolve));
+          Bun.gc(true);
+          console.log(probe());
+        }
+      `,
+      "/asset.file": "abcd",
+      "/t.txt": "embedded-text-module",
+    },
+    outfile: "dist/out",
+    run: { stdout: "1 1\n1 1\n1 1", setCwd: true },
+  });
   itBundled("compile/Bun.isStandaloneExecutable", {
     compile: true,
     assetNaming: "[name].[ext]",
@@ -910,6 +940,150 @@ describe("bundler", () => {
       })(),
     },
     run: { stdout: "Hello, world!", setCwd: true },
+  });
+
+  // A text import in a compiled executable is embedded as a string body
+  // (8-bit when ASCII, UTF-16LE otherwise) that the runtime hands back without
+  // a parse or a copy, instead of a JS module with a string literal. The same source also checks `require()`, `import()`, and that
+  // `Bun.embeddedFiles` keeps listing only real assets.
+  // Buffers: `files` strings go through dedent(), which would trim them.
+  const textImportFiles = {
+    "/ascii.txt": Buffer.from("hello world\nline 2\n"),
+    "/latin1.txt": Buffer.from("caf\u00e9 na\u00efve\n"),
+    "/wide.txt": Buffer.from("em \u2014 dash \u{1F600} emoji \u65e5\u672c\n"),
+    "/empty.txt": Buffer.alloc(0),
+    "/invalid.txt": Buffer.from([0x62, 0x61, 0x64, 0x20, 0xff, 0xfe, 0x20, 0xc3, 0x28, 0x0a]),
+    "/doc.md": Buffer.from("# Title\n\nsome *markdown* \u2014 with dash\n"),
+    "/asset.file": "abcd",
+  };
+  const textImportEntry = /* js */ `
+    import ascii from "./ascii.txt";
+    import latin1 from "./latin1.txt";
+    import wide from "./wide.txt";
+    import empty from "./empty.txt";
+    import invalid from "./invalid.txt";
+    import doc from "./doc.md";
+    import asset from "./asset.file" with { type: "file" };
+    import { readdirSync, readFileSync } from "node:fs";
+    import { dirname, join } from "node:path";
+
+    // No top-level await: the bytecode variant is CommonJS output.
+    async function main() {
+      // The embedded root. \`import.meta.dir\` is inlined at build time in CommonJS output.
+      const root = dirname(Bun.main);
+      const expected = {
+        ascii: "hello world\\nline 2\\n",
+        latin1: "caf\\u00e9 na\\u00efve\\n",
+        wide: "em \\u2014 dash \\u{1F600} emoji \\u65e5\\u672c\\n",
+        empty: "",
+        // Invalid UTF-8 decodes like TextDecoder: one U+FFFD per bad byte.
+        invalid: "bad \\ufffd\\ufffd \\ufffd(\\n",
+        doc: "# Title\\n\\nsome *markdown* \\u2014 with dash\\n",
+      };
+      const actual = { ascii, latin1, wide, empty, invalid, doc };
+      for (const [name, value] of Object.entries(actual)) {
+        if (typeof value !== "string") throw new Error(name + " is a " + typeof value);
+        if (value !== expected[name]) throw new Error(name + " mismatch: " + JSON.stringify(value));
+      }
+      if (require("./ascii.txt") !== ascii) throw new Error("require() returned " + JSON.stringify(require("./ascii.txt")));
+      if ((await import("./wide.txt")).default !== wide) throw new Error("import() mismatch");
+
+      // Text modules are not assets; only the file loader import is listed.
+      const embedded = Bun.embeddedFiles.map(blob => blob.name);
+      if (embedded.length !== 1 || !embedded[0].startsWith("asset-")) throw new Error("embeddedFiles: " + embedded);
+      if ((await Bun.file(asset).text()) !== "abcd") throw new Error("asset: " + asset);
+
+      // The embedded bytes are the string body itself.
+      const encoded = {
+        "ascii.txt": Buffer.from(expected.ascii, "latin1"),
+        "latin1.txt": Buffer.from(expected.latin1, "utf16le"),
+        "wide.txt": Buffer.from(expected.wide, "utf16le"),
+        "empty.txt": Buffer.alloc(0),
+        "invalid.txt": Buffer.from(expected.invalid, "utf16le"),
+        "doc.md": Buffer.from(expected.doc, "utf16le"),
+      };
+      const embeddedNames = readdirSync(root);
+      for (const [name, bytes] of Object.entries(encoded)) {
+        const [base, ext] = name.split(".");
+        const file = embeddedNames.find(entry => entry.startsWith(base + "-") && entry.endsWith("." + ext));
+        if (!file) throw new Error("no embedded module for " + name + " in " + JSON.stringify(embeddedNames));
+        const got = readFileSync(join(root, file));
+        if (!got.equals(bytes)) throw new Error(name + ": " + got.toString("hex") + " != " + bytes.toString("hex"));
+      }
+      console.log("PASS");
+    }
+    main();
+  `;
+  for (const [suffix, options] of [
+    ["", {}],
+    ["Bytecode", { bytecode: true }],
+    ["BytecodeESM", { bytecode: true, format: "esm" }],
+  ] as const) {
+    itBundled(`compile/TextImport${suffix}`, {
+      compile: true,
+      ...options,
+      loader: { ".md": "text" },
+      files: { "/entry.ts": textImportEntry, ...textImportFiles },
+      run: { stdout: "PASS" },
+    });
+  }
+
+  // Text modules keep their own `[name]-[hash]` path: a user `--asset-naming`
+  // without `[hash]` must not make two same-named text files share one path.
+  itBundled("compile/TextImportSameBasename", {
+    compile: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import a from "./a/readme.txt";
+        import b from "./b/readme.txt";
+        import sameA from "./a/same.txt";
+        import sameB from "./b/same.txt";
+        import icon from "./a/icon.file" with { type: "file" };
+        console.log(JSON.stringify({ a, b, sameA, sameB, icon: await Bun.file(icon).text() }));
+      `,
+      "/a/readme.txt": "from a",
+      "/b/readme.txt": "from b",
+      "/a/same.txt": "same",
+      "/b/same.txt": "same",
+      "/a/icon.file": "icon",
+    },
+    run: { stdout: JSON.stringify({ a: "from a", b: "from b", sameA: "same", sameB: "same", icon: "icon" }) },
+  });
+
+  // A browser chunk of a full-stack executable cannot reach the embedded
+  // module graph, so its text imports stay inline string literals.
+  itBundled("compile/TextImportClientChunkStaysInline", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import index from "./index.html";
+        import note from "./note.txt";
+        using server = Bun.serve({ port: 0, routes: { "/": index } });
+        const html = await (await fetch(server.url)).text();
+        const src = html.match(/<script[^>]*src="([^"]+)"/)[1];
+        const js = await (await fetch(new URL(src, server.url))).text();
+        console.log(JSON.stringify({
+          server: note,
+          clientHasLiteral: js.includes("client sees the text"),
+          clientHasBunfs: js.includes("$bunfs"),
+        }));
+      `,
+      "/index.html": /* html */ `
+        <!DOCTYPE html>
+        <html>
+          <body>
+            <script type="module" src="./app.ts"></script>
+          </body>
+        </html>
+      `,
+      "/app.ts": /* js */ `
+        import note from "./note.txt";
+        document.body.textContent = note;
+      `,
+      "/note.txt": "client sees the text",
+    },
+    run: { stdout: JSON.stringify({ server: "client sees the text", clientHasLiteral: true, clientHasBunfs: false }) },
   });
   itBundled("compile/Utf8", {
     compile: true,

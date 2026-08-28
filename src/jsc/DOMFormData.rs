@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 
 use crate::{JSGlobalObject, JSValue, JsResult};
-use bun_core::ZigString;
+use bun_core::EncodedSlice;
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle to WebCore::DOMFormData (C++ side).
@@ -12,25 +12,25 @@ unsafe extern "C" {
     safe fn WebCore__DOMFormData__create(arg0: &JSGlobalObject) -> JSValue;
     safe fn WebCore__DOMFormData__createFromURLQuery(
         arg0: &JSGlobalObject,
-        arg1: &ZigString,
+        arg1: &EncodedSlice,
     ) -> JSValue;
     safe fn WebCore__DOMFormData__fromJS(js_value0: JSValue) -> *mut DOMFormData;
     safe fn WebCore__DOMFormData__append(
         arg0: &mut DOMFormData,
-        arg1: &ZigString,
-        arg2: &ZigString,
+        arg1: &EncodedSlice,
+        arg2: &EncodedSlice,
     );
     // safe: `DOMFormData`/`JSGlobalObject` are opaque `UnsafeCell`-backed ZST
-    // handles; `&ZigString` is ABI-identical to non-null `*const ZigString` and
+    // handles; `&EncodedSlice` is ABI-identical to non-null `*const EncodedSlice` and
     // C++ only reads the named struct via `toStringCopy`. `arg3` is an opaque
     // `*Blob` C++ owns (never dereferenced as Rust data) — same round-trip
     // contract as `Zig__GlobalObject__resetModuleRegistryMap`'s `map` param.
     safe fn WebCore__DOMFormData__appendBlob(
         arg0: &mut DOMFormData,
         arg1: &JSGlobalObject,
-        arg2: &ZigString,
+        arg2: &EncodedSlice,
         arg3: *mut c_void,
-        arg4: &ZigString,
+        arg4: &EncodedSlice,
     );
     safe fn WebCore__DOMFormData__count(arg0: &mut DOMFormData) -> usize;
 }
@@ -44,7 +44,10 @@ impl DOMFormData {
     /// (returns encoded `JSValue::ZERO` on throw) — wrap in a validation scope
     /// so JSC's `validateExceptionChecks` sees the check before the next scope.
     #[track_caller]
-    pub fn create_from_url_query(global: &JSGlobalObject, query: &ZigString) -> JsResult<JSValue> {
+    pub fn create_from_url_query(
+        global: &JSGlobalObject,
+        query: &EncodedSlice,
+    ) -> JsResult<JSValue> {
         crate::from_js_host_call(global, || {
             WebCore__DOMFormData__createFromURLQuery(global, query)
         })
@@ -61,16 +64,16 @@ impl DOMFormData {
         (!p.is_null()).then(|| DOMFormData::opaque_mut(p))
     }
 
-    pub fn append(&mut self, name_: &ZigString, value_: &ZigString) {
+    pub fn append(&mut self, name_: &EncodedSlice, value_: &EncodedSlice) {
         WebCore__DOMFormData__append(self, name_, value_)
     }
 
     pub fn append_blob(
         &mut self,
         global: &JSGlobalObject,
-        name_: &ZigString,
+        name_: &EncodedSlice,
         blob: *mut c_void,
-        filename_: &ZigString,
+        filename_: &EncodedSlice,
     ) {
         WebCore__DOMFormData__appendBlob(self, global, name_, blob, filename_);
     }

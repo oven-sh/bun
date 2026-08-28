@@ -5,20 +5,20 @@ use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_core::Output;
-use bun_core::ZigString;
 use bun_core::strings;
 #[cfg(not(windows))]
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 use bun_io::KeepAlive;
-use bun_jsc::JsCell;
 use bun_jsc::abort_signal::AbortListener;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::node::PathLike;
 use bun_jsc::{
     self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CallFrame, CommonAbortReason,
     CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult, SysErrorJsc,
-    VirtualMachineRef as VirtualMachine, ZigStringJsc as _,
+    VirtualMachineRef as VirtualMachine,
 };
+use bun_jsc::{JsCell, JsCellRefExt as _};
 use bun_paths::resolve_path::{self as Path, platform};
 use bun_sys::{self, SystemErrno};
 use bun_threading::Mutex;
@@ -225,7 +225,6 @@ impl FSWatchTaskPosix {
                     self.ctx().emit_if_aborted();
                     Ok(())
                 }
-                Event::Close => self.ctx().emit::<{ EventType::Close }>(b""),
             };
             // A filename that could not be built (allocation failure, or the
             // VM is stopping): the rest of the batch is dropped with the task.
@@ -363,7 +362,6 @@ pub enum Event {
     /// `Rename` when libuv could not convert a name to UTF-8 (Windows).
     NoFilename(WatchEventKind),
     Abort,
-    Close,
 }
 
 #[repr(u8)]
@@ -425,19 +423,6 @@ impl Default for FSWatchTaskWindows {
 pub enum StringOrBytesToDecode {
     String(bun_core::String),
     BytesToFree(Box<[u8]>),
-}
-
-// The `String` arm wraps `bun_core::String`, which is `#[derive(Copy)]` and
-// has NO `Drop` of its own (src/string/lib.rs), so without this impl dropping
-// the enum would silently leak the WTF::StringImpl ref taken by
-// `BunString::clone_utf8` in `win_watcher.rs::emit()`. The `BytesToFree` arm's
-// `Box<[u8]>` already frees via its own `Drop`.
-impl Drop for StringOrBytesToDecode {
-    fn drop(&mut self) {
-        if let Self::String(s) = self {
-            s.deref();
-        }
-    }
 }
 
 // `PathWatcher::emit` and `Event::dupe` take a borrowed `&[u8]` rel-path and box
@@ -511,7 +496,6 @@ impl FSWatchTaskWindows {
                 ctx.emit_if_aborted();
                 Ok(())
             }
-            Event::Close => ctx.emit::<{ EventType::Close }>(b""),
         }
     }
 
@@ -527,7 +511,7 @@ impl FSWatchTaskWindows {
                 // variant, and `encoding` is immutable after init.
                 unreachable!()
             };
-            let js = s.transfer_to_js(&ctx.global_this)?;
+            let js = core::mem::take(s).into_js(&ctx.global_this)?;
             ctx.emit_with_filename::<EVENT_TYPE>(js);
             Ok(())
         } else {
@@ -547,9 +531,6 @@ impl FSWatchTaskWindows {
     /// `this` must be the unique `heap::alloc` pointer produced by
     /// `append_abort()` / `on_path_update_windows()`.
     pub(crate) unsafe fn deinit(this: *mut Self) {
-        // `Event` (and `StringOrBytesToDecode`, via its explicit `Drop` impl
-        // above which `deref()`s the WTF string) free their payloads via Drop,
-        // so dropping the Box releases everything.
         // SAFETY: paired with `heap::alloc` at the enqueue site.
         drop(unsafe { bun_core::heap::take(this) });
     }
@@ -653,7 +634,7 @@ impl FSWatcher {
 }
 
 pub struct Arguments<'a> {
-    pub path: PathLike,
+    pub path: PathLike<'static>,
     pub(crate) listener: JSValue,
     pub global_this: &'a JSGlobalObject,
     pub(crate) signal: Option<&'a AbortSignal>,
@@ -955,7 +936,7 @@ impl FSWatcher {
             if self.encoding == Encoding::Buffer {
                 filename = jsc::ArrayBuffer::create_buffer(&global_object, file_name)?;
             } else if self.encoding == Encoding::Utf8 {
-                filename = ZigString::from_utf8(file_name).to_js(&global_object);
+                filename = bun_string_jsc::create_utf8_for_js(&global_object, file_name)?;
             } else {
                 // convert to desired encoding
                 filename = Encoder::to_string(file_name, &global_object, self.encoding)?;
@@ -1007,15 +988,6 @@ impl FSWatcher {
             self.poll_ref.with_mut(|r| r.unref(vm_ctx));
         }
         Ok(JSValue::UNDEFINED)
-    }
-
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn has_ref(
-        &self,
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Ok(JSValue::from(self.persistent.get()))
     }
 
     // this can be called from Watcher Thread or JS Context Thread

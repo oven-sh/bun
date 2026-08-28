@@ -180,6 +180,12 @@ public:
 
     ExceptionOr<void> close(std::optional<unsigned short> code, const String& reason);
     ExceptionOr<void> terminate();
+    // Receive-side flow control (non-standard; mirrors Bun.Socket). pause()
+    // stops kernel reads so TCP backpressure reaches the peer; frames already
+    // decoded still dispatch. Before OPEN it latches and applies on connect.
+    bool pause();
+    bool resume();
+    bool isPaused() const { return m_paused; }
 
     void setProtocol(const String& protocol);
 
@@ -198,17 +204,21 @@ public:
     void didConnect();
     void didStartClosingHandshake();
     void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);
-    void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params, void* customSSLCtx);
-    void didConnectWithTunnel(void* tunnel, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params);
+    void didConnect(us_socket_t* socket, void* bufferedData, const PerMessageDeflateParams* deflate_params, void* customSSLCtx);
+    void didConnectWithTunnel(void* tunnel, void* bufferedData, const PerMessageDeflateParams* deflate_params);
     void didFailWithErrorCode(Bun::WebSocketErrorCode code);
 
     void didReceiveMessage(String&& message);
     void didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData);
+    /// `bun_core::ffi::FfiSlice` — a borrowed `&[u8]` passed by value.
+    struct FfiSlice {
+        const uint8_t* ptr;
+        size_t len;
+        std::span<const uint8_t> span() const { return { ptr, len }; }
+    };
     struct HandshakeRawHeader {
-        const uint8_t* name_ptr;
-        size_t name_len;
-        const uint8_t* value_ptr;
-        size_t value_len;
+        FfiSlice name;
+        FfiSlice value;
     };
     void didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, std::span<const uint8_t> body);
 
@@ -254,7 +264,6 @@ public:
         void (*onClose)(void* ctx, unsigned short code) = nullptr;
     };
     void setNativeCallbacks(NativeCallbacks cb) { m_native = cb; }
-    bool hasNativeCallbacks() const { return m_native.onMessage != nullptr; }
 
     // Public wrapper for the native-callback consumer to send text frames.
     // Bypasses the ExceptionOr<> wrapping — the caller has already checked
@@ -325,8 +334,10 @@ private:
     // Drop the in-flight upgrade / the connected client without a closing handshake. Neither
     // dispatches anything itself; the native side may call back synchronously.
     void cancelUpgradeClient();
+    bool applyPauseToConnectedClient();
     void cancelConnectedClient();
     bool m_rejectUnauthorized { false };
+    bool m_paused { false };
     // Default matches pre-existing behavior: advertise permessage-deflate in the upgrade
     // request. Set to false by ws.WebSocket callers passing `perMessageDeflate: false`.
     bool m_offerPerMessageDeflate { true };

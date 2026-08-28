@@ -400,6 +400,80 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  // Runs on debug builds too, same as the Bun.mmap block above.
+  describe("TextDecoder", () => {
+    test("accepts the encoding labels the runtime supports", async () => {
+      const checkDir = join(TEMP_DIR, "text-decoder-encoding-check");
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.include = ["text-decoder-encodings.ts"];
+      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+      await mkdir(checkDir, { recursive: true });
+      await makeTree(checkDir, {
+        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+        "text-decoder-encodings.ts": `new TextDecoder("windows-1251");
+           new TextDecoder("shift_jis");
+           new TextDecoder("utf8");
+           new TextDecoder("latin1");
+           new TextDecoder("gb18030", { fatal: true, ignoreBOM: true });
+           // @ts-expect-error - the TextDecoder constructor rejects the replacement encoding
+           "hz-gb-2312" satisfies Bun.Encoding;
+           // @ts-expect-error - not a label the Encoding Standard defines
+           "utf-99" satisfies Bun.Encoding;`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    // tsc cannot read the runtime's label table in
+    // src/runtime/webcore/EncodingLabel.rs, so the fixture carries a literal
+    // copy. This check ties that copy to the running binary: every fixture
+    // label must construct, and the replacement labels must throw.
+    test("the fixture label table matches the runtime", () => {
+      const fixture = readFileSync(join(FIXTURE_SOURCE_DIR, "text-encode-decoder.ts"), "utf8");
+      const arrayStart = fixture.indexOf("const labels = [");
+      const arrayEnd = fixture.indexOf("] as const;", arrayStart);
+      expect(arrayStart).toBeGreaterThan(-1);
+      expect(arrayEnd).toBeGreaterThan(arrayStart);
+
+      const labels = [...fixture.slice(arrayStart, arrayEnd).matchAll(/"([^"]+)"/g)].map(m => m[1]);
+      expect(labels).toHaveLength(222);
+      expect(new Set(labels).size).toBe(labels.length);
+
+      const rejected = labels.filter(label => {
+        try {
+          new TextDecoder(label as Bun.Encoding);
+          return false;
+        } catch {
+          return true;
+        }
+      });
+      expect(rejected).toEqual([]);
+
+      for (const label of [
+        "csiso2022kr",
+        "hz-gb-2312",
+        "iso-2022-cn",
+        "iso-2022-cn-ext",
+        "iso-2022-kr",
+        "replacement",
+      ]) {
+        expect(() => new TextDecoder(label as Bun.Encoding)).toThrow(RangeError);
+      }
+    });
+  });
+
   describe("Test Globals", () => {
     const code = `
       const test_shouldBeAFunction: Function = test;

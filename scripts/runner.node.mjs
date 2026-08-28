@@ -63,6 +63,7 @@ import {
   isWindows,
   isX64,
   markBuildkiteStepReported,
+  parseJunitFileSuites,
   printEnvironment,
   reportAnnotationToBuildKite,
   startGroup,
@@ -74,6 +75,7 @@ import {
 let isQuiet = false;
 const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
 const testsPath = join(cwd, "test");
+const ciRemapServerPath = join(cwd, "scripts", "ci-remap-server");
 
 const runnerStartedAt = Date.now();
 const jobBudgetMs = () => {
@@ -793,16 +795,14 @@ async function runTests() {
 
   if (!failedResults.length) {
     // TODO: remove windows exclusion here
-    if (isCI && !isWindows) {
-      // bun install has succeeded
+    if (isCI && !isWindows && (await installCiRemapServer(execPath))) {
       const { promise: portPromise, resolve: portResolve } = Promise.withResolvers();
       const { promise: errorPromise, resolve: errorResolve } = Promise.withResolvers();
-      console.log("run in", cwd);
       let exiting = false;
 
       const server = spawn(execPath, ["run", "--silent", "ci-remap-server", execPath, cwd, getCommit()], {
         stdio: ["ignore", "pipe", "inherit"],
-        cwd, // run in main repo
+        cwd: ciRemapServerPath,
         env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" },
       });
       server.unref();
@@ -1019,32 +1019,9 @@ async function runTests() {
       );
       if (crashes) process.stderr.write(crashes);
 
-      const suites = new Map(); // repo-relative path -> { failures, seconds, cases: [{name, message}] }
-      const unescapeXml = str =>
-        str
-          .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
-          .replace(/&quot;/g, '"')
-          .replace(/&apos;/g, "'")
-          .replace(/&lt;/g, "<")
-          .replace(/&gt;/g, ">")
-          .replace(/&amp;/g, "&");
+      let suites = new Map(); // repo-relative path -> { failures, seconds, cases: [{name, message}] }
       try {
-        const xml = readFileSync(junitPath, "utf-8");
-        for (const [, attrs] of xml.matchAll(/<testsuite\b([^>]*)>/g)) {
-          const file = /\bfile="([^"]+)"/.exec(attrs)?.[1];
-          const failures = Number(/\bfailures="(\d+)"/.exec(attrs)?.[1] ?? 0);
-          const seconds = Number(/\btime="([\d.]+)"/.exec(attrs)?.[1] ?? 0);
-          if (file) suites.set(unescapeXml(file).replaceAll("\\", "/"), { failures, seconds, cases: [] });
-        }
-        for (const [, caseAttrs, failureAttrs] of xml.matchAll(/<testcase\b([^>]*)>\s*<failure\b([^>]*)>/g)) {
-          const file = /\bfile="([^"]+)"/.exec(caseAttrs)?.[1];
-          const entry = file && suites.get(unescapeXml(file).replaceAll("\\", "/"));
-          if (!entry) continue;
-          entry.cases.push({
-            name: unescapeXml(/\bname="([^"]*)"/.exec(caseAttrs)?.[1] ?? "(unnamed)"),
-            message: unescapeXml(/\bmessage="([^"]*)"/.exec(failureAttrs)?.[1] ?? ""),
-          });
-        }
+        suites = parseJunitFileSuites(readFileSync(junitPath, "utf-8"));
       } catch {}
       if (suites.size && isBuildkite) uploadArtifactsToBuildKite(junitPath);
       else rmSync(junitPath, { force: true });
@@ -2207,8 +2184,9 @@ function parseTestStdout(stdout, testPath) {
 async function spawnBunInstall(execPath, options) {
   // spawnBun sets BUN_INSTALL_CACHE_DIR to a fresh tmpdir so per-test installs
   // are hermetic. This function only runs the runner's own dependency setup
-  // (root, test/, vendor), which should hit the image's baked cache when one
-  // exists (bootstrap.{sh,ps1} set BUN_INSTALL_CACHE_DIR machine-wide).
+  // (root, test/, scripts/ci-remap-server, vendor), which should hit the
+  // image's baked cache when one exists (bootstrap.{sh,ps1} set
+  // BUN_INSTALL_CACHE_DIR machine-wide).
   const cacheDir = process.env.BUN_INSTALL_CACHE_DIR;
   let { ok, error, stdout, duration, crashes } = await spawnBun(execPath, {
     args: ["install"],
@@ -2245,6 +2223,23 @@ async function spawnBunInstall(execPath, options) {
     stdout,
     stdoutPreview: stdout,
   };
+}
+
+/**
+ * Installs `ci-remap-server`, the bin of bun-tracestrings (github:oven-sh/bun.report).
+ * It is pinned in scripts/ci-remap-server/package.json rather than the root
+ * package.json because this runner is its only user, and as a github: dependency
+ * it would otherwise put GitHub on the critical path of the root `bun install`
+ * every GitHub Actions workflow and every build runs. Best-effort, like starting
+ * the server itself: without it crash reports are not remapped, the tests still run.
+ * @param {string} execPath
+ * @returns {Promise<boolean>}
+ */
+async function installCiRemapServer(execPath) {
+  const title = relative(cwd, join(ciRemapServerPath, "package.json")).replaceAll(sep, "/");
+  const { ok, error } = await startGroup(title, () => spawnBunInstall(execPath, { cwd: ciRemapServerPath }));
+  if (!ok) console.warn(`ci-remap server not installed (${title}: ${error}), crash reports will not be remapped`);
+  return ok;
 }
 
 /**
@@ -2735,7 +2730,7 @@ async function getExecPathFromBuildKite(target, buildId) {
 
   let zipPath;
   downloadLoop: for (let i = 0; i < 10; i++) {
-    // build-bun also uploads libbun-*.a / libbun_rust.a / dep libs; only the zips are wanted here.
+    // build-bun also uploads libbun-*.a / libbun_runtime.a / dep libs; only the zips are wanted here.
     const args = ["artifact", "download", "*.zip", releasePath, "--step", target];
     if (buildId) {
       args.push("--build", buildId);

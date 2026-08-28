@@ -716,8 +716,6 @@ pub enum ParseError {
     UnexpectedDocumentEnd,
     #[error("MultipleYamlDirectives")]
     MultipleYamlDirectives,
-    #[error("InvalidIndentation")]
-    InvalidIndentation,
     #[error("StackOverflow")]
     StackOverflow,
     #[error("ExcessiveAliasing")]
@@ -1946,7 +1944,6 @@ pub enum ParseResultError {
     UnexpectedDocumentStart { pos: Pos },
     UnexpectedDocumentEnd { pos: Pos },
     MultipleYamlDirectives { pos: Pos },
-    InvalidIndentation { pos: Pos },
     ExcessiveAliasing { pos: Pos },
     CyclicAlias { pos: Pos },
     CyclicMerge { pos: Pos },
@@ -2003,9 +2000,6 @@ impl ParseResultError {
             }
             ParseResultError::MultipleYamlDirectives { pos } => {
                 log.add_error(Some(source), pos.loc(), b"Multiple YAML directives");
-            }
-            ParseResultError::InvalidIndentation { pos } => {
-                log.add_error(Some(source), pos.loc(), b"Invalid indentation");
             }
             ParseResultError::ExcessiveAliasing { pos } => {
                 log.add_error(Some(source), pos.loc(), b"Excessive aliasing");
@@ -2080,9 +2074,6 @@ impl ParseResultError {
             ParseError::MultipleYamlDirectives => ParseResultError::MultipleYamlDirectives {
                 pos: parser.token.start,
             },
-            ParseError::InvalidIndentation => {
-                ParseResultError::InvalidIndentation { pos: parser.pos }
-            }
             ParseError::ExcessiveAliasing => ParseResultError::ExcessiveAliasing {
                 pos: parser.token.start,
             },
@@ -5235,7 +5226,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     }
 
     fn scan_literal_scalar(&mut self) -> Result<Token<Enc>, ParseError> {
-        // defer self.whitespace_buf.clearRetainingCapacity();
         let start = self.pos;
         let line = self.line;
 

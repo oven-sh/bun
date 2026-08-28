@@ -1,6 +1,7 @@
 //! macOS DNSServiceGetAddrInfo backend: all lookups share one mDNSResponder connection (see dns.rs banner).
 
 use super::*;
+use bun_collections::index_sort;
 
 pub(crate) type DNSServiceRef = *mut c_void;
 type DNSServiceFlags = u32;
@@ -269,7 +270,9 @@ impl QueryState {
     pub(crate) fn take_results(&mut self) -> bun_dns::ResultList {
         let mut results = core::mem::take(&mut self.results);
         // Family arrival order races upstream; match getaddrinfo's RFC 6724 default (IPv6 first).
-        results.sort_by_key(|r| r.address.family() != netc::AF_INET6);
+        index_sort::sort_slice_by(&mut results, |a, b| {
+            (a.address.family() != netc::AF_INET6).cmp(&(b.address.family() != netc::AF_INET6))
+        });
         results
     }
 }

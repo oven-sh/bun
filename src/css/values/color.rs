@@ -401,7 +401,7 @@ impl CssColor {
     /// Parse a CSS `<color>` from the parser cursor.
     pub fn parse(input: &mut css::Parser) -> CssResult<CssColor> {
         let location = input.current_source_location();
-        let token = input.next()?.clone();
+        let token = *input.next()?;
 
         match token {
             css::Token::UnrestrictedHash(v) | css::Token::IdHash(v) => {
@@ -2111,8 +2111,8 @@ impl RelativeComponentParser {
 
         // `Calc::Value` is `Box<V>`, so box the temporary `Angle`.
         if let Ok(value) = input.try_parse(|i| {
-            match Calc::<Angle>::parse_with(i, this, |ctx, ident| {
-                let value = ctx.get_ident(ident, allowed)?;
+            match Calc::<Angle>::parse_with(i, &|ident| {
+                let value = this.get_ident(ident, allowed)?;
                 Some(Calc::Value(Box::new(Angle::Deg(value))))
             }) {
                 Ok(Calc::Value(v)) => Ok(*v),
@@ -2145,11 +2145,8 @@ impl RelativeComponentParser {
         }
 
         if let Ok(value) = input.try_parse(|i| {
-            match Calc::<Percentage>::parse_with(i, this, |ctx, ident| {
-                let v = ctx.get_ident(ident, allowed)?;
-                // value variant is a *Percentage
-                // but we immediately dereference it and discard the pointer
-                // so using a field on this closure struct instead of making a gratuitous allocation
+            match Calc::<Percentage>::parse_with(i, &|ident| {
+                let v = this.get_ident(ident, allowed)?;
                 Some(Calc::Value(Box::new(Percentage { v })))
             }) {
                 Ok(Calc::Value(v)) => Ok(*v),
@@ -2172,8 +2169,8 @@ impl RelativeComponentParser {
         }
 
         if let Ok(value) = input.try_parse(|i| {
-            let calc_value = match Calc::<Percentage>::parse_with(i, this, |ctx, ident| {
-                let v = ctx.get_ident(ident, ChannelType::PERCENTAGE)?;
+            let calc_value = match Calc::<Percentage>::parse_with(i, &|ident| {
+                let v = this.get_ident(ident, ChannelType::PERCENTAGE)?;
                 Some(Calc::Value(Box::new(Percentage { v })))
             }) {
                 Ok(v) => v,
@@ -2223,8 +2220,8 @@ impl RelativeComponentParser {
         this: &RelativeComponentParser,
         allowed_types: ChannelType,
     ) -> CssResult<f32> {
-        if let Ok(calc_val) = Calc::<f32>::parse_with(input, this, |ctx, ident| {
-            let v = ctx.get_ident(ident, allowed_types)?;
+        if let Ok(calc_val) = Calc::<f32>::parse_with(input, &|ident| {
+            let v = this.get_ident(ident, allowed_types)?;
             Some(Calc::Number(v))
         }) {
             // PERF: I don't like this redundant allocation

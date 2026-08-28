@@ -351,7 +351,6 @@ impl<'a> Transpiler<'a> {
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
-                core::ptr::null_mut(),
                 from.fs,
             ),
             env: from.env,
@@ -378,7 +377,6 @@ impl<'a> Transpiler<'a> {
             log,
             core::ptr::addr_of_mut!(self.resolve_queue),
             core::ptr::addr_of_mut!(self.options).cast(),
-            core::ptr::addr_of_mut!(self.resolver).cast(),
             core::ptr::addr_of_mut!(*self.resolve_results),
             self.fs,
         );
@@ -458,15 +456,7 @@ impl<'a> Transpiler<'a> {
     /// retrying once on failure before reporting the error to the log.
     pub fn resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
         match self._resolve_entry_point(entry_point) {
-            Ok(r) => Ok(r),
-            // Nothing that long names a directory whose cache could be stale
-            // (and the join below has a PathBuffer to fit `top_level_dir/entry/..` in).
-            Err(err)
-                if self.fs().top_level_dir.len() + entry_point.len() + 4
-                    > bun_paths::MAX_PATH_BYTES =>
-            {
-                Err(err)
-            }
+            Ok(r) => self.reject_disabled_entry_point(r, entry_point),
             Err(err) => {
                 let mut cache_bust_buf = bun_paths::PathBuffer::uninit();
 
@@ -477,6 +467,12 @@ impl<'a> Transpiler<'a> {
                 // disjoint mutable borrows of `cache_bust_buf` across `break`,
                 // so compute `busted` directly instead.
                 let busted: bool = 'name: {
+                    // Neither buster name below would fit `cache_bust_buf`.
+                    if self.fs().top_level_dir.len() + entry_point.len() + 4
+                        > bun_paths::MAX_PATH_BYTES
+                    {
+                        break 'name false;
+                    }
                     if bun_paths::is_absolute(entry_point) {
                         let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                             entry_point,
@@ -515,7 +511,7 @@ impl<'a> Transpiler<'a> {
                 // Only re-query if we previously had something cached.
                 if busted {
                     if let Ok(result) = self._resolve_entry_point(entry_point) {
-                        return Ok(result);
+                        return self.reject_disabled_entry_point(result, entry_point);
                     }
                     // ignore this error, we will print the original error
                 }
@@ -532,6 +528,39 @@ impl<'a> Transpiler<'a> {
                 Err(err)
             }
         }
+    }
+
+    /// A disabled module (no usable path) imports as `{}`, but an entry point has nothing to emit.
+    fn reject_disabled_entry_point(
+        &self,
+        resolved: resolver::Result,
+        entry_point: &[u8],
+    ) -> crate::Result<resolver::Result> {
+        if resolved.path_const().is_some() {
+            return Ok(resolved);
+        }
+
+        // Stubbed builtins carry the "node" namespace; anything else came from a "browser" map.
+        if resolved.path_pair.primary.namespace == b"node" {
+            self.log_mut().add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "Cannot use Node.js builtin \"{}\" as an entry point",
+                    bstr::BStr::new(entry_point)
+                ),
+            );
+        } else {
+            self.log_mut().add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "\"{}\" is disabled due to \"browser\" field in package.json (entry point)",
+                    bstr::BStr::new(entry_point)
+                ),
+            );
+        }
+        Err(crate::Error::ResolveMessage)
     }
 
     /// Load env files and build `options.define`. Idempotent — a no-op once
@@ -682,22 +711,11 @@ impl<'a> Transpiler<'a> {
     /// Initialize `self.linker` with back-pointers into this `Transpiler`,
     /// optionally auto-configuring JSX from the nearest `tsconfig.json`.
     pub fn configure_linker_with_auto_jsx(&mut self, auto_jsx: AutoJsx) {
-        // `Linker::init` dropped its `arena` arg (linker.rs:172
-        // — global mimalloc). `crate::linker::Linker` stores raw pointers
-        // so `&mut self.options` etc. coerce directly. Self-reference is
-        // load-bearing — `linker.link()` reads back through these into the
-        // owning `Transpiler` — hence raw `*mut`, not `&'a mut` (would alias
-        // `&mut self` on every call).
-        // `.cast()` on the `options`/`resolver` pointers erases the
-        // `<'a>` lifetime parameter — `Linker` stores them as
-        // `*mut BundleOptions` / `*mut Resolver` with an (implicit) distinct
-        // lifetime. The linker never
-        // outlives its owning `Transpiler<'a>`.
+        // Raw back-pointers into `self`; the linker never outlives this `Transpiler`.
         self.linker = crate::linker::Linker::init(
             self.log,
             core::ptr::addr_of_mut!(self.resolve_queue),
             core::ptr::addr_of_mut!(self.options).cast(),
-            core::ptr::addr_of_mut!(self.resolver).cast(),
             core::ptr::addr_of_mut!(*self.resolve_results),
             self.fs,
         );
@@ -858,6 +876,12 @@ impl AlreadyBundled {
             self,
             AlreadyBundled::SourceCodeCjs | AlreadyBundled::BytecodeCjs(_)
         )
+    }
+    pub fn into_bytecode(self) -> Box<[u8]> {
+        match self {
+            AlreadyBundled::Bytecode(bytes) | AlreadyBundled::BytecodeCjs(bytes) => bytes,
+            _ => Box::default(),
+        }
     }
 }
 
@@ -1290,10 +1314,7 @@ impl<'a> Transpiler<'a> {
         // Construct directly into the caller-owned storage instead of building a
         // stack temporary and returning it. All fallible work is done; every
         // field below is written exactly once. `Linker::init` gets null
-        // back-pointers — `core::mem::zeroed()` is NOT a
-        // valid analogue (`Linker.hashed_filenames: HashMap` carries a `NonNull`
-        // niche, so all-zeroes is instant UB); the value fields get their proper
-        // defaults and `configure_linker_with_auto_jsx` overwrites the
+        // back-pointers; `configure_linker_with_auto_jsx` overwrites the
         // self-referential pointers before any deref.
         let p = dst.as_mut_ptr();
         // SAFETY: `dst` is an exclusively-borrowed, currently-uninitialised
@@ -1320,7 +1341,6 @@ impl<'a> Transpiler<'a> {
             // .thread_pool = pool,
             core::ptr::addr_of_mut!((*p).linker).write(crate::linker::Linker::init(
                 log,
-                core::ptr::null_mut(),
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
                 core::ptr::null_mut(),
@@ -1576,6 +1596,7 @@ impl<'a> Transpiler<'a> {
                     framework: None,
                     repl_mode: self.options.repl_mode,
                     lower_toml_datetimes: false,
+                    is_entry_point: false,
                 };
 
                 opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
@@ -2432,7 +2453,6 @@ impl<'a> Transpiler<'a> {
             minify_whitespace: self.options.minify_whitespace,
             minify_syntax: self.options.minify_syntax,
             minify_identifiers: self.options.minify_identifiers,
-            transform_only: self.options.transform_only,
             import_meta_ref: ast.import_meta_ref,
             print_dce_annotations: self.options.emit_dce_annotations,
             runtime_transpiler_cache,
@@ -2510,7 +2530,6 @@ impl<'a> Transpiler<'a> {
             minify_whitespace: self.options.minify_whitespace,
             minify_syntax: self.options.minify_syntax,
             minify_identifiers: self.options.minify_identifiers,
-            transform_only: self.options.transform_only,
             module_type: if IS_BUN && self.options.transform_only {
                 // this is for when using `bun build --no-bundle`
                 // it should copy what was passed for the cli
@@ -2745,6 +2764,8 @@ impl<'a> Transpiler<'a> {
             );
         }
 
+        self.reject_duplicate_output_paths()?;
+
         let outbase: Box<[u8]> = self.result.outbase.clone();
         let output_files: Box<[options::OutputFile]> =
             std::mem::take(&mut self.output_files).into_boxed_slice();
@@ -2800,6 +2821,58 @@ impl<'a> Transpiler<'a> {
         Ok(())
     }
 
+    /// Mirrors the duplicate-path error in `generateChunksInParallel`.
+    fn reject_duplicate_output_paths(&mut self) -> crate::Result<()> {
+        use std::io::Write as _;
+
+        let mut by_dest_path: bun_collections::StringArrayHashMap<Vec<usize>> = Default::default();
+        let mut has_duplicates = false;
+        for (index, file) in self.output_files.iter().enumerate() {
+            if file.dest_path.is_empty() {
+                continue;
+            }
+            let entry = by_dest_path.get_or_put(&file.dest_path)?;
+            has_duplicates |= entry.found_existing;
+            entry.value_ptr.push(index);
+        }
+        if !has_duplicates {
+            return Ok(());
+        }
+
+        let mut msg: Vec<u8> = Vec::new();
+        writeln!(&mut msg, "Multiple files share the same output path")?;
+        for (dest_path, indices) in by_dest_path.keys().iter().zip(by_dest_path.values()) {
+            if indices.len() < 2 {
+                continue;
+            }
+            writeln!(&mut msg, "  {}:", bstr::BStr::new(dest_path))?;
+            for &index in indices {
+                writeln!(
+                    &mut msg,
+                    "    from input {}",
+                    bstr::BStr::new(self.output_files[index].src_path.pretty)
+                )?;
+            }
+        }
+
+        let mut note: Vec<u8> = Vec::new();
+        write!(
+            &mut note,
+            "entry naming is '{}', consider adding '[hash]' to make filenames unique",
+            bstr::BStr::new(&self.entry_naming_template().data),
+        )?;
+        self.log_mut().add_range_error_with_notes(
+            None,
+            Default::default(),
+            msg,
+            Box::new([bun_ast::Data {
+                text: note.into(),
+                ..Default::default()
+            }]),
+        );
+        Ok(())
+    }
+
     fn build_with_resolve_result_eager(
         &mut self,
         resolve_result: &resolver::Result,
@@ -2846,7 +2919,7 @@ impl<'a> Transpiler<'a> {
         file_path.pretty = crate::linker::dupe(rel);
 
         let mut output_file = options::OutputFile::zero_value();
-        output_file.src_path = bun_paths::fs::Path::init(file_path_text);
+        output_file.src_path = file_path;
         output_file.loader = loader;
         output_file.output_kind = options::OutputKind::Chunk;
         output_file.side = None;
@@ -2971,7 +3044,12 @@ impl<'a> Transpiler<'a> {
                     resolve_result.dirname_fd,
                     file_path.pretty,
                 ) {
-                    Some(v) => output_file.value = v,
+                    Some(v) => {
+                        if let crate::output_file::Value::Buffer { bytes } = &v {
+                            output_file.size = bytes.len();
+                        }
+                        output_file.value = v;
+                    }
                     None => return Ok(None),
                 }
             }
@@ -2986,7 +3064,57 @@ impl<'a> Transpiler<'a> {
             }
         }
 
+        if let crate::output_file::Value::Buffer { bytes } = &output_file.value {
+            output_file.dest_path = self.transform_only_dest_path(file_path_text, loader, bytes);
+        }
+
         Ok(Some(output_file))
+    }
+
+    fn entry_naming_template(&self) -> options::PathTemplate {
+        let mut template: options::PathTemplate = options::PathTemplate::FILE.into();
+        if !self.options.entry_naming.is_empty() {
+            template.data.clone_from(&self.options.entry_naming);
+        }
+        template
+    }
+
+    /// Mirrors the entry-point naming in `computeChunks`.
+    fn transform_only_dest_path(
+        &self,
+        file_path_text: &[u8],
+        loader: options::Loader,
+        output: &[u8],
+    ) -> Box<[u8]> {
+        let rel_to_root = bun_paths::resolve_path::relative_platform::<
+            bun_paths::resolve_path::platform::Loose,
+            false,
+        >(&self.options.root_dir, file_path_text);
+        let pathname = Fs::PathName::init(rel_to_root);
+
+        let ext: &[u8] = if loader == options::Loader::Css {
+            b"css"
+        } else {
+            b"js"
+        };
+
+        let mut template = self.entry_naming_template();
+        template.placeholder.dir = pathname.dir.into();
+        template.placeholder.name = pathname.base.into();
+        template.placeholder.ext = ext.into();
+        if template.needs(options::PlaceholderField::Target) {
+            template.placeholder.target = self.options.target.naming_placeholder().into();
+        }
+        if template.needs(options::PlaceholderField::Hash) {
+            template.placeholder.hash = Some(crate::ContentHasher::run(output));
+        }
+
+        let mut dest_path = Vec::new();
+        template
+            .print(&mut dest_path, options::SanitizeParentDirs::Yes)
+            .expect("write to Vec<u8>");
+        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut dest_path);
+        dest_path.into_boxed_slice()
     }
 
     /// Cold path: `bun build` of a `.css` entry. Split out of

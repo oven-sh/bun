@@ -3,7 +3,6 @@ use bun_collections::HashMap;
 use bun_core::Output;
 
 use crate::DependencyID;
-use crate::ManifestLoad;
 use crate::PackageID;
 use crate::Resolution;
 use crate::invalid_package_id;
@@ -51,6 +50,10 @@ fn start_manifest_task(
     is_required: bool,
     needs_extended_manifest: ExtendedManifest,
 ) -> Result<(), StartManifestTaskError> {
+    // best-effort metadata backfill: nothing to do without the network
+    if manager.options.offline == crate::package_manager_real::options::OfflineMode::Offline {
+        return Ok(());
+    }
     let task_id = Task::Id::for_manifest(pkg_name);
     if run_tasks::has_created_network_task(manager, task_id, is_required) {
         return Ok(());
@@ -191,7 +194,6 @@ pub fn populate_manifest_cache(
                     cache_ctx,
                     scope.get(),
                     pkg_name_slice,
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
                     needs_extended_manifest,
                 );
                 if cached.is_none() {
@@ -248,7 +250,6 @@ pub fn populate_manifest_cache(
                         cache_ctx,
                         scope.get(),
                         package_name,
-                        ManifestLoad::LoadFromMemoryFallbackToDisk,
                         needs_extended_manifest,
                     );
                     if cached.is_none() {
@@ -287,7 +288,6 @@ pub fn populate_manifest_cache(
                     cache_ctx,
                     scope.get(),
                     package_name,
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
                     needs_extended_manifest,
                 );
                 if cached.is_none() {

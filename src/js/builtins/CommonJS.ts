@@ -15,8 +15,8 @@ export function require(this: JSCommonJSModule, _: string) {
 // overridableRequire can be overridden by setting `Module.prototype.require`
 $overriddenName = "require";
 $visibility = "Private";
-export function overridableRequire(this: JSCommonJSModule, originalId: string, options: { paths?: string[] } = {}) {
-  const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined);
+export function overridableRequire(this: JSCommonJSModule, originalId: string, options?: { paths?: string[] }) {
+  const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined, this, options);
   if (id.startsWith("node:")) {
     if (id !== originalId) {
       // A terrible special case where Node.js allows non-prefixed built-ins to
@@ -114,26 +114,30 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
       throw exception;
     }
 
-    // If we can pull out a ModuleNamespaceObject, let's do it.
-    const namespace = $esmNamespaceForCjs(id);
-    if (namespace !== undefined) {
-      // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
-      // Various libraries expect __esModule to be set when using ESM from require().
-      // We don't want to always inject the __esModule export into every module,
-      // And creating an Object wrapper causes the actual exports to not be own properties.
-      // So instead of either of those, we make it so that the __esModule property can be set at runtime.
-      // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
-      // https://github.com/oven-sh/bun/issues/14411
-      if (namespace.__esModule === undefined) {
-        try {
-          namespace.__esModule = true;
-        } catch {
-          // https://github.com/oven-sh/bun/issues/17816
-        }
+    const namespace = out;
+    // In a require cycle the namespace is live while the module body is still
+    // running, so an export named `__esModule` / `module.exports` may be in TDZ.
+    let esModule, moduleExports;
+    try {
+      esModule = namespace.__esModule;
+      moduleExports = namespace["module.exports"];
+    } catch {}
+    // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
+    // Various libraries expect __esModule to be set when using ESM from require().
+    // We don't want to always inject the __esModule export into every module,
+    // And creating an Object wrapper causes the actual exports to not be own properties.
+    // So instead of either of those, we make it so that the __esModule property can be set at runtime.
+    // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
+    // https://github.com/oven-sh/bun/issues/14411
+    if (esModule === undefined) {
+      try {
+        namespace.__esModule = true;
+      } catch {
+        // https://github.com/oven-sh/bun/issues/17816
       }
-
-      return (mod.exports = namespace["module.exports"] ?? namespace);
     }
+
+    return (mod.exports = moduleExports ?? namespace);
   }
 
   const c = $evaluateCommonJSModule(mod, this);
@@ -144,15 +148,11 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
 }
 
 $visibility = "Private";
-export function requireResolve(
-  this: string | { filename?: string; id?: string },
-  id: string,
-  options: { paths?: string[] } = {},
-) {
+export function requireResolve(this: JSCommonJSModule, id: string, options: { paths?: string[] } = {}) {
   // Only `options.paths` extraction happens here; builtin bypass and paths
   // validation are native (functionImportMeta__resolveSyncPrivate).
   const paths = typeof options === "object" && options !== null ? options.paths : undefined;
-  return $resolveSync(id, typeof this === "string" ? this : (this?.filename ?? this?.id ?? ""), false, true, paths);
+  return $resolveSync(id, this.filename, false, true, paths, this, options ?? {});
 }
 
 $visibility = "Private";
@@ -181,144 +181,12 @@ export function loadEsmIntoCjs(resolvedSpecifier: string) {
   return $esmLoadSync(resolvedSpecifier);
 }
 
-/* Legacy implementation removed: relied on the old JS-side JSModuleLoader
- * (Loader.registry JSMap, $setStateToMax, parseModule, etc.) which no longer
- * exists after the upstream module-loader rewrite.
-function loadEsmIntoCjs__dead(resolvedSpecifier: string) {
-  var loader = Loader;
-  var queue = $createFIFO();
-  let key = resolvedSpecifier;
-  const registry = loader.registry;
-
-  while (key) {
-    // we need to explicitly check because state could be $ModuleFetch
-    // it will throw this error if we do not:
-    //    $throwTypeError("Requested module is already fetched.");
-    let entry = registry.$get(key)!,
-      moduleRecordPromise,
-      state = 0,
-      // entry.fetch is a Promise<SourceCode>
-      // SourceCode is not a string, it's a JSC::SourceCode object
-      fetch: Promise<JSCSourceCodeObject> | undefined;
-
-    if (entry) {
-      ({ state, fetch } = entry);
-    }
-
-    if (
-      !entry ||
-      // if we need to fetch it
-      (state <= $ModuleFetch &&
-        // either:
-        // - we've never fetched it
-        // - a fetch is in progress
-        (!$isPromise(fetch) ||
-          ($peekPromiseStatus(fetch)) === 0))
-    ) {
-      // force it to be no longer pending
-      $fulfillModuleSync(key);
-
-      entry = registry.$get(key)!;
-
-      // the state can transition here
-      // https://github.com/oven-sh/bun/issues/8965
-      if (entry) {
-        ({ state = 0, fetch } = entry);
-      }
-    }
-
-    if (state < $ModuleLink && $isPromise(fetch)) {
-      // This will probably never happen, but just in case
-      if (($peekPromiseStatus(fetch)) === 0) {
-        registry.$delete(resolvedSpecifier);
-
-        throw new TypeError(`require() async module "${key}" is unsupported. use "await import()" instead.`);
-      }
-
-      // this pulls it out of the promise without delaying by a tick
-      // the promise is already fulfilled by $fulfillModuleSync
-      const sourceCodeObject = $peekPromiseSettledValue(fetch);
-      moduleRecordPromise = loader.parseModule(key, sourceCodeObject);
-    }
-    let mod = entry?.module;
-
-    if (moduleRecordPromise && $isPromise(moduleRecordPromise)) {
-      let reactionsOrResult = $peekPromiseSettledValue(moduleRecordPromise);
-      let state = $peekPromiseStatus(moduleRecordPromise);
-      // this branch should never happen, but just to be safe
-      if (state === 0 || (reactionsOrResult && $isPromise(reactionsOrResult))) {
-        registry.$delete(resolvedSpecifier);
-
-        throw new TypeError(`require() async module "${key}" is unsupported. use "await import()" instead.`);
-      } else if (state === 2) {
-        if (!reactionsOrResult?.message) {
-          throw new TypeError(
-            `${
-              reactionsOrResult + "" ? reactionsOrResult : "An error occurred"
-            } occurred while parsing module \"${key}\"`,
-          );
-        }
-
-        throw reactionsOrResult;
-      }
-      entry.module = mod = reactionsOrResult;
-    } else if (moduleRecordPromise && !mod) {
-      entry.module = mod = moduleRecordPromise as LoaderModule;
-    }
-
-    // This is very similar to "requestInstantiate" in ModuleLoader.js in JavaScriptCore.
-    $setStateToMax(entry, $ModuleLink);
-    const dependenciesMap = mod.dependenciesMap;
-    const requestedModules = loader.requestedModules(mod);
-    const dependencies = $newArrayWithSize<string>(requestedModules.length);
-    for (var i = 0, length = requestedModules.length; i < length; ++i) {
-      const depName = requestedModules[i];
-      // optimization: if it starts with a slash then it's an absolute path
-      // we don't need to run the resolver a 2nd time
-      const depKey = depName[0] === "/" ? depName : loader.resolve(depName, key);
-      const depEntry = loader.ensureRegistered(depKey);
-
-      if (depEntry.state < $ModuleLink) {
-        queue.push(depKey);
-      }
-
-      $putByValDirect(dependencies, i, depEntry);
-      dependenciesMap.$set(depName, depEntry);
-    }
-
-    entry.dependencies = dependencies;
-    // All dependencies resolved, set instantiate and satisfy field directly.
-    entry.instantiate = Promise.$resolve(entry);
-    entry.satisfy = Promise.$resolve(entry);
-    entry.isSatisfied = true;
-
-    key = queue.shift();
-    while (key && (registry.$get(key)?.state ?? $ModuleFetch) >= $ModuleLink) {
-      key = queue.shift();
-    }
-  }
-
-  var linkAndEvaluateResult = loader.linkAndEvaluateModule(resolvedSpecifier, undefined);
-  if (linkAndEvaluateResult && $isPromise(linkAndEvaluateResult)) {
-    registry.$delete(resolvedSpecifier);
-
-    // if you use top-level await, or any dependencies use top-level await, then we throw here
-    // this means the module will still actually load eventually, but that's okay.
-    throw new TypeError(
-      `require() async module \"${resolvedSpecifier}\" is unsupported. use "await import()" instead.`,
-    );
-  }
-
-  return registry.$get(resolvedSpecifier);
-}
-*/
-
 $visibility = "Private";
 export function requireESM(this, resolved: string) {
-  var exports = $esmNamespaceForCjs(resolved);
-  if (exports === undefined) {
-    exports = $loadEsmIntoCjs(resolved);
-  }
+  // `$esmLoadSync` answers from the registry for a record that is already
+  // Evaluated, or still Evaluating because this require() sits inside its own
+  // evaluation (a require cycle), before it loads anything.
+  const exports = $loadEsmIntoCjs(resolved);
   if (exports === undefined) {
     throw new TypeError(`require() failed to evaluate module "${resolved}". This is an internal consistentency error.`);
   }
@@ -327,35 +195,37 @@ export function requireESM(this, resolved: string) {
 
 export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: string) {
   $assert(this);
+  let namespace;
   try {
-    $requireESM(id);
+    namespace = $requireESM(id);
   } catch (exception) {
     // Since the ESM code is mostly JS, we need to handle exceptions here.
     $requireMap.$delete(id);
     throw exception;
   }
 
-  // If we can pull out a ModuleNamespaceObject, let's do it.
-  const namespace = $esmNamespaceForCjs(id);
-  if (namespace !== undefined) {
-    // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
-    // Various libraries expect __esModule to be set when using ESM from require().
-    // We don't want to always inject the __esModule export into every module,
-    // And creating an Object wrapper causes the actual exports to not be own properties.
-    // So instead of either of those, we make it so that the __esModule property can be set at runtime.
-    // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
-    // https://github.com/oven-sh/bun/issues/14411
-    if (namespace.__esModule === undefined) {
-      try {
-        namespace.__esModule = true;
-      } catch {
-        // https://github.com/oven-sh/bun/issues/17816
-      }
+  // See `overridableRequire`: TDZ-safe reads for the require-cycle case.
+  let esModule, moduleExports;
+  try {
+    esModule = namespace.__esModule;
+    moduleExports = namespace["module.exports"];
+  } catch {}
+  // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
+  // Various libraries expect __esModule to be set when using ESM from require().
+  // We don't want to always inject the __esModule export into every module,
+  // And creating an Object wrapper causes the actual exports to not be own properties.
+  // So instead of either of those, we make it so that the __esModule property can be set at runtime.
+  // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
+  // https://github.com/oven-sh/bun/issues/14411
+  if (esModule === undefined) {
+    try {
+      namespace.__esModule = true;
+    } catch {
+      // https://github.com/oven-sh/bun/issues/17816
     }
-
-    this.exports = namespace["module.exports"] ?? namespace;
-    return;
   }
+
+  this.exports = moduleExports ?? namespace;
 }
 
 $visibility = "Private";
@@ -426,8 +296,8 @@ export function createRequireCache() {
 }
 
 type WrapperMutate = (start: string, end: string) => void;
-export function getWrapperArrayProxy(onMutate: WrapperMutate) {
-  const wrapper = ["(function(exports,require,module,__filename,__dirname){", "})"];
+export function getWrapperArrayProxy(onMutate: WrapperMutate, start: string, end: string) {
+  const wrapper = [start, end];
   return new Proxy(wrapper, {
     set(_target, prop, value, receiver) {
       Reflect.set(wrapper, prop, value, receiver);

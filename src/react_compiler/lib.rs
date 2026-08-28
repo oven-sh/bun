@@ -34,6 +34,6 @@ pub use compile_result::{CompileDiagnostic, CompileOutput};
 pub use options::ReactCompilerOptions;
 pub use program::{
     CompileResult, Host, JsxImportKind, ModuleScopeOptOut, PendingCompile, ReactCompilerState,
-    RuntimeSentinel, SymbolHost, collect_import_bindings, finish, has_module_scope_opt_out,
+    RuntimeSentinel, collect_import_bindings, finish, has_module_scope_opt_out,
     maybe_compile_pending,
 };

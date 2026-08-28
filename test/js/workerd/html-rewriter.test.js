@@ -101,6 +101,150 @@ describe("HTMLRewriter", () => {
     await expect(res.text()).rejects.toThrow("test");
   });
 
+  // Inputs that go through the JS stream pump with data already queued are
+  // drained synchronously inside `transform()`, so the handler throws (and the
+  // pipe fails, detaching its input) while `assign_to_stream` is still on the
+  // stack. The pump controller must already be installed as the pipe's input
+  // source at that point: previously the pipe detached an empty placeholder
+  // and the process segfaulted. Detaching the real controller is also what
+  // cancels the input, as it does when the throwing chunk arrives later.
+  // Spawned so a regression shows up as a failed assertion instead of taking
+  // the test runner down.
+  it("error inside element handler rejects the body when the input is drained inside transform()", async () => {
+    const fixture = /* js */ `
+      const html = "<a href=/x>abc</a>";
+      const bytes = () => new TextEncoder().encode(html);
+      let upstreamCancels = 0;
+      const inputs = {
+        "Response(string) whose .body was read": () => {
+          const res = new Response(html);
+          void res.body;
+          return res;
+        },
+        "Response(Blob) whose .body was read": () => {
+          const res = new Response(new Blob([html]));
+          void res.body;
+          return res;
+        },
+        "ReadableStream with a string queued in start()": () =>
+          new Response(new ReadableStream({ start(c) { c.enqueue(html); c.close(); } })),
+        "ReadableStream with bytes queued in start()": () =>
+          new Response(new ReadableStream({ start(c) { c.enqueue(bytes()); c.close(); } })),
+        "bytes ReadableStream with a chunk queued in start()": () =>
+          new Response(new ReadableStream({ type: "bytes", start(c) { c.enqueue(bytes()); c.close(); } })),
+        "direct ReadableStream writing synchronously from pull()": () =>
+          new Response(new ReadableStream({ type: "direct", pull(c) { c.write(html); c.close(); } })),
+        "still-open ReadableStream with a chunk queued in start()": () =>
+          new Response(new ReadableStream({ start(c) { c.enqueue(html); }, cancel() { upstreamCancels++; } })),
+      };
+      for (const [name, input] of Object.entries(inputs)) {
+        const out = new HTMLRewriter()
+          .on("a", {
+            element() {
+              throw new Error("handler threw");
+            },
+          })
+          .transform(input());
+        const outcome = await out.text().then(
+          text => "resolved with " + JSON.stringify(text),
+          err => "rejected with " + err.message,
+        );
+        // Sweep the pump controller too: it must have been detached from the
+        // failed pipe rather than left pointing at it.
+        Bun.gc(true);
+        console.log(name + ": " + outcome);
+      }
+      console.log("still-open input cancelled " + upstreamCancels + " time(s)");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(
+      [
+        "Response(string) whose .body was read: rejected with handler threw",
+        "Response(Blob) whose .body was read: rejected with handler threw",
+        "ReadableStream with a string queued in start(): rejected with handler threw",
+        "ReadableStream with bytes queued in start(): rejected with handler threw",
+        "bytes ReadableStream with a chunk queued in start(): rejected with handler threw",
+        "direct ReadableStream writing synchronously from pull(): rejected with handler threw",
+        "still-open ReadableStream with a chunk queued in start(): rejected with handler threw",
+        "still-open input cancelled 1 time(s)",
+        "",
+      ].join("\n"),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // A direct stream's pull() receives the pump controller itself, so user code
+  // can hand it to an API that roots its argument with gcProtect (another
+  // rewriter's .on() does). The pipe never protects the controller, so when a
+  // failing rewrite detaches it, the detach must not gcUnprotect it either:
+  // that cancelled the other holder's root and the next GC collected the
+  // controller out from under it. The unreferenced run shows the controller
+  // is otherwise collectable, so "alive" below really is the holder's root.
+  it("detaching the pump controller of a failed rewrite keeps a gcProtect held elsewhere on it", async () => {
+    const fixture = /* js */ `
+      const holder = new HTMLRewriter();
+      async function failedRewrite(handToHolder) {
+        let ref;
+        const input = new Response(
+          new ReadableStream({
+            type: "direct",
+            pull(controller) {
+              ref = new WeakRef(controller);
+              if (handToHolder) holder.on("*", controller);
+              // The element handler below throws inside this write, so the pipe
+              // fails and detaches the controller while it is still attached.
+              controller.write("<p>x</p>");
+            },
+          }),
+        );
+        const out = new HTMLRewriter()
+          .on("p", {
+            element() {
+              throw new Error("handler threw");
+            },
+          })
+          .transform(input);
+        const outcome = await out.text().then(
+          () => "resolved",
+          err => "rejected with " + err.message,
+        );
+        return { ref, outcome };
+      }
+      for (const handToHolder of [false, true]) {
+        const { ref, outcome } = await failedRewrite(handToHolder);
+        for (let i = 0; i < 3; i++) {
+          await new Promise(resolve => setImmediate(resolve));
+          Bun.gc(true);
+        }
+        const liveness = ref.deref() === undefined ? "collected" : "alive";
+        console.log((handToHolder ? "handed to holder.on()" : "unreferenced") + ": " + outcome + ", controller " + liveness);
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(
+      [
+        "unreferenced: rejected with handler threw, controller collected",
+        "handed to holder.on(): rejected with handler threw, controller alive",
+        "",
+      ].join("\n"),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   it("HTMLRewriter: async replacement", async () => {
     await gcTick();
     const res = new HTMLRewriter()
@@ -327,10 +471,9 @@ describe("HTMLRewriter", () => {
     });
 
     // `rsisAbrupt` calls `controller.close(error)` synchronously before
-    // rejecting the pump promise, and the generated `__close` drops its error
-    // argument. The pipe must defer its terminal step to the reject reaction
-    // so the real error reaches the output body instead of resolving with
-    // truncated HTML.
+    // rejecting the pump promise. The pipe must defer its terminal step to the
+    // reject reaction so the real error reaches the output body instead of
+    // resolving with truncated HTML.
     it.each(["default", "pull"])(
       "a JS ReadableStream (%s) input that errors mid-stream rejects the body",
       async kind => {
@@ -356,6 +499,31 @@ describe("HTMLRewriter", () => {
         await expect(res.text()).rejects.toThrow("upstream boom");
       },
     );
+
+    // The input is already errored when transform() runs: the pump's first
+    // read throws, so `controller.close(error)` and the pump rejection both
+    // happen inside transform(), before any reject reaction is attached. The
+    // close must carry the error to the pipe, or the body resolves to "".
+    // `error()` with no reason errors the stream with `undefined`; that must
+    // not read as a clean close either.
+    it.each([
+      ["an Error", new Error("upstream boom")],
+      ["undefined", undefined],
+    ])("a JS ReadableStream input that is already errored (%s) rejects the body", async (_, reason) => {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode("<p>partial"));
+          controller.error(reason);
+        },
+      });
+      const res = new HTMLRewriter().on("p", { element() {} }).transform(new Response(stream));
+      const settled = await res.text().then(
+        text => ({ resolved: text }),
+        err => ({ rejected: err }),
+      );
+      expect(settled).toEqual({ rejected: reason });
+    });
 
     // A `type: 'direct'` source whose `pull()` throws synchronously leaves the
     // JS controller's `m_sinkPtr` set after `readDirectStream` returns with an
@@ -2759,6 +2927,91 @@ describe("GC pressure mid-rewrite", () => {
     expect(stash.tagName).toBeUndefined();
   });
 
+  // A handler running inside the input ByteStream's write into the pipe
+  // cancels the output reader and drops the last references to the transform.
+  // The ByteStream follows the pipe's `Done` answer with `end()` on the same
+  // sink snapshot, so the pipe must outlive the write call even when a GC in
+  // the handler swept its Transform cell.
+  it("cancelling the output from a handler mid-chunk does not free the pipe under its caller", async () => {
+    const fixture = /* js */ `
+      const CHUNKS = 6;
+      const CANCEL_AT = 4;
+      let gates;
+      // Chunk N+1 is only sent once the handler saw element N, so every element
+      // after the first reaches the rewriter from the fetch body's ByteStream.
+      const server = Bun.serve({
+        port: 0,
+        fetch() {
+          return new Response(
+            new ReadableStream({
+              async start(controller) {
+                try {
+                  for (let i = 0; i < CHUNKS; i++) {
+                    controller.enqueue(new TextEncoder().encode("<p n=" + i + "></p>"));
+                    await gates[i].promise;
+                  }
+                  controller.close();
+                } catch {}
+              },
+            }),
+            { headers: { "Content-Type": "text/html" } },
+          );
+        },
+      });
+      for (let iter = 0; iter < 3; iter++) {
+        gates = Array.from({ length: CHUNKS }, () => Promise.withResolvers());
+        const cancelled = Promise.withResolvers();
+        let seen = 0;
+        let reader;
+        let out = new HTMLRewriter()
+          .on("p", {
+            element(el) {
+              const n = Number(el.getAttribute("n"));
+              seen++;
+              if (n === CANCEL_AT) {
+                reader.cancel("bye").catch(() => {});
+                reader = out = null;
+                globalThis.junk = Array.from({ length: 2000 }, () => "x".repeat(4096));
+                Bun.gc(true);
+                Bun.gc(true);
+                cancelled.resolve();
+              }
+              el.setAttribute("seen", "1");
+              gates[n].resolve();
+            },
+          })
+          .transform(await fetch(server.url));
+        reader = out.body.getReader();
+        out = null;
+        const drain = (async () => {
+          try {
+            while (reader) {
+              const { done } = await reader.read();
+              if (done) break;
+            }
+          } catch {}
+        })();
+        await cancelled.promise;
+        await drain;
+        Bun.gc(true);
+        for (const g of gates) g.resolve();
+        console.log("iteration", iter, "saw", seen);
+      }
+      console.log("done");
+      server.stop(true);
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("iteration 0 saw 5\niteration 1 saw 5\niteration 2 saw 5\ndone\n");
+    expect(exitCode).toBe(0);
+  });
+
   // Chained transform where the intermediate Response is a temporary: while
   // the second pipe's handler is suspended, the first pipe is parked on the
   // shared ByteStream's backpressure with its producer backref installed.
@@ -2784,5 +3037,146 @@ describe("GC pressure mid-rewrite", () => {
     // stack before the GC loop in rw2's handler runs.
     const start = () => rw2.transform(rw1.transform(new Response("<p>x</p>"))).text();
     expect(await start()).toBe('<p one="" two="">x</p>');
+  });
+
+  // Content ops coerce their first argument to a string, then coerce the
+  // second (the `{ html }` options getter / the attribute value), which runs
+  // user JS. A GC in that window must not free the first argument's bytes
+  // before lol-html copies them into the output.
+  it("content op string arguments survive a GC triggered while coercing a later argument", async () => {
+    const fixture = /* js */ `
+      const N = 20000;
+      // A fresh, non-atom string each call (slice+concat resolves to a new StringImpl on toString()).
+      const mk = (ch, n) => {
+        const s = ch.repeat(n);
+        return s.slice(0, 1) + s.slice(1);
+      };
+      const churn = () => {
+        Bun.gc(true);
+        for (let i = 0; i < 50; i++) mk("SECRET", 20000);
+        Bun.gc(true);
+      };
+      // toString() hands back a temporary string nothing else references.
+      const content = ch => ({ toString: () => mk(ch, N) + "END" });
+      const opts = {
+        get html() {
+          churn();
+          return false;
+        },
+      };
+      const out = new HTMLRewriter()
+        .on("p", {
+          element(el) {
+            el.setInnerContent(content("I"), opts);
+            el.before(content("B"), opts);
+            el.setAttribute({ toString: () => mk("n", N) }, { toString: () => (churn(), "v") });
+            el.onEndTag(end => {
+              end.after(content("E"), opts);
+            });
+          },
+        })
+        .onDocument({
+          comments(c) {
+            c.replace(content("C"), opts);
+          },
+          text(t) {
+            if (t.text === "txt") t.after(content("T"), opts);
+          },
+          end(end) {
+            end.append(content("D"), opts);
+          },
+        })
+        .transform("<p>x</p><div>txt</div><!-- c -->");
+      const fragments = {
+        "element.before": mk("B", N) + "END<p ",
+        "element.setAttribute": "<p " + mk("n", N) + '="v">',
+        "element.setInnerContent": '="v">' + mk("I", N) + "END</p>",
+        "endTag.after": "</p>" + mk("E", N) + "END<div>",
+        "text.after": "<div>txt" + mk("T", N) + "END</div>",
+        "comment.replace": "</div>" + mk("C", N) + "END",
+        "documentEnd.append": "END" + mk("D", N) + "END",
+      };
+      const result = {};
+      for (const [op, fragment] of Object.entries(fragments)) result[op] = out.includes(fragment);
+      result.exact =
+        out ===
+        mk("B", N) + "END<p " + mk("n", N) + '="v">' + mk("I", N) + "END</p>" + mk("E", N) + "END" +
+        "<div>txt" + mk("T", N) + "END</div>" + mk("C", N) + "END" + mk("D", N) + "END";
+      console.log(JSON.stringify(result));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      // Malloc=1 routes JSC string allocations through the system allocator so ASan builds see the free
+      // (bmalloc's SystemHeap is unavailable on Windows).
+      env: isWindows ? bunEnv : { ...bunEnv, Malloc: "1", ASAN_OPTIONS: "detect_leaks=0" },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout.trim() || "{}")).toEqual({
+      "element.before": true,
+      "element.setAttribute": true,
+      "element.setInnerContent": true,
+      "endTag.after": true,
+      "text.after": true,
+      "comment.replace": true,
+      "documentEnd.append": true,
+      exact: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // The transform's input is a fetch() body wired straight into the pipe. Once the caller
+  // keeps only the promise for the output, the pipe is reachable from nothing in JS; what
+  // keeps it alive is the input stream's source, which the fetch holds while it delivers.
+  // The body arrives across many turns, with collections in between: every chunk must
+  // still reach the handlers.
+  it("a transform over a fetch body survives GC once only its output promise is held", async () => {
+    const fixture = /* js */ `
+      const CHUNKS = 20;
+      let release;
+      const gate = new Promise(resolve => (release = resolve));
+      const server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue("<html><body>");
+                await gate;
+                for (let i = 0; i < CHUNKS; i++) {
+                  controller.enqueue("<p>" + Buffer.alloc(1000, "x").toString() + "</p>");
+                  await Bun.sleep(1);
+                }
+                controller.close();
+              },
+            }),
+            { headers: { "content-type": "text/html" } },
+          ),
+      });
+      async function start() {
+        const res = await fetch(server.url);
+        return new HTMLRewriter().on("p", { element(el) { el.setAttribute("seen", ""); } }).transform(res).text();
+      }
+      const text = start();
+      for (let i = 0; i < 5; i++) { Bun.gc(true); await Bun.sleep(1); }
+      release();
+      for (let i = 0; i < 30; i++) { Bun.gc(true); await Bun.sleep(2); }
+      const html = await text;
+      console.log(JSON.stringify({ seen: html.split('<p seen="">').length - 1, ended: html.endsWith("</p>") }));
+      server.stop(true);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ seen: 20, ended: true }),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

@@ -14,7 +14,7 @@ use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::npm::ExtendedManifest;
 use bun_install::package_manager::options::Do;
 use bun_install::package_manager::{
-    LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
+    LogLevel, Subcommand, WorkspaceFilter, populate_manifest_cache,
     update_package_json_and_install_with_manager,
 };
 use bun_install::package_manager_real::command_line_arguments::UpdateGroups;
@@ -896,7 +896,6 @@ impl UpdateInteractiveCommand {
                     &scope,
                     package_name,
                     Some(&mut expired),
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
                     needs_extended,
                 ) else {
                     continue;
@@ -1019,7 +1018,7 @@ impl UpdateInteractiveCommand {
         let mut grouped_result = Self::group_catalog_dependencies(outdated_packages)?;
 
         // Sort packages: dependencies first, then devDependencies, etc.
-        grouped_result.sort_by(|a, b| {
+        index_sort::sort_slice_by(&mut grouped_result, |a, b| {
             // First sort by dependency type
             let a_priority = dep_type_priority(a.dependency_type);
             let b_priority = dep_type_priority(b.dependency_type);

@@ -4,7 +4,7 @@ use core::fmt::Write as _;
 
 use crate::bun_json as JSON;
 use bun_ast::{Expr, expr::Data as ExprData};
-use bun_collections::{HashContext, HashMap, StringHashMap};
+use bun_collections::{HashContext, HashMap, StringHashMap, index_sort};
 use bun_core::strings;
 use bun_core::{self};
 use bun_paths::PathBuffer;
@@ -394,6 +394,7 @@ impl Stringifier {
                     extern_strings,
                     deps_buf,
                     &lockfile.workspace_versions,
+                    &lockfile.self_contained_workspaces,
                     &mut optional_peers_buf,
                     &pkg_map,
                     b"",
@@ -412,7 +413,7 @@ impl Stringifier {
                 }
 
                 // local Sorter struct → closure
-                workspace_sort_buf.sort_by(|&l, &r| {
+                index_sort::sort_indices(&mut workspace_sort_buf, &mut |l, r| {
                     let l_res = &pkg_resolutions[l as usize];
                     let r_res = &pkg_resolutions[r as usize];
                     l_res.workspace().order(*r_res.workspace(), buf, buf)
@@ -437,6 +438,7 @@ impl Stringifier {
                         extern_strings,
                         deps_buf,
                         &lockfile.workspace_versions,
+                        &lockfile.self_contained_workspaces,
                         &mut optional_peers_buf,
                         &pkg_map,
                         pkg_names[workspace_pkg_id as usize].slice(buf),
@@ -531,7 +533,7 @@ impl Stringifier {
 
             pkgs_iter.reset();
 
-            tree_sort_buf.sort_by(tree_sort_is_less_than);
+            index_sort::sort_slice_by(&mut tree_sort_buf, tree_sort_is_less_than);
 
             if found_trusted_dependencies.len() > 0 {
                 Self::write_indent(writer, *indent)?;
@@ -676,7 +678,7 @@ impl Stringifier {
                         string_buf: buf,
                         deps_buf,
                     };
-                    tree_deps_sort_buf.sort_by(|&a, &b| {
+                    index_sort::sort_indices(&mut tree_deps_sort_buf, &mut |a, b| {
                         if ctx.is_less_than(a, b) {
                             core::cmp::Ordering::Less
                         } else if ctx.is_less_than(b, a) {
@@ -775,7 +777,7 @@ impl Stringifier {
                             string_buf: buf,
                             deps_buf,
                         };
-                        pkg_deps_sort_buf.sort_by(|&a, &b| {
+                        index_sort::sort_indices(&mut pkg_deps_sort_buf, &mut |a, b| {
                             if ctx.is_less_than(a, b) {
                                 core::cmp::Ordering::Less
                             } else if ctx.is_less_than(b, a) {
@@ -1250,6 +1252,11 @@ impl Stringifier {
         extern_strings: &[ExternalString],
         deps_buf: &[Dependency],
         workspace_versions: &VersionHashMap,
+        self_contained_workspaces: &bun_collections::ArrayHashMap<
+            PackageNameHash,
+            (),
+            bun_collections::ArrayIdentityContextU64,
+        >,
         optional_peers_buf: &mut Vec<String>,
         pkg_map: &PkgMap<()>,
         relative_path: &[u8],
@@ -1300,6 +1307,12 @@ impl Stringifier {
                 writer.write_all(b",\n")?;
                 Self::write_indent(writer, *indent)?;
                 write!(writer, "\"version\": \"{}\"", version.fmt(buf))?;
+            }
+
+            if self_contained_workspaces.contains(&pkg_name_hashes[pkg_id as usize]) {
+                writer.write_all(b",\n")?;
+                Self::write_indent(writer, *indent)?;
+                writer.write_all(b"\"hoistingLimits\": \"workspaces\"")?;
             }
 
             if pkg_bins[pkg_id as usize].tag != BinTag::None {
@@ -2343,6 +2356,21 @@ pub(crate) fn parse_into_binary_lockfile(
             lockfile
                 .workspace_versions
                 .insert(name_hash, parsed.version.min());
+        }
+
+        // `installConfig.hoistingLimits` mirrored from the workspace manifest, so the
+        // tree is hoisted the same way when it is rebuilt from this lockfile
+        if let Some(h) = value.get(b"hoistingLimits") {
+            if h.as_utf8_string_literal() == Some(b"workspaces".as_slice()) {
+                lockfile.self_contained_workspaces.insert(name_hash, ());
+            } else {
+                log.add_error(
+                    Some(source),
+                    value_loc_of(source, h.loc),
+                    b"Expected \"workspaces\" for hoistingLimits",
+                );
+                return Err(ParseError::InvalidWorkspaceObject);
+            }
         }
     }
 
@@ -3708,9 +3736,10 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
 
     {
         let bytes = lockfile.buffers.string_bytes.as_slice();
-        // `slice::sort_by` is pattern-defeating quicksort; `Dependency::cmp` is the
-        // total-order form of `isLessThan` (behavior group, then name ASC).
-        lockfile.buffers.dependencies[off..].sort_by(|a, b| Dependency::cmp(bytes, a, b));
+        // `Dependency::cmp` is the total-order form of `isLessThan` (behavior group, then name ASC).
+        index_sort::sort_slice_by(&mut lockfile.buffers.dependencies[off..], |a, b| {
+            Dependency::cmp(bytes, a, b)
+        });
     }
 
     optional_peers_buf.clear();

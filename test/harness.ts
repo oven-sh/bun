@@ -337,6 +337,35 @@ export async function runFixtureMaxRSS(fixture: string, expected: unknown) {
   expect(maxRSS).toBeGreaterThan(1024 * 1024);
   return maxRSS;
 }
+
+/**
+ * Runs `cmd` (a script that prints `{"deltaMiB": number}` as its last stdout
+ * line) under bun with ASAN quarantine disabled, and asserts the delta is below
+ * `release` MiB (or `debug` MiB under ASAN/debug builds).
+ */
+export async function expectRssDeltaBelow(
+  cmd: string[] /* args after bunExe(), e.g. ["--smol", "-e", code] or [fixturePath] */,
+  bounds: { release: number; debug: number },
+): Promise<void> {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...cmd],
+    env: {
+      ...bunEnv,
+      // ASAN's quarantine pins freed blocks and keeps RSS at peak.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+        .filter(Boolean)
+        .join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr.trim()).toBe("");
+  const { deltaMiB } = JSON.parse(stdout.trim().split("\n").at(-1)!);
+  expect(deltaMiB).toBeLessThan(isASAN || isDebug ? bounds.debug : bounds.release);
+  expect(exitCode).toBe(0);
+}
+
 let emptyBunMaxRSS: Promise<number> | undefined;
 export function emptyProcessMaxRSS() {
   return (emptyBunMaxRSS ??= (async () => {

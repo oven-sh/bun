@@ -428,7 +428,7 @@ impl Macro {
             // CLI-path macro VM uses the caller's log sink and env loader.
 
             // JSC needs to be initialized if building from CLI
-            jsc::initialize(jsc::EvalMode::No);
+            jsc::initialize(jsc::InitializeOptions::default());
 
             let _vm = VirtualMachine::init(VirtualMachineInitOptions {
                 log: Some(NonNull::from(&mut *log)),
@@ -521,7 +521,7 @@ impl From<MacroError> for Error {
             MacroError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
             MacroError::ToJs(e) => e.into(),
             MacroError::Js(JsError::OutOfMemory) => crate::Error::Alloc(bun_alloc::AllocError),
-            MacroError::Js(JsError::Thrown) => crate::Error::JSError,
+            MacroError::Js(JsError::Thrown | JsError::Terminated) => crate::Error::JSError,
         }
     }
 }
@@ -760,7 +760,7 @@ impl<'a> Run<'a> {
                 // SAFETY: `obj` is a live JSC heap cell; `'a` is bounded by the
                 // surrounding stack frame.
                 let obj_ref = unsafe { &*obj };
-                let mut object_iter = JSPropertyIterator::init(
+                let object_iter = JSPropertyIterator::init(
                     self.global,
                     obj_ref,
                     JSPropertyIteratorOptions::new(false, true),
@@ -771,8 +771,8 @@ impl<'a> Run<'a> {
                 let mut properties = G::PropertyList::init_capacity(object_iter.len);
                 // (errdefer clearAndFree deleted — drops on `?`)
 
-                while let Some(prop) = object_iter.next()? {
-                    let object_value = self.run(object_iter.value)?;
+                while let Some((prop, prop_value)) = object_iter.next()? {
+                    let object_value = self.run(prop_value)?;
 
                     // `EString::init` lifetime-erases its borrow
                     // (arena-owned per the parser's `Str` convention). Copy the
@@ -815,7 +815,7 @@ impl<'a> Run<'a> {
                 ));
             }
             T::String => {
-                let bun_str = bun_core::OwnedString::new(value.to_bun_string(self.global)?);
+                let bun_str = value.to_bun_string(self.global)?;
 
                 // encode into utf16 so the printer escapes the string correctly
                 // UTF-16 → memcpy, Latin-1 → byte-widen. JS-sourced WTF

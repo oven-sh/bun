@@ -1247,3 +1247,34 @@ describe("node shim (argv0=node) does not auto-load .env files", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// JSC options come from BUN_JSC_<option>; JSC's own JSC_<option> environment
+// pass is disabled (JSC::Config::disableEnvironmentOptions in JSCInitialize).
+describe("JSC option environment variables", () => {
+  async function dumpOptions(env: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "1"],
+      env: { ...bunEnv, ...env },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
+  }
+  test.concurrent("BUN_JSC_<option> applies", async () => {
+    // level 1 lists overridden options only
+    const { stderr, exitCode } = await dumpOptions({
+      BUN_JSC_dumpOptions: "1",
+      BUN_JSC_thresholdForJITAfterWarmUp: "77",
+    });
+    expect(stderr).toContain("thresholdForJITAfterWarmUp=77");
+    expect(exitCode).toBe(0);
+  });
+  test.concurrent("JSC_<option> is ignored", async () => {
+    // level 2 lists every option with its current value, however it was set
+    const { stderr, exitCode } = await dumpOptions({ BUN_JSC_dumpOptions: "2", JSC_thresholdForJITAfterWarmUp: "77" });
+    expect(stderr).toContain("thresholdForJITAfterWarmUp=");
+    expect(stderr).not.toContain("thresholdForJITAfterWarmUp=77");
+    expect(exitCode).toBe(0);
+  });
+});

@@ -370,3 +370,39 @@ devTest("error report endpoint blanks stray non-text bytes in reported frames", 
     await dev.fetch("/").expect.toInclude("<h1>Frame Bytes</h1>");
   },
 });
+devTest("editing a file imported from outside the project root hot-reloads", {
+  // The Windows watcher does not watch files outside the project directory.
+  skip: ["win32"],
+  files: {
+    "web/index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "web/index.ts": `
+      import { value } from "../outside/dep";
+      console.log(value);
+      import.meta.hot.accept();
+    `,
+    "outside/dep.ts": `
+      export const value = "one";
+    `,
+  },
+  cwd: "web",
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("one");
+    await dev.write(
+      "outside/dep.ts",
+      `
+        export const value = "two";
+      `,
+    );
+    await c.expectMessage("two");
+    await dev.write(
+      "outside/dep.ts",
+      `
+        export const value = "three";
+      `,
+    );
+    await c.expectMessage("three");
+  },
+});

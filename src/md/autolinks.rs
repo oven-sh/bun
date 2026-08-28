@@ -158,6 +158,31 @@ fn is_in_set(c: u8, set: &[u8]) -> bool {
     false
 }
 
+/// 256-bit membership set over bytes; keeps the boundary checks below to a
+/// couple of loads instead of per-call-site `match` jump tables.
+struct ByteSet([u64; 4]);
+
+impl ByteSet {
+    const fn of(bytes: &[u8]) -> ByteSet {
+        let mut words = [0u64; 4];
+        let mut i = 0;
+        while i < bytes.len() {
+            words[(bytes[i] >> 6) as usize] |= 1 << (bytes[i] & 63);
+            i += 1;
+        }
+        ByteSet(words)
+    }
+
+    #[inline]
+    fn contains(&self, c: u8) -> bool {
+        self.0[(c >> 6) as usize] & (1 << (c & 63)) != 0
+    }
+}
+
+const EMPH_DELIMS: ByteSet = ByteSet::of(b"*_~");
+const LEFT_BOUNDARY: ByteSet = ByteSet::of(b" \t\n\r\x0B\x0C({[");
+const RIGHT_BOUNDARY: ByteSet = ByteSet::of(b" \t\n\r\x0B\x0C)}]<.!?,;&");
+
 bun_core::bool_enum!(pub(crate) AllowEmph);
 
 /// Check left boundary for permissive autolinks.
@@ -166,12 +191,8 @@ fn check_left_boundary(content: &[u8], pos: usize, allow_emph: AllowEmph) -> boo
     if pos == 0 {
         return true;
     }
-    match content[pos - 1] {
-        b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C => true,
-        b'(' | b'{' | b'[' => true,
-        b'*' | b'_' | b'~' => allow_emph == AllowEmph::Yes,
-        _ => false,
-    }
+    let c = content[pos - 1];
+    LEFT_BOUNDARY.contains(c) || (allow_emph == AllowEmph::Yes && EMPH_DELIMS.contains(c))
 }
 
 /// Check right boundary for permissive autolinks.
@@ -180,13 +201,8 @@ fn check_right_boundary(content: &[u8], pos: usize, allow_emph: AllowEmph) -> bo
     if pos >= content.len() {
         return true;
     }
-    match content[pos] {
-        b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C => true,
-        b')' | b'}' | b']' | b'<' => true,
-        b'.' | b'!' | b'?' | b',' | b';' | b'&' => true,
-        b'*' | b'_' | b'~' => allow_emph == AllowEmph::Yes,
-        _ => false,
-    }
+    let c = content[pos];
+    RIGHT_BOUNDARY.contains(c) || (allow_emph == AllowEmph::Yes && EMPH_DELIMS.contains(c))
 }
 
 struct Scheme {

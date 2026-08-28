@@ -1,5 +1,4 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::ZigString;
 
 use super::throw;
 use super::DiffFormatter;
@@ -44,8 +43,6 @@ pub(crate) fn to_have_property(
     }
 
     let not = this.flags.get().not();
-    let mut path_string = ZigString::EMPTY;
-    expected_property_path.to_zig_string(&mut path_string, global)?;
 
     let mut pass = !value.is_undefined_or_null();
     let mut received_property: JSValue = JSValue::ZERO;

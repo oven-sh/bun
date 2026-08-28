@@ -30,9 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#if OS(WINDOWS)
-#include <winsock2.h>
-#else
+#if !OS(WINDOWS)
 #include <unistd.h>
 #include <sys/mman.h>
 #include <fcntl.h>
@@ -76,30 +74,25 @@ Shm s_shm;
 #include "libusockets.h"
 #include "_libusockets.h"
 
-// LIBUS_SOCKET_DESCRIPTOR is SOCKET on Windows, int on POSIX. us_socket_
-// from_fd takes one; its failure-path close needs the matching close.
-// Bun__Chrome__ensure returns -1 on Windows (no socketpair) so the branch
-// is unreachable there, but the compiler needs the decl to type-check.
-#if OS(WINDOWS)
-static inline void closefd(LIBUS_SOCKET_DESCRIPTOR s) { closesocket(s); }
-#else
-static inline void closefd(LIBUS_SOCKET_DESCRIPTOR fd) { ::close(fd); }
-#endif
-
 namespace Bun {
 namespace CDP {
 
 using namespace JSC;
 
-// Implemented in ChromeProcess.rs. Returns the parent's socketpair fd (bidirectional).
+// Implemented in ChromeProcess.rs. Returns the parent's socketpair fd (0 on Windows, which keeps the pipes), -1 on failure.
 // path overrides auto-detection; extraArgv (count entries, each NUL-
 // terminated) appends after core flags. All pointers nullable.
 extern "C" int32_t Bun__Chrome__ensure(Zig::GlobalObject*, const char* userDataDir,
     const char* path, const char* const* extraArgv, uint32_t extraArgvLen,
     bool stdoutInherit, bool stderrInherit);
+#if OS(WINDOWS)
+// Copies and queues one chunk; a failure arrives later as Bun__Chrome__onPipeClosed.
+extern "C" void Bun__Chrome__writePipe(const char* data, size_t len);
+#endif
+// Unpublishes and kills the spawned Chrome without reporting its exit back here.
+extern "C" void Bun__Chrome__retire();
 extern "C" void* Blob__fromBytesWithType(JSC::JSGlobalObject*, const uint8_t* ptr, size_t len, const char* mime);
 extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Zig::GlobalObject*, void* impl);
-extern "C" void Bun__VmHandle__refKeepAlive(const ::BunVmHandleRef*, int delta);
 extern "C" void Bun__EventLoop__enter(Zig::GlobalObject*);
 extern "C" void Bun__EventLoop__exit(Zig::GlobalObject*);
 extern "C" void Bun__EventLoop__runCallback2(JSGlobalObject*, EncodedJSValue cb,
@@ -238,6 +231,7 @@ Transport& transport()
     return instance.get();
 }
 
+#if !OS(WINDOWS)
 // One group per process — reused across Chrome respawns. Embedded (not
 // heap-alloc'd) and lazily linked into the loop on first socket. The vtable
 // is static-const since the singleton handlers never change.
@@ -278,6 +272,7 @@ static constexpr us_socket_vtable_t s_cdpVTable = {
     .on_connecting_error = nullptr,
     .on_handshake = nullptr,
 };
+#endif
 
 bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDataDir,
     const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
@@ -305,21 +300,27 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
         argvC.append(s.utf8());
         argvPtrs.append(argvC.last().data());
     }
-    int32_t fd = Bun__Chrome__ensure(zig,
+    int32_t rc = Bun__Chrome__ensure(zig,
         dir.length() ? dir.data() : nullptr,
         pathC.length() ? pathC.data() : nullptr,
         argvPtrs.isEmpty() ? nullptr : argvPtrs.span().data(),
         static_cast<uint32_t>(argvPtrs.size()),
         stdoutInherit, stderrInherit);
-    if (fd < 0) {
+    if (rc < 0) {
         m_dead = true;
         return false;
     }
+    m_global = zig;
+
+#if OS(WINDOWS)
+    // Nothing to adopt: the Rust side owns the pipes (m_readSock stays null).
+    return true;
+#else
     // Socketpair — same fd for read + write. Chrome's end is dup'd to its
     // fd 3 and fd 4; read(3)+write(4) both hit our socketpair peer. usockets'
     // bsd_recv calls recv() which needs a real socket (pipe fds broke here
     // with ENOTSOCK silently misread as EOF).
-    m_global = zig;
+    int fd = rc;
 
     if (!s_cdpGroup.loop) {
         us_socket_group_init(&s_cdpGroup, uws_get_loop(), &s_cdpVTable, nullptr);
@@ -331,11 +332,12 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     // they're harmless. kind=1 (.dynamic) → dispatch via s_cdpVTable.
     m_readSock = us_socket_from_fd(&s_cdpGroup, BUN_SOCKET_KIND_DYNAMIC, nullptr, sizeof(void*), fd, 0, 0);
     if (!m_readSock) {
-        closefd(fd);
+        ::close(fd);
         m_dead = true;
         return false;
     }
     return true;
+#endif
 }
 
 void Transport::send(uint32_t cdpId, Command&& cmd)
@@ -500,6 +502,10 @@ bool Transport::ensureConnected(Zig::GlobalObject* zig, const WTF::String& wsUrl
 // stopped the poll after the first fire, hanging large frames.
 void Transport::writeRaw(const char* data, size_t len)
 {
+#if OS(WINDOWS)
+    // libuv queues the chunks in order; m_txQueue/onWritable are unused.
+    if (!m_dead) Bun__Chrome__writePipe(data, len);
+#else
     if (m_dead || !m_readSock) return;
 
     if (m_txQueue.isEmpty()) {
@@ -513,6 +519,7 @@ void Transport::writeRaw(const char* data, size_t len)
         m_txQueue.append(std::span<const uint8_t>(
             reinterpret_cast<const uint8_t*>(data), len));
     }
+#endif
 }
 
 void Transport::onWritable()
@@ -528,6 +535,7 @@ void Transport::onWritable()
 
 void Transport::onData(const char* data, int length)
 {
+    if (m_dead) return; // late bytes from a connection rejectAllAndMarkDead gave up on
     m_rx.append(std::span<const uint8_t>(
         reinterpret_cast<const uint8_t*>(data), static_cast<size_t>(length)));
 
@@ -644,6 +652,18 @@ static WriteBarrier<JSPromise>& slotFor(JSWebView* view, PendingSlot s)
 static void settle(JSGlobalObject* g, JSWebView* view, PendingSlot slot, bool ok, JSValue v)
 {
     settleSlot(g, view, slotFor(view, slot), ok, v);
+}
+
+// Slots, not m_pending: a navigation that Chrome has already answered is
+// waiting for Page.loadEventFired and exists only in its slot.
+static void rejectViewSlots(JSGlobalObject* g, JSWebView* view, JSValue err)
+{
+    view->m_loading = false;
+    settleSlot(g, view, view->m_pendingNavigate, false, err);
+    settleSlot(g, view, view->m_pendingEval, false, err);
+    settleSlot(g, view, view->m_pendingScreenshot, false, err);
+    settleSlot(g, view, view->m_pendingMisc, false, err);
+    settleSlot(g, view, view->m_pendingCdp, false, err);
 }
 
 // Build an Error from CDP exceptionDetails. exception.description is V8's
@@ -1069,10 +1089,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         JSWebView* view = viewFor(vid);
         m_views.remove(vid);
         if (!view) return;
-        // Reject all pending slots. settle() is idempotent on empty slots.
-        auto* err = createError(g, "page detached (crashed or closed)"_s);
-        for (auto s : { PendingSlot::Navigate, PendingSlot::Evaluate, PendingSlot::Screenshot, PendingSlot::Misc, PendingSlot::Cdp })
-            settle(g, view, s, false, err);
+        rejectViewSlots(g, view, createError(g, "page detached (crashed or closed)"_s));
         // Erase stale m_pending entries — replies won't come.
         m_pending.removeIf([vid](auto& kv) { return kv.value.viewId == vid; });
         view->m_closed = true;
@@ -1281,20 +1298,19 @@ void Transport::rejectAllAndMarkDead(const WTF::String& reason)
     m_mode = TransportMode::None;
     m_wsOpen = false;
     m_wsPending.clear();
+    m_pending.clear();
+    m_sessions.clear();
+    // ~JSWebView() (a GC while settling) removes from m_views; iterate a local.
+    auto views = std::exchange(m_views, {});
     if (!m_global) return;
     auto* g = m_global;
     JSValue err = createError(g, reason);
-    // Reject each view's slots via settle(). Multiple pending ids may point
-    // at the same view (different slots); settle() is idempotent on an
-    // already-cleared slot — the first settle for a slot rejects, the rest
-    // find barrier.get() == null and no-op.
-    for (auto& [id, entry] : m_pending) {
-        if (JSWebView* v = viewFor(entry.viewId))
-            settle(g, v, entry.slot, false, err);
+    for (auto& weak : views.values()) {
+        JSWebView* v = weak.get();
+        if (!v) continue;
+        rejectViewSlots(g, v, err);
+        v->m_closed = true;
     }
-    m_pending.clear();
-    m_sessions.clear();
-    m_views.clear();
     updateKeepAlive();
 }
 
@@ -1307,7 +1323,7 @@ void Transport::updateKeepAlive()
     if (want == m_sockRefd || !m_global) return;
     m_sockRefd = want;
     Bun__VmHandle__refKeepAlive(
-        WebCore::clientData(m_global->vm())->vmHandle, want ? 1 : -1);
+        WebCore::clientData(m_global->vm())->vmHandle, BunLoopKind::Regular, want ? 1 : -1);
 
     // WebSocket mode: close the connection when the last view is gone.
     // We're connected to the USER'S Chrome — keeping the WS open after
@@ -1337,6 +1353,14 @@ uint32_t Transport::registerView(JSWebView* v)
     return id;
 }
 
+void Transport::retireGlobal(Zig::GlobalObject* global)
+{
+    if (m_global != global) return;
+    rejectAllAndMarkDead("WebView closed: its test file finished"_s);
+    Bun__Chrome__retire();
+    m_global = nullptr;
+}
+
 // --- CDP::Ops --------------------------------------------------------------
 // One CDP::Command per op. Input.* and Page.captureScreenshot are
 // synchronous-reply — the response means the operation completed, so these
@@ -1357,9 +1381,9 @@ static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
     auto& vm = g->vm();
     auto& t = transport();
     auto* promise = JSPromise::create(vm, g->promiseStructure());
-    // m_mode == None means neither ensureSpawned nor ensureConnected ran
-    // (constructor already called one, so this is unreachable unless
-    // rejectAllAndMarkDead reset it). WebSocket mode doesn't need
+    // Unreachable: the constructor spawned or connected, and the paths that
+    // kill or release the transport afterwards (rejectAllAndMarkDead,
+    // updateKeepAlive) leave no open view behind. WebSocket mode doesn't need
     // m_wsOpen here — send() queues until onOpen fires.
     if (t.m_dead || t.m_mode == TransportMode::None) {
         promise->reject(vm, createError(g, "Chrome connection is not available"_s));
@@ -1701,15 +1725,7 @@ JSPromise* reload(JSGlobalObject* g, JSWebView* view)
 void close(JSWebView* view)
 {
     auto& t = transport();
-    if (t.m_global) {
-        auto* g = t.m_global;
-        JSValue err = createError(g, "WebView closed"_s);
-        settleSlot(g, view, view->m_pendingNavigate, false, err);
-        settleSlot(g, view, view->m_pendingEval, false, err);
-        settleSlot(g, view, view->m_pendingScreenshot, false, err);
-        settleSlot(g, view, view->m_pendingMisc, false, err);
-        settleSlot(g, view, view->m_pendingCdp, false, err);
-    }
+    if (auto* g = t.m_global) rejectViewSlots(g, view, createError(g, "WebView closed"_s));
     // Prune m_pending entries for this view — the attach chain
     // (TargetCreateTarget → TargetAttachToTarget → PageEnable →
     // PageNavigate) holds Weak<view> per step and each step chains to the
@@ -1737,7 +1753,7 @@ void close(JSWebView* view)
 
 } // namespace CDP
 
-// Called from ChromeProcess.rs's onProcessExit. Idempotent with onClose.
+// Called from ChromeProcess.rs's on_exit. Idempotent with onClose.
 extern "C" void Bun__Chrome__died(int32_t signo)
 {
     auto& t = CDP::transport();
@@ -1746,5 +1762,18 @@ extern "C" void Bun__Chrome__died(int32_t signo)
             ? makeString("Chrome killed by signal "_s, signo)
             : "Chrome exited"_s);
 }
+
+#if OS(WINDOWS)
+// cdpOnData / cdpOnEnd counterparts, called from the tasks ChromeProcess.rs posts.
+extern "C" void Bun__Chrome__onPipeData(const char* data, size_t len)
+{
+    CDP::transport().onData(data, static_cast<int>(len));
+}
+
+extern "C" void Bun__Chrome__onPipeClosed()
+{
+    CDP::transport().onClose();
+}
+#endif
 
 } // namespace Bun

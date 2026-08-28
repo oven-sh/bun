@@ -16,7 +16,6 @@ pub use self::unicode::{
     decode_wtf8_rune_t_multibyte, wtf8_byte_sequence_length,
     wtf8_byte_sequence_length_with_invalid,
 };
-pub use unicode_draft::CodePointZero;
 
 // Sub-modules (peer files under `src/string/immutable/`).
 #[path = "immutable/escapeHTML.rs"]
@@ -640,13 +639,6 @@ impl<'a> SplitIterator<'a> {
         };
 
         Some(&self.buffer[start..end])
-    }
-
-    /// Returns a slice of the remaining bytes. Does not affect iterator state.
-    pub fn rest(&self) -> &'a [u8] {
-        let end = self.buffer.len();
-        let start = self.index.unwrap_or(end);
-        &self.buffer[start..end]
     }
 }
 
@@ -1539,7 +1531,15 @@ pub enum DecodeHexError {
 /// `u16` (UTF-16). The associated function routes full pairs through the
 /// matching Highway kernel while `_decode_hex_to_bytes` keeps the generic
 /// scalar path for short inputs.
-pub trait HexChar: Copy + Into<u32> {
+///
+/// A UTF-16 code unit is classified by its low byte, which is what Node's
+/// `Buffer` hex decoder does (`Buffer.from("\uff41", "hex")` sees `'A'`):
+/// a unit above 0xFF decodes when its low byte is a hex digit and stops the
+/// decode when it is not. The Highway kernels apply the same narrowing.
+pub trait HexChar: Copy {
+    /// The byte the decoder classifies and looks up in `HEX_TABLE`.
+    fn hex_byte(self) -> u8;
+
     /// Decode up to `min(src.len() / 2, dst.len())` hex pairs with SIMD,
     /// stopping at the first pair containing a non-hex character.
     /// Returns the number of bytes written.
@@ -1548,12 +1548,22 @@ pub trait HexChar: Copy + Into<u32> {
 
 impl HexChar for u8 {
     #[inline(always)]
+    fn hex_byte(self) -> u8 {
+        self
+    }
+
+    #[inline(always)]
     fn decode_hex_highway(src: &[Self], dst: &mut [u8]) -> usize {
         highway::decode_hex(src, dst)
     }
 }
 
 impl HexChar for u16 {
+    #[inline(always)]
+    fn hex_byte(self) -> u8 {
+        self as u8
+    }
+
     #[inline(always)]
     fn decode_hex_highway(src: &[Self], dst: &mut [u8]) -> usize {
         highway::decode_hex_u16(src, dst)
@@ -1607,18 +1617,8 @@ fn _decode_hex_to_bytes<Char: HexChar, const TRUNCATE: bool>(
     let mut input = source;
 
     while !remain.is_empty() && input.len() > 1 {
-        let int0: u32 = input[0].into();
-        let int1: u32 = input[1].into();
-        if core::mem::size_of::<Char>() > 1 {
-            if int0 > u8::MAX as u32 || int1 > u8::MAX as u32 {
-                if TRUNCATE {
-                    break;
-                }
-                return Err(DecodeHexError::InvalidByteSequence);
-            }
-        }
-        let a = HEX_TABLE[(int0 as u8) as usize];
-        let b = HEX_TABLE[(int1 as u8) as usize];
+        let a = HEX_TABLE[input[0].hex_byte() as usize];
+        let b = HEX_TABLE[input[1].hex_byte() as usize];
         if a == INVALID_CHAR || b == INVALID_CHAR {
             if TRUNCATE {
                 break;
@@ -2060,7 +2060,6 @@ pub fn must_escape_yaml_string(contents: &[u8]) -> bool {
 #[derive(Copy, Clone)]
 pub struct QuoteEscapeFormatFlags {
     pub quote_char: u8,
-    pub ascii_only: AsciiOnly,
     pub json: Json,
     pub str_encoding: Encoding,
 }
@@ -2069,7 +2068,6 @@ impl Default for QuoteEscapeFormatFlags {
     fn default() -> Self {
         Self {
             quote_char: b'"',
-            ascii_only: AsciiOnly::No,
             json: Json::No,
             str_encoding: Encoding::Utf8,
         }
@@ -2097,8 +2095,6 @@ impl core::fmt::Display for QuoteEscapeFormat<'_> {
             self.data,
             &mut buf,
             self.flags.quote_char,
-            // Hardcoded `AsciiOnly::No` regardless of
-            // `flags.ascii_only`; the field is dead in QuoteEscapeFormat.
             AsciiOnly::No,
             self.flags.json,
             self.flags.str_encoding,

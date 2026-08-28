@@ -192,6 +192,10 @@ impl UpgradedDuplex {
                 .map(Into::into),
         });
         (this.handlers.on_handshake)(this.handlers.ctx, handshake_success, ssl_error);
+        // Retry writes parked during the handshake, like openssl.c's `ssl_write_wants_read`.
+        if handshake_success && !this.is_shutdown() {
+            (this.handlers.on_writable)(this.handlers.ctx);
+        }
     }
 
     fn on_close(this: *mut Self) {
@@ -251,18 +255,18 @@ impl UpgradedDuplex {
             let buffer = match bun_jsc::array_buffer::BinaryType::Buffer.to_js(data, &global) {
                 Ok(b) => b,
                 Err(err) => {
-                    (self.handlers.on_error)(self.handlers.ctx, global.take_exception(err));
+                    (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
                     return;
                 }
             };
             buffer.ensure_still_alive();
 
             if let Err(err) = write_or_end.call(&global, duplex, &[buffer]) {
-                (self.handlers.on_error)(self.handlers.ctx, global.take_exception(err));
+                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
             }
         } else {
             if let Err(err) = write_or_end.call(&global, duplex, &[JSValue::NULL]) {
-                (self.handlers.on_error)(self.handlers.ctx, global.take_exception(err));
+                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
             }
         }
     }
@@ -561,14 +565,16 @@ impl UpgradedDuplex {
         }
     }
 
+    /// `None` means `start_tls` has not run yet (teardown never clears the slot), not shut down.
     #[uws_callback(export = "UpgradedDuplex__is_shutdown", no_catch)]
     pub(crate) fn is_shutdown(&self) -> bool {
-        self.wrapper_ref().is_none_or(|w| w.is_shutdown())
+        self.wrapper_ref().is_some_and(|w| w.is_shutdown())
     }
 
+    /// See [`Self::is_shutdown`] for the not-yet-started case.
     #[uws_callback(export = "UpgradedDuplex__is_closed", no_catch)]
     pub(crate) fn is_closed(&self) -> bool {
-        self.wrapper_ref().is_none_or(|w| w.is_closed())
+        self.wrapper_ref().is_some_and(|w| w.is_closed())
     }
 
     #[uws_callback(export = "UpgradedDuplex__is_established", no_catch)]

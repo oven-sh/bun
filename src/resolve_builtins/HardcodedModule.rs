@@ -327,17 +327,6 @@ pub struct Alias {
     pub node_only_prefix: bool,
 }
 
-impl Default for Alias {
-    fn default() -> Self {
-        Self {
-            path: zstr!(""),
-            tag: import_record::Tag::Builtin,
-            node_builtin: false,
-            node_only_prefix: false,
-        }
-    }
-}
-
 /// Prepend `"node:"` to a literal at compile time iff it isn't already prefixed.
 macro_rules! ensure_node_prefix {
     ($path:literal) => {{

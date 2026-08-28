@@ -890,7 +890,6 @@ impl<'a> PackageInstall<'a> {
             .node_modules
             .open_file(root_node_modules_dir, package_json_path)
             .ok()?;
-        // defer package_json_file.close()
 
         // Heuristic: most package.jsons will be less than 2048 bytes.
         read = package_json_file.read(&mut mutable.list[total..]).ok()?;

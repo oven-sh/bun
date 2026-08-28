@@ -7,7 +7,6 @@ use bstr::BStr;
 
 use bun_collections::VecExt;
 use bun_core::scoped_log;
-use bun_core::{ZigString, ZigStringSlice};
 use bun_http::Method as HttpMethod;
 use bun_jsc::JsCell;
 use bun_jsc::virtual_machine::IsRejection;
@@ -72,10 +71,10 @@ pub struct NodeHTTPResponse {
 
     pending_pinned_write: Cell<PendingPinnedWrite>,
     /// Owns the bytes referenced by `pending_pinned_write`: either a
-    /// `SliceWithUnderlyingString` (holds the WTFStringImpl ref) or a `Buffer`
+    /// `Utf8WithString` (holds the WTFStringImpl ref) or a `Buffer`
     /// view. The cached `pendingWriteBuffer` slot GC-roots the JS cell; for
     /// buffers the underlying ArrayBuffer is additionally `pin()`ed.
-    pending_pinned_write_owner: JsCell<crate::node::StringOrBuffer>,
+    pending_pinned_write_owner: JsCell<crate::node::StringOrBuffer<'static>>,
 
     pub(crate) upgrade_context: JsCell<UpgradeCTX>,
 
@@ -220,10 +219,6 @@ unsafe extern "C" {
         length: usize,
         use_insecure_http_parser: bool,
     ) -> JSValue;
-    // Scope-free exception read: satisfies the exception-check verifier
-    // after a callee ThrowScope destructor simulated a throw for this
-    // (scope-less native) caller. A single traps check in release builds.
-    safe fn Bun__NodeHTTP__acknowledgeThrowScope(global_object: &JSGlobalObject);
     // Builds req.rawHeaders' flat [name, value, ...] JSArray from the header
     // bytes captured at dispatch ([u32 nameLen][u32 valueLen][name][value]...).
     safe fn Bun__NodeHTTP__buildRawHeadersArray(
@@ -235,8 +230,6 @@ unsafe extern "C" {
     // `&JSGlobalObject` encodes non-null/aligned; `status_message` is the
     // ptr/len of a Rust `&[u8]` and `response` is a live `uws::Response<SSL>*`
     // from the matched `AnyResponse` arm. Module-private with one call site.
-    // Returns false when the C++ header writer left a JS exception pending
-    // (checked inside its own ThrowScope).
     safe fn NodeHTTPServer__writeHead_http(
         global_object: &JSGlobalObject,
         status_message: *const u8,
@@ -245,7 +238,7 @@ unsafe extern "C" {
         auto_header_bits: u32,
         keep_alive_timeout_secs: u32,
         response: *mut c_void,
-    ) -> bool;
+    );
 
     safe fn NodeHTTPServer__writeHead_https(
         global_object: &JSGlobalObject,
@@ -255,7 +248,7 @@ unsafe extern "C" {
         auto_header_bits: u32,
         keep_alive_timeout_secs: u32,
         response: *mut c_void,
-    ) -> bool;
+    );
 }
 
 /// `VirtualMachine::get()` returns `*mut`; deref once for callers that need `&mut`.
@@ -535,11 +528,12 @@ impl NodeHTTPResponse {
         );
     }
 
+    /// Empty `sec_websocket_*` slices fall back to the request's headers.
     pub(crate) fn upgrade(
         &self,
         data_value: JSValue,
-        sec_websocket_protocol: ZigString,
-        sec_websocket_extensions: ZigString,
+        sec_websocket_protocol: &[u8],
+        sec_websocket_extensions: &[u8],
     ) -> bool {
         let upgrade_ctx = self.upgrade_context.get().context;
         if upgrade_ctx.is_null() {
@@ -566,39 +560,28 @@ impl NodeHTTPResponse {
 
         let ws = ServerWebSocket::init(ws_handler, data_value, None);
 
-        let mut sec_websocket_protocol_str: Option<ZigStringSlice> = None;
-        let mut sec_websocket_extensions_str: Option<ZigStringSlice> = None;
-
-        // R-2: `JsCell::get()` projects `&UpgradeCTX`; the borrow lives until
-        // the explicit `drop`s below (no `with_mut` on this cell overlaps).
+        // R-2: `JsCell::get()` projects `&UpgradeCTX`; the borrow ends before
+        // the `with_mut` below.
         let upgrade_context: &UpgradeCTX = self.upgrade_context.get();
 
-        let sec_websocket_protocol_value: &[u8] = 'brk: {
-            if sec_websocket_protocol.len == 0 {
-                if !upgrade_context.request.is_null() {
-                    // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
-                    let request = bun_opaque::opaque_deref(upgrade_context.request.cast_const());
-                    break 'brk request.header(b"sec-websocket-protocol").unwrap_or(b"");
-                } else {
-                    break 'brk &upgrade_context.sec_websocket_protocol;
-                }
-            }
-            sec_websocket_protocol_str = Some(sec_websocket_protocol.to_slice());
-            break 'brk sec_websocket_protocol_str.as_ref().unwrap().slice();
+        let sec_websocket_protocol_value: &[u8] = if !sec_websocket_protocol.is_empty() {
+            sec_websocket_protocol
+        } else if !upgrade_context.request.is_null() {
+            // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
+            let request = bun_opaque::opaque_deref(upgrade_context.request.cast_const());
+            request.header(b"sec-websocket-protocol").unwrap_or(b"")
+        } else {
+            &upgrade_context.sec_websocket_protocol
         };
 
-        let sec_websocket_extensions_value: &[u8] = 'brk: {
-            if sec_websocket_extensions.len == 0 {
-                if !upgrade_context.request.is_null() {
-                    // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
-                    let request = bun_opaque::opaque_deref(upgrade_context.request.cast_const());
-                    break 'brk request.header(b"sec-websocket-extensions").unwrap_or(b"");
-                } else {
-                    break 'brk &upgrade_context.sec_websocket_extensions;
-                }
-            }
-            sec_websocket_extensions_str = Some(sec_websocket_extensions.to_slice());
-            break 'brk sec_websocket_extensions_str.as_ref().unwrap().slice();
+        let sec_websocket_extensions_value: &[u8] = if !sec_websocket_extensions.is_empty() {
+            sec_websocket_extensions
+        } else if !upgrade_context.request.is_null() {
+            // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
+            let request = bun_opaque::opaque_deref(upgrade_context.request.cast_const());
+            request.header(b"sec-websocket-extensions").unwrap_or(b"")
+        } else {
+            &upgrade_context.sec_websocket_extensions
         };
 
         let websocket_key: &[u8] = if !upgrade_context.request.is_null() {
@@ -626,10 +609,6 @@ impl NodeHTTPResponse {
                 Some(ctx),
             );
         }
-
-        // Drop the temporary slices before mutating upgrade_context.
-        drop(sec_websocket_protocol_str);
-        drop(sec_websocket_extensions_str);
 
         // The sec-websocket-* headers were already copied into
         // raw_response.upgrade(); the underlying HttpParser::fallback buffer is
@@ -719,7 +698,6 @@ impl NodeHTTPResponse {
 
     fn mark_request_as_done(&self) {
         scoped_log!(NodeHTTPResponse, "markRequestAsDone()");
-        // defer this.deref(); — moved to end of fn body.
         self.update_flags(|f| f.remove(Flags::IS_REQUEST_PENDING));
 
         // The async path (`on_node_http_request_with_upgrade_ctx`) stashes the
@@ -742,7 +720,13 @@ impl NodeHTTPResponse {
         let vm = vm_get();
         self.clear_on_data_callback(self.get_this_value(), vm.global());
         self.clear_pending_pinned_write(vm.global(), JSValue::ZERO);
-        self.upgrade_context.with_mut(|c| c.reset());
+        // ws may still upgrade an open tunnel: keep a context whose request pointer is detached.
+        let tunneled = self.flags.get().contains(Flags::TUNNELED);
+        self.upgrade_context.with_mut(|c| {
+            if !tunneled || !c.request.is_null() {
+                c.reset();
+            }
+        });
 
         self.buffered_request_body_data_during_pause
             .with_mut(|b| b.clear_and_free());
@@ -956,25 +940,15 @@ impl NodeHTTPResponse {
             200
         };
 
-        // Hot path: src/js/node/_http_server.ts always sets `response.statusMessage`,
-        // so we always land here with a short JS string. `to_slice()` would do
-        // 2×ref + 2×deref FFI (OwnedString + ZigStringSlice::WTF); instead hold
-        // the +1 from `to_bun_string` in an `OwnedString` and borrow the bytes
-        // without the inner ref bump.
-        let status_message_str;
+        let status_message_view;
         let status_message_slice;
         let status_message_bytes: &[u8] = if !status_message_value.is_undefined() {
-            status_message_str =
-                bun_core::OwnedString::new(status_message_value.to_bun_string(global_object)?);
-            status_message_slice = status_message_str.to_utf8_without_ref();
+            status_message_view = status_message_value.to_js_string_view(global_object)?;
+            status_message_slice = status_message_view.to_utf8();
             status_message_slice.slice()
         } else {
             &[]
         };
-
-        if global_object.has_exception() {
-            return Err(jsc::JsError::Thrown);
-        }
 
         if state.is_http_status_called() {
             return err_throw(
@@ -997,20 +971,19 @@ impl NodeHTTPResponse {
             }
         }
 
-        let wrote_head_ok;
         'do_it: {
             if status_message_bytes.is_empty() {
                 if let Some(status_message) =
                     HTTPStatusText::get(u16::try_from(status_code).expect("int cast"))
                 {
-                    wrote_head_ok = write_head_internal(
+                    write_head_internal(
                         &raw_response,
                         global_object,
                         status_message,
                         headers_object_value,
                         auto_header_bits,
                         keep_alive_timeout_secs,
-                    );
+                    )?;
                     break 'do_it;
                 }
             }
@@ -1033,39 +1006,29 @@ impl NodeHTTPResponse {
                 stack_buf[..code.len()].copy_from_slice(code);
                 stack_buf[code.len()] = b' ';
                 stack_buf[code.len() + 1..n].copy_from_slice(message);
-                wrote_head_ok = write_head_internal(
+                write_head_internal(
                     &raw_response,
                     global_object,
                     &stack_buf[..n],
                     headers_object_value,
                     auto_header_bits,
                     keep_alive_timeout_secs,
-                );
+                )?;
             } else {
                 // Heap fallback for absurdly long status messages (> 252 bytes).
                 let mut heap = Vec::with_capacity(n);
                 heap.extend_from_slice(code);
                 heap.push(b' ');
                 heap.extend_from_slice(message);
-                wrote_head_ok = write_head_internal(
+                write_head_internal(
                     &raw_response,
                     global_object,
                     &heap,
                     headers_object_value,
                     auto_header_bits,
                     keep_alive_timeout_secs,
-                );
+                )?;
             }
-        }
-
-        // The writeHead ThrowScope's destructor simulates a throw so its
-        // caller must check; acknowledge it scope-free (we are that caller
-        // when running inside writeHeadAndEnd), then propagate the result
-        // that traveled through the return value - otherwise the end phase
-        // would run with an exception pending.
-        Bun__NodeHTTP__acknowledgeThrowScope(global_object);
-        if !wrote_head_ok {
-            return Err(jsc::JsError::Thrown);
         }
 
         Ok(JSValue::UNDEFINED)
@@ -1162,35 +1125,32 @@ fn write_head_internal(
     headers: JSValue,
     auto_header_bits: u32,
     keep_alive_timeout_secs: u32,
-) -> bool {
+) -> JsResult<()> {
     scoped_log!(
         NodeHTTPResponse,
         "writeHeadInternal({})",
         BStr::new(status_message)
     );
-    match response {
-        uws::AnyResponse::TCP(tcp) => NodeHTTPServer__writeHead_http(
-            global_object,
-            status_message.as_ptr(),
-            status_message.len(),
-            headers,
-            auto_header_bits,
-            keep_alive_timeout_secs,
-            (*tcp).cast::<c_void>(),
-        ),
-        uws::AnyResponse::SSL(ssl) => NodeHTTPServer__writeHead_https(
-            global_object,
-            status_message.as_ptr(),
-            status_message.len(),
-            headers,
-            auto_header_bits,
-            keep_alive_timeout_secs,
-            (*ssl).cast::<c_void>(),
-        ),
-        uws::AnyResponse::H3(_) => {
-            bun_core::Output::panic(format_args!("node:http does not support HTTP/3 responses"));
+    type WriteHead =
+        extern "C" fn(&JSGlobalObject, *const u8, usize, JSValue, u32, u32, *mut c_void);
+    let (write_head, response): (WriteHead, *mut c_void) = match response {
+        uws::AnyResponse::TCP(tcp) => (NodeHTTPServer__writeHead_http, (*tcp).cast::<c_void>()),
+        uws::AnyResponse::SSL(ssl) => (NodeHTTPServer__writeHead_https, (*ssl).cast::<c_void>()),
+        uws::AnyResponse::H3(_) | uws::AnyResponse::H2(_) => {
+            bun_core::Output::panic(format_args!("node:http responses are always HTTP/1"));
         }
-    }
+    };
+    bun_jsc::from_js_host_call_generic(global_object, || {
+        write_head(
+            global_object,
+            status_message.as_ptr(),
+            status_message.len(),
+            headers,
+            auto_header_bits,
+            keep_alive_timeout_secs,
+            response,
+        )
+    })
 }
 
 impl NodeHTTPResponse {
@@ -1278,9 +1238,6 @@ bun_core::bool_enum!(IsLast);
 
 impl NodeHTTPResponse {
     fn handle_abort_or_timeout<const EVENT: AbortEvent>(&self, js_value: JSValue) {
-        // defer { if event == abort, raw_response = None }
-        // The deferred null is moved to explicit tail positions.
-
         if self.flags.get().contains(Flags::REQUEST_HAS_COMPLETED) {
             if EVENT == AbortEvent::Abort {
                 // The socket is gone — no further uws callback will arrive to
@@ -1308,8 +1265,6 @@ impl NodeHTTPResponse {
         }
 
         self.ref_();
-        // defer this.deref();
-        // defer if (event == .abort) this.markRequestAsDoneIfNecessary();
 
         let js_this: JSValue = if js_value.is_empty() {
             self.get_this_value()
@@ -1510,7 +1465,6 @@ fn node_http_request_on_resolve(global_object: &JSGlobalObject, callframe: &Call
         p.deinit();
         had
     });
-    // defer this.deref(); — moved to tail.
     this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments[1]);
 
     let flags = this.flags.get();
@@ -1557,8 +1511,6 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
         had
     });
     this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments[1]);
-
-    // defer this.deref(); — moved to tail.
 
     let flags = this.flags.get();
     if !flags.contains(Flags::REQUEST_HAS_COMPLETED)
@@ -1722,8 +1674,6 @@ impl NodeHTTPResponse {
             self.body_read_state.set(BodyReadState::Done);
         }
 
-        // defer { if last { ... } } — moved to tail.
-
         // "Armed" means a callable is cached — the slot holds an explicit
         // `undefined` between the dispatch reset and the reader's _read() arming
         // it, and a body arriving in that window used to be dropped outright.
@@ -1862,7 +1812,6 @@ impl NodeHTTPResponse {
     fn on_drain_corked(&self, offset: u64) {
         scoped_log!(NodeHTTPResponse, "onDrainCorked({})", offset);
         self.ref_();
-        // defer this.deref(); — moved to tail.
 
         let this_value = self.get_this_value();
         let Some(on_writable) = js::on_writable_get_cached(this_value) else {
@@ -2044,10 +1993,6 @@ impl NodeHTTPResponse {
             }
         }
         // string_or_buffer drops at scope exit.
-
-        if global_object.has_exception() {
-            return Err(jsc::JsError::Thrown);
-        }
 
         let bytes = string_or_buffer.slice();
 
@@ -2344,7 +2289,6 @@ impl NodeHTTPResponse {
         {
             js::on_data_set_cached(this_value, global_object, JSValue::UNDEFINED);
             self.armed_this_value.set(JSValue::ZERO);
-            // defer { if body_read_ref.has { unref } } — moved to tail of this branch.
             match self.body_read_state.get() {
                 BodyReadState::Pending | BodyReadState::Done => {
                     if !flags.contains(Flags::REQUEST_HAS_COMPLETED)
@@ -2396,7 +2340,6 @@ impl NodeHTTPResponse {
     }
 
     fn on_auto_flush(&self) -> bool {
-        // defer this.deref(); — moved to tail.
         let flags = self.flags.get();
         if !flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::UPGRADED) {
             if let Some(raw_response) = self.raw_response.get() {
@@ -2480,12 +2423,14 @@ impl NodeHTTPResponse {
         &self,
         global_object: &JSGlobalObject,
         _callframe: &CallFrame,
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         let section = self.raw_request_headers.replace(Vec::new());
         if section.is_empty() {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         }
-        Bun__NodeHTTP__buildRawHeadersArray(global_object, section.as_ptr(), section.len())
+        bun_jsc::call_zero_is_throw(global_object, || {
+            Bun__NodeHTTP__buildRawHeadersArray(global_object, section.as_ptr(), section.len())
+        })
     }
 
     /// `handle.takeRequestTrailers()` — this request's captured trailer section
@@ -2494,20 +2439,22 @@ impl NodeHTTPResponse {
         &self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         let section = self.request_trailers.replace(Vec::new());
         if section.is_empty() {
-            return JSValue::UNDEFINED;
+            return Ok(JSValue::UNDEFINED);
         }
         // Lenient (insecureHTTPParser) servers accept CTL bytes in trailer values on
         // the wire; parse them with the same leniency so they surface on req.trailers.
         let use_insecure_http_parser = callframe.argument(0).to_boolean();
-        Bun__NodeHTTP__parseRequestTrailers(
-            global_object,
-            section.as_ptr(),
-            section.len(),
-            use_insecure_http_parser,
-        )
+        bun_jsc::call_zero_is_throw(global_object, || {
+            Bun__NodeHTTP__parseRequestTrailers(
+                global_object,
+                section.as_ptr(),
+                section.len(),
+                use_insecure_http_parser,
+            )
+        })
     }
 
     pub(crate) fn get_bytes_written(
@@ -2517,22 +2464,6 @@ impl NodeHTTPResponse {
     ) -> JSValue {
         JSValue::js_number(self.bytes_written.get() as f64)
     }
-}
-
-fn handle_corked(
-    global_object: &JSGlobalObject,
-    function: JSValue,
-    result: &mut JSValue,
-    is_exception: &mut bool,
-) {
-    *result = match function.call(global_object, JSValue::UNDEFINED, &[]) {
-        Ok(v) => v,
-        Err(err) => {
-            *result = global_object.take_exception(err);
-            *is_exception = true;
-            return;
-        }
-    };
 }
 
 impl NodeHTTPResponse {
@@ -2584,8 +2515,7 @@ impl NodeHTTPResponse {
             );
         }
 
-        let mut result: JSValue = JSValue::ZERO;
-        let mut is_exception: bool = false;
+        let mut result: JsResult<JSValue> = Ok(JSValue::UNDEFINED);
 
         // R-2: this method takes `&self`, so the `noalias` miscompile
         // (b818e70e1c57) is structurally impossible — `&T` is `readonly`, not
@@ -2598,7 +2528,6 @@ impl NodeHTTPResponse {
         // BACKREF: `this` is the live `m_ctx` heap payload; `ref_()` keeps it
         // alive across re-entry.
         this.ref_();
-        // defer this.deref(); — moved to tail.
 
         // Snapshot before re-entry; `raw_response` is `Copy`.
         let raw_response = this.raw_response.get();
@@ -2607,29 +2536,17 @@ impl NodeHTTPResponse {
                 // Capture `this` so a `self`-derived pointer reaches the FFI
                 // closure-data slot (see the R-2 note above).
                 let _escape = this;
-                handle_corked(global_object, corked_fn, &mut result, &mut is_exception)
+                result = corked_fn.call(global_object, JSValue::UNDEFINED, &[]);
             });
         } else {
-            handle_corked(global_object, corked_fn, &mut result, &mut is_exception);
+            result = corked_fn.call(global_object, JSValue::UNDEFINED, &[]);
         }
-
-        let ret: JsResult<JSValue> = if is_exception {
-            if !result.is_empty() {
-                Err(global_object.throw_value(result))
-            } else {
-                Err(global_object.throw(format_args!("unknown error")))
-            }
-        } else if result.is_empty() {
-            Ok(JSValue::UNDEFINED)
-        } else {
-            Ok(result)
-        };
 
         // BACKREF: `this` held alive by the `ref_()` above; this is the
         // balancing release. Explicit `.get()` so the inherent refcount
         // `NodeHTTPResponse::deref(&self)` is selected, not `<BackRef as Deref>::deref`.
         this.get().deref();
-        ret
+        result
     }
 
     pub(crate) fn finalize(self: Box<Self>) {
@@ -2687,7 +2604,6 @@ impl NodeHTTPResponse {
 // `as_ctx_ptr()`-derived provenance; converting them to `unsafe deref(*mut)`
 // is a separate sweep.
 impl bun_ptr::AnyRefCounted for NodeHTTPResponse {
-    type DestructorCtx = ();
     #[inline]
     unsafe fn rc_ref(this: *mut Self) {
         // SAFETY: caller contract — `this` is live; touches only the
@@ -2695,7 +2611,7 @@ impl bun_ptr::AnyRefCounted for NodeHTTPResponse {
         unsafe { (*this).ref_() }
     }
     #[inline]
-    unsafe fn rc_deref_with_context(this: *mut Self, (): ()) {
+    unsafe fn rc_deref(this: *mut Self) {
         // SAFETY: caller contract — `this` is live; `deref()` touches only
         // `Cell`/`JsCell` fields and on zero frees via `heap::take`.
         unsafe { (*this).deref() }
@@ -2704,16 +2620,6 @@ impl bun_ptr::AnyRefCounted for NodeHTTPResponse {
     unsafe fn rc_has_one_ref(this: *const Self) -> bool {
         // SAFETY: caller contract — `this` is live.
         unsafe { (*this).ref_count.get() == 1 }
-    }
-    #[inline]
-    unsafe fn rc_assert_no_refs(this: *const Self) {
-        // SAFETY: caller contract — `this` is live.
-        debug_assert_eq!(unsafe { (*this).ref_count.get() }, 0);
-    }
-    #[cfg(debug_assertions)]
-    #[inline]
-    unsafe fn rc_debug_data(_this: *mut Self) -> *mut dyn bun_ptr::ref_count::DebugDataOps {
-        bun_ptr::ref_count::noop_debug_data()
     }
 }
 
@@ -2773,7 +2679,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
             break 'brk 0;
         };
 
-        *has_body = req_len > 0 || request_ref.header(b"transfer-encoding").is_some();
+        *has_body = req_len > 0 || request_ref.has_transfer_encoding();
     }
 
     let raw_response = if is_ssl != 0 {

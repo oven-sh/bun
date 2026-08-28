@@ -2,10 +2,11 @@ use core::ffi::{c_char, c_int, c_long, c_void};
 
 use crate::api::bun_secure_context::SecureContext;
 use bun_boringssl_sys as boringssl;
-use bun_core::{String as BunString, ZigString, strings};
+use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_jsc::JsClass as _;
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, ZigStringJsc as _,
+    self as jsc, CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult, StringJsc as _,
 };
 
 use crate::api::bun_x509 as X509;
@@ -184,9 +185,12 @@ pub(super) mod ffi {
         );
         pub(crate) safe fn SSL_get_ex_data(ssl: &SSL, idx: c_int) -> *mut c_void;
         /// Save/restore the per-loop BIO routing state around in-handshake JS
-        /// callbacks (defined in usockets' openssl.c).
-        pub(crate) safe fn us_internal_ssl_loop_state_save(ssl: &SSL, out5: *mut *mut c_void);
-        pub(crate) safe fn us_internal_ssl_loop_state_restore(saved5: *mut *mut c_void);
+        /// callbacks (defined in usockets' openssl.c). The caller's snapshot
+        /// array must have exactly `us_internal_ssl_loop_state_slots()`
+        /// elements (US_SSL_LOOP_STATE_SLOTS in internal.h).
+        pub(crate) safe fn us_internal_ssl_loop_state_slots() -> c_int;
+        pub(crate) safe fn us_internal_ssl_loop_state_save(ssl: &SSL, out: *mut *mut c_void);
+        pub(crate) safe fn us_internal_ssl_loop_state_restore(saved: *mut *mut c_void);
         pub(crate) safe fn SSL_renegotiate(ssl: &SSL) -> c_int;
         pub(crate) safe fn SSL_set_renegotiate_mode(
             ssl: &SSL,
@@ -304,7 +308,7 @@ pub(super) fn get_servername(
     }
     // SAFETY: SSL_get_servername returns a NUL-terminated C string owned by the SSL session.
     let slice = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-    Ok(ZigString::from_utf8(slice).to_js(global))
+    bun_string_jsc::create_utf8_for_js(global, slice)
 }
 
 pub(super) fn set_servername(
@@ -328,7 +332,7 @@ pub(super) fn set_servername(
     }
 
     let slice: Box<[u8]> = server_name
-        .get_zig_string(global)?
+        .to_bun_string(global)?
         .to_owned_slice()
         .into_boxed_slice();
     // Drop replaces the old value.
@@ -403,7 +407,7 @@ pub(super) fn get_tls_version(
     if slice.is_empty() {
         return Ok(JSValue::NULL);
     }
-    Ok(ZigString::from_utf8(slice).to_js(global))
+    bun_string_jsc::create_utf8_for_js(global, slice)
 }
 
 pub(super) fn set_max_send_fragment(
@@ -759,7 +763,7 @@ pub(super) fn get_shared_sigalgs(
             array.put_index(
                 global,
                 u32::try_from(i).expect("int cast"),
-                ZigString::from_utf8(&buffer).to_js(global),
+                bun_string_jsc::create_utf8_for_js(global, &buffer)?,
             )?;
         } else {
             let mut buffer: Vec<u8> = Vec::with_capacity(sig_with_md.len() + 6);
@@ -768,7 +772,7 @@ pub(super) fn get_shared_sigalgs(
             array.put_index(
                 global,
                 u32::try_from(i).expect("int cast"),
-                ZigString::from_utf8(&buffer).to_js(global),
+                bun_string_jsc::create_utf8_for_js(global, &buffer)?,
             )?;
         }
     }
@@ -800,7 +804,11 @@ pub(super) fn get_cipher(
     } else {
         // SAFETY: SSL_CIPHER_get_name returns a static NUL-terminated C string.
         let s = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
-        result.put(global, b"name", ZigString::from_utf8(s).to_js(global));
+        result.put(
+            global,
+            b"name",
+            bun_string_jsc::create_utf8_for_js(global, s)?,
+        );
     }
 
     let standard_name = ffi::SSL_CIPHER_standard_name(cipher);
@@ -812,7 +820,7 @@ pub(super) fn get_cipher(
         result.put(
             global,
             b"standardName",
-            ZigString::from_utf8(s).to_js(global),
+            bun_string_jsc::create_utf8_for_js(global, s)?,
         );
     }
 
@@ -822,7 +830,11 @@ pub(super) fn get_cipher(
     } else {
         // SAFETY: SSL_CIPHER_get_version returns a static NUL-terminated C string.
         let s = unsafe { bun_core::ffi::cstr(version) }.to_bytes();
-        result.put(global, b"version", ZigString::from_utf8(s).to_js(global));
+        result.put(
+            global,
+            b"version",
+            bun_string_jsc::create_utf8_for_js(global, s)?,
+        );
     }
 
     Ok(result)
@@ -939,71 +951,56 @@ pub(crate) fn export_keying_material(
         return Err(global.throw(format_args!("Expected label to be a string")));
     }
 
-    let label = label_arg.to_slice_or_null(global)?;
+    let label = label_arg.to_utf8(global)?;
     let label_slice = label.slice();
+
+    // Converting `context` can run user JS (toString / Symbol.toPrimitive)
+    // that closes the socket, so do it before fetching the SSL*.
+    let context = if frame.arguments_count() > 2 {
+        match StringOrBuffer::from_js(global, context_arg)? {
+            Some(sb) => Some(sb),
+            None => {
+                return Err(global.throw(format_args!(
+                    "Expected context to be a string, Buffer or TypedArray"
+                )));
+            }
+        }
+    } else {
+        None
+    };
+    let (context_ptr, context_len, use_context) = match &context {
+        Some(sb) => (sb.slice().as_ptr(), sb.slice().len(), 1),
+        None => (core::ptr::null(), 0, 0),
+    };
+
+    let buffer_size = usize::try_from(length).expect("int cast");
+    let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
+    let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr;
+
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
 
-    if frame.arguments_count() > 2 {
-        if let Some(sb) = StringOrBuffer::from_js(global, context_arg)? {
-            let context_slice = sb.slice();
-
-            let buffer_size = usize::try_from(length).expect("int cast");
-            let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
-            let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr;
-
-            // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr/label_slice/context_slice are valid for the lengths passed.
-            let result = unsafe {
-                ffi::SSL_export_keying_material(
-                    ssl_ptr,
-                    buffer_ptr,
-                    buffer_size,
-                    label_slice.as_ptr().cast::<c_char>(),
-                    label_slice.len(),
-                    context_slice.as_ptr(),
-                    context_slice.len(),
-                    1,
-                )
-            };
-            if result != 1 {
-                return Err(global.throw_value(get_ssl_exception(
-                    global,
-                    b"Failed to export keying material",
-                )));
-            }
-            Ok(buffer)
-        } else {
-            Err(global.throw(format_args!(
-                "Expected context to be a string, Buffer or TypedArray"
-            )))
-        }
-    } else {
-        let buffer_size = usize::try_from(length).expect("int cast");
-        let buffer = JSValue::create_buffer_from_length(global, buffer_size)?;
-        let buffer_ptr = buffer.as_array_buffer(global).unwrap().ptr;
-
-        // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr/label_slice are valid for the lengths passed; context is null with use_context=0.
-        let result = unsafe {
-            ffi::SSL_export_keying_material(
-                ssl_ptr,
-                buffer_ptr,
-                buffer_size,
-                label_slice.as_ptr().cast::<c_char>(),
-                label_slice.len(),
-                core::ptr::null(),
-                0,
-                0,
-            )
-        };
-        if result != 1 {
-            return Err(global.throw_value(get_ssl_exception(
-                global,
-                b"Failed to export keying material",
-            )));
-        }
-        Ok(buffer)
+    // SAFETY: ssl_ptr is a live *mut SSL; buffer_ptr/label_slice/context are valid for the lengths passed (context is null with use_context=0).
+    let result = unsafe {
+        ffi::SSL_export_keying_material(
+            ssl_ptr,
+            buffer_ptr,
+            buffer_size,
+            label_slice.as_ptr().cast::<c_char>(),
+            label_slice.len(),
+            context_ptr,
+            context_len,
+            use_context,
+        )
+    };
+    if result != 1 {
+        return Err(global.throw_value(get_ssl_exception(
+            global,
+            b"Failed to export keying material",
+        )));
     }
+    Ok(buffer)
 }
 
 pub(super) fn get_ephemeral_key_info(
@@ -1069,7 +1066,7 @@ pub(super) fn get_ephemeral_key_info(
             result.put(
                 global,
                 b"name",
-                ZigString::from_utf8(curve_name).to_js(global),
+                bun_string_jsc::create_utf8_for_js(global, curve_name)?,
             );
             result.put(global, b"size", JSValue::js_number(f64::from(bits)));
         }
@@ -1103,7 +1100,7 @@ pub(super) fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResul
     if strings::eql(slice, b"http/1.1") {
         return BunString::static_("http/1.1").to_js(global);
     }
-    Ok(ZigString::from_utf8(slice).to_js(global))
+    bun_string_jsc::create_utf8_for_js(global, slice)
 }
 
 /// The session Node's `getSession()`/`getTLSTicket()` read: the one most
@@ -1334,13 +1331,7 @@ extern "C" fn always_allow_ssl_verify_callback(
 #[cold]
 #[inline(never)]
 fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue {
-    let mut zig_str = ZigString::init(b"");
-    // Backing storage for the formatted "OpenSSL ..." message. Declared at
-    // function scope so it outlives `to_error_instance` below. The string is
-    // tagged UTF-8 (`init_utf8`) so that `to_error_instance` takes the copying
-    // path (`fromUTF8ReplacingInvalidSequences`); an UNTAGGED ZigString would
-    // be wrapped with `StringImpl::createWithoutCopying` and the JS Error's
-    // message would dangle into this freed Vec.
+    let mut message = EncodedSlice::EMPTY;
     let mut formatted: Vec<u8> = Vec::new();
     let mut output_buf: [u8; 4096] = [0; 4096];
 
@@ -1393,32 +1384,23 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
     }
 
     if written > 0 {
-        let message = &output_buf[0..written];
-        formatted.reserve(b"OpenSSL ".len() + message.len());
+        let text = &output_buf[0..written];
+        formatted.reserve(b"OpenSSL ".len() + text.len());
         {
             use std::io::Write;
-            let _ = write!(&mut formatted, "OpenSSL {}", ::bstr::BStr::new(message));
+            let _ = write!(&mut formatted, "OpenSSL {}", ::bstr::BStr::new(text));
         }
-        // `zig_str` borrows `formatted`, which lives until this function
-        // returns. The UTF-8 tag is what makes `to_error_instance` clone the
-        // bytes (untagged strings are wrapped without copying — see
-        // Zig::toString in src/jsc/bindings/helpers.h), matching the
-        // "Ensure we clone it" pattern in JSGlobalObject::create_error_instance.
-        zig_str = ZigString::init_utf8(&formatted);
+        message = EncodedSlice::utf8(&formatted);
 
         // We shouldn't *need* to do this but it's not entirely clear.
         boringssl::ERR_clear_error();
     }
 
-    if zig_str.len == 0 {
-        zig_str = ZigString::init(default_message);
+    if message.is_empty() {
+        message = EncodedSlice::latin1(default_message);
     }
 
-    // store the exception in here
-    // (UTF-8-tagged strings are cloned by toErrorInstance; the untagged
-    // `default_message` fallback is wrapped without copying, which is safe
-    // because callers pass static literals)
-    let exception = zig_str.to_error_instance(global);
+    let exception = message.to_error_instance(global);
 
     // reference it in stack memory
     exception.ensure_still_alive();

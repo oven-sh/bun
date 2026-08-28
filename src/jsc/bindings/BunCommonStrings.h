@@ -16,7 +16,6 @@
     macro(httpCHECKOUT, "CHECKOUT") \
     macro(httpCONNECT, "CONNECT") \
     macro(httpCOPY, "COPY") \
-    macro(ConnectionWasClosed, "The connection was closed.") \
     macro(httpDELETE, "DELETE") \
     macro(httpGET, "GET") \
     macro(httpHEAD, "HEAD") \
@@ -60,11 +59,10 @@
     macro(base64, "base64") \
     macro(base64url, "base64url") \
     macro(binaryTypeArrayBuffer, "arraybuffer") \
+    macro(binaryTypeBlob, "blob") \
     macro(binaryTypeNodeBuffer, "nodebuffer") \
     macro(binaryTypeUint8Array, "uint8array") \
     macro(buffer, "buffer") \
-    macro(ec, "ec") \
-    macro(ed25519, "ed25519") \
     macro(fetchCors, "cors") \
     macro(fetchError, "error") \
     macro(fetchFollow, "follow") \
@@ -84,18 +82,14 @@
     macro(latin1, "latin1") \
     macro(lax, "lax") \
     macro(none, "none") \
-    macro(rsa, "rsa") \
-    macro(rsaPss, "rsa-pss") \
     macro(s3Error, "S3Error") \
     macro(strict, "strict") \
     macro(jwkCrv, "crv") \
     macro(jwkD, "d") \
     macro(jwkDp, "dp") \
     macro(jwkDq, "dq") \
-    macro(jwkDsa, "DSA") \
     macro(jwkE, "e") \
     macro(jwkEc, "EC") \
-    macro(jwkG, "g") \
     macro(jwkK, "k") \
     macro(jwkP, "p") \
     macro(jwkQ, "q") \
@@ -107,33 +101,36 @@
     macro(jwkRsa, "RSA") \
     macro(jwkX, "x") \
     macro(jwkY, "y") \
-    macro(systemError, "SystemError") \
     macro(ucs2, "ucs2") \
     macro(utf16le, "utf16le") \
-    macro(utf8, "utf8") \
-    macro(x25519, "x25519")
+    macro(utf8, "utf8")
 
 // clang-format on
 
-#define BUN_COMMON_STRINGS_ACCESSOR_DEFINITION(name)                           \
-    JSC::JSString* name##String(JSC::JSGlobalObject* globalObject)             \
-    {                                                                          \
-        return m_commonString_##name.getInitializedOnMainThread(globalObject); \
+#define BUN_COMMON_STRINGS_INDEX_ENTRY(name) name,
+#define BUN_COMMON_STRINGS_INDEX_ENTRY_NOT_BUILTIN_NAMES(name, literal) name,
+
+#define BUN_COMMON_STRINGS_ACCESSOR_DEFINITION(name)                                                 \
+    JSC::JSString* name##String(JSC::JSGlobalObject* globalObject)                                   \
+    {                                                                                                \
+        return m_strings[static_cast<size_t>(Index::name)].getInitializedOnMainThread(globalObject); \
     }
 
 #define BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_NOT_BUILTIN_NAMES(name, literal) \
     BUN_COMMON_STRINGS_ACCESSOR_DEFINITION(name)
 
-#define BUN_COMMON_STRINGS_LAZY_PROPERTY_DECLARATION(name) \
-    JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSString> m_commonString_##name;
-
-#define BUN_COMMON_STRINGS_LAZY_PROPERTY_DECLARATION_NOT_BUILTIN_NAMES(name, literal) \
-    BUN_COMMON_STRINGS_LAZY_PROPERTY_DECLARATION(name)
-
 namespace Bun {
 
 class CommonStrings {
 public:
+    // clang-format off
+    enum class Index : uint8_t {
+        BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_INDEX_ENTRY)
+        BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_INDEX_ENTRY_NOT_BUILTIN_NAMES)
+        Count
+    };
+    // clang-format on
+
     BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_ACCESSOR_DEFINITION)
     BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_NOT_BUILTIN_NAMES)
     void initialize();
@@ -142,13 +139,12 @@ public:
     void visit(Visitor& visitor);
 
 private:
-    BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_LAZY_PROPERTY_DECLARATION)
-    BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_LAZY_PROPERTY_DECLARATION_NOT_BUILTIN_NAMES)
+    JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSString> m_strings[static_cast<size_t>(Index::Count)];
 };
 
 } // namespace Bun
 
+#undef BUN_COMMON_STRINGS_INDEX_ENTRY
+#undef BUN_COMMON_STRINGS_INDEX_ENTRY_NOT_BUILTIN_NAMES
 #undef BUN_COMMON_STRINGS_ACCESSOR_DEFINITION
-#undef BUN_COMMON_STRINGS_LAZY_PROPERTY_DECLARATION
 #undef BUN_COMMON_STRINGS_ACCESSOR_DEFINITION_NOT_BUILTIN_NAMES
-#undef BUN_COMMON_STRINGS_LAZY_PROPERTY_DECLARATION_NOT_BUILTIN_NAMES

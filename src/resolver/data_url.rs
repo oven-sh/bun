@@ -152,7 +152,7 @@ impl<'a> DataURL<'a> {
             strings::index_of_char(url, b',').ok_or(ParseDataURLError::InvalidDataURL)? as usize;
 
         let mut parsed = DataURL {
-            url: bun_core::String::empty(),
+            url: bun_core::String::EMPTY,
             mime_type: &url[b"data:".len()..comma],
             data: &url[comma + 1..url.len()],
             is_base64: false,
@@ -177,18 +177,15 @@ impl<'a> DataURL<'a> {
     /// Decodes the data from the data URL. Always returns an owned slice.
     pub fn decode_data(&self) -> Result<Vec<u8>, DecodeDataError> {
         let percent_decoded_owned: Option<Vec<u8>> = PercentEncoding::decode_unstrict(self.data)?;
-        // defer: `percent_decoded_owned` drops at scope exit
         let percent_decoded: &[u8] = percent_decoded_owned.as_deref().unwrap_or(self.data);
 
         if self.is_base64 {
-            let len = bun_base64::decode_len(percent_decoded);
-            let mut buf = vec![0u8; len];
-            // errdefer: `buf` drops automatically on error path
-            let result = bun_base64::decode(&mut buf, percent_decoded);
-            if !result.is_successful() || result.count != len {
+            let decoded = bun_base64::decode_alloc(percent_decoded)
+                .map_err(|_| DecodeDataError::Base64DecodeError)?;
+            if decoded.len() != bun_base64::decode_len(percent_decoded) {
                 return Err(DecodeDataError::Base64DecodeError);
             }
-            return Ok(buf);
+            return Ok(decoded);
         }
 
         Ok(percent_decoded.to_vec())
@@ -225,13 +222,11 @@ impl<'a> DataURL<'a> {
 
         // When the percent-escape path bails, the payload must be
         // base64-encoded for real (the buffer is sized for the encoded form).
-        let mut base64buf = vec![0u8; total_base64_encode_len];
-        let prefix_len = b"data:".len() + mime_type.len() + b";base64,".len();
-        base64buf[..b"data:".len()].copy_from_slice(b"data:");
-        base64buf[b"data:".len()..b"data:".len() + mime_type.len()].copy_from_slice(mime_type);
-        base64buf[b"data:".len() + mime_type.len()..prefix_len].copy_from_slice(b";base64,");
-        let encoded_len = bun_base64::encode(&mut base64buf[prefix_len..], text);
-        base64buf.truncate(prefix_len + encoded_len);
+        let mut base64buf: Vec<u8> = Vec::with_capacity(total_base64_encode_len);
+        base64buf.extend_from_slice(b"data:");
+        base64buf.extend_from_slice(mime_type);
+        base64buf.extend_from_slice(b";base64,");
+        bun_base64::encode_append(&mut base64buf, text);
         base64buf
     }
 

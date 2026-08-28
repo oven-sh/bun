@@ -11,7 +11,6 @@ use bun_collections::StringArrayHashMap;
 use bun_core::strings;
 use bun_core::{Mutex, Output};
 use bun_event_loop::MiniEventLoop::__bun_stdio_blob_store_new;
-use bun_http::MimeType as mime_type;
 use bun_io::{self as Async};
 use bun_paths::MAX_PATH_BYTES;
 use bun_sys::{self as syscall, Fd, Mode};
@@ -31,8 +30,8 @@ use super::uuid::UUID;
 //
 //   - `mysql_context` / `postgresql_context` / `ssl_ctx_cache` / `editor_context`
 //     → moved to `bun_runtime::jsc_hooks::RuntimeState` (already there).
-//   - `cron_jobs` / `node_fs_stat_watcher_scheduler`
-//     → erased `*mut c_void` slots; high tier lazy-inits.
+//   - `node_fs_stat_watcher_scheduler`
+//     → erased `*mut c_void` slot; high tier lazy-inits.
 //   - the `bun test --isolate` watcher/server registries → moved to
 //     `bun_runtime::jsc_hooks::ActiveHandles` so the entries keep their
 //     concrete types.
@@ -210,8 +209,6 @@ pub struct RareData {
     pub(crate) entropy_cache: Option<Box<EntropyCache>>,
 
     pub(crate) hot_map: Option<HotMap>,
-    /// `Vec<*mut bun_runtime::api::cron::CronJob>` — only stored/iterated here.
-    pub cron_jobs: Vec<*mut c_void>,
 
     // TODO: make this per JSGlobalObject instead of global
     // This does not handle ShadowRealm correctly!
@@ -249,8 +246,6 @@ pub struct RareData {
     /// SHA-256 + map lookup. Ref owned here. Lazy-init body lives in
     /// `bun_runtime` (it calls `SSLContextCache::get_or_create_opts`).
     pub default_client_ssl_ctx: Option<*mut SslCtx>,
-
-    pub(crate) mime_types: Option<mime_type::Map>,
 
     /// `bun_runtime::node::StatWatcherScheduler` — erased `RefPtr` payload;
     /// lazy-init in `bun_runtime::node::node_fs_stat_watcher`.
@@ -308,7 +303,6 @@ impl Default for RareData {
             stdout_mode: 0,
             entropy_cache: None,
             hot_map: None,
-            cron_jobs: Vec::new(),
             cleanup_hooks: Vec::new(),
             file_polls: None,
             spawn_ipc_group: SocketGroup::default(),
@@ -326,7 +320,6 @@ impl Default for RareData {
             ws_client_group_: SocketGroup::default(),
             ws_client_tls_group: SocketGroup::default(),
             default_client_ssl_ctx: None,
-            mime_types: None,
             node_fs_stat_watcher_scheduler: None,
             memory_pressure_watcher: None,
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
@@ -751,15 +744,6 @@ impl RareData {
         self.spawn_sync_event_loop_.as_mut().unwrap()
     }
 
-    pub(crate) fn mime_type_from_string(&mut self, str_: &[u8]) -> Option<mime_type::MimeType> {
-        let table = self
-            .mime_types
-            .get_or_insert_with(|| bun_core::handle_oom(mime_type::create_hash_table()));
-        table
-            .get(str_)
-            .map(|entry| mime_type::Compact::from(*entry).to_mime_type())
-    }
-
     // ── watch-mode listen sockets ─────────────────────────────────────────
     pub(crate) fn add_listening_socket_for_watch_mode(&self, socket: Fd) {
         self.listening_sockets_for_watch_mode.lock().push(socket);
@@ -1045,14 +1029,14 @@ fn set_tls_default_ciphers_from_js(
     if !ciphers.is_string() {
         return Err(global_this.throw_invalid_argument_type_value(b"ciphers", b"string", ciphers));
     }
-    let sliced = ciphers.to_slice(global_this)?;
+    let utf8 = ciphers.to_utf8(global_this)?;
     // `bun_vm()` is the safe BACKREF accessor for the per-thread VM; `as_mut()`
     // is the audited single-JS-thread `&mut` escape hatch.
     global_this
         .bun_vm()
         .as_mut()
         .rare_data()
-        .set_tls_default_ciphers(sliced.slice());
+        .set_tls_default_ciphers(utf8.slice());
     Ok(JSValue::UNDEFINED)
 }
 
@@ -1077,15 +1061,14 @@ fn get_tls_default_ciphers_from_js(
 impl Drop for RareData {
     fn drop(&mut self) {
         // pipe_read_scratch / h2_padded_frame_buffer / spawn_sync_event_loop_ /
-        // s3_default_client / default_csrf_secret / cleanup_hooks / cron_jobs /
-        // path_buf / tls_default_ciphers:
+        // s3_default_client / default_csrf_secret / cleanup_hooks / path_buf /
+        // tls_default_ciphers:
         // all dropped automatically via field Drop.
 
         if let Some(engine) = self.boring_ssl_engine.take() {
             // SAFETY: engine was created by ENGINE_new.
             unsafe { boring::ENGINE_free(engine) };
         }
-        debug_assert!(self.cron_jobs.is_empty());
 
         if let Some(s) = self.default_client_ssl_ctx.take() {
             // SAFETY: returned by ssl_ctx_cache.get_or_create_opts with +1 ref.

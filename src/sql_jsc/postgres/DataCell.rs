@@ -1,6 +1,6 @@
 use core::mem::size_of;
 
-use crate::jsc::{JSGlobalObject, JSValue};
+use crate::jsc::{JSGlobalObject, JSValue, bun_string_jsc};
 use bun_core::String as BunString;
 
 use crate::shared::UseBigint;
@@ -19,14 +19,47 @@ type Result<T, E = AnyPostgresError> = core::result::Result<T, E>;
 bun_core::declare_scope!(Postgres, visible);
 bun_core::declare_scope!(PostgresDataCell, visible);
 
+/// Text-format `date` / `timestamp` / `timestamptz` (scalar or array element) to epoch ms.
+fn parse_date_time_text(
+    tag: types::Tag,
+    bytes: &[u8],
+    global_object: &JSGlobalObject,
+) -> Result<f64> {
+    use crate::postgres::types::date;
+    // The StartupMessage pins DateStyle=ISO, so the server only ever sends these shapes.
+    let ms = match tag {
+        types::Tag::timestamp | types::Tag::timestamp_array => {
+            date::timestamp_text_to_ms_utc(global_object, bytes)
+        }
+        types::Tag::timestamptz | types::Tag::timestamptz_array => {
+            date::timestamptz_text_to_ms_utc(global_object, bytes)
+        }
+        _ => None,
+    };
+    if let Some(ms) = ms {
+        return Ok(ms);
+    }
+    // `date` (date-only ISO form), BC dates and 5+ digit years fall back to `Date.parse`.
+    let str = BunString::from_bytes(bytes);
+    bun_string_jsc::parse_date(&str, global_object).map_err(crate::jsc::js_error_to_postgres)
+}
+
 fn parse_bytea(hex: &[u8]) -> Result<SQLDataCell> {
     let len = hex.len() / 2;
-    let mut buf = vec![0u8; len].into_boxed_slice();
-    // errdefer free(buf) → Box drops on `?`
-
-    let written = bun_core::decode_hex_to_bytes(&mut buf, hex)
-        .map_err(|_| AnyPostgresError::InvalidByteSequence)?;
-    let ptr = bun_core::heap::into_raw(buf).cast::<u8>();
+    let mut buf: Vec<u8> = Vec::new();
+    buf.try_reserve_exact(len)
+        .map_err(|_| AnyPostgresError::OutOfMemory)?;
+    // SAFETY: the decoder only writes into the spare bytes and returns how many it filled.
+    let written = unsafe {
+        bun_core::vec::fill_spare(&mut buf, 0, |spare| {
+            match bun_core::decode_hex_to_bytes(&mut spare[..len], hex) {
+                Ok(written) => (written, Ok(written)),
+                Err(_) => (0, Err(AnyPostgresError::InvalidByteSequence)),
+            }
+        })
+    }?;
+    // `SQLDataCell::deinit` frees this as a `Box<[u8]>` of exactly `written` bytes.
+    let ptr = bun_core::heap::into_raw(buf.into_boxed_slice()).cast::<u8>();
 
     Ok(SQLDataCell {
         tag: Tag::Bytea,
@@ -224,12 +257,11 @@ fn parse_array(
                 | types::Tag::timestamp_array
                 | types::Tag::date_array => {
                     let date_str = &slice[1..current_idx];
-                    let mut str = BunString::init(date_str);
-                    // defer str.deref() → Drop on BunString
-                    array.push(SQLDataCell::date(
-                        crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)
-                            .map_err(crate::jsc::js_error_to_postgres)?,
-                    ));
+                    array.push(SQLDataCell::date(parse_date_time_text(
+                        array_type,
+                        date_str,
+                        global_object,
+                    )?));
 
                     slice = try_slice(slice, current_idx + 1);
                     continue;
@@ -333,8 +365,8 @@ fn parse_array(
                         let ms = match crate::postgres::types::date::parse_infinity(element) {
                             Some(inf) => inf,
                             None => {
-                                let mut str = BunString::init(element);
-                                crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)
+                                let str = BunString::from_bytes(element);
+                                bun_string_jsc::parse_date(&str, global_object)
                                     .map_err(crate::jsc::js_error_to_postgres)?
                             }
                         };
@@ -797,7 +829,7 @@ fn from_bytes(
                 Ok(SQLDataCell::float8(parse_binary_float8(bytes)?))
             } else {
                 Ok(SQLDataCell::float8(
-                    bun_core::parse_double(bytes).unwrap_or(f64::NAN),
+                    bun_core::fmt::parse_f64(bytes).unwrap_or(f64::NAN),
                 ))
             }
         }
@@ -806,7 +838,7 @@ fn from_bytes(
                 Ok(SQLDataCell::float8(parse_binary_float4(bytes)? as f64))
             } else {
                 Ok(SQLDataCell::float8(
-                    bun_core::parse_double(bytes).unwrap_or(f64::NAN),
+                    bun_core::fmt::parse_f64(bytes).unwrap_or(f64::NAN),
                 ))
             }
         }
@@ -853,26 +885,11 @@ fn from_bytes(
                 if let Some(inf) = crate::postgres::types::date::parse_infinity(bytes) {
                     return Ok(SQLDataCell::date(inf));
                 }
-                // DateStyle is pinned to ISO in the startup packet, so the
-                // server always emits `YYYY-MM-DD[...]` here regardless of
-                // postgresql.conf / ALTER DATABASE / ALTER ROLE defaults.
-                // `timestamp` (no offset) is decoded as UTC components to
-                // agree with the binary path; `date` (UTC midnight) and
-                // `timestamptz` (explicit offset) go through Date.parse,
-                // which handles the ISO form unambiguously.
-                let date = match tag {
-                    T::timestamp => crate::postgres::types::date::timestamp_text_to_ms_utc(global_object, bytes),
-                    _ => None,
-                };
-                let date = match date {
-                    Some(d) => d,
-                    None => {
-                        let mut str = BunString::init(bytes);
-                        crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)
-                            .map_err(crate::jsc::js_error_to_postgres)?
-                    }
-                };
-                Ok(SQLDataCell::date(date))
+                Ok(SQLDataCell::date(parse_date_time_text(
+                    tag,
+                    bytes,
+                    global_object,
+                )?))
             }
         }
         tag @ (T::time | T::timetz) => {

@@ -17,8 +17,8 @@ use crate::package_manager_real::populate_manifest_cache::{self, Packages};
 use crate::package_manager_real::{InstallPeer, enqueue_dependency_with_main};
 use crate::update_transitive::{pretty_update_row, row_glyphs};
 use crate::{
-    Dependency, DependencyID, DependencyVersionTag, ManifestLoad, PackageID, PackageManager,
-    PackageNameHash, ResolutionTag, dependency, invalid_package_id,
+    Dependency, DependencyID, DependencyVersionTag, PackageID, PackageManager, PackageNameHash,
+    ResolutionTag, dependency, invalid_package_id,
 };
 
 mod json;
@@ -649,7 +649,6 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             scope,
             &inst.name,
             Some(&mut expired),
-            ManifestLoad::LoadFromMemoryFallbackToDisk,
             ExtendedManifest::from_bool(min_age.is_some()),
         ) else {
             for &a in &inst.advisories {
@@ -797,7 +796,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
         } else {
             target.iter().flatten().map(|t| t.candidate).collect()
         };
-        chosen.sort_unstable();
+        index_sort::sort_slice_unstable_by(&mut chosen, |a, b| a.cmp(b));
         chosen.dedup();
         for &c in &chosen {
             let candidate = &candidates[c];

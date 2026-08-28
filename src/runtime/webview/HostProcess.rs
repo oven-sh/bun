@@ -37,6 +37,8 @@ pub(crate) struct HostProcess {
     // Intrusive refcount (`.deref()` called in on_process_exit); kept raw
     // because the refcount, not this struct, owns the allocation.
     process: NonNull<Process>,
+    /// Set by [`Bun__WebViewHost__retire`]: the exit is reaped but not reported to C++.
+    retired: bool,
 }
 
 // PORTING.md §Global mutable state: JS-thread-only singleton ptr → AtomicPtr.
@@ -63,6 +65,20 @@ extern "C" fn Bun__WebViewHost__kill() {
             let _ = i.process.as_mut().kill(9);
         }
     }
+}
+
+/// HostClient::retireGlobal (`bun test --isolate`): unpublish and kill this host so the next file can spawn its own at once.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__WebViewHost__retire() {
+    let this = INSTANCE.swap(ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
+    // SAFETY: INSTANCE held a live heap-allocated pointer; on_process_exit
+    // only frees it after it runs, and we have just taken it out of INSTANCE.
+    let Some(host) = (unsafe { this.as_mut() }) else {
+        return;
+    };
+    host.retired = true;
+    // SAFETY: `process` is live until on_process_exit derefs it.
+    let _ = unsafe { host.process.as_mut().kill(9) };
 }
 
 /// Lazy: first `new Bun.WebView()` calls this via C++. Returns the parent
@@ -116,14 +132,22 @@ bun_spawn::link_impl_ProcessExit! {
         // pending promises and mark the host dead.
         on_process_exit(_process, status, _rusage) => {
             scoped_log!(WebViewHost, "child exited: {}", status);
-            let signo: i32 = status.signal_code().map_or(0, |s| s as i32);
-            Bun__WebViewHost__childDied(signo);
+            // A retired host was already unpublished by Bun__WebViewHost__retire.
+            if !(*this).retired {
+                let signo: i32 = status.signal_code().map_or(0, |s| s as i32);
+                Bun__WebViewHost__childDied(signo);
+            }
             // `this` was heap-allocated in spawn(); process is the
             // intrusive-rc *mut Process whose strong ref we hold. `deref()`
             // drops that ref, then drop the Box.
             Process::deref((*this).process.as_ptr());
             drop(bun_core::heap::take(this));
-            INSTANCE.store(ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
+            let _ = INSTANCE.compare_exchange(
+                this,
+                ptr::null_mut(),
+                core::sync::atomic::Ordering::Relaxed,
+                core::sync::atomic::Ordering::Relaxed,
+            );
         },
     }
 }
@@ -197,7 +221,10 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
         let event_loop = unsafe { EventLoopHandle::init((*vm).event_loop().cast()) };
         let process =
             NonNull::new(spawned.to_process(event_loop)).expect("toProcess returned null");
-        let self_ptr = bun_core::heap::into_raw(Box::new(HostProcess { process }));
+        let self_ptr = bun_core::heap::into_raw(Box::new(HostProcess {
+            process,
+            retired: false,
+        }));
         // SAFETY: `self_ptr` is a freshly-allocated, exclusively-owned Box that
         // owns `process` and outlives it.
         unsafe {

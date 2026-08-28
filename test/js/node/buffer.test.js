@@ -1050,6 +1050,48 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(buf).toEqual(Buffer.from([0xab, 0, 0, 0]));
       });
 
+      // Like Node.js, two-byte (UTF-16) strings are decoded from the low byte
+      // of each code unit: U+FF41 and U+0141 both act like 'A', while a unit
+      // whose low byte is not a hex digit stops decoding like any other
+      // invalid character.
+      it("hex decoding of two-byte strings uses the low byte of each code unit", () => {
+        expect(Buffer.from("f\uff41", "hex")).toStrictEqual(Buffer.from([0xfa]));
+        expect(Buffer.from("\uff46\uff41", "hex")).toStrictEqual(Buffer.from([0xfa]));
+        expect(Buffer.from("fa\uff41\uff41", "hex")).toStrictEqual(Buffer.from([0xfa, 0xaa]));
+        expect(Buffer.from("f\u0141", "hex")).toStrictEqual(Buffer.from([0xfa]));
+        // U+0130 -> '0', U+3061 -> 'a', U+0131..U+0134 -> '1'..'4'
+        expect(Buffer.from("\u0130\u0130\u3061\u3061", "hex")).toStrictEqual(Buffer.from([0x00, 0xaa]));
+        expect(Buffer.from("\u0131\u0132\u0133\u0134", "hex")).toStrictEqual(Buffer.from([0x12, 0x34]));
+
+        // low byte is not a hex digit: U+0100 -> 0x00, U+0147 -> 'G', U+01FF -> 0xff,
+        // U+D83D (first unit of an emoji) -> '='
+        expect(Buffer.from("\u0100\u0100", "hex").length).toBe(0);
+        expect(Buffer.from("ab\u0147\u0147cd", "hex")).toStrictEqual(Buffer.from([0xab]));
+        expect(Buffer.from("ab\u01ff\u01ffcd", "hex")).toStrictEqual(Buffer.from([0xab]));
+        expect(Buffer.from("ab\u{1F600}cd", "hex")).toStrictEqual(Buffer.from([0xab]));
+        expect(Buffer.from("\u6d4b\u8bd5ab", "hex").length).toBe(0);
+
+        // write(), hexWrite(), fill() and indexOf() narrow the same way
+        {
+          const b = Buffer.alloc(4, 0xcc);
+          expect(b.write("fa\uff41\uff41\u0147\u0147cd", "hex")).toBe(2);
+          expect(b).toStrictEqual(Buffer.from([0xfa, 0xaa, 0xcc, 0xcc]));
+        }
+        {
+          const b = Buffer.alloc(4, 0xcc);
+          expect(b.hexWrite("\uff46\uff41", 1)).toBe(1);
+          expect(b).toStrictEqual(Buffer.from([0xcc, 0xfa, 0xcc, 0xcc]));
+        }
+        expect(Buffer.alloc(5).fill("fa\uff41\uff41", "hex")).toStrictEqual(
+          Buffer.from([0xfa, 0xaa, 0xfa, 0xaa, 0xfa]),
+        );
+        expect(Buffer.alloc(3, "f\uff41", "hex")).toStrictEqual(Buffer.from([0xfa, 0xfa, 0xfa]));
+        expect(() => Buffer.alloc(2).fill("\u0147\u0147", "hex")).toThrow(
+          expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+        );
+        expect(Buffer.from([0x01, 0xfa, 0xaa]).indexOf("f\uff41\uff41\uff41", 0, "hex")).toBe(1);
+      });
+
       // The hex decoder takes a SIMD path once the input has at least 16 byte
       // pairs and falls back to scalar code for short inputs, vector tails and
       // the block containing the first invalid character. These tests sweep the
@@ -1061,11 +1103,12 @@ for (let withOverridenBufferWrite of [false, true]) {
           if (c >= 0x41 && c <= 0x46) return c - 0x41 + 10;
           return -1;
         };
+        // Like Node's decoder, each code unit is narrowed to its low byte first.
         const referenceHexDecode = (str, maxBytes = Infinity) => {
           const out = [];
           for (let i = 0; i + 1 < str.length && out.length < maxBytes; i += 2) {
-            const hi = hexDigitValue(str.charCodeAt(i));
-            const lo = hexDigitValue(str.charCodeAt(i + 1));
+            const hi = hexDigitValue(str.charCodeAt(i) & 0xff);
+            const lo = hexDigitValue(str.charCodeAt(i + 1) & 0xff);
             if (hi < 0 || lo < 0) break;
             out.push((hi << 4) | lo);
           }
@@ -1116,18 +1159,53 @@ for (let withOverridenBufferWrite of [false, true]) {
           }
         });
 
-        it("treats UTF-16 code units above 0xFF as invalid even when their low byte is a hex digit", () => {
-          // U+0130, U+0141, U+3061, U+FF41 truncate to '0', 'A', 'a', 'A' — the
-          // decoder must reject them rather than decode the truncated byte.
-          const pairs = 64;
-          for (const bad of ["\u0130", "\u0141", "\u3061", "\uff41"]) {
-            for (const pos of [0, 1, 31, 32, 63, 64, 97, 126, 127]) {
+        // 75 pairs: on every target the input spans whole vector blocks (pairs
+        // 0-63), the 128-bit mop-up blocks of wide targets (64-71) and the
+        // scalar tail (72-74). The positions below put the two-byte unit in
+        // each of those regions and on the block boundaries between them.
+        const wideUnitPairs = 75;
+        const wideUnitPositions = [0, 1, 31, 32, 63, 64, 127, 128, 143, 144, 149];
+
+        it("decodes UTF-16 code units above 0xFF from their low byte, like Node", () => {
+          // U+0130, U+0141, U+3061, U+FF41 narrow to '0', 'A', 'a', 'A'.
+          const pairs = wideUnitPairs;
+          for (const wide of ["\u0130", "\u0141", "\u3061", "\uff41"]) {
+            const narrow = String.fromCharCode(wide.charCodeAt(0) & 0xff);
+            for (const pos of wideUnitPositions) {
+              const chars = patternHex(pairs).split("");
+              chars[pos] = wide;
+              const hex = chars.join("");
+              chars[pos] = narrow;
+              const expected = Buffer.from(chars.join(""), "hex");
+              expect(expected.length).toBe(pairs);
+              expect(expected).toEqual(referenceHexDecode(hex));
+
+              expect(Buffer.from(hex, "hex")).toEqual(expected);
+
+              const target = Buffer.alloc(pairs);
+              expect(target.write(hex, "hex")).toBe(pairs);
+              expect(target).toEqual(expected);
+            }
+          }
+        });
+
+        it("stops at a UTF-16 code unit above 0xFF whose low byte is not a hex digit", () => {
+          // U+0100, U+0147, U+01FF, U+3000 narrow to 0x00, 'G', 0xFF, 0x00.
+          const pairs = wideUnitPairs;
+          for (const bad of ["\u0100", "\u0147", "\u01ff", "\u3000"]) {
+            for (const pos of wideUnitPositions) {
               const chars = patternHex(pairs).split("");
               chars[pos] = bad;
               const hex = chars.join("");
               const expected = referenceHexDecode(hex);
               expect(expected.length).toBe(Math.floor(pos / 2));
+
               expect(Buffer.from(hex, "hex")).toEqual(expected);
+
+              const target = Buffer.alloc(pairs, 0xaa);
+              expect(target.write(hex, "hex")).toBe(expected.length);
+              expect(target.subarray(0, expected.length)).toEqual(expected);
+              expect(target.subarray(expected.length)).toEqual(Buffer.alloc(pairs - expected.length, 0xaa));
             }
           }
         });
@@ -2712,6 +2790,38 @@ for (let withOverridenBufferWrite of [false, true]) {
         }
       });
 
+      it.each([
+        ["swap16", 2],
+        ["swap32", 4],
+        ["swap64", 8],
+      ])(
+        "Buffer.%s matches a byte-reversal reference across vector boundaries and odd byteOffsets",
+        (method, elemSize) => {
+          const reference = (bytes, elemSize) => {
+            const out = new Uint8Array(bytes.length);
+            for (let i = 0; i < bytes.length; i += elemSize)
+              for (let k = 0; k < elemSize; k++) out[i + k] = bytes[i + elemSize - 1 - k];
+            return out;
+          };
+          const lengths = [];
+          for (let n = 0; n <= 288; n += elemSize) lengths.push(n);
+          lengths.push(4096 - elemSize, 4096, 4096 + elemSize, 65536 + 3 * elemSize);
+          for (const len of lengths) {
+            for (const byteOffset of [0, 1, 3]) {
+              const backing = new Uint8Array(len + byteOffset + 1);
+              for (let i = 0; i < backing.length; i++) backing[i] = (i * 37 + 11) & 0xff;
+              const buf = Buffer.from(backing.buffer, byteOffset, len);
+              const expected = reference(Uint8Array.prototype.slice.call(buf), elemSize);
+              expect(buf[method]()).toBe(buf);
+              expect(buf.equals(expected), `${method} len=${len} byteOffset=${byteOffset}`).toBe(true);
+              // Neighbouring bytes are untouched.
+              if (byteOffset > 0) expect(backing[byteOffset - 1]).toBe(((byteOffset - 1) * 37 + 11) & 0xff);
+              expect(backing[byteOffset + len]).toBe(((byteOffset + len) * 37 + 11) & 0xff);
+            }
+          }
+        },
+      );
+
       it("Buffer.toString regessions", () => {
         expect(
           Buffer.from([65, 0])
@@ -3813,6 +3923,15 @@ it("should not trim utf-8 start bytes at end of string", () => {
   expect(buf2.toString("utf-8")).toEqual("6\uFFFD");
 });
 
+it("Buffer.from(BigInt64Array) throws instead of returning a zero-filled buffer", () => {
+  // Copying BigInt elements into a Uint8Array is a TypeError (same as `new Uint8Array(2).set(new BigInt64Array(1))`).
+  expect(() => Buffer.from(new BigInt64Array([1n]))).toThrow(TypeError);
+  expect(() => Buffer.from(new BigUint64Array([1n]))).toThrow(TypeError);
+  expect(() => new Buffer(new BigInt64Array([1n]))).toThrow(TypeError);
+  // An empty one has nothing to copy.
+  expect(Buffer.from(new BigInt64Array(0)).length).toBe(0);
+});
+
 it("Buffer.from(arrayBuffer)", () => {
   const ab = Buffer.from([10, 11, 12, 13, 14, 15, 16, 17, 18, 19]).buffer;
   const buf = Buffer.from(ab);
@@ -4561,6 +4680,186 @@ describe("raw <enc>Slice / <enc>Write bindings match Node", () => {
   });
 });
 
+// Node reads a detached view's length (0) like any other buffer's: it sorts before any
+// non-empty buffer, equals any other empty one, swapNN() has nothing to swap, and as a fill
+// value it is rejected the way an empty one is. The expected values below are Node v26's.
+describe("detached buffers in compare, equals, swapNN and as a fill value", () => {
+  const detached = (size = 16) => {
+    const buf = Buffer.alloc(size);
+    buf.buffer.transfer();
+    return buf;
+  };
+  // A length-tracking view on a resizable ArrayBuffer computes its byteLength through a
+  // different path in JSC than a fixed-length one; both must read as 0 once detached.
+  const detachedLengthTracking = () => {
+    const rab = new ArrayBuffer(16, { maxByteLength: 32 });
+    const view = new Uint8Array(rab);
+    rab.transfer();
+    return view;
+  };
+  const abc = () => Buffer.from("abc");
+  const empty = () => Buffer.alloc(0);
+  const OUT_OF_RANGE = expect.objectContaining({ code: "ERR_OUT_OF_RANGE" });
+
+  it("Buffer.compare() treats a detached argument in either position as empty", () => {
+    const same = detached();
+    expect([
+      Buffer.compare(detached(), detached()),
+      Buffer.compare(same, same),
+      Buffer.compare(detached(), abc()),
+      Buffer.compare(abc(), detached()),
+      Buffer.compare(detached(), empty()),
+      Buffer.compare(empty(), detached()),
+      Buffer.compare(detachedLengthTracking(), abc()),
+      Buffer.compare(abc(), detachedLengthTracking()),
+      Buffer.compare(detachedLengthTracking(), detachedLengthTracking()),
+    ]).toEqual([0, 0, -1, 1, 0, 0, -1, 1, 0]);
+  });
+
+  it("buf.compare() treats a detached target or source as empty", () => {
+    const same = detached();
+    expect([
+      abc().compare(detached()),
+      empty().compare(detached()),
+      detached().compare(detached()),
+      same.compare(same),
+      detached().compare(abc()),
+      abc().compare(detachedLengthTracking()),
+      // With explicit offsets the detached side is an empty range whatever its start is.
+      abc().compare(detached(), 0),
+      abc().compare(detached(), 5),
+      detached().compare(detached(), 5),
+      empty().compare(detached(), 0, 0, 0, 0),
+    ]).toEqual([1, 0, 0, 0, -1, 1, 1, 1, 0, 0]);
+  });
+
+  it("buf.compare() range-checks an explicit end against the detached side's length of 0", () => {
+    expect(() => abc().compare(detached(), 0, 1)).toThrow(OUT_OF_RANGE);
+    expect(() => detached().compare(abc(), 0, 3, 0, 1)).toThrow(OUT_OF_RANGE);
+  });
+
+  it("buf.equals() treats a detached buffer on either side as empty", () => {
+    const same = detached();
+    expect([
+      abc().equals(detached()),
+      empty().equals(detached()),
+      detached().equals(detached()),
+      same.equals(same),
+      detached().equals(abc()),
+      detached().equals(empty()),
+      abc().equals(detachedLengthTracking()),
+      empty().equals(detachedLengthTracking()),
+    ]).toEqual([false, true, true, true, false, true, false, true]);
+  });
+
+  it.each(["swap16", "swap32", "swap64"])("%s() returns a detached buffer unchanged", method => {
+    const buf = detached();
+    expect(buf[method]()).toBe(buf);
+    expect(buf.length).toBe(0);
+
+    // The size check sees the detached length of 0, not the 3 bytes it was created with.
+    const odd = detached(3);
+    expect(odd[method]()).toBe(odd);
+
+    const view = detachedLengthTracking();
+    expect(Buffer.prototype[method].call(view)).toBe(view);
+  });
+
+  it("Buffer.alloc() and buf.fill() reject a detached fill value like an empty one", () => {
+    const INVALID_ARG_VALUE = expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" });
+    expect(() => Buffer.alloc(4, detached())).toThrow(INVALID_ARG_VALUE);
+    expect(() => Buffer.alloc(4, detachedLengthTracking())).toThrow(INVALID_ARG_VALUE);
+    expect(() => abc().fill(detached())).toThrow(INVALID_ARG_VALUE);
+    expect(() => abc().fill(detachedLengthTracking())).toThrow(INVALID_ARG_VALUE);
+
+    // Nothing to fill, so the value is never looked at (in Node either).
+    expect(Buffer.alloc(0, detached()).length).toBe(0);
+    const buf = abc();
+    expect(buf.fill(detached(), 1, 1)).toBe(buf);
+    expect(buf.toString()).toBe("abc");
+  });
+});
+
+// Expected values are Node's (v26). Node uses an integral number as the offset as
+// is, whatever its magnitude, and only sends other values through toInteger()
+// (NaN, +-Infinity and anything outside the safe-integer range become 0,
+// fractions round down). An offset >= 2**53 used to take the toInteger() path
+// here and silently become 0.
+describe("Buffer.prototype.copy offset coercion", () => {
+  function copyInto(...args) {
+    const target = Buffer.alloc(8, ".");
+    try {
+      const copied = Buffer.from("ABCDEFGH").copy(target, ...args);
+      return { copied, target: target.toString("latin1") };
+    } catch (e) {
+      return { code: e.code, message: e.message };
+    }
+  }
+
+  const untouched = { copied: 0, target: "........" };
+  const whole = { copied: 8, target: "ABCDEFGH" };
+
+  it.each([
+    [2 ** 53, untouched],
+    [2 ** 52 + 3, untouched],
+    [1e308, untouched],
+    [Infinity, whole],
+    [-Infinity, whole],
+    [NaN, whole],
+    ["2", { copied: 6, target: "..ABCDEF" }],
+    [1.5, { copied: 7, target: ".ABCDEFG" }],
+    [
+      -0.5,
+      { code: "ERR_OUT_OF_RANGE", message: 'The value of "targetStart" is out of range. It must be >= 0. Received -1' },
+    ],
+  ])("targetStart %p", (targetStart, expected) => {
+    expect(copyInto(targetStart)).toEqual(expected);
+  });
+
+  it.each([
+    [
+      2 ** 53,
+      {
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "sourceStart" is out of range. It must be >= 0 && <= 8. Received 9_007_199_254_740_992',
+      },
+    ],
+    [1e308, { code: "ERR_OUT_OF_RANGE", message: expect.stringContaining('"sourceStart" is out of range') }],
+    [Infinity, whole],
+    [2.9, { copied: 6, target: "CDEFGH.." }],
+    [
+      -0.5,
+      {
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "sourceStart" is out of range. It must be >= 0 && <= 8. Received -1',
+      },
+    ],
+  ])("sourceStart %p", (sourceStart, expected) => {
+    expect(copyInto(0, sourceStart)).toEqual(expected);
+  });
+
+  it.each([
+    [2 ** 53, whole],
+    [1e308, whole],
+    [Infinity, untouched],
+    [-Infinity, untouched],
+    [2.9, { copied: 2, target: "AB......" }],
+    [
+      -0.5,
+      { code: "ERR_OUT_OF_RANGE", message: 'The value of "sourceEnd" is out of range. It must be >= 0. Received -1' },
+    ],
+  ])("sourceEnd %p", (sourceEnd, expected) => {
+    expect(copyInto(0, 0, sourceEnd)).toEqual(expected);
+  });
+
+  it("checks sourceStart even when targetStart is already past the target", () => {
+    expect(copyInto(2 ** 53, 2 ** 53)).toEqual({
+      code: "ERR_OUT_OF_RANGE",
+      message: 'The value of "sourceStart" is out of range. It must be >= 0 && <= 8. Received 9_007_199_254_740_992',
+    });
+  });
+});
+
 describe("Buffer.copyBytesFrom", () => {
   it("copies the correct bytes from a Uint8Array view with a non-zero byteOffset", () => {
     const ab = new ArrayBuffer(10);
@@ -4843,3 +5142,295 @@ it.skipIf(os.totalmem() < 10 * 1024 ** 3)(
     expect(exitCode).toBe(0);
   },
 );
+
+// The fixed-width read* / write* accessors are C++ host functions that JSC's DFG/FTL compile into
+// bounds-checked loads / stores (JSBuffer.cpp + JavaScriptCore's BufferAccessorRegistry). They must
+// keep agreeing with a DataView reference after tier-up, and everything the JIT does not speculate
+// (bad offsets, out-of-range values, other receivers) must keep throwing exactly as before.
+describe("read*/write* after JIT tier-up", () => {
+  const buf = Buffer.alloc(64);
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  for (let i = 0; i < buf.length; i++) buf[i] = (i * 37 + 11) & 0xff;
+
+  const readers = [
+    ["readInt8", 1, o => dv.getInt8(o)],
+    ["readUInt8", 1, o => dv.getUint8(o)],
+    ["readInt16LE", 2, o => dv.getInt16(o, true)],
+    ["readInt16BE", 2, o => dv.getInt16(o, false)],
+    ["readUInt16LE", 2, o => dv.getUint16(o, true)],
+    ["readUInt16BE", 2, o => dv.getUint16(o, false)],
+    ["readInt32LE", 4, o => dv.getInt32(o, true)],
+    ["readInt32BE", 4, o => dv.getInt32(o, false)],
+    ["readUInt32LE", 4, o => dv.getUint32(o, true)],
+    ["readUInt32BE", 4, o => dv.getUint32(o, false)],
+    ["readFloatLE", 4, o => dv.getFloat32(o, true)],
+    ["readFloatBE", 4, o => dv.getFloat32(o, false)],
+    ["readDoubleLE", 8, o => dv.getFloat64(o, true)],
+    ["readDoubleBE", 8, o => dv.getFloat64(o, false)],
+    ["readBigInt64LE", 8, o => dv.getBigInt64(o, true)],
+    ["readBigInt64BE", 8, o => dv.getBigInt64(o, false)],
+    ["readBigUInt64LE", 8, o => dv.getBigUint64(o, true)],
+    ["readBigUInt64BE", 8, o => dv.getBigUint64(o, false)],
+  ];
+
+  function codeOf(fn) {
+    try {
+      fn();
+    } catch (e) {
+      return e.code;
+    }
+    return "no throw";
+  }
+
+  it("reads match a DataView across many iterations, and out-of-bounds keeps throwing", () => {
+    for (const [name, byteSize, reference] of readers) {
+      const read = new Function("b", "o", `return b.${name}(o);`);
+      let mismatches = 0;
+      for (let i = 0; i < 1500; i++) {
+        const o = i & 31;
+        if (read(buf, o) !== reference(o)) mismatches++;
+      }
+      expect(mismatches).toBe(0);
+      expect(read(buf, 64 - byteSize)).toBe(reference(64 - byteSize));
+      let outOfBounds = 0,
+        negative = 0,
+        fractional = 0,
+        wrongType = 0;
+      for (let i = 0; i < 50; i++) {
+        if (codeOf(() => read(buf, 64 - byteSize + 1)) === "ERR_OUT_OF_RANGE") outOfBounds++;
+        if (codeOf(() => read(buf, -1)) === "ERR_OUT_OF_RANGE") negative++;
+        if (codeOf(() => read(buf, 1.5)) === "ERR_OUT_OF_RANGE") fractional++;
+        if (codeOf(() => read(buf, "0")) === "ERR_INVALID_ARG_TYPE") wrongType++;
+      }
+      expect([outOfBounds, negative, fractional, wrongType]).toEqual([50, 50, 50, 50]);
+    }
+  });
+
+  it("writes match a DataView across many iterations, and range checks keep throwing", () => {
+    const cases = [
+      ["writeInt8", 1, o => dv.getInt8(o), i => (i & 0xff) - 128],
+      ["writeUInt8", 1, o => dv.getUint8(o), i => i & 0xff],
+      ["writeInt16LE", 2, o => dv.getInt16(o, true), i => (i & 0xffff) - 0x8000],
+      ["writeUInt16BE", 2, o => dv.getUint16(o, false), i => i & 0xffff],
+      ["writeInt32LE", 4, o => dv.getInt32(o, true), i => (-i * 1000) | 0],
+      ["writeUInt32BE", 4, o => dv.getUint32(o, false), i => 2147483648 + i],
+      ["writeFloatLE", 4, o => dv.getFloat32(o, true), i => Math.fround(i / 3)],
+      ["writeDoubleBE", 8, o => dv.getFloat64(o, false), i => -i - 0.5],
+    ];
+    for (const [name, byteSize, reference, value] of cases) {
+      const write = new Function("b", "v", "o", `return b.${name}(v, o);`);
+      let mismatches = 0;
+      for (let i = 0; i < 1500; i++) {
+        const o = i & 31;
+        const v = value(i);
+        if (write(buf, v, o) !== o + byteSize || reference(o) !== v) mismatches++;
+      }
+      expect(mismatches).toBe(0);
+      let outOfBounds = 0;
+      for (let i = 0; i < 50; i++) if (codeOf(() => write(buf, value(i), 64)) === "ERR_OUT_OF_RANGE") outOfBounds++;
+      expect(outOfBounds).toBe(50);
+    }
+    let ranges = 0;
+    for (let i = 0; i < 2000; i++) {
+      if (codeOf(() => buf.writeInt8(128, 0)) === "ERR_OUT_OF_RANGE") ranges++;
+      if (codeOf(() => buf.writeUInt16LE(65536, 0)) === "ERR_OUT_OF_RANGE") ranges++;
+      if (codeOf(() => buf.writeUInt32BE(-1, 0)) === "ERR_OUT_OF_RANGE") ranges++;
+    }
+    expect(ranges).toBe(6000);
+    expect(() => buf.writeInt16LE("40000", 0)).toThrow("Received 40000");
+  });
+
+  it("BigInt writes match a DataView across many iterations, and 64-bit range checks keep throwing", () => {
+    const values = [0n, 1n, -1n, 2n ** 32n + 7n, 2n ** 63n - 1n, -(2n ** 63n)];
+    let mismatches = 0;
+    for (let i = 0; i < 1500; i++) {
+      const o = (i & 7) * 8;
+      const v = values[i % values.length];
+      if (buf.writeBigInt64LE(v, o) !== o + 8 || dv.getBigInt64(o, true) !== v) mismatches++;
+      if (buf.writeBigInt64BE(v, o) !== o + 8 || dv.getBigInt64(o, false) !== v) mismatches++;
+      if (v >= 0n) {
+        if (buf.writeBigUInt64LE(v, o) !== o + 8 || dv.getBigUint64(o, true) !== v) mismatches++;
+        if (buf.writeBigUInt64BE(v, o) !== o + 8 || dv.getBigUint64(o, false) !== v) mismatches++;
+      }
+    }
+    expect(mismatches).toBe(0);
+    expect(buf.writeBigUInt64LE(2n ** 64n - 1n, 0)).toBe(8);
+    expect(dv.getBigUint64(0, true)).toBe(2n ** 64n - 1n);
+    let codes = [];
+    for (let i = 0; i < 1000; i++) {
+      codes = [
+        codeOf(() => buf.writeBigUInt64LE(-1n, 0)),
+        codeOf(() => buf.writeBigInt64LE(2n ** 63n, 0)),
+        codeOf(() => buf.writeBigInt64LE(-(2n ** 63n) - 1n, 0)),
+        codeOf(() => buf.writeBigInt64LE(5, 0)),
+        codeOf(() => buf.writeBigInt64LE(0n, 57)),
+      ];
+    }
+    expect(codes).toEqual([
+      "ERR_OUT_OF_RANGE",
+      "ERR_OUT_OF_RANGE",
+      "ERR_OUT_OF_RANGE",
+      "ERR_INVALID_ARG_TYPE",
+      "ERR_OUT_OF_RANGE",
+    ]);
+  });
+
+  it("works on many distinct buffers (no hidden per-buffer state)", () => {
+    const bufs = Array.from({ length: 512 }, (_, i) => {
+      const b = Buffer.alloc(16);
+      b.writeInt32LE(i * 7, 4);
+      return b;
+    });
+    let sum = 0;
+    for (let round = 0; round < 50; round++) {
+      for (let i = 0; i < bufs.length; i++) sum += bufs[i].readInt32LE(4);
+    }
+    expect(sum).toBe(50 * 7 * ((511 * 512) / 2));
+    // Reading/writing added no non-index own properties to the buffers.
+    expect(Object.getOwnPropertyNames(bufs[0]).filter(k => !/^\d+$/.test(k))).toEqual([]);
+    expect(Object.getOwnPropertySymbols(bufs[0])).toEqual([]);
+  });
+
+  it("keeps working with other ArrayBufferView receivers via .call", () => {
+    const u8 = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+    const dv8 = new DataView(u8.buffer);
+    for (let i = 0; i < 1500; i++) {
+      expect(Buffer.prototype.readInt32LE.call(u8, 0)).toBe(dv8.getInt32(0, true));
+      expect(Buffer.prototype.readUInt16BE.call(u8, 6)).toBe(dv8.getUint16(6, false));
+      expect(Buffer.prototype.writeUInt8.call(u8, i & 0xff, 7)).toBe(8);
+      expect(u8[7]).toBe(i & 0xff);
+      expect(() => Buffer.prototype.readInt32LE.call({}, 0)).toThrow(TypeError);
+    }
+    // The bound is the receiver's element count (this.length), as in lib/internal/buffer.js, not
+    // its byteLength: on a wider-element view these throw even though the bytes would fit.
+    const u16 = new Uint16Array(4);
+    expect(codeOf(() => Buffer.prototype.writeUInt32BE.call(u16, 1, 3))).toBe("ERR_OUT_OF_RANGE");
+    // The BigInt writers share the receiver / bound handling with the rest of the family.
+    expect(codeOf(() => Buffer.prototype.writeBigInt64LE.call(u16, 5n, 0))).toBe("ERR_BUFFER_OUT_OF_BOUNDS");
+    expect(codeOf(() => Buffer.prototype.readBigInt64LE.call(u16, 0))).toBe("ERR_BUFFER_OUT_OF_BOUNDS");
+    expect(codeOf(() => Buffer.prototype.writeBigInt64LE.call({}, 0n))).toBe("ERR_INVALID_ARG_TYPE");
+    // For the BigInt writers checkInt() validates the value's range before checkBounds() reaches the
+    // receiver, so a bad value wins over the DataView receiver.
+    expect(codeOf(() => Buffer.prototype.writeBigInt64LE.call(new DataView(new ArrayBuffer(16)), 2n ** 64n, 0))).toBe(
+      "ERR_OUT_OF_RANGE",
+    );
+    expect(() => Buffer.prototype.writeBigInt64LE.call(new DataView(new ArrayBuffer(16)), 2n ** 64n, 0)).toThrow(
+      'The value of "value" is out of range',
+    );
+    // A garbage receiver never masks the value's own error: the BigInt writers, like their
+    // number siblings, validate the value first.
+    expect(codeOf(() => Buffer.prototype.writeBigInt64LE.call({}, 2n ** 64n, 0))).toBe("ERR_OUT_OF_RANGE");
+    expect(() => Buffer.prototype.writeBigInt64LE.call({}, 2n ** 64n, 0)).toThrow('The value of "value"');
+    // An omitted offset defaults to 0 in the error text, on writes as on reads.
+    expect(() => Buffer.prototype.writeBigInt64LE.call(new DataView(new ArrayBuffer(16)), 5n)).toThrow("Received 0");
+    // The offset's type is validated before the receiver's length is consulted, matching the
+    // fixed-width writers, so a non-number offset still wins over the DataView receiver.
+    expect(codeOf(() => Buffer.prototype.writeBigInt64LE.call(new DataView(new ArrayBuffer(16)), 5n, "bad"))).toBe(
+      "ERR_INVALID_ARG_TYPE",
+    );
+    expect(codeOf(() => Buffer.prototype.writeBigInt64LE.call(new DataView(new ArrayBuffer(16)), 5n, 1.5))).toBe(
+      "ERR_OUT_OF_RANGE",
+    );
+    // A DataView has no `length`, so as in lib/internal/buffer.js every accessor reports `<= NaN`.
+    const dv = new DataView(new ArrayBuffer(8));
+    for (const f of [
+      () => Buffer.prototype.readIntLE.call(dv, 0, 3),
+      () => Buffer.prototype.writeIntLE.call(dv, 1, 0, 3),
+      () => Buffer.prototype.readInt32LE.call(dv, 0),
+      () => Buffer.prototype.writeInt32LE.call(dv, 1, 0),
+      () => Buffer.prototype.readBigInt64LE.call(dv, 0),
+      () => Buffer.prototype.writeBigInt64LE.call(dv, 5n, 0),
+      () => Buffer.prototype.writeBigUInt64BE.call(dv, 5n, 0),
+    ]) {
+      expect(codeOf(f)).toBe("ERR_OUT_OF_RANGE");
+      expect(() => f()).toThrow("<= NaN");
+    }
+    expect(codeOf(() => Buffer.prototype.readInt32LE.call(u16, 3))).toBe("ERR_OUT_OF_RANGE");
+    expect(codeOf(() => Buffer.prototype.readUIntLE.call(u16, 2, 3))).toBe("ERR_OUT_OF_RANGE");
+    u16[0] = 0x1234;
+    expect(Buffer.prototype.readInt32LE.call(u16, 0)).toBe(new DataView(u16.buffer).getInt32(0, true));
+  });
+
+  it("variable-width readers/writers match across widths after tier-up", () => {
+    const uint = (o, l, le) => {
+      let value = 0;
+      for (let i = 0; i < l; ++i) value = le ? value + buf[o + i] * 2 ** (8 * i) : value * 256 + buf[o + i];
+      return value;
+    };
+    const sint = (o, l, le) => {
+      const value = uint(o, l, le);
+      return value >= 2 ** (8 * l - 1) ? value - 2 ** (8 * l) : value;
+    };
+    // A constant byteLength (JIT-inlined for 1/2/4) and a varying one (host path).
+    const readConst3 = (b, o) => b.readUIntBE(o, 3);
+    const readConst4 = (b, o) => b.readIntLE(o, 4);
+    let mismatches = 0;
+    for (let i = 0; i < 1500; i++) {
+      const o = i & 15;
+      const l = 1 + (i % 6);
+      if (buf.readIntLE(o, l) !== sint(o, l, true)) mismatches++;
+      if (buf.readIntBE(o, l) !== sint(o, l, false)) mismatches++;
+      if (buf.readUIntLE(o, l) !== uint(o, l, true)) mismatches++;
+      if (buf.readUIntBE(o, l) !== uint(o, l, false)) mismatches++;
+      if (readConst3(buf, o) !== uint(o, 3, false)) mismatches++;
+      if (readConst4(buf, o) !== dv.getInt32(o, true)) mismatches++;
+    }
+    expect(mismatches).toBe(0);
+    const scratch = Buffer.alloc(16);
+    for (let i = 0; i < 1500; i++) {
+      const l = 1 + (i % 6);
+      const v = i % 100;
+      expect(scratch.writeUIntLE(v, 0, l)).toBe(l);
+      expect(scratch.readUIntLE(0, l)).toBe(v);
+      expect(scratch.writeIntBE(-v, 8, l)).toBe(8 + l);
+      expect(scratch.readIntBE(8, l)).toBe(-v | 0);
+    }
+    let codes = [];
+    for (let i = 0; i < 1000; i++) {
+      codes = [
+        codeOf(() => buf.readIntLE(0, 7)),
+        codeOf(() => buf.readIntLE(undefined, 4)),
+        codeOf(() => readConst4(buf, 61)),
+        codeOf(() => scratch.writeIntLE(2 ** 24, 0, 3)),
+      ];
+    }
+    expect(codes).toEqual(["ERR_OUT_OF_RANGE", "ERR_INVALID_ARG_TYPE", "ERR_OUT_OF_RANGE", "ERR_OUT_OF_RANGE"]);
+    // The value is only coerced after the byteLength dispatch, as in lib/internal/buffer.js.
+    let valueOfCalls = 0;
+    expect(
+      codeOf(() =>
+        scratch.writeIntLE(
+          {
+            valueOf() {
+              valueOfCalls++;
+              return 1;
+            },
+          },
+          0,
+          7,
+        ),
+      ),
+    ).toBe("ERR_OUT_OF_RANGE");
+    expect(valueOfCalls).toBe(0);
+    // With both a bad value and a bad offset: the one-byte writers (writeU_Int8) report the offset
+    // first, the wider ones (checkInt) the value first.
+    expect(codeOf(() => scratch.writeUIntLE(300, "bad", 1))).toBe("ERR_INVALID_ARG_TYPE");
+    expect(codeOf(() => scratch.writeIntLE(200, "bad", 1))).toBe("ERR_INVALID_ARG_TYPE");
+    expect(codeOf(() => scratch.writeUIntLE(2 ** 24, "bad", 2))).toBe("ERR_OUT_OF_RANGE");
+    expect(codeOf(() => scratch.writeIntBE(2 ** 24, "bad", 3))).toBe("ERR_OUT_OF_RANGE");
+    // Every accessor validates the offset's type before consulting the receiver, so a bad offset
+    // wins over a garbage receiver across the whole family.
+    for (const f of [
+      () => Buffer.prototype.readIntLE.call({}, "bad", 3),
+      () => Buffer.prototype.readInt32LE.call({}, "bad"),
+      () => Buffer.prototype.writeIntLE.call({}, 1, "bad", 3),
+      () => Buffer.prototype.writeBigInt64LE.call({}, 5n, "bad"),
+    ]) {
+      expect(codeOf(f)).toBe("ERR_INVALID_ARG_TYPE");
+      expect(() => f()).toThrow('The "offset" argument must be of type number');
+    }
+    // Out-of-range integral offsets, including |offset| > 2**53, get the bounds message.
+    expect(() => scratch.readIntLE(2 ** 53, 2)).toThrow(">= 0 and <= 14");
+    expect(() => scratch.readIntLE(1.5, 2)).toThrow("an integer");
+  });
+});

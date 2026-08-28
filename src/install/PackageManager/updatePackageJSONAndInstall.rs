@@ -977,15 +977,6 @@ struct MoreInstructions<'a> {
     folder: &'a [u8],
 }
 
-impl Default for MoreInstructions<'_> {
-    fn default() -> Self {
-        Self {
-            shell: ShellCompletions::Shell::Unknown,
-            folder: b"",
-        }
-    }
-}
-
 impl fmt::Display for MoreInstructions<'_> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         let path = ShellPathFormatter {

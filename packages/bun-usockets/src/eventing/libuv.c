@@ -22,11 +22,6 @@
 
 #ifdef LIBUS_USE_LIBUV
 
-/* The shared dispatch follows socket adoption (a tunneled/upgraded socket
- * moves; the old allocation stays readable with flags.adopted set and prev
- * pointing at the live one) and skips closed sockets. The paused-probe below
- * must honor the same contract - dereferencing the raw poll cast crashed the
- * CONNECT-tunnel tests on the aarch64 agent. */
 /* Windows does not reliably latch a received RST in SO_ERROR (POSIX does);
  * the reset surfaces on the next I/O. A zero-byte send observes it without
  * touching the stream: 0 on a healthy socket, SOCKET_ERROR with a fatal
@@ -39,17 +34,17 @@ int us_internal_libuv_peer_reset_probe(LIBUS_SOCKET_DESCRIPTOR fd) {
   }
   int err = WSAGetLastError();
   /* WSAESHUTDOWN means our own shutdown(SD_SEND) ran; that is not a peer
-   * reset. The fin_deferred sweep probes sockets after local shutdown. */
+   * reset (us_socket_stalled_write_means_peer_gone can ask after one). */
   return err != WSAEWOULDBLOCK && err != WSAESHUTDOWN;
 }
 
+/* The shared dispatch follows socket adoption (a tunneled/upgraded socket
+ * moves; the old allocation stays readable with flags.adopted set and prev
+ * pointing at the live one) and skips closed sockets. poll_cb's probes must
+ * honor the same contract - dereferencing the raw poll cast crashed the
+ * CONNECT-tunnel tests on the aarch64 agent. */
 static struct us_socket_t *us_internal_poll_cb_adopted_socket(struct us_poll_t *wp) {
   return us_internal_socket_follow_adopted((struct us_socket_t *)wp);
-}
-
-static int us_internal_poll_cb_socket_is_probeable(struct us_poll_t *wp) {
-  struct us_socket_t *s = us_internal_poll_cb_adopted_socket(wp);
-  return !s->flags.is_closed && s->flags.is_paused;
 }
 
 /* uv_poll_t->data always (except for most times after calling us_poll_stop)
@@ -87,61 +82,26 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
      * never cut at an EAGAIN. */
     if (kind == POLL_TYPE_SOCKET_SHUT_DOWN) {
       eof = 1;
-      events |= UV_READABLE;
-    } else if (kind == POLL_TYPE_SOCKET && us_internal_poll_cb_socket_is_probeable(wp)) {
-      /* A paused socket polls without READABLE, so the read loop cannot
-       * discover terminal states for it - and the pause contract forbids
-       * consuming deferred bytes. MSG_PEEK discriminates without consuming:
-       * an error is an abortive reset (our libuv patch reports AFD_POLL_ABORT
-       * as DISCONNECT so it reaches write-only polls at all) and must close
-       * now like epoll's unmaskable EPOLLERR; 0 is a graceful FIN with no
-       * data, deferred by the shared dispatch's existing paused-EOF contract
-       * until resume; pending data keeps the pause honored untouched. */
-      char probe;
-      ssize_t peeked = bsd_recv(us_poll_fd(wp), &probe, 1, MSG_PEEK);
-      if (peeked == 0) {
-        eof = 1;
-        events |= UV_READABLE;
-      } else if (peeked < 0 && !bsd_would_block()) {
-        error = 1;
-        events |= UV_READABLE;
-      } else if (peeked > 0) {
-        struct us_socket_t *sock = us_internal_poll_cb_adopted_socket(wp);
-        if (us_socket_get_error(sock) != 0 || us_internal_libuv_peer_reset_probe(us_poll_fd(wp))) {
-          /* Data is buffered ahead of whatever ended the connection. If the
-           * peer ABORTED, the kernel already discarded the stream's tail and
-           * a paused socket that never resumes would otherwise never learn -
-           * node's paused sockets error immediately on a reset, buffered
-           * data included. SO_ERROR separates that from a graceful FIN
-           * behind data, which stays deferred until resume. */
-          error = 1;
-          events |= UV_READABLE;
-        } else if (!sock->fin_deferred) {
-          /* Graceful FIN deferred behind data. This one-shot DISCONNECT
-           * report is now consumed, so a LATER reset (an error-path peer
-           * ends, flushes, then destroys - FIN, then RST) has no event left
-           * to ride. Mark the socket; the sweep timer escalates via
-           * SO_ERROR. */
-          sock->fin_deferred = 1;
-          sock->group->loop->data.fin_deferred_count++;
-        }
-      }
+      /* A paused socket keeps the hint only; the dispatcher leaves it for
+       * resume(), whose poll change re-arms DISCONNECT and lands here again. */
+      events |= us_poll_events(wp) & LIBUS_SOCKET_READABLE;
     } else if (kind == POLL_TYPE_SOCKET &&
                !(us_poll_events(wp) & LIBUS_SOCKET_READABLE)) {
-      /* A half-open data socket whose end was already delivered: the EOF path
-       * moved its poll to WRITABLE-only (loop.c), and us_poll_change re-adds
-       * UV_DISCONNECT unconditionally, so AFD keeps reporting the FIN's
-       * level-triggered DISCONNECT. Re-adding READABLE here made recv()
-       * rediscover the same EOF and busy-loop on_end; keeping DISCONNECT
-       * armed would complete instantly forever. But the peer's later RST
-       * must still close the socket (epoll parity: EPOLLERR is unmaskable),
-       * so ask the kernel which of the two this wakeup is: a dead peer
-       * surfaces via SO_ERROR or the zero-byte send probe and closes through
-       * the shared error path; a FIN re-report quiesces with only the
-       * ABORT-only subscription (UV_PRIORITIZED) kept armed so the RST still
-       * has an event to ride. Non-SOCKET kinds keep the unconditional
-       * READABLE below: SEMI_SOCKET checks error/eof (set from status) and
-       * listen polls READABLE only. */
+      /* A data socket that is not reading: paused, or half-open with its end
+       * already delivered (the EOF path moved its poll to WRITABLE-only, and
+       * us_poll_change re-adds UV_DISCONNECT unconditionally, so AFD keeps
+       * reporting the FIN's level-triggered DISCONNECT). Re-adding READABLE
+       * here would pull bytes a paused caller asked to defer, or rediscover
+       * the same EOF and busy-loop on_end; keeping DISCONNECT armed would
+       * complete instantly forever. A dead peer surfaces via SO_ERROR or the
+       * zero-byte send probe and goes through the shared error path (which
+       * reads off whatever is still queued and closes); a FIN, fresh on a
+       * paused socket or re-reported on a half-open one, quiesces with only
+       * the ABORT-only subscription (UV_PRIORITIZED) kept armed so a later
+       * RST still has an event to ride, and a paused socket meets the FIN
+       * again through recv() once resume() re-arms READABLE. Non-SOCKET kinds
+       * keep the unconditional READABLE below: SEMI_SOCKET checks error/eof
+       * (set from status) and listen polls READABLE only. */
       struct us_socket_t *sock = us_internal_poll_cb_adopted_socket(wp);
       /* A reported UV_PRIORITIZED is AFD's own ABORT signal and needs no
        * probe; the probe covers a reset that arrives while PRIORITIZED was
@@ -569,7 +529,7 @@ int us_socket_get_error(struct us_socket_t *s) {
   socklen_t len = sizeof(error);
   if (getsockopt(us_poll_fd((struct us_poll_t *)s), SOL_SOCKET, SO_ERROR,
                  (char *)&error, &len) == -1) {
-    return errno;
+    return LIBUS_ERR;
   }
   return error;
 }

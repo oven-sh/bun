@@ -1280,1792 +1280,264 @@ impl PropertyId {
     /// `PropertyId`. Returns `None` if the name is unknown *or* the prefix
     /// isn't allowed for that property.
     pub(crate) fn from_name_and_prefix(name: &[u8], pre: VendorPrefix) -> Option<PropertyId> {
-        use bun_core::strings;
-        // PERF: the linear scan here is correct but slow — a length-gated
-        // match (`comptime_string_map!`) would be an optimization.
-        if strings::eql_case_insensitive_ascii_check_length(name, b"background-color") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BackgroundColor);
-            }
-            return None;
+        bun_core::comptime_string_map! {
+            static KNOWN: (VendorPrefix, fn(VendorPrefix) -> PropertyId) = {
+                b"background-color" => (VendorPrefix::NONE, |_| PropertyId::BackgroundColor),
+                b"background-image" => (VendorPrefix::NONE, |_| PropertyId::BackgroundImage),
+                b"background-position-x" => (VendorPrefix::NONE, |_| PropertyId::BackgroundPositionX),
+                b"background-position-y" => (VendorPrefix::NONE, |_| PropertyId::BackgroundPositionY),
+                b"background-position" => (VendorPrefix::NONE, |_| PropertyId::BackgroundPosition),
+                b"background-size" => (VendorPrefix::NONE, |_| PropertyId::BackgroundSize),
+                b"background-repeat" => (VendorPrefix::NONE, |_| PropertyId::BackgroundRepeat),
+                b"background-attachment" => (VendorPrefix::NONE, |_| PropertyId::BackgroundAttachment),
+                b"background-clip" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::BackgroundClip),
+                b"background-origin" => (VendorPrefix::NONE, |_| PropertyId::BackgroundOrigin),
+                b"background" => (VendorPrefix::NONE, |_| PropertyId::Background),
+                b"box-shadow" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::BoxShadow),
+                b"opacity" => (VendorPrefix::NONE, |_| PropertyId::Opacity),
+                b"color" => (VendorPrefix::NONE, |_| PropertyId::Color),
+                b"display" => (VendorPrefix::NONE, |_| PropertyId::Display),
+                b"visibility" => (VendorPrefix::NONE, |_| PropertyId::Visibility),
+                b"width" => (VendorPrefix::NONE, |_| PropertyId::Width),
+                b"height" => (VendorPrefix::NONE, |_| PropertyId::Height),
+                b"min-width" => (VendorPrefix::NONE, |_| PropertyId::MinWidth),
+                b"min-height" => (VendorPrefix::NONE, |_| PropertyId::MinHeight),
+                b"max-width" => (VendorPrefix::NONE, |_| PropertyId::MaxWidth),
+                b"max-height" => (VendorPrefix::NONE, |_| PropertyId::MaxHeight),
+                b"block-size" => (VendorPrefix::NONE, |_| PropertyId::BlockSize),
+                b"inline-size" => (VendorPrefix::NONE, |_| PropertyId::InlineSize),
+                b"min-block-size" => (VendorPrefix::NONE, |_| PropertyId::MinBlockSize),
+                b"min-inline-size" => (VendorPrefix::NONE, |_| PropertyId::MinInlineSize),
+                b"max-block-size" => (VendorPrefix::NONE, |_| PropertyId::MaxBlockSize),
+                b"max-inline-size" => (VendorPrefix::NONE, |_| PropertyId::MaxInlineSize),
+                b"box-sizing" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::BoxSizing),
+                b"aspect-ratio" => (VendorPrefix::NONE, |_| PropertyId::AspectRatio),
+                b"overflow" => (VendorPrefix::NONE, |_| PropertyId::Overflow),
+                b"overflow-x" => (VendorPrefix::NONE, |_| PropertyId::OverflowX),
+                b"overflow-y" => (VendorPrefix::NONE, |_| PropertyId::OverflowY),
+                b"text-overflow" => (VendorPrefix::NONE.union(VendorPrefix::O), PropertyId::TextOverflow),
+                b"position" => (VendorPrefix::NONE, |_| PropertyId::Position),
+                b"top" => (VendorPrefix::NONE, |_| PropertyId::Top),
+                b"bottom" => (VendorPrefix::NONE, |_| PropertyId::Bottom),
+                b"left" => (VendorPrefix::NONE, |_| PropertyId::Left),
+                b"right" => (VendorPrefix::NONE, |_| PropertyId::Right),
+                b"inset-block-start" => (VendorPrefix::NONE, |_| PropertyId::InsetBlockStart),
+                b"inset-block-end" => (VendorPrefix::NONE, |_| PropertyId::InsetBlockEnd),
+                b"inset-inline-start" => (VendorPrefix::NONE, |_| PropertyId::InsetInlineStart),
+                b"inset-inline-end" => (VendorPrefix::NONE, |_| PropertyId::InsetInlineEnd),
+                b"inset-block" => (VendorPrefix::NONE, |_| PropertyId::InsetBlock),
+                b"inset-inline" => (VendorPrefix::NONE, |_| PropertyId::InsetInline),
+                b"inset" => (VendorPrefix::NONE, |_| PropertyId::Inset),
+                b"border-spacing" => (VendorPrefix::NONE, |_| PropertyId::BorderSpacing),
+                b"border-top-color" => (VendorPrefix::NONE, |_| PropertyId::BorderTopColor),
+                b"border-bottom-color" => (VendorPrefix::NONE, |_| PropertyId::BorderBottomColor),
+                b"border-left-color" => (VendorPrefix::NONE, |_| PropertyId::BorderLeftColor),
+                b"border-right-color" => (VendorPrefix::NONE, |_| PropertyId::BorderRightColor),
+                b"border-block-start-color" => (VendorPrefix::NONE, |_| PropertyId::BorderBlockStartColor),
+                b"border-block-end-color" => (VendorPrefix::NONE, |_| PropertyId::BorderBlockEndColor),
+                b"border-inline-start-color" => (VendorPrefix::NONE, |_| PropertyId::BorderInlineStartColor),
+                b"border-inline-end-color" => (VendorPrefix::NONE, |_| PropertyId::BorderInlineEndColor),
+                b"border-top-style" => (VendorPrefix::NONE, |_| PropertyId::BorderTopStyle),
+                b"border-bottom-style" => (VendorPrefix::NONE, |_| PropertyId::BorderBottomStyle),
+                b"border-left-style" => (VendorPrefix::NONE, |_| PropertyId::BorderLeftStyle),
+                b"border-right-style" => (VendorPrefix::NONE, |_| PropertyId::BorderRightStyle),
+                b"border-block-start-style" => (VendorPrefix::NONE, |_| PropertyId::BorderBlockStartStyle),
+                b"border-block-end-style" => (VendorPrefix::NONE, |_| PropertyId::BorderBlockEndStyle),
+                b"border-inline-start-style" => (VendorPrefix::NONE, |_| PropertyId::BorderInlineStartStyle),
+                b"border-inline-end-style" => (VendorPrefix::NONE, |_| PropertyId::BorderInlineEndStyle),
+                b"border-top-width" => (VendorPrefix::NONE, |_| PropertyId::BorderTopWidth),
+                b"border-bottom-width" => (VendorPrefix::NONE, |_| PropertyId::BorderBottomWidth),
+                b"border-left-width" => (VendorPrefix::NONE, |_| PropertyId::BorderLeftWidth),
+                b"border-right-width" => (VendorPrefix::NONE, |_| PropertyId::BorderRightWidth),
+                b"border-block-start-width" => (VendorPrefix::NONE, |_| PropertyId::BorderBlockStartWidth),
+                b"border-block-end-width" => (VendorPrefix::NONE, |_| PropertyId::BorderBlockEndWidth),
+                b"border-inline-start-width" => (VendorPrefix::NONE, |_| PropertyId::BorderInlineStartWidth),
+                b"border-inline-end-width" => (VendorPrefix::NONE, |_| PropertyId::BorderInlineEndWidth),
+                b"border-top-left-radius" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::BorderTopLeftRadius),
+                b"border-top-right-radius" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::BorderTopRightRadius),
+                b"border-bottom-left-radius" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::BorderBottomLeftRadius),
+                b"border-bottom-right-radius" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::BorderBottomRightRadius),
+                b"border-start-start-radius" => (VendorPrefix::NONE, |_| PropertyId::BorderStartStartRadius),
+                b"border-start-end-radius" => (VendorPrefix::NONE, |_| PropertyId::BorderStartEndRadius),
+                b"border-end-start-radius" => (VendorPrefix::NONE, |_| PropertyId::BorderEndStartRadius),
+                b"border-end-end-radius" => (VendorPrefix::NONE, |_| PropertyId::BorderEndEndRadius),
+                b"border-radius" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::BorderRadius),
+                b"border-image-source" => (VendorPrefix::NONE, |_| PropertyId::BorderImageSource),
+                b"border-image-outset" => (VendorPrefix::NONE, |_| PropertyId::BorderImageOutset),
+                b"border-image-repeat" => (VendorPrefix::NONE, |_| PropertyId::BorderImageRepeat),
+                b"border-image-width" => (VendorPrefix::NONE, |_| PropertyId::BorderImageWidth),
+                b"border-image-slice" => (VendorPrefix::NONE, |_| PropertyId::BorderImageSlice),
+                b"border-image" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ).union(VendorPrefix::O), PropertyId::BorderImage),
+                b"border-color" => (VendorPrefix::NONE, |_| PropertyId::BorderColor),
+                b"border-style" => (VendorPrefix::NONE, |_| PropertyId::BorderStyle),
+                b"border-width" => (VendorPrefix::NONE, |_| PropertyId::BorderWidth),
+                b"border-block-color" => (VendorPrefix::NONE, |_| PropertyId::BorderBlockColor),
+                b"border-block-style" => (VendorPrefix::NONE, |_| PropertyId::BorderBlockStyle),
+                b"border-block-width" => (VendorPrefix::NONE, |_| PropertyId::BorderBlockWidth),
+                b"border-inline-color" => (VendorPrefix::NONE, |_| PropertyId::BorderInlineColor),
+                b"border-inline-style" => (VendorPrefix::NONE, |_| PropertyId::BorderInlineStyle),
+                b"border-inline-width" => (VendorPrefix::NONE, |_| PropertyId::BorderInlineWidth),
+                b"border" => (VendorPrefix::NONE, |_| PropertyId::Border),
+                b"border-top" => (VendorPrefix::NONE, |_| PropertyId::BorderTop),
+                b"border-bottom" => (VendorPrefix::NONE, |_| PropertyId::BorderBottom),
+                b"border-left" => (VendorPrefix::NONE, |_| PropertyId::BorderLeft),
+                b"border-right" => (VendorPrefix::NONE, |_| PropertyId::BorderRight),
+                b"border-block" => (VendorPrefix::NONE, |_| PropertyId::BorderBlock),
+                b"border-block-start" => (VendorPrefix::NONE, |_| PropertyId::BorderBlockStart),
+                b"border-block-end" => (VendorPrefix::NONE, |_| PropertyId::BorderBlockEnd),
+                b"border-inline" => (VendorPrefix::NONE, |_| PropertyId::BorderInline),
+                b"border-inline-start" => (VendorPrefix::NONE, |_| PropertyId::BorderInlineStart),
+                b"border-inline-end" => (VendorPrefix::NONE, |_| PropertyId::BorderInlineEnd),
+                b"outline" => (VendorPrefix::NONE, |_| PropertyId::Outline),
+                b"outline-color" => (VendorPrefix::NONE, |_| PropertyId::OutlineColor),
+                b"outline-style" => (VendorPrefix::NONE, |_| PropertyId::OutlineStyle),
+                b"outline-width" => (VendorPrefix::NONE, |_| PropertyId::OutlineWidth),
+                b"flex-direction" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MS), PropertyId::FlexDirection),
+                b"flex-wrap" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MS), PropertyId::FlexWrap),
+                b"flex-flow" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MS), PropertyId::FlexFlow),
+                b"flex-grow" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::FlexGrow),
+                b"flex-shrink" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::FlexShrink),
+                b"flex-basis" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::FlexBasis),
+                b"flex" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MS), PropertyId::Flex),
+                b"order" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::Order),
+                b"align-content" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::AlignContent),
+                b"justify-content" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::JustifyContent),
+                b"place-content" => (VendorPrefix::NONE, |_| PropertyId::PlaceContent),
+                b"align-self" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::AlignSelf),
+                b"justify-self" => (VendorPrefix::NONE, |_| PropertyId::JustifySelf),
+                b"place-self" => (VendorPrefix::NONE, |_| PropertyId::PlaceSelf),
+                b"align-items" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::AlignItems),
+                b"justify-items" => (VendorPrefix::NONE, |_| PropertyId::JustifyItems),
+                b"place-items" => (VendorPrefix::NONE, |_| PropertyId::PlaceItems),
+                b"row-gap" => (VendorPrefix::NONE, |_| PropertyId::RowGap),
+                b"column-gap" => (VendorPrefix::NONE, |_| PropertyId::ColumnGap),
+                b"gap" => (VendorPrefix::NONE, |_| PropertyId::Gap),
+                b"box-orient" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::BoxOrient),
+                b"box-direction" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::BoxDirection),
+                b"box-ordinal-group" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::BoxOrdinalGroup),
+                b"box-align" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::BoxAlign),
+                b"box-flex" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::BoxFlex),
+                b"box-flex-group" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::BoxFlexGroup),
+                b"box-pack" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::BoxPack),
+                b"box-lines" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::BoxLines),
+                b"flex-pack" => (VendorPrefix::NONE.union(VendorPrefix::MS), PropertyId::FlexPack),
+                b"flex-order" => (VendorPrefix::NONE.union(VendorPrefix::MS), PropertyId::FlexOrder),
+                b"flex-align" => (VendorPrefix::NONE.union(VendorPrefix::MS), PropertyId::FlexAlign),
+                b"flex-item-align" => (VendorPrefix::NONE.union(VendorPrefix::MS), PropertyId::FlexItemAlign),
+                b"flex-line-pack" => (VendorPrefix::NONE.union(VendorPrefix::MS), PropertyId::FlexLinePack),
+                b"flex-positive" => (VendorPrefix::NONE.union(VendorPrefix::MS), PropertyId::FlexPositive),
+                b"flex-negative" => (VendorPrefix::NONE.union(VendorPrefix::MS), PropertyId::FlexNegative),
+                b"flex-preferred-size" => (VendorPrefix::NONE.union(VendorPrefix::MS), PropertyId::FlexPreferredSize),
+                b"margin-top" => (VendorPrefix::NONE, |_| PropertyId::MarginTop),
+                b"margin-bottom" => (VendorPrefix::NONE, |_| PropertyId::MarginBottom),
+                b"margin-left" => (VendorPrefix::NONE, |_| PropertyId::MarginLeft),
+                b"margin-right" => (VendorPrefix::NONE, |_| PropertyId::MarginRight),
+                b"margin-block-start" => (VendorPrefix::NONE, |_| PropertyId::MarginBlockStart),
+                b"margin-block-end" => (VendorPrefix::NONE, |_| PropertyId::MarginBlockEnd),
+                b"margin-inline-start" => (VendorPrefix::NONE, |_| PropertyId::MarginInlineStart),
+                b"margin-inline-end" => (VendorPrefix::NONE, |_| PropertyId::MarginInlineEnd),
+                b"margin-block" => (VendorPrefix::NONE, |_| PropertyId::MarginBlock),
+                b"margin-inline" => (VendorPrefix::NONE, |_| PropertyId::MarginInline),
+                b"margin" => (VendorPrefix::NONE, |_| PropertyId::Margin),
+                b"padding-top" => (VendorPrefix::NONE, |_| PropertyId::PaddingTop),
+                b"padding-bottom" => (VendorPrefix::NONE, |_| PropertyId::PaddingBottom),
+                b"padding-left" => (VendorPrefix::NONE, |_| PropertyId::PaddingLeft),
+                b"padding-right" => (VendorPrefix::NONE, |_| PropertyId::PaddingRight),
+                b"padding-block-start" => (VendorPrefix::NONE, |_| PropertyId::PaddingBlockStart),
+                b"padding-block-end" => (VendorPrefix::NONE, |_| PropertyId::PaddingBlockEnd),
+                b"padding-inline-start" => (VendorPrefix::NONE, |_| PropertyId::PaddingInlineStart),
+                b"padding-inline-end" => (VendorPrefix::NONE, |_| PropertyId::PaddingInlineEnd),
+                b"padding-block" => (VendorPrefix::NONE, |_| PropertyId::PaddingBlock),
+                b"padding-inline" => (VendorPrefix::NONE, |_| PropertyId::PaddingInline),
+                b"padding" => (VendorPrefix::NONE, |_| PropertyId::Padding),
+                b"scroll-margin-top" => (VendorPrefix::NONE, |_| PropertyId::ScrollMarginTop),
+                b"scroll-margin-bottom" => (VendorPrefix::NONE, |_| PropertyId::ScrollMarginBottom),
+                b"scroll-margin-left" => (VendorPrefix::NONE, |_| PropertyId::ScrollMarginLeft),
+                b"scroll-margin-right" => (VendorPrefix::NONE, |_| PropertyId::ScrollMarginRight),
+                b"scroll-margin-block-start" => (VendorPrefix::NONE, |_| PropertyId::ScrollMarginBlockStart),
+                b"scroll-margin-block-end" => (VendorPrefix::NONE, |_| PropertyId::ScrollMarginBlockEnd),
+                b"scroll-margin-inline-start" => (VendorPrefix::NONE, |_| PropertyId::ScrollMarginInlineStart),
+                b"scroll-margin-inline-end" => (VendorPrefix::NONE, |_| PropertyId::ScrollMarginInlineEnd),
+                b"scroll-margin-block" => (VendorPrefix::NONE, |_| PropertyId::ScrollMarginBlock),
+                b"scroll-margin-inline" => (VendorPrefix::NONE, |_| PropertyId::ScrollMarginInline),
+                b"scroll-margin" => (VendorPrefix::NONE, |_| PropertyId::ScrollMargin),
+                b"scroll-padding-top" => (VendorPrefix::NONE, |_| PropertyId::ScrollPaddingTop),
+                b"scroll-padding-bottom" => (VendorPrefix::NONE, |_| PropertyId::ScrollPaddingBottom),
+                b"scroll-padding-left" => (VendorPrefix::NONE, |_| PropertyId::ScrollPaddingLeft),
+                b"scroll-padding-right" => (VendorPrefix::NONE, |_| PropertyId::ScrollPaddingRight),
+                b"scroll-padding-block-start" => (VendorPrefix::NONE, |_| PropertyId::ScrollPaddingBlockStart),
+                b"scroll-padding-block-end" => (VendorPrefix::NONE, |_| PropertyId::ScrollPaddingBlockEnd),
+                b"scroll-padding-inline-start" => (VendorPrefix::NONE, |_| PropertyId::ScrollPaddingInlineStart),
+                b"scroll-padding-inline-end" => (VendorPrefix::NONE, |_| PropertyId::ScrollPaddingInlineEnd),
+                b"scroll-padding-block" => (VendorPrefix::NONE, |_| PropertyId::ScrollPaddingBlock),
+                b"scroll-padding-inline" => (VendorPrefix::NONE, |_| PropertyId::ScrollPaddingInline),
+                b"scroll-padding" => (VendorPrefix::NONE, |_| PropertyId::ScrollPadding),
+                b"font-weight" => (VendorPrefix::NONE, |_| PropertyId::FontWeight),
+                b"font-size" => (VendorPrefix::NONE, |_| PropertyId::FontSize),
+                b"font-stretch" => (VendorPrefix::NONE, |_| PropertyId::FontStretch),
+                b"font-family" => (VendorPrefix::NONE, |_| PropertyId::FontFamily),
+                b"font-style" => (VendorPrefix::NONE, |_| PropertyId::FontStyle),
+                b"font-variant-caps" => (VendorPrefix::NONE, |_| PropertyId::FontVariantCaps),
+                b"line-height" => (VendorPrefix::NONE, |_| PropertyId::LineHeight),
+                b"font" => (VendorPrefix::NONE, |_| PropertyId::Font),
+                b"transition-property" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ).union(VendorPrefix::MS), PropertyId::TransitionProperty),
+                b"transition-duration" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ).union(VendorPrefix::MS), PropertyId::TransitionDuration),
+                b"transition-delay" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ).union(VendorPrefix::MS), PropertyId::TransitionDelay),
+                b"transition-timing-function" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ).union(VendorPrefix::MS), PropertyId::TransitionTimingFunction),
+                b"transition" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ).union(VendorPrefix::MS), PropertyId::Transition),
+                b"animation-name" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ).union(VendorPrefix::O).union(VendorPrefix::MS), PropertyId::AnimationName),
+                b"animation" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ).union(VendorPrefix::O).union(VendorPrefix::MS), PropertyId::Animation),
+                b"transform" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ).union(VendorPrefix::MS).union(VendorPrefix::O), PropertyId::Transform),
+                b"transform-origin" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ).union(VendorPrefix::MS).union(VendorPrefix::O), PropertyId::TransformOrigin),
+                b"transform-style" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::TransformStyle),
+                b"transform-box" => (VendorPrefix::NONE, |_| PropertyId::TransformBox),
+                b"backface-visibility" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::BackfaceVisibility),
+                b"perspective" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::Perspective),
+                b"perspective-origin" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::PerspectiveOrigin),
+                b"translate" => (VendorPrefix::NONE, |_| PropertyId::Translate),
+                b"rotate" => (VendorPrefix::NONE, |_| PropertyId::Rotate),
+                b"scale" => (VendorPrefix::NONE, |_| PropertyId::Scale),
+                b"text-decoration-color" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT).union(VendorPrefix::MOZ), PropertyId::TextDecorationColor),
+                b"text-emphasis-color" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::TextEmphasisColor),
+                b"text-shadow" => (VendorPrefix::NONE, |_| PropertyId::TextShadow),
+                b"direction" => (VendorPrefix::NONE, |_| PropertyId::Direction),
+                b"composes" => (VendorPrefix::NONE, |_| PropertyId::Composes),
+                b"mask-image" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskImage),
+                b"mask-mode" => (VendorPrefix::NONE, |_| PropertyId::MaskMode),
+                b"mask-repeat" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskRepeat),
+                b"mask-position-x" => (VendorPrefix::NONE, |_| PropertyId::MaskPositionX),
+                b"mask-position-y" => (VendorPrefix::NONE, |_| PropertyId::MaskPositionY),
+                b"mask-position" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskPosition),
+                b"mask-clip" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskClip),
+                b"mask-origin" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskOrigin),
+                b"mask-size" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskSize),
+                b"mask-composite" => (VendorPrefix::NONE, |_| PropertyId::MaskComposite),
+                b"mask-type" => (VendorPrefix::NONE, |_| PropertyId::MaskType),
+                b"mask" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::Mask),
+                b"mask-border-source" => (VendorPrefix::NONE, |_| PropertyId::MaskBorderSource),
+                b"mask-border-mode" => (VendorPrefix::NONE, |_| PropertyId::MaskBorderMode),
+                b"mask-border-slice" => (VendorPrefix::NONE, |_| PropertyId::MaskBorderSlice),
+                b"mask-border-width" => (VendorPrefix::NONE, |_| PropertyId::MaskBorderWidth),
+                b"mask-border-outset" => (VendorPrefix::NONE, |_| PropertyId::MaskBorderOutset),
+                b"mask-border-repeat" => (VendorPrefix::NONE, |_| PropertyId::MaskBorderRepeat),
+                b"mask-border" => (VendorPrefix::NONE, |_| PropertyId::MaskBorder),
+                b"-webkit-mask-composite" => (VendorPrefix::NONE, |_| PropertyId::WebKitMaskComposite),
+                b"mask-source-type" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskSourceType),
+                b"mask-box-image" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskBoxImage),
+                b"mask-box-image-source" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskBoxImageSource),
+                b"mask-box-image-slice" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskBoxImageSlice),
+                b"mask-box-image-width" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskBoxImageWidth),
+                b"mask-box-image-outset" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskBoxImageOutset),
+                b"mask-box-image-repeat" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskBoxImageRepeat),
+                b"color-scheme" => (VendorPrefix::NONE, |_| PropertyId::ColorScheme),
+            };
+        }
+        let &(allowed, make) = KNOWN.get_ascii_case_insensitive(name)?;
+        if allowed.intersects(pre) {
+            Some(make(pre))
+        } else {
+            None
         }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"background-image") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BackgroundImage);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"background-position-x") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BackgroundPositionX);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"background-position-y") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BackgroundPositionY);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"background-position") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BackgroundPosition);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"background-size") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BackgroundSize);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"background-repeat") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BackgroundRepeat);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"background-attachment") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BackgroundAttachment);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"background-clip") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BackgroundClip(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"background-origin") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BackgroundOrigin);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"background") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Background);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"box-shadow") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BoxShadow(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"opacity") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Opacity);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"color") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Color);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"display") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Display);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"visibility") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Visibility);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"width") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Width);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"height") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Height);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"min-width") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MinWidth);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"min-height") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MinHeight);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"max-width") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaxWidth);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"max-height") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaxHeight);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"block-size") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BlockSize);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"inline-size") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::InlineSize);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"min-block-size") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MinBlockSize);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"min-inline-size") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MinInlineSize);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"max-block-size") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaxBlockSize);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"max-inline-size") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaxInlineSize);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"box-sizing") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BoxSizing(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"aspect-ratio") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::AspectRatio);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"overflow") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Overflow);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"overflow-x") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::OverflowX);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"overflow-y") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::OverflowY);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"text-overflow") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::O;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::TextOverflow(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"position") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Position);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"top") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Top);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"bottom") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Bottom);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"left") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Left);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"right") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Right);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"inset-block-start") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::InsetBlockStart);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"inset-block-end") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::InsetBlockEnd);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"inset-inline-start") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::InsetInlineStart);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"inset-inline-end") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::InsetInlineEnd);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"inset-block") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::InsetBlock);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"inset-inline") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::InsetInline);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"inset") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Inset);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-spacing") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderSpacing);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-top-color") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderTopColor);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-bottom-color") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderBottomColor);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-left-color") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderLeftColor);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-right-color") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderRightColor);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-block-start-color") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderBlockStartColor);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-block-end-color") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderBlockEndColor);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-inline-start-color") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderInlineStartColor);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-inline-end-color") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderInlineEndColor);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-top-style") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderTopStyle);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-bottom-style") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderBottomStyle);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-left-style") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderLeftStyle);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-right-style") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderRightStyle);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-block-start-style") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderBlockStartStyle);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-block-end-style") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderBlockEndStyle);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-inline-start-style") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderInlineStartStyle);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-inline-end-style") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderInlineEndStyle);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-top-width") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderTopWidth);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-bottom-width") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderBottomWidth);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-left-width") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderLeftWidth);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-right-width") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderRightWidth);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-block-start-width") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderBlockStartWidth);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-block-end-width") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderBlockEndWidth);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-inline-start-width") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderInlineStartWidth);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-inline-end-width") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderInlineEndWidth);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-top-left-radius") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderTopLeftRadius(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-top-right-radius") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderTopRightRadius(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-bottom-left-radius") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderBottomLeftRadius(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-bottom-right-radius") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderBottomRightRadius(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-start-start-radius") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderStartStartRadius);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-start-end-radius") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderStartEndRadius);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-end-start-radius") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderEndStartRadius);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-end-end-radius") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderEndEndRadius);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-radius") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderRadius(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-image-source") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderImageSource);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-image-outset") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderImageOutset);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-image-repeat") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderImageRepeat);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-image-width") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderImageWidth);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-image-slice") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderImageSlice);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-image") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ | VendorPrefix::O;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderImage(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-color") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderColor);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-style") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderStyle);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-width") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderWidth);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-block-color") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderBlockColor);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-block-style") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderBlockStyle);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-block-width") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderBlockWidth);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-inline-color") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderInlineColor);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-inline-style") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderInlineStyle);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-inline-width") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderInlineWidth);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Border);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-top") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderTop);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-bottom") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderBottom);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-left") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderLeft);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-right") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderRight);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-block") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderBlock);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-block-start") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderBlockStart);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-block-end") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderBlockEnd);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-inline") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderInline);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-inline-start") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderInlineStart);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"border-inline-end") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BorderInlineEnd);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"outline") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Outline);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"outline-color") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::OutlineColor);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"outline-style") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::OutlineStyle);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"outline-width") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::OutlineWidth);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"flex-direction") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MS;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::FlexDirection(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"flex-wrap") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MS;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::FlexWrap(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"flex-flow") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MS;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::FlexFlow(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"flex-grow") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::FlexGrow(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"flex-shrink") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::FlexShrink(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"flex-basis") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::FlexBasis(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"flex") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MS;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Flex(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"order") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Order(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"align-content") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::AlignContent(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"justify-content") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::JustifyContent(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"place-content") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::PlaceContent);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"align-self") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::AlignSelf(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"justify-self") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::JustifySelf);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"place-self") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::PlaceSelf);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"align-items") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::AlignItems(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"justify-items") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::JustifyItems);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"place-items") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::PlaceItems);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"row-gap") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::RowGap);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"column-gap") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::ColumnGap);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"gap") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Gap);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"box-orient") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BoxOrient(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"box-direction") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BoxDirection(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"box-ordinal-group") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BoxOrdinalGroup(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"box-align") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BoxAlign(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"box-flex") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BoxFlex(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"box-flex-group") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BoxFlexGroup(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"box-pack") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BoxPack(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"box-lines") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BoxLines(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"flex-pack") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::MS;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::FlexPack(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"flex-order") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::MS;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::FlexOrder(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"flex-align") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::MS;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::FlexAlign(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"flex-item-align") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::MS;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::FlexItemAlign(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"flex-line-pack") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::MS;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::FlexLinePack(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"flex-positive") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::MS;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::FlexPositive(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"flex-negative") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::MS;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::FlexNegative(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"flex-preferred-size") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::MS;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::FlexPreferredSize(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"margin-top") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MarginTop);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"margin-bottom") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MarginBottom);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"margin-left") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MarginLeft);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"margin-right") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MarginRight);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"margin-block-start") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MarginBlockStart);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"margin-block-end") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MarginBlockEnd);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"margin-inline-start") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MarginInlineStart);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"margin-inline-end") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MarginInlineEnd);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"margin-block") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MarginBlock);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"margin-inline") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MarginInline);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"margin") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Margin);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"padding-top") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::PaddingTop);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"padding-bottom") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::PaddingBottom);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"padding-left") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::PaddingLeft);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"padding-right") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::PaddingRight);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"padding-block-start") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::PaddingBlockStart);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"padding-block-end") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::PaddingBlockEnd);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"padding-inline-start") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::PaddingInlineStart);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"padding-inline-end") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::PaddingInlineEnd);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"padding-block") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::PaddingBlock);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"padding-inline") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::PaddingInline);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"padding") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Padding);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-margin-top") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::ScrollMarginTop);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-margin-bottom") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::ScrollMarginBottom);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-margin-left") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::ScrollMarginLeft);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-margin-right") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::ScrollMarginRight);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-margin-block-start") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::ScrollMarginBlockStart);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-margin-block-end") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::ScrollMarginBlockEnd);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-margin-inline-start") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::ScrollMarginInlineStart);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-margin-inline-end") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::ScrollMarginInlineEnd);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-margin-block") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::ScrollMarginBlock);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-margin-inline") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::ScrollMarginInline);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-margin") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::ScrollMargin);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-padding-top") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::ScrollPaddingTop);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-padding-bottom") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::ScrollPaddingBottom);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-padding-left") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::ScrollPaddingLeft);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-padding-right") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::ScrollPaddingRight);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-padding-block-start") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::ScrollPaddingBlockStart);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-padding-block-end") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::ScrollPaddingBlockEnd);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-padding-inline-start") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::ScrollPaddingInlineStart);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-padding-inline-end") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::ScrollPaddingInlineEnd);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-padding-block") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::ScrollPaddingBlock);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-padding-inline") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::ScrollPaddingInline);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"scroll-padding") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::ScrollPadding);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"font-weight") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::FontWeight);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"font-size") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::FontSize);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"font-stretch") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::FontStretch);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"font-family") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::FontFamily);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"font-style") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::FontStyle);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"font-variant-caps") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::FontVariantCaps);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"line-height") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::LineHeight);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"font") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Font);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"transition-property") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ | VendorPrefix::MS;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::TransitionProperty(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"transition-duration") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ | VendorPrefix::MS;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::TransitionDuration(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"transition-delay") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ | VendorPrefix::MS;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::TransitionDelay(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"transition-timing-function") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ | VendorPrefix::MS;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::TransitionTimingFunction(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"transition") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ | VendorPrefix::MS;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Transition(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"animation-name") {
-            let allowed: VendorPrefix = VendorPrefix::NONE
-                | VendorPrefix::WEBKIT
-                | VendorPrefix::MOZ
-                | VendorPrefix::O
-                | VendorPrefix::MS;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::AnimationName(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"animation") {
-            let allowed: VendorPrefix = VendorPrefix::NONE
-                | VendorPrefix::WEBKIT
-                | VendorPrefix::MOZ
-                | VendorPrefix::O
-                | VendorPrefix::MS;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Animation(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"transform") {
-            let allowed: VendorPrefix = VendorPrefix::NONE
-                | VendorPrefix::WEBKIT
-                | VendorPrefix::MOZ
-                | VendorPrefix::MS
-                | VendorPrefix::O;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Transform(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"transform-origin") {
-            let allowed: VendorPrefix = VendorPrefix::NONE
-                | VendorPrefix::WEBKIT
-                | VendorPrefix::MOZ
-                | VendorPrefix::MS
-                | VendorPrefix::O;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::TransformOrigin(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"transform-style") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::TransformStyle(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"transform-box") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::TransformBox);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"backface-visibility") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::BackfaceVisibility(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"perspective") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Perspective(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"perspective-origin") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::PerspectiveOrigin(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"translate") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Translate);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"rotate") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Rotate);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"scale") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Scale);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"text-decoration-color") {
-            let allowed: VendorPrefix =
-                VendorPrefix::NONE | VendorPrefix::WEBKIT | VendorPrefix::MOZ;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::TextDecorationColor(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"text-emphasis-color") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::TextEmphasisColor(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"text-shadow") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::TextShadow);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"direction") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Direction);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"composes") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Composes);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-image") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskImage(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-mode") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskMode);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-repeat") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskRepeat(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-position-x") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskPositionX);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-position-y") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskPositionY);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-position") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskPosition(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-clip") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskClip(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-origin") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskOrigin(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-size") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskSize(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-composite") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskComposite);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-type") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskType);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::Mask(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-border-source") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskBorderSource);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-border-mode") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskBorderMode);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-border-slice") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskBorderSlice);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-border-width") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskBorderWidth);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-border-outset") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskBorderOutset);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-border-repeat") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskBorderRepeat);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-border") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskBorder);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"-webkit-mask-composite") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::WebKitMaskComposite);
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-source-type") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskSourceType(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-box-image") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskBoxImage(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-box-image-source") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskBoxImageSource(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-box-image-slice") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskBoxImageSlice(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-box-image-width") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskBoxImageWidth(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-box-image-outset") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskBoxImageOutset(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"mask-box-image-repeat") {
-            let allowed: VendorPrefix = VendorPrefix::NONE | VendorPrefix::WEBKIT;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::MaskBoxImageRepeat(pre));
-            }
-            return None;
-        }
-        if strings::eql_case_insensitive_ascii_check_length(name, b"color-scheme") {
-            let allowed: VendorPrefix = VendorPrefix::NONE;
-            if allowed.intersects(pre) {
-                return Some(PropertyId::ColorScheme);
-            }
-            return None;
-        }
-        None
     }
 
     #[inline]
@@ -3391,6 +1863,16 @@ pub enum Property {
     All(CSSWideKeyword),
     Unparsed(UnparsedProperty),
     Custom(CustomProperty),
+}
+
+/// A fully-consumed `T`, or `None` (falling back to `Property::Unparsed`).
+/// One instantiation per value type rather than one inlined copy per property.
+fn parse_value<T: css::generic::ParseWithOptions>(
+    input: &mut css::Parser,
+    options: &css::ParserOptions,
+) -> Option<T> {
+    let value = T::parse_with_options(input, options).ok()?;
+    input.expect_exhausted().is_ok().then_some(value)
 }
 
 impl Property {
@@ -3933,1961 +2415,1251 @@ impl Property {
 
         match property_id {
             PropertyId::BackgroundColor => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BackgroundColor(c));
-                    }
+                if let Some(c) = parse_value::<css::css_values::color::CssColor>(input, options) {
+                    return Ok(Property::BackgroundColor(c));
                 }
             }
             PropertyId::BackgroundImage => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    SmallList<css::css_values::image::Image, 1>,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<SmallList<css::css_values::image::Image, 1>>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BackgroundImage(c));
-                    }
+                    return Ok(Property::BackgroundImage(c));
                 }
             }
             PropertyId::BackgroundPositionX => {
-                if let Ok(c) = css::generic::parse_with_options::<
+                if let Some(c) = parse_value::<
                     SmallList<css::css_values::position::HorizontalPosition, 1>,
                 >(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BackgroundPositionX(c));
-                    }
+                    return Ok(Property::BackgroundPositionX(c));
                 }
             }
             PropertyId::BackgroundPositionY => {
-                if let Ok(c) = css::generic::parse_with_options::<
+                if let Some(c) = parse_value::<
                     SmallList<css::css_values::position::VerticalPosition, 1>,
                 >(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BackgroundPositionY(c));
-                    }
+                    return Ok(Property::BackgroundPositionY(c));
                 }
             }
             PropertyId::BackgroundPosition => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    SmallList<background::BackgroundPosition, 1>,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<SmallList<background::BackgroundPosition, 1>>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BackgroundPosition(c));
-                    }
+                    return Ok(Property::BackgroundPosition(c));
                 }
             }
             PropertyId::BackgroundSize => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    SmallList<background::BackgroundSize, 1>,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<SmallList<background::BackgroundSize, 1>>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BackgroundSize(c));
-                    }
+                    return Ok(Property::BackgroundSize(c));
                 }
             }
             PropertyId::BackgroundRepeat => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    SmallList<background::BackgroundRepeat, 1>,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<SmallList<background::BackgroundRepeat, 1>>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BackgroundRepeat(c));
-                    }
+                    return Ok(Property::BackgroundRepeat(c));
                 }
             }
             PropertyId::BackgroundAttachment => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    SmallList<background::BackgroundAttachment, 1>,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<SmallList<background::BackgroundAttachment, 1>>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BackgroundAttachment(c));
-                    }
+                    return Ok(Property::BackgroundAttachment(c));
                 }
             }
             PropertyId::BackgroundClip(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    SmallList<background::BackgroundClip, 1>,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<SmallList<background::BackgroundClip, 1>>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BackgroundClip((c, pre)));
-                    }
+                    return Ok(Property::BackgroundClip((c, pre)));
                 }
             }
             PropertyId::BackgroundOrigin => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    SmallList<background::BackgroundOrigin, 1>,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<SmallList<background::BackgroundOrigin, 1>>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BackgroundOrigin(c));
-                    }
+                    return Ok(Property::BackgroundOrigin(c));
                 }
             }
             PropertyId::Background => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    SmallList<background::Background, 1>,
-                >(input, options)
+                if let Some(c) = parse_value::<SmallList<background::Background, 1>>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Background(c));
-                    }
+                    return Ok(Property::Background(c));
                 }
             }
             PropertyId::BoxShadow(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<SmallList<box_shadow::BoxShadow, 1>>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BoxShadow((c, pre)));
-                    }
+                if let Some(c) = parse_value::<SmallList<box_shadow::BoxShadow, 1>>(input, options)
+                {
+                    return Ok(Property::BoxShadow((c, pre)));
                 }
             }
             PropertyId::Opacity => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::alpha::AlphaValue>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Opacity(c));
-                    }
+                if let Some(c) = parse_value::<css::css_values::alpha::AlphaValue>(input, options) {
+                    return Ok(Property::Opacity(c));
                 }
             }
             PropertyId::Color => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Color(c));
-                    }
+                if let Some(c) = parse_value::<css::css_values::color::CssColor>(input, options) {
+                    return Ok(Property::Color(c));
                 }
             }
             PropertyId::Display => {
-                if let Ok(c) = css::generic::parse_with_options::<display::Display>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Display(c));
-                    }
+                if let Some(c) = parse_value::<display::Display>(input, options) {
+                    return Ok(Property::Display(c));
                 }
             }
             PropertyId::Visibility => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<display::Visibility>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Visibility(c));
-                    }
+                if let Some(c) = parse_value::<display::Visibility>(input, options) {
+                    return Ok(Property::Visibility(c));
                 }
             }
             PropertyId::Width => {
-                if let Ok(c) = css::generic::parse_with_options::<size::Size>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Width(c));
-                    }
+                if let Some(c) = parse_value::<size::Size>(input, options) {
+                    return Ok(Property::Width(c));
                 }
             }
             PropertyId::Height => {
-                if let Ok(c) = css::generic::parse_with_options::<size::Size>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Height(c));
-                    }
+                if let Some(c) = parse_value::<size::Size>(input, options) {
+                    return Ok(Property::Height(c));
                 }
             }
             PropertyId::MinWidth => {
-                if let Ok(c) = css::generic::parse_with_options::<size::Size>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MinWidth(c));
-                    }
+                if let Some(c) = parse_value::<size::Size>(input, options) {
+                    return Ok(Property::MinWidth(c));
                 }
             }
             PropertyId::MinHeight => {
-                if let Ok(c) = css::generic::parse_with_options::<size::Size>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MinHeight(c));
-                    }
+                if let Some(c) = parse_value::<size::Size>(input, options) {
+                    return Ok(Property::MinHeight(c));
                 }
             }
             PropertyId::MaxWidth => {
-                if let Ok(c) = css::generic::parse_with_options::<size::MaxSize>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaxWidth(c));
-                    }
+                if let Some(c) = parse_value::<size::MaxSize>(input, options) {
+                    return Ok(Property::MaxWidth(c));
                 }
             }
             PropertyId::MaxHeight => {
-                if let Ok(c) = css::generic::parse_with_options::<size::MaxSize>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaxHeight(c));
-                    }
+                if let Some(c) = parse_value::<size::MaxSize>(input, options) {
+                    return Ok(Property::MaxHeight(c));
                 }
             }
             PropertyId::BlockSize => {
-                if let Ok(c) = css::generic::parse_with_options::<size::Size>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BlockSize(c));
-                    }
+                if let Some(c) = parse_value::<size::Size>(input, options) {
+                    return Ok(Property::BlockSize(c));
                 }
             }
             PropertyId::InlineSize => {
-                if let Ok(c) = css::generic::parse_with_options::<size::Size>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::InlineSize(c));
-                    }
+                if let Some(c) = parse_value::<size::Size>(input, options) {
+                    return Ok(Property::InlineSize(c));
                 }
             }
             PropertyId::MinBlockSize => {
-                if let Ok(c) = css::generic::parse_with_options::<size::Size>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MinBlockSize(c));
-                    }
+                if let Some(c) = parse_value::<size::Size>(input, options) {
+                    return Ok(Property::MinBlockSize(c));
                 }
             }
             PropertyId::MinInlineSize => {
-                if let Ok(c) = css::generic::parse_with_options::<size::Size>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MinInlineSize(c));
-                    }
+                if let Some(c) = parse_value::<size::Size>(input, options) {
+                    return Ok(Property::MinInlineSize(c));
                 }
             }
             PropertyId::MaxBlockSize => {
-                if let Ok(c) = css::generic::parse_with_options::<size::MaxSize>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaxBlockSize(c));
-                    }
+                if let Some(c) = parse_value::<size::MaxSize>(input, options) {
+                    return Ok(Property::MaxBlockSize(c));
                 }
             }
             PropertyId::MaxInlineSize => {
-                if let Ok(c) = css::generic::parse_with_options::<size::MaxSize>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaxInlineSize(c));
-                    }
+                if let Some(c) = parse_value::<size::MaxSize>(input, options) {
+                    return Ok(Property::MaxInlineSize(c));
                 }
             }
             PropertyId::BoxSizing(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<size::BoxSizing>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BoxSizing((c, pre)));
-                    }
+                if let Some(c) = parse_value::<size::BoxSizing>(input, options) {
+                    return Ok(Property::BoxSizing((c, pre)));
                 }
             }
             PropertyId::AspectRatio => {
-                if let Ok(c) = css::generic::parse_with_options::<size::AspectRatio>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::AspectRatio(c));
-                    }
+                if let Some(c) = parse_value::<size::AspectRatio>(input, options) {
+                    return Ok(Property::AspectRatio(c));
                 }
             }
             PropertyId::Overflow => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<overflow::Overflow>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Overflow(c));
-                    }
+                if let Some(c) = parse_value::<overflow::Overflow>(input, options) {
+                    return Ok(Property::Overflow(c));
                 }
             }
             PropertyId::OverflowX => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<overflow::OverflowKeyword>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::OverflowX(c));
-                    }
+                if let Some(c) = parse_value::<overflow::OverflowKeyword>(input, options) {
+                    return Ok(Property::OverflowX(c));
                 }
             }
             PropertyId::OverflowY => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<overflow::OverflowKeyword>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::OverflowY(c));
-                    }
+                if let Some(c) = parse_value::<overflow::OverflowKeyword>(input, options) {
+                    return Ok(Property::OverflowY(c));
                 }
             }
             PropertyId::TextOverflow(pre) => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<overflow::TextOverflow>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::TextOverflow((c, pre)));
-                    }
+                if let Some(c) = parse_value::<overflow::TextOverflow>(input, options) {
+                    return Ok(Property::TextOverflow((c, pre)));
                 }
             }
             PropertyId::Position => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<position::Position>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Position(c));
-                    }
+                if let Some(c) = parse_value::<position::Position>(input, options) {
+                    return Ok(Property::Position(c));
                 }
             }
             PropertyId::Top => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Top(c));
-                    }
+                    return Ok(Property::Top(c));
                 }
             }
             PropertyId::Bottom => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Bottom(c));
-                    }
+                    return Ok(Property::Bottom(c));
                 }
             }
             PropertyId::Left => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Left(c));
-                    }
+                    return Ok(Property::Left(c));
                 }
             }
             PropertyId::Right => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Right(c));
-                    }
+                    return Ok(Property::Right(c));
                 }
             }
             PropertyId::InsetBlockStart => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::InsetBlockStart(c));
-                    }
+                    return Ok(Property::InsetBlockStart(c));
                 }
             }
             PropertyId::InsetBlockEnd => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::InsetBlockEnd(c));
-                    }
+                    return Ok(Property::InsetBlockEnd(c));
                 }
             }
             PropertyId::InsetInlineStart => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::InsetInlineStart(c));
-                    }
+                    return Ok(Property::InsetInlineStart(c));
                 }
             }
             PropertyId::InsetInlineEnd => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::InsetInlineEnd(c));
-                    }
+                    return Ok(Property::InsetInlineEnd(c));
                 }
             }
             PropertyId::InsetBlock => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<margin_padding::InsetBlock>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::InsetBlock(c));
-                    }
+                if let Some(c) = parse_value::<margin_padding::InsetBlock>(input, options) {
+                    return Ok(Property::InsetBlock(c));
                 }
             }
             PropertyId::InsetInline => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<margin_padding::InsetInline>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::InsetInline(c));
-                    }
+                if let Some(c) = parse_value::<margin_padding::InsetInline>(input, options) {
+                    return Ok(Property::InsetInline(c));
                 }
             }
             PropertyId::Inset => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<margin_padding::Inset>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Inset(c));
-                    }
+                if let Some(c) = parse_value::<margin_padding::Inset>(input, options) {
+                    return Ok(Property::Inset(c));
                 }
             }
             PropertyId::BorderSpacing => {
-                if let Ok(c) = css::generic::parse_with_options::<
+                if let Some(c) = parse_value::<
                     css::css_values::size::Size2D<css::css_values::length::Length>,
                 >(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderSpacing(c));
-                    }
+                    return Ok(Property::BorderSpacing(c));
                 }
             }
             PropertyId::BorderTopColor => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderTopColor(c));
-                    }
+                if let Some(c) = parse_value::<css::css_values::color::CssColor>(input, options) {
+                    return Ok(Property::BorderTopColor(c));
                 }
             }
             PropertyId::BorderBottomColor => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderBottomColor(c));
-                    }
+                if let Some(c) = parse_value::<css::css_values::color::CssColor>(input, options) {
+                    return Ok(Property::BorderBottomColor(c));
                 }
             }
             PropertyId::BorderLeftColor => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderLeftColor(c));
-                    }
+                if let Some(c) = parse_value::<css::css_values::color::CssColor>(input, options) {
+                    return Ok(Property::BorderLeftColor(c));
                 }
             }
             PropertyId::BorderRightColor => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderRightColor(c));
-                    }
+                if let Some(c) = parse_value::<css::css_values::color::CssColor>(input, options) {
+                    return Ok(Property::BorderRightColor(c));
                 }
             }
             PropertyId::BorderBlockStartColor => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderBlockStartColor(c));
-                    }
+                if let Some(c) = parse_value::<css::css_values::color::CssColor>(input, options) {
+                    return Ok(Property::BorderBlockStartColor(c));
                 }
             }
             PropertyId::BorderBlockEndColor => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderBlockEndColor(c));
-                    }
+                if let Some(c) = parse_value::<css::css_values::color::CssColor>(input, options) {
+                    return Ok(Property::BorderBlockEndColor(c));
                 }
             }
             PropertyId::BorderInlineStartColor => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderInlineStartColor(c));
-                    }
+                if let Some(c) = parse_value::<css::css_values::color::CssColor>(input, options) {
+                    return Ok(Property::BorderInlineStartColor(c));
                 }
             }
             PropertyId::BorderInlineEndColor => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderInlineEndColor(c));
-                    }
+                if let Some(c) = parse_value::<css::css_values::color::CssColor>(input, options) {
+                    return Ok(Property::BorderInlineEndColor(c));
                 }
             }
             PropertyId::BorderTopStyle => {
-                if let Ok(c) = css::generic::parse_with_options::<border::LineStyle>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderTopStyle(c));
-                    }
+                if let Some(c) = parse_value::<border::LineStyle>(input, options) {
+                    return Ok(Property::BorderTopStyle(c));
                 }
             }
             PropertyId::BorderBottomStyle => {
-                if let Ok(c) = css::generic::parse_with_options::<border::LineStyle>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderBottomStyle(c));
-                    }
+                if let Some(c) = parse_value::<border::LineStyle>(input, options) {
+                    return Ok(Property::BorderBottomStyle(c));
                 }
             }
             PropertyId::BorderLeftStyle => {
-                if let Ok(c) = css::generic::parse_with_options::<border::LineStyle>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderLeftStyle(c));
-                    }
+                if let Some(c) = parse_value::<border::LineStyle>(input, options) {
+                    return Ok(Property::BorderLeftStyle(c));
                 }
             }
             PropertyId::BorderRightStyle => {
-                if let Ok(c) = css::generic::parse_with_options::<border::LineStyle>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderRightStyle(c));
-                    }
+                if let Some(c) = parse_value::<border::LineStyle>(input, options) {
+                    return Ok(Property::BorderRightStyle(c));
                 }
             }
             PropertyId::BorderBlockStartStyle => {
-                if let Ok(c) = css::generic::parse_with_options::<border::LineStyle>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderBlockStartStyle(c));
-                    }
+                if let Some(c) = parse_value::<border::LineStyle>(input, options) {
+                    return Ok(Property::BorderBlockStartStyle(c));
                 }
             }
             PropertyId::BorderBlockEndStyle => {
-                if let Ok(c) = css::generic::parse_with_options::<border::LineStyle>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderBlockEndStyle(c));
-                    }
+                if let Some(c) = parse_value::<border::LineStyle>(input, options) {
+                    return Ok(Property::BorderBlockEndStyle(c));
                 }
             }
             PropertyId::BorderInlineStartStyle => {
-                if let Ok(c) = css::generic::parse_with_options::<border::LineStyle>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderInlineStartStyle(c));
-                    }
+                if let Some(c) = parse_value::<border::LineStyle>(input, options) {
+                    return Ok(Property::BorderInlineStartStyle(c));
                 }
             }
             PropertyId::BorderInlineEndStyle => {
-                if let Ok(c) = css::generic::parse_with_options::<border::LineStyle>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderInlineEndStyle(c));
-                    }
+                if let Some(c) = parse_value::<border::LineStyle>(input, options) {
+                    return Ok(Property::BorderInlineEndStyle(c));
                 }
             }
             PropertyId::BorderTopWidth => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderSideWidth>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderTopWidth(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderSideWidth>(input, options) {
+                    return Ok(Property::BorderTopWidth(c));
                 }
             }
             PropertyId::BorderBottomWidth => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderSideWidth>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderBottomWidth(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderSideWidth>(input, options) {
+                    return Ok(Property::BorderBottomWidth(c));
                 }
             }
             PropertyId::BorderLeftWidth => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderSideWidth>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderLeftWidth(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderSideWidth>(input, options) {
+                    return Ok(Property::BorderLeftWidth(c));
                 }
             }
             PropertyId::BorderRightWidth => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderSideWidth>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderRightWidth(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderSideWidth>(input, options) {
+                    return Ok(Property::BorderRightWidth(c));
                 }
             }
             PropertyId::BorderBlockStartWidth => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderSideWidth>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderBlockStartWidth(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderSideWidth>(input, options) {
+                    return Ok(Property::BorderBlockStartWidth(c));
                 }
             }
             PropertyId::BorderBlockEndWidth => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderSideWidth>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderBlockEndWidth(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderSideWidth>(input, options) {
+                    return Ok(Property::BorderBlockEndWidth(c));
                 }
             }
             PropertyId::BorderInlineStartWidth => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderSideWidth>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderInlineStartWidth(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderSideWidth>(input, options) {
+                    return Ok(Property::BorderInlineStartWidth(c));
                 }
             }
             PropertyId::BorderInlineEndWidth => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderSideWidth>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderInlineEndWidth(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderSideWidth>(input, options) {
+                    return Ok(Property::BorderInlineEndWidth(c));
                 }
             }
             PropertyId::BorderTopLeftRadius(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<
+                if let Some(c) = parse_value::<
                     css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
                 >(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderTopLeftRadius((c, pre)));
-                    }
+                    return Ok(Property::BorderTopLeftRadius((c, pre)));
                 }
             }
             PropertyId::BorderTopRightRadius(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<
+                if let Some(c) = parse_value::<
                     css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
                 >(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderTopRightRadius((c, pre)));
-                    }
+                    return Ok(Property::BorderTopRightRadius((c, pre)));
                 }
             }
             PropertyId::BorderBottomLeftRadius(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<
+                if let Some(c) = parse_value::<
                     css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
                 >(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderBottomLeftRadius((c, pre)));
-                    }
+                    return Ok(Property::BorderBottomLeftRadius((c, pre)));
                 }
             }
             PropertyId::BorderBottomRightRadius(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<
+                if let Some(c) = parse_value::<
                     css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
                 >(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderBottomRightRadius((c, pre)));
-                    }
+                    return Ok(Property::BorderBottomRightRadius((c, pre)));
                 }
             }
             PropertyId::BorderStartStartRadius => {
-                if let Ok(c) = css::generic::parse_with_options::<
+                if let Some(c) = parse_value::<
                     css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
                 >(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderStartStartRadius(c));
-                    }
+                    return Ok(Property::BorderStartStartRadius(c));
                 }
             }
             PropertyId::BorderStartEndRadius => {
-                if let Ok(c) = css::generic::parse_with_options::<
+                if let Some(c) = parse_value::<
                     css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
                 >(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderStartEndRadius(c));
-                    }
+                    return Ok(Property::BorderStartEndRadius(c));
                 }
             }
             PropertyId::BorderEndStartRadius => {
-                if let Ok(c) = css::generic::parse_with_options::<
+                if let Some(c) = parse_value::<
                     css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
                 >(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderEndStartRadius(c));
-                    }
+                    return Ok(Property::BorderEndStartRadius(c));
                 }
             }
             PropertyId::BorderEndEndRadius => {
-                if let Ok(c) = css::generic::parse_with_options::<
+                if let Some(c) = parse_value::<
                     css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
                 >(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderEndEndRadius(c));
-                    }
+                    return Ok(Property::BorderEndEndRadius(c));
                 }
             }
             PropertyId::BorderRadius(pre) => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border_radius::BorderRadius>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderRadius((c, pre)));
-                    }
+                if let Some(c) = parse_value::<border_radius::BorderRadius>(input, options) {
+                    return Ok(Property::BorderRadius((c, pre)));
                 }
             }
             PropertyId::BorderImageSource => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::image::Image>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderImageSource(c));
-                    }
+                if let Some(c) = parse_value::<css::css_values::image::Image>(input, options) {
+                    return Ok(Property::BorderImageSource(c));
                 }
             }
             PropertyId::BorderImageOutset => {
-                if let Ok(c) = css::generic::parse_with_options::<
+                if let Some(c) = parse_value::<
                     css::css_values::rect::Rect<css::css_values::length::LengthOrNumber>,
                 >(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderImageOutset(c));
-                    }
+                    return Ok(Property::BorderImageOutset(c));
                 }
             }
             PropertyId::BorderImageRepeat => {
-                if let Ok(c) = css::generic::parse_with_options::<border_image::BorderImageRepeat>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderImageRepeat(c));
-                    }
+                if let Some(c) = parse_value::<border_image::BorderImageRepeat>(input, options) {
+                    return Ok(Property::BorderImageRepeat(c));
                 }
             }
             PropertyId::BorderImageWidth => {
-                if let Ok(c) = css::generic::parse_with_options::<
+                if let Some(c) = parse_value::<
                     css::css_values::rect::Rect<border_image::BorderImageSideWidth>,
                 >(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderImageWidth(c));
-                    }
+                    return Ok(Property::BorderImageWidth(c));
                 }
             }
             PropertyId::BorderImageSlice => {
-                if let Ok(c) = css::generic::parse_with_options::<border_image::BorderImageSlice>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderImageSlice(c));
-                    }
+                if let Some(c) = parse_value::<border_image::BorderImageSlice>(input, options) {
+                    return Ok(Property::BorderImageSlice(c));
                 }
             }
             PropertyId::BorderImage(pre) => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border_image::BorderImage>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderImage((c, pre)));
-                    }
+                if let Some(c) = parse_value::<border_image::BorderImage>(input, options) {
+                    return Ok(Property::BorderImage((c, pre)));
                 }
             }
             PropertyId::BorderColor => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderColor>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderColor(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderColor>(input, options) {
+                    return Ok(Property::BorderColor(c));
                 }
             }
             PropertyId::BorderStyle => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderStyle>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderStyle(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderStyle>(input, options) {
+                    return Ok(Property::BorderStyle(c));
                 }
             }
             PropertyId::BorderWidth => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderWidth>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderWidth(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderWidth>(input, options) {
+                    return Ok(Property::BorderWidth(c));
                 }
             }
             PropertyId::BorderBlockColor => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderBlockColor>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderBlockColor(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderBlockColor>(input, options) {
+                    return Ok(Property::BorderBlockColor(c));
                 }
             }
             PropertyId::BorderBlockStyle => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderBlockStyle>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderBlockStyle(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderBlockStyle>(input, options) {
+                    return Ok(Property::BorderBlockStyle(c));
                 }
             }
             PropertyId::BorderBlockWidth => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderBlockWidth>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderBlockWidth(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderBlockWidth>(input, options) {
+                    return Ok(Property::BorderBlockWidth(c));
                 }
             }
             PropertyId::BorderInlineColor => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderInlineColor>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderInlineColor(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderInlineColor>(input, options) {
+                    return Ok(Property::BorderInlineColor(c));
                 }
             }
             PropertyId::BorderInlineStyle => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderInlineStyle>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderInlineStyle(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderInlineStyle>(input, options) {
+                    return Ok(Property::BorderInlineStyle(c));
                 }
             }
             PropertyId::BorderInlineWidth => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderInlineWidth>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderInlineWidth(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderInlineWidth>(input, options) {
+                    return Ok(Property::BorderInlineWidth(c));
                 }
             }
             PropertyId::Border => {
-                if let Ok(c) = css::generic::parse_with_options::<border::Border>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Border(c));
-                    }
+                if let Some(c) = parse_value::<border::Border>(input, options) {
+                    return Ok(Property::Border(c));
                 }
             }
             PropertyId::BorderTop => {
-                if let Ok(c) = css::generic::parse_with_options::<border::BorderTop>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderTop(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderTop>(input, options) {
+                    return Ok(Property::BorderTop(c));
                 }
             }
             PropertyId::BorderBottom => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderBottom>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderBottom(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderBottom>(input, options) {
+                    return Ok(Property::BorderBottom(c));
                 }
             }
             PropertyId::BorderLeft => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderLeft>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderLeft(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderLeft>(input, options) {
+                    return Ok(Property::BorderLeft(c));
                 }
             }
             PropertyId::BorderRight => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderRight>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderRight(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderRight>(input, options) {
+                    return Ok(Property::BorderRight(c));
                 }
             }
             PropertyId::BorderBlock => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderBlock>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderBlock(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderBlock>(input, options) {
+                    return Ok(Property::BorderBlock(c));
                 }
             }
             PropertyId::BorderBlockStart => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderBlockStart>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderBlockStart(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderBlockStart>(input, options) {
+                    return Ok(Property::BorderBlockStart(c));
                 }
             }
             PropertyId::BorderBlockEnd => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderBlockEnd>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderBlockEnd(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderBlockEnd>(input, options) {
+                    return Ok(Property::BorderBlockEnd(c));
                 }
             }
             PropertyId::BorderInline => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderInline>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderInline(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderInline>(input, options) {
+                    return Ok(Property::BorderInline(c));
                 }
             }
             PropertyId::BorderInlineStart => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderInlineStart>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderInlineStart(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderInlineStart>(input, options) {
+                    return Ok(Property::BorderInlineStart(c));
                 }
             }
             PropertyId::BorderInlineEnd => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderInlineEnd>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BorderInlineEnd(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderInlineEnd>(input, options) {
+                    return Ok(Property::BorderInlineEnd(c));
                 }
             }
             PropertyId::Outline => {
-                if let Ok(c) = css::generic::parse_with_options::<outline::Outline>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Outline(c));
-                    }
+                if let Some(c) = parse_value::<outline::Outline>(input, options) {
+                    return Ok(Property::Outline(c));
                 }
             }
             PropertyId::OutlineColor => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::OutlineColor(c));
-                    }
+                if let Some(c) = parse_value::<css::css_values::color::CssColor>(input, options) {
+                    return Ok(Property::OutlineColor(c));
                 }
             }
             PropertyId::OutlineStyle => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<outline::OutlineStyle>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::OutlineStyle(c));
-                    }
+                if let Some(c) = parse_value::<outline::OutlineStyle>(input, options) {
+                    return Ok(Property::OutlineStyle(c));
                 }
             }
             PropertyId::OutlineWidth => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border::BorderSideWidth>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::OutlineWidth(c));
-                    }
+                if let Some(c) = parse_value::<border::BorderSideWidth>(input, options) {
+                    return Ok(Property::OutlineWidth(c));
                 }
             }
             PropertyId::FlexDirection(pre) => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<flex::FlexDirection>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::FlexDirection((c, pre)));
-                    }
+                if let Some(c) = parse_value::<flex::FlexDirection>(input, options) {
+                    return Ok(Property::FlexDirection((c, pre)));
                 }
             }
             PropertyId::FlexWrap(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<flex::FlexWrap>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::FlexWrap((c, pre)));
-                    }
+                if let Some(c) = parse_value::<flex::FlexWrap>(input, options) {
+                    return Ok(Property::FlexWrap((c, pre)));
                 }
             }
             PropertyId::FlexFlow(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<flex::FlexFlow>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::FlexFlow((c, pre)));
-                    }
+                if let Some(c) = parse_value::<flex::FlexFlow>(input, options) {
+                    return Ok(Property::FlexFlow((c, pre)));
                 }
             }
             PropertyId::FlexGrow(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::number::CSSNumber>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::FlexGrow((c, pre)));
-                    }
+                if let Some(c) = parse_value::<css::css_values::number::CSSNumber>(input, options) {
+                    return Ok(Property::FlexGrow((c, pre)));
                 }
             }
             PropertyId::FlexShrink(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::number::CSSNumber>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::FlexShrink((c, pre)));
-                    }
+                if let Some(c) = parse_value::<css::css_values::number::CSSNumber>(input, options) {
+                    return Ok(Property::FlexShrink((c, pre)));
                 }
             }
             PropertyId::FlexBasis(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::FlexBasis((c, pre)));
-                    }
+                    return Ok(Property::FlexBasis((c, pre)));
                 }
             }
             PropertyId::Flex(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<flex::Flex>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Flex((c, pre)));
-                    }
+                if let Some(c) = parse_value::<flex::Flex>(input, options) {
+                    return Ok(Property::Flex((c, pre)));
                 }
             }
             PropertyId::Order(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::number::CSSInteger>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Order((c, pre)));
-                    }
+                if let Some(c) = parse_value::<css::css_values::number::CSSInteger>(input, options)
+                {
+                    return Ok(Property::Order((c, pre)));
                 }
             }
             PropertyId::AlignContent(pre) => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<align::AlignContent>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::AlignContent((c, pre)));
-                    }
+                if let Some(c) = parse_value::<align::AlignContent>(input, options) {
+                    return Ok(Property::AlignContent((c, pre)));
                 }
             }
             PropertyId::JustifyContent(pre) => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<align::JustifyContent>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::JustifyContent((c, pre)));
-                    }
+                if let Some(c) = parse_value::<align::JustifyContent>(input, options) {
+                    return Ok(Property::JustifyContent((c, pre)));
                 }
             }
             PropertyId::PlaceContent => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<align::PlaceContent>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::PlaceContent(c));
-                    }
+                if let Some(c) = parse_value::<align::PlaceContent>(input, options) {
+                    return Ok(Property::PlaceContent(c));
                 }
             }
             PropertyId::AlignSelf(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<align::AlignSelf>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::AlignSelf((c, pre)));
-                    }
+                if let Some(c) = parse_value::<align::AlignSelf>(input, options) {
+                    return Ok(Property::AlignSelf((c, pre)));
                 }
             }
             PropertyId::JustifySelf => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<align::JustifySelf>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::JustifySelf(c));
-                    }
+                if let Some(c) = parse_value::<align::JustifySelf>(input, options) {
+                    return Ok(Property::JustifySelf(c));
                 }
             }
             PropertyId::PlaceSelf => {
-                if let Ok(c) = css::generic::parse_with_options::<align::PlaceSelf>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::PlaceSelf(c));
-                    }
+                if let Some(c) = parse_value::<align::PlaceSelf>(input, options) {
+                    return Ok(Property::PlaceSelf(c));
                 }
             }
             PropertyId::AlignItems(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<align::AlignItems>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::AlignItems((c, pre)));
-                    }
+                if let Some(c) = parse_value::<align::AlignItems>(input, options) {
+                    return Ok(Property::AlignItems((c, pre)));
                 }
             }
             PropertyId::JustifyItems => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<align::JustifyItems>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::JustifyItems(c));
-                    }
+                if let Some(c) = parse_value::<align::JustifyItems>(input, options) {
+                    return Ok(Property::JustifyItems(c));
                 }
             }
             PropertyId::PlaceItems => {
-                if let Ok(c) = css::generic::parse_with_options::<align::PlaceItems>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::PlaceItems(c));
-                    }
+                if let Some(c) = parse_value::<align::PlaceItems>(input, options) {
+                    return Ok(Property::PlaceItems(c));
                 }
             }
             PropertyId::RowGap => {
-                if let Ok(c) = css::generic::parse_with_options::<align::GapValue>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::RowGap(c));
-                    }
+                if let Some(c) = parse_value::<align::GapValue>(input, options) {
+                    return Ok(Property::RowGap(c));
                 }
             }
             PropertyId::ColumnGap => {
-                if let Ok(c) = css::generic::parse_with_options::<align::GapValue>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::ColumnGap(c));
-                    }
+                if let Some(c) = parse_value::<align::GapValue>(input, options) {
+                    return Ok(Property::ColumnGap(c));
                 }
             }
             PropertyId::Gap => {
-                if let Ok(c) = css::generic::parse_with_options::<align::Gap>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Gap(c));
-                    }
+                if let Some(c) = parse_value::<align::Gap>(input, options) {
+                    return Ok(Property::Gap(c));
                 }
             }
             PropertyId::BoxOrient(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<flex::BoxOrient>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BoxOrient((c, pre)));
-                    }
+                if let Some(c) = parse_value::<flex::BoxOrient>(input, options) {
+                    return Ok(Property::BoxOrient((c, pre)));
                 }
             }
             PropertyId::BoxDirection(pre) => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<flex::BoxDirection>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BoxDirection((c, pre)));
-                    }
+                if let Some(c) = parse_value::<flex::BoxDirection>(input, options) {
+                    return Ok(Property::BoxDirection((c, pre)));
                 }
             }
             PropertyId::BoxOrdinalGroup(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::number::CSSInteger>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BoxOrdinalGroup((c, pre)));
-                    }
+                if let Some(c) = parse_value::<css::css_values::number::CSSInteger>(input, options)
+                {
+                    return Ok(Property::BoxOrdinalGroup((c, pre)));
                 }
             }
             PropertyId::BoxAlign(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<flex::BoxAlign>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BoxAlign((c, pre)));
-                    }
+                if let Some(c) = parse_value::<flex::BoxAlign>(input, options) {
+                    return Ok(Property::BoxAlign((c, pre)));
                 }
             }
             PropertyId::BoxFlex(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::number::CSSNumber>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BoxFlex((c, pre)));
-                    }
+                if let Some(c) = parse_value::<css::css_values::number::CSSNumber>(input, options) {
+                    return Ok(Property::BoxFlex((c, pre)));
                 }
             }
             PropertyId::BoxFlexGroup(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::number::CSSInteger>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BoxFlexGroup((c, pre)));
-                    }
+                if let Some(c) = parse_value::<css::css_values::number::CSSInteger>(input, options)
+                {
+                    return Ok(Property::BoxFlexGroup((c, pre)));
                 }
             }
             PropertyId::BoxPack(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<flex::BoxPack>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BoxPack((c, pre)));
-                    }
+                if let Some(c) = parse_value::<flex::BoxPack>(input, options) {
+                    return Ok(Property::BoxPack((c, pre)));
                 }
             }
             PropertyId::BoxLines(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<flex::BoxLines>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BoxLines((c, pre)));
-                    }
+                if let Some(c) = parse_value::<flex::BoxLines>(input, options) {
+                    return Ok(Property::BoxLines((c, pre)));
                 }
             }
             PropertyId::FlexPack(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<flex::FlexPack>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::FlexPack((c, pre)));
-                    }
+                if let Some(c) = parse_value::<flex::FlexPack>(input, options) {
+                    return Ok(Property::FlexPack((c, pre)));
                 }
             }
             PropertyId::FlexOrder(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::number::CSSInteger>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::FlexOrder((c, pre)));
-                    }
+                if let Some(c) = parse_value::<css::css_values::number::CSSInteger>(input, options)
+                {
+                    return Ok(Property::FlexOrder((c, pre)));
                 }
             }
             PropertyId::FlexAlign(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<flex::BoxAlign>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::FlexAlign((c, pre)));
-                    }
+                if let Some(c) = parse_value::<flex::BoxAlign>(input, options) {
+                    return Ok(Property::FlexAlign((c, pre)));
                 }
             }
             PropertyId::FlexItemAlign(pre) => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<flex::FlexItemAlign>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::FlexItemAlign((c, pre)));
-                    }
+                if let Some(c) = parse_value::<flex::FlexItemAlign>(input, options) {
+                    return Ok(Property::FlexItemAlign((c, pre)));
                 }
             }
             PropertyId::FlexLinePack(pre) => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<flex::FlexLinePack>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::FlexLinePack((c, pre)));
-                    }
+                if let Some(c) = parse_value::<flex::FlexLinePack>(input, options) {
+                    return Ok(Property::FlexLinePack((c, pre)));
                 }
             }
             PropertyId::FlexPositive(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::number::CSSNumber>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::FlexPositive((c, pre)));
-                    }
+                if let Some(c) = parse_value::<css::css_values::number::CSSNumber>(input, options) {
+                    return Ok(Property::FlexPositive((c, pre)));
                 }
             }
             PropertyId::FlexNegative(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::number::CSSNumber>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::FlexNegative((c, pre)));
-                    }
+                if let Some(c) = parse_value::<css::css_values::number::CSSNumber>(input, options) {
+                    return Ok(Property::FlexNegative((c, pre)));
                 }
             }
             PropertyId::FlexPreferredSize(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::FlexPreferredSize((c, pre)));
-                    }
+                    return Ok(Property::FlexPreferredSize((c, pre)));
                 }
             }
             PropertyId::MarginTop => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MarginTop(c));
-                    }
+                    return Ok(Property::MarginTop(c));
                 }
             }
             PropertyId::MarginBottom => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MarginBottom(c));
-                    }
+                    return Ok(Property::MarginBottom(c));
                 }
             }
             PropertyId::MarginLeft => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MarginLeft(c));
-                    }
+                    return Ok(Property::MarginLeft(c));
                 }
             }
             PropertyId::MarginRight => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MarginRight(c));
-                    }
+                    return Ok(Property::MarginRight(c));
                 }
             }
             PropertyId::MarginBlockStart => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MarginBlockStart(c));
-                    }
+                    return Ok(Property::MarginBlockStart(c));
                 }
             }
             PropertyId::MarginBlockEnd => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MarginBlockEnd(c));
-                    }
+                    return Ok(Property::MarginBlockEnd(c));
                 }
             }
             PropertyId::MarginInlineStart => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MarginInlineStart(c));
-                    }
+                    return Ok(Property::MarginInlineStart(c));
                 }
             }
             PropertyId::MarginInlineEnd => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MarginInlineEnd(c));
-                    }
+                    return Ok(Property::MarginInlineEnd(c));
                 }
             }
             PropertyId::MarginBlock => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<margin_padding::MarginBlock>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MarginBlock(c));
-                    }
+                if let Some(c) = parse_value::<margin_padding::MarginBlock>(input, options) {
+                    return Ok(Property::MarginBlock(c));
                 }
             }
             PropertyId::MarginInline => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<margin_padding::MarginInline>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MarginInline(c));
-                    }
+                if let Some(c) = parse_value::<margin_padding::MarginInline>(input, options) {
+                    return Ok(Property::MarginInline(c));
                 }
             }
             PropertyId::Margin => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<margin_padding::Margin>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Margin(c));
-                    }
+                if let Some(c) = parse_value::<margin_padding::Margin>(input, options) {
+                    return Ok(Property::Margin(c));
                 }
             }
             PropertyId::PaddingTop => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::PaddingTop(c));
-                    }
+                    return Ok(Property::PaddingTop(c));
                 }
             }
             PropertyId::PaddingBottom => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::PaddingBottom(c));
-                    }
+                    return Ok(Property::PaddingBottom(c));
                 }
             }
             PropertyId::PaddingLeft => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::PaddingLeft(c));
-                    }
+                    return Ok(Property::PaddingLeft(c));
                 }
             }
             PropertyId::PaddingRight => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::PaddingRight(c));
-                    }
+                    return Ok(Property::PaddingRight(c));
                 }
             }
             PropertyId::PaddingBlockStart => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::PaddingBlockStart(c));
-                    }
+                    return Ok(Property::PaddingBlockStart(c));
                 }
             }
             PropertyId::PaddingBlockEnd => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::PaddingBlockEnd(c));
-                    }
+                    return Ok(Property::PaddingBlockEnd(c));
                 }
             }
             PropertyId::PaddingInlineStart => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::PaddingInlineStart(c));
-                    }
+                    return Ok(Property::PaddingInlineStart(c));
                 }
             }
             PropertyId::PaddingInlineEnd => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::PaddingInlineEnd(c));
-                    }
+                    return Ok(Property::PaddingInlineEnd(c));
                 }
             }
             PropertyId::PaddingBlock => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<margin_padding::PaddingBlock>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::PaddingBlock(c));
-                    }
+                if let Some(c) = parse_value::<margin_padding::PaddingBlock>(input, options) {
+                    return Ok(Property::PaddingBlock(c));
                 }
             }
             PropertyId::PaddingInline => {
-                if let Ok(c) = css::generic::parse_with_options::<margin_padding::PaddingInline>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::PaddingInline(c));
-                    }
+                if let Some(c) = parse_value::<margin_padding::PaddingInline>(input, options) {
+                    return Ok(Property::PaddingInline(c));
                 }
             }
             PropertyId::Padding => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<margin_padding::Padding>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Padding(c));
-                    }
+                if let Some(c) = parse_value::<margin_padding::Padding>(input, options) {
+                    return Ok(Property::Padding(c));
                 }
             }
             PropertyId::ScrollMarginTop => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::ScrollMarginTop(c));
-                    }
+                    return Ok(Property::ScrollMarginTop(c));
                 }
             }
             PropertyId::ScrollMarginBottom => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::ScrollMarginBottom(c));
-                    }
+                    return Ok(Property::ScrollMarginBottom(c));
                 }
             }
             PropertyId::ScrollMarginLeft => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::ScrollMarginLeft(c));
-                    }
+                    return Ok(Property::ScrollMarginLeft(c));
                 }
             }
             PropertyId::ScrollMarginRight => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::ScrollMarginRight(c));
-                    }
+                    return Ok(Property::ScrollMarginRight(c));
                 }
             }
             PropertyId::ScrollMarginBlockStart => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::ScrollMarginBlockStart(c));
-                    }
+                    return Ok(Property::ScrollMarginBlockStart(c));
                 }
             }
             PropertyId::ScrollMarginBlockEnd => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::ScrollMarginBlockEnd(c));
-                    }
+                    return Ok(Property::ScrollMarginBlockEnd(c));
                 }
             }
             PropertyId::ScrollMarginInlineStart => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::ScrollMarginInlineStart(c));
-                    }
+                    return Ok(Property::ScrollMarginInlineStart(c));
                 }
             }
             PropertyId::ScrollMarginInlineEnd => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::ScrollMarginInlineEnd(c));
-                    }
+                    return Ok(Property::ScrollMarginInlineEnd(c));
                 }
             }
             PropertyId::ScrollMarginBlock => {
-                if let Ok(c) = css::generic::parse_with_options::<margin_padding::ScrollMarginBlock>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::ScrollMarginBlock(c));
-                    }
+                if let Some(c) = parse_value::<margin_padding::ScrollMarginBlock>(input, options) {
+                    return Ok(Property::ScrollMarginBlock(c));
                 }
             }
             PropertyId::ScrollMarginInline => {
-                if let Ok(c) = css::generic::parse_with_options::<margin_padding::ScrollMarginInline>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::ScrollMarginInline(c));
-                    }
+                if let Some(c) = parse_value::<margin_padding::ScrollMarginInline>(input, options) {
+                    return Ok(Property::ScrollMarginInline(c));
                 }
             }
             PropertyId::ScrollMargin => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<margin_padding::ScrollMargin>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::ScrollMargin(c));
-                    }
+                if let Some(c) = parse_value::<margin_padding::ScrollMargin>(input, options) {
+                    return Ok(Property::ScrollMargin(c));
                 }
             }
             PropertyId::ScrollPaddingTop => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::ScrollPaddingTop(c));
-                    }
+                    return Ok(Property::ScrollPaddingTop(c));
                 }
             }
             PropertyId::ScrollPaddingBottom => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::ScrollPaddingBottom(c));
-                    }
+                    return Ok(Property::ScrollPaddingBottom(c));
                 }
             }
             PropertyId::ScrollPaddingLeft => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::ScrollPaddingLeft(c));
-                    }
+                    return Ok(Property::ScrollPaddingLeft(c));
                 }
             }
             PropertyId::ScrollPaddingRight => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::ScrollPaddingRight(c));
-                    }
+                    return Ok(Property::ScrollPaddingRight(c));
                 }
             }
             PropertyId::ScrollPaddingBlockStart => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::ScrollPaddingBlockStart(c));
-                    }
+                    return Ok(Property::ScrollPaddingBlockStart(c));
                 }
             }
             PropertyId::ScrollPaddingBlockEnd => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::ScrollPaddingBlockEnd(c));
-                    }
+                    return Ok(Property::ScrollPaddingBlockEnd(c));
                 }
             }
             PropertyId::ScrollPaddingInlineStart => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::ScrollPaddingInlineStart(c));
-                    }
+                    return Ok(Property::ScrollPaddingInlineStart(c));
                 }
             }
             PropertyId::ScrollPaddingInlineEnd => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    css::css_values::length::LengthPercentageOrAuto,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::ScrollPaddingInlineEnd(c));
-                    }
+                    return Ok(Property::ScrollPaddingInlineEnd(c));
                 }
             }
             PropertyId::ScrollPaddingBlock => {
-                if let Ok(c) = css::generic::parse_with_options::<margin_padding::ScrollPaddingBlock>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::ScrollPaddingBlock(c));
-                    }
+                if let Some(c) = parse_value::<margin_padding::ScrollPaddingBlock>(input, options) {
+                    return Ok(Property::ScrollPaddingBlock(c));
                 }
             }
             PropertyId::ScrollPaddingInline => {
-                if let Ok(c) = css::generic::parse_with_options::<margin_padding::ScrollPaddingInline>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::ScrollPaddingInline(c));
-                    }
+                if let Some(c) = parse_value::<margin_padding::ScrollPaddingInline>(input, options)
+                {
+                    return Ok(Property::ScrollPaddingInline(c));
                 }
             }
             PropertyId::ScrollPadding => {
-                if let Ok(c) = css::generic::parse_with_options::<margin_padding::ScrollPadding>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::ScrollPadding(c));
-                    }
+                if let Some(c) = parse_value::<margin_padding::ScrollPadding>(input, options) {
+                    return Ok(Property::ScrollPadding(c));
                 }
             }
             PropertyId::FontWeight => {
-                if let Ok(c) = css::generic::parse_with_options::<font::FontWeight>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::FontWeight(c));
-                    }
+                if let Some(c) = parse_value::<font::FontWeight>(input, options) {
+                    return Ok(Property::FontWeight(c));
                 }
             }
             PropertyId::FontSize => {
-                if let Ok(c) = css::generic::parse_with_options::<font::FontSize>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::FontSize(c));
-                    }
+                if let Some(c) = parse_value::<font::FontSize>(input, options) {
+                    return Ok(Property::FontSize(c));
                 }
             }
             PropertyId::FontStretch => {
-                if let Ok(c) = css::generic::parse_with_options::<font::FontStretch>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::FontStretch(c));
-                    }
+                if let Some(c) = parse_value::<font::FontStretch>(input, options) {
+                    return Ok(Property::FontStretch(c));
                 }
             }
             PropertyId::FontFamily => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<Vec<font::FontFamily>>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::FontFamily(c));
-                    }
+                if let Some(c) = parse_value::<Vec<font::FontFamily>>(input, options) {
+                    return Ok(Property::FontFamily(c));
                 }
             }
             PropertyId::FontStyle => {
-                if let Ok(c) = css::generic::parse_with_options::<font::FontStyle>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::FontStyle(c));
-                    }
+                if let Some(c) = parse_value::<font::FontStyle>(input, options) {
+                    return Ok(Property::FontStyle(c));
                 }
             }
             PropertyId::FontVariantCaps => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<font::FontVariantCaps>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::FontVariantCaps(c));
-                    }
+                if let Some(c) = parse_value::<font::FontVariantCaps>(input, options) {
+                    return Ok(Property::FontVariantCaps(c));
                 }
             }
             PropertyId::LineHeight => {
-                if let Ok(c) = css::generic::parse_with_options::<font::LineHeight>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::LineHeight(c));
-                    }
+                if let Some(c) = parse_value::<font::LineHeight>(input, options) {
+                    return Ok(Property::LineHeight(c));
                 }
             }
             PropertyId::Font => {
-                if let Ok(c) = css::generic::parse_with_options::<font::Font>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Font(c));
-                    }
+                if let Some(c) = parse_value::<font::Font>(input, options) {
+                    return Ok(Property::Font(c));
                 }
             }
             PropertyId::TransitionProperty(pre) => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<SmallList<PropertyId, 1>>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::TransitionProperty((c, pre)));
-                    }
+                if let Some(c) = parse_value::<SmallList<PropertyId, 1>>(input, options) {
+                    return Ok(Property::TransitionProperty((c, pre)));
                 }
             }
             PropertyId::TransitionDuration(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    SmallList<css::css_values::time::Time, 1>,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<SmallList<css::css_values::time::Time, 1>>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::TransitionDuration((c, pre)));
-                    }
+                    return Ok(Property::TransitionDuration((c, pre)));
                 }
             }
             PropertyId::TransitionDelay(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    SmallList<css::css_values::time::Time, 1>,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<SmallList<css::css_values::time::Time, 1>>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::TransitionDelay((c, pre)));
-                    }
+                    return Ok(Property::TransitionDelay((c, pre)));
                 }
             }
             PropertyId::TransitionTimingFunction(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    SmallList<css::css_values::easing::EasingFunction, 1>,
-                >(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::TransitionTimingFunction((c, pre)));
-                    }
+                if let Some(c) = parse_value::<SmallList<css::css_values::easing::EasingFunction, 1>>(
+                    input, options,
+                ) {
+                    return Ok(Property::TransitionTimingFunction((c, pre)));
                 }
             }
             PropertyId::Transition(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    SmallList<transition::Transition, 1>,
-                >(input, options)
+                if let Some(c) = parse_value::<SmallList<transition::Transition, 1>>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Transition((c, pre)));
-                    }
+                    return Ok(Property::Transition((c, pre)));
                 }
             }
             PropertyId::Animation(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<SmallList<animation::Animation, 1>>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Animation((c, pre)));
-                    }
+                if let Some(c) = parse_value::<SmallList<animation::Animation, 1>>(input, options) {
+                    return Ok(Property::Animation((c, pre)));
                 }
             }
             PropertyId::AnimationName(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    SmallList<animation::AnimationName, 1>,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<SmallList<animation::AnimationName, 1>>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::AnimationName((c, pre)));
-                    }
+                    return Ok(Property::AnimationName((c, pre)));
                 }
             }
             PropertyId::Transform(pre) => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<transform::TransformList>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Transform((c, pre)));
-                    }
+                if let Some(c) = parse_value::<transform::TransformList>(input, options) {
+                    return Ok(Property::Transform((c, pre)));
                 }
             }
             PropertyId::TransformOrigin(pre) => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<position::Position>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::TransformOrigin((c, pre)));
-                    }
+                if let Some(c) = parse_value::<position::Position>(input, options) {
+                    return Ok(Property::TransformOrigin((c, pre)));
                 }
             }
             PropertyId::TransformStyle(pre) => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<transform::TransformStyle>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::TransformStyle((c, pre)));
-                    }
+                if let Some(c) = parse_value::<transform::TransformStyle>(input, options) {
+                    return Ok(Property::TransformStyle((c, pre)));
                 }
             }
             PropertyId::TransformBox => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<transform::TransformBox>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::TransformBox(c));
-                    }
+                if let Some(c) = parse_value::<transform::TransformBox>(input, options) {
+                    return Ok(Property::TransformBox(c));
                 }
             }
             PropertyId::BackfaceVisibility(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<transform::BackfaceVisibility>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::BackfaceVisibility((c, pre)));
-                    }
+                if let Some(c) = parse_value::<transform::BackfaceVisibility>(input, options) {
+                    return Ok(Property::BackfaceVisibility((c, pre)));
                 }
             }
             PropertyId::Perspective(pre) => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<transform::Perspective>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Perspective((c, pre)));
-                    }
+                if let Some(c) = parse_value::<transform::Perspective>(input, options) {
+                    return Ok(Property::Perspective((c, pre)));
                 }
             }
             PropertyId::PerspectiveOrigin(pre) => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<position::Position>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::PerspectiveOrigin((c, pre)));
-                    }
+                if let Some(c) = parse_value::<position::Position>(input, options) {
+                    return Ok(Property::PerspectiveOrigin((c, pre)));
                 }
             }
             PropertyId::Translate => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<transform::Translate>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Translate(c));
-                    }
+                if let Some(c) = parse_value::<transform::Translate>(input, options) {
+                    return Ok(Property::Translate(c));
                 }
             }
             PropertyId::Rotate => {
-                if let Ok(c) = css::generic::parse_with_options::<transform::Rotate>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Rotate(c));
-                    }
+                if let Some(c) = parse_value::<transform::Rotate>(input, options) {
+                    return Ok(Property::Rotate(c));
                 }
             }
             PropertyId::Scale => {
-                if let Ok(c) = css::generic::parse_with_options::<transform::Scale>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Scale(c));
-                    }
+                if let Some(c) = parse_value::<transform::Scale>(input, options) {
+                    return Ok(Property::Scale(c));
                 }
             }
             PropertyId::TextDecorationColor(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::TextDecorationColor((c, pre)));
-                    }
+                if let Some(c) = parse_value::<css::css_values::color::CssColor>(input, options) {
+                    return Ok(Property::TextDecorationColor((c, pre)));
                 }
             }
             PropertyId::TextEmphasisColor(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::color::CssColor>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::TextEmphasisColor((c, pre)));
-                    }
+                if let Some(c) = parse_value::<css::css_values::color::CssColor>(input, options) {
+                    return Ok(Property::TextEmphasisColor((c, pre)));
                 }
             }
             PropertyId::TextShadow => {
-                if let Ok(c) = css::generic::parse_with_options::<SmallList<text::TextShadow, 1>>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::TextShadow(c));
-                    }
+                if let Some(c) = parse_value::<SmallList<text::TextShadow, 1>>(input, options) {
+                    return Ok(Property::TextShadow(c));
                 }
             }
             PropertyId::Direction => {
-                if let Ok(c) = css::generic::parse_with_options::<text::Direction>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Direction(c));
-                    }
+                if let Some(c) = parse_value::<text::Direction>(input, options) {
+                    return Ok(Property::Direction(c));
                 }
             }
             PropertyId::Composes => {
@@ -5895,264 +3667,172 @@ impl Property {
                     .map(Property::Composes);
             }
             PropertyId::MaskImage(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    SmallList<css::css_values::image::Image, 1>,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<SmallList<css::css_values::image::Image, 1>>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskImage((c, pre)));
-                    }
+                    return Ok(Property::MaskImage((c, pre)));
                 }
             }
             PropertyId::MaskMode => {
-                if let Ok(c) = css::generic::parse_with_options::<SmallList<masking::MaskMode, 1>>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskMode(c));
-                    }
+                if let Some(c) = parse_value::<SmallList<masking::MaskMode, 1>>(input, options) {
+                    return Ok(Property::MaskMode(c));
                 }
             }
             PropertyId::MaskRepeat(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    SmallList<background::BackgroundRepeat, 1>,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<SmallList<background::BackgroundRepeat, 1>>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskRepeat((c, pre)));
-                    }
+                    return Ok(Property::MaskRepeat((c, pre)));
                 }
             }
             PropertyId::MaskPositionX => {
-                if let Ok(c) = css::generic::parse_with_options::<
+                if let Some(c) = parse_value::<
                     SmallList<css::css_values::position::HorizontalPosition, 1>,
                 >(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskPositionX(c));
-                    }
+                    return Ok(Property::MaskPositionX(c));
                 }
             }
             PropertyId::MaskPositionY => {
-                if let Ok(c) = css::generic::parse_with_options::<
+                if let Some(c) = parse_value::<
                     SmallList<css::css_values::position::VerticalPosition, 1>,
                 >(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskPositionY(c));
-                    }
+                    return Ok(Property::MaskPositionY(c));
                 }
             }
             PropertyId::MaskPosition(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<SmallList<position::Position, 1>>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskPosition((c, pre)));
-                    }
+                if let Some(c) = parse_value::<SmallList<position::Position, 1>>(input, options) {
+                    return Ok(Property::MaskPosition((c, pre)));
                 }
             }
             PropertyId::MaskClip(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<SmallList<masking::MaskClip, 1>>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskClip((c, pre)));
-                    }
+                if let Some(c) = parse_value::<SmallList<masking::MaskClip, 1>>(input, options) {
+                    return Ok(Property::MaskClip((c, pre)));
                 }
             }
             PropertyId::MaskOrigin(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<SmallList<masking::GeometryBox, 1>>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskOrigin((c, pre)));
-                    }
+                if let Some(c) = parse_value::<SmallList<masking::GeometryBox, 1>>(input, options) {
+                    return Ok(Property::MaskOrigin((c, pre)));
                 }
             }
             PropertyId::MaskSize(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    SmallList<background::BackgroundSize, 1>,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<SmallList<background::BackgroundSize, 1>>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskSize((c, pre)));
-                    }
+                    return Ok(Property::MaskSize((c, pre)));
                 }
             }
             PropertyId::MaskComposite => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    SmallList<masking::MaskComposite, 1>,
-                >(input, options)
+                if let Some(c) = parse_value::<SmallList<masking::MaskComposite, 1>>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskComposite(c));
-                    }
+                    return Ok(Property::MaskComposite(c));
                 }
             }
             PropertyId::MaskType => {
-                if let Ok(c) = css::generic::parse_with_options::<masking::MaskType>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskType(c));
-                    }
+                if let Some(c) = parse_value::<masking::MaskType>(input, options) {
+                    return Ok(Property::MaskType(c));
                 }
             }
             PropertyId::Mask(pre) => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<SmallList<masking::Mask, 1>>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::Mask((c, pre)));
-                    }
+                if let Some(c) = parse_value::<SmallList<masking::Mask, 1>>(input, options) {
+                    return Ok(Property::Mask((c, pre)));
                 }
             }
             PropertyId::MaskBorderSource => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::image::Image>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskBorderSource(c));
-                    }
+                if let Some(c) = parse_value::<css::css_values::image::Image>(input, options) {
+                    return Ok(Property::MaskBorderSource(c));
                 }
             }
             PropertyId::MaskBorderMode => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<masking::MaskBorderMode>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskBorderMode(c));
-                    }
+                if let Some(c) = parse_value::<masking::MaskBorderMode>(input, options) {
+                    return Ok(Property::MaskBorderMode(c));
                 }
             }
             PropertyId::MaskBorderSlice => {
-                if let Ok(c) = css::generic::parse_with_options::<border_image::BorderImageSlice>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskBorderSlice(c));
-                    }
+                if let Some(c) = parse_value::<border_image::BorderImageSlice>(input, options) {
+                    return Ok(Property::MaskBorderSlice(c));
                 }
             }
             PropertyId::MaskBorderWidth => {
-                if let Ok(c) = css::generic::parse_with_options::<
+                if let Some(c) = parse_value::<
                     css::css_values::rect::Rect<border_image::BorderImageSideWidth>,
                 >(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskBorderWidth(c));
-                    }
+                    return Ok(Property::MaskBorderWidth(c));
                 }
             }
             PropertyId::MaskBorderOutset => {
-                if let Ok(c) = css::generic::parse_with_options::<
+                if let Some(c) = parse_value::<
                     css::css_values::rect::Rect<css::css_values::length::LengthOrNumber>,
                 >(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskBorderOutset(c));
-                    }
+                    return Ok(Property::MaskBorderOutset(c));
                 }
             }
             PropertyId::MaskBorderRepeat => {
-                if let Ok(c) = css::generic::parse_with_options::<border_image::BorderImageRepeat>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskBorderRepeat(c));
-                    }
+                if let Some(c) = parse_value::<border_image::BorderImageRepeat>(input, options) {
+                    return Ok(Property::MaskBorderRepeat(c));
                 }
             }
             PropertyId::MaskBorder => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<masking::MaskBorder>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskBorder(c));
-                    }
+                if let Some(c) = parse_value::<masking::MaskBorder>(input, options) {
+                    return Ok(Property::MaskBorder(c));
                 }
             }
             PropertyId::WebKitMaskComposite => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    SmallList<masking::WebKitMaskComposite, 1>,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<SmallList<masking::WebKitMaskComposite, 1>>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::WebKitMaskComposite(c));
-                    }
+                    return Ok(Property::WebKitMaskComposite(c));
                 }
             }
             PropertyId::MaskSourceType(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<
-                    SmallList<masking::WebKitMaskSourceType, 1>,
-                >(input, options)
+                if let Some(c) =
+                    parse_value::<SmallList<masking::WebKitMaskSourceType, 1>>(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskSourceType((c, pre)));
-                    }
+                    return Ok(Property::MaskSourceType((c, pre)));
                 }
             }
             PropertyId::MaskBoxImage(pre) => {
-                if let Ok(c) =
-                    css::generic::parse_with_options::<border_image::BorderImage>(input, options)
-                {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskBoxImage((c, pre)));
-                    }
+                if let Some(c) = parse_value::<border_image::BorderImage>(input, options) {
+                    return Ok(Property::MaskBoxImage((c, pre)));
                 }
             }
             PropertyId::MaskBoxImageSource(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<css::css_values::image::Image>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskBoxImageSource((c, pre)));
-                    }
+                if let Some(c) = parse_value::<css::css_values::image::Image>(input, options) {
+                    return Ok(Property::MaskBoxImageSource((c, pre)));
                 }
             }
             PropertyId::MaskBoxImageSlice(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<border_image::BorderImageSlice>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskBoxImageSlice((c, pre)));
-                    }
+                if let Some(c) = parse_value::<border_image::BorderImageSlice>(input, options) {
+                    return Ok(Property::MaskBoxImageSlice((c, pre)));
                 }
             }
             PropertyId::MaskBoxImageWidth(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<
+                if let Some(c) = parse_value::<
                     css::css_values::rect::Rect<border_image::BorderImageSideWidth>,
                 >(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskBoxImageWidth((c, pre)));
-                    }
+                    return Ok(Property::MaskBoxImageWidth((c, pre)));
                 }
             }
             PropertyId::MaskBoxImageOutset(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<
+                if let Some(c) = parse_value::<
                     css::css_values::rect::Rect<css::css_values::length::LengthOrNumber>,
                 >(input, options)
                 {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskBoxImageOutset((c, pre)));
-                    }
+                    return Ok(Property::MaskBoxImageOutset((c, pre)));
                 }
             }
             PropertyId::MaskBoxImageRepeat(pre) => {
-                if let Ok(c) = css::generic::parse_with_options::<border_image::BorderImageRepeat>(
-                    input, options,
-                ) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::MaskBoxImageRepeat((c, pre)));
-                    }
+                if let Some(c) = parse_value::<border_image::BorderImageRepeat>(input, options) {
+                    return Ok(Property::MaskBoxImageRepeat((c, pre)));
                 }
             }
             PropertyId::ColorScheme => {
-                if let Ok(c) = css::generic::parse_with_options::<ui::ColorScheme>(input, options) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(Property::ColorScheme(c));
-                    }
+                if let Some(c) = parse_value::<ui::ColorScheme>(input, options) {
+                    return Ok(Property::ColorScheme(c));
                 }
             }
             PropertyId::All => return CSSWideKeyword::parse(input).map(Property::All),

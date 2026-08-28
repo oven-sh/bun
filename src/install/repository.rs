@@ -405,7 +405,6 @@ fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
         let term = match result.term {
             bun_spawn::Term::Exited(code) => format!("exit code {code}"),
             bun_spawn::Term::Signal(sig) => format!("signal {sig}"),
-            bun_spawn::Term::Stopped(sig) => format!("stopped (signal {sig})"),
             bun_spawn::Term::Unknown(_) => "unknown status".to_string(),
         };
         Output::err_generic("{} failed with {}", (BStr::new(argv[0]), term.as_str()));
@@ -794,19 +793,39 @@ impl RepositoryExt for Repository {
                     &[folder_name.as_bytes()],
                 );
 
-                if let Err(err) = exec(env, &[b"git", b"-C", path, b"fetch", b"--quiet"]) {
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!("\"git fetch\" for \"{}\" failed", BStr::new(name)),
-                    );
-                    return Err(err);
+                // --offline: use the cached clone as is (--prefer-offline still fetches:
+                // git dependencies pin exact commits, so a stale clone would fail to find a
+                // newly referenced one rather than "resolve older")
+                if PackageManager::get().options.offline
+                    != crate::package_manager_real::options::OfflineMode::Offline
+                {
+                    if let Err(err) = exec(env, &[b"git", b"-C", path, b"fetch", b"--quiet"]) {
+                        log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!("\"git fetch\" for \"{}\" failed", BStr::new(name)),
+                        );
+                        return Err(err);
+                    }
                 }
                 Ok(dir)
             }
             Err(not_found) => {
                 if not_found.get_errno() != bun_sys::E::ENOENT {
                     return Err(not_found.into());
+                }
+                if PackageManager::get().options.offline
+                    == crate::package_manager_real::options::OfflineMode::Offline
+                {
+                    log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "--offline: git repository for \"{}\" is not in the cache",
+                            BStr::new(name)
+                        ),
+                    );
+                    return Err(crate::Error::InstallFailed);
                 }
 
                 let staging = CacheStaging::new(cache_dir)?;

@@ -476,16 +476,6 @@ pub mod ast {
         pub(crate) atoms: GroupAtoms,
     }
 
-    impl Default for Group {
-        fn default() -> Self {
-            Self {
-                bubble_up: ptr::null_mut(),
-                bubble_up_next: None,
-                atoms: GroupAtoms::Single(Atom::Text(SmolStr::empty())),
-            }
-        }
-    }
-
     pub struct Expansion {
         // bump-owned mutable slice; raw because expand_nested writes
         // bubble_up backrefs into elements while recursing through the parent.
@@ -542,7 +532,7 @@ pub fn expand(
     contains_nested: ContainsNested,
 ) -> Result<(), ExpandError> {
     check_brace_group_count(tokens)?;
-    let mut out_key_counter: u16 = 1;
+    let mut out_key_counter: usize = 1;
     if contains_nested == ContainsNested::No {
         let expansions_table = build_expansion_table_alloc(tokens)?;
 
@@ -584,8 +574,8 @@ pub fn expand(
 unsafe fn expand_nested(
     root: *mut ast::Group,
     out: &mut [Vec<u8>],
-    out_key: u16,
-    out_key_counter: &mut u16,
+    out_key: usize,
+    out_key_counter: &mut usize,
     start: u32,
 ) -> Result<(), ExpandError> {
     // SAFETY: see fn doc comment —
@@ -609,7 +599,7 @@ unsafe fn expand_nested(
 
             match &(*root).atoms {
                 ast::GroupAtoms::Single(ast::Atom::Text(txt)) => {
-                    out[usize::from(out_key)].extend_from_slice(txt.slice());
+                    out[out_key].extend_from_slice(txt.slice());
                     if !(*root).bubble_up.is_null() {
                         let bubble_up = (*root).bubble_up;
                         let next = (*root).bubble_up_next.unwrap();
@@ -624,7 +614,7 @@ unsafe fn expand_nested(
                     return Ok(());
                 }
                 ast::GroupAtoms::Single(ast::Atom::Expansion(expansion)) => {
-                    let length = out[usize::from(out_key)].len();
+                    let length = out[out_key].len();
                     let variants = expansion.variants;
                     let variants_len = variants.len();
                     for j in 0..variants_len {
@@ -638,8 +628,8 @@ unsafe fn expand_nested(
                             // new_key > out_key always (counter is bumped past out_key before
                             // any recursion into it), and the j==0 recursion only appends to
                             // out[out_key], so its [..length] prefix is stable.
-                            let (lo, hi) = out.split_at_mut(usize::from(new_key));
-                            hi[0].extend_from_slice(&lo[usize::from(out_key)][..length]);
+                            let (lo, hi) = out.split_at_mut(new_key);
+                            hi[0].extend_from_slice(&lo[out_key][..length]);
                             *out_key_counter += 1;
                             new_key
                         };
@@ -672,10 +662,10 @@ unsafe fn expand_nested(
             let atom: &ast::Atom = &(*many)[i_];
             match atom {
                 ast::Atom::Text(txt) => {
-                    out[usize::from(out_key)].extend_from_slice(txt.slice());
+                    out[out_key].extend_from_slice(txt.slice());
                 }
                 ast::Atom::Expansion(expansion) => {
-                    let length = out[usize::from(out_key)].len();
+                    let length = out[out_key].len();
                     let variants = expansion.variants;
                     let variants_len = variants.len();
                     for j in 0..variants_len {
@@ -686,8 +676,8 @@ unsafe fn expand_nested(
                             out_key
                         } else {
                             let new_key = *out_key_counter;
-                            let (lo, hi) = out.split_at_mut(usize::from(new_key));
-                            hi[0].extend_from_slice(&lo[usize::from(out_key)][..length]);
+                            let (lo, hi) = out.split_at_mut(new_key);
+                            hi[0].extend_from_slice(&lo[out_key][..length]);
                             *out_key_counter += 1;
                             new_key
                         };
@@ -715,8 +705,8 @@ fn expand_flat(
     tokens: &[Token],
     expansion_table: &[ExpansionVariant],
     out: &mut [Vec<u8>],
-    out_key: u16,
-    out_key_counter: &mut u16,
+    out_key: usize,
+    out_key_counter: &mut usize,
     depth_: u8,
     start: usize,
     end: usize,
@@ -730,7 +720,7 @@ fn expand_flat(
     for atom in tokens[start..end].iter() {
         match atom {
             Token::Text(txt) => {
-                out[usize::from(out_key)].extend_from_slice(txt.slice());
+                out[out_key].extend_from_slice(txt.slice());
             }
             Token::Close => {
                 depth -= 1;
@@ -743,7 +733,7 @@ fn expand_flat(
                     [usize::from(expansion_variants.idx)..usize::from(expansion_variants.end)];
                 let skip_over_idx = variants[variants.len() - 1].end();
 
-                let starting_len = out[usize::from(out_key)].len();
+                let starting_len = out[out_key].len();
                 for (i, variant) in variants.iter().enumerate() {
                     let new_key = if i == 0 {
                         out_key
@@ -751,8 +741,8 @@ fn expand_flat(
                         let new_key = *out_key_counter;
                         // new_key > out_key always; the i==0 recursion only appends to
                         // out[out_key], so its [..starting_len] prefix is stable.
-                        let (lo, hi) = out.split_at_mut(usize::from(new_key));
-                        hi[0].extend_from_slice(&lo[usize::from(out_key)][..starting_len]);
+                        let (lo, hi) = out.split_at_mut(new_key);
+                        hi[0].extend_from_slice(&lo[out_key][..starting_len]);
                         *out_key_counter += 1;
                         new_key
                     };
@@ -1140,9 +1130,6 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
                 }
             }
 
-            // if (char_stack.push(char) == char_stack.Error.StackFull) {
-            //     try self.app
-            // }
             self.append_char(char)?;
         }
 

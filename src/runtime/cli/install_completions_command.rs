@@ -204,6 +204,14 @@ impl InstallCompletionsCommand {
         Ok(())
     }
 
+    fn print_powershell_completions_unsupported() {
+        Output::err_generic(
+            "PowerShell completions are not yet written for Bun.",
+            format_args!(""),
+        );
+        Output::print_errorln("See https://github.com/oven-sh/bun/issues/8939");
+    }
+
     pub(crate) fn exec() -> Result<(), crate::Error> {
         // Fail silently on auto-update.
         let fail_exit_code: u32 = if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false) {
@@ -225,9 +233,10 @@ impl InstallCompletionsCommand {
             Ok(len) => len,
             Err(_) => {
                 // don't fail on this if we don't actually need to
-                if fail_exit_code == 1 {
-                    if !bun_sys::isatty(stdout.handle) {
-                        if let Err(err) = stdout.write_all(shell.completions()) {
+                if fail_exit_code == 1 && !bun_sys::isatty(stdout.handle) {
+                    let completions = shell.completions();
+                    if !completions.is_empty() {
+                        if let Err(err) = stdout.write_all(completions) {
                             if err.get_errno() == E::EPIPE {
                                 Global::exit(0);
                             } else {
@@ -251,20 +260,15 @@ impl InstallCompletionsCommand {
             let _ = Self::install_uninstaller_windows();
         }
 
-        // TODO: https://github.com/oven-sh/bun/issues/8939
         #[cfg(windows)]
         {
-            Output::err_generic(
-                "PowerShell completions are not yet written for Bun yet.",
-                format_args!(""),
-            );
-            Output::print_errorln("See https://github.com/oven-sh/bun/issues/8939");
+            Self::print_powershell_completions_unsupported();
             return Ok(());
         }
 
         #[cfg(not(windows))]
         {
-            match shell {
+            let filename: &[u8] = match shell {
                 Shell::Unknown => {
                     Output::err_generic(
                         "Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, or bash.",
@@ -273,8 +277,14 @@ impl InstallCompletionsCommand {
                     note!("To manually output completions, run 'bun getcompletes'");
                     Global::exit(fail_exit_code);
                 }
-                _ => {}
-            }
+                Shell::Pwsh => {
+                    Self::print_powershell_completions_unsupported();
+                    Global::exit(fail_exit_code);
+                }
+                Shell::Fish => b"bun.fish",
+                Shell::Zsh => b"_bun",
+                Shell::Bash => b"bun.completion.bash",
+            };
 
             if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false) {
                 if !bun_sys::isatty(stdout.handle) {
@@ -500,7 +510,7 @@ impl InstallCompletionsCommand {
                             }
                         }
                     }
-                    _ => unreachable!(),
+                    Shell::Unknown | Shell::Pwsh => unreachable!(),
                 }
 
                 pretty_errorln!(
@@ -517,13 +527,6 @@ impl InstallCompletionsCommand {
                     "Please either pipe it:\n   bun completions > /to/a/file\n\n Or pass a directory:\n\n   bun completions /my/completions/dir\n",
                 );
                 Global::exit(fail_exit_code);
-            };
-
-            let filename: &[u8] = match shell {
-                Shell::Fish => b"bun.fish",
-                Shell::Zsh => b"_bun",
-                Shell::Bash => b"bun.completion.bash",
-                _ => unreachable!(),
             };
 
             debug_assert!(!completions_dir.is_empty());

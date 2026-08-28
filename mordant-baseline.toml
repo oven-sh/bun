@@ -8,20 +8,17 @@
 "defaulted_failure:src/bun_core/string/immutable.rs" = 1
 
 [bun_css]
+"derived_field:src/css/properties/margin_padding.rs" = 105
 
 [bun_install]
 "defaulted_failure:src/install/npm.rs" = 1
 "interchangeable_aliases:src/install/lockfile/Tree.rs" = 1
-
-[bun_js_parser]
-"same_match_twice:src/js_parser/p.rs" = 3
 
 [bun_js_printer]
 "parallel_vecs:src/js_printer/lib.rs" = 1
 
 [bun_jsc]
 "defaulted_failure:src/jsc/ConsoleObject.rs" = 4
-"same_match_twice:src/jsc/VirtualMachine.rs" = 1
 
 [bun_parsers]
 "parallel_vecs:src/parsers/xml.rs" = 1
@@ -30,7 +27,6 @@
 "reimplemented_helper:src/react_compiler/reactive_scopes/propagate_early_returns.rs" = 1
 
 [bun_runtime]
-"defaulted_failure:src/runtime/ffi/ffi_body.rs" = 1
 "defaulted_failure:src/runtime/server/RequestContext.rs" = 1
 "defaulted_failure:src/runtime/test_runner/pretty_format.rs" = 4
 "error_collapsed_to_bool:src/runtime/api/bun/Terminal.rs" = 1
@@ -45,7 +41,6 @@
 "unchecked_construction:src/runtime/api/js_bundle_completion_task.rs" = 1
 "unchecked_construction:src/runtime/cli/pack_command.rs" = 2
 "unchecked_construction:src/runtime/server/HTMLBundle.rs" = 2
-"unchecked_construction:src/runtime/server/mod.rs" = 1
 "unchecked_construction:src/runtime/server/server_body.rs" = 5
 
 [bun_sql_jsc]

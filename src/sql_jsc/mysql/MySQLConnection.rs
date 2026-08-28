@@ -7,6 +7,7 @@ use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::auth_method::AuthMethod;
 use bun_sql::mysql::capabilities::{HasDbName, MariaDBCapabilities, Ssl};
 use bun_sql::mysql::connection_state::ConnectionState;
+use bun_sql::mysql::mysql_request;
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::any_mysql_error::{self as any_mysql_error, Error as AnyMySQLError};
 use bun_sql::mysql::protocol::auth as Auth;
@@ -75,16 +76,9 @@ pub struct MySQLConnection {
     full_auth_requested: bool,
 
     auth_data: Vec<u8>,
-    // PERF: database/user/password/options could be sub-slices into options_buf
-    // (single backing allocation). Only options_buf would need to be
-    // Box<[u8]>; the others could be ranges into it. Restore the
-    // single-buffer layout and revert init()'s database/username/password/options
-    // params from Box<[u8]> back to &[u8] (1 caller-side alloc, not 5).
     database: Box<[u8]>,
     user: Box<[u8]>,
     password: Box<[u8]>,
-    _options: Box<[u8]>,
-    options_buf: Box<[u8]>,
     secure: Option<*mut SslCtx>,
     tls_config: SSLConfig,
     tls_status: TLSStatus,
@@ -119,8 +113,6 @@ impl Default for MySQLConnection {
             database: Box::default(),
             user: Box::default(),
             password: Box::default(),
-            _options: Box::default(),
-            options_buf: Box::default(),
             secure: None,
             tls_config: SSLConfig::default(),
             tls_status: TLSStatus::None,
@@ -140,8 +132,6 @@ impl MySQLConnection {
         database: Box<[u8]>,
         username: Box<[u8]>,
         password: Box<[u8]>,
-        options: Box<[u8]>,
-        options_buf: Box<[u8]>,
         tls_config: SSLConfig,
         secure: Option<*mut SslCtx>,
         ssl_mode: SSLMode,
@@ -151,8 +141,6 @@ impl MySQLConnection {
             database,
             user: username,
             password,
-            _options: options,
-            options_buf,
             socket: Socket::SocketTcp(uws::SocketTCP::detached()),
             queue: MySQLRequestQueue::init(),
             statements: PreparedStatementsMap::default(),
@@ -323,7 +311,6 @@ impl MySQLConnection {
         let _read_buffer = core::mem::take(&mut self.read_buffer);
         let statements = core::mem::take(&mut self.statements);
         let _tls_config = core::mem::take(&mut self.tls_config);
-        let _options_buf = core::mem::take(&mut self.options_buf);
 
         for stmt in statements.values() {
             // The map holds an intrusive ref on every cached prepared statement;
@@ -340,7 +327,6 @@ impl MySQLConnection {
             // SAFETY: FFI — secure is an owned SSL_CTX* freed exactly once here
             unsafe { bun_boringssl_sys::SSL_CTX_free(s) };
         }
-        // _options_buf dropped at scope exit (Box<[u8]> frees via Drop)
     }
 
     pub(crate) fn upgrade_to_tls(&mut self) -> Result<(), FlushQueueError> {
@@ -638,6 +624,9 @@ impl MySQLConnection {
                 ConnectionState::Authenticating | ConnectionState::AuthenticationAwaitingPk => {
                     self.handle_auth(reader, header_length)?
                 }
+                ConnectionState::SessionSetup => {
+                    self.handle_session_setup(reader, header_length)?
+                }
                 ConnectionState::Connected => self.handle_command(reader, header_length)?,
                 _ => {
                     debug!("Unexpected packet in state {}", self.status as u8);
@@ -811,12 +800,8 @@ impl MySQLConnection {
                 };
                 ok.decode_internal(reader)?;
 
-                self.set_status(ConnectionState::Connected);
-
                 self.status_flags = ok.status_flags;
-                self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
-                self.queue.mark_as_ready_for_query();
-                self.advance();
+                self.send_session_setup()?;
             }
 
             x if x == PacketType::ERROR.0 => {
@@ -967,6 +952,60 @@ impl MySQLConnection {
             }
         }
         Ok(())
+    }
+
+    /// The Date codec (`MySQLValue.rs`) is UTC on both ends, but the server
+    /// converts TIMESTAMP columns through `@@session.time_zone` (#40435).
+    fn send_session_setup(&mut self) -> Result<(), AnyMySQLError> {
+        self.set_status(ConnectionState::SessionSetup);
+        mysql_request::execute_query(b"SET time_zone = '+00:00'", self.writer())?;
+        self.flush_data();
+        Ok(())
+    }
+
+    fn handle_session_setup<C: ReaderContext>(
+        &mut self,
+        reader: NewReader<C>,
+        header_length: u32, // u24 on the wire
+    ) -> Result<(), AnyMySQLError> {
+        let first_byte = reader.int::<u8>()?;
+        reader.skip(-1isize);
+
+        match first_byte {
+            x if x == PacketType::OK.0 => {
+                let mut ok = OKPacket {
+                    header: 0,
+                    affected_rows: 0,
+                    last_insert_id: 0,
+                    status_flags: StatusFlags::default(),
+                    packet_size: header_length,
+                };
+                ok.decode_internal(reader)?;
+
+                self.set_status(ConnectionState::Connected);
+
+                self.status_flags = ok.status_flags;
+                self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
+                self.queue.mark_as_ready_for_query();
+                self.advance();
+                Ok(())
+            }
+            x if x == PacketType::ERROR.0 => {
+                let mut err = ErrorPacket::default();
+                err.decode_internal(reader)?;
+
+                self.js_connection_ref().on_error_packet(None, &err);
+                Err(AnyMySQLError::ConnectionFailed)
+            }
+            _ => {
+                bun_core::scoped_log!(
+                    MySQLConnection,
+                    "Unexpected session-setup packet: 0x{:02x}",
+                    first_byte
+                );
+                Err(AnyMySQLError::UnexpectedPacket)
+            }
+        }
     }
 
     pub(crate) fn handle_command<C: ReaderContext>(
@@ -1653,11 +1692,6 @@ impl MySQLConnection {
 #[derive(strum::IntoStaticStr, Debug)]
 pub enum FlushQueueError {
     AuthenticationFailed,
-}
-impl From<FlushQueueError> for crate::Error {
-    fn from(_: FlushQueueError) -> Self {
-        crate::Error::AuthenticationFailed
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

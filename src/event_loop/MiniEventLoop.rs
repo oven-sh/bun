@@ -184,14 +184,6 @@ impl MiniEventLoop {
         self.loop_
     }
 
-    /// Make a poll in progress (or the next one) return immediately, so the
-    /// `is_done` predicate a `tick` loop spins on is evaluated again. Any thread.
-    pub fn wakeup(&self) {
-        // SAFETY: `loop_` is the live uws loop; `us_wakeup_loop` is thread-safe
-        // and takes the raw pointer (no `&mut Loop` formed).
-        unsafe { bun_uws::us_wakeup_loop(self.loop_) };
-    }
-
     /// Raw pointer to the `DotEnv::Loader` backref.
     ///
     /// Returns `None` until [`init_global`] populates it. Neither a `&`- nor
@@ -325,21 +317,6 @@ impl MiniEventLoop {
         while let Some(task) = self.tasks.read_item() {
             // SAFETY: tasks are pushed by enqueue_task* and remain valid until run() consumes them.
             unsafe { (*task).run(context) };
-        }
-    }
-
-    /// Run everything already delivered (concurrent + local queues) without
-    /// blocking for more.
-    pub fn run_ready(&mut self, context: *mut c_void) {
-        loop {
-            let _ = self.tick_concurrent_with_count();
-            if self.tasks.readable_length() == 0 {
-                break;
-            }
-            while let Some(task) = self.tasks.read_item() {
-                // SAFETY: see tick_once.
-                unsafe { (*task).run(context) };
-            }
         }
     }
 

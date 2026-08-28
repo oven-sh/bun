@@ -9,7 +9,9 @@ use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::bun_schema::api as Api;
 use bun_collections::linear_fifo::{DynamicBuffer, StaticBuffer};
-use bun_collections::{ArrayHashMap, HashMap, HiveArrayFallback, LinearFifo, StringArrayHashMap};
+use bun_collections::{
+    ArrayHashMap, HashMap, HiveArrayFallback, LinearFifo, StringArrayHashMap, index_sort,
+};
 use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
@@ -215,8 +217,8 @@ pub use directories::{
 
 pub use self::package_manager_enqueue as enqueue;
 pub use enqueue::{
-    InstallPeer, IsRoot, create_extract_task_for_streaming, enqueue_dependency_list,
-    enqueue_dependency_to_root, enqueue_dependency_with_main,
+    GitEnqueueResult, InstallPeer, IsRoot, create_extract_task_for_streaming,
+    enqueue_dependency_list, enqueue_dependency_to_root, enqueue_dependency_with_main,
     enqueue_dependency_with_main_and_success_fn, enqueue_extract_npm_package, enqueue_git_checkout,
     enqueue_git_for_checkout, enqueue_network_task, enqueue_package_for_download,
     enqueue_parse_npm_package, enqueue_patch_task, enqueue_patch_task_pre,
@@ -231,9 +233,7 @@ pub use resolution::{assign_root_resolution, resolve_from_disk_cache};
 
 pub use self::progress_strings::ProgressStrings;
 
-pub use self::patch_package::{PatchCommitResult, do_patch_commit, prepare_patch};
-
-pub use self::process_dependency_list::GitResolver;
+pub use self::patch_package::PatchCommitResult;
 
 pub use self::run_tasks::{
     alloc_github_url, decrement_pending_tasks, drain_dependency_list, flush_dependency_queue,
@@ -549,7 +549,7 @@ pub struct WorkspaceFilter {
 
 impl WorkspaceFilter {
     pub(crate) fn from_ids(mut ids: Vec<PackageID>) -> WorkspaceFilter {
-        ids.sort_unstable();
+        index_sort::sort_indices_unstable(&mut ids, &mut |a, b| a.cmp(&b));
         ids.dedup();
         WorkspaceFilter {
             workspace_ids: ids.into_boxed_slice(),
@@ -1407,6 +1407,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
         public_hoist_pattern,
         hoist_pattern,
         hoist,
+        offline,
     } = bunfig;
 
     if let Some(registry) = default_registry {
@@ -1461,6 +1462,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
         public_hoist_pattern,
         hoist_pattern,
         hoist,
+        offline,
     );
 }
 
@@ -1560,6 +1562,7 @@ pub fn init(
     // Step 1. Find the nearest package.json directory
     //
     // We will walk up from the cwd, trying to find the nearest package.json file.
+    let mut no_project = false;
     let root_package_json_file = 'root_package_json_file: {
         let mut this_cwd: &[u8] = original_cwd;
         let mut created_package_json = false;
@@ -1642,6 +1645,12 @@ pub fn init(
                     break 'child attempt_to_create_package_json_and_open()?;
                 }
             }
+            if cli.no_project_ok {
+                // Registry-only commands (`bun pm diff a b`) run fine from any folder: no root file, no workspaces.
+                this_cwd = original_cwd;
+                no_project = true;
+                break 'child bun_sys::File::from_fd(bun_sys::Fd::INVALID);
+            }
             return Err(crate::Error::MissingPackageJSON);
         };
 
@@ -1663,7 +1672,7 @@ pub fn init(
 
         // Check if this is a workspace; if so, use root package
         if subcommand.should_chdir_to_root() {
-            if !created_package_json {
+            if !created_package_json && !no_project {
                 while let Some(parent) = bun_core::dirname(this_cwd) {
                     let parent_without_trailing_slash = strings::without_trailing_slash(parent);
                     let mut parent_path_buf = PathBuffer::uninit();
@@ -1854,8 +1863,14 @@ pub fn init(
         // bun_sys exposes the non-Z `get_fd_path`;
         // append the NUL ourselves so the static `&ZStr` invariant holds.
         let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
-        let p = bun_sys::get_fd_path(root_package_json_file.handle, root_buf)?;
-        let plen = p.len();
+        let plen = if no_project {
+            // Where the file would be; nothing reads it in this mode.
+            let p = original_package_json_path.as_bytes();
+            root_buf[..p.len()].copy_from_slice(p);
+            p.len()
+        } else {
+            bun_sys::get_fd_path(root_package_json_file.handle, root_buf)?.len()
+        };
         root_buf[plen] = 0;
         ROOT_PACKAGE_JSON_PATH.write(ZStr::from_raw(root_buf.as_ptr(), plen));
     }
@@ -2229,6 +2244,21 @@ pub fn init(
             ctx.install.as_deref(),
             subcommand,
         )?;
+
+        // `install.prefer = "offline"` in bunfig (also what `bun --prefer-offline` sets
+        // for the runtime's auto-install) means prefer-offline for `bun install` too,
+        // unless a flag already asked for more.
+        if manager.options.offline == options::OfflineMode::Online
+            && ctx.debug.offline_mode_setting
+                == Some(bun_options_types::offline_mode::OfflineMode::Offline)
+        {
+            manager.options.offline = options::OfflineMode::PreferOffline;
+            // the manifest cache is the data source in this mode (see Options::load)
+            manager
+                .options
+                .enable
+                .set(options::Enable::MANIFEST_CACHE, true);
+        }
 
         if let Some(config) = ctx.install.as_deref_mut() {
             if let Some(p) = config.public_hoist_pattern.take() {

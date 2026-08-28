@@ -111,7 +111,7 @@ bun_core::bool_enum!(RegistryMode { Builder, Overlay });
 ///   `build_default_globals` to construct the static base.
 /// - **Overlay mode**: lookups check the extras HashMap first,
 ///   then fall back to the static `BASE_GLOBAL_INDEX` / `BASE.globals` table.
-///   Inserts go into extras. Cloning only copies the extras map.
+///   Inserts go into extras.
 pub struct GlobalRegistry {
     mode: RegistryMode,
     entries: HashMap<Cow<'static, str>, Global>,
@@ -176,15 +176,6 @@ impl GlobalRegistry {
             "into_inner() called on overlay-mode GlobalRegistry"
         );
         self.entries
-    }
-}
-
-impl Clone for GlobalRegistry {
-    fn clone(&self) -> Self {
-        Self {
-            mode: self.mode,
-            entries: self.entries.clone(),
-        }
     }
 }
 

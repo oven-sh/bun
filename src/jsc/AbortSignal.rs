@@ -2,10 +2,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use crate::{
-    CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject, JSValue,
-    VirtualMachineRef as VirtualMachine,
-};
+use crate::{CommonAbortReason, JSGlobalObject, JSValue, VirtualMachineRef as VirtualMachine};
 use bun_event_loop::EventLoopTimer::{
     EventLoopTimer, InHeap, IntrusiveField, State as TimerState, Tag as TimerTag, TimerFlags,
     Timespec as ElTimespec,
@@ -260,15 +257,6 @@ impl AbortSignal {
 pub enum AbortReason {
     Common(CommonAbortReason),
     Js(JSValue),
-}
-
-impl AbortReason {
-    pub fn to_js(self, global: &JSGlobalObject) -> JSValue {
-        match self {
-            AbortReason::Common(reason) => reason.to_js(global),
-            AbortReason::Js(value) => value,
-        }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, withoutAggressiveGC } from "harness";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 
 test("Bun.file in CryptoHasher is not supported yet", () => {
   expect(() => Bun.SHA1.hash(Bun.file(import.meta.path))).toThrow();
@@ -51,6 +51,21 @@ test("CryptoHasher.update(str, 'hex') rejects odd-length hex like node:crypto", 
   expect(new Bun.CryptoHasher("sha1").update(Buffer.from("abc"), "hex").digest("hex")).toBe(
     createHash("sha1").update(Buffer.from("abc")).digest("hex"),
   );
+});
+test("update(str, 'hex') decodes two-byte strings from the low byte of each code unit like node", () => {
+  // U+FF41 narrows to 'A', so "f\uff41" is the byte 0xfa; U+0147 narrows to 'G' and stops decoding.
+  for (const [input, bytes] of [
+    ["f\uff41", [0xfa]],
+    ["\uff46\uff41\u0147\u0147cd", [0xfa]],
+    ["\u0131\u0132\u0133\u0134", [0x12, 0x34]],
+  ] as const) {
+    const expected = createHash("sha1").update(Buffer.from(bytes)).digest("hex");
+    expect(new Bun.CryptoHasher("sha1").update(input, "hex").digest("hex"), JSON.stringify(input)).toBe(expected);
+    expect(new Bun.CryptoHasher("sha1", "key").update(input, "hex").digest("hex"), JSON.stringify(input)).toBe(
+      createHmac("sha1", "key").update(Buffer.from(bytes)).digest("hex"),
+    );
+    expect(createHash("sha1").update(input, "hex").digest("hex"), JSON.stringify(input)).toBe(expected);
+  }
 });
 test("CryptoHasher throws on non-latin1 algorithm names instead of crashing", () => {
   // @ts-expect-error

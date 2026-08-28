@@ -94,10 +94,6 @@ export default [
         fn: "doUnref",
         length: 0,
       },
-      hasRef: {
-        fn: "hasRef",
-        length: 0,
-      },
       close: {
         fn: "doClose",
         length: 0,
@@ -325,7 +321,6 @@ export default [
       symlinkSync: { async: false, fn: "symlinkSync", length: 3 },
       truncate: { async: true, fn: "truncate", length: 3 },
       truncateSync: { async: false, fn: "truncateSync", length: 2 },
-      unwatchFile: { async: true, fn: "unwatchFile", length: 2 },
       unlink: { async: true, fn: "unlink", length: 2 },
       unlinkSync: { async: false, fn: "unlinkSync", length: 1 },
       utimes: { async: true, fn: "utimes", length: 4 },

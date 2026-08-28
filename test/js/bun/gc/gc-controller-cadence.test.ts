@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 
 // Bun's GarbageCollectionController used to sample `blockBytesAllocated +
 // extraMemorySize` on every event-loop tick and arm a 16 ms one-shot whenever
@@ -54,6 +54,77 @@ async function countEdenCollections(
   expect(exitCode, log).toBe(0);
   return { eden };
 }
+
+// Bun used to request a collection (`perform_gc()`) right before waiting on the
+// entry point's promise, once more per preload, and again for a worker's entry
+// point. The heap holds little more than the fresh global object at that point,
+// so JSC served each request as an eden collection that freed nothing, on the
+// main thread, before the first line of the program ran. These programs are too
+// small to reach JSC's own allocation budget, so any eden collection JSC logs
+// was requested by Bun. The full collections Bun runs on purpose are left out:
+// tearing the VM down at exit (BUN_DESTRUCT_VM_ON_EXIT, which the ASAN lanes
+// set), and, for a worker, once after its entry point ran and once at teardown.
+describe.concurrent("no collection is requested while starting up", () => {
+  const env = {
+    ...bunEnv,
+    // The startup requests and the idle timer both go through
+    // GarbageCollectionController::perform_gc(), so BUN_GC_TIMER_DISABLE would
+    // hide the requests too. Instead keep the timer from firing while a slow
+    // (debug, ASAN) child is still starting its worker.
+    BUN_GC_TIMER_DISABLE: undefined,
+    BUN_GC_TIMER_INTERVAL: String(2 ** 31 - 1),
+    // The CI runner sets 1, which makes some test-runner paths request collections.
+    BUN_GARBAGE_COLLECTOR_LEVEL: "0",
+    BUN_JSC_logGC: "true",
+  };
+
+  // `ran` is what the program prints once the code under test has run.
+  async function edenCollectionsLoggedBy(cmd: string[], cwd?: string, ran = "entry ran") {
+    await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const log = stdout + stderr;
+    expect(log).toContain(ran);
+    expect(exitCode, log).toBe(0);
+    return log.match(/=> EdenCollection/g) ?? [];
+  }
+
+  test("running a script", async () => {
+    expect(await edenCollectionsLoggedBy([bunExe(), "-e", `console.log("entry ran")`])).toEqual([]);
+  });
+
+  test("running a script with a preload", async () => {
+    using dir = tempDir("gc-startup-preload", {
+      "preload.js": `globalThis.preloaded = true;`,
+      "entry.js": `console.log("entry ran", globalThis.preloaded);`,
+    });
+    const cmd = [bunExe(), "--preload", "./preload.js", "entry.js"];
+    expect(await edenCollectionsLoggedBy(cmd, String(dir), "entry ran true")).toEqual([]);
+  });
+
+  test("running a test file", async () => {
+    using dir = tempDir("gc-startup-test", {
+      "entry.test.js": `
+        import { test } from "bun:test";
+        test("entry ran", () => {});
+      `,
+    });
+    expect(await edenCollectionsLoggedBy([bunExe(), "test", "./entry.test.js"], String(dir))).toEqual([]);
+  });
+
+  test("starting a worker", async () => {
+    using dir = tempDir("gc-startup-worker", {
+      "entry.js": `
+        const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+        worker.onmessage = ({ data }) => {
+          console.log(data);
+          worker.terminate();
+        };
+      `,
+      "worker.js": `postMessage("entry ran");`,
+    });
+    expect(await edenCollectionsLoggedBy([bunExe(), "entry.js"], String(dir))).toEqual([]);
+  });
+});
 
 describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
   // 100 ticks allocating ~50 KB each is ~5 MB total over ~2 s. Before the fix

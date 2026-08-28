@@ -18,6 +18,7 @@ use crate::integrity::Integrity;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
 use crate::npm::{self};
 use crate::package_manager::IsRoot;
+use crate::package_manager_real::update_package_json_and_install::print_package_json_into_cache_entry;
 use crate::repository::Repository;
 use crate::resolution::{self, Resolution, TaggedValue};
 use crate::{DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager};
@@ -2528,7 +2529,9 @@ fn update_package_json_after_migration(
             // `workspace_package_json_cache`. Intern the bytes into the same
             // thread-local `DATA_STORE` that owns the surrounding `Expr`
             // nodes — arena ownership, not a leak (bulk-freed on
-            // `Expr::data_store_reset`).
+            // `Expr::data_store_reset`). This only covers scalars that slice
+            // the source; arena-backed scalars are re-interned after the
+            // parse below.
             let contents: &'static [u8] = js_ast::data_store_dupe_str(&contents);
             let yaml_source = bun_ast::Source::init_path_string(b"pnpm-workspace.yaml", contents);
             let arena = bun_alloc::Arena::new();
@@ -2565,6 +2568,21 @@ fn update_package_json_after_migration(
             workspace_patched_deps_obj = ws_root
                 .get_object(b"patchedDependencies")
                 .filter(is_non_empty_object);
+
+            // These subtrees escape this arm (into `json` and the cached
+            // package.json tree) while `arena` drops with it, so their
+            // arena-backed strings must be re-interned first (#39785).
+            for subtree in [
+                &mut catalog_obj,
+                &mut catalogs_obj,
+                &mut workspace_overrides_obj,
+                &mut workspace_patched_deps_obj,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                data_store_dupe_expr_strings(subtree);
+            }
         }
         Err(_) => {}
     }
@@ -2724,36 +2742,14 @@ fn update_package_json_after_migration(
     }
 
     if needs_update {
-        let mut buffer_writer = bun_js_printer::BufferWriter::init();
-        buffer_writer.append_newline = !root_pkg_json.source.contents().is_empty()
-            && root_pkg_json.source.contents()[root_pkg_json.source.contents().len() - 1] == b'\n';
-        let mut package_json_writer = bun_js_printer::BufferPrinter::init(buffer_writer);
-
-        if bun_js_printer::print_json(
-            &mut package_json_writer,
-            json,
-            &root_pkg_json.source,
-            bun_js_printer::PrintJsonOptions {
-                indent: root_pkg_json.indentation,
-                mangled_props: None,
-                ..Default::default()
-            },
-        )
-        .is_err()
-        {
-            return Ok(());
+        print_package_json_into_cache_entry(root_pkg_json, json);
+        // The edits above spliced `Store`-allocated nodes into the cached tree,
+        // and the next `initialize_store()` recycles them. Re-parse so the entry
+        // owns its tree again before `bun add` prints it after the install.
+        if let Err(err) = root_pkg_json.reparse_root(log) {
+            bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
+            bun_core::Global::crash();
         }
-
-        if package_json_writer.flush().is_err() {
-            return Err(AllocError);
-        }
-
-        root_pkg_json.source.contents = std::borrow::Cow::Owned(
-            package_json_writer
-                .ctx
-                .written_without_trailing_zero()
-                .to_vec(),
-        );
 
         // Write the updated package.json
         if sys::File::write_file(
@@ -2774,6 +2770,37 @@ fn update_package_json_after_migration(
 
 fn is_non_empty_object(expr: &Expr) -> bool {
     matches!(&expr.data, ExprData::EObject(o) if !o.properties.is_empty())
+}
+
+/// The YAML parser backs quoted, block, and multi-line plain scalars with the
+/// caller's parse arena (`NodeScalar::to_expr`), so a subtree that outlives
+/// that arena dangles. Re-intern every string into the thread-local
+/// `DATA_STORE` that owns the surrounding `Expr` nodes.
+fn data_store_dupe_expr_strings(expr: &mut Expr) {
+    match &mut expr.data {
+        ExprData::EString(s) => {
+            let s = &mut **s;
+            if s.is_utf8() {
+                s.data = E::Str::new(js_ast::data_store_dupe_str(s.data.slice()));
+            }
+        }
+        ExprData::EObject(o) => {
+            for prop in (**o).properties.slice_mut() {
+                if let Some(key) = prop.key.as_mut() {
+                    data_store_dupe_expr_strings(key);
+                }
+                if let Some(value) = prop.value.as_mut() {
+                    data_store_dupe_expr_strings(value);
+                }
+            }
+        }
+        ExprData::EArray(a) => {
+            for item in (**a).items.slice_mut() {
+                data_store_dupe_expr_strings(item);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn paths_array(paths: &[&'static [u8]]) -> Expr {

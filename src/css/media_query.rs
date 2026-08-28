@@ -1516,7 +1516,7 @@ pub(crate) fn parse_query_condition_with_options<C: QueryCondition>(
     use bun_core::strings;
     let location = input.current_source_location();
     let (is_negation, is_style) = 'brk: {
-        let tok = input.next()?.clone();
+        let tok = *input.next()?;
         match &tok {
             css::Token::OpenParen => break 'brk (false, false),
             css::Token::Ident(ident) => {
@@ -1586,7 +1586,7 @@ pub(crate) fn parse_parens_or_function<C: QueryCondition>(
 ) -> Result<C> {
     use bun_core::strings;
     let location = input.current_source_location();
-    let t = input.next()?.clone();
+    let t = *input.next()?;
     match &t {
         css::Token::OpenParen => return parse_paren_block::<C>(input, flags, options),
         css::Token::Function(f) => {
@@ -1770,7 +1770,7 @@ fn consume_operation_or_colon(
     let location = input.current_source_location();
     let first_delim: u32 = {
         let loc = input.current_source_location();
-        let next_token = input.next()?.clone();
+        let next_token = *input.next()?;
         match next_token {
             css::Token::Colon if allow_colon == AllowColon::Yes => return Ok(None),
             css::Token::Delim(oper) => oper,

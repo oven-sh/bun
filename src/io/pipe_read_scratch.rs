@@ -27,12 +27,6 @@ impl PipeReadScratch {
     }
 }
 
-impl Default for PipeReadScratch {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Exclusive claim on the scratch; released on drop.
 pub struct PipeReadScratchGuard<'a>(&'a PipeReadScratch);
 

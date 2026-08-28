@@ -8,7 +8,7 @@ use bun_io as aio;
 use bun_io::FileType;
 use bun_io::{BufferedReader, Chunk, ReadState};
 use bun_jsc::JsCell;
-use bun_ptr::AsCtxPtr;
+use bun_ptr::{AsCtxPtr, RefPtr};
 use bun_sys::{self as sys, Fd, FdExt};
 
 use crate::webcore::SinkHandle;
@@ -95,10 +95,7 @@ pub type IOReader = BufferedReader;
 
 pub enum Lazy {
     None,
-    /// Intrusively-refcounted `*Blob.Store`. Uses `StoreRef` (not `Arc`) so the
-    /// raw pointer carries mutable provenance from `heap::alloc` for the
-    /// direct field writes in `open_file_blob`.
-    Blob(blob::StoreRef),
+    Blob(RefPtr<blob::Store>),
 }
 
 pub struct OpenedFileBlob {
@@ -312,19 +309,17 @@ impl FileReader {
         #[cfg(unix)]
         let mut file_type = FileType::File;
         // R-2: move the `Lazy` out of the cell up-front (it's reset to `None`
-        // on every path through the original `if let` body) so the `StoreRef`
+        // on every path through the original `if let` body) so the `RefPtr<Store>`
         // is owned locally and the cell borrow is released immediately.
         if let Lazy::Blob(store) = self.lazy.replace(Lazy::None) {
-            // `StoreRef::data_mut` encapsulates the raw-pointer deref under the
-            // `StoreRef` liveness invariant (single-threaded JS event loop; we
-            // hold the only mutating handle).
-            match store.data_mut() {
+            // Single-threaded JS event loop; we hold the only mutating handle.
+            match blob::Store::data_mut(&store) {
                 blob::store::Data::S3(_) | blob::store::Data::Bytes(_) => {
                     panic!("Invalid state in FileReader: expected file ")
                 }
                 blob::store::Data::File(file) => {
                     let open_result = Lazy::open_file_blob(file);
-                    // drop the StoreRef; `lazy` was already cleared above
+                    // drop the RefPtr<Store>; `lazy` was already cleared above
                     drop(store);
                     match open_result {
                         Err(err) => {

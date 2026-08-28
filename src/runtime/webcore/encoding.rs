@@ -6,6 +6,7 @@ use crate::webcore::jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_core::String as BunString;
 use bun_core::strings;
 use bun_simdutf_sys::simdutf as bun_simdutf;
+use core::mem::MaybeUninit;
 
 // `bun_core::String` exposes safe `Vec<u8>`/`Vec<u16>` → WTF::ExternalStringImpl
 // constructors; delegate so the FFI ownership-transfer invariant is enforced
@@ -256,7 +257,7 @@ pub(crate) fn to_string(
 
 pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding) -> BunString {
     if input.is_empty() {
-        return BunString::empty();
+        return BunString::EMPTY;
     }
 
     match encoding {
@@ -275,25 +276,7 @@ pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding)
         }
         Encoding::Latin1 => create_external_globally_allocated_latin1(input),
         Encoding::Buffer | Encoding::Utf8 => {
-            let converted = match strings::to_utf16_alloc(
-                &input,
-                strings::FailIfInvalid::No,
-                strings::Sentinel::No,
-            ) {
-                Ok(v) => v,
-                Err(_) => {
-                    // input dropped
-                    return BunString::dead();
-                }
-            };
-
-            if let Some(utf16) = converted {
-                // input dropped at end of scope
-                return create_external_globally_allocated_utf16(utf16);
-            }
-
-            // If we get here, it means we can safely assume the string is 100% ASCII characters
-            create_external_globally_allocated_latin1(input)
+            BunString::from_owned_utf8(input).unwrap_or(BunString::DEAD)
         }
         Encoding::Ucs2 | Encoding::Utf16le => {
             // Avoid incomplete characters - if input length is 0 or odd, handle gracefully
@@ -305,7 +288,7 @@ pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding)
 
             if usable_len == 0 {
                 // input dropped
-                return BunString::empty();
+                return BunString::EMPTY;
             }
 
             // Allocate a fresh u16-aligned Vec and copy the bytes. Rebuilding a
@@ -316,9 +299,12 @@ pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding)
             // paper and an allocator change could surface it. Mirrors
             // `construct_from_u16`'s utf16le arm, which avoids the same
             // reinterpret for the same reason.
-            let mut as_u16 = vec![0u16; usable_len / 2];
-            let dst: &mut [u8] = bytemuck::cast_slice_mut(&mut as_u16);
-            dst.copy_from_slice(&input[..usable_len]);
+            let as_u16: Vec<u16> = input[..usable_len]
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|&unit| u16::from_ne_bytes(unit))
+                .collect();
             create_external_globally_allocated_utf16(as_u16)
         }
 
@@ -334,8 +320,7 @@ pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding)
 
             // Return an empty string in this case, just like node.
             if wrote < chars.len() {
-                str.deref();
-                return BunString::empty();
+                return BunString::EMPTY;
             }
 
             str
@@ -352,8 +337,7 @@ fn to_string_comptime<const ENCODING: u8>(
     input: &[u8],
     global: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    let mut bun_string = to_bun_string_comptime::<ENCODING>(input);
-    bun_string.transfer_to_js(global)
+    to_bun_string_comptime::<ENCODING>(input).into_js(global)
 }
 
 pub(crate) fn to_bun_string(input: &[u8], encoding: impl Into<Encoding>) -> BunString {
@@ -362,7 +346,7 @@ pub(crate) fn to_bun_string(input: &[u8], encoding: impl Into<Encoding>) -> BunS
 
 fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
     if input.is_empty() {
-        return BunString::empty();
+        return BunString::EMPTY;
     }
 
     match encoding_from_u8(ENCODING) {
@@ -389,7 +373,7 @@ fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
                 strings::Sentinel::No,
             ) {
                 Ok(v) => v,
-                Err(_) => return BunString::dead(),
+                Err(_) => return BunString::DEAD,
             };
             if let Some(utf16) = converted {
                 return create_external_globally_allocated_utf16(utf16);
@@ -402,7 +386,7 @@ fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
         Encoding::Ucs2 | Encoding::Utf16le => {
             // Avoid incomplete characters
             if input.len() / 2 == 0 {
-                return BunString::empty();
+                return BunString::EMPTY;
             }
 
             let chars_len = input.len() / 2;
@@ -470,7 +454,7 @@ fn encode_base64_to_bun_string(input: &[u8], url_safe: bun_base64::Alphabet) -> 
 
     let mut to: Vec<u8> = Vec::new();
     if to.try_reserve_exact(to_len).is_err() {
-        return BunString::dead();
+        return BunString::DEAD;
     }
     // SAFETY: the spare bytes are write-only; the encoder reports how many it
     // initialized and only those are committed.
@@ -692,8 +676,7 @@ pub(crate) unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bo
             // decoder applies.
             // SAFETY: caller guarantees `input[..len]` is valid.
             let input_slice = unsafe { bun_core::ffi::slice(input, len) };
-            let mut narrowed = vec![0u8; len];
-            strings::copy_u16_into_u8(&mut narrowed, input_slice);
+            let narrowed = narrow_u16_to_u8(input_slice);
             // SAFETY: caller guarantees `to[..to_len]` is valid for writing; `input_slice`
             // is dead by now, so no other view of caller memory is live.
             let to = unsafe { bun_core::ffi::slice_mut(to, to_len) };
@@ -708,16 +691,7 @@ fn construct_from_u8<const ENCODING: u8>(input: &[u8]) -> Vec<u8> {
     }
 
     match encoding_from_u8(ENCODING) {
-        Encoding::Buffer => {
-            let mut to = vec![0u8; input.len()];
-            to.copy_from_slice(input);
-            to
-        }
-        Encoding::Latin1 | Encoding::Ascii => {
-            let mut to = vec![0u8; input.len()];
-            to.copy_from_slice(input);
-            to
-        }
+        Encoding::Buffer | Encoding::Latin1 | Encoding::Ascii => input.to_vec(),
         Encoding::Utf8 => {
             // need to encode
             strings::allocate_latin1_into_utf8(input).unwrap_or_default()
@@ -729,29 +703,18 @@ fn construct_from_u8<const ENCODING: u8>(input: &[u8]) -> Vec<u8> {
             // (`copy_latin1_into_utf16` is exactly that loop). Write the bytes
             // directly into a `Vec<u8>` so we never depend on an allocator-
             // layout-dependent `Vec<u16> → Vec<u8>` header reinterpret.
-            let mut to = vec![0u8; input.len() * 2];
-            for (out, &b) in to.as_chunks_mut::<2>().0.iter_mut().zip(input) {
-                *out = u16::from(b).to_ne_bytes();
+            let out_len = input.len() * 2;
+            let mut to: Vec<u8> = Vec::with_capacity(out_len);
+            let (pairs, _) = to.spare_capacity_mut().as_chunks_mut::<2>();
+            for (out, &b) in pairs.iter_mut().zip(input) {
+                *out = u16::from(b).to_ne_bytes().map(MaybeUninit::new);
             }
+            // SAFETY: the loop wrote one pair per input byte, i.e. all `out_len` reserved bytes.
+            unsafe { to.set_len(out_len) };
             to
         }
 
-        Encoding::Hex => {
-            if input.len() < 2 {
-                return Vec::new();
-            }
-
-            let mut to = vec![0u8; input.len() / 2];
-            let wrote = strings::decode_hex_to_bytes_truncate(&mut to, input);
-            if wrote == 0 {
-                // No valid hex pairs were decoded (e.g. Buffer.from("zz", "hex")). The
-                // allocation is unreachable once we return a zero-length slice, so free
-                // it here instead of leaking it.
-                return Vec::new();
-            }
-            to.truncate(wrote);
-            to
-        }
+        Encoding::Hex => construct_from_hex(input),
 
         Encoding::Base64 | Encoding::Base64url => {
             const TRIM_CHARS: &[u8] = b"\r\n\t \x0B"; // \x0B = vertical tab
@@ -793,11 +756,7 @@ fn construct_from_u16<const ENCODING: u8>(input: &[u16]) -> Vec<u8> {
 
     match encoding_from_u8(ENCODING) {
         Encoding::Utf8 => strings::to_utf8_alloc_with_type(input),
-        Encoding::Latin1 | Encoding::Buffer | Encoding::Ascii => {
-            let mut to = vec![0u8; input.len()];
-            strings::copy_u16_into_u8(&mut to, input);
-            to
-        }
+        Encoding::Latin1 | Encoding::Buffer | Encoding::Ascii => narrow_u16_to_u8(input),
         // string is already encoded, just need to copy the data
         Encoding::Ucs2 | Encoding::Utf16le => {
             // `input: &[u16]` is the source bytes verbatim; copy them
@@ -806,34 +765,53 @@ fn construct_from_u16<const ENCODING: u8>(input: &[u16]) -> Vec<u8> {
             bytemuck::cast_slice::<u16, u8>(input).to_vec()
         }
 
-        Encoding::Hex => {
-            if input.len() < 2 {
-                return Vec::new();
-            }
-
-            let mut to = vec![0u8; input.len() / 2];
-            let wrote = strings::decode_hex_to_bytes_truncate(&mut to, input);
-            if wrote == 0 {
-                return Vec::new();
-            }
-            to.truncate(wrote);
-            to
-        }
+        Encoding::Hex => construct_from_hex(input),
 
         Encoding::Base64 | Encoding::Base64url => {
             // Match Node.js: two-byte strings are decoded from the low byte of
             // each UTF-16 code unit (so e.g. U+013D behaves like '=' and
             // U+1234 like '4'), the same narrowing Node's lenient fallback
             // decoder applies.
-            let mut narrowed = vec![0u8; input.len()];
-            strings::copy_u16_into_u8(&mut narrowed, input);
-            construct_from_u8::<ENCODING>(&narrowed)
+            construct_from_u8::<ENCODING>(&narrow_u16_to_u8(input))
         }
     }
 }
 
+/// The low byte of every code unit, in a fresh exactly-sized `Vec<u8>`.
+fn narrow_u16_to_u8(input: &[u16]) -> Vec<u8> {
+    let mut out: Vec<u8> = Vec::with_capacity(input.len());
+    // SAFETY: `copy_u16_into_u8` only writes `dst`, initializing exactly `input.len()` bytes.
+    unsafe {
+        bun_core::vec::fill_spare(&mut out, 0, |dst| {
+            strings::copy_u16_into_u8(&mut dst[..input.len()], input);
+            (input.len(), ())
+        })
+    };
+    out
+}
+
+/// Decodes hex pairs up to the first invalid one (`Buffer.from("..", "hex")` semantics).
+fn construct_from_hex<Char: strings::HexChar>(input: &[Char]) -> Vec<u8> {
+    let outlen = input.len() / 2;
+    if outlen == 0 {
+        return Vec::new();
+    }
+
+    let mut to: Vec<u8> = Vec::new();
+    // SAFETY: the returned spare bytes are write-only until committed.
+    let dest = unsafe { bun_core::vec::reserve_spare_bytes(&mut to, outlen) };
+    let wrote = strings::decode_hex_to_bytes_truncate(&mut dest[..outlen], input);
+    // `create_buffer` frees nothing for an empty slice, so an empty result must not own memory.
+    if wrote == 0 {
+        return Vec::new();
+    }
+    // SAFETY: the decoder initialized the first `wrote` bytes (`wrote <= outlen <= capacity`).
+    unsafe { bun_core::vec::commit_spare(&mut to, wrote) };
+    to
+}
+
 // ──────────────────────────────────────────────────────────────────────────
-// `String` / `ZigString` encoding extension traits.
+// `String` / `EncodedSlice` encoding extension traits.
 //
 // Hosted here (not on `bun_core::String`) because the encoder bodies above
 // (`encodeIntoFrom{8,16}` / `constructFrom{U8,U16}`) belong to `bun_runtime`;
@@ -862,16 +840,16 @@ pub trait BunStringEncode {
 impl BunStringEncode for bun_core::String {
     /// Encode `self` with the given encoding.
     fn encode(&self, enc: Encoding) -> Vec<u8> {
-        self.to_zig_string().encode_with_allocator(enc)
+        self.to_encoded_slice().encode_with_allocator(enc)
     }
 }
 
-/// `ZigString` encoding. Extension trait — encoder bodies live in this crate.
-pub trait ZigStringEncode {
+/// `EncodedSlice` encoding. Extension trait — encoder bodies live in this crate.
+pub trait EncodedSliceEncode {
     fn encode_with_allocator(&self, enc: Encoding) -> Vec<u8>;
 }
 
-impl ZigStringEncode for bun_core::ZigString {
+impl EncodedSliceEncode for bun_core::EncodedSlice<'_> {
     fn encode_with_allocator(&self, enc: Encoding) -> Vec<u8> {
         if self.is_16bit() {
             construct_from_u16_dyn(self.utf16_slice(), enc)

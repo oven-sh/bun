@@ -29,20 +29,6 @@ pub struct ZigStackFrame {
 }
 
 impl ZigStackFrame {
-    /// Explicit deref of owned strings.
-    ///
-    /// Intentionally NOT `Drop`: this `#[repr(C)]` extern struct lives both in
-    /// C++-populated buffers (`ZigStackTrace.frames_ptr`) and in the Rust-owned
-    /// `Holder.frames: [ZigStackFrame; 32]` array. `Holder::deinit()` calls
-    /// `ZigException::deinit()` → `frame.deinit()` to release the strings, but
-    /// the array elements are then later dropped by Rust when `Holder` itself
-    /// drops. A `Drop` impl would deref the same `WTF::StringImpl` a second
-    /// time (UAF). Explicit `deinit` only.
-    pub(crate) fn deinit(&mut self) {
-        self.function_name.deref();
-        self.source_url.deref();
-    }
-
     pub(crate) fn snapshot(
         &self,
         root_path: &[u8],
@@ -81,9 +67,26 @@ impl ZigStackFrame {
         jsc_stack_frame_index: -1,
     };
 
-    pub fn name_formatter(&self, enable_color: AnsiColors) -> NameFormatter {
+    /// The frame's source as a report that lists files relative to `dir` (the JUnit
+    /// reporter, the GitHub Actions annotation) prints it.
+    ///
+    /// Only an absolute path is made relative. A source URL that is not a path (a
+    /// `data:` or `blob:` URL, `node:fs`, the name from a `//# sourceURL=` comment)
+    /// is printed as-is, like [`SourceURLFormatter`] prints it. `relative` normalizes
+    /// its operands in fixed path buffers, so a source URL that is too long to be a
+    /// path is printed as-is too.
+    ///
+    /// The relative form lives in `relative`'s thread-local buffer until the next call.
+    pub fn relative_source_url<'a>(dir: &[u8], source_url: &'a [u8]) -> &'a [u8] {
+        if !bun_paths::is_absolute(source_url) || source_url.len() >= bun_paths::MAX_PATH_BYTES {
+            return source_url;
+        }
+        bun_paths::resolve_path::relative(dir, source_url)
+    }
+
+    pub fn name_formatter(&self, enable_color: AnsiColors) -> NameFormatter<'_> {
         NameFormatter {
-            function_name: self.function_name,
+            function_name: &self.function_name,
             code_type: self.code_type,
             enable_color,
             is_async: self.is_async,
@@ -91,14 +94,14 @@ impl ZigStackFrame {
     }
 
     pub(crate) fn source_url_formatter<'a>(
-        &self,
+        &'a self,
         root_path: &'a [u8],
         origin: Option<&'a ZigURL<'a>>,
         line_column: LineColumn,
         enable_color: AnsiColors,
     ) -> SourceURLFormatter<'a> {
         SourceURLFormatter {
-            source_url: self.source_url,
+            source_url: &self.source_url,
             line_column,
             origin,
             root_path,
@@ -117,7 +120,7 @@ pub(crate) enum LineColumn {
 }
 
 pub struct SourceURLFormatter<'a> {
-    pub(crate) source_url: BunString,
+    pub(crate) source_url: &'a BunString,
     pub(crate) position: ZigStackFramePosition,
     pub(crate) enable_color: AnsiColors,
     pub(crate) origin: Option<&'a ZigURL<'a>>,
@@ -137,7 +140,6 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
 
         let source_slice_ = self.source_url.to_utf8();
         let mut source_slice: &[u8] = source_slice_.slice();
-        // `defer source_slice_.deinit()` — handled by Drop on Utf8Slice.
 
         if !self.remapped {
             if let Some(origin) = self.origin {
@@ -227,16 +229,16 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
     }
 }
 
-pub struct NameFormatter {
-    pub(crate) function_name: BunString,
+pub struct NameFormatter<'a> {
+    pub(crate) function_name: &'a BunString,
     pub(crate) code_type: ZigStackFrameCode,
     pub(crate) enable_color: AnsiColors,
     pub(crate) is_async: bool,
 }
 
-impl fmt::Display for NameFormatter {
+impl fmt::Display for NameFormatter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = &self.function_name;
+        let name = self.function_name;
         let enable_color = self.enable_color == AnsiColors::Enabled;
 
         match self.code_type {

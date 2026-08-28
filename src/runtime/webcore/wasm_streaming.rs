@@ -111,7 +111,7 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
     }
 
     if matches!(response.get_body_value(), BodyValue::Locked(_)) {
-        if let Some(stream) = response.get_body_readable_stream(this) {
+        if let Some(stream) = response.get_body_readable_stream() {
             return Ok(stream.value);
         }
     }

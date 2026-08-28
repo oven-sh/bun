@@ -572,7 +572,7 @@ fn parse_selector<Impl: BunSelectorImpl>(
             let source_location = input.current_source_location();
             if let Ok(next) = input.next() {
                 return Err(source_location.new_custom_error(
-                    SelectorParseErrorKind::UnexpectedSelectorAfterPseudoElement(next.clone())
+                    SelectorParseErrorKind::UnexpectedSelectorAfterPseudoElement(*next)
                         .into_default_parser_error(),
                 ));
             }
@@ -1342,7 +1342,7 @@ impl<'a> SelectorParser<'a> {
                 // the underlying `&'static [u8]` payload directly.
                 let languages = parser.parse_comma_separated(|p| -> CResult<Str> {
                     let loc = p.current_source_location();
-                    let tok = p.next()?.clone();
+                    let tok = *p.next()?;
                     match tok {
                         Token::Ident(i) | Token::QuotedString(i) => Ok(i),
                         t => Err(loc.new_unexpected_token_error(t)),
@@ -1621,13 +1621,6 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
         true
     }
 
-    /// Do not call this! Use `serializer::serialize_selector_list()` or
-    /// `tocss_servo::to_css_selector_list()` instead.
-    #[deprecated = "use serializer::serialize_selector_list()"]
-    pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-        unreachable!("use serializer::serialize_selector_list()");
-    }
-
     pub fn parse(
         parser: &mut SelectorParser,
         input: &mut CssParser,
@@ -1816,13 +1809,6 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
     pub fn parse(parser: &mut SelectorParser, input: &mut CssParser) -> CResult<Self> {
         let mut state = SelectorParsingState::empty();
         parse_selector::<Impl>(parser, input, &mut state, NestingRequirement::None)
-    }
-
-    /// Do not call this! Use `serializer::serialize_selector()` or
-    /// `tocss_servo::to_css_selector()` instead.
-    #[deprecated = "use serializer::serialize_selector()"]
-    pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-        unreachable!("use serializer::serialize_selector()");
     }
 
     pub(crate) fn append(&mut self, component: GenericComponent<Impl>) {
@@ -2272,13 +2258,6 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
     /// Returns true if this is a combinator.
     pub(crate) fn is_combinator(&self) -> bool {
         matches!(self, Self::Combinator(_))
-    }
-
-    /// Do not call this! Use `serializer::serialize_component()` or
-    /// `tocss_servo::to_css_component()` instead.
-    #[deprecated = "use serializer::serialize_component()"]
-    pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-        unreachable!("use serializer::serialize_component()");
     }
 
     pub(crate) fn hash(&self, hasher: &mut Wyhash) {
@@ -2814,13 +2793,6 @@ pub enum Combinator {
 impl Combinator {
     // hash — via `#[derive(CssHash)]`.
 
-    /// Do not call this! Use `serializer::serialize_combinator()` or
-    /// `tocss_servo::to_css_combinator()` instead.
-    #[deprecated = "use serializer::serialize_combinator()"]
-    pub fn to_css(self, _dest: &mut Printer) -> Result<(), PrintErr> {
-        unreachable!("use serializer::serialize_combinator()");
-    }
-
     pub(crate) fn is_tree_combinator(self) -> bool {
         matches!(
             self,
@@ -3255,7 +3227,7 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
     let token_location = input.current_source_location();
     let token_loc = input.position();
     let token = match input.next_including_whitespace() {
-        Ok(v) => v.clone(),
+        Ok(v) => *v,
         Err(_) => {
             input.reset(&start);
             return Ok(None);
@@ -3293,8 +3265,8 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
         Token::Colon => {
             let location = input.current_source_location();
             let (is_single_colon, next_token): (bool, Token) =
-                match input.next_including_whitespace()?.clone() {
-                    Token::Colon => (false, input.next_including_whitespace()?.clone()),
+                match *input.next_including_whitespace()? {
+                    Token::Colon => (false, *input.next_including_whitespace()?),
                     t => (true, t),
                 };
             let (name, is_functional): (Str, bool) = match next_token {
@@ -3394,7 +3366,7 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
                     ));
                 }
                 let location = input.current_source_location();
-                let class = match input.next_including_whitespace()?.clone() {
+                let class = match *input.next_including_whitespace()? {
                     Token::Ident(class) => class,
                     t => {
                         let e = SelectorParseErrorKind::ClassNeedsIdent(t);
@@ -3463,7 +3435,7 @@ pub(crate) fn parse_attribute_selector<Impl: BunSelectorImpl>(
     let location = input.current_source_location();
     let operator: attrs::AttrSelectorOperator = 'operator: {
         let tok = match input.next() {
-            Ok(v) => v.clone(),
+            Ok(v) => *v,
             Err(_) => {
                 // [foo]
                 let local_name_lower: *const [u8] = arena_lowercase(input.arena(), local_name);
@@ -3517,7 +3489,7 @@ pub(crate) fn parse_attribute_selector<Impl: BunSelectorImpl>(
     // Clone the token so the borrow is released before we re-borrow.
     let value_str: Str = {
         let value_loc = input.current_source_location();
-        let tok = input.next()?.clone();
+        let tok = *input.next()?;
         match tok {
             Token::Ident(v) | Token::QuotedString(v) => v,
             t => {
@@ -3907,7 +3879,7 @@ pub(crate) fn parse_qualified_name<Impl: BunSelectorImpl>(
     let start = input.state();
 
     let tok = match input.next_including_whitespace() {
-        Ok(v) => v.clone(),
+        Ok(v) => *v,
         Err(e) => {
             input.reset(&start);
             return Err(e);
@@ -4014,7 +3986,7 @@ fn parse_qualified_name_eplicit_namespace_helper<Impl: BunSelectorImpl>(
     in_attr_selector: InAttrSelector,
 ) -> CResult<OptionalQName<Impl>> {
     let location = input.current_source_location();
-    let t = input.next_including_whitespace()?.clone();
+    let t = *input.next_including_whitespace()?;
     match &t {
         Token::Ident(local_name) => return Ok(OptionalQName::Some(namespace, Some(*local_name))),
         // `*` is only a valid local name outside of attribute selectors;
@@ -4219,7 +4191,7 @@ impl ViewTransitionPartName {
 pub(crate) fn parse_attribute_flags(input: &mut CssParser) -> CResult<AttributeFlags> {
     let location = input.current_source_location();
     let token = match input.next() {
-        Ok(v) => v.clone(),
+        Ok(v) => *v,
         Err(_) => {
             // Selectors spec says language-defined; HTML says it depends on the
             // exact attribute name.

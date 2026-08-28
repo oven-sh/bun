@@ -276,11 +276,7 @@ pub mod route_bundle;
 pub mod serialized_failure;
 pub mod source_map_store;
 
-pub use assets::Assets;
-pub use incremental_graph::IncrementalGraph;
-pub use route_bundle::RouteBundle;
 pub use serialized_failure::SerializedFailure;
-pub use source_map_store::SourceMapStore;
 
 /// Local response trait — the response type is a generic bound.
 /// Method shapes mirror `bun_uws_sys::Response<SSL>` so the `R`-generic
@@ -290,14 +286,6 @@ pub trait ResponseLike {
     fn write_status(&mut self, status: &[u8]);
     fn end(&mut self, data: &[u8], close_connection: bun_uws::CloseConnection);
     fn as_any_response(&mut self) -> bun_uws::AnyResponse;
-    fn upgrade<D>(
-        &mut self,
-        data: D,
-        sec_web_socket_key: &[u8],
-        sec_web_socket_protocol: &[u8],
-        sec_web_socket_extensions: &[u8],
-        ctx: &mut bun_uws::WebSocketUpgradeContext,
-    );
 }
 
 // `AnyResponse` already type-erases SSL/TCP/H3 — it satisfies `resp: anytype`
@@ -313,23 +301,6 @@ impl ResponseLike for bun_uws::AnyResponse {
     }
     fn as_any_response(&mut self) -> bun_uws::AnyResponse {
         *self
-    }
-    fn upgrade<D>(
-        &mut self,
-        data: D,
-        sec_web_socket_key: &[u8],
-        sec_web_socket_protocol: &[u8],
-        sec_web_socket_extensions: &[u8],
-        ctx: &mut bun_uws::WebSocketUpgradeContext,
-    ) {
-        let boxed = bun_core::heap::into_raw(Box::new(data));
-        let _ = (*self).upgrade(
-            boxed,
-            sec_web_socket_key,
-            sec_web_socket_protocol,
-            sec_web_socket_extensions,
-            Some(ctx),
-        );
     }
 }
 

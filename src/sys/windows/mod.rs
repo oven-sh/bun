@@ -106,7 +106,6 @@ pub type PVOID = LPVOID;
 pub use bun_windows_sys::COORD;
 pub use bun_windows_sys::FALSE;
 pub use bun_windows_sys::FILE_BEGIN;
-pub use bun_windows_sys::FILE_CURRENT;
 pub use bun_windows_sys::FILE_END;
 pub use bun_windows_sys::FILE_OPEN;
 pub use bun_windows_sys::INVALID_HANDLE_VALUE;
@@ -120,11 +119,9 @@ pub use bun_windows_sys::NT_ERROR;
 pub use bun_windows_sys::NT_SUCCESS;
 pub use bun_windows_sys::NTSTATUS;
 pub use bun_windows_sys::PWSTR;
-pub use bun_windows_sys::STATUS_SUCCESS;
 pub use bun_windows_sys::TRUE;
 pub use bun_windows_sys::UINT;
 pub use bun_windows_sys::ULONG;
-pub use bun_windows_sys::ULONGLONG;
 pub use bun_windows_sys::UNICODE_STRING;
 pub use bun_windows_sys::WCHAR;
 /// `STARTF_USESTDHANDLES` (winbase.h).
@@ -138,18 +135,11 @@ pub use bun_windows_sys::FILETIME;
 
 pub use bun_windows_sys::DUPLICATE_SAME_ACCESS;
 pub use bun_windows_sys::FILE_ALL_INFORMATION;
-pub use bun_windows_sys::FILE_ATTRIBUTE_ARCHIVE;
-pub use bun_windows_sys::FILE_ATTRIBUTE_COMPRESSED;
-pub use bun_windows_sys::FILE_ATTRIBUTE_DEVICE;
 pub use bun_windows_sys::FILE_ATTRIBUTE_DIRECTORY;
 pub use bun_windows_sys::FILE_ATTRIBUTE_HIDDEN;
 pub use bun_windows_sys::FILE_ATTRIBUTE_NORMAL;
-pub use bun_windows_sys::FILE_ATTRIBUTE_NOT_CONTENT_INDEXED;
-pub use bun_windows_sys::FILE_ATTRIBUTE_OFFLINE;
 pub use bun_windows_sys::FILE_ATTRIBUTE_READONLY;
 pub use bun_windows_sys::FILE_ATTRIBUTE_REPARSE_POINT;
-pub use bun_windows_sys::FILE_ATTRIBUTE_SPARSE_FILE;
-pub use bun_windows_sys::FILE_ATTRIBUTE_SYSTEM;
 pub use bun_windows_sys::FILE_ATTRIBUTE_TEMPORARY;
 pub use bun_windows_sys::FILE_BASIC_INFORMATION;
 pub use bun_windows_sys::FILE_DEVICE_CONSOLE;
@@ -163,12 +153,10 @@ pub use bun_windows_sys::FILE_INFO_BY_HANDLE_CLASS;
 pub use bun_windows_sys::FILE_INFORMATION_CLASS;
 pub use bun_windows_sys::FILE_NON_DIRECTORY_FILE;
 pub use bun_windows_sys::FILE_OPEN_REPARSE_POINT;
-pub use bun_windows_sys::FILE_SEQUENTIAL_ONLY;
 pub use bun_windows_sys::FILE_SHARE_DELETE;
 pub use bun_windows_sys::FILE_SHARE_READ;
 pub use bun_windows_sys::FILE_SHARE_WRITE;
 pub use bun_windows_sys::FILE_SYNCHRONOUS_IO_NONALERT;
-pub use bun_windows_sys::FILE_WRITE_THROUGH;
 pub use bun_windows_sys::FS_INFORMATION_CLASS;
 pub use bun_windows_sys::IO_STATUS_BLOCK;
 pub use bun_windows_sys::OBJECT_ATTRIBUTES;
@@ -177,13 +165,11 @@ pub use bun_windows_sys::advapi32;
 pub use bun_windows_sys::kernel32::SetConsoleCtrlHandler;
 pub use bun_windows_sys::user32;
 pub use bun_windows_sys::{CONSOLE_SCREEN_BUFFER_INFO, SMALL_RECT};
-pub use bun_windows_sys::{
-    CTRL_BREAK_EVENT, CTRL_C_EVENT, CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT, CTRL_SHUTDOWN_EVENT,
-};
+pub use bun_windows_sys::{CTRL_BREAK_EVENT, CTRL_C_EVENT, CTRL_CLOSE_EVENT};
 pub use bun_windows_sys::{DELETE, GENERIC_READ, GENERIC_WRITE, SYNCHRONIZE};
 pub use bun_windows_sys::{
-    FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX, PIPE_ACCESS_INBOUND, PIPE_ACCESS_OUTBOUND,
-    PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT, SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE,
+    FILE_FLAG_OVERLAPPED, PIPE_ACCESS_INBOUND, PIPE_ACCESS_OUTBOUND, PIPE_READMODE_BYTE,
+    PIPE_TYPE_BYTE, PIPE_WAIT, SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE,
     SYMBOLIC_LINK_FLAG_DIRECTORY,
 };
 pub use bun_windows_sys::{FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_READ_EA, FILE_TRAVERSE};
@@ -375,8 +361,6 @@ pub use bun_windows_sys::externs::FILE_FLAG_BACKUP_SEMANTICS;
 pub use bun_windows_sys::externs::GetFileInformationByHandle;
 pub use bun_windows_sys::externs::OPEN_EXISTING;
 
-pub use bun_windows_sys::externs::CommandLineToArgvW;
-
 unsafe extern "system" {
     // safe: `HANDLE` is a by-value opaque; bad handle → FILE_TYPE_UNKNOWN +
     // GetLastError, no UB.
@@ -530,8 +514,6 @@ pub fn CreateHardLinkW(
 
 pub use bun_windows_sys::externs::CopyFileW;
 
-pub use bun_windows_sys::externs::SetFileInformationByHandle;
-
 pub fn get_last_errno() -> E {
     SystemErrno::init(kernel32::GetLastError())
         .unwrap_or(SystemErrno::EUNKNOWN)
@@ -609,8 +591,6 @@ pub use bun_windows_sys::externs::{
     PROCESS_BASIC_INFORMATION, ProcessBasicInformation, RegisterWaitForSingleObject,
     SetEnvironmentVariableW, WAITORTIMERCALLBACK, WT_EXECUTEONLYONCE,
 };
-
-pub use bun_windows_sys::externs::ResumeThread;
 
 // Job Object structures + JOBOBJECTINFOCLASS consts — canonical definitions
 // live in bun_windows_sys::externs; Zeroable impls for these nominal types
@@ -1230,6 +1210,8 @@ pub const EXCEPTION_ACCESS_VIOLATION: u32 = 0xC0000005;
 pub const EXCEPTION_DATATYPE_MISALIGNMENT: u32 = 0x80000002;
 pub const EXCEPTION_ILLEGAL_INSTRUCTION: u32 = 0xC000001D;
 pub const EXCEPTION_STACK_OVERFLOW: u32 = 0xC00000FD;
+/// Exit code of a process terminated by the default `CTRL_C_EVENT` handler.
+pub const STATUS_CONTROL_C_EXIT: u32 = 0xC000013A;
 
 /// `EXCEPTION_RECORD` (winnt.h).
 #[repr(C)]
@@ -1633,8 +1615,7 @@ pub fn become_watcher_manager() -> ! {
             bun_core::Output::panic(format_args!("Failed to spawn process: {}\n", err));
         }
         // `kernel32::WaitForSingleObject` is the local `safe fn` re-decl
-        // (by-value `HANDLE`/`DWORD` only); avoid the `bun_windows_sys`
-        // `unsafe fn` Result-wrapper and check `WAIT_FAILED` inline.
+        // (by-value `HANDLE`/`DWORD` only); check `WAIT_FAILED` inline.
         if kernel32::WaitForSingleObject(procinfo.hProcess, win32::INFINITE) == externs::WAIT_FAILED
         {
             let err = Win32Error::get();

@@ -385,7 +385,7 @@ pub(crate) unsafe fn pwritev(
 // `-errno` returns, which callers decode via `GetErrno for isize`.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Raw `read(2)` — libc-convention return (for `linux::read` / `posix::read`).
+/// Raw `read(2)` — libc-convention return (for `linux::read`).
 ///
 /// This is a libc-convention thunk: callers may pass `fd == -1` (expecting
 /// EBADF), `buf == NULL` with `count == 0` (expecting `0`), or an

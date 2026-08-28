@@ -9,7 +9,6 @@ use crate::Error;
 use bun_core::{ZStr, strings};
 use bun_js_parser::{self as js_parser, lexer as js_lexer};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_paths::{self, PathBuffer};
 use bun_sys::{self};
 use bun_wyhash::hash;
 
@@ -104,9 +103,21 @@ impl InlineSnapshotToWrite {
     }
 }
 
-pub struct File {
-    pub(crate) id: FileId,
-    pub(crate) file: bun_sys::File,
+/// The `.snap` file of the test file that is running; `write_snapshot_file` replaces it.
+struct File {
+    id: FileId,
+    /// NUL-terminated.
+    path: Vec<u8>,
+    /// `file_buf` has entries the file does not have. Always set under `--update-snapshots`.
+    dirty: bool,
+    /// The file did not parse: its snapshots fail and it is left as it is.
+    unparseable: bool,
+}
+
+impl File {
+    fn path_z(&self) -> &ZStr {
+        ZStr::from_slice_with_nul(&self.path)
+    }
 }
 
 impl Snapshots {
@@ -159,6 +170,9 @@ impl Snapshots {
                     crate::Error::SnapshotFailed
                 });
             }
+        }
+        if self.current_file().unparseable {
+            return Err(crate::Error::ParseError);
         }
 
         let (name, counter) = self.add_count(expect, hint)?;
@@ -217,16 +231,50 @@ impl Snapshots {
         .map_err(|_| crate::Error::WriteError)?;
 
         self.added += 1;
+        self.current_file_mut().dirty = true;
         self.values
             .insert(name_hash, Box::<[u8]>::from(target_value));
         Ok(None)
     }
 
-    pub(crate) fn parse_file(&mut self, file: &File) -> Result<(), Error> {
-        if self.file_buf.is_empty() {
-            return Ok(());
-        }
+    fn current_file(&self) -> &File {
+        self._current_file
+            .as_ref()
+            .expect("get_snapshot_file sets _current_file before it returns Ok")
+    }
 
+    fn current_file_mut(&mut self) -> &mut File {
+        self._current_file
+            .as_mut()
+            .expect("get_snapshot_file sets _current_file before it returns Ok")
+    }
+
+    /// The `.snap` file whose parse failure made `get_or_put` return `Error::ParseError`.
+    pub(crate) fn unparseable_file_path(&self) -> Option<&[u8]> {
+        self._current_file
+            .as_ref()
+            .filter(|file| file.unparseable)
+            .map(|file| file.path_z().as_bytes())
+    }
+
+    /// Loads the entries of `file_buf` into `values`, printing the parse errors if it fails.
+    fn parse_file(&mut self, snapshot_file_path: &[u8]) -> Result<(), Error> {
+        let mut temp_log = bun_ast::Log::init();
+        let result = self.parse_file_into_values(snapshot_file_path, &mut temp_log);
+        if temp_log.errors > 0 {
+            let _ = temp_log.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                bun_output::error_writer(),
+            ));
+            bun_output::flush();
+        }
+        result
+    }
+
+    fn parse_file_into_values(
+        &mut self,
+        snapshot_file_path: &[u8],
+        temp_log: &mut bun_ast::Log,
+    ) -> Result<(), Error> {
         // SAFETY: VM is thread-local singleton installed before any test runs; lives for the
         // duration of the runner. Per `VirtualMachine::get` doc, callers form a short-lived borrow.
         let vm = VirtualMachine::get().as_mut();
@@ -236,53 +284,19 @@ impl Snapshots {
         );
         // Thread a per-call arena — js_parser is bump-allocated.
         let arena = bun_alloc::Arena::new();
-        let mut temp_log = bun_ast::Log::init();
 
-        // do NOT call `Jest::runner()` here — it hands out an exclusive ref to the global TestRunner,
-        // and `self: &mut Snapshots` is a live borrow of that same TestRunner's `.snapshots`
-        // field. Retagging the whole TestRunner would invalidate `self` under Stacked Borrows.
-        // Project the disjoint `.files` sibling through the raw `RUNNER` pointer instead.
-        // SAFETY: single-threaded JS VM; RUNNER is set before any Snapshots method runs
-        // (Snapshots is a field of TestRunner). Raw-pointer place projection touches only
-        // `.files` bytes, disjoint from `&mut self`.
-        let test_file_source = unsafe {
-            let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
-            &(*p).files.items_source()[file.id as usize]
-        };
-        let name = test_file_source.path.name();
-        let test_filename = name.filename;
-        let dir_path = name.dir_with_trailing_slash();
-
-        let mut snapshot_file_path_buf = PathBuffer::uninit();
-        let buf = snapshot_file_path_buf.0.as_mut_slice();
-        let mut pos = 0usize;
-        buf[pos..pos + dir_path.len()].copy_from_slice(dir_path);
-        pos += dir_path.len();
-        buf[pos..pos + Self::SNAPSHOTS_DIR_NAME.len()].copy_from_slice(Self::SNAPSHOTS_DIR_NAME);
-        pos += Self::SNAPSHOTS_DIR_NAME.len();
-        buf[pos..pos + test_filename.len()].copy_from_slice(test_filename);
-        pos += test_filename.len();
-        buf[pos..pos + b".snap".len()].copy_from_slice(b".snap");
-        pos += b".snap".len();
-        buf[pos] = 0;
-        // SAFETY: buf[pos] == 0 written above
-        let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
-
-        let source = bun_ast::Source::init_path_string(
-            snapshot_file_path.as_bytes(),
-            self.file_buf.as_slice(),
-        );
+        let source = bun_ast::Source::init_path_string(snapshot_file_path, self.file_buf.as_slice());
 
         let parser = js_parser::Parser::init(
             opts,
-            &mut temp_log,
+            temp_log,
             &source,
             &vm.transpiler.options.define,
             &arena,
-        )?;
+        )
+        .map_err(|_| crate::Error::ParseError)?;
 
-        let parse_result = parser.parse()?;
-        let mut ast = match parse_result {
+        let mut ast = match parser.parse().map_err(|_| crate::Error::ParseError)? {
             bun_js_parser::Result::Ast(ast) => ast,
             _ => return Err(crate::Error::ParseError),
         };
@@ -346,19 +360,29 @@ impl Snapshots {
     }
 
     pub(crate) fn write_snapshot_file(&mut self) -> Result<(), Error> {
-        if let Some(file) = self._current_file.take() {
-            file.file
-                .write_all(&self.file_buf)
-                .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
-            let _ = file.file.close();
-            self.file_buf.clear();
-            self.file_buf.shrink_to_fit();
+        let Some(file) = self._current_file.take() else {
+            return Ok(());
+        };
+        let result = if file.dirty {
+            bun_sys::File::write_file_atomically(file.path_z(), &self.file_buf, 0o644)
+        } else {
+            Ok(())
+        };
+        self.file_buf.clear();
+        self.file_buf.shrink_to_fit();
 
-            self.values.clear();
+        self.values.clear();
 
-            self.counts.clear();
-        }
-        Ok(())
+        self.counts.clear();
+
+        result.map_err(|err| {
+            bun_output::err(
+                err,
+                "Failed to write snapshot file: {}",
+                (bstr::BStr::new(file.path_z().as_bytes()),),
+            );
+            crate::Error::FailedToWriteSnapshotFile
+        })
     }
 
     pub(crate) fn add_inline_snapshot_to_write(
@@ -417,8 +441,8 @@ impl Snapshots {
 
             // 2. load file text
             // avoid `Jest::runner()` (would alias `&mut TestRunner` over the live
-            // `&mut self` / `ils_info` borrow of `runner.snapshots`). See comment in `parse_file`.
-            // SAFETY: see `parse_file` — raw-pointer projection to disjoint `.files` field.
+            // `&mut self` / `ils_info` borrow of `runner.snapshots`). See comment in `get_snapshot_file`.
+            // SAFETY: see `get_snapshot_file` — raw-pointer projection to disjoint `.files` field.
             let test_file_source = unsafe {
                 let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
                 &(*p).files.items_source()[file_id as usize]
@@ -431,26 +455,24 @@ impl Snapshots {
             // SAFETY: NUL appended above
             let test_filename_z = ZStr::from_slice_with_nul(&test_filename[..]);
 
-            let fd = match bun_sys::open(test_filename_z, bun_sys::O::RDWR, 0o644) {
-                bun_sys::Result::Ok(r) => r,
+            // O_RDWR: a file that may not be written to is reported here, not replaced below.
+            let file_text: Vec<u8> = match bun_sys::File::open(test_filename_z, bun_sys::O::RDWR, 0o644)
+                .and_then(|file| file.read_to_end())
+            {
+                bun_sys::Result::Ok(file_text) => file_text,
                 bun_sys::Result::Err(e) => {
                     log.add_error_fmt(
                         &bun_ast::Source::init_empty_file(test_filename_z.as_bytes()),
                         bun_ast::Loc { start: 0 },
                         format_args!(
-                            "Failed to update inline snapshot: Failed to open file: {}",
+                            "Failed to update inline snapshot: Failed to {} file: {}",
+                            e.syscall.name(),
                             bstr::BStr::new(e.name()),
                         ),
                     );
                     continue;
                 }
             };
-            let file = File {
-                id: file_id,
-                file: bun_sys::File::from_fd(fd),
-            };
-
-            let file_text: Vec<u8> = file.file.read_to_end().map_err(Error::from)?;
 
             let source =
                 bun_ast::Source::init_path_string(test_filename_z.as_bytes(), file_text.as_slice());
@@ -806,19 +828,7 @@ impl Snapshots {
             }
 
             // 4. write out result_text to the file
-            if let Err(e) = file.file.seek_to(0) {
-                log.add_error_fmt(
-                    &source,
-                    bun_ast::Loc { start: 0 },
-                    format_args!(
-                        "Failed to update inline snapshot: Seek file error: {}",
-                        bstr::BStr::new(e.name()),
-                    ),
-                );
-                continue;
-            }
-
-            if let Err(e) = file.file.write_all(&result_text) {
+            if let Err(e) = bun_sys::File::write_file_atomically(test_filename_z, &result_text, 0o644) {
                 log.add_error_fmt(
                     &source,
                     bun_ast::Loc { start: 0 },
@@ -827,100 +837,97 @@ impl Snapshots {
                         bstr::BStr::new(e.name()),
                     ),
                 );
-                continue;
-            }
-            if result_text.len() < file_text.len() {
-                if bun_sys::ftruncate(file.file.handle, result_text.len() as i64).is_err() {
-                    panic!("Failed to update inline snapshot: File was left in an invalid state");
-                }
             }
         }
         Ok(success.get())
     }
 
     fn get_snapshot_file(&mut self, file_id: FileId) -> Result<bun_sys::Result<()>, Error> {
-        if self._current_file.is_none() || self._current_file.as_ref().unwrap().id != file_id {
-            self.write_snapshot_file()?;
+        if self._current_file.as_ref().is_some_and(|file| file.id == file_id) {
+            return Ok(bun_sys::Result::Ok(()));
+        }
+        self.write_snapshot_file()?;
 
-            // avoid `Jest::runner()` (aliases `&mut TestRunner` over live `&mut self`).
-            // SAFETY: see `parse_file` — raw-pointer projection to disjoint `.files` field.
-            let test_file_source = unsafe {
-                let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
-                &(*p).files.items_source()[file_id as usize]
-            };
-            let name = test_file_source.path.name();
-            let test_filename = name.filename;
-            let dir_path = name.dir_with_trailing_slash();
+        // do NOT call `Jest::runner()` here — it hands out an exclusive ref to the global TestRunner,
+        // and `self: &mut Snapshots` is a live borrow of that same TestRunner's `.snapshots`
+        // field. Retagging the whole TestRunner would invalidate `self` under Stacked Borrows.
+        // Project the disjoint `.files` sibling through the raw `RUNNER` pointer instead.
+        // SAFETY: single-threaded JS VM; RUNNER is set before any Snapshots method runs
+        // (Snapshots is a field of TestRunner). Raw-pointer place projection touches only
+        // `.files` bytes, disjoint from `&mut self`.
+        let test_file_source = unsafe {
+            let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
+            &(*p).files.items_source()[file_id as usize]
+        };
+        let name = test_file_source.path.name();
+        let test_filename = name.filename;
+        let dir_path = name.dir_with_trailing_slash();
 
-            let mut snapshot_file_path_buf = PathBuffer::uninit();
-            let buf = snapshot_file_path_buf.0.as_mut_slice();
-            let mut pos = 0usize;
-            buf[pos..pos + dir_path.len()].copy_from_slice(dir_path);
-            pos += dir_path.len();
-            buf[pos..pos + Self::SNAPSHOTS_DIR_NAME.len()]
-                .copy_from_slice(Self::SNAPSHOTS_DIR_NAME);
-            pos += Self::SNAPSHOTS_DIR_NAME.len();
+        let mut path: Vec<u8> = Vec::with_capacity(
+            dir_path.len()
+                + Self::SNAPSHOTS_DIR_NAME.len()
+                + test_filename.len()
+                + b".snap".len()
+                + 1,
+        );
+        path.extend_from_slice(dir_path);
+        path.extend_from_slice(Self::SNAPSHOTS_DIR_NAME);
 
-            let cached_dir = self.snapshot_dir_path;
-            if cached_dir.is_none() || !strings::eql_long(dir_path, cached_dir.unwrap(), true) {
-                buf[pos] = 0;
-                // SAFETY: buf[pos] == 0 written above
-                let snapshot_dir_path = ZStr::from_buf(&buf[..], pos);
-                match bun_sys::mkdir(snapshot_dir_path, 0o777) {
-                    bun_sys::Result::Ok(()) => {
+        let cached_dir = self.snapshot_dir_path;
+        if cached_dir.is_none() || !strings::eql_long(dir_path, cached_dir.unwrap(), true) {
+            path.push(0);
+            match bun_sys::mkdir(ZStr::from_slice_with_nul(&path), 0o777) {
+                bun_sys::Result::Ok(()) => {
+                    self.snapshot_dir_path = Some(dir_path);
+                }
+                bun_sys::Result::Err(err) => match err.get_errno() {
+                    bun_sys::Errno::EEXIST => {
                         self.snapshot_dir_path = Some(dir_path);
                     }
-                    bun_sys::Result::Err(err) => match err.get_errno() {
-                        bun_sys::Errno::EEXIST => {
-                            self.snapshot_dir_path = Some(dir_path);
-                        }
-                        _ => return Ok(bun_sys::Result::Err(err)),
-                    },
-                }
+                    _ => return Ok(bun_sys::Result::Err(err)),
+                },
             }
-
-            buf[pos..pos + test_filename.len()].copy_from_slice(test_filename);
-            pos += test_filename.len();
-            buf[pos..pos + b".snap".len()].copy_from_slice(b".snap");
-            pos += b".snap".len();
-            buf[pos] = 0;
-            // SAFETY: buf[pos] == 0 written above
-            let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
-
-            let mut flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
-            if self.update_snapshots {
-                flags |= bun_sys::O::TRUNC;
-            }
-            let fd = match bun_sys::open(snapshot_file_path, flags, 0o644) {
-                bun_sys::Result::Ok(fd) => fd,
-                bun_sys::Result::Err(err) => return Ok(bun_sys::Result::Err(err)),
-            };
-
-            let file = File {
-                id: file_id,
-                file: bun_sys::File::from_fd(fd),
-            };
-
-            if self.update_snapshots {
-                self.file_buf.extend_from_slice(Self::FILE_HEADER);
-            } else {
-                let length = file.file.get_end_pos().map_err(Error::from)?;
-                if length == 0 {
-                    self.file_buf.extend_from_slice(Self::FILE_HEADER);
-                } else {
-                    let mut tmp = vec![0u8; length];
-                    let _ = file.file.pread_all(&mut tmp, 0).map_err(Error::from)?;
-                    #[cfg(windows)]
-                    {
-                        file.file.seek_to(0).map_err(Error::from)?;
-                    }
-                    self.file_buf.extend_from_slice(&tmp);
-                }
-            }
-
-            self.parse_file(&file)?;
-            self._current_file = Some(file);
+            path.pop();
         }
+
+        path.extend_from_slice(test_filename);
+        path.extend_from_slice(b".snap");
+        path.push(0);
+
+        let mut file = File {
+            id: file_id,
+            path,
+            dirty: self.update_snapshots,
+            unparseable: false,
+        };
+
+        let existing: Vec<u8> = if self.update_snapshots {
+            Vec::new()
+        } else {
+            match bun_sys::File::open(file.path_z(), bun_sys::O::RDONLY, 0)
+                .and_then(|existing| existing.read_to_end())
+            {
+                bun_sys::Result::Ok(contents) => contents,
+                bun_sys::Result::Err(err) => match err.get_errno() {
+                    bun_sys::Errno::ENOENT => Vec::new(),
+                    _ => return Ok(bun_sys::Result::Err(err)),
+                },
+            }
+        };
+
+        if existing.is_empty() {
+            self.file_buf.extend_from_slice(Self::FILE_HEADER);
+        } else {
+            self.file_buf = existing;
+            if self.parse_file(file.path_z().as_bytes()).is_err() {
+                file.unparseable = true;
+                self.file_buf = Vec::new();
+                bun_core::note!(
+                    "Restore the snapshot file or run \"bun test --update-snapshots\" to regenerate it"
+                );
+            }
+        }
+        self._current_file = Some(file);
 
         Ok(bun_sys::Result::Ok(()))
     }

@@ -1052,6 +1052,13 @@ impl error::IntoErrnoInt for bun_windows_sys::NTSTATUS {
     }
 }
 
+/// Whole-file lock for [`flock`], released with the fd; mandatory on Windows, so lock unread files.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum FileLockMode {
+    Shared,
+    Exclusive,
+}
+
 /// `Exchange` and `NoReplace` are mutually exclusive at the kernel level.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum RenameMode {
@@ -1389,6 +1396,7 @@ impl Tag {
     #[cfg(not(windows))]
     pub(crate) const setrlimit: Tag = Tag(106);
     pub const clone3: Tag = Tag(107);
+    pub const flock: Tag = Tag(108);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1396,7 +1404,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 108] = [
+        const NAMES: [&str; 109] = [
             "TODO",
             "dup",
             "access",
@@ -1506,6 +1514,7 @@ impl Tag {
             "getrlimit",
             "setrlimit",
             "clone3",
+            "flock",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -2641,6 +2650,30 @@ mod posix_impl {
     pub fn ftruncate(fd: Fd, len: i64) -> Maybe<()> {
         check!(safe_libc::ftruncate(fd.native(), len), Tag::ftruncate);
         Ok(())
+    }
+    /// See [`FileLockMode`]. `nonblocking` returns `Ok(false)` instead of waiting.
+    pub fn flock(fd: Fd, mode: FileLockMode, nonblocking: bool) -> Maybe<bool> {
+        let mut operation = match mode {
+            FileLockMode::Shared => libc::LOCK_SH,
+            FileLockMode::Exclusive => libc::LOCK_EX,
+        };
+        if nonblocking {
+            operation |= libc::LOCK_NB;
+        }
+        loop {
+            // SAFETY: `flock` takes only by-value scalars; a bad fd is EBADF, never UB.
+            if unsafe { libc::flock(fd.native(), operation) } == 0 {
+                return Ok(true);
+            }
+            let errno = last_errno();
+            if errno == libc::EINTR {
+                continue;
+            }
+            if nonblocking && errno == libc::EWOULDBLOCK {
+                return Ok(false);
+            }
+            return Err(Error::from_code_int(errno, Tag::flock).with_fd(fd));
+        }
     }
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
         // SAFETY: `buf` is a valid exclusive slice; `getcwd` writes at most
@@ -3889,6 +3922,31 @@ mod windows_impl {
             return Err(Error::new(errno, Tag::ftruncate).with_fd(fd));
         }
         Ok(())
+    }
+    /// See [`FileLockMode`]: `LockFileEx` over the whole range. `nonblocking` returns `Ok(false)`.
+    pub fn flock(fd: Fd, mode: FileLockMode, nonblocking: bool) -> Maybe<bool> {
+        let mut flags: w::DWORD = 0;
+        if mode == FileLockMode::Exclusive {
+            flags |= w::LOCKFILE_EXCLUSIVE_LOCK;
+        }
+        if nonblocking {
+            flags |= w::LOCKFILE_FAIL_IMMEDIATELY;
+        }
+        // The zeroed offset starts the range at byte 0.
+        let mut overlapped: w::OVERLAPPED = bun_core::ffi::zeroed();
+        // SAFETY: FFI; `fd` is a live handle and `overlapped` outlives the call, which is
+        // synchronous for the handles bun opens (no FILE_FLAG_OVERLAPPED).
+        let rc = unsafe {
+            w::kernel32::LockFileEx(fd.native(), flags, 0, u32::MAX, u32::MAX, &mut overlapped)
+        };
+        if rc != 0 {
+            return Ok(true);
+        }
+        let er = w::Win32Error::get();
+        if nonblocking && er == w::Win32Error::LOCK_VIOLATION {
+            return Ok(false);
+        }
+        Err(Error::new(er.to_e(), Tag::flock).with_fd(fd))
     }
 
     // ── kernel32 / ntdll arms ────────────────────────────────────────────

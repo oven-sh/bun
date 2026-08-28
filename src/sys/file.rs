@@ -385,6 +385,85 @@ impl File {
         let f = Self::openat(dir, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664)?;
         f.write_all(data)
     }
+    /// [`File::write_file`] through a temporary file and a rename. Keeps the file's mode and owner.
+    pub fn write_file_atomically(path: &ZStr, data: &[u8], mode: Mode) -> Maybe<()> {
+        // Best effort (on Windows it opens the file to read); the open for writing below decides.
+        let mut realpath_buf = bun_paths::path_buffer_pool::get();
+        let mut target: Vec<u8> = match realpath(path, &mut realpath_buf) {
+            Ok(resolved) => resolved.to_vec(),
+            Err(_) => path.as_bytes().to_vec(),
+        };
+        target.push(0);
+        let target = ZStr::from_slice_with_nul(&target);
+
+        let existing = match Self::open(target, O::WRONLY | O::CLOEXEC, 0) {
+            // The rename below only needs the directory; this open reports an unwritable file.
+            Ok(existing) => Some(existing.stat()?),
+            Err(err) if err.get_errno() == E::ENOENT => None,
+            Err(err) => return Err(err),
+        };
+        let create_mode = existing
+            .as_ref()
+            .map_or(mode, |st| st.st_mode as Mode & 0o7777);
+
+        let target_bytes = target.as_bytes();
+        let dir_len = target_bytes.len() - bun_paths::basename(target_bytes).len();
+        let mut tmp_name_buf = [0u8; 64];
+        let tmp_name =
+            bun_paths::fs::FileSystem::tmpname(b"tmp", &mut tmp_name_buf, bun_core::fast_random())
+                .expect("the buffer is sized for this name");
+        let mut tmp_path: Vec<u8> = Vec::with_capacity(dir_len + tmp_name.as_bytes().len() + 1);
+        tmp_path.extend_from_slice(&target_bytes[..dir_len]);
+        tmp_path.extend_from_slice(tmp_name.as_bytes());
+        tmp_path.push(0);
+        let tmp_path = ZStr::from_slice_with_nul(&tmp_path);
+
+        let cwd = Fd::cwd();
+        let mut tmpfile = match Tmpfile::create_with_mode(cwd, tmp_path, create_mode) {
+            Ok(tmpfile) => tmpfile,
+            // The directory refuses new files from this user. The file itself opened above.
+            Err(err) if matches!(err.get_errno(), E::EACCES | E::EPERM) => {
+                return Self::write_file_in_place(target, data, mode);
+            }
+            Err(err) => return Err(err),
+        };
+        // Closes the descriptor on every path below. `Tmpfile` does not own it.
+        let file = File::from_fd(tmpfile.fd);
+        if let Err(err) = file.write_all(data) {
+            // Disk full, and the like: the old file is intact, and writing in place would empty it.
+            drop(file);
+            let _ = unlinkat(cwd, tmp_path);
+            return Err(err);
+        }
+        #[cfg(unix)]
+        if let Some(st) = &existing {
+            // The new inode belongs to this process, and the create applied the umask.
+            let _ = fchown(file.handle, st.st_uid, st.st_gid);
+            let _ = fchmod(file.handle, st.st_mode as Mode & 0o7777);
+        }
+        let renamed = tmpfile.finish(target);
+        drop(file);
+        let Err(err) = renamed else {
+            return Ok(());
+        };
+        let _ = unlinkat(cwd, tmp_path);
+        // A volume without rename over a file, a file another program holds open, a sticky dir.
+        if matches!(
+            err.get_errno(),
+            E::EACCES | E::EPERM | E::EINVAL | E::ENOTSUP | E::EBUSY | E::ETXTBSY
+        ) {
+            return Self::write_file_in_place(target, data, mode);
+        }
+        Err(err)
+    }
+    /// The write every caller did before: for a directory or a volume that refuses the mechanism.
+    fn write_file_in_place(target: &ZStr, data: &[u8], mode: Mode) -> Maybe<()> {
+        crate::syslog!(
+            "write_file_atomically({}) writes in place",
+            bstr::BStr::new(target.as_bytes())
+        );
+        Self::open(target, O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC, mode)?.write_all(data)
+    }
     /// Like [`File::write_file`] but takes the platform-native path type so Windows
     /// callers can pass a `&WStr` without round-tripping through UTF-8.
     pub fn write_file_os_path(

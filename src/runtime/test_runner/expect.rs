@@ -1197,9 +1197,13 @@ impl Expect {
                     crate::Error::FailedToWriteSnapshotFile => {
                         global_this.throw(format_args!("Failed write to snapshot file: {test_file_path}"))
                     }
-                    crate::Error::SyntaxError | crate::Error::ParseError => {
-                        global_this.throw(format_args!("Failed to parse snapshot file for: {test_file_path}"))
-                    }
+                    crate::Error::ParseError => match runner.snapshots.unparseable_file_path() {
+                        Some(snapshot_file_path) => global_this.throw(format_args!(
+                            "Failed to parse snapshot file: {}",
+                            bstr::BStr::new(snapshot_file_path)
+                        )),
+                        None => global_this.throw(format_args!("Failed to parse snapshot file for: {test_file_path}")),
+                    },
                     crate::Error::SnapshotCreationNotAllowedInCI => {
                         let snapshot_name = runner.snapshots.last_error_snapshot_name.take();
                         if let Some(name) = snapshot_name {

@@ -314,6 +314,13 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             setup_global_dir(pm, &&mut *ctx)?;
         }
 
+        // `bun pm` subcommands that always rewrite package.json or the lockfile.
+        if strings::eql_comptime(subcommand, b"trust")
+            || strings::eql_comptime(subcommand, b"migrate")
+        {
+            pm.lock_project();
+        }
+
         if strings::eql_comptime(subcommand, b"scan") {
             ScanCommand::exec_with_manager(&mut *ctx, pm, &cwd)?;
             Global::exit(0);

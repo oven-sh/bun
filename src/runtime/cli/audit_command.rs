@@ -154,6 +154,9 @@ impl AuditCommand {
         };
         let json_output = manager.options.json_output;
         if fix {
+            if !manager.options.dry_run {
+                manager.lock_project();
+            }
             return Self::audit_fix(
                 ctx,
                 manager,

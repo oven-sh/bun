@@ -221,10 +221,10 @@ impl PmVersionCommand {
                 Global::exit(1);
             }
 
-            if let Err(err) = bun_sys::File::write_file(
-                Fd::cwd(),
+            if let Err(err) = bun_sys::File::write_file_atomically(
                 package_json_path,
                 package_json_writer.ctx.written_without_trailing_zero(),
+                0o644,
             ) {
                 Output::err_generic("Failed to write package.json: {}", (BStr::new(err.name()),));
                 Global::exit(1);

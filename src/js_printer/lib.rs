@@ -2190,11 +2190,18 @@ pub(crate) mod __gated_printer {
 
         pub(crate) fn print_decls(
             &mut self,
-            keyword: &'static [u8],
+            kind: S::Kind,
             decls_: &[G::Decl],
             flags: ExprFlagSet,
             tlm: TopLevelAndIsExport,
         ) {
+            let keyword: &'static [u8] = match kind {
+                S::Kind::KVar => b"var",
+                S::Kind::KLet => b"let",
+                S::Kind::KConst => b"const",
+                S::Kind::KUsing => b"using",
+                S::Kind::KAwaitUsing => b"await using",
+            };
             self.print(keyword);
             self.print_space();
             let mut decls = decls_;
@@ -2205,166 +2212,181 @@ pub(crate) mod __gated_printer {
                 unreachable!();
             }
 
-            if bun_core::FeatureFlags::SAME_TARGET_BECOMES_DESTRUCTURING {
-                // Minify
-                //
-                //    var a = obj.foo, b = obj.bar, c = obj.baz;
-                //
-                // to
-                //
-                //    var {a, b, c} = obj;
-                //
-                // Caveats:
-                //   - Same consecutive target
-                //   - No optional chaining
-                //   - No computed property access
-                //   - Identifier bindings only
-                'brk: {
-                    if decls.len() <= 1 {
-                        break 'brk;
-                    }
-                    let first_decl = &decls[0];
-                    let second_decl = &decls[1];
+            // A `using` or `await using` declaration admits only identifier
+            // bindings, never a binding pattern.
+            let allow_destructuring =
+                bun_core::FeatureFlags::SAME_TARGET_BECOMES_DESTRUCTURING && !kind.is_using();
 
-                    if !matches!(first_decl.binding.data, BindingData::BIdentifier(_))
-                        || !matches!(second_decl.binding.data, BindingData::BIdentifier(_))
-                    {
-                        break 'brk;
-                    }
-
-                    let Some(target_value) = &first_decl.value else {
-                        break 'brk;
-                    };
-                    let ExprData::EDot(target_e_dot) = &target_value.data else {
-                        break 'brk;
-                    };
-                    let ExprData::EIdentifier(target_id) = &target_e_dot.target.data else {
-                        break 'brk;
-                    };
-                    if target_e_dot.optional_chain.is_some() {
-                        break 'brk;
-                    }
-                    let target_ref = target_id.ref_;
-
-                    let Some(second_value) = &second_decl.value else {
-                        break 'brk;
-                    };
-                    let ExprData::EDot(second_e_dot) = &second_value.data else {
-                        break 'brk;
-                    };
-                    let ExprData::EIdentifier(second_id) = &second_e_dot.target.data else {
-                        break 'brk;
-                    };
-                    if second_e_dot.optional_chain.is_some() || !second_id.ref_.eql(target_ref) {
-                        break 'brk;
-                    }
-
-                    {
-                        // Reset the temporary bindings array early on
-                        let mut temp_bindings = core::mem::take(&mut self.temporary_bindings);
-                        temp_bindings.reserve(2);
-                        temp_bindings.push(B::Property {
-                            flags: Default::default(),
-                            key: Expr::init(
-                                E::String::init(&target_e_dot.name),
-                                target_e_dot.name_loc,
-                            ),
-                            value: decls[0].binding,
-                            default_value: None,
-                        });
-                        temp_bindings.push(B::Property {
-                            flags: Default::default(),
-                            key: Expr::init(
-                                E::String::init(&second_e_dot.name),
-                                second_e_dot.name_loc,
-                            ),
-                            value: decls[1].binding,
-                            default_value: None,
-                        });
-
-                        decls = &decls[2..];
-                        while !decls.is_empty() {
-                            let decl = &decls[0];
-
-                            if !matches!(decl.binding.data, BindingData::BIdentifier(_)) {
-                                break;
-                            }
-                            let Some(value) = &decl.value else {
-                                break;
-                            };
-                            let ExprData::EDot(e_dot) = &value.data else {
-                                break;
-                            };
-                            let ExprData::EIdentifier(id) = &e_dot.target.data else {
-                                break;
-                            };
-                            if e_dot.optional_chain.is_some() || !id.ref_.eql(target_ref) {
-                                break;
-                            }
-
-                            temp_bindings.push(B::Property {
-                                flags: Default::default(),
-                                key: Expr::init(E::String::init(&e_dot.name), e_dot.name_loc),
-                                value: decl.binding,
-                                default_value: None,
-                            });
-                            decls = &decls[1..];
-                        }
-                        let mut b_object = B::Object {
-                            // SAFETY: `temp_bindings`' heap buffer is stable until the
-                            // matching clear()/drop below; `print_binding` only reads it.
-                            properties: js_ast::StoreSlice::new_mut(temp_bindings.as_mut_slice()),
-                            is_single_line: true,
-                        };
-                        // `from_bump` wraps a `&mut T` as a non-null arena ref; here the
-                        // pointee is a stack local but `print_binding` only reads it and
-                        // returns before `b_object` is dropped (same as the prior `&raw mut`).
-                        let binding = Binding {
-                            loc: target_e_dot.target.loc,
-                            data: BindingData::BObject(js_ast::StoreRef::from_bump(&mut b_object)),
-                        };
-                        self.print_binding(binding, tlm);
-                        // If recursion replaced
-                        // `self.temporary_bindings`, drop our local; else clear+restore.
-                        if self.temporary_bindings.capacity() > 0 {
-                            drop(temp_bindings);
-                        } else {
-                            temp_bindings.clear();
-                            self.temporary_bindings = temp_bindings;
-                        }
-                    }
-
-                    self.print_whitespacer(ws!(b" = "));
-                    self.print_expr(second_e_dot.target, Level::Comma, flags);
-
-                    if decls.is_empty() {
-                        return;
-                    }
-
+            let mut needs_comma = false;
+            'decls: while !decls.is_empty() {
+                if needs_comma {
                     self.print(b",");
                     self.print_space();
                 }
-            }
+                needs_comma = true;
 
-            {
+                if allow_destructuring {
+                    // Minify each run of
+                    //
+                    //    a = obj.foo, b = obj.bar, c = obj.baz
+                    //
+                    // to
+                    //
+                    //    {foo: a, bar: b, baz: c} = obj
+                    //
+                    // Caveats:
+                    //   - Same consecutive target
+                    //   - No optional chaining
+                    //   - No computed property access
+                    //   - Identifier bindings only
+                    'brk: {
+                        if decls.len() <= 1 {
+                            break 'brk;
+                        }
+                        let first_decl = &decls[0];
+                        let second_decl = &decls[1];
+
+                        let BindingData::BIdentifier(first_binding) = &first_decl.binding.data
+                        else {
+                            break 'brk;
+                        };
+                        let BindingData::BIdentifier(second_binding) = &second_decl.binding.data
+                        else {
+                            break 'brk;
+                        };
+
+                        let Some(target_value) = &first_decl.value else {
+                            break 'brk;
+                        };
+                        let ExprData::EDot(target_e_dot) = &target_value.data else {
+                            break 'brk;
+                        };
+                        let ExprData::EIdentifier(target_id) = &target_e_dot.target.data else {
+                            break 'brk;
+                        };
+                        if target_e_dot.optional_chain.is_some() {
+                            break 'brk;
+                        }
+                        let target_ref = target_id.ref_;
+
+                        // A group evaluates its target once, before any
+                        // assignment, but the original declarators execute in
+                        // order. A declarator that binds the target itself can
+                        // only be the last member of a group: a later member
+                        // would read the rebound target.
+                        if first_binding.get().r#ref.eql(target_ref) {
+                            break 'brk;
+                        }
+
+                        let Some(second_value) = &second_decl.value else {
+                            break 'brk;
+                        };
+                        let ExprData::EDot(second_e_dot) = &second_value.data else {
+                            break 'brk;
+                        };
+                        let ExprData::EIdentifier(second_id) = &second_e_dot.target.data else {
+                            break 'brk;
+                        };
+                        if second_e_dot.optional_chain.is_some() || !second_id.ref_.eql(target_ref)
+                        {
+                            break 'brk;
+                        }
+                        let mut target_rebound = second_binding.get().r#ref.eql(target_ref);
+
+                        {
+                            // Reset the temporary bindings array early on
+                            let mut temp_bindings = core::mem::take(&mut self.temporary_bindings);
+                            temp_bindings.reserve(2);
+                            temp_bindings.push(B::Property {
+                                flags: Default::default(),
+                                key: Expr::init(
+                                    E::String::init(&target_e_dot.name),
+                                    target_e_dot.name_loc,
+                                ),
+                                value: decls[0].binding,
+                                default_value: None,
+                            });
+                            temp_bindings.push(B::Property {
+                                flags: Default::default(),
+                                key: Expr::init(
+                                    E::String::init(&second_e_dot.name),
+                                    second_e_dot.name_loc,
+                                ),
+                                value: decls[1].binding,
+                                default_value: None,
+                            });
+
+                            decls = &decls[2..];
+                            while !decls.is_empty() && !target_rebound {
+                                let decl = &decls[0];
+
+                                let BindingData::BIdentifier(binding) = &decl.binding.data else {
+                                    break;
+                                };
+                                let Some(value) = &decl.value else {
+                                    break;
+                                };
+                                let ExprData::EDot(e_dot) = &value.data else {
+                                    break;
+                                };
+                                let ExprData::EIdentifier(id) = &e_dot.target.data else {
+                                    break;
+                                };
+                                if e_dot.optional_chain.is_some() || !id.ref_.eql(target_ref) {
+                                    break;
+                                }
+                                target_rebound = binding.get().r#ref.eql(target_ref);
+
+                                temp_bindings.push(B::Property {
+                                    flags: Default::default(),
+                                    key: Expr::init(E::String::init(&e_dot.name), e_dot.name_loc),
+                                    value: decl.binding,
+                                    default_value: None,
+                                });
+                                decls = &decls[1..];
+                            }
+                            let mut b_object = B::Object {
+                                // SAFETY: `temp_bindings`' heap buffer is stable until the
+                                // matching clear()/drop below; `print_binding` only reads it.
+                                properties: js_ast::StoreSlice::new_mut(
+                                    temp_bindings.as_mut_slice(),
+                                ),
+                                is_single_line: true,
+                            };
+                            // `from_bump` wraps a `&mut T` as a non-null arena ref; here the
+                            // pointee is a stack local but `print_binding` only reads it and
+                            // returns before `b_object` is dropped (same as the prior `&raw mut`).
+                            let binding = Binding {
+                                loc: target_e_dot.target.loc,
+                                data: BindingData::BObject(js_ast::StoreRef::from_bump(
+                                    &mut b_object,
+                                )),
+                            };
+                            self.print_binding(binding, tlm);
+                            // If recursion replaced
+                            // `self.temporary_bindings`, drop our local; else clear+restore.
+                            if self.temporary_bindings.capacity() > 0 {
+                                drop(temp_bindings);
+                            } else {
+                                temp_bindings.clear();
+                                self.temporary_bindings = temp_bindings;
+                            }
+                        }
+
+                        self.print_whitespacer(ws!(b" = "));
+                        self.print_expr(second_e_dot.target, Level::Comma, flags);
+
+                        continue 'decls;
+                    }
+                }
+
                 self.print_binding(decls[0].binding, tlm);
 
                 if let Some(value) = &decls[0].value {
                     self.print_whitespacer(ws!(b" = "));
                     self.print_expr(*value, Level::Comma, flags);
                 }
-            }
-
-            for decl in &decls[1..] {
-                self.print(b",");
-                self.print_space();
-
-                self.print_binding(decl.binding, tlm);
-
-                if let Some(value) = &decl.value {
-                    self.print_whitespacer(ws!(b" = "));
-                    self.print_expr(*value, Level::Comma, flags);
-                }
+                decls = &decls[1..];
             }
         }
 
@@ -5653,19 +5675,7 @@ pub(crate) mod __gated_printer {
                     self.print_indent();
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
-                    match s.kind {
-                        S::Kind::KConst => {
-                            self.print_decl_stmt(s.is_export, b"const", s.decls.slice())
-                        }
-                        S::Kind::KLet => self.print_decl_stmt(s.is_export, b"let", s.decls.slice()),
-                        S::Kind::KVar => self.print_decl_stmt(s.is_export, b"var", s.decls.slice()),
-                        S::Kind::KUsing => {
-                            self.print_decl_stmt(s.is_export, b"using", s.decls.slice())
-                        }
-                        S::Kind::KAwaitUsing => {
-                            self.print_decl_stmt(s.is_export, b"await using", s.decls.slice())
-                        }
-                    }
+                    self.print_decl_stmt(s.is_export, s.kind, s.decls.slice());
                 }
                 StmtData::SIf(s) => {
                     self.print_indent();
@@ -6363,38 +6373,12 @@ pub(crate) mod __gated_printer {
                 }
                 StmtData::SLocal(s) => {
                     let flags = ExprFlag::ForbidIn.into();
-                    match s.kind {
-                        S::Kind::KVar => self.print_decls(
-                            b"var",
-                            s.decls.slice(),
-                            flags,
-                            TopLevelAndIsExport::default(),
-                        ),
-                        S::Kind::KLet => self.print_decls(
-                            b"let",
-                            s.decls.slice(),
-                            flags,
-                            TopLevelAndIsExport::default(),
-                        ),
-                        S::Kind::KConst => self.print_decls(
-                            b"const",
-                            s.decls.slice(),
-                            flags,
-                            TopLevelAndIsExport::default(),
-                        ),
-                        S::Kind::KUsing => self.print_decls(
-                            b"using",
-                            s.decls.slice(),
-                            flags,
-                            TopLevelAndIsExport::default(),
-                        ),
-                        S::Kind::KAwaitUsing => self.print_decls(
-                            b"await using",
-                            s.decls.slice(),
-                            flags,
-                            TopLevelAndIsExport::default(),
-                        ),
-                    }
+                    self.print_decls(
+                        s.kind,
+                        s.decls.slice(),
+                        flags,
+                        TopLevelAndIsExport::default(),
+                    );
                 }
                 // for(;)
                 StmtData::SEmpty(_) => {}
@@ -6567,7 +6551,7 @@ pub(crate) mod __gated_printer {
         pub(crate) fn print_decl_stmt(
             &mut self,
             is_export: bool,
-            keyword: &'static [u8],
+            kind: S::Kind,
             decls: &[G::Decl],
         ) {
             if is_export {
@@ -6578,7 +6562,7 @@ pub(crate) mod __gated_printer {
             } else {
                 TopLevelAndIsExport::default()
             };
-            self.print_decls(keyword, decls, ExprFlag::none(), tlm);
+            self.print_decls(kind, decls, ExprFlag::none(), tlm);
             self.print_semicolon_after_statement();
         }
 

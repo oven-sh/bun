@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_ptr::{BackRef, RawSlice};
+use bun_ptr::{BackRef, RawSlice, RefPtr};
 
 use crate::webcore::jsc::{
     self as jsc, ArrayBuffer, CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject,
@@ -2085,14 +2085,11 @@ pub type HTTPResponseSink = HTTPServerWritable<false>;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct NetworkSink {
-    // Stored as `BackRef`
-    // (set-once); while `Some` the sink holds a counted ref on the intrusively
-    // ref-counted `MultiPartUpload`, released in `detach_writable`.
-    pub task: Option<BackRef<bun_s3::MultiPartUpload, bun_ptr::Mut>>,
+    /// The sink's ref on the upload, released in `detach_writable`.
+    pub task: Option<RefPtr<bun_s3::MultiPartUpload>>,
     pub(crate) source: SourceHandle,
     // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
     pub global_this: Option<BackRef<JSGlobalObject>>,
-    pub(crate) high_water_mark: BlobSizeType,
     /// Pending `flush()` promise. Serves both the user `s3file.writer().flush()`
     /// API and the `readDirectStream` / `BunAsyncIterableSource` pump, which
     /// parks on `controller.flush(true)` (not `m_onPull`) on backpressure.
@@ -2122,7 +2119,6 @@ impl Default for NetworkSink {
             task: None,
             source: SourceHandle::default(),
             global_this: None,
-            high_water_mark: 2048,
             flush_promise: JSPromiseStrong::default(),
             pending: WritablePending::default(),
             end_promise: JSPromiseStrong::default(),
@@ -2148,14 +2144,9 @@ impl NetworkSink {
     }
 
     /// Shared borrow of the upload task, if attached.
-    ///
-    /// SAFETY (invariant): `task` is an intrusively ref-counted heap allocation;
-    /// while `Some`, this sink holds a counted ref (released in `detach_writable`),
-    /// so the pointee is live for at least `'_`.
     #[inline]
     fn task_ref(&self) -> Option<&bun_s3::MultiPartUpload> {
-        // `BackRef::get` encapsulates the deref under the counted-ref invariant.
-        self.task.as_ref().map(BackRef::get)
+        self.task.as_deref()
     }
 
     pub(crate) fn new(init: NetworkSink) -> Box<NetworkSink> {
@@ -2169,16 +2160,11 @@ impl NetworkSink {
         None
     }
 
-    pub(crate) fn start(&mut self, stream_start: &Start) -> bun_sys::Result<()> {
+    pub(crate) fn start(&mut self, _stream_start: &Start) -> bun_sys::Result<()> {
         if self.ended {
             return bun_sys::Result::Ok(());
         }
 
-        if let &Start::ChunkSize(chunk_size) = stream_start {
-            if chunk_size > 0 {
-                self.high_water_mark = chunk_size;
-            }
-        }
         self.source.start();
         bun_sys::Result::Ok(())
     }
@@ -2206,10 +2192,7 @@ impl NetworkSink {
     }
 
     fn detach_writable(&mut self) {
-        if let Some(task) = self.task.take() {
-            // task is ref-counted; deref releases our ref
-            bun_s3::MultiPartUpload::deref_(task.as_ptr());
-        }
+        self.task = None;
     }
 
     /// The S3 upload drained: settle the flush/write promises (terminal, like
@@ -2387,6 +2370,40 @@ impl NetworkSink {
         bun_sys::Result::Ok(())
     }
 
+    /// JS-pump terminator for a source that failed. Unlike `end()`, the upload
+    /// is aborted, not committed; the stashed reason becomes the caller's
+    /// rejection. The pump's reject reaction still releases the pump ref, so
+    /// no wrapper deref here.
+    ///
+    /// Raw `*mut Self`: `task.fail()` synchronously fires
+    /// `S3UploadStreamWrapper::resolve`, which re-borrows this sink.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) fn fail_from_js_pump(this: *mut Self, global: &JSGlobalObject, reason: JSValue) {
+        // SAFETY: `this` is the live Box<NetworkSink> the wrapper owns; the
+        // borrow ends before `fail` re-enters.
+        let task_ref = unsafe {
+            if (*this).ended {
+                return;
+            }
+            (*this).ended = true;
+            (*this).done = true;
+            (*this).pending.result = Writable::Done;
+            (*this).pending.run();
+            if !reason.is_empty_or_undefined_or_null() {
+                (*this).upstream_error.set(global, reason);
+            }
+            // Our own ref: `fail` re-enters and may clear `(*this).task`.
+            (*this).task.clone()
+        };
+        let Some(task) = task_ref else {
+            return;
+        };
+        let _ = task.fail(bun_s3_signing::error::S3Error {
+            code: b"UnknownError",
+            message: b"ReadableStream ended with an error",
+        });
+    }
+
     /// Native-path terminator called from `SinkHandle::end`. Unlike `end()`
     /// (clean EOF / commit), an upstream error on the ByteStream fast-path must
     /// abort the upload and surface the original JS error to the caller.
@@ -2418,13 +2435,14 @@ impl NetworkSink {
             return;
         }
         // SAFETY: scoped accesses for field writes; no re-entry in this block.
-        let (task_ref, wrapper) = unsafe {
+        let (task, wrapper) = unsafe {
             (*this).ended = true;
             (*this).source.clear();
-            let Some(task_ref) = (*this).task else {
+            // Our own ref: `fail`/`write_bytes` re-enter and may clear `(*this).task`.
+            let Some(task) = (*this).task.clone() else {
                 return;
             };
-            let wrapper = task_ref
+            let wrapper = task
                 .callback_context
                 .get()
                 .cast::<crate::webcore::s3::client::S3UploadStreamWrapper>();
@@ -2438,9 +2456,8 @@ impl NetworkSink {
                     (*this).upstream_error.set(&global, js_err);
                 }
             }
-            (task_ref, wrapper)
+            (task, wrapper)
         };
-        let task = task_ref.get();
         if err.is_some() {
             let _ = task.fail(bun_s3_signing::error::S3Error {
                 code: b"UnknownError",
@@ -2450,7 +2467,7 @@ impl NetworkSink {
             let _ = task.write_bytes(b"", true);
         }
         // SAFETY: `wrapper` live with rc ≥ 1; this may free `*this`.
-        unsafe { crate::webcore::s3::client::S3UploadStreamWrapper::deref_(wrapper) };
+        unsafe { crate::webcore::s3::client::S3UploadStreamWrapper::deref(wrapper) };
     }
 
     pub(crate) fn end_from_js(
@@ -2502,6 +2519,14 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
             (*this).finalize();
             Self::release_writer_holder(this);
         }
+    }
+    unsafe fn close_with_error(
+        this: *mut Self,
+        global: &JSGlobalObject,
+        reason: JSValue,
+    ) -> bun_sys::Result<()> {
+        Self::fail_from_js_pump(this, global, reason);
+        bun_sys::Result::Ok(())
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, global)

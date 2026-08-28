@@ -9,11 +9,9 @@
 //!
 //! Port of `react_compiler/entrypoint/pipeline.rs` — see DESIGN.md.
 //!
-//! Upstream's `ProgramContext` carries `timing` / `debug_enabled` /
-//! `log_debug` / `log_event`; the Bun port's [`ProgramContext`] does not (Bun
-//! has no Babel-shim debug surface), so the per-pass timing and debug log
-//! calls are dropped. The pass *sequence* and gating predicates are kept
-//! byte-identical with upstream.
+//! Bun has no Babel-shim debug surface, so upstream's per-pass timing and
+//! debug log calls are not ported. The pass sequence and gating predicates
+//! match upstream.
 
 #![allow(
     clippy::disallowed_types,

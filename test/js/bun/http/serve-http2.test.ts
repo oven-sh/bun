@@ -16,6 +16,7 @@ import {
   connectH2,
   decodeStatus,
   frame,
+  hpackFields,
   hpackLiteral,
   request,
   sha256,
@@ -157,6 +158,40 @@ for (const secure of [true, false]) {
       expect(res.headers["x-multi"]).toBe("1, 2");
       const viaCookieMap = await request(session, { ":path": "/cookies", cookie: "seen=xx" });
       expect(viaCookieMap.headers["set-cookie"]).toEqual(["seen=xxx; Path=/; SameSite=Lax"]);
+    });
+
+    test("latin-1 header values are one byte per code unit for 8-bit and 16-bit strings", async () => {
+      // https://fetch.spec.whatwg.org/#concept-header-value
+      // U+00E9 is the single byte 0xE9 on the wire, not UTF-8 0xC3 0xA9, whether JSC
+      // stores the string as 8-bit or 16-bit. Both names are in the HPACK static table
+      // (content-disposition = 25, set-cookie = 55), so the fields arrive as literals
+      // with an indexed name. A fresh connection per request keeps the dynamic table
+      // out of the picture.
+      const expected = "63 61 66 e9 2d 80 ff";
+      const hex = (b: Buffer) => [...b].map(c => c.toString(16).padStart(2, "0")).join(" ");
+      for (const bits of ["8", "16"]) {
+        const raw = await RawH2.connect(fx.port, secure);
+        try {
+          await raw.waitFor(f => f.type === T.SETTINGS);
+          raw.headers(1, baseHeaders(`/latin1-headers?bits=${bits}`));
+          const headers = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+          const fields = hpackFields(headers.payload);
+          const literal = (index: number) => {
+            const field = fields.find(f => f.index === index && f.value);
+            if (!field?.value) throw new Error(`no literal for static name ${index} in ${JSON.stringify(fields)}`);
+            // These bytes cost more Huffman-coded than raw, so the encoder sends them as is.
+            expect(field.value.huffman).toBe(false);
+            return hex(field.value.bytes);
+          };
+          expect({ bits, "content-disposition": literal(25), "set-cookie": literal(55) }).toEqual({
+            bits,
+            "content-disposition": expected,
+            "set-cookie": "61 3d " + expected,
+          });
+        } finally {
+          raw.close();
+        }
+      }
     });
 
     test("5 MB response body (flow control + socket backpressure)", async () => {

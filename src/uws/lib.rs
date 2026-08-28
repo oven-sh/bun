@@ -156,8 +156,8 @@ pub mod ssl_wrapper {
     mod boring_sys {
         pub(super) use bun_boringssl::c::{
             BIO_ctrl_pending, BIO_free, BIO_new, BIO_read, BIO_s_mem, BIO_set_mem_eof_return,
-            BIO_write, ERR_clear_error, SSL, SSL_CTX, SSL_CTX_free, SSL_CTX_get_verify_mode,
-            SSL_ERROR_SSL, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE,
+            BIO_write, ERR_clear_error, OwnedSslCtx, SSL, SSL_CTX_get_verify_mode, SSL_ERROR_SSL,
+            SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE,
             SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN,
             SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSL_VERIFY_NONE, SSL_VERIFY_PEER, SSL_do_handshake,
             SSL_free, SSL_get_error, SSL_get_rbio, SSL_get_shutdown, SSL_get_wbio,
@@ -215,7 +215,7 @@ pub mod ssl_wrapper {
     pub struct SSLWrapper<T: Copy> {
         pub handlers: Cell<Handlers<T>>,
         pub ssl: Cell<Option<NonNull<boring_sys::SSL>>>,
-        pub(crate) ctx: Cell<Option<NonNull<boring_sys::SSL_CTX>>>,
+        pub(crate) ctx: Cell<Option<boring_sys::OwnedSslCtx>>,
         pub flags: Flags,
         pub(crate) renegotiation_count: Cell<u8>,
         pub(crate) renegotiation_window_start: Cell<Option<std::time::Instant>>,
@@ -371,16 +371,14 @@ pub mod ssl_wrapper {
     }
 
     impl<T: Copy> SSLWrapper<T> {
-        /// Initialize the SSLWrapper with a specific SSL_CTX*, remember to
-        /// call SSL_CTX_up_ref if you want to keep the SSL_CTX alive after
-        /// the SSLWrapper is deinitialized.
+        /// Takes ownership of `ctx` (dropped on `Err`).
         pub fn init_with_ctx(
-            ctx: NonNull<boring_sys::SSL_CTX>,
+            ctx: boring_sys::OwnedSslCtx,
             is_client: bool,
             handlers: Handlers<T>,
         ) -> Result<Self, InitError> {
             bun_boringssl::load();
-            // SAFETY: ctx is a valid non-null SSL_CTX*; SSL_new returns null on OOM.
+            // SAFETY: ctx is a live SSL_CTX; SSL_new returns null on OOM.
             let ssl = NonNull::new(unsafe { boring_sys::SSL_new(ctx.as_ptr()) })
                 .ok_or(InitError::OutOfMemory)?;
             // errdefer BoringSSL.SSL_free(ssl) — FFI cleanup on early return
@@ -513,19 +511,10 @@ pub mod ssl_wrapper {
             bun_boringssl::load();
 
             let mut err = crate::create_bun_socket_error_t::none;
-            let Some(ssl_ctx) = ctx_opts.create_ssl_context(&mut err).and_then(NonNull::new) else {
+            let Some(ssl_ctx) = ctx_opts.create_ssl_context(&mut err) else {
                 return Err(InitError::InvalidOptions);
             };
-            // init_with_ctx adopts the SSL_CTX* (one ref). The passphrase was
-            // already freed inside create_ssl_context, so SSL_CTX_free is
-            // sufficient on the error path.
-            let ctx_guard = scopeguard::guard(ssl_ctx, |c| {
-                // SAFETY: ssl_ctx ref was just created by create_ssl_context and not yet adopted by init_with_ctx.
-                unsafe { boring_sys::SSL_CTX_free(c.as_ptr()) };
-            });
-            let this = Self::init_with_ctx(ssl_ctx, is_client, handlers)?;
-            let _ = scopeguard::ScopeGuard::into_inner(ctx_guard);
-            Ok(this)
+            Self::init_with_ctx(ssl_ctx, is_client, handlers)
         }
 
         /// Mirror `us_socket_adopt_tls`'s server-side `SSL_set_verify` override.
@@ -823,10 +812,7 @@ pub mod ssl_wrapper {
                 // SAFETY: ssl was created by SSL_new and is owned by self; SSL_free also frees the input and output BIOs.
                 unsafe { boring_sys::SSL_free(ssl.as_ptr()) };
             }
-            if let Some(ctx) = self.ctx.take() {
-                // SAFETY: ctx ref was adopted in init/init_with_ctx; SSL_CTX_free decrements the C refcount and frees the SSL context and all the certificates when it hits zero.
-                unsafe { boring_sys::SSL_CTX_free(ctx.as_ptr()) };
-            }
+            self.ctx.set(None);
         }
 
         fn trigger_handshake_callback(&self, success: bool, result: us_bun_verify_error_t) {

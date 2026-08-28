@@ -288,12 +288,8 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
 
     pub(crate) flags: ServerFlags,
 
-    /// Intrusively-refcounted plugin state. Stored as a `BackRef` (not `Rc`)
-    /// because (a) the same `*mut ServePlugins` is smuggled through
-    /// `JSValue::then` as a promise context and (b) `ServePlugins` is mutated
-    /// through any owner. The
-    /// counted ref held here is released in `Drop for NewServer`.
-    pub(crate) plugins: Option<bun_ptr::BackRef<ServePlugins, bun_ptr::Mut>>,
+    /// Shared plugin state; also passed through `JSValue::then` as a promise context.
+    pub(crate) plugins: Option<bun_ptr::RefPtr<ServePlugins>>,
 
     pub(crate) dev_server: Option<Box<crate::bake::DevServer::DevServer>>,
 
@@ -324,11 +320,6 @@ impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
         drop(self.dev_server.take());
         // The remaining owned fields (config, base_url, h3_alt_svc,
         // user_routes, all_closed_promise) drop automatically.
-        if let Some(p) = self.plugins.take() {
-            // SAFETY: `plugins` carries the `heap::alloc` provenance from
-            // `ServePlugins::init`; this releases the server's counted ref.
-            unsafe { ServePlugins::deref_(p.as_ptr()) };
-        }
     }
 }
 
@@ -819,9 +810,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         ctx_ref.signal.set(core::ptr::NonNull::new(signal));
         bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
 
-        // SAFETY: `signal.ref_()` bumps the intrusive count and returns +1.
-        let signal_ref =
-            unsafe { jsc::AbortSignalRef::adopt(bun_opaque::opaque_deref_mut(signal).ref_()) };
+        let signal_ref = bun_opaque::opaque_deref_mut(signal).ref_();
         // ownership: `Request::new` is `bun.TrivialNew` — the heap
         // allocation is handed to the JS GC via `to_js`/`to_js_for_bake` (C++
         // wrapper finalizer frees it), or, for `CreateJsRequest::No`, retained
@@ -2582,10 +2571,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 .as_ref()
             {
                 if !serve_plugins_config.is_empty() {
-                    let p = ServePlugins::init(serve_plugins_config.clone());
-                    // SAFETY: `init` returns a live `heap::alloc`'d `ServePlugins` (write
-                    // provenance, non-null); freed only via `ServePlugins::deref_`.
-                    self.plugins = Some(unsafe { bun_ptr::BackRef::from_raw_mut(p) });
+                    self.plugins = Some(ServePlugins::init(serve_plugins_config.clone()));
                 }
             }
         }

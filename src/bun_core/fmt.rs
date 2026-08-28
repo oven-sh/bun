@@ -1891,9 +1891,10 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
 
                         prev_keyword = None;
                         let mut i: usize = 1;
-                        if text.len() > 1 && num == b'0' && text[1] == b'x' {
+                        if text.len() > 1 && num == b'0' && matches!(text[1], b'x' | b'X') {
                             i += 1;
-                            while i < text.len() && text[i].is_ascii_hexdigit() {
+                            while i < text.len() && (text[i].is_ascii_hexdigit() || text[i] == b'_')
+                            {
                                 i += 1;
                             }
                         } else {
@@ -1910,10 +1911,16 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                         | b'B'
                                         | b'o'
                                         | b'O'
+                                        | b'_'
                                 )
                             {
                                 i += 1;
                             }
+                        }
+
+                        // BigInt suffix
+                        if i < text.len() && text[i] == b'n' {
+                            i += 1;
                         }
 
                         write!(

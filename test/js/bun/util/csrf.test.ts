@@ -197,9 +197,17 @@ describe("Bun.CSRF", () => {
       throw new Error(`expected ${field}: ${String(value)} to throw`);
     }
 
-    test("NaN is treated as 0", () => {
+    test("NaN is treated as an absent option", () => {
       expect(() => call(NaN)).not.toThrow();
       expect(CSRF.verify(CSRF.generate(secret, { expiresIn: NaN }), { secret, maxAge: NaN })).toBe(true);
+
+      // The token embeds expiresIn as a big-endian u64 at bytes 24..32, after
+      // the timestamp and the nonce. 0 there means the token never expires.
+      const embeddedExpiresIn = (options?: { expiresIn: number }) =>
+        Buffer.from(CSRF.generate(secret, options), "base64url").readBigUInt64BE(24);
+      expect(embeddedExpiresIn({ expiresIn: 0 })).toBe(0n);
+      expect(embeddedExpiresIn({ expiresIn: NaN })).toBe(embeddedExpiresIn());
+      expect(embeddedExpiresIn({ expiresIn: NaN })).toBe(BigInt(24 * 60 * 60 * 1000));
     });
 
     test("out-of-range values throw RangeError [ERR_OUT_OF_RANGE]", () => {

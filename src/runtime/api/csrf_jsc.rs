@@ -4,7 +4,7 @@
 use bun_boringssl_sys as boring;
 use bun_core::Utf8Bytes;
 use bun_csrf as csrf;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, IntegerRange, JSGlobalObject, JSValue, JsResult};
 
 use crate::api::crypto::evp::Algorithm as EvpAlgorithm;
 use crate::crypto::evp;
@@ -19,6 +19,28 @@ fn algorithm_from_js_case_insensitive(
 ) -> JsResult<Option<EvpAlgorithm>> {
     let slice = input.to_utf8(global)?;
     Ok(evp::lookup_ignore_case(slice.slice()))
+}
+
+/// Reads an optional millisecond duration (`expiresIn` / `maxAge`).
+/// `validate_integer_range` maps NaN to the default. `bun_csrf` treats `0` as
+/// "no expiry", so the default here is the 24h one an absent property gets.
+fn get_optional_duration_ms(
+    target: JSValue,
+    global: &JSGlobalObject,
+    field_name: &'static [u8],
+) -> JsResult<Option<u64>> {
+    let Some(value) = target.get(global, field_name)? else {
+        return Ok(None);
+    };
+    Ok(Some(global.validate_integer_range::<u64>(
+        value,
+        csrf::DEFAULT_EXPIRATION_MS,
+        IntegerRange {
+            min: 0,
+            field_name,
+            ..Default::default()
+        },
+    )?))
 }
 
 /// Reads the optional `encoding` property. Parsed as a Buffer encoding name
@@ -78,8 +100,8 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
         let options_value = args[1];
 
         // Extract expiresIn (optional)
-        if let Some(expires_in_js) = options_value.get_optional_int::<u64>(global, "expiresIn")? {
-            expires_in = expires_in_js;
+        if let Some(ms) = get_optional_duration_ms(options_value, global, b"expiresIn")? {
+            expires_in = ms;
         }
 
         // Extract sessionId (optional)
@@ -220,8 +242,8 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         }
 
         // Extract maxAge (optional)
-        if let Some(max_age_js) = options_value.get_optional_int::<u64>(global, "maxAge")? {
-            max_age = max_age_js;
+        if let Some(ms) = get_optional_duration_ms(options_value, global, b"maxAge")? {
+            max_age = ms;
         }
 
         // Extract encoding (optional)

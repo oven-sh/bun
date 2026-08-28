@@ -170,6 +170,25 @@ describe("empty brace variants are argv words in every position", () => {
     expect(await $`echo {,b}`.text()).toBe(" b\n");
     expect(await $`echo {,}`.text()).toBe(" \n");
   });
+
+  // An empty word in command position is a command name that does not exist.
+  // It must not take the "no command name" exit, which ran nothing and exited 0.
+  test.concurrent.each(["{,false}", "{,echo} hi", '"" echo hi'])("%s is command not found", async cmd => {
+    const { stdout, stderr, exitCode } = await $`${{ raw: cmd }}`.nothrow().quiet();
+    expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+      stdout: "",
+      stderr: "bun: command not found: \n",
+      exitCode: 1,
+    });
+  });
+
+  // Assignments join the words with a space, so an empty variant keeps its slot.
+  test("assignment keeps the empty variant", async () => {
+    expect(await $`FOO={,b}; echo "[$FOO]"`.text()).toBe("[ b]\n");
+    expect(await $`FOO={a,}; echo "[$FOO]"`.text()).toBe("[a ]\n");
+    const printFoo = "console.log(JSON.stringify(process.env.FOO))";
+    expect(await $`FOO={,b} ${bunExe()} -e ${printFoo}`.env(bunEnv).text()).toBe(`" b"\n`);
+  });
 });
 
 // A shell word combining brace + glob (`src/*.{ts,tsx}`, `{src,lib}/*.ts`) was

@@ -6,7 +6,7 @@ use std::time::Instant;
 use bun_collections::ArrayHashMap;
 use bun_core::{self, Output};
 use bun_ptr::RefPtr;
-use bun_threading::{Mutex, UnboundedQueue};
+use bun_threading::{Mutex, SpawnError, UnboundedQueue};
 use bun_uws as uws;
 
 use crate::async_http::{ACTIVE_REQUESTS_COUNT, MAX_SIMULTANEOUS_REQUESTS};
@@ -1013,7 +1013,7 @@ impl HttpThread {
         // dereffing `as_mut_ptr()` below on an uninitialized static is UB.
         // The "every caller goes through `init`" invariant was unenforced
         // (e.g. `async_http::preconnect` did not), so check it here. The
-        // `Acquire` load pairs with `init_once`'s `Release` store to publish
+        // `Acquire` load pairs with `start`'s `Release` store to publish
         // the `HTTP_THREAD.write(..)` to this thread.
         assert!(
             crate::HTTP_THREAD_INIT.load(Ordering::Acquire),
@@ -1128,9 +1128,11 @@ use core::cell::Cell;
 
 mod _event_loop_draft {
     use super::*;
-    use std::sync::Once;
 
-    static INIT_ONCE: Once = Once::new();
+    /// Not a `Once`: a failed [`start`] is retried by the next `init` call.
+    static START_LOCK: Mutex = Mutex::new();
+    // Set once the thread runs.
+    //
     // Note: `Builder::spawn` allocates an `Arc<thread::Inner>` (48 B)
     // shared between the `JoinHandle` and the new thread's TLS `current()`.
     // Dropping the handle leaves the only strong ref inside the spawned
@@ -1143,33 +1145,40 @@ mod _event_loop_draft {
     static HTTP_THREAD_HANDLE: std::sync::OnceLock<std::thread::JoinHandle<()>> =
         std::sync::OnceLock::new();
 
-    pub(super) fn init(opts: &InitOpts) {
-        INIT_ONCE.call_once(|| init_once(opts));
+    pub(super) fn init(opts: &InitOpts) -> Result<(), SpawnError> {
+        if HTTP_THREAD_HANDLE.get().is_some() {
+            return Ok(());
+        }
+        let _guard = START_LOCK.lock_guard();
+        if HTTP_THREAD_HANDLE.get().is_some() {
+            return Ok(());
+        }
+        start(opts)
     }
 
-    fn init_once(opts: &InitOpts) {
-        // Initialize the global (with timer
-        // started on the calling thread) BEFORE spawning, so `on_start`'s
-        // `crate::http_thread_mut()` finds `Some(..)` and can fill in
-        // `loop_`/`uws_loop`/contexts.
-        // SAFETY: `init_once` runs under `Once`; no other thread reads
-        // `HTTP_THREAD` until `has_awoken` is set in `on_start`.
-        unsafe {
-            (*crate::HTTP_THREAD.get()).write(HttpThread::new());
-        }
-        crate::HTTP_THREAD_INIT.store(true, core::sync::atomic::Ordering::Release);
-        bun_libdeflate_sys::libdeflate::load();
-        let opts_copy = opts.clone();
-        let thread = std::thread::Builder::new()
-            .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
-            .spawn(move || on_start(opts_copy));
-        match thread {
-            // detach — see HTTP_THREAD_HANDLE note above re: LSAN reachability
-            Ok(t) => {
-                let _ = HTTP_THREAD_HANDLE.set(t);
+    /// Caller holds `START_LOCK`.
+    fn start(opts: &InitOpts) -> Result<(), SpawnError> {
+        if !crate::HTTP_THREAD_INIT.load(core::sync::atomic::Ordering::Acquire) {
+            // Written before the spawn, because `on_start` fills it in, and
+            // written only once: a failed spawn leaves it in place for the
+            // next attempt, so no reader ever sees it rewritten.
+            // SAFETY: the caller holds `START_LOCK`, and `HTTP_THREAD_INIT` is
+            // still false, so nothing reads `HTTP_THREAD` yet.
+            unsafe {
+                (*crate::HTTP_THREAD.get()).write(HttpThread::new());
             }
-            Err(err) => Output::panic(format_args!("Failed to start HTTP Client thread: {}", err)),
+            crate::HTTP_THREAD_INIT.store(true, core::sync::atomic::Ordering::Release);
+            bun_libdeflate_sys::libdeflate::load();
         }
+        let thread = bun_threading::spawn_with_retry("HTTP client", || {
+            let opts = opts.clone();
+            std::thread::Builder::new()
+                .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
+                .spawn(move || on_start(opts))
+        })?;
+        // detach — see HTTP_THREAD_HANDLE note above re: LSAN reachability
+        let _ = HTTP_THREAD_HANDLE.set(thread);
+        Ok(())
     }
 
     fn on_start(opts: InitOpts) {
@@ -1370,10 +1379,10 @@ pub fn shutdown_for_exit() -> bool {
 // dispatch_deps bridge removed — real impls now live in
 // h3_client/ClientContext.rs (abort_by_http_id / stream_body_by_http_id).
 
-/// Module-level bridge for `HTTPThread::init`. The real body lives in
-/// `_event_loop_draft` below (depends on `bun_event_loop::MiniEventLoop`,
-/// which is outside this crate's dep set). Call sites in AsyncHTTP.rs hit
-/// this until that tier boundary is resolved.
-pub fn init(opts: &InitOpts) {
+/// Starts the HTTP client thread if it is not running yet; every path that
+/// schedules work on it calls this first. `opts` only matters for the call
+/// that starts it. `Err`: the OS refused the thread. The caller reports that,
+/// and the next call tries again.
+pub fn init(opts: &InitOpts) -> Result<(), SpawnError> {
     _event_loop_draft::init(opts)
 }

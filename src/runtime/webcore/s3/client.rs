@@ -178,6 +178,19 @@ pub(crate) fn list_objects(
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
 ) -> JsResult<()> {
+    // Before anything is allocated for the request, like a signing error.
+    if let Err(err) = bun_http::http_thread::init(&Default::default()) {
+        let message = err.to_string();
+        callback(
+            S3ListObjectsResult::Failure(Error::S3Error {
+                code: err.code().as_bytes(),
+                message: message.as_bytes(),
+            }),
+            callback_context,
+        )?;
+        return Ok(());
+    }
+
     let mut search_params: Vec<u8> = Vec::<u8>::default();
 
     let _ = search_params.append_slice(b"?"); // OOM/capacity: fire-and-forget
@@ -361,7 +374,6 @@ pub(crate) fn list_objects(
     ));
 
     // queue http request
-    bun_http::http_thread::init(&Default::default());
     let mut batch = bun_threading::thread_pool::Batch::default();
     // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
     unsafe { task.http.assume_init_mut() }.schedule(&mut batch);
@@ -1120,6 +1132,21 @@ fn download_stream(
     ),
     callback_context: *mut c_void,
 ) -> *mut S3HttpDownloadStreamingTask {
+    // Before anything is allocated for the request, like a signing error.
+    if let Err(err) = bun_http::http_thread::init(&Default::default()) {
+        let message = err.to_string();
+        callback(
+            &MutableString::default(),
+            false,
+            Some(Error::S3Error {
+                code: err.code().as_bytes(),
+                message: message.as_bytes(),
+            }),
+            callback_context,
+        );
+        return core::ptr::null_mut();
+    }
+
     let range: Option<Vec<u8>> = 'brk: {
         if let Some(size_) = size {
             let mut end = offset + size_;
@@ -1275,7 +1302,6 @@ fn download_stream(
     // enable streaming
     http.enable_response_body_streaming();
     // queue http request
-    bun_http::http_thread::init(&Default::default());
     let mut batch = bun_threading::thread_pool::Batch::default();
     http.schedule(&mut batch);
     // Out on the HTTP thread until its final callback: the VM aborts it at

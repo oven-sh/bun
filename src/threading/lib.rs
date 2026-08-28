@@ -13,6 +13,7 @@ pub mod reset_event;
 pub mod rwlock;
 #[path = "Semaphore.rs"]
 pub mod semaphore;
+pub mod spawn;
 #[path = "ThreadPool.rs"]
 pub mod thread_pool;
 pub mod work_pool;
@@ -34,6 +35,7 @@ pub use mutex::{Mutex, MutexGuard};
 pub use reset_event::ResetEvent;
 pub use rwlock::RwLock;
 pub use semaphore::Semaphore;
+pub use spawn::{SpawnError, spawn_with_retry};
 pub use thread_pool::ThreadPool;
 pub use unbounded_queue::{Link, Linked, UnboundedQueue};
 pub use wait_group::WaitGroup;

@@ -30,13 +30,14 @@ unsafe extern "Rust" {
     /// reborrows `&mut *log` / `&mut *env` and reads `*install` if non-null.
     /// All three must point at process-lifetime Transpiler-owned storage; the
     /// returned `NonNull` names the `'static` `PackageManager` singleton.
-    /// Errs when the one-time init fails (e.g. the top-level directory is
-    /// unreadable); the failure is sticky across calls.
+    /// `Error::Sys`: the one-time init failed (e.g. an unreadable top-level
+    /// directory), sticky across calls. `Error::HttpThread`: the OS refused the
+    /// HTTP client thread, retried by the next call.
     fn __bun_resolver_init_package_manager(
         log: NonNull<bun_ast::Log>,
         install: Option<NonNull<bun_options_types::schema::api::BunInstall>>,
         env: NonNull<bun_dotenv::Loader>,
-    ) -> core::result::Result<NonNull<dyn AutoInstaller>, bun_errno::SystemErrno>;
+    ) -> core::result::Result<NonNull<dyn AutoInstaller>, crate::Error>;
 }
 use crate::cache::Set as CacheSet;
 use ::bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
@@ -821,10 +822,9 @@ impl<'a> Resolver<'a> {
     /// process-static singleton as a `dyn AutoInstaller`. We then wire
     /// `on_wake` and cache the pointer. Reached from
     /// the auto-install path (`load_node_modules` global-cache block) when
-    /// [`use_package_manager`] is `true`. Errs (without caching, but sticky
-    /// inside the factory) when the one-time init fails, e.g. the top-level
-    /// directory was deleted or is unreadable — callers surface that as a
-    /// resolve failure rather than panicking.
+    /// [`use_package_manager`] is `true`. Errs (without caching) when the
+    /// factory fails; callers surface that as a resolve failure rather than
+    /// panicking.
     pub fn get_package_manager(&mut self) -> crate::CrateResult<*mut dyn AutoInstaller> {
         if let Some(pm) = self.package_manager {
             return Ok(pm.as_ptr());
@@ -2880,25 +2880,38 @@ impl<'a> Resolver<'a> {
                 let manager_ptr: *mut dyn AutoInstaller = match self.get_package_manager() {
                     Ok(pm) => pm,
                     Err(err) => {
-                        // One-time init reads the top-level directory, which
-                        // can fail at runtime (cwd deleted, EACCES, a dropped
-                        // network drive). Report it as a catchable resolve
-                        // error; the `Metadata::Resolve` msg carries the text
-                        // for `import.meta.resolveSync` & co.
+                        // A catchable resolve error: the `Metadata::Resolve`
+                        // msg carries the text for `import.meta.resolveSync`
+                        // & co. Every error but `HttpThread` comes from
+                        // reading the top-level directory.
                         let top_level_dir = self.fs_ref().top_level_dir;
-                        self.log_mut().add_resolve_error(
-                            None,
-                            bun_ast::Range::NONE,
-                            format_args!(
-                                "Cannot read directory \"{}\": {} while resolving \"{}\"",
-                                bstr::BStr::new(top_level_dir),
-                                bstr::BStr::new(err.name()),
-                                bstr::BStr::new(import_path)
+                        match err {
+                            crate::Error::HttpThread(_) => self.log_mut().add_resolve_error(
+                                None,
+                                bun_ast::Range::NONE,
+                                format_args!(
+                                    "Failed to start the HTTP client thread: {} while resolving \"{}\"",
+                                    bstr::BStr::new(err.name()),
+                                    bstr::BStr::new(import_path)
+                                ),
+                                import_path,
+                                kind,
+                                bun_ast::Error::ModuleNotFound,
                             ),
-                            import_path,
-                            kind,
-                            bun_ast::Error::ModuleNotFound,
-                        );
+                            _ => self.log_mut().add_resolve_error(
+                                None,
+                                bun_ast::Range::NONE,
+                                format_args!(
+                                    "Cannot read directory \"{}\": {} while resolving \"{}\"",
+                                    bstr::BStr::new(top_level_dir),
+                                    bstr::BStr::new(err.name()),
+                                    bstr::BStr::new(import_path)
+                                ),
+                                import_path,
+                                kind,
+                                bun_ast::Error::ModuleNotFound,
+                            ),
+                        }
                         if let Some(d) = self.debug_logs.as_mut() {
                             d.decrease_indent();
                         }

@@ -297,6 +297,7 @@ impl Route {
                         );
                     }
                     // TODO: use the code from DevServer.rs to render the error
+                    resp.write_status(b"500 Build Failed");
                     resp.end_without_body(true);
                 }
                 State::Html(html) => {
@@ -375,6 +376,14 @@ impl Route {
         let server = this.server.get().expect("server set");
         let development = server.config().development;
         let vm = global.bun_vm().as_mut();
+
+        if let Err(err) = bun_bundler::bundle_v2::singleton::start::<JSBundleCompletionTask>() {
+            let mut log = Log::init();
+            log.add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("{err}"));
+            this.set_build_error(server, log);
+            this.finish_building();
+            return Ok(());
+        }
 
         let mut config = JSBundlerConfig::default();
         // `Config` owns its fields and

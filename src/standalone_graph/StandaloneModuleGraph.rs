@@ -2211,7 +2211,7 @@ pub(crate) fn download_to_path(
     env: &mut bun_dotenv::Loader,
     dest_z: &ZStr,
 ) -> crate::Result<()> {
-    bun_http::http_thread::init(&Default::default());
+    bun_http::http_thread::init(&Default::default()).map_err(bun_http::Error::from)?;
     let mut refresher = bun_core::Progress::Progress::default();
 
     {

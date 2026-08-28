@@ -1813,6 +1813,20 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
 
+    // A refused thread rejects like a connect failure does (`FetchTasklet::on_reject`).
+    if let Err(err) = http::http_thread::init(&http::http_thread::InitOpts::default()) {
+        let err = jsc::SystemError {
+            code: BunString::static_(err.code()),
+            message: BunString::create_format(format_args!("{err}")),
+            path: BunString::clone_utf8(url.href),
+            ..Default::default()
+        }
+        .to_type_error_instance(global_this);
+        // HTTPRequestBody has no Drop impl; a bare drop leaks its store ref or fd.
+        body.detach();
+        return Ok(JSPromise::rejected_promise(global_this, err).to_js());
+    }
+
     // Only create this after we have validated all the input.
     // or else we will leak it
     let promise = jsc::JSPromiseStrong::init(global_this);

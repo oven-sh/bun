@@ -1777,7 +1777,8 @@ impl TestCommand {
             short_lived_globals: ctx.test_options.isolate,
             ..Default::default()
         });
-        bun_http::http_thread::init(&Default::default());
+        // Warm-up only. A test's own fetch() reports a refused thread.
+        let _ = bun_http::http_thread::init(&Default::default());
 
         let enable_random = ctx.test_options.randomize;
         let seed: u32 = if enable_random {

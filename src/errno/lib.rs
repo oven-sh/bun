@@ -294,6 +294,23 @@ pub fn from_errno(errno: i32) -> SystemErrno {
     SystemErrno::init(errno as i64).unwrap_or(SystemErrno::EIO)
 }
 
+impl SystemErrno {
+    /// The OS error behind a `std::io::Error`. `None` when the error did not
+    /// come from the OS, or its code has no `SystemErrno`. On Windows the code
+    /// is a Win32 error, which the `u32` entry point of `init` maps.
+    pub fn from_io_error(err: &std::io::Error) -> Option<SystemErrno> {
+        let code = err.raw_os_error()?;
+        #[cfg(windows)]
+        {
+            SystemErrno::init(code as u32)
+        }
+        #[cfg(not(windows))]
+        {
+            SystemErrno::init(i64::from(code))
+        }
+    }
+}
+
 #[cfg(not(windows))]
 impl SystemErrno {
     // `i64` covers every concrete call site (errno-range values).
@@ -425,6 +442,40 @@ mod errno_name_tests {
             assert_eq!(SystemErrno::init(35), Some(SystemErrno::EAGAIN));
             assert_eq!(SystemErrno::init(54), Some(SystemErrno::ECONNRESET));
         }
+    }
+
+    #[test]
+    fn io_error_to_errno() {
+        // On POSIX the discriminant is the errno value.
+        #[cfg(not(windows))]
+        assert_eq!(
+            SystemErrno::from_io_error(&std::io::Error::from_raw_os_error(
+                SystemErrno::ENOMEM as i32
+            )),
+            Some(SystemErrno::ENOMEM)
+        );
+        #[cfg(windows)]
+        {
+            // ERROR_NOT_ENOUGH_MEMORY and ERROR_ACCESS_DENIED are Win32 codes.
+            // Read as errno values, 8 and 5 would be ENOEXEC and EIO.
+            assert_eq!(
+                SystemErrno::from_io_error(&std::io::Error::from_raw_os_error(8)),
+                Some(SystemErrno::ENOMEM)
+            );
+            assert_eq!(
+                SystemErrno::from_io_error(&std::io::Error::from_raw_os_error(5)),
+                Some(SystemErrno::EPERM)
+            );
+            // ERROR_COMMITMENT_LIMIT has no errno.
+            assert_eq!(
+                SystemErrno::from_io_error(&std::io::Error::from_raw_os_error(1455)),
+                None
+            );
+        }
+        assert_eq!(
+            SystemErrno::from_io_error(&std::io::Error::other("not from the OS")),
+            None
+        );
     }
 
     /// Exhaustive: every dense slot in the per-platform enum round-trips through

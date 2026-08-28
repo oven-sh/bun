@@ -2296,12 +2296,12 @@ impl FetchTasklet {
         }
     }
 
+    /// `fetch_impl` has called `http_thread::init` before it created `promise`.
     pub(crate) fn queue(
         global: &JSGlobalObject,
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
     ) -> crate::Result<*mut FetchTasklet> {
-        http::http_thread::init(&http::http_thread::InitOpts::default());
         let node = Self::get(global, fetch_options, promise)?;
 
         let node_ref = Self::from_raw_mut(node);

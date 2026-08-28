@@ -442,6 +442,7 @@ impl Process {
         {
             let ctx = self.event_loop_ctx();
             if WaiterThread::should_use_waiter_thread() {
+                WaiterThread::start()?;
                 self.poller = Poller::WaiterThread(KeepAlive::default());
                 if let Poller::WaiterThread(w) = &mut self.poller {
                     w.ref_(ctx);
@@ -507,6 +508,7 @@ impl Process {
     pub(crate) fn rewatch_posix(&mut self) -> bun_sys::Result<()> {
         let ctx = self.event_loop_ctx();
         if WaiterThread::should_use_waiter_thread() {
+            WaiterThread::start()?;
             if !matches!(self.poller, Poller::WaiterThread(_)) {
                 self.poller = Poller::WaiterThread(KeepAlive::default());
             }
@@ -1322,11 +1324,10 @@ pub mod waiter_thread_posix {
     /// Shared borrow of the singleton — sole deref site for the set-once
     /// `INSTANCE` cell. All fields are either atomic (`started`),
     /// interior-mutable (`js_process.active` via `UnsafeCell`, `js_process.queue`
-    /// lock-free), or write-once-before-spawn (`eventfd`, set in `init()` under
-    /// the `started` fetch_max guard before any reader thread exists), so a
-    /// shared `&'static` is sound. The lone mutating write (`eventfd` in
-    /// `init()`) goes through the raw [`instance()`] pointer; no `&` from this
-    /// accessor is live across it.
+    /// lock-free), or write-once-before-spawn (`eventfd`, set in `start()` under
+    /// `START_LOCK` before any reader thread exists), so a shared `&'static` is
+    /// sound. The lone mutating write (`eventfd` in `start()`) goes through the
+    /// raw [`instance()`] pointer; no `&` from this accessor is live across it.
     #[inline]
     fn instance_ref() -> &'static WaiterThreadPosix {
         // SAFETY: see doc comment — process-lifetime singleton, fields are
@@ -1345,12 +1346,58 @@ pub mod waiter_thread_posix {
             bun_spawn_sys::waiter_thread_flag::get()
         }
 
+        /// Starts the thread the first time. When the OS refuses it, the
+        /// error goes to the caller and the next call tries again.
+        pub(crate) fn start() -> bun_sys::Result<()> {
+            debug_assert!(bun_spawn_sys::waiter_thread_flag::get());
+
+            if instance_ref().started.load(Ordering::Acquire) > 0 {
+                return Ok(());
+            }
+            let _guard = START_LOCK.lock_guard();
+            if instance_ref().started.load(Ordering::Acquire) > 0 {
+                return Ok(());
+            }
+
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if !instance_ref().eventfd.is_valid() {
+                // All by-value `c_uint`/`c_int` args; the kernel validates flags
+                // and returns -1/errno on failure — no memory-safety preconditions,
+                // so `safe fn` (Rust 2024) discharges the link-time proof.
+                unsafe extern "C" {
+                    safe fn eventfd(
+                        initval: core::ffi::c_uint,
+                        flags: core::ffi::c_int,
+                    ) -> core::ffi::c_int;
+                }
+                let fd = eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC);
+                if fd < 0 {
+                    return Err(bun_sys::Error::from_code_int(
+                        bun_sys::last_errno(),
+                        bun_sys::Tag::eventfd,
+                    ));
+                }
+                // SAFETY: the caller holds `START_LOCK` and the thread does not
+                // exist yet, so nothing reads `eventfd`.
+                unsafe { (*instance()).eventfd = Fd::from_native(fd) };
+            }
+
+            let thread = bun_threading::spawn_with_retry("process waiter", || {
+                std::thread::Builder::new()
+                    .stack_size(STACK_SIZE)
+                    .spawn(loop_)
+            })?;
+            drop(thread); // detach
+            instance_ref().started.store(1, Ordering::Release);
+            Ok(())
+        }
+
+        /// The caller's [`start`] succeeded.
         pub(crate) fn append(process: *mut Process) {
+            debug_assert!(instance_ref().started.load(Ordering::Acquire) > 0);
             // `js_process.queue` is an MPSC lock-free queue; `append` is the
             // producer half and only touches `queue`, never `active`.
             instance_ref().js_process.append(process);
-
-            init().unwrap_or_else(|_| panic!("Failed to start WaiterThread"));
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
@@ -1388,43 +1435,14 @@ pub mod waiter_thread_posix {
         }
     }
 
-    pub(crate) fn init() -> Result<(), std::io::Error> {
-        debug_assert!(bun_spawn_sys::waiter_thread_flag::get());
-
-        if instance_ref().started.fetch_max(1, Ordering::Relaxed) > 0 {
-            return Ok(());
-        }
-
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            // All by-value `c_uint`/`c_int` args; the kernel validates flags
-            // and returns -1/errno on failure — no memory-safety preconditions,
-            // so `safe fn` (Rust 2024) discharges the link-time proof.
-            unsafe extern "C" {
-                safe fn eventfd(
-                    initval: core::ffi::c_uint,
-                    flags: core::ffi::c_int,
-                ) -> core::ffi::c_int;
-            }
-            let fd = eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC);
-            if fd < 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            // SAFETY: single-writer init path (guarded by fetch_max above).
-            unsafe { (*instance()).eventfd = Fd::from_native(fd) };
-        }
-
-        let thread = std::thread::Builder::new()
-            .stack_size(STACK_SIZE)
-            .spawn(loop_)?;
-        drop(thread); // detach
-        Ok(())
-    }
+    /// Serializes [`WaiterThreadPosix::start`]. Not a `Once`: a refused
+    /// thread is tried again by the next call.
+    static START_LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     extern "C" fn wakeup(_: c_int) {
         let one: [u8; 8] = (1usize).to_ne_bytes();
-        // eventfd is write-once in init() before this handler is installed.
+        // eventfd is write-once in start() before this handler is installed.
         let _ = bun_sys::write(instance_ref().eventfd, &one).unwrap_or(0);
     }
 

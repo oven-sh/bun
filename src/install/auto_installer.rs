@@ -453,14 +453,14 @@ unsafe fn __bun_resolver_init_package_manager(
     mut log: core::ptr::NonNull<bun_ast::Log>,
     install: Option<core::ptr::NonNull<crate::bun_schema::api::BunInstall>>,
     mut env: core::ptr::NonNull<bun_dotenv::Loader>,
-) -> core::result::Result<core::ptr::NonNull<dyn hooks::AutoInstaller>, bun_errno::SystemErrno> {
-    // ABI: the resolver-side `extern "Rust"` declaration names
-    // `bun_errno::SystemErrno` (both crates depend on bun_errno; carries the
-    // real errno name so resolve.test.ts sees `EACCES` not `Unexpected`). Keep
-    // both sides byte-identical or the `Result` layout diverges.
+) -> core::result::Result<core::ptr::NonNull<dyn hooks::AutoInstaller>, bun_resolver::Error> {
+    // ABI: the resolver-side `extern "Rust"` declaration names the same
+    // `bun_resolver::Error`. `Sys` keeps the errno name (resolve.test.ts sees
+    // `EACCES`); `HttpThread` selects the resolver's message.
     //
-    // Idempotent.
-    bun_http::http_thread::init(&Default::default());
+    // Before the sticky init below, so that the next resolve tries again.
+    bun_http::http_thread::init(&Default::default())
+        .map_err(|err| bun_resolver::Error::HttpThread(err.errno()))?;
 
     // SAFETY: when `Some`, `install` points at a live `Api::BunInstall`
     // (see `run_command::wire_transpiler_from_ctx`); read-only borrow.
@@ -478,14 +478,14 @@ unsafe fn __bun_resolver_init_package_manager(
         env_ref,
     )
     .map_err(|e| match e {
-        crate::Error::Sys(errno) => errno,
-        crate::Error::Resolver(bun_resolver::Error::Sys(errno)) => errno,
+        crate::Error::Sys(errno) => bun_resolver::Error::Sys(errno),
+        crate::Error::Resolver(err @ bun_resolver::Error::Sys(_)) => err,
         other => {
             log_ref.add_zig_error_with_note(
                 other.name(),
                 format_args!("while initializing the auto-install package manager"),
             );
-            bun_errno::SystemErrno::EIO
+            bun_resolver::Error::Sys(bun_errno::SystemErrno::EIO)
         }
     })?;
     // On success `init_with_runtime` returns the non-null `holder::RAW_PTR`

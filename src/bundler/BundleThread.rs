@@ -3,6 +3,7 @@ use core::ptr::NonNull;
 use bun_alloc::Arena; // MimallocArena → bumpalo::Bump (ThreadLocalArena)
 use bun_core::{self, Output, zstr};
 use bun_io as Async;
+use bun_threading::SpawnError;
 use bun_threading::unbounded_queue::{Node, UnboundedQueue};
 
 use crate::bundle_v2::{FileMap, JSBundlerPlugin, dispatch};
@@ -369,23 +370,47 @@ pub mod singleton {
     unsafe impl Sync for Instance {}
 
     static INSTANCE: std::sync::OnceLock<Instance> = std::sync::OnceLock::new();
+    /// Not `OnceLock::get_or_init`: a failed [`start`] is retried by the next call.
+    static START_LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
 
-    // Blocks the calling thread until the bun build thread is created.
-    // OnceLock also blocks other callers of this function until the first caller is done.
-    fn load_once_impl<C: CompletionStruct>() -> Instance {
+    /// Starts the bundle thread if it is not running yet and blocks until it
+    /// runs. `Err`: the OS refused the thread; the caller fails its build, and
+    /// the next call tries again. All calls must use the same `C` (the static
+    /// is type-erased), and `get`/`enqueue` require a previous `Ok`.
+    pub fn start<C: CompletionStruct>() -> Result<(), SpawnError> {
+        if INSTANCE.get().is_some() {
+            return Ok(());
+        }
+        let _guard = START_LOCK.lock_guard();
+        if INSTANCE.get().is_some() {
+            return Ok(());
+        }
+
         let bundle_thread = bun_core::heap::into_raw(Box::new(BundleThread::<C>::uninitialized()));
 
-        // 2. Spawn the bun build thread.
         // SAFETY: bundle_thread is a leaked Box, valid for 'static; `spawn` takes the
         // raw pointer directly so no `&mut` is materialized that would alias the
-        // bundle thread's own access.
-        let os_thread = unsafe { BundleThread::spawn(bundle_thread) }
-            .unwrap_or_else(|_| Output::panic(format_args!("Failed to spawn bun build thread")));
+        // bundle thread's own access. A failed attempt leaves it untouched.
+        let spawned = bun_threading::spawn_with_retry("bundler", || unsafe {
+            BundleThread::spawn(bundle_thread)
+        });
+        let os_thread = match spawned {
+            Ok(os_thread) => os_thread,
+            Err(err) => {
+                // SAFETY: no thread runs against it; sole pointer to the
+                // allocation from `into_raw` above.
+                drop(unsafe { bun_core::heap::take(bundle_thread) });
+                return Err(err);
+            }
+        };
         // `std.Thread.detach()` — drop the JoinHandle without joining.
         drop(os_thread);
 
         // SAFETY: `into_raw` of a `Box` is never null.
-        Instance(unsafe { NonNull::new_unchecked(bundle_thread.cast::<()>()) })
+        let instance = Instance(unsafe { NonNull::new_unchecked(bundle_thread.cast::<()>()) });
+        // Cannot fail: `INSTANCE` was empty above, and this thread holds `START_LOCK`.
+        let _ = INSTANCE.set(instance);
+        Ok(())
     }
 
     /// Returns the raw singleton pointer. The bundle thread runs `thread_main`
@@ -395,17 +420,21 @@ pub mod singleton {
     ///
     /// # Safety
     /// All calls (across the process) must use the same `C`; the static is
-    /// type-erased.
+    /// type-erased. [`start`] must have returned `Ok` before.
     pub(crate) fn get<C: CompletionStruct>() -> *mut BundleThread<C> {
         // INSTANCE is a leaked 'static Box of `BundleThread<C>` (same `C` per
         // the safety contract).
         INSTANCE
-            .get_or_init(load_once_impl::<C>)
+            .get()
+            .unwrap_or_else(|| {
+                Output::panic(format_args!("BundleThread used before singleton::start()"))
+            })
             .0
             .as_ptr()
             .cast::<BundleThread<C>>()
     }
 
+    /// The caller has called [`start`] and got `Ok`.
     pub fn enqueue<C: CompletionStruct>(completion: *mut C) {
         // Validate the caller's pointer at the public boundary so the unsafe
         // path below never receives null.

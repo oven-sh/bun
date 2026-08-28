@@ -158,6 +158,7 @@ impl JSBundleCompletionTask {
     /// `BundleV2.createAndScheduleCompletionTask` — take a process-keepalive
     /// ref and hand the task to the bundle-thread singleton. The one ref `new`
     /// created travels with the task and is released by `on_complete_anytask`.
+    /// The caller has started the bundle thread (`singleton::start`) first.
     pub(crate) fn schedule(mut self) {
         self.poll_ref.ref_(self.global_this.bun_vm().loop_ctx());
         let plugins = self.plugins;

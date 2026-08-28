@@ -132,7 +132,7 @@ setInterval(() => {}, 1000);
 // Watcher::start() must propagate a failed thread spawn as an Err through its
 // Result return instead of aborting inside start() with `.expect()`. An
 // LD_PRELOAD shim arms on inotify_init1 (which Watcher::init() calls on Linux
-// immediately before start()) and fails the very next pthread_create.
+// immediately before start()) and fails the pthread_create attempts that follow.
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 it.skipIf(!isLinux || !cc)("propagates FileWatcher thread spawn failure instead of panicking in start()", async () => {
   const SHIM_C = /* c */ `
@@ -155,8 +155,10 @@ __attribute__((constructor)) static void no_core(void) {
 
 int inotify_init1(int flags) {
   if (!real_inotify_init1) real_inotify_init1 = dlsym(RTLD_NEXT, "inotify_init1");
-  /* Watcher::start() retries once on EAGAIN; fail both attempts. */
-  armed = 2;
+  /* Watcher::start() spawns through bun_threading::spawn_with_retry, which
+   * makes 20 attempts. Arm many more, so that an unrelated thread created in
+   * the window cannot use them up. */
+  armed = 1000;
   return real_inotify_init1(flags);
 }
 

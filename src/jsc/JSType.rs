@@ -665,27 +665,12 @@ impl JSType {
         })
     }
 
-    /// `JSType` is a
-    /// newtype-const (not a Rust `enum`), so there is no derived stringifier.
-    /// Covers every `is_typed_array_or_array_buffer()` variant + `DataView`.
-    /// The `_ => "TypedArray"` arm is unreachable for any real
-    /// `ArrayBuffer.typed_array_type` (always one of the 14).
+    /// `name()` of an `is_array_buffer_like()` tag, as bytes for the console
+    /// and `bun:test` formatters. `"TypedArray"` for any other tag, which no
+    /// real `ArrayBuffer.typed_array_type` is.
     pub fn typed_array_name(self) -> &'static [u8] {
-        match self {
-            JSType::ArrayBuffer => b"ArrayBuffer",
-            JSType::Int8Array => b"Int8Array",
-            JSType::Uint8Array => b"Uint8Array",
-            JSType::Uint8ClampedArray => b"Uint8ClampedArray",
-            JSType::Int16Array => b"Int16Array",
-            JSType::Uint16Array => b"Uint16Array",
-            JSType::Int32Array => b"Int32Array",
-            JSType::Uint32Array => b"Uint32Array",
-            JSType::Float16Array => b"Float16Array",
-            JSType::Float32Array => b"Float32Array",
-            JSType::Float64Array => b"Float64Array",
-            JSType::BigInt64Array => b"BigInt64Array",
-            JSType::BigUint64Array => b"BigUint64Array",
-            JSType::DataView => b"DataView",
+        match self.name() {
+            Some(name) if self.is_array_buffer_like() => name.as_bytes(),
             _ => b"TypedArray",
         }
     }

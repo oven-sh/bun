@@ -166,7 +166,9 @@ server_exports = {
         try {
           const exports = await loadExports<{}>(uid);
 
-          const client = {};
+          // Keyed by user export names. A null prototype keeps an export named
+          // "__proto__" an own key instead of hitting the Object.prototype setter.
+          const client = Object.create(null);
           for (const exportName of Object.keys(exports)) {
             serverManifest[uid + "#" + exportName] = {
               id: uid,

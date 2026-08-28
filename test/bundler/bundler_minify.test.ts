@@ -3,6 +3,22 @@ import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
+  // A direct eval at the top level of a file the bundler wraps in a CommonJS
+  // closure can reach that file's top-level names, so they are not renamed.
+  itBundled("minify/DirectEvalKeepsTopLevelNamesOfWrappedFile", {
+    files: {
+      "/entry.js": /* js */ `
+        var secret = 'top'
+        function helper() { return 'fn' }
+        console.log(eval('secret'), eval('helper()'))
+      `,
+    },
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("secret");
+    },
+    run: { stdout: "top fn" },
+  });
   itBundled("minify/TemplateStringFolding", {
     files: {
       "/entry.js": /* js */ `
@@ -329,6 +345,98 @@ describe("bundler", () => {
     run: {
       stdout: '["inf","neg","inf","method","static"]',
     },
+  });
+  // https://github.com/oven-sh/bun/issues/40688: the same-target destructuring
+  // transform must apply to every eligible run of declarations, not only the
+  // run at the head of the list.
+  itBundled("minify/SameTargetDestructuringAfterOtherDecl", {
+    files: {
+      "/entry.js": /* js */ `
+        var Math_random = Math.random;
+        var Math_random2 = Math.random;
+        var x = Math_random2() + Math_random();
+        var Math_cos = Math.cos;
+        var Math_sin = Math.sin;
+        console.log(typeof Math_cos(x), typeof Math_sin(x));
+      `,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("{ random: Math_random, random: Math_random2 } = Math");
+      api.expectFile("/out.js").toContain("{ cos: Math_cos, sin: Math_sin } = Math");
+    },
+    run: { stdout: "number number" },
+  });
+  itBundled("minify/SameTargetDestructuringMultipleRuns", {
+    files: {
+      "/entry.js": /* js */ `
+        var o = { a: 1, b: 2 };
+        var p = { a: 3, b: 4 };
+        var w = o.a;
+        var x = o.b;
+        var y = p.a;
+        var z = p.b;
+        var mid = w + x;
+        var q = p.a;
+        var r = p.b;
+        console.log(w, x, y, z, mid, q, r);
+      `,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("{ a: w, b: x } = o");
+      api.expectFile("/out.js").toContain("{ a: y, b: z } = p");
+      api.expectFile("/out.js").toContain("{ a: q, b: r } = p");
+    },
+    run: { stdout: "1 2 3 4 3 3 4" },
+  });
+  // A destructuring group evaluates its target once, before any assignment.
+  // A declarator that rebinds the target itself must end the group, or a
+  // later member reads the old target instead of the rebound one.
+  itBundled("minify/SameTargetDestructuringStopsWhenTargetRebound", {
+    files: {
+      "/entry.js": /* js */ `
+        var o = { a: 1, o: { b: 99 } };
+        var a = o.a;
+        var o = o.o;
+        var b = o.b;
+        console.log(a, b);
+        var p = { x: { y: 5 }, y: 7 };
+        var p = p.x;
+        var c = p.y;
+        console.log(c);
+      `,
+    },
+    minifySyntax: true,
+    run: { stdout: "1 99\n5" },
+  });
+  // A `using` declaration admits only identifier bindings, so the transform
+  // must not rewrite its declarators into an object pattern.
+  itBundled("minify/SameTargetDestructuringSkipsUsingDecls", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = { x: null, y: null };
+        function mk() {
+          return { r: null, w: null, v: 1, [Symbol.dispose]() {} };
+        }
+        function f() {
+          using a = obj.x, b = obj.y;
+          return [a, b];
+        }
+        function g() {
+          using db = mk(), a = db.r, b = db.w;
+          return [db.v, a, b];
+        }
+        console.log(JSON.stringify(f()), JSON.stringify(g()));
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("using a = obj.x, b = obj.y");
+      api.expectFile("/out.js").toContain("using db = mk(), a = db.r, b = db.w");
+    },
+    run: { stdout: "[null,null] [1,null,null]" },
   });
   itBundled("minify/InlineArraySpread", {
     files: {
@@ -1396,6 +1504,80 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
       expect(code).toMatch(/=>\s*\{\s*return a \+ 1;?\s*\}/);
+    },
+  });
+
+  // A single-use `let` is substituted into whichever child of the next
+  // expression reads it. `a` is used where the substitution must happen;
+  // `keep` where a side effect in between must block it.
+  itBundled("minify/SingleUseSubstitutionIntoEachChild", {
+    files: {
+      "/entry.js": /* js */ `
+        export function newTarget(c) { let a = c; return new a(); }
+        export function newArgs(c, v) { let a = v; return new c(1, a); }
+        export function spread(v) { let a = v; return [...a]; }
+        export async function awaited(v) { let a = v; return await a; }
+        export function* yielded(v) { let a = v; yield a; }
+        export function dynamicImport(v) { let a = v; return import(a); }
+        export function unary(v) { let a = v; return -a; }
+        export function dot(v) { let a = v; return a.b; }
+        export function binaryLeft(v, w) { let a = v; return a + w; }
+        export function binaryRight(v, w) { let a = v; return w + a; }
+        export function ifTest(v, w, u) { let a = v; return a ? w : u; }
+        export function ifYes(v, w, u) { let a = v; return w ? a : u; }
+        export function ifNo(v, w, u) { let a = v; return w ? u : a; }
+        export function indexTarget(v, i) { let a = v; return a[i]; }
+        export function indexIndex(v, i) { let a = i; return v[a]; }
+        export function callTarget(v) { let a = v; return a(); }
+        export function array(v) { let a = v; return [1, a, 2]; }
+        export function objectValue(v) { let a = v; return { k: 1, v: a }; }
+        export function objectComputedKey(v) { let a = v; return { [a]: 1 }; }
+        export function templateTag(t) { let a = t; return a\`x\`; }
+        export function templateParts(v) { let a = v; return \`1-\${v}-\${a}\`; }
+
+        export function newArgsWithSideEffect(c) { let keep = g(); return new c(keep); }
+        export function* yieldWithoutOperand(v) { let keep = v; yield; return keep; }
+        export function mutatingUnary(v) { let keep = v; return keep++; }
+        export function binaryRightAfterSideEffect(w) { let keep = g(); return w.z + keep; }
+        export function updateAssignment() { let keep = g(); total += keep; }
+        export function ifBranchWithSideEffect(w, u) { let keep = g(); return w ? keep : u; }
+        export function optionalCallArg() { let keep = g(); return f?.(keep); }
+        export function callTargetChangingThis(o) { let keep = o.m; return keep(); }
+        export function objectValueAfterComputedKey() { let keep = g(); return { [k()]: 1, v: keep }; }
+        export function templatePartAfterSideEffect() { let keep = g(); return \`\${h()}-\${keep}\`; }
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).not.toContain("let a");
+      for (const substituted of [
+        "new c;",
+        "new c(1, v)",
+        "[...v]",
+        "await v",
+        "yield v",
+        "import(v)",
+        "return -v",
+        "return v.b",
+        "return v + w",
+        "return w + v",
+        "v ? w : u",
+        "w ? v : u",
+        "w ? u : v",
+        "return v()",
+        "[1, v, 2]",
+        "{ k: 1, v }",
+        "{ [v]: 1 }",
+        "t`x`",
+        "`1-${v}-${v}`",
+      ]) {
+        expect(code).toContain(substituted);
+      }
+      // indexTarget and indexIndex both end up here.
+      expect(code.match(/return v\[i\];/g)).toHaveLength(2);
+      expect(code.match(/let keep = /g)).toHaveLength(10);
     },
   });
 });

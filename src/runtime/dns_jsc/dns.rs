@@ -20,12 +20,14 @@ use bun_dns::{
 #[cfg(not(windows))]
 use bun_io::FilePoll;
 use bun_io::{self as Async, KeepAlive};
+use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult,
     SystemError, host_fn,
 };
 use bun_paths::{MAX_PATH_BYTES, PathBuffer};
+use bun_ptr::RefPtr;
 #[cfg(windows)]
 use bun_sys::windows::libuv;
 #[cfg(not(windows))]
@@ -154,7 +156,6 @@ mod lib_c {
             cache,
             get_addr_info_request::Backend::CAres,
             Some(this.as_ctx_ptr()),
-            &query,
             global_this,
             PendingCacheField::PendingHostCacheNative,
         );
@@ -243,7 +244,6 @@ pub(crate) mod lib_uv_backend {
             cache,
             get_addr_info_request::Backend::Libc(get_addr_info_request::LibcBackend::uv_uninit()),
             Some(this.as_ctx_ptr()),
-            &query,
             global_this,
             PendingCacheField::PendingHostCacheNative,
         );
@@ -287,9 +287,9 @@ pub(crate) mod lib_uv_backend {
                 // completion would have taken so the pending-cache slot is released
                 // and the promise is rejected with a DNSException.
                 if let Some(resolver) = (*request).resolver_for_caching {
-                    if (*request).cache.pending_cache() {
+                    if let Some(pos) = (*request).pending_slot {
                         (*resolver).drain_pending_host_native(
-                            (*request).cache.pos_in_pending(),
+                            pos,
                             (*request).head.global_this(),
                             rc.int(),
                             &GetAddrInfoResultAny::Addrinfo(ptr::null_mut()),
@@ -331,39 +331,6 @@ fn normalize_dns_name<'a>(name: &'a [u8], backend: &mut GetAddrInfoBackend) -> &
     }
 
     name
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// CacheConfig — packed struct(u16) shared by all request types
-// ──────────────────────────────────────────────────────────────────────────
-
-#[repr(transparent)]
-#[derive(Copy, Clone, Default)]
-pub struct CacheConfig(u16);
-
-impl CacheConfig {
-    #[inline]
-    pub(crate) const fn pending_cache(self) -> bool {
-        self.0 & 0x0001 != 0
-    }
-    #[inline]
-    pub(crate) const fn pos_in_pending(self) -> u8 {
-        ((self.0 >> 2) & 0x1F) as u8
-    }
-    #[inline]
-    pub(crate) const fn new(
-        pending_cache: bool,
-        entry_cache: bool,
-        pos_in_pending: u8,
-        name_len: u16,
-    ) -> Self {
-        Self(
-            (pending_cache as u16)
-                | ((entry_cache as u16) << 1)
-                | (((pos_in_pending as u16) & 0x1F) << 2)
-                | ((name_len & 0x1FF) << 7),
-        )
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -431,7 +398,9 @@ impl<T: CAresRecordType> Drop for OwnedReply<T> {
 pub(crate) struct ResolveInfoRequest<T: CAresRecordType> {
     // TODO: should be Option<&'a Resolver> (struct gets <'a>); raw ptr until reconciled with intrusive RC
     pub resolver_for_caching: Option<*mut Resolver>,
-    pub cache: CacheConfig,
+    /// Slot this request owns in the resolver's pending cache, which same-name
+    /// lookups chain onto until completion drains it; `None` when the cache was full.
+    pub pending_slot: Option<u8>,
     pub head: CAresLookup<T>,
     pub tail: *mut CAresLookup<T>, // INTRUSIVE — points at `head` or last appended node
 }
@@ -480,10 +449,10 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
             resolver_for_caching: resolver,
-            cache: CacheConfig::default(),
+            pending_slot: None,
             head: CAresLookup {
                 // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
-                resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
+                resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
                 global_this: bun_ptr::BackRef::new(global_this),
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,
@@ -505,7 +474,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
                     .pending_cache_for::<T>(cache_field)
                     .index_of(new)
                     .unwrap();
-                (*request).cache = CacheConfig::new(true, false, pos as u8, name.len() as u16);
+                (*request).pending_slot = Some(pos as u8);
                 (*new).lookup = request;
             }
         }
@@ -522,13 +491,8 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching {
                 scopeguard::defer! { (*resolver).request_completed() };
-                if (*this).cache.pending_cache() {
-                    (*resolver).drain_pending_cares::<T>(
-                        (*this).cache.pos_in_pending(),
-                        err_,
-                        timeout,
-                        result,
-                    );
+                if let Some(pos) = (*this).pending_slot {
+                    (*resolver).drain_pending_cares::<T>(pos, err_, timeout, result);
                     return;
                 }
             }
@@ -568,7 +532,8 @@ impl<T: CAresRecordType> c_ares::ResolveHandler for ResolveInfoRequest<T> {
 pub(crate) struct GetHostByAddrInfoRequest {
     // TODO: should be Option<&'a Resolver>; raw ptr for now
     pub resolver_for_caching: Option<*mut Resolver>,
-    pub cache: CacheConfig,
+    /// See [`ResolveInfoRequest::pending_slot`].
+    pub pending_slot: Option<u8>,
     pub head: CAresReverse,
     pub tail: *mut CAresReverse, // INTRUSIVE
 }
@@ -618,10 +583,10 @@ impl GetHostByAddrInfoRequest {
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
             resolver_for_caching: resolver,
-            cache: CacheConfig::default(),
+            pending_slot: None,
             head: CAresReverse {
                 // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
-                resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
+                resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
                 global_this: bun_ptr::BackRef::new(global_this),
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,
@@ -642,7 +607,7 @@ impl GetHostByAddrInfoRequest {
                     .get()
                     .index_of(new)
                     .unwrap();
-                (*request).cache = CacheConfig::new(true, false, pos as u8, name.len() as u16);
+                (*request).pending_slot = Some(pos as u8);
                 (*new).lookup = request;
             }
         }
@@ -658,13 +623,8 @@ impl GetHostByAddrInfoRequest {
         // SAFETY: this is the heap-allocated request c-ares calls back with
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching {
-                if (*this).cache.pending_cache() {
-                    (*resolver).drain_pending_addr_cares(
-                        (*this).cache.pos_in_pending(),
-                        err_,
-                        timeout,
-                        result,
-                    );
+                if let Some(pos) = (*this).pending_slot {
+                    (*resolver).drain_pending_addr_cares(pos, err_, timeout, result);
                     return;
                 }
             }
@@ -818,7 +778,8 @@ impl Drop for CAresNameInfo {
 pub(crate) struct GetNameInfoRequest {
     // TODO: should be Option<&'a Resolver>; raw ptr for now
     pub resolver_for_caching: Option<*mut Resolver>,
-    pub cache: CacheConfig,
+    /// See [`ResolveInfoRequest::pending_slot`].
+    pub pending_slot: Option<u8>,
     pub head: CAresNameInfo,
     pub tail: *mut CAresNameInfo, // INTRUSIVE
 }
@@ -865,10 +826,9 @@ impl GetNameInfoRequest {
     ) -> *mut Self {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
-        let name_len = name.len();
         let request = bun_core::heap::into_raw(Box::new(Self {
             resolver_for_caching: resolver,
-            cache: CacheConfig::default(),
+            pending_slot: None,
             head: CAresNameInfo {
                 global_this: bun_ptr::BackRef::new(global_this),
                 promise: JSPromiseStrong::init(global_this),
@@ -890,7 +850,7 @@ impl GetNameInfoRequest {
                     .get()
                     .index_of(new)
                     .unwrap();
-                (*request).cache = CacheConfig::new(true, false, pos as u8, name_len as u16);
+                (*request).pending_slot = Some(pos as u8);
                 (*new).lookup = request;
             }
         }
@@ -909,13 +869,8 @@ impl GetNameInfoRequest {
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching {
                 scopeguard::defer! { (*resolver).request_completed() };
-                if (*this).cache.pending_cache() {
-                    (*resolver).drain_pending_name_info_cares(
-                        (*this).cache.pos_in_pending(),
-                        err_,
-                        timeout,
-                        result,
-                    );
+                if let Some(pos) = (*this).pending_slot {
+                    (*resolver).drain_pending_name_info_cares(pos, err_, timeout, result);
                     return;
                 }
             }
@@ -957,7 +912,8 @@ pub struct GetAddrInfoRequest {
     pub(crate) backend: get_addr_info_request::Backend,
     // TODO: should be Option<&'a Resolver>; raw ptr for now
     pub(crate) resolver_for_caching: Option<*mut Resolver>,
-    pub(crate) cache: CacheConfig,
+    /// See [`ResolveInfoRequest::pending_slot`].
+    pub(crate) pending_slot: Option<u8>,
     pub(crate) head: DNSLookup,
     pub(crate) tail: *mut DNSLookup, // INTRUSIVE
 }
@@ -989,11 +945,11 @@ pub mod get_addr_info_request {
             // waiters, none of which anything else will touch again.
             unsafe {
                 if let Some(resolver) = (*req).resolver_for_caching {
-                    if (*req).cache.pending_cache() {
-                        drop((*resolver).get_key_host(
-                            (*req).cache.pos_in_pending(),
-                            PendingCacheField::PendingHostCacheNative,
-                        ));
+                    if let Some(pos) = (*req).pending_slot {
+                        drop(
+                            (*resolver)
+                                .get_key_host(pos, PendingCacheField::PendingHostCacheNative),
+                        );
                     }
                 }
                 let mut pending = (*req).head.next;
@@ -1189,7 +1145,6 @@ impl GetAddrInfoRequest {
         cache: CacheHit,
         backend: get_addr_info_request::Backend,
         resolver: Option<*mut Resolver>,
-        query: &GetAddrInfo,
         global_this: &JSGlobalObject,
         cache_field: PendingCacheField,
     ) -> *mut Self {
@@ -1199,10 +1154,10 @@ impl GetAddrInfoRequest {
         let request = bun_core::heap::into_raw(Box::new(Self {
             backend,
             resolver_for_caching: resolver,
-            cache: CacheConfig::default(),
+            pending_slot: None,
             head: DNSLookup {
                 // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
-                resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
+                resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
                 global_this: bun_ptr::BackRef::new(global_this),
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,
@@ -1221,8 +1176,7 @@ impl GetAddrInfoRequest {
                     .pending_host_cache(cache_field)
                     .index_of(new)
                     .unwrap();
-                (*request).cache =
-                    CacheConfig::new(true, false, pos as u8, query.name.len() as u16);
+                (*request).pending_slot = Some(pos as u8);
                 (*new).lookup = request;
             }
         }
@@ -1283,9 +1237,9 @@ impl GetAddrInfoRequest {
             };
 
             if let Some(resolver) = (*this).resolver_for_caching {
-                if (*this).cache.pending_cache() {
+                if let Some(pos) = (*this).pending_slot {
                     (*resolver).drain_pending_host_native(
-                        (*this).cache.pos_in_pending(),
+                        pos,
                         (*this).head.global_this(),
                         status,
                         &any,
@@ -1331,9 +1285,9 @@ impl GetAddrInfoRequest {
                     // at the end of whichever callee receives `any`.
                     let any = GetAddrInfoResultAny::List(result);
                     if let Some(resolver) = (*this).resolver_for_caching {
-                        if (*this).cache.pending_cache() {
+                        if let Some(pos) = (*this).pending_slot {
                             (*resolver).drain_pending_host_native(
-                                (*this).cache.pos_in_pending(),
+                                pos,
                                 (*this).head.global_this(),
                                 0,
                                 &any,
@@ -1351,9 +1305,9 @@ impl GetAddrInfoRequest {
                     err,
                 )) => {
                     if let Some(resolver) = (*this).resolver_for_caching {
-                        if (*this).cache.pending_cache() {
+                        if let Some(pos) = (*this).pending_slot {
                             (*resolver).drain_pending_host_native(
-                                (*this).cache.pos_in_pending(),
+                                pos,
                                 (*this).head.global_this(),
                                 err,
                                 &GetAddrInfoResultAny::Addrinfo(ptr::null_mut()),
@@ -1388,13 +1342,8 @@ impl GetAddrInfoRequest {
         // `resolver` (if set) is the live intrusive-RC ctx stored at init time.
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching {
-                if (*this).cache.pending_cache() {
-                    (*resolver).drain_pending_host_cares(
-                        (*this).cache.pos_in_pending(),
-                        err_,
-                        timeout,
-                        result,
-                    );
+                if let Some(pos) = (*this).pending_slot {
+                    (*resolver).drain_pending_host_cares(pos, err_, timeout, result);
                     return;
                 }
             }
@@ -1434,9 +1383,9 @@ impl GetAddrInfoRequest {
             };
 
             if let Some(resolver) = (*this).resolver_for_caching {
-                if (*this).cache.pending_cache() {
+                if let Some(pos) = (*this).pending_slot {
                     (*resolver).drain_pending_host_native(
-                        (*this).cache.pos_in_pending(),
+                        pos,
                         (*this).head.global_this(),
                         retcode,
                         &result_any,
@@ -1483,7 +1432,7 @@ impl c_ares::AddrInfoHandler for GetAddrInfoRequest {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) struct CAresReverse {
-    pub resolver: Option<bun_ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
+    pub resolver: Option<RefPtr<Resolver>>,
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
     pub poll_ref: KeepAlive,
@@ -1513,7 +1462,7 @@ impl CAresReverse {
         poll_ref.ref_(js_event_loop_ctx());
         bun_core::heap::into_raw(Box::new(Self {
             // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
-            resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
+            resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
             global_this: bun_ptr::BackRef::new(global_this),
             promise: JSPromiseStrong::init(global_this),
             poll_ref,
@@ -1574,7 +1523,7 @@ impl CAresReverse {
             let global_this = (*this).global_this();
             result.settle(&mut promise, global_this);
             if let Some(resolver) = (*this).resolver.as_ref() {
-                // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
+                // RefPtr holds a live ref; request_completed mutates pending_requests counter only.
                 (*resolver.as_ptr()).request_completed();
             }
             Self::destroy(this);
@@ -1599,11 +1548,6 @@ impl Drop for CAresReverse {
     fn drop(&mut self) {
         let _ = self.global_this();
         self.poll_ref.unref(js_event_loop_ctx());
-        // RefPtr (= IntrusiveRc) does NOT deref on Drop; release the ref taken
-        // by `init_ref` in `init()` / `GetHostByAddrInfoRequest::init()`.
-        if let Some(resolver) = self.resolver.take() {
-            resolver.deref();
-        }
         // self.name freed by Box<[u8]> Drop
     }
 }
@@ -1613,7 +1557,7 @@ impl Drop for CAresReverse {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) struct CAresLookup<T: CAresRecordType> {
-    pub resolver: Option<bun_ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
+    pub resolver: Option<RefPtr<Resolver>>,
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
     pub poll_ref: KeepAlive,
@@ -1638,7 +1582,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
         poll_ref.ref_(js_event_loop_ctx());
         Self::new(Self {
             // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
-            resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
+            resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
             global_this: bun_ptr::BackRef::new(global_this),
             promise: JSPromiseStrong::init(global_this),
             poll_ref,
@@ -1712,7 +1656,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
             let global_this = (*this).global_this();
             result.settle(&mut promise, global_this);
             if let Some(resolver) = (*this).resolver.as_ref() {
-                // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
+                // RefPtr holds a live ref; request_completed mutates pending_requests counter only.
                 (*resolver.as_ptr()).request_completed();
             }
             Self::destroy(this);
@@ -1737,11 +1681,6 @@ impl<T: CAresRecordType> Drop for CAresLookup<T> {
     fn drop(&mut self) {
         let _ = self.global_this();
         self.poll_ref.unref(js_event_loop_ctx());
-        // RefPtr (= IntrusiveRc) does NOT deref on Drop; release the ref taken
-        // by `init_ref` in `init()` / `ResolveInfoRequest::init()`.
-        if let Some(resolver) = self.resolver.take() {
-            resolver.deref();
-        }
         // self.name freed by Box<[u8]> Drop
     }
 }
@@ -1751,7 +1690,7 @@ impl<T: CAresRecordType> Drop for CAresLookup<T> {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) struct DNSLookup {
-    pub resolver: Option<bun_ptr::IntrusiveRc<Resolver>>, // SHARED (intrusive — Resolver embeds ref_count and crosses FFI as m_ctx)
+    pub resolver: Option<RefPtr<Resolver>>,
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
     pub allocated: bool,
@@ -1781,7 +1720,7 @@ impl DNSLookup {
 
         bun_core::heap::into_raw(Box::new(Self {
             // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
-            resolver: Some(unsafe { bun_ptr::IntrusiveRc::init_ref(resolver) }),
+            resolver: Some(unsafe { RefPtr::init_ref(resolver) }),
             global_this: bun_ptr::BackRef::new(global_this),
             poll_ref,
             promise: JSPromiseStrong::init(global_this),
@@ -1885,7 +1824,7 @@ impl DNSLookup {
             let global_this = (*this).global_this();
             result.settle(&mut promise, global_this);
             if let Some(resolver) = (*this).resolver.as_ref() {
-                // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
+                // RefPtr holds a live ref; request_completed mutates pending_requests counter only.
                 (*resolver.as_ptr()).request_completed();
             }
             Self::destroy(this);
@@ -1925,8 +1864,8 @@ impl Outcome {
             Err(bun_jsc::JsError::OutOfMemory) => {
                 Outcome::Error(global.create_out_of_memory_error())
             }
-            Err(bun_jsc::JsError::Thrown) => {
-                let e = global.take_exception(bun_jsc::JsError::Thrown);
+            Err(err) => {
+                let e = global.take_exception(err);
                 if e.is_termination_exception() {
                     Outcome::Stopped
                 } else {
@@ -1972,11 +1911,6 @@ impl Drop for DNSLookup {
         self.poll_ref.unref(Async::posix_event_loop::get_vm_ctx(
             Async::AllocatorType::Js,
         ));
-        // RefPtr (= IntrusiveRc) does NOT deref on Drop; release the ref taken
-        // by `init_ref` in `init()` / `GetAddrInfoRequest::init()`.
-        if let Some(resolver) = self.resolver.take() {
-            resolver.deref();
-        }
     }
 }
 
@@ -1993,15 +1927,6 @@ impl GlobalData {
         Box::new(Self {
             resolver: Resolver::setup(vm),
         })
-    }
-}
-
-impl Drop for GlobalData {
-    fn drop(&mut self) {
-        // `Resolver::deinit` ends with `heap::take(this)`, which is wrong for a
-        // value field — open-code the channel teardown so the c-ares state
-        // frees when this box drops in `deinit_runtime_state`.
-        self.resolver.destroy_channel();
     }
 }
 
@@ -2054,7 +1979,7 @@ impl Resolver {
         // Failing the pending queries releases their refs on this resolver from
         // inside `ares_destroy`; hold one so it outlives its own channel close.
         // SAFETY: fn contract.
-        unsafe { (*this).ref_() };
+        let _guard = unsafe { RefPtr::init_ref(this) };
         // SAFETY: alive under the ref just taken.
         let result = if unsafe { (*this).destroy_channel() } {
             SweepResult::Stopped
@@ -2064,11 +1989,8 @@ impl Resolver {
         // `GetAddrInfoRequest`'s EDESTRUCTION path does not call
         // `request_completed()`, so the c-ares timeout timer (and its +1 ref on
         // this resolver plus the uws active-handle bump) can still be linked.
-        // SAFETY: as above; then release our ref (may free `this`).
-        unsafe {
-            (*this).remove_timer();
-            Self::deref(this);
-        }
+        // SAFETY: as above. `_guard` then releases our ref (may free `this`).
+        unsafe { (*this).remove_timer() };
         result
     }
 }
@@ -2655,6 +2577,7 @@ pub mod internal {
         #[cfg(windows)]
         unsafe {
             use bun_sys::windows::ws2_32 as wsa;
+            libuv::uv__winsock_ensure();
             let mut wsa_hints: wsa::addrinfo = bun_core::ffi::zeroed();
             wsa_hints.ai_family = wsa::AF_UNSPEC;
             wsa_hints.ai_socktype = wsa::SOCK_STREAM;
@@ -2884,7 +2807,7 @@ pub mod internal {
                 "expected (hostname: string, addresses: string[])"
             )));
         }
-        let hostname_slice = args[0].to_slice(global)?;
+        let hostname_slice = args[0].to_utf8(global)?;
         let hostname_z = bun::ZBox::from_bytes(hostname_slice.slice());
         let len = args[1].get_length(global)? as usize;
         if len == 0 || len > 64 {
@@ -2896,7 +2819,7 @@ pub mod internal {
         let mut addrs: Vec<SockaddrStorage> = (0..len).map(|_| bun_core::ffi::zeroed()).collect();
         let mut nodes: Vec<AddrInfo> = (0..len).map(|_| bun_core::ffi::zeroed()).collect();
         for i in 0..len {
-            let addr_slice = args[1].get_index(global, i as u32)?.to_slice(global)?;
+            let addr_slice = args[1].get_index(global, i as u32)?.to_utf8(global)?;
             let addr_z = bun::ZBox::from_bytes(addr_slice.slice());
             let node = &mut nodes[i];
             node.ai_socktype = netc::SOCK_STREAM;
@@ -3100,7 +3023,7 @@ pub mod internal {
         let hostname_or_url = arguments[0];
 
         let hostname_slice = if hostname_or_url.is_string() {
-            hostname_or_url.to_slice(global_this)?
+            hostname_or_url.to_utf8(global_this)?
         } else {
             return Err(
                 global_this.throw_invalid_arguments(format_args!("hostname must be a string"))
@@ -3629,8 +3552,9 @@ type PollsMap = ArrayHashMap<c_ares::ares_socket_t, *mut PollType>;
 // cache them across re-entrant FFI calls (the proper fix for the
 // PROVEN_CACHED ref_count miscompile previously laundered with `black_box`).
 #[bun_jsc::JsClass(name = "DNSResolver", no_constructor)]
+#[derive(bun_ptr::RefCounted)]
 pub struct Resolver {
-    pub(crate) ref_count: bun_ptr::RefCount<Resolver>, // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — already Cell-backed
+    pub(crate) ref_count: bun_ptr::RefCount<Resolver>,
     pub(crate) channel: Cell<Option<*mut c_ares::Channel>>, // FFI
     pub(crate) vm: bun_ptr::BackRef<VirtualMachine>, // JSC_BORROW (BACKREF — VirtualMachine outlives the resolver; read-only after init)
     pub(crate) polls: JsCell<PollsMap>,
@@ -3658,29 +3582,9 @@ pub struct Resolver {
 
 bun_event_loop::impl_timer_owner!(Resolver; from_timer_ptr => event_loop_timer);
 
-/// RAII owner for a scoped `Resolver` refcount bump.
-/// Constructed via [`Resolver::ref_scope`]; releases the ref on Drop.
-#[must_use = "dropping immediately releases the scoped ref"]
-struct ResolverRefGuard(*mut Resolver);
-
-impl Drop for ResolverRefGuard {
-    #[inline]
+impl Drop for Resolver {
     fn drop(&mut self) {
-        // SAFETY: `ref_scope` took a ref on a live heap-allocated Resolver, so
-        // `self.0` is still live here and `deref` has valid write provenance.
-        unsafe { Resolver::deref(self.0) };
-    }
-}
-
-// `pub const ref/deref` from RefCount mixin → provided by `bun_ptr::IntrusiveRc<Self>`.
-impl bun_ptr::RefCounted for Resolver {
-    type DestructorCtx = ();
-    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
-        // SAFETY: caller contract — `this` points to a live Self.
-        unsafe { &raw mut (*this).ref_count }
-    }
-    unsafe fn destructor(this: *mut Self, _ctx: ()) {
-        Self::deinit(this);
+        self.destroy_channel();
     }
 }
 
@@ -3887,10 +3791,8 @@ trait OrderJscExt {
 
 impl OrderJscExt for Order {
     fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_jsc::bun_string_jsc::create_utf8_for_js(
-            global_this,
-            <&'static str>::from(self).as_bytes(),
-        )
+        use jsc::StringJsc as _;
+        bun::String::static_(<&'static str>::from(self)).to_js(global_this)
     }
 }
 
@@ -3928,6 +3830,13 @@ impl RecordType {
 }
 
 impl Resolver {
+    /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
+    #[inline]
+    fn ref_guard(&self) -> RefPtr<Self> {
+        // SAFETY: `self` is the live heap allocation.
+        unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
+    }
+
     pub(crate) fn vm(&self) -> &VirtualMachine {
         self.vm.get()
     }
@@ -3937,8 +3846,7 @@ impl Resolver {
         // SAFETY: `self` is live; ref_count uses interior mutability.
         unsafe { bun_ptr::RefCount::<Self>::ref_(std::ptr::from_ref::<Self>(self).cast_mut()) };
     }
-    /// Decrement the intrusive refcount; on last ref, runs `deinit` (frees the
-    /// allocation via `heap::take`).
+    /// Decrement the intrusive refcount; the last ref drops the Box.
     ///
     /// Takes a raw `*mut Self` (not `&self`) because the final deref must write
     /// through / deallocate `*this`; deriving a `*mut` from a `&self` borrow
@@ -3950,26 +3858,8 @@ impl Resolver {
     /// `heap::alloc` (see `init`). If this call may drop the last reference,
     /// the caller must not hold any live `&`/`&mut` borrow of `*this`.
     pub unsafe fn deref(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live; `RefCount::deref` invokes
-        // `RefCounted::destructor` (→ `Self::deinit`) on the 1→0 transition.
+        // SAFETY: caller contract — `this` is live; the 1→0 transition drops the Box.
         unsafe { bun_ptr::RefCount::<Self>::deref(this) };
-    }
-
-    /// RAII bracket: bump the intrusive refcount now, drop it on guard Drop,
-    /// so re-entrant c-ares callbacks that release their own refs cannot free
-    /// `*this` mid-call.
-    ///
-    /// Captures a raw `*mut` (not `&self`) so the guard does not borrow the
-    /// resolver — gives `deref` proper write provenance for the final
-    /// `heap::take` in `deinit`.
-    ///
-    /// # Safety
-    /// `this` must point to a live heap-allocated `Resolver` (see `init`).
-    #[inline]
-    unsafe fn ref_scope(this: *mut Self) -> ResolverRefGuard {
-        // SAFETY: caller contract — `this` is live; `ref_()` uses interior mutability.
-        unsafe { (*this).ref_() };
-        ResolverRefGuard(this)
     }
 
     pub(crate) fn setup(vm: &VirtualMachine) -> Self {
@@ -4006,25 +3896,9 @@ impl Resolver {
         bun_core::heap::into_raw(Box::new(Self::setup(vm)))
     }
 
-    pub fn finalize(self: Box<Self>) {
-        // Refcounted: release the JS wrapper's +1; allocation may outlive this
-        // call if other refs remain, so hand ownership back to the raw refcount.
-        // SAFETY: `self` is the heap allocation from `init`; `deref` frees on count==0.
-        unsafe { Self::deref(Box::into_raw(self)) };
-    }
-
-    fn deinit(this: *mut Self) {
-        // SAFETY: `this` is the heap allocation from `init()`; refcount has hit
-        // zero (sole caller is `Self::deref`), so we hold exclusive ownership.
-        unsafe {
-            (*this).destroy_channel();
-            drop(bun_core::heap::take(this));
-        }
-    }
-
     // ─── R-2 interior-mutability helpers ────────────────────────────────────
 
-    /// `self`'s address as `*mut Self` for c-ares / `FilePoll` / `IntrusiveRc`
+    /// `self`'s address as `*mut Self` for c-ares / `FilePoll` / `RefPtr`
     /// ctx slots and `Self::deref`. Callbacks deref it as `&*const` (shared) —
     /// see `on_dns_poll`, `on_cares_complete` — so no write provenance is
     /// required; the `*mut` spelling is purely to match the C signature. All
@@ -4172,8 +4046,8 @@ impl Resolver {
         scopeguard::defer! {
             // SAFETY: `this` is the heap allocation from `init`. This releases
             // the ref taken by `add_timer`. Every caller holds at least one
-            // other ref for the duration of this call (an `IntrusiveRc`, a
-            // `ref_scope` guard, or the global-resolver permanent pin), so this
+            // other ref for the duration of this call (a `RefPtr` or the
+            // global-resolver permanent pin), so this
             // `deref` cannot reach 0 while `&self` is live.
             unsafe {
                 let uws_loop = (*this).vm().uws_loop();
@@ -4298,8 +4172,7 @@ impl Resolver {
         result: Option<OwnedReply<T>>,
     ) {
         // cache_name = format!("pending_{}_cache_cares", T::TYPE_NAME)
-        // SAFETY: `self` is the live heap allocation; ref_scope keeps count > 0 across re-entrant callbacks.
-        let _g = unsafe { Self::ref_scope(self.as_ctx_ptr()) };
+        let _guard = self.ref_guard();
 
         let key = {
             let cache = self.pending_cache_for::<T>(T::CACHE_FIELD);
@@ -4367,8 +4240,7 @@ impl Resolver {
     ) {
         let key = self.get_key_host(index, PendingCacheField::PendingHostCacheCares);
 
-        // SAFETY: `self` is the live heap allocation; ref_scope keeps count > 0 across re-entrant callbacks.
-        let _g = unsafe { Self::ref_scope(self.as_ctx_ptr()) };
+        let _guard = self.ref_guard();
 
         let Some(addr) = result else {
             // SAFETY: `key.lookup` is the heap-allocated request stored in the
@@ -4437,8 +4309,7 @@ impl Resolver {
         bun_output::scoped_log!(DNSResolver, "drainPendingHostNative");
         let key = self.get_key_host(index, PendingCacheField::PendingHostCacheNative);
 
-        // SAFETY: `self` is the live heap allocation; ref_scope keeps count > 0 across re-entrant callbacks.
-        let _g = unsafe { Self::ref_scope(self.as_ctx_ptr()) };
+        let _guard = self.ref_guard();
 
         let mut array: Outcome = match super::options_jsc::result_any_to_js(result, global_object)
             .transpose()
@@ -4509,8 +4380,7 @@ impl Resolver {
     ) {
         let key = self.get_key_addr(index);
 
-        // SAFETY: `self` is the live heap allocation; ref_scope keeps count > 0 across re-entrant callbacks.
-        let _g = unsafe { Self::ref_scope(self.as_ctx_ptr()) };
+        let _guard = self.ref_guard();
 
         let Some(addr) = result else {
             // SAFETY: `key.lookup` is the heap-allocated request stored in the
@@ -4578,8 +4448,7 @@ impl Resolver {
     ) {
         let key = self.get_key_nameinfo(index);
 
-        // SAFETY: `self` is the live heap allocation; ref_scope keeps count > 0 across re-entrant callbacks.
-        let _g = unsafe { Self::ref_scope(self.as_ctx_ptr()) };
+        let _guard = self.ref_guard();
 
         let Some(mut name_info) = result else {
             // SAFETY: `key.lookup` is the heap-allocated request stored in the
@@ -4716,8 +4585,8 @@ impl Resolver {
             ChannelResult::Err(err) => {
                 let system_error = SystemError {
                     errno: -1,
-                    code: bun_core::String::static_(err.code()).into(),
-                    message: bun_core::String::static_(err.label()).into(),
+                    code: bun_core::String::static_(err.code()),
+                    message: bun_core::String::static_(err.label()),
                     ..Default::default()
                 };
                 Err(global_this.throw_value(system_error.to_error_instance(global_this)))
@@ -4738,14 +4607,14 @@ impl Resolver {
         // via `from_poll` (libuv guarantees the handle outlives this callback).
         // `parent` is the heap-allocated Resolver back-ptr (set in
         // `on_dns_socket_state`); it is kept alive across `Channel::process` by the
-        // `ref_()`/`_deref` bracket below. `channel` is non-null because c-ares
+        // `_guard` below. `channel` is non-null because c-ares
         // must have been initialized for this poll callback to fire.
         unsafe {
             let parent: *mut Resolver = (*poll).parent;
             let vm = (*parent).vm.get();
             let _exit = vm.enter_event_loop_scope();
             // SAFETY: `parent` is the live heap-allocated Resolver back-ptr.
-            let _deref = Self::ref_scope(parent);
+            let _guard = RefPtr::init_ref(parent);
             // channel must be non-null here as c_ares must have been initialized if we're receiving callbacks
             let channel = (*parent).channel.get().unwrap();
             if status < 0 {
@@ -4799,8 +4668,7 @@ impl Resolver {
             return;
         };
 
-        // SAFETY: `self` is the heap allocation from `init`; ref_scope keeps count > 0 across re-entrant callbacks.
-        let _deref = unsafe { Self::ref_scope(self.as_ctx_ptr()) };
+        let _guard = self.ref_guard();
 
         // SAFETY: `channel` is the live c-ares channel owned by `self`; no `&mut`
         // to `*self` is held across this re-entrant call (all fields are
@@ -4993,12 +4861,11 @@ impl Resolver {
                 {
                     break 'brk RecordType::DEFAULT;
                 }
-                // SAFETY: `to_js_string` returns a live *mut JSString rooted by `record_type_value`.
-                let record_type_str = record_type_value.to_js_string(global_this)?;
-                if record_type_str.length() == 0 {
+                let record_type_view = record_type_value.to_js_string_view(global_this)?;
+                if record_type_view.is_empty() {
                     break 'brk RecordType::DEFAULT;
                 }
-                match RECORD_TYPE_MAP.get(record_type_str.to_slice(global_this).slice()) {
+                match RECORD_TYPE_MAP.get(record_type_view.to_utf8().slice()) {
                     Some(r) => *r,
                     None => {
                         return Err(global_this.throw_invalid_argument_property_value(
@@ -5015,16 +4882,15 @@ impl Resolver {
         if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
             return Err(global_this.throw_invalid_argument_type("resolve", "name", "string"));
         }
-        // SAFETY: `to_js_string` returns a live *mut JSString rooted by `name_value`.
-        let name_str = name_value.to_js_string(global_this)?;
-        if name_str.length() == 0 {
+        let name_view = name_value.to_js_string_view(global_this)?;
+        let name = name_view.to_utf8();
+        if name.slice().is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "resolve",
                 "name",
                 "non-empty string",
             ));
         }
-        let name = name_str.to_slice_clone(global_this)?;
 
         match record_type {
             RecordType::A => self.do_resolve_cares::<AHostentWithTtls>(name.slice(), global_this),
@@ -5079,9 +4945,9 @@ impl Resolver {
         if ip_value.is_empty_or_undefined_or_null() || !ip_value.is_string() {
             return Err(global_this.throw_invalid_argument_type("reverse", "ip", "string"));
         }
-        // SAFETY: `to_js_string` returns a live *mut JSString rooted by `ip_value`.
-        let ip_str = ip_value.to_js_string(global_this)?;
-        if ip_str.length() == 0 {
+        let ip_view = ip_value.to_js_string_view(global_this)?;
+        let ip_slice = ip_view.to_utf8();
+        if ip_slice.slice().is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "reverse",
                 "ip",
@@ -5089,7 +4955,6 @@ impl Resolver {
             ));
         }
 
-        let ip_slice = ip_str.to_slice_clone(global_this)?;
         let ip = ip_slice.slice();
         let channel: *mut c_ares::Channel = match self.get_channel() {
             ChannelResult::Result(res) => res,
@@ -5149,9 +5014,9 @@ impl Resolver {
         if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
             return Err(global_this.throw_invalid_argument_type("lookup", "hostname", "string"));
         }
-        // SAFETY: `to_js_string` returns a live *mut JSString rooted by `name_value`.
-        let name_str = name_value.to_js_string(global_this)?;
-        if name_str.length() == 0 {
+        let name_view = name_value.to_js_string_view(global_this)?;
+        let name = name_view.to_utf8();
+        if name.slice().is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "lookup",
                 "hostname",
@@ -5191,7 +5056,6 @@ impl Resolver {
             };
         }
 
-        let name = name_str.to_slice(global_this);
         let resolver = global_resolver(global_this);
 
         resolver.do_lookup(name.slice(), port, options, global_this)
@@ -5288,16 +5152,15 @@ macro_rules! resolve_record_fn {
             if name_value.is_empty_or_undefined_or_null() || !name_value.is_string() {
                 return Err(global_this.throw_invalid_argument_type($jsname, "hostname", "string"));
             }
-            // SAFETY: `to_js_string` returns a live *mut JSString rooted by `name_value`.
-            let name_str = name_value.to_js_string(global_this)?;
-            if !$allow_empty && name_str.length() == 0 {
+            let name_view = name_value.to_js_string_view(global_this)?;
+            let name = name_view.to_utf8();
+            if !$allow_empty && name.slice().is_empty() {
                 return Err(global_this.throw_invalid_argument_type(
                     $jsname,
                     "hostname",
                     "non-empty string",
                 ));
             }
-            let name = name_str.to_slice_clone(global_this)?;
             self.do_resolve_cares::<$ty>(name.slice(), global_this)
         }
     };
@@ -5469,9 +5332,9 @@ impl Resolver {
                 let syscall = bun_core::String::create_atom(&query.name);
                 let system_error = SystemError {
                     errno: -1,
-                    code: bun_core::String::static_(err.code()).into(),
-                    message: bun_core::String::static_(err.label()).into(),
-                    syscall: syscall.into(),
+                    code: bun_core::String::static_(err.code()),
+                    message: bun_core::String::static_(err.label()),
+                    syscall,
                     ..Default::default()
                 };
                 return Err(global_this.throw_value(system_error.to_error_instance(global_this)));
@@ -5495,7 +5358,6 @@ impl Resolver {
             cache,
             get_addr_info_request::Backend::CAres,
             Some(self.as_ctx_ptr()),
-            query,
             global_this,
             PendingCacheField::PendingHostCacheCares,
         );
@@ -5573,16 +5435,12 @@ impl Resolver {
 
             // size = strlen(buf+1) + 1
             let size = ip.len() + 1;
-            // `bun_core::ZigString` lacks `with_encoding`/`to_js` (those live
-            // on `bun_jsc::zig_string::ZigString`). The formatted bytes here are pure
-            // ASCII (IP address + optional port), so `with_encoding()` would be a no-op
-            // anyway — borrow as a `bun_core::String` and hand to JS.
             use jsc::StringJsc as _;
             if port == IANA_DNS_PORT {
                 values.put_index(
                     global_this,
                     i,
-                    bun_core::String::borrow_utf8(&buf[1..size]).to_js(global_this)?,
+                    bun_string_jsc::create_utf8_for_js(global_this, &buf[1..size])?,
                 )?;
             } else if family == netc::AF_INET6 {
                 buf[0] = b'[';
@@ -5611,7 +5469,7 @@ impl Resolver {
                 values.put_index(
                     global_this,
                     i,
-                    bun_core::String::borrow_utf8(&buf[1..size + port_len]).to_js(global_this)?,
+                    bun_string_jsc::create_utf8_for_js(global_this, &buf[1..size + port_len])?,
                 )?;
             }
 
@@ -5697,22 +5555,13 @@ impl Resolver {
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<c_int> {
-        let str_ = value.to_slice(global_this)?;
-        // ZigStringSlice has no `into_owned_slice_z`; build the
-        // NUL-terminated buffer inline.
-        let bytes = str_.slice();
-        let mut slice = bytes.to_vec();
-        slice.push(0);
+        let address = value.to_bun_string(global_this)?.to_owned_slice_z();
 
         let mut addr = [0u8; 16];
 
-        // SAFETY: FFI; `slice` is NUL-terminated above; `addr` is a 16-byte stack buffer.
+        // SAFETY: FFI; `address` is NUL-terminated; `addr` is a 16-byte stack buffer.
         if unsafe {
-            c_ares::ares_inet_pton(
-                c_ares::AF::INET,
-                slice.as_ptr().cast::<c_char>(),
-                addr.as_mut_ptr().cast(),
-            )
+            c_ares::ares_inet_pton(c_ares::AF::INET, address.as_ptr(), addr.as_mut_ptr().cast())
         } == 1
         {
             let ip = u32::from_be_bytes([addr[0], addr[1], addr[2], addr[3]]);
@@ -5721,11 +5570,11 @@ impl Resolver {
             return Ok(c_ares::AF::INET);
         }
 
-        // SAFETY: FFI; `slice` is NUL-terminated above; `addr` is a 16-byte stack buffer.
+        // SAFETY: FFI; `address` is NUL-terminated; `addr` is a 16-byte stack buffer.
         if unsafe {
             c_ares::ares_inet_pton(
                 c_ares::AF::INET6,
-                slice.as_ptr().cast::<c_char>(),
+                address.as_ptr(),
                 addr.as_mut_ptr().cast(),
             )
         } == 1
@@ -5739,7 +5588,7 @@ impl Resolver {
             global_this,
             format_args!(
                 "Invalid IP address: \"{}\"",
-                bstr::BStr::new(&slice[..slice.len() - 1])
+                bstr::BStr::new(address.as_bytes())
             ),
         ))
     }
@@ -5811,11 +5660,9 @@ impl Resolver {
                 );
             }
 
-            let address_string = bun_core::OwnedString::new(
-                triple
-                    .get_index(global_this, 1)?
-                    .to_bun_string(global_this)?,
-            );
+            let address_string = triple
+                .get_index(global_this, 1)?
+                .to_bun_string(global_this)?;
             let address_slice = address_string.to_owned_slice();
 
             let mut address_buffer = vec![0u8; address_slice.len() + 1];
@@ -5963,15 +5810,15 @@ impl Resolver {
                 "string",
             ));
         }
-        let addr_str = addr_value.to_js_string(global_this)?;
-        if addr_str.length() == 0 {
+        let addr_view = addr_value.to_js_string_view(global_this)?;
+        if addr_view.is_empty() {
             return Err(global_this.throw_invalid_argument_type(
                 "lookupService",
                 "address",
                 "non-empty string",
             ));
         }
-        let addr_slice = addr_str.to_slice(global_this);
+        let addr_slice = addr_view.to_utf8();
         let addr_s = addr_slice.slice();
 
         let port_value = arguments[1];

@@ -8,7 +8,7 @@ use crate::Error as BunError;
 use bun_alloc::AllocError;
 use bun_collections::{
     ArrayHashMap, ArrayIdentityContext, ArrayIdentityContextU64, DynamicBitSet,
-    HashMap as BunHashMap, IdentityContext, LinearFifo, linear_fifo::DynamicBuffer,
+    HashMap as BunHashMap, IdentityContext, LinearFifo, index_sort, linear_fifo::DynamicBuffer,
 };
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
@@ -180,6 +180,12 @@ pub struct Lockfile {
     pub(crate) scripts: Scripts,
     pub(crate) workspace_paths: NameHashMap,
     pub workspace_versions: VersionHashMap,
+    /// Workspaces (by name hash) that must get a self-contained node_modules: those
+    /// listed in the root manifest's `workspaces.selfContained` and those declaring
+    /// `installConfig.hoistingLimits = "workspaces"`. Mirrored from the manifests on
+    /// every install and persisted per workspace in bun.lock (`"hoistingLimits"`), so a
+    /// tree rebuilt from the lockfile is hoisted the same way.
+    pub self_contained_workspaces: ArrayHashMap<PackageNameHash, (), ArrayIdentityContextU64>,
 
     /// Optional because `trustedDependencies` in package.json might be an
     /// empty list or it might not exist
@@ -684,6 +690,7 @@ impl Lockfile {
         self.trusted_dependencies = None;
         self.workspace_paths = NameHashMap::default();
         self.workspace_versions = VersionHashMap::default();
+        self.self_contained_workspaces = ArrayHashMap::default();
         self.overrides = OverrideMap::default();
         self.catalogs = CatalogMap::default();
         self.patched_dependencies = PatchedDependenciesMap::default();
@@ -782,6 +789,16 @@ impl Lockfile {
         self.get_workspace_pkg_if_workspace_dep(id) != invalid_package_id
     }
 
+    /// `None` for the edges `enqueue_dependency_to_root` appends outside of any package.
+    pub(crate) fn get_parent_pkg_of_dependency(&self, id: DependencyID) -> Option<PackageID> {
+        for (pkg_id, dependencies) in self.packages.items_dependencies().iter().enumerate() {
+            if dependencies.contains(id) {
+                return Some(PackageID::try_from(pkg_id).expect("int cast"));
+            }
+        }
+        None
+    }
+
     pub(crate) fn get_workspace_pkg_if_workspace_dep(&self, id: DependencyID) -> PackageID {
         let packages = self.packages.slice();
         let resolutions = packages.items_resolution();
@@ -800,6 +817,47 @@ impl Lockfile {
         }
 
         invalid_package_id
+    }
+
+    /// Workspace packages whose node_modules must be self-contained: listed in the
+    /// root manifest's `workspaces.selfContained` (by path or name) or declaring
+    /// `"installConfig": { "hoistingLimits": "workspaces" }` in their own manifest.
+    /// Both are recorded in `self_contained_workspaces` while the workspaces are
+    /// parsed (and persisted per workspace in bun.lock).
+    pub(crate) fn self_contained_workspace_ids(&self) -> Vec<PackageID> {
+        if self.self_contained_workspaces.count() == 0 {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        let pkgs = self.packages.slice();
+        for (i, res) in pkgs.items_resolution().iter().enumerate() {
+            if res.tag == crate::resolution::Tag::Workspace
+                && self
+                    .self_contained_workspaces
+                    .contains(&pkgs.items_name_hash()[i])
+            {
+                out.push(i as PackageID);
+            }
+        }
+        out
+    }
+
+    /// The workspace (or root, 0) package that owns tree `id`: walk up until a
+    /// workspace/root tree is reached and return the package it stands for.
+    pub(crate) fn owning_workspace_of_tree(&self, mut id: tree::Id) -> PackageID {
+        while id != 0 && (id as usize) < self.buffers.trees.len() {
+            let t = &self.buffers.trees[id as usize];
+            let dep_id = t.dependency_id;
+            if (dep_id as usize) < self.buffers.dependencies.len()
+                && self.buffers.dependencies[dep_id as usize]
+                    .behavior
+                    .is_workspace()
+            {
+                return self.buffers.resolutions[dep_id as usize];
+            }
+            id = t.parent;
+        }
+        0
     }
 
     /// Does this tree id belong to a workspace (including workspace root)?
@@ -969,9 +1027,11 @@ impl Lockfile {
 
         let mut package_id_mapping = vec![invalid_package_id; old.packages.len()];
         let clone_queue_ = PendingResolutions::new();
+        // A frozen install never saves, so dropping peer-held targets could only fail its check.
+        let keep_optional_peer_targets =
+            manager.options.enable.frozen_lockfile() || !manager.summary.changes_resolutions();
         // Explicit `&mut *` reborrows so `old`/`manager`/`new` are
         // released back to this scope once `cloner` is dropped.
-        let keep_optional_peer_targets = !manager.summary.changes_resolutions();
         let mut cloner = Cloner {
             old: &mut *old,
             lockfile: &mut *new,
@@ -982,7 +1042,6 @@ impl Lockfile {
             log,
             old_preinstall_state,
             manager: &mut *manager,
-            trees_count: 1,
         };
 
         // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
@@ -1077,6 +1136,9 @@ impl Lockfile {
 
                 new.workspace_versions.re_index()?;
                 new.workspace_paths.re_index()?;
+            }
+            for key in old.self_contained_workspaces.keys() {
+                new.self_contained_workspaces.put(*key, ())?;
             }
         }
 
@@ -1209,7 +1271,6 @@ pub struct Cloner<'a> {
     pub lockfile: &'a mut Lockfile,
     pub(crate) old: &'a mut Lockfile,
     pub(crate) mapping: &'a mut [PackageID],
-    pub(crate) trees_count: u32,
     pub(crate) log: &'a mut bun_ast::Log,
     pub(crate) old_preinstall_state: Vec<Install::PreinstallState>,
     pub(crate) manager: &'a mut PackageManager,
@@ -1310,8 +1371,10 @@ impl Lockfile {
         // `ParentRef::new` captures `SharedReadOnly` provenance from `&*self`,
         // which is exactly what `Builder` needs (it only ever `Deref`s); the
         // `Builder` does not outlive this `&mut self` borrow.
+        let self_contained = self.self_contained_workspace_ids();
         let lockfile_ref = bun_ptr::ParentRef::<Lockfile>::new(&*self);
         let mut builder = tree::Builder::<METHOD> {
+            self_contained,
             queue: tree::TreeFiller::init(),
             resolution_lists: slice.items_resolutions(),
             resolutions: self.buffers.resolutions.as_mut_slice(),
@@ -1376,6 +1439,8 @@ impl Lockfile {
         {
             return Ok(());
         }
+        // Otherwise the command loading this lockfile would dedupe its own fetch of a manifest this pass failed to get.
+        manager.network_dedupe_map.clear();
 
         let cache_ctx = manager.manifest_disk_cache_ctx();
         // `manifests` is a field of `manager`, and a `string_builder` is
@@ -1429,7 +1494,6 @@ impl Lockfile {
                         scope,
                         pkg_name_str,
                         pkg_name_hash,
-                        Install::ManifestLoad::LoadFromMemoryFallbackToDisk,
                         false,
                     ) else {
                         continue;
@@ -1639,7 +1703,7 @@ impl<'a> Printer<'a> {
         match Self::print_with_lockfile(&lockfile, format, writer) {
             Ok(()) => {}
             Err(crate::Error::Alloc(bun_alloc::AllocError)) => bun_core::out_of_memory(),
-            Err(crate::Error::BrokenPipe) | Err(crate::Error::WriteFailed) => return Ok(()),
+            Err(crate::Error::WriteFailed) => return Ok(()),
             Err(e) => return Err(e),
         }
         Output::flush();
@@ -1973,6 +2037,7 @@ impl Lockfile {
             trusted_dependencies: None,
             workspace_paths: NameHashMap::default(),
             workspace_versions: VersionHashMap::default(),
+            self_contained_workspaces: ArrayHashMap::default(),
             overrides: OverrideMap::default(),
             catalogs: CatalogMap::default(),
             meta_hash: ZERO_HASH,
@@ -2363,12 +2428,6 @@ impl Scratch {
     }
 }
 
-impl Default for Scratch {
-    fn default() -> Self {
-        Self::init()
-    }
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 // LockfileFields — disjoint split borrow alongside StringBuilder
 // ────────────────────────────────────────────────────────────────────────────
@@ -2664,8 +2723,12 @@ impl<'a> EqlSorter<'a> {
 }
 
 impl Lockfile {
-    /// `cut_off_pkg_id` should be removed when we stop appending packages to lockfile during install step
-    pub(crate) fn eql(&self, r: &Lockfile, cut_off_pkg_id: usize) -> Result<bool, AllocError> {
+    /// A placement of `r` bound past `r_loaded_package_count` was rebound after loading: a change.
+    pub(crate) fn eql(
+        &self,
+        r: &Lockfile,
+        r_loaded_package_count: usize,
+    ) -> Result<bool, AllocError> {
         let l: &Lockfile = self;
         let l_hoisted_deps = l.buffers.hoisted_dependencies.as_slice();
         let r_hoisted_deps = r.buffers.hoisted_dependencies.as_slice();
@@ -2704,7 +2767,7 @@ impl Lockfile {
                     continue;
                 }
                 let l_pkg_id = l.buffers.resolutions[l_dep_id as usize];
-                if l_pkg_id == invalid_package_id || l_pkg_id as usize >= cut_off_pkg_id {
+                if l_pkg_id == invalid_package_id {
                     continue;
                 }
                 sort_buf.push(PathToId {
@@ -2732,8 +2795,11 @@ impl Lockfile {
                     continue;
                 }
                 let r_pkg_id = r.buffers.resolutions[r_dep_id as usize];
-                if r_pkg_id == invalid_package_id || r_pkg_id as usize >= cut_off_pkg_id {
+                if r_pkg_id == invalid_package_id {
                     continue;
+                }
+                if r_pkg_id as usize >= r_loaded_package_count {
+                    return Ok(false);
                 }
                 sort_buf.push(PathToId {
                     pkg_id: r_pkg_id,
@@ -2766,7 +2832,7 @@ impl Lockfile {
                 string_buf: l_string_buf,
                 pkg_resolutions: l_pkg_resolutions,
             };
-            l_buf.sort_unstable_by(|a, b| sorter.order(*a, *b));
+            index_sort::sort_slice_unstable_by(l_buf, |a, b| sorter.order(*a, *b));
         }
 
         {
@@ -2775,7 +2841,7 @@ impl Lockfile {
                 string_buf: r_string_buf,
                 pkg_resolutions: r_pkg_resolutions,
             };
-            r_buf.sort_unstable_by(|a, b| sorter.order(*a, *b));
+            index_sort::sort_slice_unstable_by(r_buf, |a, b| sorter.order(*a, *b));
         }
 
         let l_extern_strings = l.buffers.extern_strings.as_slice();
@@ -2908,13 +2974,39 @@ impl Lockfile {
             string_builder.count(SCRIPTS_END);
         }
 
+        // Self-contained workspaces change the hoisted layout without changing any
+        // resolution; include them (sorted, only when present) so bun.lockb's
+        // frozen-lockfile check notices. Text lockfiles compare the tree itself.
+        const SELF_CONTAINED_BEGIN: &[u8] = b"\n-- BEGIN SELF-CONTAINED WORKSPACES --\n";
+        let mut self_contained_names: Vec<&[u8]> = Vec::new();
+        if self.self_contained_workspaces.count() > 0 {
+            for i in 0..packages_len {
+                if resolutions[i].tag == crate::resolution::Tag::Workspace
+                    && self
+                        .self_contained_workspaces
+                        .contains(&self.packages.items_name_hash()[i])
+                {
+                    self_contained_names.push(names[i].slice(bytes));
+                }
+            }
+            self_contained_names.sort_unstable();
+            if !self_contained_names.is_empty() {
+                string_builder.count(SELF_CONTAINED_BEGIN);
+                for n in &self_contained_names {
+                    string_builder.fmt_count(format_args!("{}\n", bstr::BStr::new(n)));
+                }
+            }
+        }
+
         {
             let alphabetizer = package::Alphabetizer::<u64> {
                 names: names.into(),
                 buf: bytes.into(),
                 resolutions: resolutions.into(),
             };
-            alphabetized_names.sort_unstable_by(|a, b| alphabetizer.order(*a, *b));
+            index_sort::sort_indices_unstable(&mut alphabetized_names, &mut |a, b| {
+                alphabetizer.order(a, b)
+            });
         }
 
         string_builder.allocate().expect("unreachable");
@@ -2942,6 +3034,13 @@ impl Lockfile {
                 }
             }
             let _ = string_builder.append(SCRIPTS_END);
+        }
+
+        if !self_contained_names.is_empty() {
+            let _ = string_builder.append(SELF_CONTAINED_BEGIN);
+            for n in &self_contained_names {
+                let _ = string_builder.fmt(format_args!("{}\n", bstr::BStr::new(n)));
+            }
         }
 
         let _ = string_builder.append(HASH_SUFFIX);
@@ -3034,7 +3133,7 @@ pub static DEFAULT_TRUSTED_DEPENDENCIES_LIST: std::sync::LazyLock<Vec<&'static [
     std::sync::LazyLock::new(|| {
         const DATA: &[u8] = include_bytes!("default-trusted-dependencies.txt");
         let mut names: Vec<&'static [u8]> = strings::tokenize_any(DATA, b" \r\n\t").collect();
-        names.sort_unstable();
+        index_sort::sort_slice_unstable_by(&mut names, |a, b| a.cmp(b));
         debug_assert!(
             names.len() <= MAX_DEFAULT_TRUSTED_DEPENDENCIES,
             "default-trusted-dependencies.txt is too large, please increase \

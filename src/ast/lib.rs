@@ -84,6 +84,20 @@ pub enum ImportKind {
 // - packages/bun-types/bun.d.ts
 
 impl ImportKind {
+    /// With code splitting, whether an edge of this kind puts its target in a
+    /// chunk of its own that is loaded when the expression runs, rather than
+    /// in the importer's static closure. `require()` qualifies only when the
+    /// output runs in Bun, which loads the chunk synchronously through
+    /// `import.meta.require`.
+    #[inline]
+    pub fn can_be_lazy_chunk(self, target_is_bun: bool) -> bool {
+        match self {
+            ImportKind::Dynamic => true,
+            ImportKind::Require => target_is_bun,
+            _ => false,
+        }
+    }
+
     #[inline]
     pub fn label(self) -> &'static [u8] {
         match self {
@@ -617,14 +631,14 @@ pub struct Location {
     // - 4-byte fields last: i32
     // This eliminates padding between differently-sized fields.
     //
-    // `file` / `line_text` are `Cow` (not `Str`) because
+    // `file` / `namespace` / `line_text` are `Cow` (not `Str`) because
     // `Location::clone()` must deep-dupe them so a
     // `BuildMessage`/`ResolveMessage` that outlives the
-    // `Source.contents` it borrowed from doesn't read poisoned memory. The
+    // `Source` it borrowed from doesn't read poisoned memory. The
     // borrowed arm covers the common case where the slice points into
-    // arena-owned source text.
+    // the bundle's arena.
     pub file: Cow<'static, [u8]>,
-    pub namespace: Str,
+    pub namespace: Cow<'static, [u8]>,
     /// Text on the line, avoiding the need to refetch the source code
     pub line_text: Option<Cow<'static, [u8]>>,
     /// Number of bytes this location should highlight.
@@ -643,9 +657,9 @@ pub struct Location {
     pub column: i32,
 }
 
-// NOT `#[derive(Clone)]`. `file` / `line_text` are
+// NOT `#[derive(Clone)]`. `file` / `namespace` / `line_text` are
 // `Cow<'static, [u8]>` whose `Borrowed` arm may carry a lifetime-erased view
-// into `Source.contents` (see `init_or_null`, `css_parser.rs`, `error.rs`,
+// into a `Source` (see `init_or_null`, `css_parser.rs`, `error.rs`,
 // `JSBundler.rs`). The derived `Cow::clone` would re-borrow that pointer, so a
 // `BuildMessage` cloned via `Option<Location>::clone()` / `Vec<Data>::clone()`
 // could outlive the source buffer and read poisoned memory. Instead,
@@ -654,7 +668,7 @@ impl Clone for Location {
     fn clone(&self) -> Self {
         Location {
             file: Cow::Owned(self.file.to_vec()),
-            namespace: self.namespace,
+            namespace: Cow::Owned(self.namespace.to_vec()),
             line: self.line,
             column: self.column,
             length: self.length,
@@ -668,7 +682,7 @@ impl Default for Location {
     fn default() -> Self {
         Location {
             file: Cow::Borrowed(b""),
-            namespace: b"file",
+            namespace: Cow::Borrowed(b"file"),
             line_text: None,
             length: 0,
             offset: 0,
@@ -691,7 +705,7 @@ impl Location {
 
     pub fn count(&self, builder: &mut StringBuilder) {
         builder.count(self.file.as_ref().into_str());
-        builder.count(self.namespace);
+        builder.count(self.namespace.as_ref().into_str());
         if let Some(text) = &self.line_text {
             builder.count(text.as_ref().into_str());
         }
@@ -713,7 +727,7 @@ impl Location {
         // single-buffer packing.
         Location {
             file: Cow::Owned(self.file.to_vec()),
-            namespace: self.namespace,
+            namespace: Cow::Owned(self.namespace.to_vec()),
             line: self.line,
             column: self.column,
             length: self.length,
@@ -734,7 +748,7 @@ impl Location {
     ) -> Location {
         Location {
             file: Cow::Borrowed(file),
-            namespace,
+            namespace: Cow::Borrowed(namespace),
             line,
             column,
             length: length as usize,
@@ -767,7 +781,7 @@ impl Location {
             if r.is_empty() {
                 return Some(Location {
                     file: Cow::Borrowed(source.path.text),
-                    namespace: source.path.namespace,
+                    namespace: Cow::Borrowed(source.path.namespace),
                     line: -1,
                     column: -1,
                     length: 0,
@@ -802,7 +816,7 @@ impl Location {
 
             return Some(Location {
                 file: Cow::Borrowed(source.path.text),
-                namespace: source.path.namespace,
+                namespace: Cow::Borrowed(source.path.namespace),
                 line: usize2loc(data.line_count).start,
                 column: usize2loc(data.column_count).start,
                 length: if r.len > -1 {
@@ -1077,15 +1091,17 @@ impl BabyString {
         (self.0 >> 16) as u16
     }
 
-    pub fn r#in(parent: &[u8], text: &[u8]) -> BabyString {
+    /// Locates `substring` inside `container` (the string later passed to
+    /// [`BabyString::slice`]) and records its offset and length.
+    pub fn r#in(container: &[u8], substring: &[u8]) -> BabyString {
         // bun_core::strings::index_of deliberately returns None for an empty
-        // needle, but an empty `text` reaches this path via resolve errors for
-        // `import ""`, so short-circuit it here to offset 0.
-        if text.is_empty() {
+        // needle, but an empty `substring` reaches this path via resolve errors
+        // for `import ""`, so short-circuit it here to offset 0.
+        if substring.is_empty() {
             return BabyString::new(0, 0);
         }
-        let off = bun_core::strings::index_of(parent, text).expect("unreachable");
-        BabyString::new(off as u16, text.len() as u16) // @truncate
+        let off = bun_core::strings::index_of(container, substring).expect("unreachable");
+        BabyString::new(off as u16, substring.len() as u16) // @truncate
     }
 
     pub fn slice<'a>(self, container: &'a [u8]) -> &'a [u8] {
@@ -1213,16 +1229,6 @@ pub struct MetadataResolve {
     pub specifier: BabyString,
     pub import_kind: ImportKind,
     pub err: crate::Error,
-}
-
-impl Default for MetadataResolve {
-    fn default() -> Self {
-        MetadataResolve {
-            specifier: BabyString::new(0, 0),
-            import_kind: ImportKind::default(),
-            err: crate::Error::ModuleNotFound,
-        }
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1534,7 +1540,6 @@ impl Log {
             },
             text,
             Box::default(),
-            true,
             false,
         )
     }
@@ -1613,23 +1618,21 @@ impl Log {
         r: Range,
         text: Cow<'static, [u8]>,
         notes: Box<[Data]>,
-        clone: bool,
-        redact: bool,
+        redact_sensitive_information: bool,
     ) {
         match kind {
             Kind::Err => self.errors += 1,
             Kind::Warn => self.warnings += 1,
             _ => {}
         }
-        let mut data = self.tracked_range_data(source, r, text);
-        if clone {
-            data = data.clone_line_text(self.clone_line_text);
-        }
+        let data = self
+            .tracked_range_data(source, r, text)
+            .clone_line_text(self.clone_line_text);
         self.add_msg(Msg {
             kind,
             data,
             notes,
-            redact_sensitive_information: redact,
+            redact_sensitive_information,
             ..Default::default()
         })
     }
@@ -1743,7 +1746,7 @@ impl Log {
         args: fmt::Arguments<'_>,
     ) {
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Err, source, r, text, Box::default(), true, false)
+        self.add_formatted_msg(Kind::Err, source, r, text, Box::default(), false)
     }
 
     #[inline]
@@ -1755,7 +1758,7 @@ impl Log {
         args: fmt::Arguments<'_>,
     ) {
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Err, source, r, text, notes, true, false)
+        self.add_formatted_msg(Kind::Err, source, r, text, notes, false)
     }
 
     #[inline]
@@ -1775,7 +1778,6 @@ impl Log {
             },
             text,
             Box::default(),
-            true,
             false,
         )
     }
@@ -1793,7 +1795,6 @@ impl Log {
             },
             text,
             Box::default(),
-            true,
             opts.redact_sensitive_information,
         )
     }
@@ -1857,7 +1858,6 @@ impl Log {
             },
             text,
             Box::default(),
-            true,
             false,
         )
     }
@@ -1921,7 +1921,7 @@ impl Log {
             return;
         }
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Warn, source, r, text, Box::default(), true, false)
+        self.add_formatted_msg(Kind::Warn, source, r, text, Box::default(), false)
     }
 
     #[cold]
@@ -1959,7 +1959,7 @@ impl Log {
         args: fmt::Arguments<'_>,
     ) {
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Warn, source, r, text, notes, true, false)
+        self.add_formatted_msg(Kind::Warn, source, r, text, notes, false)
     }
 
     #[cold]
@@ -2053,12 +2053,23 @@ impl Log {
         })
     }
 
-    #[cold]
+    #[inline]
     pub fn add_range_error_with_notes(
         &mut self,
         source: Option<&Source>,
         r: Range,
         text: impl IntoText,
+        notes: Box<[Data]>,
+    ) {
+        self.add_range_error_with_notes_text(source, r, text.into_text(), notes)
+    }
+
+    #[cold]
+    fn add_range_error_with_notes_text(
+        &mut self,
+        source: Option<&Source>,
+        r: Range,
+        text: Cow<'static, [u8]>,
         notes: Box<[Data]>,
     ) {
         self.errors += 1;
@@ -2075,8 +2086,15 @@ impl Log {
         self.msgs.push(msg);
     }
 
+    /// Generic only over the text conversion; the body is shared so each
+    /// `&[u8; N]` literal length does not get its own copy.
+    #[inline]
+    pub fn add_error(&mut self, source: Option<&Source>, loc: Loc, text: impl IntoText) {
+        self.add_error_text(source, loc, text.into_text());
+    }
+
     #[cold]
-    pub fn add_error(&mut self, _source: Option<&Source>, loc: Loc, text: impl IntoText) {
+    fn add_error_text(&mut self, _source: Option<&Source>, loc: Loc, text: Cow<'static, [u8]>) {
         self.errors += 1;
         let data = self.tracked_range_data(
             _source,
@@ -2310,6 +2328,7 @@ pub fn alloc_print(args: fmt::Arguments<'_>) -> Cow<'static, [u8]> {
     Cow::Owned(v)
 }
 
+/// In range for every position in a source that passed [`Source::check_parseable_len`].
 #[inline]
 pub fn usize2loc(loc: usize) -> Loc {
     Loc {
@@ -2557,6 +2576,10 @@ impl LineColumnTracker {
     }
 }
 
+/// Returned by [`Source::check_parseable_len`] once it has logged the error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceTooLarge;
+
 impl Source {
     /// Borrowed view of the source bytes. Provided as a method so callers that
     /// were written against a future owning-`contents` shape (`Vec<u8>`/`Cow`)
@@ -2564,6 +2587,23 @@ impl Source {
     #[inline]
     pub fn contents(&self) -> &[u8] {
         &self.contents
+    }
+
+    /// Positions are `i32` [`Loc`]s, so no parser can take a longer source.
+    pub const MAX_PARSEABLE_LEN: usize = i32::MAX as usize;
+
+    /// Parsers call this before reading a source, whichever way it reached them.
+    pub fn check_parseable_len(&self, log: &mut Log, what: &str) -> Result<(), SourceTooLarge> {
+        if self.contents.len() <= Self::MAX_PARSEABLE_LEN {
+            return Ok(());
+        }
+        // Without a position: finding the line of one would scan the oversized source.
+        log.add_error_fmt(
+            Some(self),
+            Loc::EMPTY,
+            format_args!("{what} is too large to parse (2 GiB maximum)"),
+        );
+        Err(SourceTooLarge)
     }
 
     pub fn fmt_identifier(&self) -> bun_core::fmt::FormatValidIdentifier<'_> {
@@ -2750,9 +2790,14 @@ impl Source {
     }
 }
 
+#[inline]
 pub fn range_data(source: Option<&Source>, r: Range, text: impl IntoText) -> Data {
+    range_data_text(source, r, text.into_text())
+}
+
+fn range_data_text(source: Option<&Source>, r: Range, text: Cow<'static, [u8]>) -> Data {
     Data {
-        text: text.into_text(),
+        text,
         location: Location::init_or_null(source, r),
     }
 }
@@ -3366,14 +3411,18 @@ mod line_column_tracker_tests {
     #[test]
     fn line_column_tracker_interleaved_diagnostic_streams_match_full_scan() {
         let statement = b"try {} catch ([a,a,a,a,a,a,a,a,a,a,a,a, `]) {}\n";
+        // Every lookup below re-scans from an earlier line, so cost grows with
+        // the square of the statement count; under Miri 4 statements still
+        // interleave forward and backward jumps across lines at ~1/9 the work.
+        let statements: usize = if cfg!(miri) { 4 } else { 12 };
         let mut contents = Vec::new();
-        for _ in 0..12 {
+        for _ in 0..statements {
             contents.extend_from_slice(statement);
         }
         let source = Source::init_path_string(b"tracker-test.js" as &[u8], contents.as_slice());
 
         let mut offsets = Vec::new();
-        for statement_index in 0..12usize {
+        for statement_index in 0..statements {
             let start = statement_index * statement.len();
             let first_binding = start + 15;
             offsets.push(start + statement.len() - 6);

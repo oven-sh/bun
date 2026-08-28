@@ -100,7 +100,6 @@ members = [
   "src/spawn",
   "src/spawn_sys",
   "src/bunfig",
-  "src/bun_bin",
 ]
 # `vendor/lolhtml` (the `lol_html` crate) is a non-member path dependency,
 # fetched into `vendor/` by `scripts/build/deps/lolhtml.ts` before cargo runs.
@@ -114,7 +113,7 @@ exclude = ["vendor"]
 # (see its rust-toolchain), which must still be able to compile this workspace.
 [workspace.metadata.dylint]
 libraries = [
-    { git = "https://github.com/scarletindustries/mordant", rev = "173f675deacd57387e78a63ab68b6dd7af8a1361" },
+    { git = "https://github.com/scarletindustries/mordant", rev = "12d279767fd7150afe7e549003896b5ec54493f6" },
 ]
 
 [workspace.package]
@@ -146,8 +145,8 @@ panic = "abort"
 [profile.dev]
 panic = "abort"
 # Split DWARF: debuginfo goes into `.dwo` files alongside each `.o` instead of
-# being packed into the rlibs and then re-packed into `libbun_rust.a`. The debug
-# `.a` was ~1.5 GB (≥80% debuginfo) and the `bun_bin` staticlib step alone spent
+# being packed into the rlibs and then re-packed into `libbun_runtime.a`. The debug
+# `.a` was ~1.5 GB (≥80% debuginfo) and the staticlib step alone spent
 # ~6s archiving it. With split DWARF the `.a` is ~1/4 the size, per-crate
 # codegen writes less to disk, and `gdb`/`lldb` still resolve full debuginfo via
 # the skeleton CUs (`DW_AT_dwo_name`) pointing into `<target>/deps/*.dwo`.
@@ -191,7 +190,7 @@ codegen-units = 1
 strip = "symbols"
 # Pin these so the shim PE is byte-identical across bun's own profiles.
 # rust.ts sets CARGO_PROFILE_RELEASE_{LTO,DEBUG_ASSERTIONS} for the main
-# bun_bin build and the shim build shares that env; without explicit values
+# bun_runtime build and the shim build shares that env; without explicit values
 # here the env overrides on `release` would be inherited.
 debug-assertions = false
 overflow-checks = false
@@ -339,7 +338,7 @@ new_ret_no_self = "allow"
 map_identity = "allow"
 
 [workspace.dependencies]
-rust-argon2 = "3.0"
+rust-argon2 = { path = "vendor/rust-argon2" }
 bcrypt = "0.19"
 getrandom = "0.4"
 strum = { version = "0.26", features = ["derive"] }
@@ -365,6 +364,7 @@ thiserror = "2"
 smallvec = "1"
 typed-arena = "2"
 itoa = "1"
+encoding_rs = "0.8.35"
 # Vendored, not crates.io — see the `exclude = ["vendor"]` note above.
 lol_html = { path = "vendor/lolhtml" }
 bun_opaque = { path = "src/opaque" }
@@ -460,7 +460,6 @@ bun_zstd = { path = "src/zstd" }
 bun_options_types = { path = "src/options_types" }
 bun_bunfig = { path = "src/bunfig" }
 bun_output = { path = "src/output" }
-bun_runtime = { path = "src/runtime", default-features = false }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
 bun_transpiler = { path = "src/transpiler" }

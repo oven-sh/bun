@@ -14,10 +14,10 @@
 // ─── pure-Rust leaf (no JSC) — always compiles ───────────────────────────
 pub mod diff {
     // mod-rs path rule: inline `mod diff` + `#[path]` → test_runner/diff/<file>
-    #[path = "diff_match_patch.rs"]
-    pub mod diff_match_patch;
     #[path = "printDiff.rs"]
     pub mod print_diff;
+    #[path = "text_diff.rs"]
+    pub mod text_diff;
 }
 
 // ─── JSC-heavy core ──────────────────────────────────────────────────────

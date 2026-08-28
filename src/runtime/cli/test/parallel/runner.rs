@@ -23,7 +23,9 @@ use super::worker::{Worker, WorkerPipe};
 use crate::Command;
 use crate::test_command::{self, CommandLineReporter, TestCommand};
 use crate::test_runner::bun_test::FirstLast;
+use bun_collections::index_sort;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
+use bun_sourcemap_jsc::code_coverage;
 
 /// All workers are busy for at least this long before another is spawned.
 /// Overridable via BUN_TEST_PARALLEL_SCALE_MS for tests, where debug-build
@@ -63,14 +65,6 @@ pub(crate) fn run_as_coordinator(
     if Output::enable_ansi_colors_stderr() {
         let _ = env.map.put(b"FORCE_COLOR", b"1");
     }
-    if ctx.test_options.reporters.junit {
-        // Coordinator's own JunitReporter would otherwise produce an empty
-        // document and overwrite the merged one in writeJUnitReportIfNeeded.
-        if let Some(jr) = reporter.reporters.junit.take() {
-            let _ = env.map.put(b"BUN_TEST_WORKER_JUNIT", b"1");
-            drop(jr);
-        }
-    }
     // Each worker gets a unique JEST_WORKER_ID / BUN_TEST_WORKER_ID (1-indexed,
     // matching Jest) so tests can pick distinct ports/databases. Serialize the
     // env map once per worker after .put() — appending after the fact would
@@ -92,7 +86,9 @@ pub(crate) fn run_as_coordinator(
     // explicitly opts out of locality (the caller already shuffled).
     let mut sorted: Vec<Interned> = files.to_vec();
     if !ctx.test_options.randomize {
-        sorted.sort_by(|a, b| bun_core::order(a.as_bytes(), b.as_bytes()));
+        index_sort::sort_slice_by(&mut sorted, |a, b| {
+            bun_core::order(a.as_bytes(), b.as_bytes())
+        });
     }
     // With --timings the contiguous chunks are cut by total duration instead
     // of file count, and each chunk is dispatched slowest-first (cache hits
@@ -175,9 +171,12 @@ pub(crate) fn run_as_coordinator(
         },
         bail: ctx.test_options.bail,
         dots: ctx.test_options.reporters.dots,
-        junit_chunks: (0..n).map(|_| None).collect(),
-        junit_totals: Default::default(),
-        coverage_chunks: Vec::new(),
+        test_records: if ctx.test_options.reporters.junit {
+            (0..n).map(|_| Default::default()).collect()
+        } else {
+            Vec::new()
+        },
+        coverage_files: Default::default(),
         last_header_idx: None,
         frame: Frame::default(),
         files_done: 0,
@@ -215,26 +214,12 @@ pub(crate) fn run_as_coordinator(
     unsafe { &*vm_ptr }.run_with_api_lock(|| coord.drive());
     coord.end_group();
 
-    if ctx.test_options.reporters.junit {
-        if let Some(outfile) = &ctx.test_options.reporter_outfile {
-            // `coord` holds the unique &mut to `reporter`; obtain the summary
-            // through it. Raw-pointer reborrow because merge_junit_fragments
-            // also needs &mut coord (it only reads from summary).
-            let summary_ptr: *const crate::test_runner::jest::Summary = coord.reporter.summary();
-            // SAFETY: summary lives in *coord.reporter, which outlives this call
-            // and is not mutated by merge_junit_fragments.
-            aggregate::merge_junit_fragments(&mut coord, outfile, unsafe { &*summary_ptr });
-        }
-    }
+    aggregate::replay_test_records(&mut coord);
     if coverage_opts.enabled {
-        let frags: Vec<&[u8]> = coord.coverage_chunks.iter().map(|b| b.as_ref()).collect();
-        if Output::enable_ansi_colors_stderr() {
-            aggregate::merge_coverage_fragments::<true>(&frags, coverage_opts);
-        } else {
-            aggregate::merge_coverage_fragments::<false>(&frags, coverage_opts);
-        }
+        aggregate::write_coverage_report(&mut coord, coverage_opts);
     }
     if let Some(code) = coord.aborted {
+        coord.reporter.write_junit_report_if_needed();
         coord.reporter.write_timings_if_needed();
         Output::flush();
         Global::exit(code);
@@ -245,8 +230,10 @@ pub(crate) fn run_as_coordinator(
 /// Build the argv used for every worker (re)spawn. Forwards every `bun test`
 /// flag that affects how tests *execute inside* a worker, plus `--dots` and
 /// `--only-failures` since the worker formats result lines and the coordinator
-/// prints them verbatim. Coordinator-only concerns — file discovery
-/// (`--path-ignore-patterns`, `--changed`), `--reporter`/`--reporter-outfile`,
+/// prints them verbatim. `--reporter=junit` is forwarded (without the outfile)
+/// so workers attach the per-test detail the coordinator's JunitReporter
+/// needs. Coordinator-only concerns — file discovery
+/// (`--path-ignore-patterns`, `--changed`), `--reporter-outfile`,
 /// `--pass-with-no-tests`, `--parallel` itself — are intentionally not
 /// forwarded.
 fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn::CStrPtr]>> {
@@ -293,6 +280,9 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     }
     if opts.reporters.only_failures {
         argv.push(lit(b"--only-failures\0"));
+    }
+    if opts.reporters.junit {
+        argv.push(lit(b"--reporter=junit\0"));
     }
     if opts.update_snapshots {
         argv.push(lit(b"--update-snapshots\0"));
@@ -384,6 +374,9 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     }
     if ctx.args.allow_addons == Some(false) {
         argv.push(lit(b"--no-addons\0"));
+    }
+    if ctx.args.allow_ffi_cc == Some(false) {
+        argv.push(lit(b"--no-ffi-cc\0"));
     }
     if matches!(ctx.debug.macros, MacroOptions::Disable) {
         argv.push(lit(b"--no-macros\0"));
@@ -557,6 +550,8 @@ impl<'a> WorkerLoop<'a> {
 
             let before = *self.reporter.summary();
             let before_unhandled = self.reporter.jest.unhandled_errors_between_tests;
+            let started_ns =
+                bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns();
 
             // A worker never knows which file is its last, so preload-level hooks wrap every file (with or without --isolate).
             if let Err(err) = TestCommand::run(
@@ -582,19 +577,9 @@ impl<'a> WorkerLoop<'a> {
             }
             self.reporter.jest.default_timeout_override = u32::MAX;
 
-            if let Some(junit) = &mut self.reporter.reporters.junit {
-                while !junit.suite_stack.is_empty() {
-                    let _ = junit.end_test_suite();
-                }
-                junit.current_file = Box::default();
-                if junit.contents.len() > junit.sent_upto {
-                    wf.begin(frame::Kind::JunitChunk);
-                    wf.u32(idx);
-                    wf.str(&junit.contents[junit.sent_upto..]);
-                    self.cmds.send(wf.finish());
-                    junit.sent_upto = junit.contents.len();
-                }
-            }
+            let elapsed_ns = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
+                .ns()
+                .saturating_sub(started_ns);
 
             let after = *self.reporter.summary();
             wf.begin(frame::Kind::FileDone);
@@ -611,6 +596,7 @@ impl<'a> WorkerLoop<'a> {
             ] {
                 wf.u32(v);
             }
+            wf.u64(elapsed_ns);
             self.cmds.send(wf.finish());
         }
     }
@@ -646,15 +632,6 @@ pub(crate) fn run_as_worker(
     vm_ref.arena = Some(NonNull::from(&mut arena));
     // vm.allocator = arena.arena(); — allocator params dropped in Rust
 
-    let env = vm_ref.env_loader();
-    if let Some(junit) = reporter.reporters.junit.as_mut() {
-        junit.elements_only = true;
-    } else if env.get(b"BUN_TEST_WORKER_JUNIT").is_some() {
-        let mut junit = test_command::JunitReporter::init();
-        junit.elements_only = true;
-        reporter.reporters.junit = Some(junit);
-    }
-
     let mut wloop = WorkerLoop {
         reporter,
         vm,
@@ -669,7 +646,7 @@ pub(crate) fn run_as_worker(
 
     worker_flush_aggregates(wloop.reporter, vm_ref, ctx, &mut wloop.cmds);
     // Drain any backpressure-buffered frames before exit so the coordinator
-    // sees repeat_bufs / junit_chunk / coverage_chunk.
+    // sees repeat_bufs / coverage_file.
     while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done.get() {
         // SAFETY: event_loop pointer is valid while vm lives.
         unsafe { (*vm_ref.event_loop()).tick() };
@@ -717,18 +694,15 @@ fn worker_flush_aggregates(
     wf.str(reporter.todos_to_repeat_buf.as_slice());
     cmds.send(wf.finish());
 
-    if let Some(junit) = &mut reporter.reporters.junit {
-        while !junit.suite_stack.is_empty() {
-            let _ = junit.end_test_suite();
-        }
-        junit.current_file = Box::default();
-    }
     if ctx.test_options.coverage.enabled {
-        if let Some(lcov) = reporter.render_lcov(vm, &ctx.test_options.coverage) {
-            wf.begin(frame::Kind::CoverageChunk);
-            wf.str(&lcov);
+        let mut encoded: Vec<u8> = Vec::new();
+        CommandLineReporter::for_each_coverage_report(vm, &ctx.test_options.coverage, |report| {
+            encoded.clear();
+            code_coverage::wire::encode(&report, &mut encoded);
+            wf.begin(frame::Kind::CoverageFile);
+            wf.str(&encoded);
             cmds.send(wf.finish());
-        }
+        });
     }
 }
 
@@ -746,8 +720,14 @@ static WORKER_CMDS: bun_core::RacyCell<Option<*mut WorkerCommands>> = bun_core::
 
 /// Called from `CommandLineReporter.handleTestCompleted` in the worker with the
 /// fully-formatted status line (✓/✗ + scopes + name + duration, including ANSI
-/// codes). The coordinator prints these bytes verbatim so output matches serial.
-pub(crate) fn worker_emit_test_done(file_idx: u32, formatted_line: &[u8]) {
+/// codes), which the coordinator prints verbatim so output matches serial, and,
+/// when the coordinator asked for it (`--reporter`), the structured result it
+/// replays into its own reporters.
+pub(crate) fn worker_emit_test_done(
+    file_idx: u32,
+    formatted_line: &[u8],
+    test: Option<&test_command::TestCaseReport<'_>>,
+) {
     // SAFETY: single-threaded worker; WORKER_CMDS only written/read on this thread.
     let Some(cmds_ptr) = (unsafe { WORKER_CMDS.read() }) else {
         return;
@@ -760,5 +740,68 @@ pub(crate) fn worker_emit_test_done(file_idx: u32, formatted_line: &[u8]) {
     wf.begin(frame::Kind::TestDone);
     wf.u32(file_idx);
     wf.str(formatted_line);
+    if let Some(test) = test {
+        encode_test_case(wf, test);
+    }
     cmds.send(wf.finish());
+}
+
+fn encode_test_case(wf: &mut Frame, t: &test_command::TestCaseReport<'_>) {
+    wf.u32(t.status as u32);
+    wf.u32(t.assertions);
+    wf.u64(t.elapsed_ns);
+    wf.u32(t.line_number);
+    wf.str(t.name);
+    wf.u32(u32::try_from(t.scopes.len()).expect("int cast"));
+    for &(name, line) in &t.scopes {
+        wf.str(name);
+        wf.u32(line);
+    }
+    match &t.failure {
+        None => wf.u32(0),
+        Some(f) => {
+            wf.u32(1);
+            wf.str(&f.name);
+            wf.str(&f.message);
+            wf.str(&f.body);
+        }
+    }
+}
+
+/// Inverse of `encode_test_case`; strings borrow the frame payload. The file
+/// isn't on the wire: the frame's `file_idx` names it.
+pub(crate) fn decode_test_case<'a>(
+    rd: &mut frame::Reader<'a>,
+    file: &'a [u8],
+) -> Option<test_command::TestCaseReport<'a>> {
+    use crate::test_runner::execution::Result;
+    let status =
+        Result::from_repr(u8::try_from(rd.u32()).ok()?).filter(|s| *s != Result::Pending)?;
+    let assertions = rd.u32();
+    let elapsed_ns = rd.u64();
+    let line_number = rd.u32();
+    let name = rd.str();
+    let n = rd.u32() as usize;
+    if n > 64 {
+        return None;
+    }
+    let mut scopes = Vec::with_capacity(n);
+    for _ in 0..n {
+        scopes.push((rd.str(), rd.u32()));
+    }
+    let failure = (rd.u32() != 0).then(|| test_command::TestFailure {
+        name: rd.str().to_vec(),
+        message: rd.str().to_vec(),
+        body: rd.str().to_vec(),
+    });
+    Some(test_command::TestCaseReport {
+        file,
+        scopes,
+        name,
+        status,
+        assertions,
+        elapsed_ns,
+        line_number,
+        failure,
+    })
 }

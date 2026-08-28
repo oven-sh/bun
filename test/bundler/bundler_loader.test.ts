@@ -488,6 +488,26 @@ describe("bundler", async () => {
     });
   }
 
+  // `import addon from "./addon.node"` prints as `__require("./addon-[hash].node")`
+  // in ESM output, so the chunk has to define the runtime helper.
+  itBundled("bun/loader-napi-esm-runtime-require", {
+    target: "bun",
+    format: "esm",
+    outdir: "/out",
+    files: {
+      "/entry.ts": /* js */ `
+        import addon from "./addon.node";
+        export default addon;
+      `,
+      "/addon.node": "not a real addon",
+    },
+    onAfterBundle(api) {
+      const js = api.readFile("/out/entry.js");
+      expect(js).toContain("var __require = import.meta.require;");
+      expect(js).toMatch(/__require\("\.\/addon-[a-z0-9]+\.node"\)/);
+    },
+  });
+
   describe("handles empty files", () => {
     for (const target of ["bun", "node", "browser"] as const) {
       itBundled(`${target}/loader-empty-text-file`, {

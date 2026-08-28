@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use std::io::Write as _;
 
 use crate::Error;
-use bun_collections::{HashMap, StringHashMap};
+use bun_collections::{HashMap, StringHashMap, index_sort};
 use bun_install::bin::Bin;
 use bun_install::dependency::{self, Dependency, DependencyExt as _};
 use bun_install::install::{self, DependencyID, PackageID, PackageManager};
@@ -1383,7 +1383,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     for (base_name, versions) in scoped_packages.iter_mut() {
         let base_name: &[u8] = base_name.as_ref();
 
-        versions.sort_by_key(|a| a.package_id);
+        index_sort::sort_slice_by(versions, |a, b| a.package_id.cmp(&b.package_id));
 
         let original_name_hash = string_hash(base_name);
         // `remove` drops the value (and thus the `Ids` Vec) automatically.

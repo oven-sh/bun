@@ -9,7 +9,7 @@ description: Server-side WebSockets in Bun
 
 **⚡️ 7x more throughput**
 
-Bun's WebSockets are fast. For a [simple chatroom](https://github.com/oven-sh/bun/tree/main/bench/websocket-server/README.md) on Linux x64, Bun can handle 7x more requests per second than Node.js + [`"ws"`](https://github.com/websockets/ws).
+Bun's WebSockets are fast. For a [simple chatroom](https://github.com/oven-sh/bun/tree/main/bench/websocket-server/README.md) on Linux x64, Bun can handle 7x more messages per second than Node.js + [`"ws"`](https://github.com/websockets/ws).
 
 | **Messages sent per second** | **Runtime**                    | **Clients** |
 | ---------------------------- | ------------------------------ | ----------- |
@@ -232,7 +232,7 @@ const server = Bun.serve({
 console.log(`Listening on ${server.hostname}:${server.port}`);
 ```
 
-Calling `.publish(data)` sends the message to all subscribers of a topic _except_ the socket that called `.publish()`. To send a message to all subscribers of a topic, use the `.publish()` method on the `Server` instance.
+Calling `.publish(topic, data)` sends the message to all subscribers of a topic _except_ the socket that called `.publish()`. To send a message to all subscribers of a topic, use the `.publish()` method on the `Server` instance.
 
 ```ts
 const server = Bun.serve({
@@ -337,6 +337,24 @@ socket.addEventListener("close", event => {});
 // error handler
 socket.addEventListener("error", event => {});
 ```
+
+### Backpressure
+
+The browser `WebSocket` API has no way to slow down a peer that sends faster than you consume: incoming messages are buffered in memory without bound. Bun adds `pause()` and `resume()`, which stop and restart reads from the underlying socket so the sender sees TCP backpressure instead. This is a Bun-specific extension. _It does not work in browsers._
+
+```ts
+const socket = new WebSocket("ws://localhost:3000");
+
+socket.addEventListener("message", event => {
+  if (!file.write(event.data)) {
+    // The file's buffer is full: stop reading until it drains.
+    socket.pause();
+    file.once("drain", () => socket.resume());
+  }
+});
+```
+
+`pause()` and `resume()` return `true` when they took effect (or will, once a connecting socket opens) and `false` when there is no socket to act on; `socket.isPaused` reports the current state. Messages already decoded when `pause()` is called may still be delivered. The `ws` package's `pause()`, `resume()`, and `isPaused` map to the same methods.
 
 ---
 

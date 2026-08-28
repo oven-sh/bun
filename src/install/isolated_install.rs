@@ -30,7 +30,7 @@ use bun_alloc::AllocError;
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_collections::{
     ArrayHashMap, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, HashMap, LinearFifo,
-    StringArrayHashMap,
+    StringArrayHashMap, index_sort,
 };
 use bun_core::{Environment, Global, Output, fast_random, fmt as bun_fmt};
 use bun_paths::path_options::AssumeOk as _;
@@ -96,7 +96,8 @@ enum State {
 
 struct StackFrame {
     id: store::entry::Id,
-    dep_idx: u32,
+    /// Position in `id`'s dependency list, not a `DependencyID`.
+    next_dep: u32,
     hasher: Wyhash,
 }
 
@@ -157,14 +158,6 @@ impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
     ) {
         ctx.on_package_download_error(id, name, resolution, err, url);
     }
-
-    fn as_store_installer<'x>(ctx: &'x mut Self::Ctx) -> &'x mut store::Installer<'x> {
-        // SAFETY: identity cast — narrows the invariant `'a` param to the
-        // borrow-local `'x` (`'a: 'x` is implied by `&'x mut Installer<'a>`).
-        // The returned reference cannot outlive `'x`, so all inner `'a`
-        // borrows remain valid. Inner-lifetime variance cast via raw pointer.
-        unsafe { &mut *core::ptr::from_mut(ctx).cast::<store::Installer<'x>>() }
-    }
 }
 
 struct Wait<'a, 'b> {
@@ -213,13 +206,20 @@ impl<'a, 'b> Wait<'a, 'b> {
     }
 }
 
+/// Whether `build_store` reports how long each of its two passes took.
+#[derive(Clone, Copy)]
+pub(crate) enum Timings {
+    Print,
+    Quiet,
+}
+
 pub(crate) fn build_store(
     manager: &PackageManager,
     lockfile: &Lockfile,
     install_root_dependencies: bool,
     workspace_filters: &[WorkspaceFilter],
     packages_to_install: Option<&[PackageID]>,
-    print_timings: bool,
+    timings: Timings,
 ) -> Result<Store, AllocError> {
     let mut timer = std::time::Instant::now();
     let pkgs = lockfile.packages.slice();
@@ -520,12 +520,11 @@ pub(crate) fn build_store(
                                     }
                                     break 'resolved invalid_package_id;
                                 };
-                                // Auto-install fallback is declarer-specific; let the
-                                // second pass handle this position rather than risk an
-                                // unsound key.
-                                if resolved == invalid_package_id {
-                                    break 'dont_dedupe;
-                                }
+                                // `invalid_package_id` is part of the key: an
+                                // unresolved peer auto-installs the declarer's own
+                                // `resolutions[peer_dep_id]`, which is position-
+                                // independent, so two positions that both leave
+                                // the name unresolved expand identically.
                                 hasher.update(bun_core::bytes_of(&peer_name_hash));
                                 hasher.update(bun_core::bytes_of(&resolved));
                             }
@@ -646,10 +645,10 @@ pub(crate) fn build_store(
         // and devDependency handling to match `hoistDependency`
         {
             let sorter = lockfile::DepSorter { lockfile };
-            dep_ids_sort_buf.sort_by(|a, b| {
-                if sorter.is_less_than(*a, *b) {
+            index_sort::sort_indices(&mut dep_ids_sort_buf, &mut |a, b| {
+                if sorter.is_less_than(a, b) {
                     core::cmp::Ordering::Less
-                } else if sorter.is_less_than(*b, *a) {
+                } else if sorter.is_less_than(b, a) {
                     core::cmp::Ordering::Greater
                 } else {
                     core::cmp::Ordering::Equal
@@ -861,7 +860,7 @@ pub(crate) fn build_store(
         node_queue[queue_mark..].reverse();
     }
 
-    if print_timings {
+    if matches!(timings, Timings::Print) {
         let full_tree_end = timer.elapsed();
         timer = std::time::Instant::now();
         bun_core::pretty_errorln!(
@@ -1118,7 +1117,7 @@ pub(crate) fn build_store(
         }
     }
 
-    if print_timings {
+    if matches!(timings, Timings::Print) {
         let dedupe_end = timer.elapsed();
         bun_core::pretty_errorln!(
             "Created store [{}]",
@@ -1150,13 +1149,18 @@ pub(crate) fn install_isolated_packages(
     // while this reborrow is live (column slices below borrow through it).
     let lockfile: &mut Lockfile = unsafe { &mut *lockfile };
 
+    let timings = if manager.options.log_level.is_verbose() {
+        Timings::Print
+    } else {
+        Timings::Quiet
+    };
     let store: Store = build_store(
         &*manager,
         &*lockfile,
         install_root_dependencies,
         workspace_filters,
         packages_to_install,
-        manager.options.log_level.is_verbose(),
+        timings,
     )?;
 
     let global_store_path: Option<Vec<u8>> = if manager.options.enable.global_virtual_store() {
@@ -1196,13 +1200,13 @@ pub(crate) fn install_isolated_packages(
             // their own store-path bytes.
             let mut stack: Vec<StackFrame> = Vec::new();
 
-            for _root_id in 0..store.entries.len() {
-                if states[_root_id] != State::Unvisited {
+            for root_entry_idx in 0..store.entries.len() {
+                if states[root_entry_idx] != State::Unvisited {
                     continue;
                 }
                 stack.push(StackFrame {
-                    id: store::entry::Id::from(u32::try_from(_root_id).expect("int cast")),
-                    dep_idx: 0,
+                    id: store::entry::Id::from(u32::try_from(root_entry_idx).expect("int cast")),
+                    next_dep: 0,
                     // Placeholder; reinitialized below before first use when state == Unvisited.
                     hasher: Wyhash::init(0),
                 });
@@ -1212,12 +1216,12 @@ pub(crate) fn install_isolated_packages(
                     // Reshaped for borrowck — re-borrow `top` after each
                     // potential `stack.push()` realloc.
                     let id = stack[top_idx].id;
-                    let idx = id.get() as usize;
+                    let entry_idx = id.get() as usize;
 
-                    if states[idx] == State::Unvisited {
-                        states[idx] = State::InProgress;
+                    if states[entry_idx] == State::Unvisited {
+                        states[entry_idx] = State::InProgress;
 
-                        let node_id = entry_node_ids[idx];
+                        let node_id = entry_node_ids[entry_idx];
                         let pkg_id = node_pkg_ids[node_id.get() as usize];
                         let dep_id = node_dep_ids[node_id.get() as usize];
                         let pkg_res = &pkg_resolutions[pkg_id as usize];
@@ -1292,8 +1296,8 @@ pub(crate) fn install_isolated_packages(
                         };
 
                         if !eligible {
-                            states[idx] = State::Ineligible;
-                            entry_hashes[idx] = 0;
+                            states[entry_idx] = State::Ineligible;
+                            entry_hashes[entry_idx] = 0;
                             stack.pop();
                             continue;
                         }
@@ -1323,32 +1327,32 @@ pub(crate) fn install_isolated_packages(
                             .update(bun_core::bytes_of(&pkg_metas[pkg_id as usize].integrity));
                     }
 
-                    if states[idx] == State::Ineligible {
+                    if states[entry_idx] == State::Ineligible {
                         stack.pop();
                         continue;
                     }
 
-                    let deps = entry_dependencies[idx].slice();
+                    let deps = entry_dependencies[entry_idx].slice();
                     let mut advanced = false;
-                    while (stack[top_idx].dep_idx as usize) < deps.len() {
-                        let dep = &deps[stack[top_idx].dep_idx as usize];
-                        let dep_idx = dep.entry_id.get() as usize;
+                    while (stack[top_idx].next_dep as usize) < deps.len() {
+                        let dep = &deps[stack[top_idx].next_dep as usize];
+                        let dep_entry_idx = dep.entry_id.get() as usize;
                         let dep_name_hash = dependencies[dep.dep_id as usize].name_hash;
-                        match states[dep_idx] {
+                        match states[dep_entry_idx] {
                             State::Done => {
                                 stack[top_idx]
                                     .hasher
                                     .update(bun_core::bytes_of(&dep_name_hash));
                                 stack[top_idx]
                                     .hasher
-                                    .update(bun_core::bytes_of(&entry_hashes[dep_idx]));
+                                    .update(bun_core::bytes_of(&entry_hashes[dep_entry_idx]));
                             }
                             State::Ineligible => {
                                 // A dep that can't live in the global store poisons
                                 // this entry too: its symlink would point at a
                                 // project-local path.
-                                states[idx] = State::Ineligible;
-                                entry_hashes[idx] = 0;
+                                states[entry_idx] = State::Ineligible;
+                                entry_hashes[entry_idx] = 0;
                             }
                             State::InProgress => {
                                 // Cycle back-edge: the dep's hash isn't known yet.
@@ -1363,7 +1367,7 @@ pub(crate) fn install_isolated_packages(
                             State::Unvisited => {
                                 stack.push(StackFrame {
                                     id: dep.entry_id,
-                                    dep_idx: 0,
+                                    next_dep: 0,
                                     // Placeholder; reinitialized on next iteration before use.
                                     hasher: Wyhash::init(0),
                                 });
@@ -1372,24 +1376,24 @@ pub(crate) fn install_isolated_packages(
                                 break;
                             }
                         }
-                        if states[idx] == State::Ineligible {
+                        if states[entry_idx] == State::Ineligible {
                             break;
                         }
-                        stack[top_idx].dep_idx += 1;
+                        stack[top_idx].next_dep += 1;
                     }
 
                     if advanced {
                         continue;
                     }
 
-                    if states[idx] != State::Ineligible {
+                    if states[entry_idx] != State::Ineligible {
                         let mut h = stack[top_idx].hasher.final_();
                         // 0 is the "not eligible" sentinel.
                         if h == 0 {
                             h = 1;
                         }
-                        entry_hashes[idx] = h;
-                        states[idx] = State::Done;
+                        entry_hashes[entry_idx] = h;
+                        states[entry_idx] = State::Done;
                     }
                     stack.pop();
                 }
@@ -1589,9 +1593,11 @@ pub(crate) fn install_isolated_packages(
                                         scc_ext.put(ext.final_(), ())?;
                                     }
                                 }
-                                member_sub.sort_unstable();
+                                index_sort::sort_slice_unstable_by(&mut member_sub, |a, b| {
+                                    a.cmp(b)
+                                });
                                 let ext_keys = scc_ext.keys_mut();
-                                ext_keys.sort_unstable();
+                                index_sort::sort_slice_unstable_by(ext_keys, |a, b| a.cmp(b));
                                 let mut hasher = Wyhash::init(0x42A7C15F9E3779B9);
                                 for k in &member_sub {
                                     hasher.update(bun_core::bytes_of(k));
@@ -2198,7 +2204,16 @@ pub(crate) fn install_isolated_packages(
                     let pkg_res_tag = pkg_res.tag;
 
                     let patch_info =
-                        installer.package_patch_info(pkg_name, pkg_name_hash, &pkg_res)?;
+                        match installer.package_patch_info(pkg_name, pkg_name_hash, &pkg_res) {
+                            Ok(patch_info) => patch_info,
+                            Err(err) => {
+                                // .monotonic is okay because the task isn't running on another thread.
+                                entry_steps[entry_id.get() as usize]
+                                    .store(installer::Step::Done as u32, Ordering::Relaxed);
+                                installer.on_task_fail(entry_id, &err);
+                                continue;
+                            }
+                        };
 
                     let uses_global_store = installer.entry_uses_global_store(entry_id);
 
@@ -2410,7 +2425,10 @@ pub(crate) fn install_isolated_packages(
                                 Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
                                     return Err(AllocError);
                                 }
-                                Err(crate::network_task::ForTarballError::AlreadyFailed) => {
+                                Err(
+                                    crate::network_task::ForTarballError::AlreadyFailed
+                                    | crate::network_task::ForTarballError::Offline,
+                                ) => {
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
                                     entry_steps[entry_id.get() as usize]
@@ -2444,13 +2462,21 @@ pub(crate) fn install_isolated_packages(
                             }
                         }
                         ResolutionTag::Git => {
-                            installer.manager_mut().enqueue_git_for_checkout(
+                            if installer.manager_mut().enqueue_git_for_checkout(
                                 dep_id,
                                 dep.name.slice(string_buf),
                                 &pkg_res,
                                 ctx,
                                 patch_info.name_and_version_hash(),
-                            );
+                            ) == crate::package_manager::GitEnqueueResult::OfflineMiss
+                            {
+                                // --offline and not cached: nothing was queued
+                                entry_steps[entry_id.get() as usize]
+                                    .store(installer::Step::Done as u32, Ordering::Relaxed);
+                                installer
+                                    .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                continue;
+                            }
                         }
                         ResolutionTag::Github => {
                             // The `.git()` accessor has a `debug_assert_eq!(tag, Git)` that
@@ -2469,7 +2495,10 @@ pub(crate) fn install_isolated_packages(
                                 Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
                                     bun_core::out_of_memory()
                                 }
-                                Err(crate::network_task::ForTarballError::AlreadyFailed) => {
+                                Err(
+                                    crate::network_task::ForTarballError::AlreadyFailed
+                                    | crate::network_task::ForTarballError::Offline,
+                                ) => {
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
                                     entry_steps[entry_id.get() as usize]
@@ -2522,7 +2551,10 @@ pub(crate) fn install_isolated_packages(
                                 Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
                                     bun_core::out_of_memory()
                                 }
-                                Err(crate::network_task::ForTarballError::AlreadyFailed) => {
+                                Err(
+                                    crate::network_task::ForTarballError::AlreadyFailed
+                                    | crate::network_task::ForTarballError::Offline,
+                                ) => {
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
                                     entry_steps[entry_id.get() as usize]

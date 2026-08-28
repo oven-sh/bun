@@ -146,13 +146,6 @@ pub mod options {
     pub struct ReactFastRefresh {
         pub import_source: Cow<'static, [u8]>,
     }
-    impl Default for ReactFastRefresh {
-        fn default() -> Self {
-            Self {
-                import_source: Cow::Borrowed(b"react-refresh/runtime"),
-            }
-        }
-    }
 }
 pub use crate::parse::parse_entry::{Options as ParserOptions, Parser};
 pub use crate::renamer;
@@ -347,7 +340,7 @@ pub mod Runtime {
             // so sort the inputs first; the resulting `keys()` iteration order
             // is then byte-lexicographic.
             let mut sorted: Vec<&[u8]> = feature_flags.to_vec();
-            sorted.sort_unstable();
+            bun_collections::index_sort::sort_slice_unstable_by(&mut sorted, |a, b| a.cmp(b));
             let mut set = StringSet::new();
             for flag in sorted {
                 let _ = set.insert(flag);
@@ -685,6 +678,13 @@ pub struct VisitArgsOpts<'a> {
 }
 
 #[derive(Clone, Copy)]
+pub struct VisitDeclOpts {
+    pub(crate) was_anonymous_named_expr: bool,
+    pub(crate) could_be_const_value: bool,
+    pub(crate) could_be_macro: bool,
+}
+
+#[derive(Clone, Copy)]
 pub struct TransposeState {
     pub(crate) is_await_target: bool,
     pub(crate) is_then_catch_target: bool,
@@ -845,12 +845,6 @@ impl Default for ExprOrLetStmt {
             decls: bun_collections::RawSlice::EMPTY,
         }
     }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum FunctionKind {
-    Stmt,
-    Expr,
 }
 
 #[repr(u8)]
@@ -1048,15 +1042,6 @@ pub struct ThenCatchChain {
     pub(crate) has_multiple_args: bool,
     pub(crate) has_catch: bool,
 }
-impl Default for ThenCatchChain {
-    fn default() -> Self {
-        Self {
-            next_target: js_ast::ExprData::EMissing(E::Missing {}),
-            has_multiple_args: false,
-            has_catch: false,
-        }
-    }
-}
 
 #[derive(Clone, Copy)]
 pub struct ParsedPath<'a> {
@@ -1069,14 +1054,8 @@ pub struct ParsedPath<'a> {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StrictModeFeature {
-    WithStatement,
-    DeleteBareName,
-    ForInVarInit,
     EvalOrArguments,
     ReservedWord,
-    LegacyOctalLiteral,
-    LegacyOctalEscape,
-    IfElseFunctionStmt,
 }
 
 #[derive(Clone, Copy)]
@@ -1282,27 +1261,7 @@ pub struct FnOrArrowDataVisit {
 /// restored on the call stack around code that parses nested functions (but not
 /// nested arrow functions).
 #[derive(Default)]
-pub struct FnOnlyDataVisit<'a> {
-    /// This is a reference to the enclosing class name if there is one. It's used
-    /// to implement "this" and "super" references. A name is automatically generated
-    /// if one is missing so this will always be present inside a class body.
-    ///
-    /// `&Cell<Ref>` (not `&mut Ref`): the visit pass needs to
-    /// both share this slot into nested `fn_only_data_visit` frames *and* read/write
-    /// it from the enclosing `visit_class` frame. `Cell` gives shared interior
-    /// mutability for the `Copy` `Ref` payload with zero `unsafe`.
-    pub(crate) class_name_ref: Option<&'a core::cell::Cell<Ref>>,
-
-    /// If true, we're inside a static class context where "this" expressions
-    /// should be replaced with the class name.
-    pub(crate) should_replace_this_with_class_name_ref: bool,
-
-    /// If we're inside an async arrow function and async functions are not
-    /// supported, then we will have to convert that arrow function to a generator
-    /// function. That means references to "arguments" inside the arrow function
-    /// will have to reference a captured variable instead of the real variable.
-    pub(crate) is_inside_async_arrow_fn: bool,
-
+pub struct FnOnlyDataVisit {
     /// If false, the value for "this" is the top-level module scope "this" value.
     /// That means it's "undefined" for ECMAScript modules and "exports" for
     /// CommonJS modules. We track this information so that we can substitute the
@@ -1729,6 +1688,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
         define,
         source,
         log: log_ptr,
+        orig_error_count: 0,
     };
     let result = match parser.to_lazy_export_ast(expr, runtime_api_call, symbols) {
         Ok(r) => r,

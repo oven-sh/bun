@@ -2,12 +2,10 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use std::borrow::Cow;
 use std::io::Write as _;
 
-use bstr::BStr;
-
 use bun_alloc::{AllocError, allocators};
 use bun_collections::VecExt as _;
+use bun_core::Generation;
 use bun_core::MutableString;
-use bun_core::{FeatureFlags, Generation};
 use bun_paths::strings;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer};
 use bun_ptr::Interned;
@@ -121,16 +119,6 @@ pub struct EntryCache {
     /// don't make it bun.invalid_fd
     pub fd: Fd,
     pub(crate) kind: EntryKind,
-}
-
-impl Default for EntryCache {
-    fn default() -> Self {
-        Self {
-            symlink: Interned::EMPTY,
-            fd: Fd::INVALID,
-            kind: EntryKind::File,
-        }
-    }
 }
 
 // `cache` / `need_stat` are lazily populated by `Entry::kind` /
@@ -399,9 +387,6 @@ pub struct DirEntry {
 
 impl DirEntry {
     pub(crate) fn init(dir: &'static [u8], generation: Generation) -> DirEntry {
-        if FeatureFlags::VERBOSE_FS {
-            bun_core::prettyln!("\n  {}", BStr::new(dir));
-        }
         DirEntry {
             dir,
             data: dir_entry::EntryMap::default(),
@@ -584,16 +569,6 @@ impl DirEntry {
 
         if !I::IS_VOID {
             iterator.next(stored_ref, self.fd);
-        }
-
-        if FeatureFlags::VERBOSE_FS {
-            // re-borrow `base()` after the `iterator.next` mutable borrow ends.
-            let stored_name = stored_ref.base();
-            if found_kind == Some(EntryKind::Dir) {
-                bun_core::prettyln!("   + {}/", BStr::new(stored_name));
-            } else {
-                bun_core::prettyln!("   + {}", BStr::new(stored_name));
-            }
         }
 
         Ok(())

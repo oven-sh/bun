@@ -8,7 +8,6 @@ use bun_core::strings;
 // `mime_type_list_enum.rs`.
 // ───────────────────────────────────────────────────────────────────────────
 pub use super::mime_type_list_enum::MimeTypeList as Table;
-use bun_collections::StringHashMap;
 
 // `mime_type_list_enum.rs` exposes `const fn from_mime_literal(&'static str)`,
 // an UNCHECKED literal wrapper: a typo'd literal still compiles and simply
@@ -27,8 +26,6 @@ pub struct MimeType {
     pub value: Cow<'static, [u8]>,
     pub category: Category,
 }
-
-pub type Map = StringHashMap<Table>;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Compact {
@@ -94,22 +91,33 @@ impl Compact {
     }
 }
 
-#[cold]
-pub fn create_hash_table() -> Result<Map, bun_alloc::AllocError> {
-    let mut map = Map::default();
-    map.reserve(Table::ALL.len() as u32 as usize);
-    // `StringHashMap` boxes the key.
-    for entry in Table::ALL {
-        assert!(
-            strings::eql(entry.slice(), <&'static str>::from(*entry).as_bytes()),
-            "{} != {}. Code generation is broken.",
-            bstr::BStr::new(entry.slice()),
-            <&'static str>::from(*entry),
-        );
-        map.put(entry.slice(), *entry)?;
-    }
-
-    Ok(map)
+/// Case-sensitive lookup of a full MIME string against the interned set
+/// (`mime_type_list.txt`). A hit hands back the static spelling — and, for a
+/// few, the canonical constant, see `Compact::to_mime_type` — so `Blob` can
+/// hold it as `BlobContentType::Static`; anything else takes the copy path.
+pub fn by_name_static(name: &[u8]) -> Option<MimeType> {
+    use super::mime_type_list_sorted::{BUCKETS, NAMES};
+    let interned = bun_core::comptime_string_map::sorted_key_slice(name, NAMES, &BUCKETS)?;
+    Some(match interned {
+        b"application/webassembly" => WASM,
+        b"application/javascript" | b"text/javascript" | b"text/jsx" => JAVASCRIPT,
+        b"application/json" => JSON,
+        b"application/x-www-form-urlencoded" => {
+            const VALUE: &[u8] = b"application/x-www-form-urlencoded;charset=UTF-8";
+            MimeType {
+                value: Cow::Borrowed(VALUE),
+                category: Category::from_interned(VALUE),
+            }
+        }
+        b"image/vnd.microsoft.icon" => ICO,
+        b"text/css" => CSS,
+        b"text/html" => HTML,
+        b"text/plain" => TEXT,
+        _ => MimeType {
+            value: Cow::Borrowed(interned),
+            category: Category::from_interned(interned),
+        },
+    })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
@@ -140,6 +148,10 @@ pub enum Category {
 
 impl Category {
     pub(crate) fn from_table(entry: Table) -> Category {
+        Self::from_interned(entry.slice())
+    }
+
+    fn from_interned(name: &[u8]) -> Category {
         bun_core::comptime_string_map! {
             static CATEGORY_OVERRIDES: Category = {
                 b"text/javascript" => Category::Javascript,
@@ -162,10 +174,10 @@ impl Category {
                 b"application/json;charset=utf8" => Category::Json,
             };
         }
-        if let Some(&category) = CATEGORY_OVERRIDES.get(entry.slice()) {
+        if let Some(&category) = CATEGORY_OVERRIDES.get(name) {
             return category;
         }
-        Category::init(entry.slice())
+        Category::init(name)
     }
 }
 
@@ -243,6 +255,13 @@ impl Category {
         }
 
         Category::Other
+    }
+
+    pub fn is_text_like(self) -> bool {
+        matches!(
+            self,
+            Category::Javascript | Category::Html | Category::Text | Category::Css | Category::Json
+        )
     }
 
     pub fn autoset_filename(self) -> bool {

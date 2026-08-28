@@ -699,12 +699,7 @@ pub struct GitCheckoutRequest {
 
 pub struct LocalTarballRequest {
     pub(crate) tarball: ExtractTarball,
-    /// Path to read the tarball from. May be the same as `tarball.url` (when
-    /// `normalize` is true) or an absolute path joined with a workspace
-    /// directory. Computed on the main thread in `enqueueLocalTarball` because
-    /// resolving it requires reading `lockfile.packages` / `string_bytes`,
-    /// which can be reallocated concurrently by the main thread while this
-    /// task runs on a ThreadPool worker.
+    /// Resolved by `enqueue_local_tarball` on the main thread; the worker must not read the lockfile.
     pub(crate) tarball_path: StringOrTinyString,
     /// When true, `tarball_path` is a user-provided path resolved relative to
     /// cwd. When false, it is already an absolute path.

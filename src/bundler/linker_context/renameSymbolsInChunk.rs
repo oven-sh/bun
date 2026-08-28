@@ -1,5 +1,5 @@
 use crate::mal_prelude::*;
-use bun_collections::VecExt;
+use bun_collections::{VecExt, index_sort};
 use core::cmp::Ordering;
 
 use crate::bundled_ast::Flags as AstFlags;
@@ -157,7 +157,7 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
             }
         }
 
-        list.sort_unstable_by(|a, b| {
+        index_sort::sort_slice_unstable_by(&mut list, |a, b| {
             if StableRef::is_less_than((), *a, *b) {
                 Ordering::Less
             } else if StableRef::is_less_than((), *b, *a) {
@@ -190,7 +190,6 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         let stable_source_indices = c.graph.stable_source_indices.slice();
         let mut freq = bun_ast::CharFreq { freqs: [0i32; 64] };
 
-        let mut capacity = sorted_imports_from_other_chunks.len();
         for &source_index in files_in_order {
             if ast_flags_col[source_index as usize].contains(AstFlags::HAS_CHAR_FREQ) {
                 freq.include(&char_freq_col[source_index as usize]);
@@ -247,7 +246,6 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
             }
 
             top_level_symbols.sort_unstable_by(StableSymbolCount::less_than);
-            capacity += top_level_symbols.len();
             top_level_symbols_all.extend_from_slice(&top_level_symbols);
         }
 
@@ -265,14 +263,32 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         top_level_symbols_all.extend_from_slice(&top_level_symbols);
         minify_renamer.allocate_top_level_symbol_slots(&top_level_symbols_all)?;
 
-        let minifier = freq.compile();
-        minify_renamer.assign_names_by_frequency(&minifier)?;
-
-        let _ = capacity;
+        minify_renamer.name_minifier = Some(freq.compile());
+        // With code splitting, names are assigned (`MinifyRenamer::finish`)
+        // after `assign_cross_chunk_names` has seen every chunk's counts and
+        // pinned the bindings that cross chunks.
+        if !c.graph.code_splitting {
+            minify_renamer.finish()?;
+        }
         return Ok(ChunkRenamer::Minify(minify_renamer));
     }
 
     let mut r = NumberRenamer::init(make_symbols_view(symbols), &reserved_names)?;
+    // Bindings that cross chunks carry one bundle-wide name
+    // (`assign_cross_chunk_names`); everything else is numbered around them.
+    if let Content::Javascript(js) = &chunk.content {
+        for &ref_ in js.exports_to_other_chunks.keys() {
+            if let Some(name) = c.cross_chunk_names.get(&ref_) {
+                r.pin_top_level_symbol(ref_, name);
+            }
+        }
+    }
+    for stable_ref in &sorted_imports_from_other_chunks {
+        let ref_ = { stable_ref.r#ref };
+        if let Some(name) = c.cross_chunk_names.get(&ref_) {
+            r.pin_top_level_symbol(ref_, name);
+        }
+    }
     for stable_ref in &sorted_imports_from_other_chunks {
         // `StableRef` is `repr(packed)`; copy the field to avoid an unaligned ref.
         r.add_top_level_symbol(stable_ref.r#ref);

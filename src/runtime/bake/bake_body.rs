@@ -10,8 +10,9 @@ use core::ptr::NonNull;
 use bun_alloc::Arena; // = bumpalo::Bump
 use bun_collections::ArrayHashMap;
 use bun_core::Output;
+use bun_core::Utf8Bytes;
 use bun_core::{ZStr, strings};
-use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
+use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult};
 use bun_options_types::schema as bun_schema;
 use bun_paths::{self as paths, PathBuffer};
 
@@ -37,9 +38,9 @@ fn get_optional_slice(
     target: JSValue,
     global: &JSGlobalObject,
     property: &[u8],
-) -> JsResult<Option<ZigStringSlice>> {
+) -> JsResult<Option<Utf8Bytes<'static>>> {
     match target.get(global, property)? {
-        Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_slice(global)?)),
+        Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_utf8(global)?)),
         _ => Ok(None),
     }
 }
@@ -172,7 +173,7 @@ impl UserOptions {
         if !config.is_object() {
             // Allow users to do `export default { app: 'react' }` for convenience
             if config.is_string() {
-                let bunstr = bun_core::OwnedString::new(config.to_bun_string(global)?);
+                let bunstr = config.to_bun_string(global)?;
                 let utf8_string = bunstr.to_utf8();
 
                 if strings::eql(utf8_string.slice(), b"react") {
@@ -263,7 +264,7 @@ impl UserOptions {
 /// Each string stores its allocator since some may hold reference counts to JSC
 #[derive(Default)]
 pub struct StringRefList {
-    pub(crate) strings: Vec<ZigStringSlice>,
+    pub(crate) strings: Vec<Utf8Bytes<'static>>,
 }
 
 impl StringRefList {
@@ -272,17 +273,17 @@ impl StringRefList {
     };
 
     // Note: returned slice borrows JSC-owned storage kept alive by the
-    // `ZigStringSlice` now stored in `self.strings`; it is valid only for as
+    // `Utf8Bytes` now stored in `self.strings`; it is valid only for as
     // long as `self` is. Callers that store the result in `Framework` /
     // `FileSystemRouterType` / `ServerComponents` fields must thread a `'bump`
     // lifetime (or switch those fields to `Box<[u8]>` / `ArenaStr`) — see the
     // file-level TODO(lifetime) above. Do NOT paper over this with a `'static`
     // transmute (forbidden per PORTING.md §Forbidden — lifetime extension).
-    pub(crate) fn track(&mut self, str: ZigStringSlice) -> &'static [u8] {
+    pub(crate) fn track(&mut self, str: Utf8Bytes<'static>) -> &'static [u8] {
         self.strings.push(str);
         let slice = self.strings.last().unwrap().slice();
         // SAFETY: (`Interned::assume` — Population B, holder-backed) the
-        // `ZigStringSlice` is now owned by `self.strings` and lives exactly as
+        // `Utf8Bytes` is now owned by `self.strings` and lives exactly as
         // long as the `StringRefList`, which is owned by `UserOptions` and
         // dropped only when bake teardown runs (`UserOptions::deinit`). The
         // returned slice is stored only in `Framework` / `FileSystemRouterType`
@@ -509,10 +510,10 @@ impl Framework {
     pub fn react(arena: &Arena) -> crate::Result<Framework> {
         // Cannot use .import because resolution must happen from the user's POV
         let built_in_values: &[BuiltInModule] = &[
-            BuiltInModule::Code(
-                bun_core::runtime_embed_file!(Src, "runtime/bake/bun-framework-react/client.tsx")
-                    .as_bytes(),
-            ),
+            // Browser-side source: compressed in release builds.
+            BuiltInModule::Code(bun_zstd::embed_compressed!(
+                src "runtime/bake/bun-framework-react/client.tsx"
+            )),
             BuiltInModule::Code(
                 bun_core::runtime_embed_file!(Src, "runtime/bake/bun-framework-react/server.tsx")
                     .as_bytes(),
@@ -589,8 +590,7 @@ impl Framework {
                 import_source: b"react-refresh/runtime/index.js",
             });
             let react_refresh_code = BuiltInModule::Code(
-                bun_core::runtime_embed_file!(Codegen, "node-fallbacks/react-refresh.js")
-                    .as_bytes(),
+                bun_zstd::embed_compressed!(codegen "node-fallbacks/react-refresh.js"),
             );
             let _ = arena;
             fw.built_in_modules.put(
@@ -755,10 +755,10 @@ impl Framework {
         arena: &Arena,
     ) -> JsResult<Framework> {
         if opts.is_string() {
-            let str = bun_core::OwnedString::new(opts.to_bun_string(global)?);
+            let str = opts.to_bun_string(global)?;
 
             // Deprecated
-            if str.eql_comptime("react-server-components") {
+            if str.eq_ascii(b"react-server-components") {
                 bun_core::warn!(
                     "deprecation notice: 'react-server-components' will be renamed to 'react'"
                 );
@@ -766,7 +766,7 @@ impl Framework {
                     .map_err(|e| throw_core_error(global, e, "Framework::react"));
             }
 
-            if str.eql_comptime("react") {
+            if str.eq_ascii(b"react") {
                 return Framework::react(arena)
                     .map_err(|e| throw_core_error(global, e, "Framework::react"));
             }
@@ -814,10 +814,10 @@ impl Framework {
                 }
             };
 
-            let str = bun_core::OwnedString::new(prop.to_bun_string(global)?);
+            let str = prop.to_bun_string(global)?;
 
             Some(ReactFastRefresh {
-                import_source: refs.track(str.to_utf8()),
+                import_source: refs.track(str.into_utf8()),
             })
         };
         let server_components: Option<ServerComponents> = 'sc: {
@@ -992,7 +992,7 @@ impl Framework {
                 {
                     'exts: {
                         if exts_js.is_string() {
-                            let str = exts_js.to_slice(global)?;
+                            let str = exts_js.to_utf8(global)?;
                             if str.slice() == b"*" {
                                 break 'exts &[] as &[&[u8]];
                             }
@@ -1004,7 +1004,7 @@ impl Framework {
                                     arena,
                                 );
                             while let Some(array_item) = it_2.next()? {
-                                let slice = refs.track(array_item.to_slice(global)?);
+                                let slice = refs.track(array_item.to_utf8(global)?);
                                 if slice == b"*" {
                                     return Err(global.throw_invalid_arguments(format_args!(
                                             "'extensions' cannot include \"*\" as an extension. Pass \"*\" instead of the array."
@@ -1054,7 +1054,7 @@ impl Framework {
                                 arena,
                             );
                             while let Some(array_item) = it_2.next()? {
-                                dirs.push(refs.track(array_item.to_slice(global)?));
+                                dirs.push(refs.track(array_item.to_utf8(global)?));
                             }
                             break 'exts arena_erase(dirs.into_bump_slice());
                         }
@@ -1385,8 +1385,7 @@ fn get_optional_string(
     if value.is_undefined_or_null() {
         return Ok(None);
     }
-    let str = bun_core::OwnedString::new(value.to_bun_string(global)?);
-    Ok(Some(allocations.track(str.to_utf8())))
+    Ok(Some(allocations.track(value.to_utf8(global)?)))
 }
 
 // Note: `HmrRuntime` is defined canonically in the parent `bake/mod.rs`
@@ -1411,26 +1410,26 @@ pub(crate) fn get_hmr_runtime(side: Side) -> HmrRuntime {
     // costs one extra copy at first call; the cost is negligible vs. keeping
     // a per-call-site `#[cfg]` pair in sync.)
     use std::sync::OnceLock;
-    fn nul_terminate(s: &'static str, cell: &'static OnceLock<Box<[u8]>>) -> &'static ZStr {
+    fn nul_terminate(s: &'static [u8], cell: &'static OnceLock<Box<[u8]>>) -> &'static ZStr {
         let buf = cell.get_or_init(|| {
             let mut v = Vec::with_capacity(s.len() + 1);
-            v.extend_from_slice(s.as_bytes());
+            v.extend_from_slice(s);
             v.push(0);
             v.into_boxed_slice()
         });
         // SAFETY: buf is process-lifetime (`OnceLock` static), buf[len-1] == 0.
         ZStr::from_slice_with_nul(&buf[..])
     }
-    static CLIENT: OnceLock<Box<[u8]>> = OnceLock::new();
     static SERVER: OnceLock<Box<[u8]>> = OnceLock::new();
     hmr_runtime_init(match side {
-        Side::Client => nul_terminate(
-            bun_core::runtime_embed_file!(CodegenEager, "bake.client.js"),
-            &CLIENT,
-        ),
+        // Shipped to the browser, so release builds embed it compressed; the
+        // bundler owns the one inflated (NUL-terminated) copy.
+        Side::Client => {
+            ZStr::from_slice_with_nul(bun_bundler::bake_types::bake_client_js_with_nul())
+        }
         // server runtime is loaded once, so it is pointless to make this eager.
         Side::Server => nul_terminate(
-            bun_core::runtime_embed_file!(Codegen, "bake.server.js"),
+            bun_core::runtime_embed_file!(Codegen, "bake.server.js").as_bytes(),
             &SERVER,
         ),
     })

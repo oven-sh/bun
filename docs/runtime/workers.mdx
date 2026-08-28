@@ -112,7 +112,7 @@ Bun enqueues messages until the worker is ready, so you don't need to wait for t
 
 ## Messages with `postMessage`
 
-To send messages, use [`worker.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Worker/postMessage) and [`self.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage). Bun serializes messages with the [HTML Structured Clone Algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm).
+To send messages, use [`worker.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Worker/postMessage) and [`self.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/DedicatedWorkerGlobalScope/postMessage). Bun serializes messages with the [HTML Structured Clone Algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm).
 
 ### Performance optimizations
 
@@ -250,7 +250,7 @@ worker.unref();
 worker.ref();
 ```
 
-Alternatively, you can also pass an `options` object to `Worker`:
+Alternatively, you can also pass `ref: false` in the `options` object to `Worker`, which is equivalent to calling `worker.unref()`:
 
 ```ts index.ts icon="/icons/typescript.svg"
 const worker = new Worker(new URL("worker.ts", import.meta.url).href, {

@@ -515,6 +515,37 @@ describe("mock()", () => {
       value: 44,
     });
   });
+  test("this is undefined when called without a receiver from a closure", () => {
+    const fn = jest.fn().mockReturnThis();
+    // Referencing `fn` from an inner function moves it into the closure's
+    // scope, so the bare call below resolves it through that scope object.
+    function keep() {
+      return fn;
+    }
+    expect(fn()).toBeUndefined();
+    expect(fn.mock.contexts).toEqual([undefined]);
+    expect(fn.mock.results).toEqual([{ type: "return", value: undefined }]);
+    expect(keep()).toBe(fn);
+  });
+  if (isBun) {
+    test("mock.lastCall getter ignores the closure scope it is called through", () => {
+      const calls = [["from the enclosing scope"]];
+      const lastCall = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(jest.fn().mock), "lastCall").get;
+      function keep() {
+        return [calls, lastCall];
+      }
+      expect(lastCall()).toBeUndefined();
+      expect(keep()).toEqual([calls, lastCall]);
+    });
+    test("mock methods called without a receiver from a closure throw the invalid this error", () => {
+      const { mockName } = jest.fn();
+      function keep() {
+        return mockName;
+      }
+      expect(() => mockName("name")).toThrow(/^Expected this to be instanceof Mock$/);
+      expect(keep()).toBe(mockName);
+    });
+  }
   test("looks like a function", () => {
     const fn = jest.fn(function nameHere(a, b, c) {
       return [a, b, c];
@@ -693,6 +724,42 @@ describe("mock()", () => {
       },
     );
     expect(fn()).toBe("1");
+  });
+  test("withImplementation (callback throws)", () => {
+    const fn = jest.fn(() => "1");
+    expect(() =>
+      fn.withImplementation(
+        () => "2",
+        () => {
+          expect(fn()).toBe("2");
+          throw new Error("from callback");
+        },
+      ),
+    ).toThrow("from callback");
+  });
+  test("withImplementation restores a queued mockImplementationOnce chain", () => {
+    const fn = jest.fn(() => "base");
+    fn.mockImplementationOnce(() => "a").mockImplementationOnce(() => "b");
+    fn.withImplementation(
+      () => "temp",
+      () => {
+        expect(fn()).toBe("temp");
+      },
+    );
+    fn.mockImplementationOnce(() => "c");
+    expect([fn(), fn(), fn(), fn()]).toEqual(["a", "b", "c", "base"]);
+  });
+  test("copying name/length from the implementation propagates getter errors", () => {
+    const impl = function () {};
+    Object.defineProperty(impl, "length", {
+      get() {
+        throw new Error("length getter");
+      },
+    });
+    expect(() => jest.fn(impl)).toThrow("length getter");
+    const obj = { method: impl };
+    expect(() => jest.spyOn(obj, "method")).toThrow("length getter");
+    expect(obj.method).toBe(impl);
   });
   test("withImplementation (async)", async () => {
     const fn = jest.fn(() => "1");

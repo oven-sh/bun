@@ -63,6 +63,7 @@ import {
   isWindows,
   isX64,
   markBuildkiteStepReported,
+  parseJunitFileSuites,
   printEnvironment,
   reportAnnotationToBuildKite,
   startGroup,
@@ -74,6 +75,7 @@ import {
 let isQuiet = false;
 const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();
 const testsPath = join(cwd, "test");
+const ciRemapServerPath = join(cwd, "scripts", "ci-remap-server");
 
 const runnerStartedAt = Date.now();
 const jobBudgetMs = () => {
@@ -153,6 +155,10 @@ const { values: options, positionals: filters } = parseArgs({
     ["exclude"]: {
       type: "string",
       multiple: true,
+      default: undefined,
+    },
+    ["skip-slower-than"]: {
+      type: "string",
       default: undefined,
     },
     ["quiet"]: {
@@ -789,16 +795,14 @@ async function runTests() {
 
   if (!failedResults.length) {
     // TODO: remove windows exclusion here
-    if (isCI && !isWindows) {
-      // bun install has succeeded
+    if (isCI && !isWindows && (await installCiRemapServer(execPath))) {
       const { promise: portPromise, resolve: portResolve } = Promise.withResolvers();
       const { promise: errorPromise, resolve: errorResolve } = Promise.withResolvers();
-      console.log("run in", cwd);
       let exiting = false;
 
       const server = spawn(execPath, ["run", "--silent", "ci-remap-server", execPath, cwd, getCommit()], {
         stdio: ["ignore", "pipe", "inherit"],
-        cwd, // run in main repo
+        cwd: ciRemapServerPath,
         env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" },
       });
       server.unref();
@@ -1015,32 +1019,9 @@ async function runTests() {
       );
       if (crashes) process.stderr.write(crashes);
 
-      const suites = new Map(); // repo-relative path -> { failures, seconds, cases: [{name, message}] }
-      const unescapeXml = str =>
-        str
-          .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
-          .replace(/&quot;/g, '"')
-          .replace(/&apos;/g, "'")
-          .replace(/&lt;/g, "<")
-          .replace(/&gt;/g, ">")
-          .replace(/&amp;/g, "&");
+      let suites = new Map(); // repo-relative path -> { failures, seconds, cases: [{name, message}] }
       try {
-        const xml = readFileSync(junitPath, "utf-8");
-        for (const [, attrs] of xml.matchAll(/<testsuite\b([^>]*)>/g)) {
-          const file = /\bfile="([^"]+)"/.exec(attrs)?.[1];
-          const failures = Number(/\bfailures="(\d+)"/.exec(attrs)?.[1] ?? 0);
-          const seconds = Number(/\btime="([\d.]+)"/.exec(attrs)?.[1] ?? 0);
-          if (file) suites.set(unescapeXml(file).replaceAll("\\", "/"), { failures, seconds, cases: [] });
-        }
-        for (const [, caseAttrs, failureAttrs] of xml.matchAll(/<testcase\b([^>]*)>\s*<failure\b([^>]*)>/g)) {
-          const file = /\bfile="([^"]+)"/.exec(caseAttrs)?.[1];
-          const entry = file && suites.get(unescapeXml(file).replaceAll("\\", "/"));
-          if (!entry) continue;
-          entry.cases.push({
-            name: unescapeXml(/\bname="([^"]*)"/.exec(caseAttrs)?.[1] ?? "(unnamed)"),
-            message: unescapeXml(/\bmessage="([^"]*)"/.exec(failureAttrs)?.[1] ?? ""),
-          });
-        }
+        suites = parseJunitFileSuites(readFileSync(junitPath, "utf-8"));
       } catch {}
       if (suites.size && isBuildkite) uploadArtifactsToBuildKite(junitPath);
       else rmSync(junitPath, { force: true });
@@ -2203,8 +2184,9 @@ function parseTestStdout(stdout, testPath) {
 async function spawnBunInstall(execPath, options) {
   // spawnBun sets BUN_INSTALL_CACHE_DIR to a fresh tmpdir so per-test installs
   // are hermetic. This function only runs the runner's own dependency setup
-  // (root, test/, vendor), which should hit the image's baked cache when one
-  // exists (bootstrap.{sh,ps1} set BUN_INSTALL_CACHE_DIR machine-wide).
+  // (root, test/, scripts/ci-remap-server, vendor), which should hit the
+  // image's baked cache when one exists (bootstrap.{sh,ps1} set
+  // BUN_INSTALL_CACHE_DIR machine-wide).
   const cacheDir = process.env.BUN_INSTALL_CACHE_DIR;
   let { ok, error, stdout, duration, crashes } = await spawnBun(execPath, {
     args: ["install"],
@@ -2241,6 +2223,23 @@ async function spawnBunInstall(execPath, options) {
     stdout,
     stdoutPreview: stdout,
   };
+}
+
+/**
+ * Installs `ci-remap-server`, the bin of bun-tracestrings (github:oven-sh/bun.report).
+ * It is pinned in scripts/ci-remap-server/package.json rather than the root
+ * package.json because this runner is its only user, and as a github: dependency
+ * it would otherwise put GitHub on the critical path of the root `bun install`
+ * every GitHub Actions workflow and every build runs. Best-effort, like starting
+ * the server itself: without it crash reports are not remapped, the tests still run.
+ * @param {string} execPath
+ * @returns {Promise<boolean>}
+ */
+async function installCiRemapServer(execPath) {
+  const title = relative(cwd, join(ciRemapServerPath, "package.json")).replaceAll(sep, "/");
+  const { ok, error } = await startGroup(title, () => spawnBunInstall(execPath, { cwd: ciRemapServerPath }));
+  if (!ok) console.warn(`ci-remap server not installed (${title}: ${error}), crash reports will not be remapped`);
+  return ok;
 }
 
 /**
@@ -2473,6 +2472,35 @@ async function getVendorTests(cwd) {
 }
 
 /**
+ * Checked-in median wall-clock duration per test file for this lane, from
+ * expected-durations.json (see scripts/update-test-durations.mjs).
+ * @param {string} cwd
+ * @returns {Record<string, number>}
+ */
+function loadExpectedDurations(cwd) {
+  const durations = {};
+  try {
+    const raw = JSON.parse(readFileSync(join(cwd, "expected-durations.json"), "utf8"));
+    const step = options["step"] || "";
+    const lane = step.includes("asan")
+      ? "asan"
+      : step.includes("musl")
+        ? "musl"
+        : isWindows || step.includes("windows")
+          ? "windows"
+          : "default";
+    for (const [path, entry] of Object.entries(raw)) {
+      if (path === "_meta") continue;
+      const ms = entry[lane] ?? entry.default ?? entry.asan ?? entry.musl ?? entry.windows;
+      if (typeof ms === "number") durations[path] = ms;
+    }
+  } catch (e) {
+    console.warn("expected-durations.json not loaded:", e?.message || e);
+  }
+  return durations;
+}
+
+/**
  * @param {string} cwd
  * @param {string[]} testModifiers
  * @param {TestExpectation[]} testExpectations
@@ -2522,6 +2550,22 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
     }
   }
 
+  // Drop the slowest files by expected duration. Used on lanes that trade a
+  // little coverage for throughput; the same files still run on other lanes.
+  const skipSlowerThan = parseInt(options["skip-slower-than"]);
+  if (skipSlowerThan > 0) {
+    const durations = loadExpectedDurations(cwd);
+    const slow = availableTests.filter(testPath => (durations[testPath.replaceAll("\\", "/")] ?? 0) >= skipSlowerThan);
+    for (const testPath of slow) availableTests.splice(availableTests.indexOf(testPath), 1);
+    !isQuiet &&
+      console.log(
+        `Skipping tests slower than ${skipSlowerThan}ms:`,
+        slow.length,
+        "/",
+        availableTests.length + slow.length,
+      );
+  }
+
   const skipExpectations = testExpectations
     .filter(
       ({ modifiers, expectations }) =>
@@ -2564,25 +2608,7 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
     // machines without any coordination. Tests absent from the table (new
     // files, or the file failing to load) fall back to the table's median so
     // they spread across shards instead of all landing on shard 0.
-    let durations = {};
-    try {
-      const raw = JSON.parse(readFileSync(join(cwd, "expected-durations.json"), "utf8"));
-      const step = options["step"] || "";
-      const lane = step.includes("asan")
-        ? "asan"
-        : step.includes("musl")
-          ? "musl"
-          : isWindows || step.includes("windows")
-            ? "windows"
-            : "default";
-      for (const [path, entry] of Object.entries(raw)) {
-        if (path === "_meta") continue;
-        const ms = entry[lane] ?? entry.default ?? entry.asan ?? entry.musl ?? entry.windows;
-        if (typeof ms === "number") durations[path] = ms;
-      }
-    } catch (e) {
-      console.warn("expected-durations.json not loaded, sharding by index:", e?.message || e);
-    }
+    const durations = loadExpectedDurations(cwd);
     const known = Object.values(durations).sort((a, b) => a - b);
     const unknownCost = known.length ? known[Math.floor(known.length / 2)] : 100;
     const costOf = testPath => durations[testPath.replaceAll("\\", "/")] ?? unknownCost;
@@ -2704,7 +2730,7 @@ async function getExecPathFromBuildKite(target, buildId) {
 
   let zipPath;
   downloadLoop: for (let i = 0; i < 10; i++) {
-    // build-bun also uploads libbun-*.a / libbun_rust.a / dep libs; only the zips are wanted here.
+    // build-bun also uploads libbun-*.a / libbun_runtime.a / dep libs; only the zips are wanted here.
     const args = ["artifact", "download", "*.zip", releasePath, "--step", target];
     if (buildId) {
       args.push("--build", buildId);
@@ -2883,38 +2909,6 @@ function uploadArtifactsToBuildKite(glob) {
 }
 
 /**
- * @param {string} [glob]
- * @param {string} [step]
- */
-function listArtifactsFromBuildKite(glob, step) {
-  const args = [
-    "artifact",
-    "search",
-    "--no-color",
-    "--allow-empty-results",
-    "--include-retried-jobs",
-    "--format",
-    "%p\n",
-    glob || "*",
-  ];
-  if (step) {
-    args.push("--step", step);
-  }
-  const { error, status, signal, stdout, stderr } = spawnSync("buildkite-agent", args, {
-    stdio: ["ignore", "ignore", "ignore"],
-    encoding: "utf-8",
-    timeout: spawnTimeout,
-    cwd,
-  });
-  if (status === 0) {
-    return stdout?.split("\n").map(line => line.trim()) || [];
-  }
-  const cause = error ?? signal ?? `code ${status}`;
-  console.warn("Failed to list artifacts from BuildKite:", cause, stderr);
-  return [];
-}
-
-/**
  * @param {string} name
  * @param {string} value
  */
@@ -2957,14 +2951,6 @@ function getAnsi(color) {
  */
 function stripAnsi(string) {
   return string.replace(/\u001b\[\d+m/g, "");
-}
-
-/**
- * @param {string} string
- * @returns {string}
- */
-function escapeGitHubAction(string) {
-  return string.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
 }
 
 /**

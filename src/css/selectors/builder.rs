@@ -110,23 +110,8 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     /// Consumes the builder, producing a Selector.
     ///
     /// *NOTE*: This will free all allocated memory in the builder
-    pub(crate) fn build(
-        &mut self,
-        parsed_pseudo: bool,
-        parsed_slotted: bool,
-        parsed_part: bool,
-    ) -> BuildResult<Impl> {
+    pub(crate) fn build(&mut self, flags: SelectorFlags) -> BuildResult<Impl> {
         let specificity = compute_specificity::<Impl>(self.simple_selectors.slice());
-        let mut flags = SelectorFlags::empty();
-        if parsed_pseudo {
-            flags |= SelectorFlags::HAS_PSEUDO;
-        }
-        if parsed_slotted {
-            flags |= SelectorFlags::HAS_SLOTTED;
-        }
-        if parsed_part {
-            flags |= SelectorFlags::HAS_PART;
-        }
         // `build_with_specificity_and_flags()` drains the contents; `Drop` on
         // `SelectorBuilder` frees the SmallList capacity when the builder goes
         // out of scope.

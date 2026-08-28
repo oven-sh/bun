@@ -14,6 +14,10 @@ bun build <entry points>
   Use a bytecode cache when compiling
 </ParamField>
 
+<ParamField path="--bytecode-depth" type="number">
+  How many levels of nested functions to compile to bytecode ahead of time (a non-negative integer). Defaults to all
+</ParamField>
+
 <ParamField path="--target" type="string" default="browser">
   Intended execution environment for the bundle. One of <code>browser</code>, <code>bun</code>, or <code>node</code>
 </ParamField>
@@ -35,6 +39,14 @@ bun build <entry points>
 
 <ParamField path="--outfile" type="string">
   Write output to a specific file
+</ParamField>
+
+<ParamField path="--metafile" type="string">
+  Write a JSON file with metadata about the build
+</ParamField>
+
+<ParamField path="--metafile-md" type="string">
+  Write a markdown file with a visualization of the module graph (LLM-friendly)
 </ParamField>
 
 <ParamField path="--sourcemap" type="string" default="none">
@@ -78,12 +90,26 @@ bun build <entry points>
   Enable code splitting for shared modules
 </ParamField>
 
+<ParamField path="--min-chunk-size" type="number">
+  With `--splitting`, also fold side-effect-free chunks smaller than this many source bytes into a chunk loaded by a
+  superset of their importers
+</ParamField>
+
 <ParamField path="--public-path" type="string">
   Prefix the bundler adds to import paths in bundled code
 </ParamField>
 
 <ParamField path="--external" type="string">
   Exclude modules from the bundle (supports wildcards). Alias: <code>-e</code>
+</ParamField>
+
+<ParamField path="--allow-unresolved" type="string" default="*">
+  Allow unresolved dynamic import()/require() specifiers matching these glob patterns. Pass <code>''</code> to allow
+  opaque specifiers
+</ParamField>
+
+<ParamField path="--reject-unresolved" type="boolean">
+  Fail the build on any dynamic import()/require() specifier that cannot be resolved at build time
 </ParamField>
 
 <ParamField path="--packages" type="string" default="bundle">
@@ -151,6 +177,47 @@ bun build <entry points>
 
 <ParamField path="--compile-exec-argv" type="string">
   Prepend arguments to the standalone executable’s <code>execArgv</code>
+</ParamField>
+
+<ParamField path="--compile-autoload-dotenv" type="boolean" default="true">
+  Enable autoloading of <code>.env</code> files in the standalone executable
+</ParamField>
+
+<ParamField path="--no-compile-autoload-dotenv" type="boolean">
+  Disable autoloading of <code>.env</code> files in the standalone executable
+</ParamField>
+
+<ParamField path="--compile-autoload-bunfig" type="boolean" default="true">
+  Enable autoloading of <code>bunfig.toml</code> in the standalone executable
+</ParamField>
+
+<ParamField path="--no-compile-autoload-bunfig" type="boolean">
+  Disable autoloading of <code>bunfig.toml</code> in the standalone executable
+</ParamField>
+
+<ParamField path="--compile-autoload-tsconfig" type="boolean" default="false">
+  Enable autoloading of <code>tsconfig.json</code> at runtime in the standalone executable
+</ParamField>
+
+<ParamField path="--no-compile-autoload-tsconfig" type="boolean">
+  Disable autoloading of <code>tsconfig.json</code> at runtime in the standalone executable
+</ParamField>
+
+<ParamField path="--compile-autoload-package-json" type="boolean" default="false">
+  Enable autoloading of <code>package.json</code> at runtime in the standalone executable
+</ParamField>
+
+<ParamField path="--no-compile-autoload-package-json" type="boolean">
+  Disable autoloading of <code>package.json</code> at runtime in the standalone executable
+</ParamField>
+
+<ParamField path="--compile-executable-path" type="string">
+  Path to a Bun executable to use for cross-compilation instead of downloading
+</ParamField>
+
+<ParamField path="--asset" type="string">
+  Embed a file or directory into the compiled executable under its basename; a directory keeps its internal tree, so{" "}
+  <code>--asset ./static/public</code> embeds <code>public/...</code> (requires <code>--compile</code>)
 </ParamField>
 
 ### Windows Executable Details

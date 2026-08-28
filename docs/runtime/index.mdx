@@ -90,7 +90,6 @@ rm -rf dist && echo 'Done.'
 ```
 
 ```txt
-Cleaning...
 Done.
 ```
 
@@ -111,15 +110,13 @@ bun run
 ```
 
 ```txt
-quickstart scripts:
+...
+package.json scripts (2 found):
+  $ bun run clean
+    rm -rf dist && echo 'Done.'
 
- bun run clean
-   rm -rf dist && echo 'Done.'
-
- bun run dev
-   bun server.ts
-
-2 scripts
+  $ bun run dev
+    bun server.ts
 ```
 
 Bun respects lifecycle hooks. For instance, `bun run clean` runs `preclean` and `postclean`, if defined. If the `pre<script>` fails, Bun does not run the script itself.

@@ -228,9 +228,9 @@ The output is a syntax-highlighted preview of the source code where the error oc
 ```ts icon="file-code"
 1 | // Create an error
 2 | const err = new Error("Something went wrong");
-                ^
+                    ^
 error: Something went wrong
-      at file.js:2:13
+      at /path/to/file.js:2:17
 ```
 
 ### V8 Stack Traces
@@ -293,7 +293,7 @@ In the following example, `err.stack` points to the code calling `fn()`, even th
 ```ts index.ts icon="/icons/typescript.svg"
 const fn = () => {
   function myInner() {
-    throw err;
+    throw new Error("here!");
   }
 
   try {
@@ -313,18 +313,12 @@ fn();
 
 ```txt
 Error: here!
-    at myInner (file.js:4:15)
-    at fn (file.js:8:5)
-    at module code (file.js:17:1)
-    at moduleEvaluation (native)
-    at moduleEvaluation (native)
-    at <anonymous> (native)
+    at myInner (/path/to/index.ts:3:15)
+    at fn (/path/to/index.ts:7:5)
+    at /path/to/index.ts:18
 
 -- captureStackTrace --
 
 Error: here!
-    at module code (file.js:17:1)
-    at moduleEvaluation (native)
-    at moduleEvaluation (native)
-    at <anonymous> (native)
+    at /path/to/index.ts:18
 ```

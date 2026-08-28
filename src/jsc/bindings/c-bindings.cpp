@@ -16,10 +16,16 @@
 #include <termios.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#if OS(DARWIN)
+#include <mach-o/loader.h>
+#endif
 #else
 #include <uv.h>
 #include <windows.h>
 #include <corecrt_io.h>
+#include <atomic>
+#include <new>
+#include <wtf/Threading.h>
 #endif // !OS(WINDOWS)
 #include <lshpack.h>
 
@@ -208,11 +214,8 @@ extern "C" size_t Bun__memoryFootprint()
 #if OS(WINDOWS)
 #define MS_PER_SEC 1000ULL // MS = milliseconds
 #define US_PER_MS 1000ULL // US = microseconds
-#define HNS_PER_US 10ULL // HNS = hundred-nanoseconds (e.g., 1 hns = 100 ns)
-#define NS_PER_US 1000ULL
+#define NS_PER_US 1000ULL // NS = nanoseconds
 
-#define HNS_PER_SEC (MS_PER_SEC * US_PER_MS * HNS_PER_US)
-#define NS_PER_HNS (100ULL) // NS = nanoseconds
 #define NS_PER_SEC (MS_PER_SEC * US_PER_MS * NS_PER_US)
 
 extern "C" void clock_gettime_monotonic(int64_t* tv_sec, int64_t* tv_nsec)
@@ -609,9 +612,33 @@ extern "C" void Bun__setCTRLHandler(BOOL add)
 {
     SetConsoleCtrlHandler(Ctrlhandler, add);
 }
+
+// Held, never released, across ExitProcess: a WTF suspender it kills between
+// SuspendThread and ResumeThread of this thread would leave it suspended forever.
+extern "C" void Bun__lockThreadSuspensionForExit()
+{
+    static std::atomic<DWORD> owner { 0 };
+    DWORD self = GetCurrentThreadId();
+    DWORD expected = 0;
+    if (!owner.compare_exchange_strong(expected, self, std::memory_order_acq_rel)) {
+        // Re-entered on the thread that already holds the lock.
+        if (expected == self)
+            return;
+        // Another thread's exit holds it and is about to terminate this thread.
+        for (;;)
+            SleepEx(INFINITE, FALSE);
+    }
+    alignas(WTF::ThreadSuspendLocker) static unsigned char storage[sizeof(WTF::ThreadSuspendLocker)];
+    new (storage) WTF::ThreadSuspendLocker();
+}
 #endif
 
 extern "C" int32_t bun_is_stdio_null[3] = { 0, 0, 0 };
+
+#if OS(DARWIN)
+extern "C" int __cxa_atexit(void (*)(void*), void*, void*);
+extern "C" struct mach_header __dso_handle;
+#endif
 
 extern "C" void bun_initialize_process()
 {
@@ -733,7 +760,12 @@ extern "C" void bun_initialize_process()
     Bun__setCTRLHandler(1);
 #endif
 
-#if OS(DARWIN) || ASAN_ENABLED
+#if OS(DARWIN)
+    // atexit() on macOS dladdr()s the handler, a linear walk of this executable's
+    // symbol table (~0.5ms with symbols). __cxa_atexit lands on the same LIFO
+    // list without the lookup, as the compiler does for static destructors.
+    __cxa_atexit([](void*) { Bun__onExit(); }, nullptr, &__dso_handle);
+#elif ASAN_ENABLED
     atexit(Bun__onExit);
 #elif !OS(WINDOWS)
     at_quick_exit(Bun__onExit);
@@ -1081,7 +1113,17 @@ extern "C" void Bun__signpost_emit(os_log_t log, os_signpost_type_t type, os_sig
 
 #if OS(DARWIN) || defined(__linux__) || defined(__FreeBSD__)
 
-#define BLOB_HEADER_ALIGNMENT 16 * 1024
+#if OS(DARWIN)
+// exe_format/macho.rs expands the __BUN segment in place at this alignment
+// (the page size on Apple Silicon).
+#define BLOB_HEADER_ALIGNMENT (16 * 1024)
+#else
+// ELF: the section holds only this 8-byte header; exe_format/elf.rs places the
+// --compile payload at a page-aligned vaddr itself. A larger alignment raises
+// the RW PT_LOAD's p_align past the page size, which makes it overlap the
+// previous segment under strict-p_align loaders like UPX's stub (#40752).
+#define BLOB_HEADER_ALIGNMENT 8
+#endif
 
 extern "C" {
 struct BlobHeader {
@@ -1135,7 +1177,7 @@ static bool initializePESection()
     PIMAGE_SECTION_HEADER sectionHeader = IMAGE_FIRST_SECTION(ntHeaders);
 
     for (int i = 0; i < ntHeaders->FileHeader.NumberOfSections; i++) {
-        if (strncmp((char*)sectionHeader->Name, ".bun", 4) == 0) {
+        if (memcmp(sectionHeader->Name, ".bun\0\0\0\0", 8) == 0) {
             // Found the .bun section
             // Section format: 8 bytes size (uint64_t) + data
             BYTE* sectionData = (BYTE*)hModule + sectionHeader->VirtualAddress;

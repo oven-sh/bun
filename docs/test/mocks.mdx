@@ -189,7 +189,7 @@ test("spyon", () => {
 ### Advanced Spy Usage
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
-import { test, expect, spyOn, afterEach } from "bun:test";
+import { test, expect, spyOn, afterEach, jest } from "bun:test";
 
 class UserService {
   async getUser(id: string) {
@@ -574,7 +574,7 @@ test("conditional API usage", async () => {
 ### Mock Cleanup Patterns
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
-import { afterEach, beforeEach } from "bun:test";
+import { afterEach, beforeEach, mock } from "bun:test";
 
 beforeEach(() => {
   // Set up common mocks
@@ -586,7 +586,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  // Clean up all mocks
+  // Restore spies and clear call history; neither call resets the mock.module() override
   mock.restore();
   mock.clearAllMocks();
 });

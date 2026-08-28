@@ -99,8 +99,8 @@ fn default_registry_href(pm: &PackageManager) -> &[u8] {
 
 fn report_non_json_response(registry: &[u8]) {
     Output::err_generic(
-        "{s} returned a non-JSON audit response",
-        (BStr::new(registry),),
+        "{f} returned a non-JSON audit response",
+        (bun_core::fmt::redacted_npm_url(registry),),
     );
 }
 
@@ -419,8 +419,9 @@ impl core::fmt::Display for SkipReason {
 fn unaudited(request: &AuditRequest, reason: &SkipReason) -> audit_fix::UnauditedRegistry {
     let mut reason_text: Vec<u8> = Vec::new();
     write!(&mut reason_text, "{reason}").expect("unreachable");
+    let registry = URL::parse(&request.registry.href).href_without_auth();
     audit_fix::UnauditedRegistry {
-        registry: request.registry.href.clone(),
+        registry: Box::from(strings::without_trailing_slash(&registry)),
         packages: request
             .packages
             .iter()
@@ -696,9 +697,8 @@ fn send_audit_request(
     libdeflate::load();
     let mut compressor = libdeflate::OwnedCompressor::new(6).ok_or(bun_alloc::AllocError)?;
 
-    let max_compressed_size = compressor.max_bytes_needed(body, libdeflate::Encoding::Gzip);
-    let mut compressed_body = Vec::with_capacity(max_compressed_size);
-    let _ = compressor.compress_to_vec(body, &mut compressed_body, libdeflate::Encoding::Gzip);
+    let mut compressed_body = Vec::new();
+    let _ = compressor.compress_to_vec(body, &mut compressed_body, libdeflate::Encoding::Gzip)?;
     drop(compressor);
     let final_compressed_body = compressed_body;
 
@@ -752,7 +752,6 @@ fn send_audit_request(
         headers_buf,
         &final_compressed_body,
         http_proxy,
-        None,
         http::FetchRedirect::Follow,
     );
     let reason = match req.send_sync(&mut response_buf) {
@@ -783,7 +782,7 @@ fn send_audit_request(
         reason => {
             bun_core::pretty_errorln!(
                 "<r><red>error<r><d>:<r> <red><b>POST<r><red> {}<d> - {}<r>",
-                BStr::new(&url_str),
+                bun_core::fmt::redacted_npm_url(&url_str),
                 reason
             );
         }

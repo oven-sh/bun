@@ -121,7 +121,7 @@ bun create remix
 bunx create-remix
 ```
 
-Refer to the `create-<template>` package's documentation for usage instructions.
+Refer to the `create-<template>` package's documentation for usage instructions. For `react` and `next`, Bun doesn't run a package; it only prints a message pointing to `react-app`/`vite` and `next-app`.
 
 ## From GitHub
 
@@ -201,12 +201,13 @@ You can specify pre- and post-install setup scripts in the `"bun-create"` sectio
 }
 ```
 
-Each field accepts a string or an array of strings. An array of commands runs in order.
+`preinstall` and `postinstall` accept a string or an array of strings. An array of commands runs in order.
 
-| Field         | Description                         |
-| ------------- | ----------------------------------- |
-| `postinstall` | runs after installing dependencies  |
-| `preinstall`  | runs before installing dependencies |
+| Field         | Description                                                                                 |
+| ------------- | ------------------------------------------------------------------------------------------- |
+| `postinstall` | runs after installing dependencies                                                          |
+| `preinstall`  | runs before installing dependencies                                                         |
+| `start`       | the command Bun prints under "To get started, run:" when it finishes; defaults to `bun dev` |
 
 After cloning a template, `bun create` removes the `"bun-create"` section from `package.json` before writing it to the destination folder.
 
@@ -232,7 +233,7 @@ After cloning a template, `bun create` removes the `"bun-create"` section from `
 
 When you run `bun create ${template} ${destination}`, here’s what happens:
 
-IF remote template
+IF remote template (`elysia`, `elysia-buchta`, or `stric`; Bun hands any other npm template name to `bunx create-${template}` instead, except `react` and `next`, for which it only prints a message pointing to `react-app`/`vite` and `next-app`)
 
 1. GET `registry.npmjs.org/@bun-examples/${template}/latest` and parse it
 2. GET `registry.npmjs.org/@bun-examples/${template}/-/${template}-${latestVersion}.tgz`
@@ -250,6 +251,8 @@ ELSE IF local template
 1. Open local template folder
 2. Delete destination directory recursively
 3. Copy files recursively using the fastest system calls available (on macOS, `fcopyfile`; on Linux, `copy_file_range`). Do not copy or traverse into the `node_modules` folder if it exists (this alone makes it faster than `cp`)
+
+THEN, for remote templates, GitHub repos, and local templates alike:
 
 4. Parse the `package.json` (again!), update `name` to be `${basename(destination)}`, remove the `bun-create` section from the `package.json` and save the updated `package.json` to disk.
 5. Run any tasks defined in `"bun-create": { "preinstall" }`

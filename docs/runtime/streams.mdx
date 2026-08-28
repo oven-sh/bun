@@ -42,9 +42,9 @@ for await (const chunk of stream) {
 
 ## Direct `ReadableStream`
 
-Bun implements an optimized version of `ReadableStream` that avoids unnecessary data copying and queue management.
+Bun implements an optimized version of `ReadableStream` that avoids unnecessary queue management.
 
-With a traditional `ReadableStream`, you _enqueue_ chunks of data. The stream copies each chunk into a queue, where it sits until the stream is ready to send more data.
+With a traditional `ReadableStream`, you _enqueue_ chunks of data. The stream adds each chunk to a queue, where it sits until the stream is ready to send more data.
 
 ```ts
 const stream = new ReadableStream({
@@ -56,7 +56,7 @@ const stream = new ReadableStream({
 });
 ```
 
-With a direct `ReadableStream`, you write chunks of data directly to the stream. No queueing happens, and there's no need to clone the chunk data into memory. The `controller` API reflects this: you call `.write()` instead of `.enqueue()`.
+With a direct `ReadableStream`, you write chunks of data directly to the stream. No queueing happens. The `controller` API reflects this: you call `.write()` instead of `.enqueue()`.
 
 ```ts
 const stream = new ReadableStream({
@@ -68,7 +68,7 @@ const stream = new ReadableStream({
 });
 ```
 
-When using a direct `ReadableStream`, the destination handles all chunk queueing. The consumer of the stream receives exactly what is passed to `controller.write()`, without any encoding or modification.
+When using a direct `ReadableStream`, the destination handles all chunk queueing. The destination receives the bytes you pass to `controller.write()`. When the stream is read from JavaScript, Bun buffers the writes and delivers them as `Uint8Array` chunks (strings are UTF-8 encoded).
 
 ### Handling backpressure
 
@@ -118,6 +118,19 @@ const response = new Response({
 });
 
 await response.text(); // "helloworld"
+```
+
+The body contains the yielded values only. As with `for await`, the generator's return value is not part of the body.
+
+```ts
+const response = new Response(
+  (async function* () {
+    yield "hello";
+    return "ignored";
+  })(),
+);
+
+await response.text(); // "hello"
 ```
 
 For more control over the stream, `yield` returns the direct `ReadableStream` controller.

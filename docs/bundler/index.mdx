@@ -114,7 +114,7 @@ The contents of `out/index.js` look something like this:
 // Component.tsx
 function Component(props) {
   return $jsxDEV(
-    "p",
+    "h1",
     {
       children: props.message,
     },
@@ -429,7 +429,7 @@ To build a CommonJS module, set `format` to `"cjs"`. When you choose `"cjs"`, th
 
 #### format: "iife" - IIFE
 
-TODO: document IIFE once we support globalNames.
+To build an IIFE bundle, set `format` to `"iife"`. Bun wraps the bundle in an immediately invoked function expression and does not support exposing its exports under a global name.
 
 ### `jsx`
 
@@ -507,10 +507,12 @@ When `true`, the bundler enables code splitting. When multiple entrypoints impor
 
 ```ts entry-a.ts icon="/icons/typescript.svg"
 import { shared } from "./shared.ts";
+console.log(shared);
 ```
 
 ```ts entry-b.ts icon="/icons/typescript.svg"
 import { shared } from "./shared.ts";
+console.log(shared);
 ```
 
 ```ts shared.ts icon="/icons/typescript.svg"
@@ -538,20 +540,71 @@ To bundle `entry-a.ts` and `entry-b.ts` with code-splitting enabled:
   </Tab>
 </Tabs>
 
-Running this build results in the following files:
+Running this build with the JavaScript API results in the following files:
 
 ```text title="file system" icon="folder-tree"
 .
-├── entry-a.tsx
-├── entry-b.tsx
-├── shared.tsx
+├── entry-a.ts
+├── entry-b.ts
+├── shared.ts
 └── out
     ├── entry-a.js
     ├── entry-b.js
-    └── chunk-2fce6291bf86559d.js
+    └── chunk-dqmx6gc8.js
 ```
 
-The generated `chunk-2fce6291bf86559d.js` file contains the shared code. To avoid collisions, the file name includes a content hash by default. Customize this with [`naming`](#naming).
+The generated `chunk-dqmx6gc8.js` file contains the shared code. To avoid collisions, the file name includes a content hash by default. The `bun build` CLI names this chunk `entry-a-t268ez5g.js` instead of `chunk-<hash>.js`. Customize this with [`naming`](#naming).
+
+Each `import()` of a bundled JavaScript module also becomes its own chunk. Tree shaking applies to these chunks too: if every `import()` of a module lives in code that tree shaking removes — for example inside a function that is only called behind a [`define`](#define) or [`features`](#features) gate that evaluates to `false` — and nothing else in the live output imports the module, its chunk is not written and the module is absent from the [metafile](#metafile)'s `inputs` and `outputs`. Setting `treeShaking: false` keeps every `import()` chunk. This differs from esbuild, which emits a chunk for every reachable `import()` target.
+
+With `target: "bun"`, a `require()` of a bundled ES module becomes a chunk of its own as well. The call is emitted as `import.meta.require("./chunk-<hash>.js")` and stays synchronous — Bun evaluates the chunk when the call runs — so a `require()` inside a function that never runs keeps its module out of the startup working set entirely. Tree shaking treats these chunks like `import()` chunks. `require()` of a CommonJS module is unaffected and keeps returning `module.exports`. A `require()` cycle between such chunks follows Bun's runtime `require()` of an ES module: a module required again while its chunk is still being loaded sees the partially initialized CommonJS placeholder (`{}`) rather than the live bindings the in-chunk wrapper provides. For other targets — and with `splitRequire: false` (`--no-split-require`) — the required module is inlined into the calling chunk behind a lazy wrapper instead, because the call must return synchronously.
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./index.tsx"],
+      outdir: "./out",
+      target: "bun",
+      splitting: true,
+      splitRequire: false, // keep require()'d modules in the calling chunk
+    });
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash title="Terminal" icon="terminal"
+    bun build ./index.tsx --outdir ./out --target bun --splitting --no-split-require
+    ```
+  </Tab>
+</Tabs>
+
+### minChunkSize
+
+With `splitting`, also fold small side-effect-free chunks into a chunk that more entrypoints load.
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      splitting: true,
+      minChunkSize: 16 * 1024, // default 0 (disabled)
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --splitting --min-chunk-size=16384
+    ```
+  </Tab>
+</Tabs>
+
+Code splitting gives each distinct set of importers its own chunk, then folds chunks that are always loaded together: a module that `index.tsx` imports and that a lazily `import()`ed module also imports lives in `index.js`, and the lazy chunk imports it from there, because the lazy module can only load after `index.tsx` has run. That fold never makes an entrypoint load more code, so it is always on.
+
+`minChunkSize` goes further for chunks whose source files add up to fewer than this many bytes and whose modules run nothing at the top level: only declarations, `"sideEffects": false` in their `package.json`, or a lazily initialized CommonJS/ESM wrapper. Such a chunk folds into a chunk loaded by a superset of its importers. Everything it imports must already be loaded whenever that target is, or be side-effect free as well. The extra entrypoints then carry some unused definitions, capped at about 1.5% of what each entrypoint loaded to begin with. No side effect runs earlier than before and nothing lazy becomes eager. Because these rules bound what an entrypoint can end up loading, a large `minChunkSize` is reasonable.
+
+A chunk that absorbs other chunks exports the symbols those chunks' importers need. An entrypoint that has exports of its own never absorbs one, so its module namespace stays as written; an entrypoint without exports can. With `--compile`, nothing folds into the entrypoint's own chunk.
 
 ### plugins
 
@@ -675,7 +728,7 @@ Specifies the type of sourcemap to generate.
   </Tab>
   <Tab title="CLI">
     ```bash terminal icon="terminal"
-    bun build ./index.tsx --outdir ./out --sourcemap linked
+    bun build ./index.tsx --outdir ./out --sourcemap=linked
     ```
   </Tab>
 </Tabs>
@@ -841,7 +894,7 @@ Controls whether package dependencies are included in the bundle. Possible value
 
 ### naming
 
-Customizes the generated file names. Defaults to `./[dir]/[name].[ext]`.
+Customizes the generated file names. Defaults to `[dir]/[name].[ext]`.
 
 <Tabs>
   <Tab title="JavaScript">
@@ -1099,7 +1152,7 @@ var logo = "https://cdn.example.com/logo-a7305bdef.svg";
 
 ### define
 
-A map of global identifiers to be replaced at build time. Keys of this object are identifier names, and values are JSON strings that are inlined.
+A map of global identifiers to be replaced at build time. Keys of this object are identifiers or dotted property paths such as `process.env.NODE_ENV`, and values are JSON strings, identifiers, or property paths that are inlined.
 
 <Tabs>
   <Tab title="JavaScript">
@@ -1345,7 +1398,7 @@ Generate metadata about the build in a structured format. The metafile describes
   </Tab>
   <Tab title="CLI">
     ```bash terminal icon="terminal"
-    bun build ./src/index.ts --outdir ./dist --metafile ./dist/meta.json
+    bun build ./src/index.ts --outdir ./dist --metafile=./dist/meta.json
     ```
   </Tab>
 </Tabs>
@@ -1355,13 +1408,13 @@ Generate metadata about the build in a structured format. The metafile describes
 Use `--metafile-md` to generate a markdown metafile, which is LLM-friendly and readable in the terminal:
 
 ```bash terminal icon="terminal"
-bun build ./src/index.ts --outdir ./dist --metafile-md ./dist/meta.md
+bun build ./src/index.ts --outdir ./dist --metafile-md=./dist/meta.md
 ```
 
 You can use both `--metafile` and `--metafile-md` together:
 
 ```bash terminal icon="terminal"
-bun build ./src/index.ts --outdir ./dist --metafile ./dist/meta.json --metafile-md ./dist/meta.md
+bun build ./src/index.ts --outdir ./dist --metafile=./dist/meta.json --metafile-md=./dist/meta.md
 ```
 
 #### `metafile` option formats
@@ -1532,6 +1585,8 @@ The `bytecode: boolean` option generates bytecode for any JavaScript/TypeScript 
 
 Without an explicit `format`, bytecode defaults to CommonJS.
 
+The `bytecodeDepth: number` option (a non-negative integer) limits how many levels of nested functions are compiled ahead of time (`0` = only each module's top-level code). Functions past the limit are compiled from source when first called. Defaults to all.
+
 <Tabs>
   <Tab title="JavaScript">
     ```ts title="build.ts" icon="/icons/typescript.svg"
@@ -1678,6 +1733,8 @@ interface BuildConfig {
       };
   root?: string; // project root
   splitting?: boolean; // default false, enable code splitting
+  splitRequire?: boolean; // default true, with splitting and target "bun": require() of an ES module is a chunk too
+  minChunkSize?: number; // default 0, also fold side-effect-free chunks smaller than this many source bytes
   plugins?: BunPlugin[];
   external?: string[];
   packages?: "bundle" | "external";
@@ -1737,6 +1794,13 @@ interface BuildConfig {
    * @default false
    */
   bytecode?: boolean;
+  /**
+   * How many levels of nested functions to compile to bytecode ahead of time
+   * (a non-negative integer; `0` = only each module's top-level code).
+   * Only used when `bytecode: true`.
+   * @default undefined (all nested functions)
+   */
+  bytecodeDepth?: number;
   /**
    * Add a banner to the bundled code such as "use client";
    */

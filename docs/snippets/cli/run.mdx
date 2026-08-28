@@ -78,11 +78,11 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--no-deprecation" type="boolean">
-  Suppress all reporting of the custom deprecation
+  Silence all deprecation warnings
 </ParamField>
 
 <ParamField path="--throw-deprecation" type="boolean">
-  Determine whether deprecation warnings result in errors
+  Throw deprecation warnings as errors
 </ParamField>
 
 <ParamField path="--title" type="string">
@@ -94,7 +94,12 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--no-addons" type="boolean">
-  Throw an error if <code>process.dlopen</code> is called, and disable export condition <code>node-addons</code>
+  Throw an error if <code>process.dlopen</code> or <code>bun:ffi</code> <code>cc()</code> is called, and disable export
+  condition <code>node-addons</code>
+</ParamField>
+
+<ParamField path="--no-ffi-cc" type="boolean">
+  Throw an error if <code>bun:ffi</code> <code>cc()</code> is called (disables the C compiler)
 </ParamField>
 
 <ParamField path="--unhandled-rejections" type="string">
@@ -178,7 +183,7 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--main-fields" type="string">
-  Main fields to lookup in <code>package.json</code>. Defaults to --target dependent
+  Main fields to lookup in <code>package.json</code>
 </ParamField>
 
 <ParamField path="--preserve-symlinks" type="boolean">
@@ -189,8 +194,8 @@ bun run <file or script>
   Preserve symlinks when resolving the main entry point
 </ParamField>
 
-<ParamField path="--extension-order" type="string" default=".tsx,.ts,.jsx,.js,.json">
-  Defaults to: <code>.tsx,.ts,.jsx,.js,.json</code>
+<ParamField path="--extension-order" type="string" default=".tsx,.ts,.jsx,.cts,.cjs,.js,.mjs,.mts,.json,.node">
+  Defaults to: <code>.tsx,.ts,.jsx,.cts,.cjs,.js,.mjs,.mts,.json,.node</code>
 </ParamField>
 
 ### Transpilation &amp; Language Features

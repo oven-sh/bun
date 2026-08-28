@@ -462,7 +462,7 @@ impl Expansion {
         expand_tilde: bool,
         event_loop: EventLoopHandle,
         command_ctx: *mut bun_options_types::context::ContextData,
-        vm_args_utf8: &mut Vec<bun_core::ZigStringSlice>,
+        vm_args_utf8: &mut Vec<bun_core::Utf8Bytes<'static>>,
     ) -> bool {
         use crate::shell::env_str::EnvStr;
         match atom {
@@ -725,7 +725,6 @@ impl Expansion {
         me.out.buf.clear();
         me.out.bounds.clear();
         me.current_out.clear();
-        me.base.end_scope();
     }
 
     /// Take the expanded output (called by the parent after `child_done`).

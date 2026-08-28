@@ -3,6 +3,8 @@
 use bun_sys::Error;
 
 use crate::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, SystemErrorJsc};
+#[cfg(windows)]
+use bun_jsc::bun_string_jsc;
 
 pub trait ErrorJsc {
     fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
@@ -71,7 +73,7 @@ pub mod TestingAPIs {
                 from_libuv: true,
                 ..Default::default()
             };
-            return bun_jsc::bun_string_jsc::create_utf8_for_js(global, err.name());
+            return bun_string_jsc::create_utf8_for_js(global, err.name());
         }
     }
 
@@ -99,7 +101,7 @@ pub mod TestingAPIs {
             let raw: u32 = arguments[0].to_u32();
             let status = bun_sys::windows::NTSTATUS::from_raw(raw);
             let result = bun_sys::windows::translate_nt_status_to_errno(status);
-            return bun_jsc::bun_string_jsc::create_utf8_for_js(
+            return bun_string_jsc::create_utf8_for_js(
                 global,
                 <&'static str>::from(result).as_bytes(),
             );
@@ -127,8 +129,7 @@ pub mod TestingAPIs {
         {
             let code: core::ffi::c_int = arguments[0].to_int32();
             let result = bun_sys::windows::translate_uv_error_to_e(code);
-            // @tagName(result) → IntoStaticStr derive on the E enum.
-            return bun_jsc::bun_string_jsc::create_utf8_for_js(
+            return bun_string_jsc::create_utf8_for_js(
                 global,
                 <&'static str>::from(result).as_bytes(),
             );

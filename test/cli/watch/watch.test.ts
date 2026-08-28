@@ -2,7 +2,7 @@ import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
-import { readdirSync, rmSync } from "node:fs";
+import { copyFileSync, linkSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 let watchee: Subprocess;
@@ -202,6 +202,102 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
   expect(stdout).not.toContain("unreachable");
   expect(exitCode).not.toBe(0);
 });
+
+// The reload execve()s the running binary by path. That fails when the binary
+// is gone, for example after an upgrade replaced it. The tests below run a
+// second link to the binary so removing it leaves the build alone. A hard link
+// needs the same filesystem; fall back to a copy.
+function linkBunExe(dir: string): string {
+  const exe = join(dir, "bun-link");
+  try {
+    linkSync(bunExe(), exe);
+  } catch {
+    copyFileSync(bunExe(), exe);
+  }
+  return exe;
+}
+
+// CI sets BUN_CRASH_REPORT_URL so unexpected crashes are captured; the
+// deliberate crashes below must not upload there.
+const noCrashReportEnv = { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" };
+
+it.skipIf(isWindows)(
+  "--watch names the errno when the re-exec of the binary fails",
+  async () => {
+    using dir = tempDir("watch-reexec-fails", {
+      "app.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
+    });
+    const exe = linkBunExe(String(dir));
+
+    const proc = spawn({
+      // --debug-crash-handler-use-trace-string skips the debug build's slow
+      // backtrace symbolication so the child exits promptly.
+      cmd: [exe, "--debug-crash-handler-use-trace-string", "--watch", "app.js"],
+      cwd: String(dir),
+      env: noCrashReportEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    watchee = proc;
+    const stderr = proc.stderr.text();
+    const { waitFor, release } = stdoutWaiter(proc);
+
+    await waitFor("iter first");
+    release();
+
+    // The path the reload will execve() no longer exists.
+    rmSync(exe);
+    await Bun.write(join(String(dir), "app.js"), `console.log("iter second");`);
+
+    const [err, exitCode] = await Promise.all([stderr, proc.exited]);
+    expect(err).toContain("Unexpected error while reloading: ENOENT");
+    expect(exitCode).not.toBe(0);
+  },
+  30000,
+);
+
+// A crash under --watch restarts the process from the crash handler. When that
+// execve() fails as well, the error line must name the errno and must reach
+// stderr before the handler re-raises the fatal signal.
+it.skipIf(isWindows)(
+  "--watch crash auto-restart reports a failed re-exec by errno name",
+  async () => {
+    using dir = tempDir("watch-crash-reexec-fails", {
+      "app.js": `
+        const { crash_handler } = require("bun:internal-for-testing");
+        console.log("iter first");
+        process.stdin.on("data", () => crash_handler.segfault());
+      `,
+    });
+    const exe = linkBunExe(String(dir));
+
+    const proc = spawn({
+      cmd: [exe, "--debug-crash-handler-use-trace-string", "--watch", "app.js"],
+      cwd: String(dir),
+      env: noCrashReportEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    watchee = proc;
+    const stderr = proc.stderr.text();
+    const { waitFor, release } = stdoutWaiter(proc);
+
+    await waitFor("iter first");
+    release();
+
+    // Crash only after the path the restart will execve() is gone.
+    rmSync(exe);
+    proc.stdin.write("crash\n");
+    await proc.stdin.end();
+
+    const [err, exitCode] = await Promise.all([stderr, proc.exited]);
+    expect(err).toContain("Bun is auto-restarting due to crash");
+    expect(err).toContain("ENOENT: No such file or directory: Failed to reload process (execve)");
+    expect(exitCode).not.toBe(0);
+  },
+  30000,
+);
 
 // A script that registers a SIGTERM handler and then spins in synchronous
 // code must still restart on file change: the watcher thread posts the reload

@@ -242,8 +242,7 @@ impl Loader {
         None
     }
 
-    /// Bun's install cache directory, shared by `bun install` and the `bun build --compile` download
-    /// of another platform's executable. `cache_directory` is the `--cache-dir` / bunfig setting.
+    /// `cache_directory` is the `--cache-dir` / bunfig `install.cache.dir` setting, if any.
     pub fn install_cache_directory_path<'b>(
         &self,
         cache_directory: Option<&[u8]>,

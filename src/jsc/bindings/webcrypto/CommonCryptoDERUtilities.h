@@ -43,7 +43,6 @@ inline constexpr unsigned char SequenceMark = 0x30;
 inline constexpr unsigned char InitialOctet = 0x00;
 inline constexpr size_t MaxLengthInOneByte = 128;
 
-size_t bytesUsedToEncodedLength(uint8_t);
 void addEncodedASN1Length(Vector<uint8_t>&, size_t);
 
 } // namespace WebCore

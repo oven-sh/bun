@@ -1321,6 +1321,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut before: ListManaged<'a, Stmt> = ListManaged::new_in(p.arena);
             let mut after: ListManaged<'a, Stmt> = ListManaged::new_in(p.arena);
 
+            let prev_nearest_stmt_list = p.nearest_stmt_list;
+            // BACKREF — `before` outlives this block; raw NonNull avoids
+            // the `&'a mut` borrow conflict. Derive via `addr_of_mut!` (no intermediate
+            // `&mut`) so the pointer shares the local's base tag and survives the
+            // direct `&mut before` reborrows in the loop below (Stacked Borrows).
+            // Set before the enum pre-pass, so a class expression in an enum
+            // initializer declares its temporaries in this list too.
+            p.nearest_stmt_list = NonNull::new(core::ptr::addr_of_mut!(before));
+
             // Preprocess TypeScript enums to improve code generation. Otherwise
             // uses of an enum before that enum has been declared won't be inlined:
             //
@@ -1352,13 +1361,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // visit all statements first
             let mut visited: ListManaged<'a, Stmt> =
                 ListManaged::with_capacity_in(stmts.len(), p.arena);
-
-            let prev_nearest_stmt_list = p.nearest_stmt_list;
-            // BACKREF — `before` outlives this block; raw NonNull avoids
-            // the `&'a mut` borrow conflict. Derive via `addr_of_mut!` (no intermediate
-            // `&mut`) so the pointer shares the local's base tag and survives the
-            // direct `&mut before` reborrows in the loop below (Stacked Borrows).
-            p.nearest_stmt_list = NonNull::new(core::ptr::addr_of_mut!(before));
 
             let mut preprocessed_enum_i: usize = 0;
 

@@ -6677,7 +6677,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // A computed key temporary is a `var` in the scope around the class.
-        let can_declare_temps = self.nearest_stmt_list.is_some();
         let class_body_scope = self.current_scope;
         let mut enclosing_scope = class_body_scope;
         while matches!(
@@ -6696,22 +6695,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 properties.push(core::mem::take(prop));
                 continue;
             }
-            let key_for_reuse = if can_declare_temps {
-                self.current_scope = enclosing_scope;
-                let (key, _) = self.capture_computed_key(prop);
-                self.current_scope = class_body_scope;
-                key
-            } else {
-                prop.key.expect("infallible: prop has key")
-            };
+            self.current_scope = enclosing_scope;
+            let (key_for_reuse, _) = self.capture_computed_key(prop);
+            self.current_scope = class_body_scope;
             self.lower_ts_auto_accessor(prop, key_for_reuse, &mut storage_names, &mut properties);
         }
         class.properties = bun_ast::StoreSlice::new_mut(properties.into_bump_slice_mut());
 
-        if let Some(temp_decls) = self.drain_capture_temp_decls(temp_refs_before, class.body_loc)
-            && let Some(stmt_list) = self.nearest_stmt_list_mut()
-        {
-            stmt_list.push(temp_decls);
+        if let Some(temp_decls) = self.drain_capture_temp_decls(temp_refs_before, class.body_loc) {
+            self.nearest_stmt_list_mut()
+                .expect("visit_class runs while a statement list is visited")
+                .push(temp_decls);
         }
     }
 

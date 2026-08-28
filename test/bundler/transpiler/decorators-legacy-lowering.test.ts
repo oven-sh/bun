@@ -191,13 +191,15 @@ const fixtures: Record<string, Fixture> = {
         #x_accessor_storage = 4;
         get(): number[] { return [this.x, A.x, this.#x, this.#x_accessor_storage] }
       }
-      const k = () => "k";
+      let n = 0;
+      const k = () => "k" + ++n;
       const B = class { accessor y = 5; accessor [k()] = 7 };
       const b: any = new B();
       b.y += 1;
-      console.log(JSON.stringify([new A().get(), b.y, b.k, Object.getOwnPropertyNames(b).length]));
+      enum E { A = (new (class { accessor [k()] = 8 })() as any).k2 }
+      console.log(JSON.stringify([new A().get(), b.y, b.k1, Object.getOwnPropertyNames(b).length, E.A, n]));
     `,
-    expected: "[[1,2,3,4],6,7,0]\n",
+    expected: "[[1,2,3,4],6,7,0,8,2]\n",
   },
 };
 

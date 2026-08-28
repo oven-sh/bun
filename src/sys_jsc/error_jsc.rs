@@ -77,8 +77,7 @@ pub mod TestingAPIs {
         }
     }
 
-    /// Runs `Output.err` on a `bun.sys.Error` built from `(errno, fromLibuv)`;
-    /// tests read the line from stderr. `fromLibuv` is Windows-only (no-op elsewhere).
+    /// Runs `Output.err` on an `Error` built from `(errno, fromLibuv)`. Tests read stderr.
     #[bun_jsc::host_fn]
     pub fn sys_error_output_err(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments = frame.arguments();

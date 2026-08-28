@@ -803,8 +803,8 @@ impl Loader {
             Err(err) => {
                 use bun_sys::E;
                 match err.get_errno() {
-                    // ENXIO: a unix socket.
-                    E::EISDIR | E::ENOENT | E::ENXIO => {
+                    // A unix socket: ENXIO on Linux, EOPNOTSUPP on macOS and FreeBSD.
+                    E::EISDIR | E::ENOENT | E::ENXIO | E::EOPNOTSUPP => {
                         // prevent retrying
                         self.default_files_loaded.insert(env_file);
                         return Ok(());

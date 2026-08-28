@@ -809,7 +809,7 @@ describe("read edge cases", () => {
     // checks 4 GiB offsets without a 4 GiB allocation. Runs in a subprocess
     // because a truncated offset reads unmapped memory and can crash.
     const src = `
-      const { ptr, read } = require("bun:ffi");
+      import { ptr, read } from "bun:ffi";
       const buf = new Uint8Array(32);
       for (let i = 0; i < buf.length; i++) buf[i] = 0x80 + i;
       const view = new DataView(buf.buffer);
@@ -852,7 +852,7 @@ describe("read edge cases", () => {
     // Runs in a subprocess: an unfixed build reads the JSValue encoding of
     // `undefined` as the offset, and a debug build asserts on it.
     const src = `
-      const { ptr, read } = require("bun:ffi");
+      import { ptr, read } from "bun:ffi";
       const buf = new Uint8Array([0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc]);
       const p = ptr(buf);
       const got = { none: read.u8(p), undefined: read.u8(p, undefined), null: read.u8(p, null) };

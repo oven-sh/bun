@@ -167,14 +167,16 @@ describe("tsconfig extends", () => {
       expect(exitCode).toBe(0);
     });
 
-    test.concurrent("'.' and '..' mean the tsconfig.json in that directory", async () => {
+    test.concurrent("'..' means the tsconfig.json in that directory", async () => {
       using dir = tempDir("tsconfig-extends-dot", {
         ...noAutoInstall,
         "tsconfig.json": JSON.stringify(jsxBase),
         "sub/tsconfig.json": JSON.stringify({ extends: ".." }),
         "sub/app.tsx": jsxApp,
       });
-      const { stdout, stderr, exitCode } = await runFile(String(dir), "sub/app.tsx");
+      // The runtime reads JSX settings from the tsconfig.json of the working
+      // directory, so run from `sub` to make `extends: ".."` the config in use.
+      const { stdout, stderr, exitCode } = await runFile(join(String(dir), "sub"), "app.tsx");
       expect(stderr).toBe("");
       expect(stdout).toBe(jsxExpected);
       expect(exitCode).toBe(0);

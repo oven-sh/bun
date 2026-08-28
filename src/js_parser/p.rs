@@ -4539,8 +4539,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(ref_)
     }
 
-    /// A generator declaration may be named "yield", a generator expression
-    /// may not: only the expression's name binds inside the generator.
     pub(crate) fn validate_function_name(&mut self, func: &G::Fn, kind: FnKind) {
         if let Some(name) = &func.name {
             // SAFETY: Symbol.original_name is an arena/source-contents slice valid for 'a.

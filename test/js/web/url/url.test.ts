@@ -323,6 +323,121 @@ describe("url", () => {
 }`);
     // A path whose first segment merely starts with "." gets no guard.
     expect(util.inspect(new URL("foo:/.foo"), { showHidden: true })).toContain("pathname_start: 4,");
+    // search_start is derived from the pathname's length, so it is only right if the pathname getter keeps the "/.".
+    const inspected = util.inspect(new URL("foo:/.foo?x"), { showHidden: true });
+    expect(inspected).toContain("pathname: '/.foo',");
+    expect(inspected).toContain("pathname_start: 4,");
+    expect(inspected).toContain("search_start: 9,");
+  });
+
+  // URL Standard section 4.5 step 3: a URL with a null host serializes a path whose first segment is empty with a "/."
+  // guard in front of it (foo:/.//b), and the pathname getter leaves that guard out. The guard is only ever in front of
+  // "//"; a first segment that merely starts with "." (foo:/.a, git:/.git/config) is part of the pathname.
+  describe("pathname of a host-less URL whose first segment starts with a dot", () => {
+    const pathnames = (inputs: string[]) => Object.fromEntries(inputs.map(input => [input, new URL(input).pathname]));
+
+    it("keeps the dotted first segment", () => {
+      expect(
+        pathnames([
+          "foo:/.a/b",
+          "git:/.git/config",
+          "myapp:/.well-known/assetlinks.json",
+          "foo:/..a",
+          "foo:/.a",
+          "foo:/.a?q#f",
+          "foo:/.%2Fa",
+          "foo:/.a//b",
+          "foo:/./.a",
+        ]),
+      ).toEqual({
+        "foo:/.a/b": "/.a/b",
+        "git:/.git/config": "/.git/config",
+        "myapp:/.well-known/assetlinks.json": "/.well-known/assetlinks.json",
+        "foo:/..a": "/..a",
+        "foo:/.a": "/.a",
+        "foo:/.a?q#f": "/.a",
+        "foo:/.%2Fa": "/.%2Fa",
+        "foo:/.a//b": "/.a//b",
+        "foo:/./.a": "/.a",
+      });
+    });
+
+    it("still omits the /. guard and normalizes dot segments", () => {
+      expect(
+        pathnames([
+          "foo:/.//b",
+          "foo:/..//b",
+          "foo:/.//.a",
+          "foo:/./b",
+          "foo:/.",
+          "foo://h/.a",
+          "foo:///.a",
+          "https://h/.a",
+          "file:/.a",
+        ]),
+      ).toEqual({
+        "foo:/.//b": "//b",
+        "foo:/..//b": "//b",
+        "foo:/.//.a": "//.a",
+        "foo:/./b": "/b",
+        "foo:/.": "/",
+        "foo://h/.a": "/.a",
+        "foo:///.a": "/.a",
+        "https://h/.a": "/.a",
+        "file:/.a": "/.a",
+      });
+      expect(new URL("foo:/.//b").href).toBe("foo:/.//b");
+      expect(new URL("foo:/.a/b").href).toBe("foo:/.a/b");
+    });
+
+    it("resolves relative references against such a URL", () => {
+      const resolve = (input: string, base: string) => {
+        const url = new URL(input, base);
+        return { href: url.href, pathname: url.pathname };
+      };
+      expect({
+        "x against foo:/.a/b": resolve("x", "foo:/.a/b"),
+        "../y against foo:/.a/b/c": resolve("../y", "foo:/.a/b/c"),
+        "/.a against foo:/.//b": resolve("/.a", "foo:/.//b"),
+        "//b against foo:/.a": resolve("//b", "foo:/.a"),
+      }).toEqual({
+        "x against foo:/.a/b": { href: "foo:/.a/x", pathname: "/.a/x" },
+        "../y against foo:/.a/b/c": { href: "foo:/.a/y", pathname: "/.a/y" },
+        "/.a against foo:/.//b": { href: "foo:/.a", pathname: "/.a" },
+        "//b against foo:/.a": { href: "foo://b", pathname: "" },
+      });
+    });
+
+    it("setters", () => {
+      const set = (input: string, property: "pathname" | "host" | "search" | "protocol", value: string) => {
+        const url = new URL(input);
+        url[property] = value;
+        return { href: url.href, host: url.host, pathname: url.pathname };
+      };
+      expect({
+        "foo:/x pathname=/.a/b": set("foo:/x", "pathname", "/.a/b"),
+        "foo:/.a pathname=/b": set("foo:/.a", "pathname", "/b"),
+        "foo:/.a pathname=//b": set("foo:/.a", "pathname", "//b"),
+        "foo:/.//b pathname=/.c": set("foo:/.//b", "pathname", "/.c"),
+        "foo:/.a search=?x": set("foo:/.a", "search", "?x"),
+        "foo:/.a protocol=bar": set("foo:/.a", "protocol", "bar"),
+        "foo:/.a host=h": set("foo:/.a", "host", "h"),
+        "foo:/.a host=h:1": set("foo:/.a", "host", "h:1"),
+        "foo:/.//b host=h": set("foo:/.//b", "host", "h"),
+        "foo:/.//b host=h:1": set("foo:/.//b", "host", "h:1"),
+      }).toEqual({
+        "foo:/x pathname=/.a/b": { href: "foo:/.a/b", host: "", pathname: "/.a/b" },
+        "foo:/.a pathname=/b": { href: "foo:/b", host: "", pathname: "/b" },
+        "foo:/.a pathname=//b": { href: "foo:/.//b", host: "", pathname: "//b" },
+        "foo:/.//b pathname=/.c": { href: "foo:/.c", host: "", pathname: "/.c" },
+        "foo:/.a search=?x": { href: "foo:/.a?x", host: "", pathname: "/.a" },
+        "foo:/.a protocol=bar": { href: "bar:/.a", host: "", pathname: "/.a" },
+        "foo:/.a host=h": { href: "foo://h/.a", host: "h", pathname: "/.a" },
+        "foo:/.a host=h:1": { href: "foo://h:1/.a", host: "h:1", pathname: "/.a" },
+        "foo:/.//b host=h": { href: "foo://h//b", host: "h", pathname: "//b" },
+        "foo:/.//b host=h:1": { href: "foo://h:1//b", host: "h:1", pathname: "//b" },
+      });
+    });
   });
   it("works", () => {
     const inputs = [

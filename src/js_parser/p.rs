@@ -6662,8 +6662,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `accessor` members of a TypeScript class expression under
-    /// `experimentalDecorators`. A class statement goes through `lower_class`.
+    /// `accessor` members of a class expression (a class statement uses `lower_class`).
     pub(crate) fn lower_class_expr_auto_accessors(&mut self, class: &mut G::Class) {
         use js_ast::g::PropertyKind;
         if !class
@@ -6706,9 +6705,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         names
     }
 
-    /// Rewrites a computed key to `[_key = expr]` and returns `_key` for the
-    /// other uses of the key, plus the assignment itself. A key that is a
-    /// literal, or not computed, is returned as is.
+    /// `[expr]` becomes `[_key = expr]`. Returns the key for other uses and the assignment.
     fn capture_computed_key(&mut self, prop: &mut G::Property) -> (Expr, Option<Expr>) {
         let key = prop.key.expect("infallible: prop has key");
         if !prop.flags.contains(Flags::Property::IsComputed)
@@ -6732,8 +6729,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    /// `accessor x = init` becomes `#x_accessor_storage = init` plus a getter
-    /// and a setter. `key_for_reuse` is the key the setter uses.
+    /// `accessor x = init` becomes `#x_accessor_storage = init` plus a getter and a setter.
     fn lower_ts_auto_accessor(
         &mut self,
         prop: &mut G::Property,

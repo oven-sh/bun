@@ -508,6 +508,58 @@ test("--parallel --reporter=junit produces a merged report covering all files", 
   expect(exitCode).toBe(1);
 });
 
+test("--parallel --reporter=junit writes the same document as a serial run", async () => {
+  const files = {
+    "a.test.js": `import {test,expect,describe} from "bun:test";
+      describe("outer", () => {
+        describe("inner", () => {
+          test("passes", () => expect(1).toBe(1));
+          test("fails", () => expect(1).toBe(2));
+        });
+        test.skip("skipped", () => {});
+        test.todo("todo");
+      });
+      test("top level", () => expect(1).toBe(1));`,
+    "b.test.js": `import {test,expect} from "bun:test"; test("tb <needs> & 'escaping'", () => expect(1).toBe(1));`,
+  };
+  using dir = tempDir("parallel-junit-parity", files);
+  const run = async (name: string, ...extra: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...extra, "--reporter=junit", `--reporter-outfile=${name}.xml`],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("3 pass");
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).toBe(1);
+    const xml = await Bun.file(`${dir}/${name}.xml`).text();
+    // Per-file <testsuite> blocks keyed by file, with timings and hostname masked.
+    const suites: Record<string, string> = {};
+    for (const m of xml
+      .replace(/ (time|hostname)="[^"]*"/g, "")
+      .matchAll(/^  <testsuite name="([^"]+)"[^]*?^  <\/testsuite>\n/gm)) {
+      suites[m[1]] = m[0];
+    }
+    const header = xml.match(/<testsuites [^>]*>/)![0].replace(/ time="[^"]*"/, "");
+    return { stdout, exitCode, suites, header };
+  };
+  const serial = await run("serial");
+  const parallel = await run("parallel", "--parallel=2");
+  expect(serial.stdout).not.toContain("PARALLEL");
+  expect(parallel.stdout).toContain("PARALLEL");
+  expect(Object.keys(serial.suites).sort()).toEqual(["a.test.js", "b.test.js"]);
+  expect(parallel.suites).toEqual(serial.suites);
+  expect(parallel.header).toEqual(serial.header);
+  // The failure detail captured in the worker made it across.
+  expect(parallel.suites["a.test.js"]).toContain(
+    '<failure type="AssertionError" message="expect(received).toBe(expected)',
+  );
+  expect(parallel.suites["a.test.js"]).toMatch(/<testsuite name="inner"[^>]* line="\d+"/);
+});
+
 test("--parallel --reporter=junit keeps the suites of files a worker finished before it crashed", async () => {
   using dir = tempDir("parallel-junit-crash", {
     "aslow.test.js": `import {test,expect} from "bun:test"; test("slow", async () => { await Bun.sleep(400); expect(1).toBe(1); });`,
@@ -621,28 +673,37 @@ test("--parallel --coverage prints merged text table", async () => {
   expect(exitCode).toBe(0);
 });
 
-test("--parallel --coverage enforces coverageThreshold with lcov-only reporter", async () => {
+test.each([
+  ["lcov", "--parallel=2"],
+  ["text", "--parallel=2"],
+  ["lcov", ""],
+  ["text", ""],
+])("--coverage --coverage-reporter=%s %s enforces coverageThreshold", async (reporter, mode) => {
   using dir = tempDir("parallel-coverage-threshold", {
     "bunfig.toml": `[test]\ncoverageThreshold = 0.9\ncoverageSkipTestFiles = true\n`,
     "lib.js": `export function used() { return 1; }\nexport function unused() { return 2; }\nexport function alsoUnused() { return 3; }\n`,
     "a.test.js": `import {test,expect} from "bun:test"; import {used} from "./lib.js"; test("a",()=>expect(used()).toBe(1));`,
     "b.test.js": `import {test,expect} from "bun:test"; import {used} from "./lib.js"; test("b",()=>expect(used()).toBe(1));`,
   });
-
-  for (const reporter of ["lcov", "text"] as const) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--parallel=2", "--coverage", `--coverage-reporter=${reporter}`, "--coverage-dir=./cov"],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toContain("PARALLEL");
-    expect(stderr).toContain("2 pass");
-    // lib.js has 1/3 functions covered → below 0.9 threshold → must fail.
-    expect({ reporter, exitCode }).toEqual({ reporter, exitCode: 1 });
-  }
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "test",
+      ...(mode ? [mode] : []),
+      "--coverage",
+      `--coverage-reporter=${reporter}`,
+      "--coverage-dir=./cov",
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.includes("PARALLEL")).toBe(mode !== "");
+  expect(stderr).toContain("2 pass");
+  // lib.js has 1/3 functions covered → below 0.9 threshold → must fail.
+  expect(exitCode).toBe(1);
 });
 
 test("--parallel --dots prints one status character per test", async () => {

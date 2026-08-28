@@ -16,6 +16,9 @@
 #include <termios.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#if OS(DARWIN)
+#include <mach-o/loader.h>
+#endif
 #else
 #include <uv.h>
 #include <windows.h>
@@ -632,6 +635,11 @@ extern "C" void Bun__lockThreadSuspensionForExit()
 
 extern "C" int32_t bun_is_stdio_null[3] = { 0, 0, 0 };
 
+#if OS(DARWIN)
+extern "C" int __cxa_atexit(void (*)(void*), void*, void*);
+extern "C" struct mach_header __dso_handle;
+#endif
+
 extern "C" void bun_initialize_process()
 {
     // Disable printf() buffering. We buffer it ourselves.
@@ -752,7 +760,12 @@ extern "C" void bun_initialize_process()
     Bun__setCTRLHandler(1);
 #endif
 
-#if OS(DARWIN) || ASAN_ENABLED
+#if OS(DARWIN)
+    // atexit() on macOS dladdr()s the handler, a linear walk of this executable's
+    // symbol table (~0.5ms with symbols). __cxa_atexit lands on the same LIFO
+    // list without the lookup, as the compiler does for static destructors.
+    __cxa_atexit([](void*) { Bun__onExit(); }, nullptr, &__dso_handle);
+#elif ASAN_ENABLED
     atexit(Bun__onExit);
 #elif !OS(WINDOWS)
     at_quick_exit(Bun__onExit);

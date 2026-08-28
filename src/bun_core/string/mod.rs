@@ -1798,6 +1798,8 @@ pub mod printer {
         Utf16,
     }
 
+    const MALFORMED: i32 = -1;
+
     /// Runtime-encoding adapter: selects the matching monomorphized
     /// [`write_pre_quoted_string_inner`] instance.
     pub fn write_pre_quoted_string<W: PrinterWriter + ?Sized>(
@@ -1829,6 +1831,9 @@ pub mod printer {
     /// keeps the hot transpile pages dense. `ENCODING` stays `const` because it
     /// changes the code-unit indexing structure of the loop, so a per-encoding
     /// copy is genuinely different code.
+    ///
+    /// In the UTF-8 instance, malformed bytes (a stray continuation byte, an
+    /// invalid lead, or a truncated sequence) become U+FFFD, one byte at a time.
     #[inline(never)]
     pub fn write_pre_quoted_string_inner<W, const ENCODING: Encoding>(
         text_in: &[u8],
@@ -1876,14 +1881,23 @@ pub mod printer {
             let clamped_width = (width as usize).min(n.saturating_sub(i));
             let c: i32 = match ENCODING {
                 Encoding::Utf8 => {
-                    let bytes: [u8; 4] = match clamped_width {
-                        1 => [text[i], 0, 0, 0],
-                        2 => [text[i], text[i + 1], 0, 0],
-                        3 => [text[i], text[i + 1], text[i + 2], 0],
-                        4 => [text[i], text[i + 1], text[i + 2], text[i + 3]],
-                        _ => unreachable!(),
-                    };
-                    strings::decode_wtf8_rune_t::<i32>(bytes, width, 0)
+                    if width == 1 {
+                        // width 1 with a byte >= 0x80 is a stray continuation byte or an invalid lead.
+                        if text[i] >= 0x80 {
+                            MALFORMED
+                        } else {
+                            text[i] as i32
+                        }
+                    } else {
+                        let bytes: [u8; 4] = match clamped_width {
+                            1 => [text[i], 0, 0, 0],
+                            2 => [text[i], text[i + 1], 0, 0],
+                            3 => [text[i], text[i + 1], text[i + 2], 0],
+                            4 => [text[i], text[i + 1], text[i + 2], text[i + 3]],
+                            _ => unreachable!(),
+                        };
+                        strings::decode_wtf8_rune_t::<i32>(bytes, width, MALFORMED)
+                    }
                 }
                 Encoding::Ascii => {
                     debug_assert!(text[i] <= 0x7F);
@@ -1898,6 +1912,17 @@ pub mod printer {
                     code_unit_at!(i)
                 }
             };
+
+            if c == MALFORMED {
+                if ascii_only {
+                    writer.write_all(&bmp_escape(0xFFFD))?;
+                } else {
+                    writer.write_all("\u{FFFD}".as_bytes())?;
+                }
+                // One byte, not `width`, so the bytes after a truncated sequence survive.
+                i += 1;
+                continue;
+            }
 
             if can_print_without_escape(c, ascii_only) {
                 match ENCODING {

@@ -189,7 +189,7 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
             let _ = write!(
                 &mut msg,
                 "Failed to read process output: {}",
-                <&'static str>::from(err.get_errno())
+                bstr::BStr::new(err.name())
             );
             self.err_msg().set(Some(msg));
         }
@@ -393,7 +393,7 @@ impl CronJobBase for CronRegisterJob {
             Status::Err(err) => {
                 self.set_err(format_args!(
                     "Process error: {}",
-                    <&'static str>::from(err.get_errno())
+                    bstr::BStr::new(err.name())
                 ));
                 return JobAction::Finish;
             }
@@ -1125,7 +1125,7 @@ impl CronJobBase for CronRemoveJob {
             Status::Err(err) => {
                 self.set_err(format_args!(
                     "Process error: {}",
-                    <&'static str>::from(err.get_errno())
+                    bstr::BStr::new(err.name())
                 ));
                 return JobAction::Finish;
             }
@@ -1370,7 +1370,6 @@ impl Drop for CronRemoveJob {
 // + `UnsafeCell`-backed fields suppresses `noalias` on the receiver.
 #[bun_jsc::JsClass(no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = Self::destroy_impl)]
 pub struct CronJob {
     ref_count: Cell<u32>,
     /// Set from the allocating `RefPtr` so `&self` host fns can reach the
@@ -1413,19 +1412,6 @@ pub mod js {
 pub enum ClearMode {
     Reload,
     Teardown,
-}
-
-impl CronJob {
-    /// `CellRefCounted::destroy` target (refcount hit zero).
-    ///
-    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-    /// whose generated trait `destroy` upholds the sole-owner contract.
-    fn destroy_impl(this: *mut Self) {
-        // deinit: this_value.deinit() then destroy.
-        // Note: `JsRef::deinit()` was dropped — Strong's Drop on
-        // reassignment handles teardown (JSRef.rs trailer).
-        bun_ptr::destroy_box_with(this, |job| job.this_value.set(JsRef::empty()));
-    }
 }
 
 impl CronJob {
@@ -1516,8 +1502,8 @@ impl CronJob {
         }
     }
 
-    pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box(self, |this| this.this_value.with_mut(|v| v.finalize()));
+    pub fn finalize(&self) {
+        self.this_value.with_mut(|v| v.finalize());
     }
 
     fn compute_next_timespec(&self) -> Option<bun_core::Timespec> {

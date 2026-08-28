@@ -76,7 +76,7 @@ export default [
     sharedThis: true,
     construct: true,
     constructNeedsThis: true,
-    finalize: true,
+    refCounted: true,
     final: false,
     JSType: "0b11101110",
     configurable: false,

@@ -107,6 +107,6 @@ impl Export {
     ) -> Yield {
         let failed = matches!(Self::state_mut(interp, cmd).state, State::WaitingWriteErr);
         Self::state_mut(interp, cmd).state = State::Done;
-        Builtin::done(interp, cmd, if failed || err.is_some() { 1 } else { 0 })
+        Builtin::done(interp, cmd, if failed { 1 } else { err.map_or(0, |_| 1) })
     }
 }

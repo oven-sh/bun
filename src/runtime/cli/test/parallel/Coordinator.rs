@@ -77,6 +77,12 @@ pub(crate) struct FileTestRecords {
     pub(crate) elapsed_ns: u64,
 }
 
+/// Consecutive pre-`.ready` exits a worker slot tolerates before the slot
+/// stops respawning. Without the cap, a worker that deterministically dies
+/// during init (before the IPC handshake) is respawned forever with no
+/// output and the run never ends.
+const MAX_STARTUP_FAILURES: u8 = 2;
+
 /// Why the run stopped dispatching files. A worker panic overrides `Bail`
 /// (see `abort_on_worker_panic`); nothing clears it.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -420,7 +426,11 @@ impl<'a> Coordinator<'a> {
 
     pub(crate) fn on_frame(&mut self, w: &mut Worker, kind: frame::Kind, rd: &mut frame::Reader) {
         match kind {
-            frame::Kind::Ready => self.assign_work_or_retry(w),
+            frame::Kind::Ready => {
+                w.reached_ready = true;
+                w.startup_failures = 0;
+                self.assign_work_or_retry(w);
+            }
             frame::Kind::FileStart => {
                 let _ = rd.u32();
             }
@@ -583,6 +593,13 @@ impl<'a> Coordinator<'a> {
         // the IPC pipe has been drained and this reap actually runs.
         self.live_workers -= 1;
         self.flush_captured(w);
+        // Spawned but exited before the IPC handshake — an init failure
+        // (startup crash, failed fd-3 adopt, bad bunfig in the worker's
+        // bootstrap). `inflight` is None, so the mid-file handling below
+        // never fires; without the per-slot cap this slot would respawn
+        // forever, silently.
+        let startup_failure = w.inflight.is_none() && !w.reached_ready;
+        let worker_idx = w.idx;
         if let Some(idx) = w.inflight {
             self.break_dots();
             self.ensure_header(idx);
@@ -628,14 +645,57 @@ impl<'a> Coordinator<'a> {
             if panicked {
                 self.abort_on_worker_panic(idx, status);
             }
+        } else if startup_failure {
+            w.startup_failures += 1;
+            // A fatal signal during init is a Bun bug just as much as one
+            // mid-file — abort the whole run so the crash's stderr (already
+            // flushed via flush_captured) isn't buried under retries.
+            if is_panic_status(status) {
+                self.abort_on_worker_startup_panic(status);
+            }
         }
 
         // SAFETY: fresh derivation — `abort_on_worker_panic` above retags the slots.
         let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
         w.process = None;
+        let startup_failures = w.startup_failures;
+
+        let can_respawn = self.stop_reason.is_none()
+            && startup_failures < MAX_STARTUP_FAILURES
+            && self.has_undispatched_files();
+
+        if startup_failure && self.stop_reason.is_none() {
+            // `can_respawn` is false either because the slot hit the cap or
+            // because no work remains. Only the former warrants the red
+            // error; the latter is benign (other workers ran everything).
+            self.break_dots();
+            let mut buf = [0u8; 32];
+            let desc = bstr::BStr::new(describe_status(&mut buf, status));
+            if can_respawn {
+                bun_core::pretty_error!(
+                    "<r><yellow>warn<r>: test worker {} exited during startup ({}), retrying\n",
+                    worker_idx + 1,
+                    desc,
+                );
+            } else if startup_failures >= MAX_STARTUP_FAILURES {
+                bun_core::pretty_error!(
+                    "<r><red>error<r>: test worker {} exited during startup ({}) {} times\n",
+                    worker_idx + 1,
+                    desc,
+                    startup_failures,
+                );
+            } else {
+                bun_core::pretty_error!(
+                    "<r><d>test worker {} exited during startup ({})<r>\n",
+                    worker_idx + 1,
+                    desc,
+                );
+            }
+            Output::flush();
+        }
 
         let mut respawned = false;
-        if self.stop_reason.is_none() && self.has_undispatched_files() {
+        if can_respawn {
             // SAFETY: fresh derivation — `has_undispatched_files` read the slots.
             let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
             w.ipc = Default::default();
@@ -643,6 +703,7 @@ impl<'a> Coordinator<'a> {
             let w_ptr = std::ptr::from_mut::<Worker>(w).cast_const();
             w.out = WorkerPipe::new(w_ptr);
             w.err = WorkerPipe::new(w_ptr);
+            w.reached_ready = false;
             match w.start() {
                 Ok(()) => {
                     respawned = true;
@@ -727,6 +788,26 @@ impl<'a> Coordinator<'a> {
             bstr::BStr::new(self.rel_path(file_idx)),
         );
         Output::flush();
+        self.terminate_workers_after_panic(b"aborted: worker panicked");
+    }
+
+    /// `abort_on_worker_panic` for the pre-`.ready` case — there is no file
+    /// to name because nothing was dispatched to the worker yet.
+    fn abort_on_worker_startup_panic(&mut self, status: &SpawnStatus) {
+        self.break_dots();
+        let mut buf = [0u8; 32];
+        bun_core::pretty_error!(
+            concat!(
+                "\n<red>error<r>: a test worker process crashed with <b>{}<r> during startup.\n",
+                "This indicates a bug in Bun or in a native addon, not in the test itself. Aborting.\n",
+            ),
+            bstr::BStr::new(describe_status(&mut buf, status)),
+        );
+        Output::flush();
+        self.terminate_workers_after_panic(b"aborted: worker panicked during startup");
+    }
+
+    fn terminate_workers_after_panic(&mut self, sweep_reason: &'static [u8]) {
         // .shutdown() only takes effect between files, so a worker that's
         // mid-file would keep producing output after the panic banner.
         // Terminate the whole process group (same as the SIGINT path) so the
@@ -777,7 +858,7 @@ impl<'a> Coordinator<'a> {
         if already_stopped {
             return;
         }
-        self.abort_queued_files(b"aborted: worker panicked");
+        self.abort_queued_files(sweep_reason);
     }
 
     /// Mark every not-yet-dispatched file as failed so `drive()` can exit

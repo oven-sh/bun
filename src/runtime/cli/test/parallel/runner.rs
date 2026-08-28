@@ -132,6 +132,8 @@ pub(crate) fn run_as_coordinator(
             alive: false,
             exit_status: None,
             reap_pending: false,
+            reached_ready: false,
+            startup_failures: 0,
         });
         let w: *mut Worker = workers.last_mut().unwrap();
         // SAFETY: w points into workers; Vec will not reallocate (capacity == k)
@@ -523,6 +525,22 @@ impl<'a> WorkerLoop<'a> {
         // SAFETY: single-threaded worker; WORKER_CMDS is only read on this thread
         unsafe {
             WORKER_CMDS.write(Some(&raw mut self.cmds));
+        }
+
+        // Test hook for the coordinator's pre-ready exit path. Real triggers
+        // (an init crash, a failed fd-3 adopt) aren't reproducible from a
+        // test; this lets parallel-startup-failure.test.ts assert the respawn
+        // loop is bounded. Same pattern as BUN_TEST_PARALLEL_SCALE_MS.
+        // SAFETY: env loader is initialized before the test runner runs.
+        if unsafe { &*vm.transpiler.env }
+            .get(b"BUN_TEST_WORKER_EXIT_BEFORE_READY")
+            .is_some()
+        {
+            bun_core::pretty_errorln!(
+                "test worker exiting before ready (BUN_TEST_WORKER_EXIT_BEFORE_READY)"
+            );
+            Output::flush();
+            Global::exit(1);
         }
 
         // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer

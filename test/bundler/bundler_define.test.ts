@@ -148,12 +148,19 @@ const repros: Repro[] = [
     defines: {
       FOO: "123",
       BAR: "a.b",
+      "obj.key": "c.d",
+      "obj.num": "7",
     },
     cases: [
       ["FOO = 1;", "FOO = 1;"],
       ["console.log(FOO);", "console.log(123);"],
       // An identifier or a member chain is a valid target
       ["BAR = 2;", "a.b = 2;"],
+      ["obj.key = 3;", "c.d = 3;"],
+      ['obj["key"] = 4;', "c.d = 4;"],
+      ["obj.num = 5;", "obj.num = 5;"],
+      ['obj["num"] = 6;', 'obj["num"] = 6;'],
+      ["console.log(obj.num, obj.key);", "console.log(7, c.d);"],
     ],
   },
 ];

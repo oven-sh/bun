@@ -25,6 +25,11 @@ use js_ast::OpCode as Op;
 // The 25+ per-variant `e_*` helpers are private; only `visit_expr` /
 // `visit_expr_in_out` are surfaced.
 
+/// A define value that can replace an assignment target: `FOO = 1` must not become `0 = 1`.
+fn define_value_can_be_assign_target(value: &Expr) -> bool {
+    matches!(value.data.tag(), Tag::EIdentifier | Tag::EDot)
+}
+
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // PERF(port:noalias): `e: &mut Expr` is lowered to a `noalias` LLVM param, so reads
     // through `e` can be cached in registers across child recursion. The by-value
@@ -270,9 +275,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let newvalue: Expr =
                         p.value_for_define(expr.loc, in_.assign_target, is_delete_target, def);
 
-                    // A constant is not a valid assignment target ("0 = 1"), an identifier or property access is
                     if in_.assign_target == js_ast::AssignTarget::None
-                        || matches!(newvalue.data.tag(), Tag::EIdentifier | Tag::EDot)
+                        || define_value_can_be_assign_target(&newvalue)
                     {
                         p.ignore_usage(e_.ref_);
                         *e = newvalue;
@@ -889,24 +893,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if let Some(dot_defines) = defines.dots.get(s.slice(p.arena)) {
                 for define in dot_defines.as_slice() {
                     if p.is_dot_define_match(expr, &define.parts) {
-                        if in_.assign_target == js_ast::AssignTarget::None {
-                            // Substitute user-specified defines
-                            if !define.data.valueless() {
-                                *e = p.value_for_define(
-                                    expr.loc,
-                                    in_.assign_target,
-                                    is_delete_target,
-                                    &define.data,
-                                );
+                        // Substitute user-specified defines
+                        if !define.data.valueless() {
+                            let replacement = p.value_for_define(
+                                expr.loc,
+                                in_.assign_target,
+                                is_delete_target,
+                                &define.data,
+                            );
+                            if in_.assign_target == js_ast::AssignTarget::None
+                                || define_value_can_be_assign_target(&replacement)
+                            {
+                                *e = replacement;
                                 return;
                             }
-
-                            if define.data.method_call_must_be_replaced_with_undefined()
-                                && in_
-                                    .property_access_for_method_call_maybe_should_replace_with_undefined
-                            {
-                                p.method_call_must_be_replaced_with_undefined = true;
-                            }
+                        } else if in_.assign_target == js_ast::AssignTarget::None
+                            && define.data.method_call_must_be_replaced_with_undefined()
+                            && in_
+                                .property_access_for_method_call_maybe_should_replace_with_undefined
+                        {
+                            p.method_call_must_be_replaced_with_undefined = true;
                         }
                         break;
                     }
@@ -1389,24 +1395,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(parts) = defines.dots.get(e_.name.slice()) {
             for define in parts.as_slice() {
                 if p.is_dot_define_match(expr, &define.parts) {
-                    if in_.assign_target == js_ast::AssignTarget::None {
-                        // Substitute user-specified defines
-                        if !define.data.valueless() {
-                            *e = p.value_for_define(
-                                expr.loc,
-                                in_.assign_target,
-                                is_delete_target,
-                                &define.data,
-                            );
+                    // Substitute user-specified defines
+                    if !define.data.valueless() {
+                        let replacement = p.value_for_define(
+                            expr.loc,
+                            in_.assign_target,
+                            is_delete_target,
+                            &define.data,
+                        );
+                        if in_.assign_target == js_ast::AssignTarget::None
+                            || define_value_can_be_assign_target(&replacement)
+                        {
+                            *e = replacement;
                             return;
                         }
-
-                        if define.data.method_call_must_be_replaced_with_undefined()
-                            && in_
-                                .property_access_for_method_call_maybe_should_replace_with_undefined
-                        {
-                            p.method_call_must_be_replaced_with_undefined = true;
-                        }
+                    } else if in_.assign_target == js_ast::AssignTarget::None
+                        && define.data.method_call_must_be_replaced_with_undefined()
+                        && in_.property_access_for_method_call_maybe_should_replace_with_undefined
+                    {
+                        p.method_call_must_be_replaced_with_undefined = true;
                     }
 
                     // Copy the side effect flags over in case this expression is unused

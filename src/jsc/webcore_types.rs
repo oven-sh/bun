@@ -664,9 +664,7 @@ pub mod store {
             }
         }
 
-        /// Adopt the buffer together with the allocator that owns it (no
-        /// copy). `Drop` frees it through that allocator, so bytes a native
-        /// bundler plugin provided go back through the plugin's callback.
+        /// Adopt the buffer and the allocator that frees it (no copy).
         pub fn from_owned_bytes(bytes: bun_alloc::OwnedBytes) -> Bytes {
             match bytes.into_raw_parts() {
                 Some((ptr, len, allocator)) => Bytes {
@@ -917,8 +915,7 @@ pub mod store {
             Self::init_bytes(Bytes::init(bytes))
         }
 
-        /// Returns a +1-ref heap `Store` over an already-built byte store
-        /// (which may carry a non-global allocator).
+        /// +1-ref heap `Store` over a byte store with any allocator.
         pub fn init_bytes(bytes: Bytes) -> RefPtr<Store> {
             RefPtr::new(Store {
                 data: Data::Bytes(bytes),

@@ -2,12 +2,9 @@ use core::ptr::NonNull;
 
 use crate::{Alignment, StdAllocator, basic};
 
-/// A heap byte buffer paired with the [`StdAllocator`] that frees it.
-///
-/// `Box<[u8]>` in the common case (global allocator), but the buffer can also
-/// belong to a foreign owner with its own free callback (a native bundler
-/// plugin's `free_plugin_source_code_context`), so a consumer such as the
-/// bundler's `OutputFile` can adopt such bytes without a copy.
+/// `Box<[u8]>` whose deallocator is a [`StdAllocator`]: the global allocator,
+/// or a foreign free callback (a native bundler plugin's) when the bytes were
+/// adopted from it instead of copied.
 pub struct OwnedBytes {
     /// `None` ⇒ empty; nothing is freed on drop.
     ptr: Option<NonNull<u8>>,
@@ -15,9 +12,7 @@ pub struct OwnedBytes {
     allocator: StdAllocator,
 }
 
-// SAFETY: the buffer is uniquely owned through `ptr` and `StdAllocator` is
-// `Send + Sync`; the free callback's thread-safety is the allocator's contract
-// (same as `StdAllocator` itself).
+// SAFETY: `ptr` is the sole alias of the buffer; `StdAllocator` is `Send + Sync`.
 unsafe impl Send for OwnedBytes {}
 // SAFETY: `&OwnedBytes` only reads the uniquely owned slice.
 unsafe impl Sync for OwnedBytes {}
@@ -31,11 +26,8 @@ impl OwnedBytes {
         }
     }
 
-    /// Adopt `ptr[..len]`, to be released with `allocator.free`.
-    ///
     /// # Safety
-    /// `ptr[..len]` must be a live, initialized allocation owned by `allocator`
-    /// and nothing else may free it afterwards.
+    /// `ptr[..len]` is a live allocation owned by `allocator`; ownership moves here.
     pub unsafe fn from_raw_parts(ptr: NonNull<u8>, len: usize, allocator: StdAllocator) -> Self {
         Self {
             ptr: Some(ptr),
@@ -44,8 +36,7 @@ impl OwnedBytes {
         }
     }
 
-    /// Give up ownership: `(ptr, len, allocator)`, or `None` when empty. The
-    /// caller must free `ptr[..len]` through `allocator`.
+    /// `(ptr, len, allocator)` for the caller to free, or `None` when empty.
     pub fn into_raw_parts(self) -> Option<(NonNull<u8>, usize, StdAllocator)> {
         let this = core::mem::ManuallyDrop::new(self);
         this.ptr.map(|ptr| (ptr, this.len, this.allocator))
@@ -102,10 +93,8 @@ impl From<Vec<u8>> for OwnedBytes {
 impl Drop for OwnedBytes {
     fn drop(&mut self) {
         if let Some(ptr) = self.ptr {
-            // Not `StdAllocator::free`: that skips empty slices, but a foreign
-            // owner's callback must run even for a zero-length buffer.
-            // SAFETY: `ptr[..len]` is the allocation handed over in
-            // `from_raw_parts`/`From<Box<[u8]>>`, owned by `allocator`.
+            // `raw_free`, not `free`: a foreign callback must run for a zero-length buffer too.
+            // SAFETY: `ptr[..len]` is the allocation adopted by `from_raw_parts`/`From`.
             let buf = unsafe { core::slice::from_raw_parts_mut(ptr.as_ptr(), self.len) };
             self.allocator
                 .raw_free(buf, Alignment::from_byte_units(1), 0);

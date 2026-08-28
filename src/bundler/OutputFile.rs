@@ -106,11 +106,7 @@ pub struct FileOperation {
 pub enum Value {
     Copy(FileOperation),
     Noop,
-    /// `bytes` carries its own allocator: the global one for bundler output, a
-    /// native plugin's free callback for an asset the plugin provided.
-    Buffer {
-        bytes: OwnedBytes,
-    },
+    Buffer { bytes: OwnedBytes },
     Saved(SavedFile),
 }
 

@@ -116,14 +116,10 @@ pub struct BundleV2<'a> {
     pub(crate) unique_key: u64,
     pub(crate) dynamic_import_entry_points: ArrayHashMap<IndexInt, ()>,
 
-    /// Free callbacks for native `onBeforeParse` buffers whose bytes the parse
-    /// consumed; run when the bundle is torn down.
+    /// Native `onBeforeParse` buffers to free at teardown.
     pub(crate) finalizers: Vec<ExternalFreeFunction>,
-    /// Free callbacks for native `onBeforeParse` buffers that are the
-    /// `source.contents` of a copy-for-bundling asset (`file`, `wasm`, ...),
-    /// keyed by source index. `process_files_to_copy` moves each buffer into
-    /// its `OutputFile` with the callback as the deallocator; whatever is left
-    /// (asset not emitted) is freed at teardown.
+    /// Native `onBeforeParse` buffers that are a copy-loader asset's `source.contents`,
+    /// by source index: `process_files_to_copy` hands them to the `OutputFile`.
     pub(crate) asset_free_functions: ArrayHashMap<IndexInt, ExternalFreeFunction>,
 
     pub(crate) drain_defer_task: DeferredBatchTask,
@@ -4418,13 +4414,10 @@ pub mod bv2_impl {
                                     match asset_free_functions
                                         .fetch_swap_remove(&(index as IndexInt))
                                     {
-                                        // A native `onBeforeParse` plugin owns `b`; its free
-                                        // callback becomes the output's deallocator.
                                         Some((_, external)) => {
                                             let ptr = core::ptr::NonNull::from(b).cast::<u8>();
-                                            // SAFETY: `b` is the buffer the plugin handed over
-                                            // (`Contents::External`), freed only through
-                                            // `external`, which leaves the bundle's hands here.
+                                            // SAFETY: `b` is the plugin's `Contents::External`
+                                            // buffer and `external` is its only owner.
                                             unsafe {
                                                 bun_alloc::OwnedBytes::from_raw_parts(
                                                     ptr,
@@ -7153,8 +7146,6 @@ pub mod bv2_impl {
             if parse_result.external.function.is_some() {
                 let external = core::mem::take(&mut parse_result.external);
                 match &parse_result.value {
-                    // The plugin buffer stays `source.contents` until
-                    // `process_files_to_copy` hands it to the asset's `OutputFile`.
                     parse_task::ResultValue::Success(result)
                         if result.loader.should_copy_for_bundling() =>
                     {

@@ -2117,15 +2117,12 @@ pub mod cache {
             }
         }
 
-        /// Wrap the callback as the allocator of the buffer it frees, so the
-        /// buffer can move into an owner that carries its allocator
-        /// (`bun_alloc::OwnedBytes`, a `Blob` byte store) instead of being
-        /// copied. The callback runs exactly once, on that owner's free.
+        /// The callback as the `StdAllocator` of the buffer it frees, so the buffer
+        /// can move into an owner that carries its allocator (`bun_alloc::OwnedBytes`).
         pub fn into_allocator(self) -> bun_alloc::StdAllocator {
             debug_assert!(self.function.is_some());
             unsafe fn free(ctx: *mut c_void, _: &mut [u8], _: bun_alloc::Alignment, _: usize) {
-                // SAFETY: `ctx` is the `Box<ExternalFreeFunction>` leaked by
-                // `into_allocator`; the allocator frees each buffer once.
+                // SAFETY: `ctx` is the `Box<ExternalFreeFunction>` leaked by `into_allocator`.
                 let this: Box<ExternalFreeFunction> = unsafe { bun_core::heap::take(ctx.cast()) };
                 this.call();
             }

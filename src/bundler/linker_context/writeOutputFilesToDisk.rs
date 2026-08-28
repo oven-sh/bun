@@ -635,8 +635,6 @@ pub(crate) fn write_output_files_to_disk(
             } else {
                 bun_alloc::OwnedBytes::new()
             };
-            // `defer src.value.buffer.arena.free(bytes)` — `bytes` now owns the
-            // buffer and frees it through its allocator at end of scope.
 
             let rel_parent = paths::resolve_path::dirname::<paths::platform::Auto>(&src.dest_path);
             if !rel_parent.is_empty() {

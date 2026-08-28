@@ -32,9 +32,7 @@ fn set_blob_mime(blob: &mut Blob, mime: MimeType) {
     }
 }
 
-/// The output bytes move into the blob's store with their allocator, so a
-/// plugin-provided asset is not copied and is freed through the plugin's
-/// callback when the store is released.
+/// The bytes move into the blob's store with their allocator (no copy).
 fn blob_from_output_bytes(bytes: OwnedBytes, global_this: &JSGlobalObject) -> Blob {
     if bytes.is_empty() {
         return Blob::init_empty(global_this);

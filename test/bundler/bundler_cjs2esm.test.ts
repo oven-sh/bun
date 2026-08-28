@@ -796,4 +796,31 @@ describe("bundler", () => {
     },
     run: { runtime: "node", stdout: "dep\ntrue 1" },
   });
+  // The same ordering inside a __commonJS wrapper: a file that mixes `import` with `module.exports`.
+  itBundled("cjs2esm/UseStrictInsideCommonJSWrapperBeforeInitCalls", {
+    files: {
+      "/entry.js": /* js */ `
+        const mixed = require('./mixed.js');
+        console.log(mixed.strict, mixed.dep);
+      `,
+      "/mixed.js": /* js */ `
+        "use strict";
+        import { dep } from './dep.mjs';
+        module.exports = { strict: (function() { return this === undefined; })(), dep };
+      `,
+      "/dep.mjs": /* js */ `
+        console.log('dep');
+        export const dep = 1;
+      `,
+    },
+    format: "cjs",
+    outfile: "/out.cjs",
+    minifySyntax: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.cjs")).toMatch(
+        /require_mixed = __commonJS\(function\([^)]*\) \{\s*"use strict";\s*init_dep\(\);/,
+      );
+    },
+    run: { runtime: "node", stdout: "dep\ntrue 1" },
+  });
 });

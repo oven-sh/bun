@@ -65,13 +65,6 @@ impl HasLength for &str {
     }
 }
 
-impl HasLength for &crate::String {
-    #[inline]
-    fn length(&self) -> usize {
-        crate::String::length(self)
-    }
-}
-
 /// Lookup for large maps, which store their keys as data instead of as an
 /// inlined compare tree: keys are sorted by `(len, bytes)` and concatenated
 /// into `blob`; `buckets[len]` is `(blob offset, first sorted position)` of

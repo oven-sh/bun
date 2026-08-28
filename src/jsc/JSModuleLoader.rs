@@ -1,5 +1,5 @@
 use crate::{JSGlobalObject, JSInternalPromise, JsError, JsResult};
-use bun_core::String as BunString;
+use bun_core::Str;
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for JSC's JSModuleLoader.
@@ -8,20 +8,13 @@ bun_opaque::opaque_ffi! {
 
 unsafe extern "C" {
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); `Option<&BunString>` is ABI-identical
-    // to a nullable `*const BunString` via the guaranteed null-pointer optimization.
+    // ABI-identical to non-null `*const`); `&Str` is `const BunString*`.
     // The returned `*mut JSInternalPromise` is nullable; callers check before deref.
     safe fn JSC__JSModuleLoader__loadAndEvaluateModule(
         arg0: &JSGlobalObject,
-        arg1: Option<&BunString>,
+        arg1: &Str,
     ) -> *mut JSInternalPromise;
-
-    // safe: same handle/reference contract as `loadAndEvaluateModule` above;
-    // `arg1` is always non-null at every Rust call site.
-    safe fn JSModuleLoader__import(
-        arg0: &JSGlobalObject,
-        arg1: &BunString,
-    ) -> *mut JSInternalPromise;
+    safe fn JSModuleLoader__import(arg0: &JSGlobalObject, arg1: &Str) -> *mut JSInternalPromise;
 }
 
 impl JSModuleLoader {
@@ -30,7 +23,7 @@ impl JSModuleLoader {
     /// a mutable cell pointer don't launder provenance through `&T -> *mut T`.
     pub fn load_and_evaluate_module_ptr(
         global_object: *mut JSGlobalObject,
-        module_name: Option<&BunString>,
+        module_name: &Str,
     ) -> Option<core::ptr::NonNull<JSInternalPromise>> {
         // `JSGlobalObject` is an opaque ZST handle; `opaque_ref` is the
         // centralised zero-byte deref proof (panics on null).
@@ -47,7 +40,7 @@ impl JSModuleLoader {
     /// [`Self::load_and_evaluate_module_ptr`].
     pub fn import_ptr(
         global_object: *mut JSGlobalObject,
-        module_name: &BunString,
+        module_name: &Str,
     ) -> JsResult<core::ptr::NonNull<JSInternalPromise>> {
         // `JSGlobalObject` is an opaque ZST handle; `opaque_ref` is the
         // centralised zero-byte deref proof (panics on null).

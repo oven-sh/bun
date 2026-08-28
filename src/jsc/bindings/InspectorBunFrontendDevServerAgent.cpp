@@ -143,9 +143,9 @@ void InspectorBunFrontendDevServerAgent__notifyBundleComplete(InspectorBunFronte
     agent->bundleComplete(devServerId, durationMs);
 }
 
-void InspectorBunFrontendDevServerAgent__notifyBundleFailed(InspectorBunFrontendDevServerAgent* agent, int devServerId, BunString buildErrorsPayloadBase64)
+void InspectorBunFrontendDevServerAgent__notifyBundleFailed(InspectorBunFrontendDevServerAgent* agent, int devServerId, const BunString* buildErrorsPayloadBase64)
 {
-    agent->bundleFailed(devServerId, buildErrorsPayloadBase64.transferToWTFString());
+    agent->bundleFailed(devServerId, buildErrorsPayloadBase64->toWTFString());
 }
 
 void InspectorBunFrontendDevServerAgent__notifyClientNavigated(InspectorBunFrontendDevServerAgent* agent, int devServerId, int connectionId, const BunString* url, int routeBundleId)

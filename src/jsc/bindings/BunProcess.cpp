@@ -1676,7 +1676,7 @@ JSObject* Process::ensureOnWarning(Zig::GlobalObject* globalObject)
         redirectPath = jsString(vm, redirect.transferToWTFString());
     } else {
         EncodedSlice name = toEncodedSlice("NODE_REDIRECT_WARNINGS"_s);
-        EncodedSlice value = { nullptr, 0 };
+        EncodedSlice value = Zig::EncodedSliceEmpty;
         if (Bun__getEnvValue(globalObject, &name, &value) && value.len > 0)
             redirectPath = jsString(vm, Zig::toStringCopy(value));
     }

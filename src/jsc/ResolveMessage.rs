@@ -5,7 +5,7 @@ use bun_ast::ImportKind;
 use bun_core::strings;
 
 use crate::bun_string_jsc;
-use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StrJsc as _, StringJsc as _};
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. `msg` and
 // `referrer` are read-only after construction; only `logged` is mutated
@@ -281,7 +281,7 @@ impl ResolveMessage {
         object.put(
             global,
             b"name",
-            bun_core::String::static_("ResolveMessage").to_js(global)?,
+            bun_core::String::from_static("ResolveMessage").to_js(global)?,
         );
         object.put(global, b"position", Self::get_position(this, global)?);
         object.put(global, b"message", Self::get_message(this, global)?);
@@ -429,7 +429,7 @@ impl ResolveMessage {
 
     #[crate::host_fn(getter)]
     pub fn get_level(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_core::String::static_(this.msg.kind.string()).to_js(global)
+        bun_core::String::from_static(this.msg.kind.string()).to_js(global)
     }
 
     #[crate::host_fn(getter)]
@@ -449,7 +449,8 @@ impl ResolveMessage {
     pub fn get_import_kind(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(match &this.msg.metadata {
             bun_ast::Metadata::Resolve(resolve) => {
-                bun_core::String::static_(import_kind_label(resolve.import_kind)).to_js(global)?
+                bun_core::String::from_static(import_kind_label(resolve.import_kind))
+                    .to_js(global)?
             }
             _ => JSValue::js_empty_string(global),
         })

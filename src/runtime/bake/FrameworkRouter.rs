@@ -13,7 +13,8 @@ use bun_collections::{ArrayHashMap, BoundedArray, StringArrayHashMap};
 use bun_core::Output;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc, Strong, StrongOptional,
+    CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StrJsc as _, StringJsc, Strong,
+    StrongOptional,
 };
 use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer};
 use bun_resolver::{DirInfo, Resolver};
@@ -1231,12 +1232,11 @@ impl MatchedParams {
         // Create a JavaScript object with params
         let obj = JSValue::create_empty_object(global, params_array.len());
         for param in params_array {
-            let key_str = bun_core::String::clone_utf8(param.key.slice());
             let value_str = bun_core::String::clone_utf8(param.value.slice());
 
             obj.put_bun_string_one_or_array(
                 global,
-                &key_str,
+                &bun_core::StringView::utf8(param.key.slice()),
                 value_str.into_js(global).expect("unreachable"),
             )
             .expect("unreachable");
@@ -2024,7 +2024,7 @@ impl JSFrameworkRouter {
         obj.put(
             global,
             b"kind",
-            bun_core::String::static_(<&'static str>::from(parsed.kind)).to_js(global)?,
+            bun_core::String::from_static(<&'static str>::from(parsed.kind)).to_js(global)?,
         );
         obj.put(global, b"pattern", out.into_js(global)?);
         Ok(obj)

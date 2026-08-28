@@ -324,7 +324,7 @@ pub mod registry {
 
         /// Stores the WHATWG serialization (the base `bun_url::join` resolves against) so same-origin checks, concatenated tarball URLs and `url_hash` agree with the requests; credentials must already be split off.
         pub fn set_url(&mut self, href: Box<[u8]>) {
-            self.url = URL::from_string(&bun_core::String::borrow_utf8(&href))
+            self.url = URL::from_string(&bun_core::StringView::utf8(&href))
                 .unwrap_or_else(|_| OwnedURL::from_href(href));
             self.url_hash = Self::hash(strings::without_trailing_slash(self.url.href()));
         }

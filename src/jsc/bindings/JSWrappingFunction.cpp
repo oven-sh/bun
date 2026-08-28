@@ -27,8 +27,7 @@ JS_EXPORT_PRIVATE JSWrappingFunction* JSWrappingFunction::create(
     JSC::JSObject* wrappedFn = wrappedFnValue.getObject();
     ASSERT(wrappedFn != nullptr);
 
-    auto nameStr = symbolName->tag == BunStringTag::Empty ? WTF::emptyString() : symbolName->toWTFString();
-    auto name = Identifier::fromString(vm, nameStr);
+    auto nameStr = symbolName->toWTFString();
     // Pass callHostFunctionAsConstructor so `new` on the wrapper throws a
     // TypeError instead of jumping to a null native constructor.
     NativeExecutable* executable = vm.getHostFunction(functionPointer, ImplementationVisibility::Public, callHostFunctionAsConstructor, 0, nameStr);

@@ -33,7 +33,7 @@ enum class BunTestType : uint8_t {
 
 void Bun__TestReporterAgentReportTestFound(Inspector::InspectorTestReporterAgent* agent, JSC::CallFrame* callFrame, int testId, const BunString* name, BunTestType item_type, int parentId)
 {
-    auto str = name->toWTFString(BunString::ZeroCopy);
+    auto str = name->toWTFString();
 
     Protocol::TestReporter::TestType type;
     switch (item_type) {
@@ -52,8 +52,8 @@ void Bun__TestReporterAgentReportTestFound(Inspector::InspectorTestReporterAgent
 
 void Bun__TestReporterAgentReportTestFoundWithLocation(Inspector::InspectorTestReporterAgent* agent, int testId, const BunString* name, BunTestType item_type, int parentId, const BunString* sourceURL, int line)
 {
-    auto str = name->toWTFString(BunString::ZeroCopy);
-    auto sourceURLStr = sourceURL->toWTFString(BunString::ZeroCopy);
+    auto str = name->toWTFString();
+    auto sourceURLStr = sourceURL->toWTFString();
 
     Protocol::TestReporter::TestType type;
     switch (item_type) {

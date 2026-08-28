@@ -111,7 +111,7 @@ unsafe extern "C" {
     safe fn Bun__createErrorWithCode(
         global: &JSGlobalObject,
         code: ErrorCode,
-        message: &bun_core::String,
+        message: &bun_core::Str,
     ) -> JSValue;
 }
 

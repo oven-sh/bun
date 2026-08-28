@@ -1780,7 +1780,7 @@ extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t erro
 
 extern "C" void WebSocket__didReceiveText(WebCore::WebSocket* webSocket, bool clone, const EncodedSlice* str)
 {
-    WTF::String wtf_str = clone ? Zig::toStringCopy(*str) : Zig::toString(*str);
+    WTF::String wtf_str = clone ? Zig::toStringCopy(*str) : Zig::adoptExternal(*str);
     webSocket->didReceiveMessage(WTF::move(wtf_str));
 }
 extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, WebCore::WebSocket::FfiSlice data, const uint8_t op)

@@ -5,6 +5,7 @@
 #include "JavaScriptCore/ArgList.h"
 #include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
+#include <wtf/text/Latin1Character.h>
 #include <set>
 
 #ifndef HEADERS_HANDWRITTEN
@@ -33,6 +34,12 @@ typedef union BunStringImpl {
 namespace WTF {
 class StringImpl;
 class String;
+class StringView;
+struct StringViewWithUnderlyingString;
+}
+namespace JSC {
+class Identifier;
+class VM;
 }
 
 typedef union BunStringImpl {
@@ -69,38 +76,30 @@ typedef struct BunString {
     BunStringTag tag;
     BunStringImpl impl;
 
-    enum ZeroCopyTag { ZeroCopy };
-    enum NonNullTag { NonNull };
-
     // If it's not a WTFStringImpl, this does nothing
     inline void ref();
 
     // If it's not a WTFStringImpl, this does nothing
     inline void deref();
 
-    // Zero copy is kind of a lie.
-    // We clone it if it's non-ASCII UTF-8.
-    // We don't clone it if it was marked as static
-    // if it was an EncodedSlice, it still allocates a WTF::StringImpl.
-    // It's only truly zero-copy if it was already a WTFStringImpl (which it is if it came from JS and we didn't use EncodedSlice)
-    WTF::String toWTFString(ZeroCopyTag) const;
-
-    // If the string is empty, this will ensure m_impl is non-null by
-    // using shared static emptyString.
-    WTF::String toWTFString(NonNullTag) const;
-
-    WTF::String transferToWTFString();
-
-    // Consumes this BunString and returns a JS string value. Leaves *this Dead
-    // so a Rust-side OwnedString::Drop deref becomes a no-op.
-    JSC::JSValue transferToJS(JSC::JSGlobalObject* globalObject);
-
-    // This one usually will clone the raw bytes.
+    // May be retained: shares a WTFStringImpl, atomizes a StaticEncodedSlice,
+    // adopts a GLOBAL-tagged EncodedSlice, and copies any other EncodedSlice.
+    // Null for Dead/Empty, and for an EncodedSlice over the string length limit.
     WTF::String toWTFString() const;
 
-    bool isEmpty() const;
+    // Borrows the characters in place; must not outlive `*this`. Allocates
+    // only for a non-ASCII UTF-8 EncodedSlice (`underlyingString` owns it).
+    // A null view for an EncodedSlice over the string length limit.
+    WTF::StringViewWithUnderlyingString view() const;
 
-    void appendToBuilder(WTF::StringBuilder& builder) const;
+    // toWTFString() that moves the WTFStringImpl ref out instead of sharing
+    // it. Leaves *this Empty.
+    WTF::String transferToWTFString();
+
+    // Returns a JS string value; a non-empty *this is consumed and left Empty.
+    JSC::JSValue transferToJS(JSC::JSGlobalObject* globalObject);
+
+    bool isEmpty() const;
 
 } BunString;
 
@@ -248,7 +247,6 @@ typedef struct ZigStackTrace {
     ZigStackFrame* frames_ptr;
     uint8_t frames_len;
     uint8_t frames_cap;
-    JSC::SourceProvider* referenced_source_provider;
 } ZigStackTrace;
 
 typedef struct ZigException {
@@ -335,7 +333,10 @@ extern "C" bool BunString__fromJS(JSC::JSGlobalObject*, JSC::EncodedJSValue, Bun
 extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, const BunString*);
 
 namespace Bun {
-JSC::JSString* toJS(JSC::JSGlobalObject*, BunString);
+JSC::JSString* toJS(JSC::JSGlobalObject*, const BunString&);
+// Property key straight from the characters (atom-table lookup; allocates only
+// when the atom is new).
+JSC::Identifier toIdentifier(JSC::VM&, const BunString&);
 BunString toString(WTF::String& wtfString);
 BunString toString(const WTF::String& wtfString);
 BunString toString(WTF::StringImpl* wtfString);
@@ -347,7 +348,9 @@ BunString toStringRef(WTF::StringImpl* wtfString);
 
 // This creates a detached string view, which cannot be ref/unref.
 // Be very careful using this, and ensure the memory owner does not get destroyed.
-BunString toStringView(WTF::StringView view);
+BunString borrowStringView(WTF::StringView view);
+// A `'static` ASCII literal (`String::from_static` on the Rust side): never copied or freed.
+BunString staticString(WTF::ASCIILiteral literal);
 }
 
 typedef struct {

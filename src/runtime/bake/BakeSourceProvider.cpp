@@ -21,7 +21,7 @@ namespace Bake {
   
 extern "C" BunString BakeSourceProvider__getSourceSlice(SourceProvider* provider)
 {
-    return Bun::toStringView(provider->source());
+    return Bun::borrowStringView(provider->source());
 }
 
 extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(JSC::JSGlobalObject* global, BunString source, bool separateSSRGraph) {
@@ -140,10 +140,8 @@ extern "C" JSC::EncodedJSValue BakeGetOnModuleNamespace(
   size_t keyLength
 ) {
   auto& vm = JSC::getVM(global);
-  const auto propertyString = String(StringImpl::createWithoutCopying({ key, keyLength }));
-  const auto identifier = JSC::Identifier::fromString(vm, propertyString);
-  const auto property = JSC::PropertyName(identifier);
-  return JSC::JSValue::encode(moduleNamespace->get(global, property));
+  const auto identifier = JSC::Identifier::fromString(vm, std::span<const Latin1Character> { key, keyLength });
+  return JSC::JSValue::encode(moduleNamespace->get(global, identifier));
 }
 
 } // namespace Bake

@@ -1,7 +1,7 @@
 //! Test-only host fns for `bun.ini` (used by `internal-for-testing.ts`).
 //! Kept out of `ini/` so that directory has no JSC references.
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, LogJsc as _, StringJsc};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, LogJsc as _, StrJsc as _};
 
 /// Free-fn aliases of the [`IniTestingAPIs`] associated fns so
 /// `bun_runtime::dispatch::js2native` can `pub use` them (associated fns
@@ -27,7 +27,7 @@ impl IniTestingAPIs {
     ) -> JsResult<JSValue> {
         use bun_api::BunInstall;
         use bun_ast::{Log, Source};
-        use bun_core::String as BunString;
+        use bun_core::StringView;
         use bun_dotenv as dotenv;
         use bun_ini::{RegistryAuth, load_npmrc};
         use bun_install::npm::Registry;
@@ -94,34 +94,34 @@ impl IniTestingAPIs {
         ) = 'brk: {
             let Some(default_registry) = install.default_registry.as_ref() else {
                 break 'brk (
-                    BunString::static_(Registry::DEFAULT_URL),
-                    BunString::EMPTY,
-                    BunString::EMPTY,
-                    BunString::EMPTY,
-                    BunString::EMPTY,
+                    StringView::from_static(Registry::DEFAULT_URL),
+                    StringView::EMPTY,
+                    StringView::EMPTY,
+                    StringView::EMPTY,
+                    StringView::EMPTY,
                 );
             };
 
             (
-                BunString::from_bytes(&default_registry.url),
-                BunString::from_bytes(&default_registry.token),
-                BunString::from_bytes(&default_registry.username),
-                BunString::from_bytes(&default_registry.password),
-                BunString::from_bytes(&default_registry.email),
+                StringView::from_bytes(&default_registry.url),
+                StringView::from_bytes(&default_registry.token),
+                StringView::from_bytes(&default_registry.username),
+                StringView::from_bytes(&default_registry.password),
+                StringView::from_bytes(&default_registry.email),
             )
         };
         // Rust has no field reflection; mirror struct-literal object creation with
         // a local `PojoFields` impl (the bun_jsc-convention until `#[derive(PojoFields)]`
         // lands) so each `bun.String → JSValue` encoding interleaves with `put()` and
         // stays on the stack for JSC's conservative scan.
-        struct Pojo {
-            default_registry_url: BunString,
-            default_registry_token: BunString,
-            default_registry_username: BunString,
-            default_registry_password: BunString,
-            default_registry_email: BunString,
+        struct Pojo<'a> {
+            default_registry_url: StringView<'a>,
+            default_registry_token: StringView<'a>,
+            default_registry_username: StringView<'a>,
+            default_registry_password: StringView<'a>,
+            default_registry_email: StringView<'a>,
         }
-        impl bun_jsc::js_object::PojoFields for Pojo {
+        impl bun_jsc::js_object::PojoFields for Pojo<'_> {
             const FIELD_COUNT: usize = 5;
             fn put_fields(
                 &self,

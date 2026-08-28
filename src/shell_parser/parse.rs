@@ -10,7 +10,7 @@ use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
-use bun_core::{String as BunString, strings};
+use bun_core::{Str, String as BunString, strings};
 
 // `strings::Cursor` aliased as `CodepointCursor` for readability.
 type CodepointCursor = strings::Cursor;
@@ -3143,10 +3143,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         Ok(())
     }
 
-    fn append_string_to_str_pool(&mut self, bunstr: &BunString) -> Result<(), LexerError> {
+    fn append_string_to_str_pool(&mut self, bunstr: &Str) -> Result<(), LexerError> {
         let start = self.strpool.len();
         if bunstr.is_utf16() {
-            let utf16 = bunstr.utf16();
+            let utf16 = bunstr.utf16_slice();
             // The transcoding helpers in bun_core take
             // `&mut Vec<u8>` (global allocator), so go through a scratch Vec
             // and copy. PERF: re-unify once a bumpalo-aware transcoder
@@ -3184,8 +3184,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         Ok(())
     }
 
-    fn handle_js_string_ref(&mut self, bunstr: &bun_core::String) -> Result<(), LexerError> {
-        if bunstr.length() == 0 {
+    fn handle_js_string_ref(&mut self, bunstr: &Str) -> Result<(), LexerError> {
+        if bunstr.is_empty() {
             // Empty JS string ref: emit a zero-length DoubleQuotedText token directly.
             // The parser converts this to a quoted_empty atom, preserving the empty arg.
             // This works regardless of the lexer's current quote state (Normal/Single/Double)
@@ -3940,11 +3940,11 @@ pub(crate) const SPECIAL_CHARS_TABLE: ByteTable = {
 pub(crate) const BACKSLASHABLE_CHARS: [u8; 4] = *b"$`\"\\";
 
 pub fn escape_bun_str<const ADD_QUOTES: bool>(
-    bunstr: &BunString,
+    bunstr: &Str,
     outbuf: &mut Vec<u8>,
 ) -> Result<bool, bun_alloc::AllocError> {
     if bunstr.is_utf16() {
-        let res = escape_utf16::<ADD_QUOTES>(bunstr.utf16(), outbuf)?;
+        let res = escape_utf16::<ADD_QUOTES>(bunstr.utf16_slice(), outbuf)?;
         return Ok(!res.is_invalid);
     }
     if bunstr.is_utf8() {
@@ -4045,9 +4045,9 @@ pub(crate) fn escape_utf16<const ADD_QUOTES: bool>(
     Ok(EscapeUtf16Result { is_invalid: false })
 }
 
-pub fn needs_escape_bunstr(bunstr: &BunString) -> bool {
+pub fn needs_escape_bunstr(bunstr: &Str) -> bool {
     if bunstr.is_utf16() {
-        return needs_escape_utf16(bunstr.utf16());
+        return needs_escape_utf16(bunstr.utf16_slice());
     }
     // Otherwise is utf-8, ascii, or latin-1
     needs_escape_utf8_ascii_latin1(bunstr.byte_slice())
@@ -4082,7 +4082,7 @@ pub fn needs_escape_utf8_ascii_latin1(str: &[u8]) -> bool {
     false
 }
 
-pub fn is_if_clause_keyword_bunstr(bunstr: &BunString) -> bool {
+pub fn is_if_clause_keyword_bunstr(bunstr: &Str) -> bool {
     use IfClauseTok::{Elif, Else, Fi, If, Then};
     [If, Else, Elif, Then, Fi]
         .iter()

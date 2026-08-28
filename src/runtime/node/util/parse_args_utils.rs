@@ -1,4 +1,4 @@
-use bun_core::{String, StringView};
+use bun_core::{Str, String, StringView};
 use bun_jsc::JSValue;
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -20,7 +20,7 @@ impl From<OptionValueType> for &'static str {
 
 impl super::validators::StringEnum for OptionValueType {
     const VALUES_INFO: &'static str = "boolean|string";
-    fn from_bun_string(s: &String) -> Option<Self> {
+    fn from_bun_string(s: &Str) -> Option<Self> {
         if s.eq_ascii(b"boolean") {
             Some(Self::Boolean)
         } else if s.eq_ascii(b"string") {
@@ -80,8 +80,8 @@ pub(crate) enum TokenSubtype {
 }
 
 #[inline]
-pub(crate) fn classify_token(arg: &String, options: &[OptionDefinition]) -> TokenSubtype {
-    let len = arg.length();
+pub(crate) fn classify_token(arg: &Str, options: &[OptionDefinition]) -> TokenSubtype {
+    let len = arg.len();
 
     if len == 2 {
         if arg.starts_with_ascii(b"-") {
@@ -99,7 +99,7 @@ pub(crate) fn classify_token(arg: &String, options: &[OptionDefinition]) -> Toke
                 TokenSubtype::LoneLongOption
             };
         } else if arg.starts_with_ascii(b"-") {
-            let first_char = arg.substring_with_len(1, 2);
+            let first_char = arg.substring_range(1, 2);
             let option_idx = find_option_by_short_name(&first_char, options);
             if let Some(i) = option_idx {
                 return if options[i].r#type == OptionValueType::String {
@@ -119,8 +119,8 @@ pub(crate) fn classify_token(arg: &String, options: &[OptionDefinition]) -> Toke
 /// Detect whether there is possible confusion and user may have omitted
 /// the option argument, like `--port --verbose` when `port` of type:string.
 /// In strict mode we throw errors if value is option-like.
-pub(crate) fn is_option_like_value(value: &String) -> bool {
-    value.length() > 1 && value.starts_with_ascii(b"-")
+pub(crate) fn is_option_like_value(value: &Str) -> bool {
+    value.len() > 1 && value.starts_with_ascii(b"-")
 }
 
 /// Find the long option associated with a short option. Looks for a configured
@@ -133,7 +133,7 @@ pub(crate) fn is_option_like_value(value: &String) -> bool {
 /// }) // returns "bar"
 /// ```
 pub(crate) fn find_option_by_short_name(
-    short_name: &String,
+    short_name: &Str,
     options: &[OptionDefinition],
 ) -> Option<usize> {
     let mut long_option_index: Option<usize> = None;
@@ -141,7 +141,7 @@ pub(crate) fn find_option_by_short_name(
         if short_name.eql(&option.short_name) {
             return Some(i);
         }
-        if option.long_name.length() == 1 && short_name.eql(&option.long_name) {
+        if option.long_name.len() == 1 && short_name.eql(&option.long_name) {
             long_option_index = Some(i);
         }
     }

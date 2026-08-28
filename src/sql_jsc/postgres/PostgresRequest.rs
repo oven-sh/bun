@@ -1,6 +1,6 @@
 use crate::jsc::{JSGlobalObject, JSValue, StringJsc as _};
-use bun_core::String as BunString;
 use bun_core::fmt as bun_fmt;
+use bun_core::{Str, String as BunString};
 
 use bun_sql::postgres::PostgresProtocol as protocol;
 use bun_sql::postgres::PostgresTypes as types;
@@ -51,7 +51,7 @@ const MAX_PARAMETERS: usize = u16::MAX as usize;
 
 pub(crate) fn write_bind<Context: WriterContext>(
     name: &[u8],
-    cursor_name: &BunString,
+    cursor_name: &Str,
     global: &JSGlobalObject,
     values_array: JSValue,
     columns_value: JSValue,
@@ -296,7 +296,7 @@ pub(crate) fn prepare_and_query_with_signature<Context: WriterContext>(
     )?;
     write_bind(
         &signature.prepared_statement_name,
-        &BunString::EMPTY,
+        &bun_core::String::EMPTY,
         global,
         array_value,
         JSValue::ZERO,
@@ -326,7 +326,7 @@ pub(crate) fn bind_and_execute<Context: WriterContext>(
 ) -> Result<(), AnyPostgresError> {
     write_bind(
         &statement.signature.prepared_statement_name,
-        &BunString::EMPTY,
+        &bun_core::String::EMPTY,
         global,
         array_value,
         columns_value,
@@ -395,7 +395,7 @@ pub(crate) fn parse_and_bind_and_execute<Context: WriterContext>(
 
     write_bind(
         name,
-        &BunString::EMPTY,
+        &bun_core::String::EMPTY,
         global,
         array_value,
         columns_value,

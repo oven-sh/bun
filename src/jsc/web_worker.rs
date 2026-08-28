@@ -282,8 +282,8 @@ impl WebWorker {
     pub(crate) unsafe extern "C" fn create(
         proxy: *mut c_void,
         parent: *mut VirtualMachine,
-        name_str: &BunString,
-        specifier_str: &BunString,
+        name_str: &bun_core::Str,
+        specifier_str: &bun_core::Str,
         error_message: &mut BunString,
         _parent_context_id: u32,
         this_context_id: u32,
@@ -380,7 +380,7 @@ impl WebWorker {
             match parent_ref.env_loader().map.clone_with_allocator() {
                 Ok(m) => m,
                 Err(_) => {
-                    *error_message = BunString::static_("Out of memory");
+                    *error_message = BunString::from_static("Out of memory");
                     return core::ptr::null_mut();
                 }
             }
@@ -482,7 +482,7 @@ impl WebWorker {
             Err(_) => {
                 // The thread's ref went down with the closure; ours drops on return.
                 worker_ref.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
-                *error_message = BunString::static_("Failed to spawn worker thread");
+                *error_message = BunString::from_static("Failed to spawn worker thread");
                 core::ptr::null_mut()
             }
         }
@@ -1364,7 +1364,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
         if (hooks.has_blob_url)(&str[b"blob:".len()..]) {
             return Some(str);
         } else {
-            *error_message = BunString::static_("Blob URL is missing");
+            *error_message = BunString::from_static("Blob URL is missing");
             return None;
         }
     }
@@ -1392,7 +1392,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
                 }
                 Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
                 Err(JsError::Thrown | JsError::Terminated) => {
-                    *error_message = BunString::static_("unexpected exception");
+                    *error_message = BunString::from_static("unexpected exception");
                     return None;
                 }
             }

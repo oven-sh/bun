@@ -252,9 +252,9 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeForStream(
     // the coercion so no user JS runs while the borrow is live.
     let this = unsafe { &*this };
     let encoded = if str.is_utf16() {
-        this.encode_utf16(global, str.utf16())
+        this.encode_utf16(global, str.utf16_slice())
     } else {
-        this.encode_latin1(global, str.latin1())
+        this.encode_latin1(global, str.latin1_slice())
     };
     bun_jsc::to_js_host_fn_result(global, encoded)
 }
@@ -300,9 +300,9 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
     let mut buf = this.scratch.take();
     buf.clear();
     let encoded = if str.is_utf16() {
-        this.encode_utf16_into(str.utf16(), &mut buf)
+        this.encode_utf16_into(str.utf16_slice(), &mut buf)
     } else {
-        this.encode_latin1_into(str.latin1(), &mut buf)
+        this.encode_latin1_into(str.latin1_slice(), &mut buf)
     };
     if encoded.is_err() {
         return global.throw_out_of_memory_value();

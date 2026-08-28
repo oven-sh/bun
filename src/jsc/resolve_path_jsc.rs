@@ -10,7 +10,7 @@ use bun_paths::resolve_path;
 #[unsafe(no_mangle)]
 extern "C" fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
     global_object: &JSGlobalObject,
-    input: &BunString,
+    input: &bun_core::Str,
 ) -> BunString {
     let str = input.to_utf8();
 

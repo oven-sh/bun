@@ -1,12 +1,10 @@
 use core::ptr;
-use core::ptr::NonNull;
 
 use crate::exception_list;
 use bun_core::String as BunString;
 use bun_core::Utf8Bytes;
 use bun_url::URL as ZigURL;
 
-use crate::SourceProvider;
 use crate::ZigStackFrame;
 
 /// Represents a JavaScript stack trace
@@ -20,21 +18,6 @@ pub struct ZigStackTrace {
     pub(crate) frames_ptr: *mut ZigStackFrame,
     pub frames_len: u8,
     pub(crate) frames_cap: u8,
-
-    /// Non-null if `source_lines_*` points into data owned by a JSC::SourceProvider.
-    /// If so, then .deref must be called on it to release the memory.
-    ///
-    /// `Option<NonNull<_>>` niche-optimizes to a single thin pointer, so the
-    /// FFI layout is exactly one nullable pointer.
-    pub(crate) referenced_source_provider: Option<NonNull<SourceProvider>>,
-}
-
-impl Drop for ZigStackTrace {
-    fn drop(&mut self) {
-        if let Some(source) = self.referenced_source_provider.take() {
-            SourceProvider::opaque_mut(source.as_ptr()).deref();
-        }
-    }
 }
 
 impl ZigStackTrace {
@@ -48,8 +31,6 @@ impl ZigStackTrace {
             frames_ptr: frames_slice.as_mut_ptr(),
             frames_len: frames_slice.len().min(usize::from(u8::MAX)) as u8,
             frames_cap: frames_slice.len().min(usize::from(u8::MAX)) as u8,
-
-            referenced_source_provider: None,
         }
     }
 
@@ -135,7 +116,7 @@ impl<'a> SourceLineIterator<'a> {
         // source_line_iterator().
         let lines = unsafe { bun_core::ffi::slice(self.trace.source_lines_ptr, n) };
         for line in lines {
-            count += line.length();
+            count += line.len();
         }
         count
     }

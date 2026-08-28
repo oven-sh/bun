@@ -2046,7 +2046,7 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
             "Executable not found in $PATH: \"{}\"",
             bstr::BStr::new(command)
         )),
-        code: BunString::static_("ENOENT"),
+        code: BunString::from_static("ENOENT"),
         errno: -UV_E::NOENT,
         path: BunString::clone_utf8(command),
         ..Default::default()

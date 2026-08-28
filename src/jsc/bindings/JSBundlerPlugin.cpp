@@ -76,31 +76,29 @@ void BundlerPlugin::NamespaceList::append(JSC::VM& vm, JSC::RegExp* filter, Stri
     nsGroup->append(WTF::move(filter_regexp));
 }
 
-static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& list, BunString* namespaceStr, BunString* path)
+static bool anyMatchesForNamespace(JSC::VM& vm, BundlerPlugin::NamespaceList& list, const BunString* namespaceStr, const BunString* path)
 {
-    auto namespaceString = namespaceStr ? namespaceStr->transferToWTFString() : String();
-    auto pathString = path->transferToWTFString();
-
     if (list.fileNamespace.isEmpty() && list.namespaces.isEmpty())
         return false;
 
     unsigned index = 0;
-    auto* group = list.group(namespaceString, index);
+    auto* group = list.group(namespaceStr->view().view, index);
     if (group == nullptr) {
         return false;
     }
 
     auto& filters = *group;
+    auto pathString = path->view();
 
     for (auto& filter : filters) {
-        if (filter.match(vm, pathString)) {
+        if (filter.match(vm, pathString.view)) {
             return true;
         }
     }
 
     return false;
 }
-bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, BunString* namespaceStr, BunString* path, bool isOnLoad)
+bool BundlerPlugin::anyMatchesCrossThread(JSC::VM& vm, const BunString* namespaceStr, const BunString* path, bool isOnLoad)
 {
     if (isOnLoad) {
         return anyMatchesForNamespace(vm, this->onLoad, namespaceStr, path);
@@ -283,7 +281,7 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
     }
 }
 
-bool BundlerPlugin::FilterRegExp::match(JSC::VM& vm, const String& path)
+bool BundlerPlugin::FilterRegExp::match(JSC::VM& vm, StringView path)
 {
     WTF::Locker locker { lock };
     Yarr::MatchingContextHolder regExpContext(vm, nullptr, Yarr::MatchFrom::CompilerThread);
@@ -293,7 +291,7 @@ bool BundlerPlugin::FilterRegExp::match(JSC::VM& vm, const String& path)
 int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, OnBeforeParseArguments* onBeforeParseArgs, OnBeforeParseResult* onBeforeParseResult)
 {
     unsigned index = 0;
-    auto* groupPtr = this->group(namespaceStr->toWTFString(BunString::ZeroCopy), index);
+    auto* groupPtr = this->group(namespaceStr->view().view, index);
     if (groupPtr == nullptr) {
         return -1;
     }
@@ -306,14 +304,14 @@ int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, in
     }
 
     int count = 0;
-    const WTF::String& path = pathString->toWTFString(BunString::ZeroCopy);
+    auto path = pathString->view();
     for (size_t i = 0, total = callbacks.size(); i < total && *shouldContinue; ++i) {
 
         if (i > 0) {
             OnBeforeParseResult__reset(onBeforeParseResult);
         }
 
-        if (filters[i].match(vm, path)) {
+        if (filters[i].match(vm, path.view)) {
             Bun::NapiExternal* external = callbacks[i].external;
             ASSERT(onBeforeParseArgs != nullptr);
             if (external) {
@@ -518,7 +516,7 @@ void JSBundlerPlugin::finishCreation(JSC::VM& vm)
     Bun::reifyStaticPropertyTable(vm, JSBundlerPlugin::info(), JSBundlerPluginHashTable, *this);
 }
 
-extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, BunString* namespaceString, BunString* path, bool isOnLoad)
+extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, const BunString* namespaceString, const BunString* path, bool isOnLoad)
 {
     return pluginObject->plugin.anyMatchesCrossThread(pluginObject->vm(), namespaceString, path, isOnLoad);
 }

@@ -1686,7 +1686,7 @@ fn write_lcov_report(
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::String) -> bool {
+extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Str) -> bool {
     let zig_slice = test_name_str.to_utf8();
     // In this particular case, we don't actually care about non-ascii latin1 characters.
     // so we skip the ascii check

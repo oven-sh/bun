@@ -490,7 +490,7 @@ impl<T: JsSinkType> JSSink<T> {
         }
 
         if view.is_utf16() {
-            let utf16 = view.utf16();
+            let utf16 = view.utf16_slice();
             let bytes: &[u8] = bytemuck::cast_slice(utf16);
             let data = bun_ptr::RawSlice::new(bytes);
             return Ok(this
@@ -499,7 +499,7 @@ impl<T: JsSinkType> JSSink<T> {
                 .to_js(global));
         }
 
-        let data = bun_ptr::RawSlice::new(view.latin1());
+        let data = bun_ptr::RawSlice::new(view.latin1_slice());
         Ok(this
             .sink
             .write_latin1(&streams::Result::Temporary(data))

@@ -833,7 +833,7 @@ impl ServerConfig {
                     let mut derived_head_route: Option<UserRouteBuilder> = None;
                     let mut has_head_route = false;
                     for method in METHODS {
-                        let method_name = bun_core::String::static_(method.as_str());
+                        let method_name = bun_core::String::from_static(method.as_str());
                         if let Some(function) = value.get_own(global, &method_name)? {
                             if !found {
                                 validate_route_name(global, &path)?;

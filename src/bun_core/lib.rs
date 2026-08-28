@@ -54,7 +54,7 @@ pub mod string;
 pub use ::bstr::{BStr, BString, ByteSlice};
 pub use string::string_joiner::StringJoiner;
 pub use string::{
-    EncodedSlice, HashedString, MutableString, NodeEncoding, SmolStr, String, StringBuilder,
+    EncodedSlice, HashedString, MutableString, NodeEncoding, SmolStr, Str, String, StringBuilder,
     StringView, Utf8Bytes, Utf8WithString, WTFStringImpl, WTFStringImplExt, WTFStringImplStruct,
 };
 pub use string::{

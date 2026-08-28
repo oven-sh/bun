@@ -1,6 +1,6 @@
 use bun_collections::HashMap;
 use bun_core::StackCheck;
-use bun_core::String as BunString;
+use bun_core::Str;
 use bun_js_parser::lexer;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, wtf};
 use bun_parsers::json5;
@@ -126,7 +126,7 @@ impl Space {
         }
         if space.is_string() {
             let str = space.to_bun_string(global)?;
-            if str.length() == 0 {
+            if str.is_empty() {
                 return Ok(Space::Minified);
             }
             return Ok(Space::Str(str));
@@ -338,15 +338,15 @@ impl Stringifier {
         Ok(())
     }
 
-    fn append_key(&mut self, name: &BunString) {
+    fn append_key(&mut self, name: &Str) {
         let is_identifier = 'is_identifier: {
-            if name.length() == 0 {
+            if name.is_empty() {
                 break 'is_identifier false;
             }
             if !lexer::is_identifier_start(i32::from(name.char_at(0))) {
                 break 'is_identifier false;
             }
-            for i in 1..name.length() {
+            for i in 1..name.len() {
                 if !lexer::is_identifier_continue(i32::from(name.char_at(i))) {
                     break 'is_identifier false;
                 }
@@ -361,9 +361,9 @@ impl Stringifier {
         }
     }
 
-    fn append_quoted_string(&mut self, str: &BunString) {
+    fn append_quoted_string(&mut self, str: &Str) {
         self.builder.append_lchar(b'\'');
-        for i in 0..str.length() {
+        for i in 0..str.len() {
             let c = str.char_at(i);
             match c {
                 0x00 => self.builder.append_latin1(b"\\0"),

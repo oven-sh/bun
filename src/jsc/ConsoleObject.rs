@@ -11,7 +11,7 @@ use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
 use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_collections::HashMap;
-use bun_core::{EncodedSlice, String as BunString, strings};
+use bun_core::{EncodedSlice, Str, String as BunString, strings};
 use bun_core::{Output, StackCheck};
 
 /// Thin facade over `bun_js_parser::lexer` / `bun_js_printer` so the call
@@ -598,10 +598,10 @@ enum RowKey {
 }
 
 impl RowKey {
-    fn str(name: &bun_core::StringView) -> Self {
+    fn str(name: &Str) -> Self {
         Self::Str {
             width: u32::try_from(name.visible_width_exclude_ansi_colors(false)).expect("int cast"),
-            text: (**name).clone().into_utf8(),
+            text: name.to_owned().into_utf8(),
         }
     }
 
@@ -772,7 +772,7 @@ impl<'a> TablePrinter<'a> {
                         }
 
                         columns.push(Column {
-                            name: (*col_key).clone(),
+                            name: col_key.to_owned(),
                             width: 1,
                         });
                         break 'brk columns.len() - 1;
@@ -870,14 +870,14 @@ impl<'a> TablePrinter<'a> {
 
         // create the first column " " which is always present
         columns.push(Column {
-            name: BunString::static_("\u{0020}"),
+            name: BunString::from_static("\u{0020}"),
             width: 1,
         });
 
         // special case for Map: create the special "Key" column at index 1
         if self.jstype.is_map() {
             columns.push(Column {
-                name: BunString::static_("Key"),
+                name: BunString::from_static("Key"),
                 width: 1,
             });
         }
@@ -979,7 +979,7 @@ impl<'a> TablePrinter<'a> {
         if let Some(width) = self.values_col_width {
             self.values_col_idx = columns.len();
             columns.push(Column {
-                name: BunString::static_("Values"),
+                name: BunString::from_static("Values"),
                 width,
             });
         }
@@ -1126,22 +1126,13 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
     // SAFETY: per-thread VM; `console.trace()` only runs on the JS thread.
     let vm = VirtualMachine::get().as_mut();
 
-    let mut source_code_slice: Option<bun_core::Utf8Bytes> = None;
-
     let err = global.create_error_instance(format_args!("trace output"));
     // `remap_zig_exception` populates `holder.zig_exception()` from `err`.
     // `exception` and `&holder.need_to_clear_parser_arena_on_deinit` would be
     // two simultaneous `&mut` into `holder`. Capture the flag in a local and
     // write it back after.
     let mut need_to_clear = holder.need_to_clear_parser_arena_on_deinit;
-    vm.remap_zig_exception(
-        holder.zig_exception(),
-        err,
-        None,
-        &mut need_to_clear,
-        &mut source_code_slice,
-        false,
-    );
+    vm.remap_zig_exception(holder.zig_exception(), err, None, &mut need_to_clear, false);
     holder.need_to_clear_parser_arena_on_deinit = need_to_clear;
 
     let mut adapter = DynWriteAdapter::new(writer);
@@ -1151,7 +1142,6 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
         Output::enable_ansi_colors_stderr(),
     );
 
-    drop(source_code_slice);
     holder.deinit(vm);
 }
 
@@ -1202,7 +1192,7 @@ pub enum Colon {
 }
 
 pub struct ErrorDisplayLevelFormatter<'a> {
-    pub name: &'a BunString,
+    pub name: &'a Str,
     pub(crate) level: ErrorDisplayLevel,
     pub(crate) enable_colors: bool,
     pub(crate) colon: Colon,
@@ -1219,7 +1209,7 @@ impl core::fmt::Display for ErrorDisplayLevelFormatter<'_> {
         }
 
         if !self.name.is_empty() {
-            core::fmt::Display::fmt(self.name, writer)?;
+            core::fmt::Display::fmt(&self.name, writer)?;
         } else if self.level == ErrorDisplayLevel::Warn {
             writer.write_str("warn")?;
         } else {
@@ -1245,7 +1235,7 @@ impl core::fmt::Display for ErrorDisplayLevelFormatter<'_> {
 impl ErrorDisplayLevel {
     pub(crate) fn formatter(
         self,
-        error_name: &BunString,
+        error_name: &Str,
         enable_colors: bool,
         colon: Colon,
     ) -> ErrorDisplayLevelFormatter<'_> {
@@ -2578,7 +2568,7 @@ pub mod formatter {
                                 // JSON.stringify the value using FastStringifier
                                 // for SIMD optimization
                                 let str = next_value.json_stringify_fast(global)?;
-                                writer.add_for_new_line(str.length());
+                                writer.add_for_new_line(str.len());
                                 writer.print(format_args!("{str}"));
                             }
                         }
@@ -2697,7 +2687,7 @@ pub mod formatter {
         }
 
         #[inline]
-        pub(crate) fn write_string(&mut self, str: &bun_core::String) {
+        pub(crate) fn write_string(&mut self, str: &Str) {
             self.print(format_args!("{str}"));
         }
 
@@ -3170,7 +3160,9 @@ pub mod formatter {
         if !name_str.eq_ascii(b"Object") {
             return Ok(Some(name_str));
         } else if value.get_prototype(global_this)?.eql_value(JSValue::NULL) {
-            return Ok(Some(bun_core::String::static_("[Object: null prototype]")));
+            return Ok(Some(bun_core::String::from_static(
+                "[Object: null prototype]",
+            )));
         }
         Ok(None)
     }
@@ -3525,7 +3517,7 @@ pub mod formatter {
                 failed: false,
                 estimated_line_length: &mut self.estimated_line_length,
             };
-            writer.add_for_new_line(str.length());
+            writer.add_for_new_line(str.len());
 
             if self.quote_strings && js_type != jsc::JSType::RegExpObject {
                 if str.is_empty() {
@@ -3551,8 +3543,12 @@ pub mod formatter {
                     return Ok(());
                 }
 
-                JSPrinter::write_json_string(str.latin1(), writer.ctx, JSPrinter::Encoding::Latin1)
-                    .expect("unreachable");
+                JSPrinter::write_json_string(
+                    str.latin1_slice(),
+                    writer.ctx,
+                    JSPrinter::Encoding::Latin1,
+                )
+                .expect("unreachable");
 
                 if C {
                     writer.write_all(pfmt!("<r>", true).as_bytes());
@@ -3581,7 +3577,7 @@ pub mod formatter {
                     };
                 } else {
                     JSPrinter::write_json_string(
-                        str.latin1(),
+                        str.latin1_slice(),
                         writer.ctx,
                         JSPrinter::Encoding::Latin1,
                     )
@@ -3610,7 +3606,8 @@ pub mod formatter {
                 writer.write_all(slice);
             } else if !str.is_empty() {
                 // slow path
-                let buf = strings::allocate_latin1_into_utf8(str.latin1()).unwrap_or_default();
+                let buf =
+                    strings::allocate_latin1_into_utf8(str.latin1_slice()).unwrap_or_default();
                 if !buf.is_empty() {
                     writer.write_all(&buf);
                 }
@@ -3662,7 +3659,7 @@ pub mod formatter {
                 estimated_line_length: &mut self.estimated_line_length,
             };
             let view = value.to_js_string_view(self.global_this)?;
-            let out_str = view.latin1();
+            let out_str = view.latin1_slice();
             writer.add_for_new_line(out_str.len());
             writer.print(format_args!(
                 "{}{}n{}",
@@ -3699,7 +3696,7 @@ pub mod formatter {
 
                 if !number_name.eq_ascii(b"Number") {
                     writer.add_for_new_line(
-                        number_name.length() + number_value.length() + "[Number ():]".len(),
+                        number_name.len() + number_value.len() + "[Number ():]".len(),
                     );
                     writer.print(format_args!(
                         "{}[Number ({}): {}]{}",
@@ -3714,7 +3711,7 @@ pub mod formatter {
                     return Ok(());
                 }
 
-                writer.add_for_new_line(number_name.length() + number_value.length() + 4);
+                writer.add_for_new_line(number_name.len() + number_value.len() + 4);
                 writer.print(format_args!(
                     "{}[{}: {}]{}",
                     pf!("<r><yellow>"),
@@ -3815,7 +3812,7 @@ pub mod formatter {
             writer.add_for_new_line("Symbol".len());
 
             if !description.is_empty() {
-                writer.add_for_new_line(description.length() + "()".len());
+                writer.add_for_new_line(description.len() + "()".len());
                 writer.print(format_args!(
                     "{}Symbol({}){}",
                     pfmt!("<r><blue>", C),
@@ -3891,7 +3888,7 @@ pub mod formatter {
             // "Function". The `.name` property is set to the real class name
             // on the constructor itself. See #29225.
             let printable = value.get_name(self.global_this)?;
-            writer.add_for_new_line(printable.length());
+            writer.add_for_new_line(printable.len());
 
             // Only report `extends` when the parent is itself a class
             // (i.e. `class Foo extends Bar`). Built-in and DOM constructors
@@ -3906,7 +3903,7 @@ pub mod formatter {
             } else {
                 BunString::EMPTY
             };
-            writer.add_for_new_line(printable_proto.length());
+            writer.add_for_new_line(printable_proto.len());
 
             if printable.is_empty() {
                 if printable_proto.is_empty() {
@@ -4104,7 +4101,7 @@ pub mod formatter {
 
                 if !bool_name.eq_ascii(b"Boolean") {
                     writer.add_for_new_line(
-                        bool_value.length() + bool_name.length() + "[Boolean (): ]".len(),
+                        bool_value.len() + bool_name.len() + "[Boolean (): ]".len(),
                     );
                     writer.print(format_args!(
                         "{}[Boolean ({}): {}]{}",
@@ -4118,7 +4115,7 @@ pub mod formatter {
                     }
                     return Ok(());
                 }
-                writer.add_for_new_line(bool_value.length() + "[Boolean: ]".len());
+                writer.add_for_new_line(bool_value.len() + "[Boolean: ]".len());
                 writer.print(format_args!(
                     "{}[Boolean: {}]{}",
                     pf!("<r><yellow>"),
@@ -4177,7 +4174,7 @@ pub mod formatter {
                 estimated_line_length: &mut self.estimated_line_length,
             };
             let str = value.json_stringify(self.global_this, self.indent)?;
-            writer.add_for_new_line(str.length());
+            writer.add_for_new_line(str.len());
             if js_type == jsc::JSType::JSDate {
                 // in the code for printing dates, it never exceeds this amount
                 let mut iso_string_buf = [0u8; 36];
@@ -5170,7 +5167,7 @@ pub mod formatter {
                                             writer.write_all(pfmt!("<r>", true).as_bytes());
                                         }
                                         writer.write_all(b">");
-                                        if children_string.length() < 128 {
+                                        if children_string.len() < 128 {
                                             writer.write_string(&children_string);
                                         } else {
                                             self.indent += 1;
@@ -5400,7 +5397,7 @@ pub mod formatter {
 
             let mut display_name = value.get_name(self.global_this)?;
             if display_name.is_empty() {
-                display_name = BunString::static_("Object");
+                display_name = BunString::from_static("Object");
             }
             let _ = write!(
                 writer_,

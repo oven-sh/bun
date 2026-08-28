@@ -704,7 +704,7 @@ impl<'w, W: bun_io::Write> WrappedWriter<'w, W> {
     }
 
     #[inline]
-    pub(crate) fn write_string(&mut self, str: &bun_core::String) {
+    pub(crate) fn write_string(&mut self, str: &bun_core::Str) {
         self.print(format_args!("{}", str));
     }
 
@@ -1158,7 +1158,7 @@ impl<'a> Formatter<'a> {
                                 BACKSLASH => {
                                     writer.print(format_args!(
                                         "{}\\",
-                                        remaining.substring_with_len(0, i)
+                                        remaining.substring_range(0, i)
                                     ));
                                     remaining = remaining.substring(i + 1);
                                 }
@@ -1168,12 +1168,12 @@ impl<'a> Formatter<'a> {
                                     {
                                         writer.print(format_args!(
                                             "{}",
-                                            remaining.substring_with_len(0, i)
+                                            remaining.substring_range(0, i)
                                         ));
                                     } else {
                                         writer.print(format_args!(
                                             "{}\n",
-                                            remaining.substring_with_len(0, i)
+                                            remaining.substring_range(0, i)
                                         ));
                                     }
 
@@ -1241,7 +1241,7 @@ impl<'a> Formatter<'a> {
                 }
                 Tag::BigInt => {
                     let view = value.to_js_string_view(self.global_this)?;
-                    let out_str = view.latin1();
+                    let out_str = view.latin1_slice();
                     self.add_for_new_line(out_str.len());
 
                     writer.print(format_args!(
@@ -1318,7 +1318,7 @@ impl<'a> Formatter<'a> {
                     self.add_for_new_line(b"Symbol".len());
 
                     if !description.is_empty() {
-                        self.add_for_new_line(description.length() + b"()".len());
+                        self.add_for_new_line(description.len() + b"()".len());
                         writer.print(format_args!(
                             "{}Symbol({}){}",
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>"),
@@ -1350,7 +1350,7 @@ impl<'a> Formatter<'a> {
                 }
                 Tag::Class => {
                     let printable = value.get_class_name(self.global_this)?;
-                    self.add_for_new_line(printable.length());
+                    self.add_for_new_line(printable.len());
 
                     if printable.is_empty() {
                         writer.print(format_args!(
@@ -1803,7 +1803,7 @@ impl<'a> Formatter<'a> {
                 }
                 Tag::JSON => {
                     let str = value.json_stringify(self.global_this, self.indent)?;
-                    self.add_for_new_line(str.length());
+                    self.add_for_new_line(str.len());
                     if js_type == JSType::JSDate {
                         // in the code for printing dates, it never exceeds this amount
                         let mut iso_string_buf = [0u8; 36];
@@ -2156,7 +2156,7 @@ impl<'a> Formatter<'a> {
                                                 }
 
                                                 writer.write_all(b">");
-                                                if children_string.length() < 128 {
+                                                if children_string.len() < 128 {
                                                     writer.write_string(&children_string);
                                                 } else {
                                                     self.indent += 1;
@@ -2788,7 +2788,7 @@ impl JestPrettyFormat {
             }
 
             let class_name = constructor_value.get_class_name(this.amf_global_this())?;
-            this.amf_add_for_new_line(class_name.length());
+            this.amf_add_for_new_line(class_name.len());
             writer.print(format_args!(
                 "{}{}{}",
                 pretty_fmt_const!(ENABLE_ANSI_COLORS, "<cyan>"),
@@ -2912,7 +2912,7 @@ impl JestPrettyFormat {
                     this.amf_add_for_new_line(b"not ".len());
                     writer.write_all(b"not ");
                 }
-                this.amf_add_for_new_line(matcher_name.length() + 1);
+                this.amf_add_for_new_line(matcher_name.len() + 1);
                 writer.print(format_args!("{}", matcher_name));
                 writer.write_all(b" ");
                 this.amf_print_as::<ENABLE_ANSI_COLORS>(

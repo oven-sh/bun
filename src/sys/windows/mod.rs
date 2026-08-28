@@ -1787,7 +1787,7 @@ pub(crate) fn spawn_watcher_child(
 /// Using characters16() does not seem to always have the sentinel. or something else
 /// broke when I just used it. Not sure. ... but this works!
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__LoadLibraryBunString(str_: &bun_core::String) -> *mut c_void {
+pub(crate) extern "C" fn Bun__LoadLibraryBunString(str_: &bun_core::Str) -> *mut c_void {
     #[cfg(not(windows))]
     {
         compile_error!("unreachable");

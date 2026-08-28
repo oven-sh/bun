@@ -102,7 +102,7 @@ pub mod bun_object {
 }
 
 // Shorthand for the bindgen string payload. The real generator hands back a
-// `bun.String` / `WTFStringImpl`; downstream code only calls `.length()` /
+// `bun.String` / `WTFStringImpl`; downstream code only calls `.len()` /
 // `.to_utf8()` / `.to_owned_slice_z()` on it, all of which `bun_core::String`
 // already provides.
 pub type GenString = bun_core::String;

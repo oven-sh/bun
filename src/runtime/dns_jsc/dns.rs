@@ -20,6 +20,7 @@ use bun_dns::{
 #[cfg(not(windows))]
 use bun_io::FilePoll;
 use bun_io::{self as Async, KeepAlive};
+use bun_jsc::StrJsc as _;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -3791,8 +3792,8 @@ trait OrderJscExt {
 
 impl OrderJscExt for Order {
     fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        use jsc::StringJsc as _;
-        bun::String::static_(<&'static str>::from(self)).to_js(global_this)
+        use jsc::StrJsc as _;
+        bun::String::from_static(<&'static str>::from(self)).to_js(global_this)
     }
 }
 
@@ -4585,8 +4586,8 @@ impl Resolver {
             ChannelResult::Err(err) => {
                 let system_error = SystemError {
                     errno: -1,
-                    code: bun_core::String::static_(err.code()),
-                    message: bun_core::String::static_(err.label()),
+                    code: bun_core::String::from_static(err.code()),
+                    message: bun_core::String::from_static(err.label()),
                     ..Default::default()
                 };
                 Err(global_this.throw_value(system_error.to_error_instance(global_this)))
@@ -5332,8 +5333,8 @@ impl Resolver {
                 let syscall = bun_core::String::create_atom(&query.name);
                 let system_error = SystemError {
                     errno: -1,
-                    code: bun_core::String::static_(err.code()),
-                    message: bun_core::String::static_(err.label()),
+                    code: bun_core::String::from_static(err.code()),
+                    message: bun_core::String::from_static(err.label()),
                     syscall,
                     ..Default::default()
                 };
@@ -5435,7 +5436,6 @@ impl Resolver {
 
             // size = strlen(buf+1) + 1
             let size = ip.len() + 1;
-            use jsc::StringJsc as _;
             if port == IANA_DNS_PORT {
                 values.put_index(
                     global_this,
@@ -5455,8 +5455,7 @@ impl Resolver {
                 values.put_index(
                     global_this,
                     i,
-                    bun_core::String::borrow_utf8(&buf[0..size + 1 + port_len])
-                        .to_js(global_this)?,
+                    bun_core::StringView::utf8(&buf[0..size + 1 + port_len]).to_js(global_this)?,
                 )?;
             } else {
                 use std::io::Write;

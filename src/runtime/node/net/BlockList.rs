@@ -32,7 +32,7 @@ use core::cmp::Ordering;
 use core::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 use bun_core::{String as BunString, ZStr};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StrJsc as _, StringJsc as _};
 use bun_threading::{Guarded, Mutex};
 
 /// `(serialize_nonce, address)` of `BlockList` instances currently embedded in
@@ -138,7 +138,7 @@ impl BlockList {
     ) -> JsResult<JSValue> {
         let [address_js, mut family_js] = frame.arguments_as_array::<2>();
         if family_js.is_undefined() {
-            family_js = BunString::static_("ipv4").to_js(global)?;
+            family_js = BunString::from_static("ipv4").to_js(global)?;
         }
         let address = if let Some(sa) = address_js.as_class_ref::<SocketAddress>() {
             sa._addr
@@ -165,7 +165,7 @@ impl BlockList {
     ) -> JsResult<JSValue> {
         let [start_js, end_js, mut family_js] = frame.arguments_as_array::<3>();
         if family_js.is_undefined() {
-            family_js = BunString::static_("ipv4").to_js(global)?;
+            family_js = BunString::from_static("ipv4").to_js(global)?;
         }
         let start = if let Some(sa) = start_js.as_class_ref::<SocketAddress>() {
             sa._addr
@@ -208,7 +208,7 @@ impl BlockList {
     ) -> JsResult<JSValue> {
         let [network_js, prefix_js, mut family_js] = frame.arguments_as_array::<3>();
         if family_js.is_undefined() {
-            family_js = BunString::static_("ipv4").to_js(global)?;
+            family_js = BunString::from_static("ipv4").to_js(global)?;
         }
         let network = if let Some(sa) = network_js.as_class_ref::<SocketAddress>() {
             sa._addr
@@ -256,7 +256,7 @@ impl BlockList {
     ) -> JsResult<JSValue> {
         let [address_js, mut family_js] = frame.arguments_as_array::<2>();
         if family_js.is_undefined() {
-            family_js = BunString::static_("ipv4").to_js(global)?;
+            family_js = BunString::from_static("ipv4").to_js(global)?;
         }
         let address_val;
         let address: &sockaddr = if let Some(sa) = address_js.as_class_ref::<SocketAddress>() {

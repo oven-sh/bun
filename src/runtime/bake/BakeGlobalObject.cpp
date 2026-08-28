@@ -4,6 +4,7 @@
 #include "JavaScriptCore/GlobalObjectMethodTable.h"
 #include "JavaScriptCore/JSPromise.h"
 #include "headers-handwritten.h"
+#include "helpers.h"
 #include "JavaScriptCore/JSModuleLoader.h"
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JSSourceCode.h"
@@ -86,7 +87,7 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
 
         if (keyView.startsWith("bake:/"_s)) {
             WTF::String keyWithoutScheme = keyView.substringSharingImpl("bake:"_s.length());
-            BunString bakePrefixBunString = { BunStringTag::StaticEncodedSlice, { .encoded = { reinterpret_cast<const unsigned char*>("bake:/"), 6 } } };
+            BunString bakePrefixBunString = Bun::staticString("bake:/"_s);
             BunString keyBunString = Bun::toString(keyWithoutScheme);
             BunString result = BakeProdResolve(global, &bakePrefixBunString, &keyBunString);
             RETURN_IF_EXCEPTION(scope, {});

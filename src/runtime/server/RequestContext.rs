@@ -1779,7 +1779,8 @@ where
                     }
                 };
                 let mut sys: jsc::SystemError = err.to_system_error().into();
-                sys.message = BunString::static_("Cannot stream a directory as a response body");
+                sys.message =
+                    BunString::from_static("Cannot stream a directory as a response body");
                 return self.run_error_handler(sys.to_error_instance(global_this));
             }
             (bun_io::FileType::File, false)
@@ -3114,10 +3115,10 @@ where
                     if stream.is_locked(global_this) {
                         stream_log!("was locked but it shouldn't be");
                         let err = jsc::SystemError {
-                            code: BunString::static_(<&'static str>::from(
+                            code: BunString::from_static(<&'static str>::from(
                                 jsc::ErrorCode::ERR_STREAM_CANNOT_PIPE,
                             )),
-                            message: BunString::static_(
+                            message: BunString::from_static(
                                 "Stream already used, please create a new one",
                             ),
                             ..Default::default()
@@ -4028,7 +4029,7 @@ where
                 if let Some(bytes) = readable.ptr.bytes() {
                     let source = bytes.parent_const();
                     source.producer.set(WebCore::streams::SourceHandle::None);
-                    let mut err = Body::ValueError::Message(BunString::static_(
+                    let mut err = Body::ValueError::Message(BunString::from_static(
                         "Request body exceeded maxRequestBodySize",
                     ));
                     bytes.on_data(WebCore::streams::Result::Err(
@@ -4132,7 +4133,7 @@ where
                 // .Locked itself (rejects the promise, deinits the
                 // readable, calls onReceiveValue).
                 let _ = body.to_error_instance(
-                    Body::ValueError::Message(BunString::static_(
+                    Body::ValueError::Message(BunString::from_static(
                         "Request body exceeded maxRequestBodySize",
                     )),
                     global_this,

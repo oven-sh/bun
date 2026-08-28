@@ -709,7 +709,7 @@ pub mod bv2_impl {
             use crate::options_impl::TargetExt;
             use crate::parse_task::ParseTask;
             use bun_ast::ImportKind;
-            use bun_core::String as BunString;
+            use bun_core::{String as BunString, StringView};
             use bun_resolver::fs::PathResolverExt as _;
 
             // `Plugin = opaque {}` — backed by C++ `BunPlugin`. The bundler calls
@@ -727,8 +727,8 @@ pub mod bv2_impl {
                 #[link_name = "JSBundlerPlugin__anyMatches"]
                 safe fn JSBundlerPlugin__anyMatches(
                     this: &Plugin,
-                    namespace: &mut BunString,
-                    path: &mut BunString,
+                    namespace: &bun_core::Str,
+                    path: &bun_core::Str,
                     is_on_load: bool,
                 ) -> bool;
                 // `context` is an opaque cookie C++ round-trips back to a Rust
@@ -767,8 +767,8 @@ pub mod bv2_impl {
                 safe fn JSBundlerPlugin__callOnBeforeParsePlugins(
                     this: &Plugin,
                     ctx: *mut core::ffi::c_void,
-                    namespace: &BunString,
-                    path: &BunString,
+                    namespace: &bun_core::Str,
+                    path: &bun_core::Str,
                     args: *mut core::ffi::c_void,
                     result: *mut core::ffi::c_void,
                     should_continue_running: *mut i32,
@@ -793,8 +793,8 @@ pub mod bv2_impl {
                 pub(crate) fn call_on_before_parse_plugins(
                     &self,
                     ctx: *mut core::ffi::c_void,
-                    namespace: &BunString,
-                    path: &BunString,
+                    namespace: &bun_core::Str,
+                    path: &bun_core::Str,
                     args: *mut crate::parse_task::parse_worker::OnBeforeParseArguments,
                     result: *mut crate::parse_task::parse_worker::OnBeforeParseResult,
                     should_continue_running: &core::cell::Cell<i32>,
@@ -818,16 +818,15 @@ pub mod bv2_impl {
                     path: &crate::bun_fs::Path,
                     is_on_load: bool,
                 ) -> bool {
-                    let mut namespace_string = if path.is_file() {
-                        BunString::EMPTY
+                    let namespace_string = if path.is_file() {
+                        StringView::EMPTY
                     } else {
-                        BunString::clone_utf8(path.namespace)
+                        StringView::utf8(path.namespace)
                     };
-                    let mut path_string = BunString::clone_utf8(path.text);
                     JSBundlerPlugin__anyMatches(
                         self,
-                        &mut namespace_string,
-                        &mut path_string,
+                        &namespace_string,
+                        &StringView::utf8(path.text),
                         is_on_load,
                     )
                 }
@@ -842,7 +841,7 @@ pub mod bv2_impl {
                 ) {
                     let _tracer = bun_core::perf::trace("JSBundler.matchOnLoad");
                     let mut namespace_string = if namespace.is_empty() {
-                        BunString::static_("file")
+                        BunString::from_static("file")
                     } else {
                         BunString::clone_utf8(namespace)
                     };
@@ -867,7 +866,7 @@ pub mod bv2_impl {
                 ) {
                     let _tracer = bun_core::perf::trace("JSBundler.matchOnResolve");
                     let mut namespace_string = if namespace.is_empty() || namespace == b"file" {
-                        BunString::static_("file")
+                        BunString::from_static("file")
                     } else {
                         BunString::clone_utf8(namespace)
                     };
@@ -1411,7 +1410,7 @@ pub mod bv2_impl {
             safe fn __bun_jsc_generate_cached_bytecode(
                 format: crate::options_impl::Format,
                 source: &[u8],
-                source_provider_url: &bun_core::String,
+                source_provider_url: &bun_core::Str,
                 depth: u32,
                 external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
             ) -> Option<Box<[u8]>>;
@@ -1481,7 +1480,7 @@ pub mod bv2_impl {
         pub(crate) fn generate_cached_bytecode(
             format: crate::options_impl::Format,
             source: &[u8],
-            source_provider_url: &bun_core::String,
+            source_provider_url: &bun_core::Str,
             depth: u32,
             external_strings: Option<core::ptr::NonNull<EncoderStringTable>>,
         ) -> Option<Box<[u8]>> {

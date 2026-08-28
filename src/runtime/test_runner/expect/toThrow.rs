@@ -49,7 +49,7 @@ pub(crate) fn to_throw(
         } else if value.is_string() {
             // `.toThrow("")` behaves the same as `.toThrow()`
             let s = value.to_js_string(global)?;
-            if s.length() == 0 {
+            if s.is_empty() {
                 break 'brk JSValue::ZERO;
             }
         }

@@ -661,7 +661,7 @@ impl File {
                         );
                     }
                     Encoding::Latin1 => {
-                        BunString::create_static_external(self.contents.as_bytes(), true)
+                        BunString::create_static_external_latin1(self.contents.as_bytes())
                     }
                     Encoding::Utf16 => {
                         let units = self.utf16_units();

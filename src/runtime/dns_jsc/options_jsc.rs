@@ -97,7 +97,7 @@ fn family_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Family, Fro
         return match js(FAMILY_MAP.from_js(global, value))? {
             Some(f) => Ok(f),
             None => {
-                if js(value.to_js_string(global))?.length() == 0 {
+                if js(value.to_js_string(global))?.is_empty() {
                     return Ok(Family::Unspecified);
                 }
                 Err(FromJSError::InvalidFamily)
@@ -127,7 +127,7 @@ fn socket_type_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Socket
         return match js(SOCKET_TYPE_MAP.from_js(global, value))? {
             Some(s) => Ok(s),
             None => {
-                if js(value.to_js_string(global))?.length() == 0 {
+                if js(value.to_js_string(global))?.is_empty() {
                     return Ok(SocketType::Unspecified);
                 }
                 Err(FromJSError::InvalidSocketType)
@@ -157,7 +157,7 @@ fn protocol_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Protocol,
             Some(p) => Ok(p),
             None => {
                 let str = js(value.to_js_string(global))?;
-                if str.length() == 0 {
+                if str.is_empty() {
                     return Ok(Protocol::Unspecified);
                 }
                 Err(FromJSError::InvalidProtocol)
@@ -177,7 +177,7 @@ fn backend_from_js(value: JSValue, global: &JSGlobalObject) -> Result<Backend, F
         return match js(BACKEND_LABEL.from_js(global, value))? {
             Some(b) => Ok(b),
             None => {
-                if js(value.to_js_string(global))?.length() == 0 {
+                if js(value.to_js_string(global))?.is_empty() {
                     return Ok(Backend::default());
                 }
                 Err(FromJSError::InvalidBackend)

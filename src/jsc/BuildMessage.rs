@@ -2,7 +2,7 @@ use core::cell::Cell;
 use std::io::Write as _;
 
 use crate::bun_string_jsc;
-use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StrJsc as _};
 
 #[crate::JsClass] // codegen: JSBuildMessage (toJS / fromJS / fromJSDirect wired by derive)
 // R-2 (`sharedThis`): every JS-facing host-fn takes `&self`; the only field
@@ -97,7 +97,7 @@ impl BuildMessage {
         object.put(
             global,
             b"name",
-            bun_core::String::static_("BuildMessage").to_js(global)?,
+            bun_core::String::from_static("BuildMessage").to_js(global)?,
         );
         object.put(global, b"position", self.get_position(global)?);
         object.put(global, b"message", self.get_message(global)?);
@@ -171,6 +171,6 @@ impl BuildMessage {
 
     #[crate::host_fn(getter)]
     pub fn get_level(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_core::String::static_(self.msg.kind.string()).to_js(global)
+        bun_core::String::from_static(self.msg.kind.string()).to_js(global)
     }
 }

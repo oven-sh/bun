@@ -25,7 +25,7 @@ use bun_jsc::Debugger::DebuggerId;
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError,
-    JsResult, Node, StringJsc as _, VirtualMachine, host_fn,
+    JsResult, Node, StrJsc as _, StringJsc as _, VirtualMachine, host_fn,
 };
 use bun_paths as paths;
 use bun_ptr::RefPtr;
@@ -1020,10 +1020,10 @@ impl ServePlugins {
         let plugin = JSBundler::Plugin::create(global, bun_jsc::BunPluginTarget::Browser);
         // SAFETY: `Plugin::create` returns a freshly-boxed `*mut Plugin` (single owner).
         let plugin: Box<JSBundler::Plugin> = unsafe { bun_core::heap::take(plugin) };
-        let mut bunstring_array: Vec<BunString> = Vec::with_capacity(plugin_list.len());
-        for raw_plugin in &plugin_list {
-            bunstring_array.push(BunString::from_bytes(raw_plugin));
-        }
+        let bunstring_array: Vec<bun_core::StringView<'_>> = plugin_list
+            .iter()
+            .map(|raw_plugin| bun_core::StringView::from_bytes(raw_plugin))
+            .collect();
         let plugin_js_array = bun_string_jsc::to_js_array(global, &bunstring_array)?;
         let bunfig_folder_bunstr = bun_string_jsc::create_utf8_for_js(global, bunfig_folder)?;
 
@@ -2588,7 +2588,7 @@ where
                         if let Some(hostname) = hostname {
                             return bun_string_jsc::create_utf8_for_js(global, hostname.as_bytes());
                         } else {
-                            return BunString::static_("localhost").to_js(global);
+                            return BunString::from_static("localhost").to_js(global);
                         }
                     }
                     server_config::Address::Unix(_) => unreachable!(),
@@ -2601,9 +2601,9 @@ where
     pub(crate) fn get_protocol(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let _ = self;
         if SSL {
-            BunString::static_("https").to_js(global)
+            BunString::from_static("https").to_js(global)
         } else {
-            BunString::static_("http").to_js(global)
+            BunString::from_static("http").to_js(global)
         }
     }
 
@@ -3079,11 +3079,9 @@ where
                 if let Some(mut s) = prefix {
                     s.extend_from_slice(path);
                     // Same WHATWG pass as `Request::ensure_url` for HTTP/1.
-                    let href = bun_url::href_from_string(&BunString::from_bytes(&s));
+                    let href = bun_url::href_from_string(&bun_core::StringView::from_bytes(&s));
                     request_object.url.set(if href.is_empty() {
                         BunString::clone_utf8(&s)
-                    } else if core::ptr::eq(href.byte_slice().as_ptr(), s.as_ptr()) {
-                        BunString::clone_latin1(&s[..href.length()])
                     } else {
                         href
                     });

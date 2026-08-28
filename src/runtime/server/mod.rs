@@ -2007,8 +2007,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 bstr::BStr::new(host),
                                 port
                             )),
-                            code: bun_core::String::static_("EACCES"),
-                            syscall: bun_core::String::static_("listen"),
+                            code: bun_core::String::from_static("EACCES"),
+                            syscall: bun_core::String::from_static("listen"),
                             ..Default::default()
                         };
                         let _ = global.throw_value(err.to_error_instance(global));
@@ -2031,8 +2031,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         "Failed to start server. Is port {} in use?",
                         port
                     )),
-                    code: bun_core::String::static_("EADDRINUSE"),
-                    syscall: bun_core::String::static_("listen"),
+                    code: bun_core::String::from_static("EADDRINUSE"),
+                    syscall: bun_core::String::from_static("listen"),
                     ..Default::default()
                 }
                 .to_error_instance(global)
@@ -2045,8 +2045,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             "Failed to listen on unix socket {}",
                             bun_core::fmt::QuotedFormatter { text: unix }
                         )),
-                        code: bun_core::String::static_("EADDRINUSE"),
-                        syscall: bun_core::String::static_("listen"),
+                        code: bun_core::String::from_static("EADDRINUSE"),
+                        syscall: bun_core::String::from_static("listen"),
                         ..Default::default()
                     }
                     .to_error_instance(global),
@@ -4159,7 +4159,7 @@ pub(crate) mod http_server_agent {
                 max_id = max_id.max(user_route.id);
                 routes.push(Route {
                     route_id: user_route.id as i32,
-                    path: BunString::from_bytes(user_route.route.path.as_bytes()),
+                    path: BunString::clone_utf8(user_route.route.path.as_bytes()),
                     r#type: RouteType::Api,
                     ..Default::default()
                 });
@@ -4170,14 +4170,14 @@ pub(crate) mod http_server_agent {
             max_id += 1;
             routes.push(Route {
                 route_id: max_id as i32,
-                path: BunString::from_bytes(&entry.path),
+                path: BunString::clone_utf8(&entry.path),
                 r#type: match &entry.route {
                     AnyRoute::Html(_) => RouteType::Html,
                     AnyRoute::Static(_) => RouteType::Static,
                     _ => RouteType::Default,
                 },
                 file_path: match &entry.route {
-                    AnyRoute::Html(r) => BunString::from_bytes(&r.bundle.path),
+                    AnyRoute::Html(r) => BunString::clone_utf8(&r.bundle.path),
                     _ => BunString::EMPTY,
                 },
                 ..Default::default()

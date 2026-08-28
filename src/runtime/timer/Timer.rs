@@ -86,13 +86,10 @@ impl All {
                     ))
                 } else {
                     // -Infinity is handled by TimeoutNegativeWarning
-                    BunString::ascii(
-                        const_format::concatcp!(
-                            "Infinity does not fit into a 32-bit signed integer",
-                            SUFFIX
-                        )
-                        .as_bytes(),
-                    )
+                    BunString::from_static(const_format::concatcp!(
+                        "Infinity does not fit into a 32-bit signed integer",
+                        SUFFIX
+                    ))
                 }
             }
             TimeoutWarning::TimeoutNegativeWarning => {
@@ -101,15 +98,15 @@ impl All {
                         "{countdown} is a negative number{SUFFIX}"
                     ))
                 } else {
-                    BunString::ascii(
-                        const_format::concatcp!("-Infinity is a negative number", SUFFIX)
-                            .as_bytes(),
-                    )
+                    BunString::from_static(const_format::concatcp!(
+                        "-Infinity is a negative number",
+                        SUFFIX
+                    ))
                 }
             }
             TimeoutWarning::TimeoutNaNWarning => {
                 debug_assert!(countdown.is_nan());
-                BunString::ascii(const_format::concatcp!("NaN is not a number", SUFFIX).as_bytes())
+                BunString::from_static(const_format::concatcp!("NaN is not a number", SUFFIX))
             }
         };
         let warning_type_string =
@@ -374,9 +371,9 @@ impl All {
                     // dispatch on `is_utf16()` and treat the 8-bit case via
                     // `latin1()` (digit chars are in the ASCII range either way).
                     if string.is_utf16() {
-                        parse_slice!(string.utf16());
+                        parse_slice!(string.utf16_slice());
                     } else {
-                        parse_slice!(string.latin1());
+                        parse_slice!(string.latin1_slice());
                     }
                     accumulator
                 };

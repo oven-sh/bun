@@ -6,7 +6,6 @@ use crate::{
     VirtualMachineRef as VirtualMachine,
 };
 use bun_bundler::transpiler::PluginResolver;
-use bun_core::String as BunString;
 use bun_event_loop::ManagedTask::ManagedTask;
 use bun_sourcemap::SourceProviderMap;
 use bun_sourcemap::parsed_source_map::AnySourceProvider;
@@ -270,7 +269,7 @@ pub fn get_verbose_fetch_value() -> i32 {
 pub fn add_source_provider_source_map(
     vm: &mut VirtualMachine,
     opaque_source_provider: *mut c_void,
-    specifier: &BunString,
+    specifier: &bun_core::Str,
 ) {
     let slice = specifier.to_utf8();
     vm.source_mappings.put_source_provider(
@@ -287,7 +286,7 @@ pub fn add_source_provider_source_map(
 pub fn remove_source_provider_source_map(
     vm: &mut VirtualMachine,
     opaque_source_provider: *mut c_void,
-    specifier: &BunString,
+    specifier: &bun_core::Str,
 ) {
     let slice = specifier.to_utf8();
     vm.source_mappings

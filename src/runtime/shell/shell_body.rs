@@ -12,7 +12,7 @@ use bun_core::String as BunString;
 use bun_core::ZStr;
 use bun_core::strings;
 use bun_jsc::EncodedSliceJsc as _;
-use bun_jsc::StringJsc as _;
+use bun_jsc::StrJsc as _;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult,
@@ -453,7 +453,7 @@ pub(crate) fn handle_template_value(
                     depth + 1,
                 )?;
                 if i < last {
-                    let str = BunString::static_(" ");
+                    let str = BunString::from_static(" ");
                     let mut b = ShellSrcBuilder::init(global, out_script, jsstrings);
                     if !b.append_bun_str::<false>(str)? {
                         return Err(global
@@ -566,7 +566,7 @@ impl<'a> ShellSrcBuilder<'a> {
         &mut self,
         bunstr: BunString,
     ) -> Result<bool, bun_alloc::AllocError> {
-        let invalid = (bunstr.is_utf16() && !simdutf::validate::utf16le(bunstr.utf16()))
+        let invalid = (bunstr.is_utf16() && !simdutf::validate::utf16le(bunstr.utf16_slice()))
             || (bunstr.is_utf8() && !simdutf::validate::utf8(bunstr.byte_slice()));
         if invalid {
             return Ok(false);
@@ -584,7 +584,7 @@ impl<'a> ShellSrcBuilder<'a> {
             }
         }
         if bunstr.is_utf16() {
-            self.append_utf16_impl(bunstr.utf16())?;
+            self.append_utf16_impl(bunstr.utf16_slice())?;
             return Ok(true);
         }
         if bunstr.is_utf8() || strings::is_all_ascii(bunstr.byte_slice()) {
@@ -793,8 +793,7 @@ pub mod testing_apis {
         }
 
         let str = format!("{}", test::tokens_json_fmt(&test_tokens[..]));
-        let bun_str = BunString::from_bytes(str.as_bytes());
-        bun_str.to_js(global)
+        bun_core::StringView::utf8(str.as_bytes()).to_js(global)
     }
 
     /// Testing API: parse the shell template-string arguments and return the

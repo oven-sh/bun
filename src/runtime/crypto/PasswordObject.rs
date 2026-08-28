@@ -189,7 +189,7 @@ impl AlgorithmValue {
     }
 }
 
-fn algorithm_from_string(s: &bun_core::String) -> Option<Algorithm> {
+fn algorithm_from_string(s: &bun_core::Str) -> Option<Algorithm> {
     if s.eq_ascii(b"argon2i") {
         Some(Algorithm::Argon2i)
     } else if s.eq_ascii(b"argon2d") {

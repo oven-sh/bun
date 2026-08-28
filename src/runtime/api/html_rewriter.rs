@@ -27,7 +27,7 @@ use crate::webcore::streams::{
     self, SourceHandle, Start, StartTag, StreamError, StreamResult, Writable, WritablePending,
 };
 use crate::webcore::{self, ByteStream, DrainResult, ReadableStream, Response, SinkHandle};
-use bun_core::{EncodedSlice, String as BunString, Utf8Bytes};
+use bun_core::{EncodedSlice, String as BunString, StringView, Utf8Bytes};
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::call_frame::ArgumentsSlice;
 
@@ -52,8 +52,8 @@ type RawEndTag = lol_html::html_content::EndTag<'static>;
 /// Construct a `SystemError` with code+message and remaining fields defaulted.
 fn system_error(code: &'static str, message: &'static str) -> SystemError {
     SystemError {
-        code: BunString::static_(code),
-        message: BunString::static_(message),
+        code: BunString::from_static(code),
+        message: BunString::from_static(message),
         ..Default::default()
     }
 }
@@ -812,7 +812,7 @@ impl RewriterPipe {
             this.phase.set(RewritePhase::Done);
             this.done.set(true);
         } else {
-            this.fail(webcore::body::ValueError::Message(BunString::static_(
+            this.fail(webcore::body::ValueError::Message(BunString::from_static(
                 "HTMLRewriter content handler returned a Promise that will never settle",
             )));
         }
@@ -2803,8 +2803,8 @@ impl AttributeIterator {
             bun_string_jsc::to_js_array(
                 global_object,
                 &[
-                    BunString::clone_utf8(name.as_bytes()),
-                    BunString::clone_utf8(value.as_bytes()),
+                    StringView::utf8(name.as_bytes()),
+                    StringView::utf8(value.as_bytes()),
                 ],
             )?,
         )

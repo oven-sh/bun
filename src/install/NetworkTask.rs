@@ -491,8 +491,8 @@ impl NetworkTask {
             };
 
             let tmp = bun_url::join(
-                &bun_core::String::borrow_utf8(scope.url.href()),
-                &bun_core::String::borrow_utf8(encoded_name),
+                &bun_core::StringView::utf8(scope.url.href()),
+                &bun_core::StringView::utf8(encoded_name),
             );
 
             if tmp.tag() == bun_core::Tag::Dead {

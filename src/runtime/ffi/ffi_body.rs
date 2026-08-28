@@ -1012,7 +1012,7 @@ impl FFI {
         let mut compile_c = CompileC::default();
 
         let symbols_object: JSValue = object
-            .get_own(global_this, &bun_core::String::borrow_utf8(b"symbols"))?
+            .get_own(global_this, &bun_core::String::from_static("symbols"))?
             .unwrap_or(JSValue::UNDEFINED);
         if symbols_object.is_empty() || !symbols_object.is_object() {
             return Err(global_this.throw_invalid_argument_type_value(
@@ -1040,7 +1040,7 @@ impl FFI {
         }
 
         if let Some(library_value) =
-            object.get_own(global_this, &bun_core::String::borrow_utf8(b"library"))?
+            object.get_own(global_this, &bun_core::String::from_static("library"))?
         {
             compile_c.libraries = StringArray::from_js(global_this, library_value, "library")?;
         }
@@ -1117,7 +1117,7 @@ impl FFI {
         }
 
         if let Some(source_value) =
-            object.get_own(global_this, &bun_core::String::borrow_utf8(b"source"))?
+            object.get_own(global_this, &bun_core::String::from_static("source"))?
         {
             if source_value.is_array() {
                 compile_c.source = Source::Files(Vec::new());
@@ -1402,7 +1402,7 @@ fn invalid_options_arg(global: &JSGlobalObject) -> JSValue {
 impl FFI {
     pub(crate) fn open(
         global: &JSGlobalObject,
-        name_str: &bun_core::String,
+        name_str: &bun_core::Str,
         object_value: JSValue,
     ) -> JsResult<JSValue> {
         jsc::mark_binding();
@@ -1678,7 +1678,7 @@ impl FFI {
 
         let name = match name_value {
             Some(value) if value.is_string() => value.to_bun_string(global)?,
-            _ => bun_core::String::static_("CFunction"),
+            _ => bun_core::String::from_static("CFunction"),
         };
         if let Some(err) = function.reject_napi_types_error(global) {
             return Ok(err);
@@ -1706,7 +1706,7 @@ pub(super) fn generate_symbol_for_function(
 
     let mut abi_types: Vec<ABIType> = Vec::new();
 
-    if let Some(args) = value.get_own(global, &bun_core::String::borrow_utf8(b"args"))? {
+    if let Some(args) = value.get_own(global, &bun_core::String::from_static("args"))? {
         if args.is_empty_or_undefined_or_null() || !args.js_type().is_array() {
             return Ok(Some(global.create_error_instance(format_args!(
                 "Expected an object with \"args\" as an array"

@@ -1335,7 +1335,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             };
 
-            url_string = bun_url::file_url_from_string(&BunString::borrow_utf8(temp_file_path));
+            url_string = bun_url::file_url_from_string(&bun_core::StringView::utf8(temp_file_path));
 
             // `find_or_create_file_from_path` is typed against the
             // `crate::webcore::node_types` stub (until it's swapped to a

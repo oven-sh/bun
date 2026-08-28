@@ -163,7 +163,7 @@ impl HmrSocket {
                 let maybe_rbi = dev.route_to_bundle_index_slow(pattern);
                 if let Some(agent) = dev.inspector() {
                     if self.inspector_connection_id > -1 {
-                        let pattern_str = bun_core::String::from_bytes(pattern);
+                        let pattern_str = bun_core::StringView::from_bytes(pattern);
                         agent.notify_client_navigated(
                             dev.inspector_server_id,
                             self.inspector_connection_id,
@@ -257,7 +257,7 @@ impl HmrSocket {
                 let dev = unsafe { self.dev() };
 
                 if let Some(agent) = dev.inspector() {
-                    let log_str = bun_core::String::from_bytes(data);
+                    let log_str = bun_core::StringView::from_bytes(data);
                     agent.notify_console_log(dev.inspector_server_id, kind as u8, &log_str);
                 }
 

@@ -79,7 +79,7 @@ use core::ptr::NonNull;
 use bun_alloc::Arena;
 use bun_ast as ast;
 use bun_core::escape_reg_exp::escape_reg_exp_for_package_name_matching;
-use bun_core::{String as BunString, strings};
+use bun_core::{Str, StringView, strings};
 
 // LAYERING: `bun_jsc::RegularExpression` (Yarr FFI) lives in a higher tier.
 // The bodies are defined `#[no_mangle]` in
@@ -89,8 +89,8 @@ unsafe extern "Rust" {
     /// Compile `pattern` with no flags. `None` ⇔ the pattern does not compile.
     /// Initializes JSC first (idempotent), so it must only run from
     /// [`RegularExpression::matches`]; see the type's docs.
-    fn __bun_regex_compile(pattern: &BunString) -> Option<NonNull<()>>;
-    fn __bun_regex_matches(regex: NonNull<()>, input: &BunString) -> bool;
+    fn __bun_regex_compile(pattern: &Str) -> Option<NonNull<()>>;
+    fn __bun_regex_matches(regex: NonNull<()>, input: &Str) -> bool;
     fn __bun_regex_drop(regex: NonNull<()>);
 }
 
@@ -126,10 +126,10 @@ pub struct RegularExpression {
 }
 
 impl RegularExpression {
-    fn matches(&self, input: &BunString) -> bool {
+    fn matches(&self, input: &Str) -> bool {
         let compiled = self.compiled.get_or_init(|| {
             // SAFETY: link-time extern; Yarr compiles the pattern and does not retain it.
-            unsafe { __bun_regex_compile(&BunString::borrow_utf8(&self.source)) }
+            unsafe { __bun_regex_compile(&StringView::utf8(&self.source)) }
                 .map(CompiledRegularExpression)
         });
         match compiled {
@@ -252,9 +252,7 @@ impl PnpmMatcher {
             return false;
         }
 
-        // Package names are ASCII, so
-        // `borrow_utf8` is a zero-copy borrow for the regex match.
-        let name_str = BunString::borrow_utf8(name);
+        let name_str = StringView::utf8(name);
 
         match self.behavior {
             Behavior::AllMatchersInclude => {

@@ -1701,7 +1701,7 @@ impl<'a> Repl<'a> {
             // Wrapper is REPL-built { __proto__: null, value: ... } so getOwn shouldn't throw,
             // but if it does, propagate as a REPL error.
             let maybe_value =
-                match resolved_result.get_own(global, &bun_core::String::static_("value")) {
+                match resolved_result.get_own(global, &bun_core::String::from_static("value")) {
                     Ok(v) => v,
                     Err(err) => {
                         let exc = global.take_exception(err);
@@ -1838,7 +1838,7 @@ impl<'a> Repl<'a> {
         let mut actual_result = resolved_result;
         if resolved_result.is_object() {
             let maybe_value =
-                match resolved_result.get_own(global, &bun_core::String::static_("value")) {
+                match resolved_result.get_own(global, &bun_core::String::from_static("value")) {
                     Ok(v) => v,
                     Err(err) => {
                         let exc = global.take_exception(err);
@@ -1986,7 +1986,7 @@ impl<'a> Repl<'a> {
         let mut actual_result = resolved_result;
         if resolved_result.is_object() {
             let maybe_value =
-                match resolved_result.get_own(global, &bun_core::String::static_("value")) {
+                match resolved_result.get_own(global, &bun_core::String::from_static("value")) {
                     Ok(v) => v,
                     Err(err) => {
                         let exc = global.take_exception(err);

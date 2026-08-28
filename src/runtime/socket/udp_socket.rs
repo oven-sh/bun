@@ -9,8 +9,8 @@ use bun_jsc::JsCell;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
-    SysErrorJsc, SystemError,
+    CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, StrJsc as _,
+    StringJsc, SysErrorJsc, SystemError,
 };
 use bun_ptr::BackRef;
 
@@ -254,7 +254,7 @@ extern "C" fn on_data(
                 BunString::create_format(format_args!("{}%{}", bstr::BStr::new(span), id))
             }
         } else {
-            BunString::from_bytes(span)
+            BunString::clone_utf8(span)
         };
 
         let loop_ = VirtualMachine::get().event_loop_mut();
@@ -399,7 +399,7 @@ impl UDPSocketConfig {
                 }
                 break 'brk value.to_bun_string(global_this)?;
             } else {
-                break 'brk BunString::static_("0.0.0.0");
+                break 'brk BunString::from_static("0.0.0.0");
             }
         };
 
@@ -723,9 +723,9 @@ impl UDPSocket {
                 };
                 let sys_err = SystemError {
                     errno: err,
-                    code: BunString::static_(code),
+                    code: BunString::from_static(code),
                     message,
-                    syscall: BunString::static_(syscall),
+                    syscall: BunString::from_static(syscall),
                     ..Default::default()
                 };
                 let error_value = sys_err.to_error_instance(global_this);
@@ -2478,7 +2478,7 @@ pub(crate) fn js_dgram_guess_handle_type(
         }
         "UNKNOWN"
     };
-    BunString::static_(kind.as_bytes()).to_js(global)
+    BunString::from_static(kind.as_bytes()).to_js(global)
 }
 
 /// `(fd)` → puts a stream descriptor created by `js_dgram_new_socket_fd` into

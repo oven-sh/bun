@@ -9,7 +9,7 @@ use crate::ipc::{
 use bun_core::String as BunString;
 #[cfg(windows)]
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StrJsc as _};
 use bun_ptr::RefPtr;
 
 use crate::api::bun::subprocess::Subprocess;
@@ -289,7 +289,7 @@ pub(crate) fn do_send(
         ex.put(
             global_object,
             b"syscall",
-            BunString::static_("write").to_js(global_object)?,
+            BunString::from_static("write").to_js(global_object)?,
         );
         return do_send_err(global_object, callback, ex, from);
     }

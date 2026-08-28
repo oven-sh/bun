@@ -11,7 +11,9 @@ use core::mem;
 use bun_cares_sys::c_ares as ares;
 use bun_core::{String as BunString, ZStr, strings};
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, StringJsc};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, StrJsc as _, StringJsc,
+};
 use bun_ptr::JsCell;
 
 // The JsClass derive / codegen wires toJS/fromJS/fromJSDirect.
@@ -181,14 +183,14 @@ impl SocketAddress {
 
         const PREFIX: &str = "http://";
         let url_str: BunString = if input.is_8bit() {
-            let from_chars = input.latin1();
+            let from_chars = input.latin1_slice();
             let (str, to_chars) =
                 BunString::create_uninitialized_latin1(from_chars.len() + PREFIX.len());
             to_chars[..PREFIX.len()].copy_from_slice(PREFIX.as_bytes());
             to_chars[PREFIX.len()..].copy_from_slice(from_chars);
             str
         } else {
-            let from_chars = input.utf16();
+            let from_chars = input.utf16_slice();
             let (str, to_chars) =
                 BunString::create_uninitialized_utf16(from_chars.len() + PREFIX.len());
             // bun.strings.literal(u16, "http://")
@@ -210,12 +212,12 @@ impl SocketAddress {
             }
         };
         debug_assert!(host.tag() != bun_core::Tag::Dead);
-        debug_assert!(host.length() >= 2);
+        debug_assert!(host.len() >= 2);
 
         // NOTE: parsed host cannot be used as presentation string. e.g.
         // - "[::1]" -> "::1"
         // - "0x.0x.0" -> "0.0.0.0"
-        let paddr = host.latin1(); // presentation address
+        let paddr = host.latin1_slice(); // presentation address
         // Uses `ares_inet_pton` (already linked) to fill the sockaddr in place.
         // A `%scope` suffix populates `scope_id`, but
         // `ares_inet_pton` does not accept it, so we strip and parse it here.
@@ -758,7 +760,7 @@ impl AF {
     fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<AF> {
         if value.is_string() {
             let fam_str = BunString::from_js(value, global)?;
-            if fam_str.length() != 4 {
+            if fam_str.len() != 4 {
                 return Err(global.throw_invalid_argument_property_value(
                     b"options.family",
                     Some("'ipv4' or 'ipv6'"),
@@ -767,7 +769,7 @@ impl AF {
             }
 
             if fam_str.is_8bit() {
-                let slice = fam_str.latin1();
+                let slice = fam_str.latin1_slice();
                 if bun_core::strings::eql_case_insensitive_ascii_check_length(slice, b"ipv4") {
                     return Ok(AF::INET);
                 }

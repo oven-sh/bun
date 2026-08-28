@@ -6,7 +6,7 @@ use bun_collections::BoundedArray;
 use bun_core::String as BunString;
 use bun_core::{Environment, Global};
 use bun_crash_handler as crash_handler;
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, StringJsc};
+use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, StrJsc as _, StringJsc};
 
 pub(crate) mod js_bindings {
     use super::*;
@@ -233,13 +233,13 @@ pub(crate) mod js_bindings {
         let obj = JSValue::create_empty_object(global, 5);
         let list = analytics::PACKED_FEATURES_LIST;
         let array = JSValue::create_array_from_iter(global, list.iter(), |feature| {
-            BunString::static_(feature).to_js(global)
+            BunString::from_static(feature).to_js(global)
         })?;
         obj.put(global, "features", array);
         obj.put(
             global,
             "version",
-            BunString::static_(Global::package_json_version).to_js(global)?,
+            BunString::from_static(Global::package_json_version).to_js(global)?,
         );
         obj.put(
             global,
@@ -252,7 +252,7 @@ pub(crate) mod js_bindings {
         obj.put(
             global,
             "revision",
-            BunString::static_(Environment::GIT_SHA).to_js(global)?,
+            BunString::from_static(Environment::GIT_SHA).to_js(global)?,
         );
 
         obj.put(

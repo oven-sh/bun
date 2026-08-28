@@ -5,7 +5,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_ast::ExportsKind;
 use bun_ast::Source;
-use bun_core::{FeatureFlags, env_var};
+use bun_core::{FeatureFlags, Str, StringView, env_var};
 use bun_core::{String as BunString, ZStr};
 use bun_js_parser::ParserOptions;
 use bun_paths::resolve_path::{self as path_handler, platform};
@@ -244,7 +244,7 @@ impl Entry {
         features_hash: u64,
         sourcemap: &[u8],
         esm_record: &[u8],
-        output_code: &BunString,
+        output_code: &Str,
         exports_kind: ExportsKind,
     ) -> crate::CrateResult<()> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.save");
@@ -459,7 +459,7 @@ impl Entry {
                     let read_bytes = file.pread_all(bytes, self.metadata.output_byte_offset)?;
 
                     if self.metadata.output_hash != 0 {
-                        if hash(latin1.latin1()) != self.metadata.output_hash {
+                        if hash(latin1.latin1_slice()) != self.metadata.output_hash {
                             return Err(crate::CrateError::InvalidHash);
                         }
                     }
@@ -489,7 +489,7 @@ impl Entry {
                     }
 
                     if self.metadata.output_hash != 0 {
-                        let utf16_bytes: &[u8] = bytemuck::cast_slice(string.utf16());
+                        let utf16_bytes: &[u8] = bytemuck::cast_slice(string.utf16_slice());
                         if hash(utf16_bytes) != self.metadata.output_hash {
                             return Err(crate::CrateError::InvalidHash);
                         }
@@ -774,7 +774,7 @@ impl RuntimeTranspilerCache {
         features_hash: u64,
         sourcemap: &[u8],
         esm_record: &[u8],
-        source_code: &BunString,
+        source_code: &Str,
         exports_kind: ExportsKind,
     ) -> crate::CrateResult<()> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.toFile");
@@ -962,7 +962,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             // Borrowed Latin-1 view: `to_file` only reads `byte_slice()` + the encoding
             // tag (unmarked 8-bit EncodedSlice -> Encoding::LATIN1, same as clone_latin1),
             // and `output_code_bytes` outlives the synchronous `to_file` call.
-            let output_code = BunString::ascii(output_code_bytes);
+            let output_code = StringView::latin1(output_code_bytes);
             let result = RuntimeTranspilerCache::to_file(
                 this.input_byte_length.unwrap(),
                 this.input_hash.unwrap(),

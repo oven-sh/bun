@@ -1,8 +1,7 @@
 use core::ffi::c_void;
 
 use crate::{JSGlobalObject, JSValue, JsResult};
-use bun_core::StringView;
-use bun_core::Utf8Bytes;
+use bun_core::{Str, StringView};
 
 bun_opaque::opaque_ffi! {
     /// Opaque JSC `JSString*` cell. Never constructed in Rust; only handled by reference.
@@ -10,10 +9,10 @@ bun_opaque::opaque_ffi! {
 }
 
 unsafe extern "C" {
-    pub(crate) safe fn JSC__JSString__view<'a>(
-        this: &'a JSString,
+    pub(crate) safe fn JSC__JSString__view(
+        this: &JSString,
         global: &JSGlobalObject,
-    ) -> StringView<'a>;
+    ) -> StringView<'static>;
     fn JSC__JSString__iterator(this: &JSString, global_object: &JSGlobalObject, iter: *mut c_void);
     safe fn JSC__JSString__length(this: &JSString) -> usize;
     safe fn JSC__JSString__is8Bit(this: &JSString) -> bool;
@@ -34,7 +33,7 @@ impl JSString {
     #[track_caller]
     pub fn view<'a>(&'a self, global: &JSGlobalObject) -> JsResult<JSStringView<'a>> {
         let view = crate::call_check_slow(global, || JSC__JSString__view(self, global))?;
-        Ok(JSStringView { cell: self, view })
+        Ok(JSStringView::new(self, view))
     }
 
     pub fn iterator(&self, global_object: &JSGlobalObject, iter: &mut Iterator) {
@@ -43,8 +42,12 @@ impl JSString {
         unsafe { JSC__JSString__iterator(self, global_object, core::ptr::from_mut(iter).cast()) }
     }
 
-    pub fn length(&self) -> usize {
+    pub fn len(&self) -> usize {
         JSC__JSString__length(self)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     pub fn is_8bit(&self) -> bool {
@@ -56,32 +59,31 @@ impl JSString {
 /// is viewed in place, not flattened). Keeps the cell observable to the GC's
 /// conservative stack scan until dropped (the Rust counterpart of
 /// `GCOwnedDataScope`), so a string `toString()` just created cannot be
-/// collected while its characters are in use.
+/// collected while its characters are in use. Derefs to `Str`, so nothing it
+/// hands out can outlive the guard.
 pub struct JSStringView<'a> {
-    pub(crate) cell: &'a JSString,
-    pub(crate) view: StringView<'a>,
+    cell: &'a JSString,
+    view: StringView<'static>,
 }
 
-impl JSStringView<'_> {
-    /// UTF-8 bytes; borrows when 8-bit ASCII, allocates otherwise. Never refs.
+impl<'a> JSStringView<'a> {
     #[inline]
-    pub fn to_utf8(&self) -> Utf8Bytes<'_> {
-        self.view.to_utf8()
+    pub(crate) fn new(cell: &'a JSString, view: StringView<'static>) -> Self {
+        Self { cell, view }
     }
 }
 
 impl core::ops::Deref for JSStringView<'_> {
-    type Target = bun_core::String;
-
+    type Target = Str;
     #[inline]
-    fn deref(&self) -> &bun_core::String {
+    fn deref(&self) -> &Str {
         &self.view
     }
 }
 
 impl core::fmt::Display for JSStringView<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        core::fmt::Display::fmt(&*self.view, f)
+        core::fmt::Display::fmt(&**self, f)
     }
 }
 

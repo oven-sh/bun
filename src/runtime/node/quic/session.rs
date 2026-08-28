@@ -7,7 +7,8 @@ use std::collections::VecDeque;
 
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, StringJsc, Strong,
+    ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, StrJsc as _,
+    StringJsc, Strong,
 };
 
 use bun_lsquic_sys as lsquic;
@@ -1199,7 +1200,7 @@ impl QuicSession {
                     return Ok(());
                 }
                 let id_js = JSValue::from_uint64_no_truncate(global, id)?;
-                let status_js = bun_core::String::static_("abandoned").to_js(global)?;
+                let status_js = bun_core::String::from_static("abandoned").to_js(global)?;
                 if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
                     let vm = global.bun_vm().as_mut();
                     vm.event_loop_ref().run_callback(
@@ -1249,7 +1250,7 @@ impl QuicSession {
                         continue;
                     }
                     let args = JSValue::from_uint64_no_truncate(global, id).and_then(|id_js| {
-                        Ok([id_js, bun_core::String::static_(status).to_js(global)?])
+                        Ok([id_js, bun_core::String::from_static(status).to_js(global)?])
                     });
                     let [id_js, status_js] = match args {
                         Ok(args) => args,
@@ -1346,7 +1347,7 @@ impl QuicSession {
                 } else {
                     b"aborted".as_slice()
                 };
-                let result_js = bun_core::String::static_(result).to_js(global)?;
+                let result_js = bun_core::String::from_static(result).to_js(global)?;
                 // Node passes each fact only from the side that owns it:
                 // the server knows the previous path, the client knows it
                 // migrated to the preferred address.
@@ -1519,7 +1520,7 @@ impl QuicSession {
         let alpn = alpn_bytes
             .map(|b| bun_string_jsc::create_utf8_for_js(global, &b).or_report())
             .unwrap_or(JSValue::UNDEFINED);
-        let cipher_version = bun_core::String::static_("TLSv1.3")
+        let cipher_version = bun_core::String::from_static("TLSv1.3")
             .to_js(global)
             .or_report();
         // Node reports both fields only on failure -- the JS 'auto' rejection
@@ -1534,10 +1535,10 @@ impl QuicSession {
         };
         let (verify_reason, verify_code) = match pair {
             Some((code, reason)) => (
-                bun_core::String::static_(reason.as_bytes())
+                bun_core::String::from_static(reason.as_bytes())
                     .to_js(global)
                     .or_report(),
-                bun_core::String::static_(code.as_bytes())
+                bun_core::String::from_static(code.as_bytes())
                     .to_js(global)
                     .or_report(),
             ),
@@ -2100,7 +2101,7 @@ impl QuicSession {
             return Ok(());
         }
         let id_js = JSValue::from_uint64_no_truncate(global, id)?;
-        let status_js = bun_core::String::static_("abandoned").to_js(global)?;
+        let status_js = bun_core::String::from_static("abandoned").to_js(global)?;
         if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
             let vm = global.bun_vm().as_mut();
             vm.event_loop_ref()
@@ -2174,13 +2175,13 @@ impl QuicSession {
         obj.put(
             global,
             b"type",
-            bun_core::String::static_(kind.as_bytes()).to_js(global)?,
+            bun_core::String::from_static(kind.as_bytes()).to_js(global)?,
         );
         if let Some(name) = name {
             obj.put(
                 global,
                 b"name",
-                bun_core::String::static_(name.as_bytes()).to_js(global)?,
+                bun_core::String::from_static(name.as_bytes()).to_js(global)?,
             );
         }
         obj.put(global, b"size", JSValue::js_number(f64::from(bits)));
@@ -2282,7 +2283,7 @@ fn opt_bytes_to_js(global: &JSGlobalObject, bytes: Option<&[u8]>) -> JSValue {
 }
 
 fn make_application_error(global: &JSGlobalObject, code: u64) -> JsResult<JSValue> {
-    let kind = bun_core::String::static_("application").to_js(global)?;
+    let kind = bun_core::String::from_static("application").to_js(global)?;
     let code = JSValue::from_uint64_no_truncate(global, code)?;
     JSValue::create_array_from_slice(
         global,

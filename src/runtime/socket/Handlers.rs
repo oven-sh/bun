@@ -538,7 +538,7 @@ impl SocketConfig {
         if result.fd.is_some() {
             // If a user passes a file descriptor then prefer it over hostname or unix
         } else if let Some(unix) = generated.unix_.into_inner() {
-            if unix.length() == 0 {
+            if unix.is_empty() {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected a non-empty \"unix\" path")));
             }
@@ -552,7 +552,7 @@ impl SocketConfig {
                 result.hostname_or_unix = Utf8Bytes::Owned(without_prefix);
             }
         } else if let Some(hostname) = generated.hostname.into_inner() {
-            if hostname.length() == 0 {
+            if hostname.is_empty() {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected a non-empty \"hostname\"")));
             }

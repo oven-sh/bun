@@ -20,7 +20,7 @@ use crate::webcore::form_data::AsyncFormDataExt as _;
 use bun_core::String as BunString;
 use bun_core::{Utf8Bytes, WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
 use bun_jsc::JsCell;
-use bun_jsc::StringJsc as _;
+use bun_jsc::StrJsc as _;
 use bun_jsc::bun_string_jsc;
 
 /// Deref the `Value::WTFStringImpl` / `AnyBlob::WTFStringImpl` payload.
@@ -924,7 +924,7 @@ impl Value {
 
         if js_type.is_string_like() {
             let str = value.to_bun_string(global_this)?;
-            if str.length() == 0 {
+            if str.is_empty() {
                 return Ok(Value::Empty);
             }
 

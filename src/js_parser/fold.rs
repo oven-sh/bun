@@ -530,7 +530,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return Some(p.new_expr(e_string_init(p.source.path.text), name_loc));
                         } else if name == b"url" {
                             // Inline import.meta.url as file:// URL
-                            let bunstr = bun_core::String::from_bytes(p.source.path.text);
+                            let bunstr = bun_core::StringView::from_bytes(p.source.path.text);
                             let url = p.arena.alloc_slice_copy(
                                 format!("{}", bun_url::file_url_from_string(&bunstr)).as_bytes(),
                             );

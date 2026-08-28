@@ -4,7 +4,7 @@ use core::ffi::c_void;
 use bun_ast::{Expr, expr::Data as ExprData};
 use bun_collections::{HashMap, StringHashMap};
 use bun_core::StackCheck;
-use bun_core::String as BunString;
+use bun_core::{Str, String as BunString};
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
     JsError, JsResult, MarkedArgumentBuffer, wtf,
@@ -84,7 +84,7 @@ impl Space {
 
         if space.is_string() {
             let str = space.to_bun_string(global)?;
-            if str.length() == 0 {
+            if str.is_empty() {
                 return Ok(Space::Minified);
             }
             return Ok(Space::Str(str));
@@ -122,7 +122,7 @@ impl AnchorAlias {
                 ValueOrigin::Root => AnchorAliasName::Root,
                 ValueOrigin::ArrayItem => AnchorAliasName::ArrayItem(0),
                 ValueOrigin::PropValue(prop_name) => AnchorAliasName::PropValue {
-                    prop_name: (*prop_name).clone(),
+                    prop_name: prop_name.to_owned(),
                     counter: 0,
                 },
             },
@@ -145,7 +145,7 @@ pub(crate) enum AnchorAliasName {
 pub(crate) enum ValueOrigin<'a> {
     Root,
     ArrayItem,
-    PropValue(&'a BunString),
+    PropValue(&'a Str),
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
@@ -581,7 +581,7 @@ impl Stringifier {
                 let clamped = space_str.trunc(10);
 
                 self.builder
-                    .ensure_unused_capacity(indent_count * clamped.length());
+                    .ensure_unused_capacity(indent_count * clamped.len());
                 for _ in 0..indent_count {
                     self.builder.append_string(&clamped);
                 }
@@ -589,10 +589,10 @@ impl Stringifier {
         }
     }
 
-    fn append_double_quoted_string(&mut self, str: &BunString) {
+    fn append_double_quoted_string(&mut self, str: &Str) {
         self.builder.append_lchar(b'"');
 
-        for i in 0..str.length() {
+        for i in 0..str.len() {
             let c = str.char_at(i);
 
             match c {
@@ -649,7 +649,7 @@ impl Stringifier {
         self.builder.append_lchar(b'"');
     }
 
-    fn append_string(&mut self, str: &BunString) {
+    fn append_string(&mut self, str: &Str) {
         if string_needs_quotes(str) {
             self.append_double_quoted_string(str);
             return;
@@ -666,12 +666,12 @@ fn prop_value_needs_newline(value: JSValue) -> bool {
 /// Can this property name be emitted verbatim as an anchor/alias name?
 /// Anchor names can't be quoted or escaped, so only unambiguously safe characters
 /// are reused; anything else falls back to a generated `value<counter>` name.
-fn can_use_prop_name_as_anchor(str: &BunString) -> bool {
+fn can_use_prop_name_as_anchor(str: &Str) -> bool {
     if str.is_empty() {
         return false;
     }
 
-    for i in 0..str.length() {
+    for i in 0..str.len() {
         match str.char_at(i) {
             0x30..=0x39 /* '0'..='9' */
             | 0x41..=0x5a /* 'A'..='Z' */
@@ -687,11 +687,11 @@ fn can_use_prop_name_as_anchor(str: &BunString) -> bool {
 }
 
 /// `value0`, `item12`, `root1`, ... — names that could duplicate a generated anchor name.
-fn matches_generated_anchor_name(str: &BunString) -> bool {
+fn matches_generated_anchor_name(str: &Str) -> bool {
     const PREFIXES: [&[u8]; 3] = [b"value", b"item", b"root"];
 
     'next_prefix: for prefix in PREFIXES {
-        if str.length() <= prefix.len() {
+        if str.len() <= prefix.len() {
             continue;
         }
 
@@ -701,7 +701,7 @@ fn matches_generated_anchor_name(str: &BunString) -> bool {
             }
         }
 
-        for i in prefix.len()..str.length() {
+        for i in prefix.len()..str.len() {
             if !matches!(str.char_at(i), 0x30..=0x39 /* '0'..='9' */) {
                 continue 'next_prefix;
             }
@@ -713,12 +713,12 @@ fn matches_generated_anchor_name(str: &BunString) -> bool {
     false
 }
 
-fn string_needs_quotes(str: &BunString) -> bool {
+fn string_needs_quotes(str: &Str) -> bool {
     if str.is_empty() {
         return true;
     }
 
-    match str.char_at(str.length() - 1) {
+    match str.char_at(str.len() - 1) {
         // whitespace characters
         0x20 /* ' ' */
         | 0x09 /* '\t' */
@@ -774,7 +774,7 @@ fn string_needs_quotes(str: &BunString) -> bool {
     }
 
     let mut i: usize = 0;
-    while i < str.length() {
+    while i < str.len() {
         match str.char_at(i) {
             // flow indicators need to be quoted always
             0x7b /* '{' */
@@ -784,7 +784,7 @@ fn string_needs_quotes(str: &BunString) -> bool {
             | 0x2c /* ',' */ => return true,
 
             0x3a /* ':' */ => {
-                if i + 1 < str.length() {
+                if i + 1 < str.len() {
                     match str.char_at(i + 1) {
                         0x20 /* ' ' */
                         | 0x09 /* '\t' */
@@ -801,11 +801,11 @@ fn string_needs_quotes(str: &BunString) -> bool {
             | 0x27 /* '\'' */ => return true,
 
             0x2d /* '-' */ => {
-                if i + 2 < str.length()
+                if i + 2 < str.len()
                     && str.char_at(i + 1) == 0x2d /* '-' */
                     && str.char_at(i + 2) == 0x2d /* '-' */
                 {
-                    if i + 3 >= str.length() {
+                    if i + 3 >= str.len() {
                         return true;
                     }
                     match str.char_at(i + 3) {
@@ -828,11 +828,11 @@ fn string_needs_quotes(str: &BunString) -> bool {
                 i += 1;
             }
             0x2e /* '.' */ => {
-                if i + 2 < str.length()
+                if i + 2 < str.len()
                     && str.char_at(i + 1) == 0x2e /* '.' */
                     && str.char_at(i + 2) == 0x2e /* '.' */
                 {
-                    if i + 3 >= str.length() {
+                    if i + 3 >= str.len() {
                         return true;
                     }
                     match str.char_at(i + 3) {
@@ -897,8 +897,8 @@ fn string_needs_quotes(str: &BunString) -> bool {
 ///   The parser-side gate now rejects non-conforming float-like tokens
 ///   (e.g. `"1+5"`, `"1e"`, `"."`) so this mirror should err on the side of
 ///   *quoting* whenever a token *might* parse as a number.
-fn string_is_number(str: &BunString) -> bool {
-    let len = str.length();
+fn string_is_number(str: &Str) -> bool {
+    let len = str.len();
     if len == 0 {
         return false;
     }
@@ -1007,8 +1007,8 @@ fn string_is_number(str: &BunString) -> bool {
 /// or "INF" — the suffix the YAML parser accepts after a signed `.` to mean
 /// +/- infinity. Over-matches `+.infX` etc., which is harmless for the quoting
 /// decision.
-fn is_inf_suffix(str: &BunString, i: usize) -> bool {
-    if i + 4 > str.length() {
+fn is_inf_suffix(str: &Str, i: usize) -> bool {
+    if i + 4 > str.len() {
         return false;
     }
     let a = str.char_at(i + 1);

@@ -1,6 +1,8 @@
 use bun_core::strings::EncodingNonAscii;
-use bun_core::{self as bstr, EncodedSlice, String as BunString, strings};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
+use bun_core::{self as bstr, EncodedSlice, Str, String as BunString, StringView, strings};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSValue, JsResult, StrJsc as _, StringJsc as _, bun_string_jsc,
+};
 use bun_sys::UV_E;
 
 use crate::node::types::Encoding;
@@ -16,7 +18,7 @@ pub(crate) fn internal_error_name(global: &JSGlobalObject, frame: &CallFrame) ->
 
     let err_int = arguments[0].to_int32();
     if let Some(name) = UV_E::name(err_int) {
-        return BunString::static_(name).to_js(global);
+        return BunString::from_static(name).to_js(global);
     }
     BunString::create_format(format_args!("Unknown system error {}", err_int)).into_js(global)
 }
@@ -34,7 +36,7 @@ pub(crate) fn internal_error_entries(
         if i % 2 == 0 {
             Ok(JSValue::js_number_from_int32(code))
         } else {
-            BunString::static_(name).to_js(global)
+            BunString::from_static(name).to_js(global)
         }
     })
 }
@@ -133,24 +135,20 @@ pub(crate) fn extracted_split_new_lines_fast_path_strings_only(
 // PERF: `encoding` is a runtime parameter
 // because `EncodingNonAscii` doesn't derive `ConstParamTy` (would need nightly
 // `adt_const_params`). The hot u8/u16 split is still type-dispatched below.
-fn split(
-    encoding: EncodingNonAscii,
-    global: &JSGlobalObject,
-    str: &BunString,
-) -> JsResult<JSValue> {
-    let mut lines: Vec<bun_core::String> = Vec::new();
+fn split(encoding: EncodingNonAscii, global: &JSGlobalObject, str: &Str) -> JsResult<JSValue> {
+    let mut lines: Vec<StringView<'_>> = Vec::new();
 
     // Split into two arms over the buffer's element type (u8 for
     // utf8/latin1, u16 for utf16).
     match encoding {
         EncodingNonAscii::Utf16 => {
-            let buffer: &[u16] = str.utf16();
+            let buffer: &[u16] = str.utf16_slice();
             let mut it = SplitNewlineIterator {
                 buffer,
                 index: Some(0),
             };
             while let Some(line) = it.next() {
-                lines.push(BunString::borrow_utf16(line));
+                lines.push(StringView::utf16(line));
             }
         }
         EncodingNonAscii::Utf8 | EncodingNonAscii::Latin1 => {
@@ -160,12 +158,11 @@ fn split(
                 index: Some(0),
             };
             while let Some(line) = it.next() {
-                let encoded_line = if encoding == EncodingNonAscii::Utf8 {
-                    BunString::borrow_utf8(line)
+                lines.push(if encoding == EncodingNonAscii::Utf8 {
+                    StringView::utf8(line)
                 } else {
-                    BunString::clone_latin1(line)
-                };
-                lines.push(encoded_line);
+                    StringView::latin1(line)
+                });
             }
         }
     }
@@ -211,7 +208,7 @@ pub(crate) fn normalize_encoding(global: &JSGlobalObject, frame: &CallFrame) -> 
     let input = frame.argument(0);
     let str = BunString::from_js(input, global)?;
     debug_assert!(str.tag() != bstr::Tag::Dead);
-    if str.length() == 0 {
+    if str.is_empty() {
         return Ok(Encoding::Utf8.to_js(global));
     }
     if let Some(enc) = Encoding::from_bun_string(&str) {

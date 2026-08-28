@@ -14,7 +14,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, StringJsc as _,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, StrJsc as _,
 };
 use bun_sys::{self, Fd};
 use bun_uws as uws;
@@ -284,7 +284,7 @@ impl Listener {
                                 if se != bun_sys::SystemErrno::EUNKNOWN && (se as u16) < 3000 {
                                     let err = jsc::SystemError {
                                         errno: *uv_errno,
-                                        code: bun_core::String::static_(name).into(),
+                                        code: bun_core::String::from_static(name).into(),
                                         message: bun_core::String::clone_utf8(
                                             format!(
                                                 "listen {}: {}",
@@ -294,7 +294,7 @@ impl Listener {
                                             .as_bytes(),
                                         )
                                         .into(),
-                                        syscall: bun_core::String::static_("listen").into(),
+                                        syscall: bun_core::String::from_static("listen").into(),
                                         path: bun_core::String::clone_utf8(&pipe_buf[..pipe_len])
                                             .into(),
                                         ..Default::default()
@@ -516,7 +516,7 @@ impl Listener {
                 err.put(
                     global,
                     b"syscall",
-                    BunString::static_("listen").to_js(global)?,
+                    BunString::from_static("listen").to_js(global)?,
                 );
                 err.put(global, b"errno", JSValue::js_number(errno as f64));
                 err.put(
@@ -531,7 +531,7 @@ impl Listener {
                     err.put(
                         global,
                         b"code",
-                        BunString::static_(<&'static str>::from(str_)).to_js(global)?,
+                        BunString::from_static(<&'static str>::from(str_)).to_js(global)?,
                     );
                 }
             }

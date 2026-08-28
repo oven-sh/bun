@@ -4105,7 +4105,7 @@ pub mod bindings {
 
                     let mut entry_info = EntryInfo {
                         pathname: pathname_string,
-                        kind: BunString::static_(file_kind_tag(kind)),
+                        kind: BunString::from_static(file_kind_tag(kind)),
                         perm,
                         contents: None,
                     };

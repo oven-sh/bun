@@ -43,7 +43,7 @@ extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
 pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::String {
     // SAFETY: non-null impl borrowed from the live `WorkerOptions`.
     let imp = unsafe { &*wtf };
-    if imp.length() == 0 {
+    if imp.is_empty() {
         bun_core::String::EMPTY
     } else if imp.is_8bit() {
         bun_core::String::clone_latin1(imp.latin1_slice())
@@ -162,7 +162,7 @@ static Bun__version_sha: CStrPtr = CStrPtr(
 
 mod _impl {
     use bun_core::env_var;
-    use bun_core::{EncodedSlice, String as BunString, strings};
+    use bun_core::{EncodedSlice, Str, String as BunString, StringView, strings};
     use bun_jsc::bun_string_jsc;
     use bun_jsc::{
         EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker,
@@ -204,7 +204,7 @@ mod _impl {
 
     // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
     #[unsafe(export_name = "Bun__Process__setTitle")]
-    extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: &BunString) {
+    extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: &Str) {
         // `to_owned_slice` is infallible (Vec<u8>).
         let new_title: Box<[u8]> = newvalue.to_owned_slice().into_boxed_slice();
 
@@ -268,7 +268,7 @@ mod _impl {
         }
 
         let argv = bun_core::argv();
-        let mut args = Vec::<BunString>::with_capacity(argv.len().saturating_sub(1));
+        let mut args = Vec::<StringView>::with_capacity(argv.len().saturating_sub(1));
 
         let mut seen_run = false;
         let mut prev: Option<&[u8]> = None;
@@ -282,7 +282,7 @@ mod _impl {
             let arg: &[u8] = arg;
 
             if arg.len() >= 1 && arg[0] == b'-' {
-                args.push(BunString::clone_utf8(arg));
+                args.push(StringView::from_bytes(arg));
                 prev = Some(arg);
                 continue;
             }
@@ -325,7 +325,7 @@ mod _impl {
 
             if let Some(p) = prev {
                 if MAP.contains(p) {
-                    args.push(BunString::clone_utf8(arg));
+                    args.push(StringView::from_bytes(arg));
                     prev = Some(arg);
                     continue;
                 }
@@ -359,12 +359,12 @@ mod _impl {
         if vm.standalone_module_graph.is_some() {
             // Don't break user's code because they did process.argv.slice(2)
             // Even if they didn't type "bun", we still want to add it as argv[0]
-            args_list.push(BunString::static_("bun"));
+            args_list.push(BunString::from_static("bun"));
         } else {
             let exe_path = bun_core::self_exe_path().ok();
             args_list.push(match exe_path {
-                Some(str_) => BunString::borrow_utf8(str_.as_bytes()),
-                None => BunString::static_("bun"),
+                Some(str_) => BunString::clone_utf8(str_.as_bytes()),
+                None => BunString::from_static("bun"),
             });
         }
 
@@ -384,9 +384,9 @@ mod _impl {
             && !strings::ends_with(vm.main(), STDIN_SUFFIX)
         {
             if worker.is_some_and(|w| w.eval_mode()) {
-                args_list.push(BunString::static_("[worker eval]"));
+                args_list.push(BunString::from_static("[worker eval]"));
             } else {
-                args_list.push(BunString::borrow_utf8(vm.main()));
+                args_list.push(BunString::clone_utf8(vm.main()));
             }
         }
 
@@ -399,9 +399,8 @@ mod _impl {
             );
         } else {
             for arg in &vm.argv {
-                let str_ = BunString::borrow_utf8(arg);
                 // https://github.com/yargs/yargs/blob/adb0d11e02c613af3d9427b3028cc192703a3869/lib/utils/process-argv.ts#L1
-                args_list.push(str_);
+                args_list.push(BunString::clone_utf8(arg));
             }
         }
 
@@ -462,9 +461,9 @@ mod _impl {
                     format!("{code}: process.cwd failed with error {label}{hint}, uv_cwd");
                 let err = bun_jsc::SystemError {
                     errno: core::ffi::c_int::from(e.errno).wrapping_neg(),
-                    code: BunString::static_(code),
+                    code: BunString::from_static(code),
                     message: BunString::clone_utf8(message.as_bytes()),
-                    syscall: BunString::static_("uv_cwd"),
+                    syscall: BunString::from_static("uv_cwd"),
                     ..Default::default()
                 };
                 Err(global_object.throw_value(err.to_error_instance(global_object)))
@@ -531,7 +530,7 @@ mod _impl {
     // TODO: switch this to a WTF::String-backed type when one is added
     #[cfg(windows)]
     #[unsafe(export_name = "Bun__Process__editWindowsEnvVar")]
-    extern "C" fn bun_process_edit_windows_env_var(k: &BunString, v: &BunString) {
+    extern "C" fn bun_process_edit_windows_env_var(k: &Str, v: &Str) {
         const _: () = assert!(cfg!(windows));
         if k.tag() == bun_core::Tag::Empty {
             return;
@@ -542,10 +541,10 @@ mod _impl {
         let mut buf1: Vec<u16> = vec![0u16; k.utf16_byte_length() + 1];
         let mut buf2: Vec<u16> = vec![0u16; v.utf16_byte_length() + 1];
         let len1: usize = if k.is_8bit() {
-            strings::copy_latin1_into_utf16(&mut buf1, k.latin1()).written as usize
+            strings::copy_latin1_into_utf16(&mut buf1, k.latin1_slice()).written as usize
         } else {
-            buf1[0..k.length()].copy_from_slice(k.utf16());
-            k.length()
+            buf1[0..k.len()].copy_from_slice(k.utf16_slice());
+            k.len()
         };
         buf1[len1] = 0;
 
@@ -556,10 +555,10 @@ mod _impl {
                     break 'str_ EMPTY_W.as_ptr();
                 }
                 let len2: usize = if v.is_8bit() {
-                    strings::copy_latin1_into_utf16(&mut buf2, v.latin1()).written as usize
+                    strings::copy_latin1_into_utf16(&mut buf2, v.latin1_slice()).written as usize
                 } else {
-                    buf2[0..v.length()].copy_from_slice(v.utf16());
-                    v.length()
+                    buf2[0..v.len()].copy_from_slice(v.utf16_slice());
+                    v.len()
                 };
                 buf2[len2] = 0;
                 buf2.as_ptr()

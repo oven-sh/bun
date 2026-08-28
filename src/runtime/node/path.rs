@@ -1,6 +1,6 @@
 use crate::jsc::rare_data::PathBuf as RarePathBuf;
 use crate::jsc::{
-    JSGlobalObject, JSStringView, JSValue, JsResult, StringJsc as _, SysErrorJsc as _,
+    JSGlobalObject, JSStringView, JSValue, JsResult, StrJsc as _, StringJsc as _, SysErrorJsc as _,
     bun_string_jsc,
 };
 use crate::node::validators::{validate_object, validate_string};
@@ -580,7 +580,7 @@ pub(crate) fn basename(
     };
     let suffix_slice = suffix_str
         .as_ref()
-        .filter(|s| !s.is_empty() && s.length() <= path_str.length())
+        .filter(|s| !s.is_empty() && s.len() <= path_str.len())
         .map(|s| s.to_utf8());
     basename_js_t::<u8>(
         global_object,
@@ -785,7 +785,7 @@ fn dirname(
 
     let path_str = path_ptr.to_js_string_view(global_object)?;
     if path_str.is_empty() {
-        return bun_core::String::static_(CHAR_STR_DOT).to_js(global_object);
+        return bun_core::String::from_static(CHAR_STR_DOT).to_js(global_object);
     }
 
     let path_slice = path_str.to_utf8();
@@ -1262,20 +1262,20 @@ fn format(global_object: &JSGlobalObject, is_windows: bool, args: &[JSValue]) ->
     )
 }
 
-fn is_absolute_posix_string(path: &bun_core::String) -> bool {
+fn is_absolute_posix_string(path: &bun_core::Str) -> bool {
     let path_trunc = path.trunc(1);
     if path_trunc.is_utf16() {
-        is_absolute_posix_t::<u16>(path_trunc.utf16())
+        is_absolute_posix_t::<u16>(path_trunc.utf16_slice())
     } else {
-        is_absolute_posix_t::<u8>(path_trunc.latin1())
+        is_absolute_posix_t::<u8>(path_trunc.latin1_slice())
     }
 }
 
-fn is_absolute_windows_string(path: &bun_core::String) -> bool {
+fn is_absolute_windows_string(path: &bun_core::Str) -> bool {
     if path.is_utf16() {
-        is_absolute_windows_t::<u16>(path.utf16())
+        is_absolute_windows_t::<u16>(path.utf16_slice())
     } else {
-        is_absolute_windows_t::<u8>(path.latin1())
+        is_absolute_windows_t::<u8>(path.latin1_slice())
     }
 }
 
@@ -1353,7 +1353,7 @@ fn join_posix_t<'a, T: PathCharCwd>(
 /// `rhs_ptr[..rhs_len]` must be a valid readable slice. Called only from C++.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__Node__Path_joinWTF(
-    lhs: &bun_core::String,
+    lhs: &bun_core::Str,
     rhs_ptr: *const u8,
     rhs_len: usize,
 ) -> bun_core::String {
@@ -1524,7 +1524,7 @@ pub(crate) fn join(
 ) -> JsResult<JSValue> {
     let args_len = args.len();
     if args_len == 0 {
-        return bun_core::String::static_(CHAR_STR_DOT).to_js(global_object);
+        return bun_core::String::from_static(CHAR_STR_DOT).to_js(global_object);
     }
 
     // ASCII-only inputs (the common case) borrow the JSString backing without
@@ -1549,7 +1549,7 @@ pub(crate) fn join(
         }
         views.push(path_str);
     }
-    let owned: SmallVec<[Utf8Bytes<'_>; 8]> = views.iter().map(JSStringView::to_utf8).collect();
+    let owned: SmallVec<[Utf8Bytes<'_>; 8]> = views.iter().map(|v| v.to_utf8()).collect();
     let paths: SmallVec<[&[u8]; 8]> = owned.iter().map(Utf8Bytes::slice).collect();
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
     join_js_t::<u8>(global_object, pool, is_windows, &paths)
@@ -1980,7 +1980,7 @@ fn normalize(
     validate_string(global_object, path_ptr, format_args!("path"))?;
     let path_str = path_ptr.to_js_string_view(global_object)?;
     if path_str.is_empty() {
-        return bun_core::String::static_(CHAR_STR_DOT).to_js(global_object);
+        return bun_core::String::from_static(CHAR_STR_DOT).to_js(global_object);
     }
 
     let path_slice = path_str.to_utf8();
@@ -3406,7 +3406,7 @@ fn resolve(
         views.push(path_str);
     }
 
-    let owned: SmallVec<[Utf8Bytes<'_>; 8]> = views.iter().map(JSStringView::to_utf8).collect();
+    let owned: SmallVec<[Utf8Bytes<'_>; 8]> = views.iter().map(|v| v.to_utf8()).collect();
     let paths: SmallVec<[&[u8]; 8]> = owned.iter().rev().map(Utf8Bytes::slice).collect();
 
     #[cfg(unix)]

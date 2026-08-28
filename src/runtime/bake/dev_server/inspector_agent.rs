@@ -8,7 +8,7 @@
 //! `Bun__InspectorBunFrontendDevServerAgent__setEnabled`, `slot.sequence` is
 //! `next_inspector_connection_id`.
 
-use bun_core::String as BunString;
+use bun_core::{Str, String as BunString};
 use bun_jsc::debugger::{DebuggerId, ErasedAgentSlot};
 use bun_jsc::virtual_machine::VirtualMachine;
 
@@ -116,7 +116,7 @@ impl BunFrontendDevServerAgent {
     pub(crate) fn notify_bundle_failed(
         &self,
         dev_server_id: DebuggerId,
-        build_errors_payload_base64: BunString,
+        build_errors_payload_base64: &Str,
     ) {
         if let Some(handle) = self.handle_mut() {
             ffi::InspectorBunFrontendDevServerAgent__notifyBundleFailed(
@@ -134,7 +134,7 @@ impl BunFrontendDevServerAgent {
         &self,
         dev_server_id: DebuggerId,
         connection_id: i32,
-        url: &BunString,
+        url: &Str,
         route_bundle_id: i32,
     ) {
         if let Some(handle) = self.handle_mut() {
@@ -150,7 +150,7 @@ impl BunFrontendDevServerAgent {
 
     /// `notifyConsoleLog`. `kind` is `DevServer.ConsoleLogKind as u8` (`b'l'`
     /// / `b'e'`) — caller does `kind as u8`.
-    pub(crate) fn notify_console_log(&self, dev_server_id: DebuggerId, kind: u8, data: &BunString) {
+    pub(crate) fn notify_console_log(&self, dev_server_id: DebuggerId, kind: u8, data: &Str) {
         if let Some(handle) = self.handle_mut() {
             ffi::InspectorBunFrontendDevServerAgent__notifyConsoleLog(
                 handle,
@@ -203,20 +203,20 @@ mod ffi {
         pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyBundleFailed(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
-            build_errors_payload_base64: BunString,
+            build_errors_payload_base64: &bun_core::Str,
         );
         pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyClientNavigated(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
             connection_id: i32,
-            url: &BunString,
+            url: &bun_core::Str,
             route_bundle_id: i32,
         );
         pub(super) safe fn InspectorBunFrontendDevServerAgent__notifyConsoleLog(
             agent: &mut InspectorBunFrontendDevServerAgentHandle,
             dev_server_id: i32,
             kind: u8,
-            data: &BunString,
+            data: &bun_core::Str,
         );
     }
 }

@@ -815,9 +815,9 @@ impl<'a> Run<'a> {
                 // UTF-16 → memcpy, Latin-1 → byte-widen. JS-sourced WTF
                 // strings are never UTF-8-tagged, so two arms suffice.
                 let utf16_bytes: Vec<u16> = if bun_str.is_utf16() {
-                    bun_str.utf16().to_vec()
+                    bun_str.utf16_slice().to_vec()
                 } else {
-                    bun_str.latin1().iter().map(|&b| b as u16).collect()
+                    bun_str.latin1_slice().iter().map(|&b| b as u16).collect()
                 };
                 // `E::EString::init_utf16` lifetime-erases the slice
                 // (arena-owned per the parser's `Str` convention). Copy into

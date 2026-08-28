@@ -578,7 +578,7 @@ impl CryptoHasher {
             Encoding::Utf8
         };
         if input.is_string_literal() && encoding == Encoding::Hex {
-            let length = input.to_js_string(global)?.length();
+            let length = input.to_js_string(global)?.len();
             if length % 2 != 0 {
                 let actual = JSGlobalObject::inspect_for_error_message(global, encoding_value)?;
                 return Err(global

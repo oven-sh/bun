@@ -1,7 +1,7 @@
 use core::mem::size_of;
 
 use crate::jsc::{JSGlobalObject, JSValue, bun_string_jsc};
-use bun_core::String as BunString;
+use bun_core::StringView;
 
 use crate::shared::cached_structure::CachedStructure as PostgresCachedStructure;
 use bun_sql::postgres::postgres_protocol as protocol;
@@ -39,7 +39,7 @@ fn parse_date_time_text(
         return Ok(ms);
     }
     // `date` (date-only ISO form), BC dates and 5+ digit years fall back to `Date.parse`.
-    let str = BunString::from_bytes(bytes);
+    let str = StringView::from_bytes(bytes);
     bun_string_jsc::parse_date(&str, global_object).map_err(crate::jsc::js_error_to_postgres)
 }
 
@@ -347,7 +347,7 @@ fn parse_array(
                         let ms = match crate::postgres::types::date::parse_infinity(element) {
                             Some(inf) => inf,
                             None => {
-                                let str = BunString::from_bytes(element);
+                                let str = StringView::from_bytes(element);
                                 bun_string_jsc::parse_date(&str, global_object)
                                     .map_err(crate::jsc::js_error_to_postgres)?
                             }

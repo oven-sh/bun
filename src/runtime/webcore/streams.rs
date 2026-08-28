@@ -170,7 +170,7 @@ impl Start {
                 let mut empty = true;
 
                 if let Some(val) =
-                    value.get_own(global_this, &bun_core::String::static_("asUint8Array"))?
+                    value.get_own(global_this, &bun_core::String::from_static("asUint8Array"))?
                 {
                     if val.is_boolean() {
                         as_uint8array = val.to_boolean();

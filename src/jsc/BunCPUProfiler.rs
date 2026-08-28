@@ -81,7 +81,7 @@ pub(crate) fn stop_and_write_profile(
 }
 
 fn write_profile_to_file(
-    profile_string: &BunString,
+    profile_string: &bun_core::Str,
     config: &CPUProfilerConfig,
     is_md_format: bool,
 ) -> Result<(), ProfilerError> {

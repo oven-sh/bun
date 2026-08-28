@@ -682,7 +682,7 @@ pub extern "C" fn TextDecoder__createForStream(
         }
     };
     // SAFETY: as above; the label borrows a 'static byte slice (no refcount).
-    unsafe { out_encoding_label.write(bun_core::String::static_(encoding.get_label())) };
+    unsafe { out_encoding_label.write(bun_core::String::from_static(encoding.get_label())) };
     if matches!(encoding, EncodingLabel::Utf8) && !fatal {
         // SAFETY: as above.
         unsafe { *out_utf8_fast_path = true };

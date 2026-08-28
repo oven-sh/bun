@@ -69,8 +69,8 @@ unsafe extern "C" {
     ) -> u32;
 
     fn generateCachedModuleByteCodeFromSourceCode(
-        source_provider_url: &BunString,
-        input_code: &BunString,
+        source_provider_url: &bun_core::Str,
+        input_code: &bun_core::Str,
         depth: u32,
         output_byte_code: *mut Option<NonNull<u8>>,
         output_byte_code_size: *mut usize,
@@ -79,8 +79,8 @@ unsafe extern "C" {
     ) -> bool;
 
     fn generateCachedCommonJSProgramByteCodeFromSourceCode(
-        source_provider_url: &BunString,
-        input_code: &BunString,
+        source_provider_url: &bun_core::Str,
+        input_code: &bun_core::Str,
         depth: u32,
         output_byte_code: *mut Option<NonNull<u8>>,
         output_byte_code_size: *mut usize,
@@ -149,7 +149,7 @@ impl CachedBytecode {
     pub(crate) fn generate(
         format: Format,
         input: &[u8],
-        source_provider_url: &BunString,
+        source_provider_url: &bun_core::Str,
         depth: u32,
         external_strings: Option<NonNull<EncoderStringTable>>,
     ) -> Option<(&'static [u8], NonNull<CachedBytecode>)> {
@@ -212,7 +212,7 @@ impl bun_alloc::Allocator for CachedBytecode {}
 pub(crate) fn __bun_jsc_generate_cached_bytecode(
     format: Format,
     source: &[u8],
-    source_provider_url: &BunString,
+    source_provider_url: &bun_core::Str,
     depth: u32,
     external_strings: Option<NonNull<EncoderStringTable>>,
 ) -> Option<Box<[u8]>> {

@@ -2,7 +2,7 @@ use core::ffi::c_void;
 
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl as boringssl;
-use bun_core::{String as BunString, strings};
+use bun_core::strings;
 use bun_event_loop::EventLoopTimer as Timer;
 use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -487,14 +487,15 @@ impl JSValkeyClient {
         let vm: &'static VirtualMachine = global_object.bun_vm();
         let vm_ref = vm;
 
-        let url_str = if arguments.len() >= 1 && !arguments[0].is_undefined_or_null() {
-            arguments[0].to_bun_string(&global_object)?
+        let url_slice = if arguments.len() >= 1 && !arguments[0].is_undefined_or_null() {
+            arguments[0].to_utf8(&global_object)?
         } else {
             let env = vm_ref.env_loader();
-            match env.get(b"REDIS_URL").or_else(|| env.get(b"VALKEY_URL")) {
-                Some(url) => BunString::borrow_utf8(url),
-                None => BunString::static_("valkey://localhost:6379"),
-            }
+            bun_core::Utf8Bytes::Borrowed(
+                env.get(b"REDIS_URL")
+                    .or_else(|| env.get(b"VALKEY_URL"))
+                    .unwrap_or(b"valkey://localhost:6379"),
+            )
         };
         let mut fallback_url_buf = [0u8; 2048];
 
@@ -505,7 +506,6 @@ impl JSValkeyClient {
         // understand why this is happening, but since I need to uncork valkey, I'm adding this as
         // a stop-gap.
         let parsed_url = 'get_url: {
-            let url_slice = url_str.to_utf8();
             let url_byte_slice = url_slice.slice();
 
             if url_byte_slice.is_empty() {

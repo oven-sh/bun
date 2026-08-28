@@ -6,7 +6,9 @@ use std::sync::Arc;
 use bstr::BStr;
 
 use bun_core::{self as bstring, strings};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSValue, JsResult, StrJsc as _, StringJsc as _, bun_string_jsc,
+};
 use bun_sourcemap::{Mapping, Ordinal, ParsedSourceMap, mapping};
 
 // generate-classes.ts does not emit Rust accessors yet, so the

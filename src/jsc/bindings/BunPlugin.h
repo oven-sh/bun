@@ -29,7 +29,7 @@ public:
         BunPluginTarget target { BunPluginTargetBun };
 
         void append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSObject* func);
-        JSObject* find(JSC::JSGlobalObject* globalObj, String& path);
+        JSObject* find(JSC::JSGlobalObject* globalObj, StringView path);
         void clear()
         {
             filters.clear();
@@ -43,7 +43,7 @@ public:
         Vector<String> namespaces = {};
         Vector<Group> groups = {};
 
-        Group* group(const String& namespaceStr)
+        Group* group(StringView namespaceStr)
         {
             if (namespaceStr.isEmpty()) {
                 return &fileNamespace;
@@ -119,6 +119,6 @@ class GlobalObject;
 } // namespace Zig
 
 namespace Bun {
-JSC::JSValue runVirtualModule(Zig::GlobalObject*, BunString* specifier, bool& wasModuleMock);
+JSC::JSValue runVirtualModule(Zig::GlobalObject*, const BunString* specifier, bool& wasModuleMock);
 JSC::Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 }

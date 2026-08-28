@@ -294,7 +294,7 @@ pub fn resolve_reject_unauthorized(
 fn handle_path(
     global: &JSGlobalObject,
     field: &'static str,
-    string: &bun_core::String,
+    string: &bun_core::Str,
 ) -> JsResult<*const c_char> {
     let name = string.to_owned_slice_z();
     // `bun_sys::access` routes to `access(2)` on POSIX and
@@ -401,7 +401,7 @@ fn handle_file_array(
 }
 
 enum SingleFile<'a> {
-    String(&'a bun_core::String),
+    String(&'a bun_core::Str),
     Buffer(&'a mut jsc::JSCArrayBuffer),
     File(&'a mut crate::webcore::Blob),
 }

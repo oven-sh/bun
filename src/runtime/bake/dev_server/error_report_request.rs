@@ -130,8 +130,8 @@ impl ErrorReportRequest {
             let function_name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
             let file_name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
             frames.push(ZigStackFrame {
-                function_name: BunString::from_bytes(function_name),
-                source_url: BunString::from_bytes(file_name),
+                function_name: BunString::clone_utf8(function_name),
+                source_url: BunString::clone_utf8(file_name),
                 position: if line > 0 {
                     ZigStackFramePosition {
                         line: Ordinal::from_one_based(line),
@@ -176,12 +176,9 @@ impl ErrorReportRequest {
         let mut top_frame_position = ZigStackFramePosition::INVALID;
         let mut region_of_interest_line: u32 = 0;
         for frame in frames.iter_mut() {
-            // Every `source_url` here is `Tag::EncodedSlice` (built via
-            // `String::from_bytes`), so `byte_slice()` is the right view.
-            let source_url: &[u8] = frame.source_url.byte_slice();
             // The browser code strips "http://localhost:3000" when the string
             // has /_bun/client. It's done because JS can refer to `location`
-            let Some(id) = parse_id(source_url, browser_url_origin) else {
+            let Some(id) = parse_id(&frame.source_url.to_utf8(), browser_url_origin) else {
                 continue;
             };
 
@@ -192,7 +189,7 @@ impl ErrorReportRequest {
                     None => {
                         bun_core::debug_warn!(
                             "Failed to find mapping for {}, {}",
-                            bstr::BStr::new(source_url),
+                            frame.source_url,
                             id.get()
                         );
                         *gop.value_ptr = None;
@@ -224,7 +221,7 @@ impl ErrorReportRequest {
             if generated_mappings.len() <= 1
                 || frame.position.line.zero_based() < generated_mappings[1].lines.zero_based()
             {
-                frame.source_url = BunString::static_(RUNTIME_NAME); // matches value in source map
+                frame.source_url = BunString::from_static(RUNTIME_NAME); // matches value in source map
                 frame.position = ZigStackFramePosition::INVALID;
                 continue;
             }
@@ -242,10 +239,10 @@ impl ErrorReportRequest {
                 let index = remapped_position.source_index;
                 if index >= 1 && (index as usize - 1) < result.file_paths.len() {
                     let abs_path: &[u8] = &result.file_paths[index as usize - 1];
-                    frame.source_url = BunString::from_bytes(abs_path);
+                    frame.source_url = BunString::clone_utf8(abs_path);
                     let mut relative_path_buf = path_buffer_pool::get();
                     let rel_path = dev.relative_path(&mut relative_path_buf, abs_path);
-                    if strings::eql(frame.function_name.byte_slice(), rel_path) {
+                    if frame.function_name.eql_utf8(rel_path) {
                         frame.function_name = BunString::EMPTY;
                     }
                     frame.remapped = true;
@@ -268,7 +265,7 @@ impl ErrorReportRequest {
                     }
                 } else if index == 0 {
                     // Should be picked up by above but just in case.
-                    frame.source_url = BunString::static_(RUNTIME_NAME);
+                    frame.source_url = BunString::from_static(RUNTIME_NAME);
                     frame.position = ZigStackFramePosition::INVALID;
                 }
             }
@@ -301,12 +298,12 @@ impl ErrorReportRequest {
         let mut exception = ZigException {
             r#type: JSErrorCode::Error,
             runtime_type: JSRuntimeType::NOTHING,
-            name: BunString::from_bytes(name),
-            message: BunString::from_bytes(message),
+            name: BunString::clone_utf8(name),
+            message: BunString::clone_utf8(message),
             stack: ZigStackTrace::from_frames(&mut frames),
             exception: core::ptr::null_mut(),
             remapped: false,
-            browser_url: BunString::from_bytes(browser_url),
+            browser_url: BunString::clone_utf8(browser_url),
             errno: 0,
             syscall: BunString::EMPTY,
             system_code: BunString::EMPTY,
@@ -341,11 +338,12 @@ impl ErrorReportRequest {
             _ = out.write_int_le::<i32>(frame.position.line.one_based());
             _ = out.write_int_le::<i32>(frame.position.column.one_based());
 
-            let function_name: &[u8] = frame.function_name.byte_slice();
+            let function_name = frame.function_name.to_utf8();
             _ = out.write_int_le::<u32>(function_name.len() as u32);
-            out.extend_from_slice(function_name);
+            out.extend_from_slice(&function_name);
 
-            let src_to_write: &[u8] = frame.source_url.byte_slice();
+            let src_to_write = frame.source_url.to_utf8();
+            let src_to_write: &[u8] = &src_to_write;
             if strings::has_prefix_comptime(src_to_write, b"/") {
                 let mut relative_path_buf = path_buffer_pool::get();
                 let file = dev.relative_path(&mut relative_path_buf, src_to_write);

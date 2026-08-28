@@ -11,7 +11,7 @@
 
 use core::ffi::c_void;
 
-use bun_core::String as BunString;
+use bun_core::Str;
 use bun_jsc::JSGlobalObject;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sourcemap::parsed_source_map::AnySourceProvider;
@@ -128,7 +128,7 @@ impl SourceProvider for DevServerSourceProvider {
 pub fn add_bake_source_provider_source_map(
     vm: &mut VirtualMachine,
     opaque_source_provider: *mut c_void,
-    specifier: &BunString,
+    specifier: &Str,
 ) {
     let slice = specifier.to_utf8();
     vm.source_mappings.put_source_provider(
@@ -145,7 +145,7 @@ pub fn add_bake_source_provider_source_map(
 pub fn add_dev_server_source_provider(
     vm: &mut VirtualMachine,
     opaque_source_provider: *mut c_void,
-    specifier: &BunString,
+    specifier: &Str,
 ) {
     let slice = specifier.to_utf8();
     vm.source_mappings.put_source_provider(
@@ -162,7 +162,7 @@ pub fn add_dev_server_source_provider(
 pub fn remove_dev_server_source_provider(
     vm: &mut VirtualMachine,
     opaque_source_provider: *mut c_void,
-    specifier: &BunString,
+    specifier: &Str,
 ) {
     let slice = specifier.to_utf8();
     vm.source_mappings

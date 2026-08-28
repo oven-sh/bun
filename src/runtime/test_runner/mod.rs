@@ -212,7 +212,7 @@ pub mod expect {
             self,
             global: &JSGlobalObject,
             bind_this: JSValue,
-            name: &bun_core::String,
+            name: &bun_core::Str,
             length: f64,
             args: &[JSValue],
         ) -> JsResult<JSValue>;
@@ -266,7 +266,7 @@ pub mod expect {
             self,
             global: &JSGlobalObject,
             bind_this: JSValue,
-            name: &bun_core::String,
+            name: &bun_core::Str,
             length: f64,
             args: &[JSValue],
         ) -> JsResult<JSValue> {

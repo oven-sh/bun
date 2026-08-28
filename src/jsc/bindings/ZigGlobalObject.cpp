@@ -3209,7 +3209,7 @@ extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, c
 {
     auto& vm = JSC::getVM(globalObject);
 
-    if (WTF::setTimeZoneOverride(Zig::toString(*timeZone))) {
+    if (WTF::setTimeZoneOverride(Zig::toStringView(*timeZone).view)) {
         Bun::resetDateCachesAfterTimeZoneChange(vm);
         return true;
     }
@@ -3962,7 +3962,7 @@ static void noteModuleEvaluation(Zig::GlobalObject* globalObject, JSModuleLoader
     if (Bun__VM__entryEvaluationStarted(bunVM))
         return;
     BunString rootKey = Bun__VM__entryRootKey(bunVM);
-    auto* entry = moduleLoader->registryEntry(JSC::Identifier::fromString(globalObject->vm(), rootKey.toWTFString(BunString::ZeroCopy)));
+    auto* entry = moduleLoader->registryEntry(Bun::toIdentifier(globalObject->vm(), rootKey));
     if (!entry)
         return;
     auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());

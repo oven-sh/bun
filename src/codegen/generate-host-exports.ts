@@ -551,6 +551,8 @@ const importCandidates: Array<[string, string]> = [
   ["core::ffi", "c_char"],
   ["core::ffi", "c_int"],
   ["core::ffi", "c_void"],
+  ["bun_core", "Str"],
+  ["bun_core", "StringView"],
   ["bun_jsc", "host_fn"],
   ["bun_jsc", "CallFrame"],
   ["bun_jsc", "JSGlobalObject"],

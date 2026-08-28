@@ -2,6 +2,8 @@
 
 #include "root.h"
 #include "wtf/text/ASCIILiteral.h"
+#include "wtf/text/ExternalStringImpl.h"
+#include "wtf/text/StringView.h"
 #include "wtf/SIMDUTF.h"
 
 #include <JavaScriptCore/Error.h>
@@ -27,14 +29,15 @@ extern "C" const char* Bun__errnoName(int);
 
 namespace Zig {
 
-// 8 bit byte
-// we tag the final two bits
-// so 56 bits are copied over
-// rest we zero out for consistentcy
+// EncodedSlice pointer tag bits; mirror `TAG_*_BIT` / `UNTAG_MASK` in src/bun_core/string/mod.rs.
+static constexpr uintptr_t encodedSliceTagUTF16 = static_cast<uintptr_t>(1) << 63;
+static constexpr uintptr_t encodedSliceTagGlobal = static_cast<uintptr_t>(1) << 62;
+static constexpr uintptr_t encodedSliceTagUTF8 = static_cast<uintptr_t>(1) << 61;
+static constexpr uintptr_t encodedSliceUntagMask = (static_cast<uintptr_t>(1) << 53) - 1;
+
 static const unsigned char* untag(const unsigned char* ptr)
 {
-    return reinterpret_cast<const unsigned char*>(
-        (((reinterpret_cast<uintptr_t>(ptr) & ~(static_cast<uint64_t>(1) << 63) & ~(static_cast<uint64_t>(1) << 62)) & ~(static_cast<uint64_t>(1) << 61)) & ~(static_cast<uint64_t>(1) << 60)));
+    return reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(ptr) & encodedSliceUntagMask);
 }
 
 static void* untagVoid(const unsigned char* ptr)
@@ -49,18 +52,18 @@ static void* untagVoid(const char16_t* ptr)
 
 static bool isTaggedUTF16Ptr(const unsigned char* ptr)
 {
-    return (reinterpret_cast<uintptr_t>(ptr) & (static_cast<uint64_t>(1) << 63)) != 0;
+    return (reinterpret_cast<uintptr_t>(ptr) & encodedSliceTagUTF16) != 0;
 }
 
 // Do we need to convert the string from UTF-8 to UTF-16?
 static bool isTaggedUTF8Ptr(const unsigned char* ptr)
 {
-    return (reinterpret_cast<uintptr_t>(ptr) & (static_cast<uint64_t>(1) << 61)) != 0;
+    return (reinterpret_cast<uintptr_t>(ptr) & encodedSliceTagUTF8) != 0;
 }
 
 static bool isTaggedExternalPtr(const unsigned char* ptr)
 {
-    return (reinterpret_cast<uintptr_t>(ptr) & (static_cast<uint64_t>(1) << 62)) != 0;
+    return (reinterpret_cast<uintptr_t>(ptr) & encodedSliceTagGlobal) != 0;
 }
 
 static void free_global_string(void* str, void* ptr, unsigned len)
@@ -102,50 +105,24 @@ static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
     return WTF::String(WTF::move(impl));
 }
 
-// Switching to AtomString doesn't yield a perf benefit because we're recreating it each time.
-static const WTF::String toString(EncodedSlice str)
+// Adopts a GLOBAL-tagged buffer (Rust global allocator) into an
+// ExternalStringImpl that frees it on destruction.
+static WTF::String adoptExternal(EncodedSlice str)
 {
-    if (str.len == 0 || str.ptr == nullptr) {
+    ASSERT(isTaggedExternalPtr(str.ptr));
+    ASSERT_WITH_MESSAGE(!isTaggedUTF8Ptr(str.ptr), "UTF8 and external ptr are mutually exclusive. The external will never be freed.");
+    if (str.len == 0) {
         return WTF::String();
     }
-    if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
-        ASSERT_WITH_MESSAGE(!isTaggedExternalPtr(str.ptr), "UTF8 and external ptr are mutually exclusive. The external will never be freed.");
-        // Check if the resulting UTF-16 string could possibly exceed the maximum length.
-        // For valid UTF-8, the number of UTF-16 code units is <= the number of UTF-8 bytes
-        // (ASCII is 1:1; other code points use multiple UTF-8 bytes per UTF-16 code unit).
-        // We only need to compute the actual UTF-16 length when the byte length exceeds the limit.
-        size_t maxLength = std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(WTF::String::MaxLength));
-        if (str.len > maxLength) [[unlikely]] {
-            // UTF-8 byte length != UTF-16 length, so use simdutf to calculate the actual UTF-16 length.
-            size_t utf16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(untag(str.ptr)), str.len);
-            if (utf16Length > maxLength) {
-                return {};
-            }
-        }
-        return convertUTF8ToString(std::span { untag(str.ptr), str.len });
-    }
-
-    if (isTaggedExternalPtr(str.ptr)) [[unlikely]] {
-        // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
-        if (str.len > Bun__stringSyntheticAllocationLimit || str.len > WTF::String::MaxLength) [[unlikely]] {
-            free_global_string(nullptr, reinterpret_cast<void*>(const_cast<unsigned char*>(untag(str.ptr))), static_cast<unsigned>(str.len));
-            return {};
-        }
-
-        return !isTaggedUTF16Ptr(str.ptr)
-            ? WTF::String(WTF::ExternalStringImpl::create({ untag(str.ptr), str.len }, untagVoid(str.ptr), free_global_string))
-            : WTF::String(WTF::ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }, untagVoid(str.ptr), free_global_string));
-    }
-
     // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
     if (str.len > Bun__stringSyntheticAllocationLimit || str.len > WTF::String::MaxLength) [[unlikely]] {
+        free_global_string(nullptr, untagVoid(str.ptr), static_cast<unsigned>(str.len));
         return {};
     }
 
     return !isTaggedUTF16Ptr(str.ptr)
-        ? WTF::String(WTF::StringImpl::createWithoutCopying({ untag(str.ptr), str.len }))
-        : WTF::String(WTF::StringImpl::createWithoutCopying(
-              { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }));
+        ? WTF::String(WTF::ExternalStringImpl::create({ untag(str.ptr), str.len }, untagVoid(str.ptr), free_global_string))
+        : WTF::String(WTF::ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }, untagVoid(str.ptr), free_global_string));
 }
 
 static const WTF::String toStringCopy(EncodedSlice str, StringPointer ptr)
@@ -211,62 +188,51 @@ static const WTF::String toStringCopy(EncodedSlice str)
     }
 }
 
-static void appendToBuilder(EncodedSlice str, WTF::StringBuilder& builder)
-{
-    if (str.len == 0 || str.ptr == nullptr) {
-        return;
-    }
-    if (isTaggedUTF8Ptr(str.ptr)) [[unlikely]] {
-        // Check if the resulting UTF-16 string could possibly exceed the maximum length.
-        size_t maxLength = std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(WTF::String::MaxLength));
-        if (str.len > maxLength) [[unlikely]] {
-            size_t utf16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(untag(str.ptr)), str.len);
-            if (utf16Length > maxLength) {
-                return;
-            }
-        }
-        WTF::String converted = convertUTF8ToString(std::span { untag(str.ptr), str.len });
-        builder.append(converted);
-        return;
-    }
-    if (isTaggedUTF16Ptr(str.ptr)) {
-        builder.append({ reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len });
-        return;
-    }
-
-    builder.append({ untag(str.ptr), str.len });
-}
-
-static JSC::JSString* toJSStringGC(EncodedSlice str, JSC::JSGlobalObject* global)
-{
-    return JSC::jsString(global->vm(), toStringCopy(str));
-}
-
-static const EncodedSlice EncodedSliceEmpty = EncodedSlice { (unsigned char*)"", 0 };
-static const BunString BunStringEmpty = BunString { BunStringTag::Empty, nullptr };
-
 static const unsigned char* taggedUTF16Ptr(const char16_t* ptr)
 {
-    return reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(ptr) | (static_cast<uint64_t>(1) << 63));
+    return reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(ptr) | encodedSliceTagUTF16);
 }
+
+static const unsigned char* taggedUTF8Ptr(const unsigned char* ptr)
+{
+    return reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(ptr) | encodedSliceTagUTF8);
+}
+
+// Borrowed slices: the encoding lives in the pointer tag, so construct an
+// EncodedSlice only through one of these.
+static constexpr EncodedSlice latin1Slice(std::span<const Latin1Character> span)
+{
+    return { span.data(), span.size() };
+}
+
+static EncodedSlice utf8Slice(std::span<const uint8_t> span)
+{
+    return { taggedUTF8Ptr(span.data()), span.size() };
+}
+
+static EncodedSlice utf16Slice(std::span<const char16_t> span)
+{
+    return { taggedUTF16Ptr(span.data()), span.size() };
+}
+
+static const EncodedSlice EncodedSliceEmpty = latin1Slice(""_span8);
+static const BunString BunStringEmpty = BunString { BunStringTag::Empty, nullptr };
 
 // Overload for `StringImpl*` so callers like `toEncodedSlice(string.impl())` resolve here
 // instead of implicitly constructing a temporary `WTF::StringView` (which, in debug builds
 // with CHECK_STRINGVIEW_LIFETIME, takes a lock and heap-allocates an UnderlyingString entry).
 static EncodedSlice toEncodedSlice(const WTF::StringImpl* str)
 {
-    return (!str || str->isEmpty())
-        ? EncodedSliceEmpty
-        : EncodedSlice { str->is8Bit() ? str->span8().data() : taggedUTF16Ptr(str->span16().data()),
-              str->length() };
+    if (!str || str->isEmpty())
+        return EncodedSliceEmpty;
+    return str->is8Bit() ? latin1Slice(str->span8()) : utf16Slice(str->span16());
 }
 
 static EncodedSlice toEncodedSlice(const WTF::StringView& str)
 {
-    return str.isEmpty()
-        ? EncodedSliceEmpty
-        : EncodedSlice { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
-              str.length() };
+    if (str.isEmpty())
+        return EncodedSliceEmpty;
+    return str.is8Bit() ? latin1Slice(str.span8()) : utf16Slice(str.span16());
 }
 
 static EncodedSlice toEncodedSlice(JSC::JSString* str, JSC::JSGlobalObject* global)
@@ -304,14 +270,38 @@ static const WTF::String toStringStatic(EncodedSlice str)
     return WTF::String(AtomStringImpl::add(std::span { untagged, str.len }));
 }
 
-static const JSC::Identifier toIdentifier(EncodedSlice str, JSC::JSGlobalObject* global)
+// Transient view over the slice's characters; must not outlive the slice.
+// `underlyingString` owns a converted copy only for non-ASCII UTF-8. The view
+// is null only when the slice is too long for a WTF::String.
+static WTF::StringViewWithUnderlyingString toStringView(EncodedSlice str)
 {
-    if (str.len == 0 || str.ptr == nullptr) {
-        return global->vm().propertyNames->emptyIdentifier;
+    ASSERT(!isTaggedExternalPtr(str.ptr));
+    if (str.len == 0 || str.ptr == nullptr)
+        return { WTF::emptyStringView(), {} };
+    if (isTaggedUTF8Ptr(str.ptr) && !simdutf::validate_ascii(reinterpret_cast<const char*>(untag(str.ptr)), str.len)) [[unlikely]] {
+        auto copy = toStringCopy(str);
+        return { copy, copy };
     }
-    WTF::String wtfstr = Zig::isTaggedExternalPtr(str.ptr) ? toString(str) : Zig::toStringCopy(str);
-    JSC::Identifier id = JSC::Identifier::fromString(global->vm(), wtfstr);
-    return id;
+    if (str.len > Bun__stringSyntheticAllocationLimit || str.len > WTF::String::MaxLength) [[unlikely]]
+        return {};
+    if (isTaggedUTF16Ptr(str.ptr))
+        return { std::span { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }, {} };
+    return { std::span<const Latin1Character> { untag(str.ptr), str.len }, {} };
+}
+
+static JSC::Identifier toIdentifier(JSC::VM& vm, WTF::StringView string)
+{
+    return string.is8Bit() ? JSC::Identifier::fromString(vm, string.span8()) : JSC::Identifier::fromString(vm, string.span16());
+}
+
+// Atom-table lookup straight from the borrowed characters; allocates only when
+// the atom is new.
+static JSC::Identifier toIdentifier(JSC::VM& vm, EncodedSlice str)
+{
+    auto string = toStringView(str);
+    if (!string.underlyingString.isNull())
+        return JSC::Identifier::fromString(vm, string.underlyingString);
+    return toIdentifier(vm, string.view);
 }
 
 }; // namespace Zig

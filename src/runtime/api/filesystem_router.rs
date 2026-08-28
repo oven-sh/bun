@@ -29,7 +29,9 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::js_object::ObjectInitializer;
 use bun_jsc::ref_string::RefString;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsResult, LogJsc, StringJsc};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsResult, LogJsc, StrJsc as _,
+};
 use bun_paths::{self as path, MAX_PATH_BYTES};
 use bun_ptr::BackRef;
 
@@ -648,18 +650,18 @@ impl FileSystemRouter {
         let router = this.router.get();
         let paths = router.get_entry_points();
         let names = router.get_names();
-        let mut name_strings: Vec<EncodedSlice> = vec![EncodedSlice::EMPTY; names.len() * 2];
-        let (name_strings_slice, paths_strings) = name_strings.split_at_mut(names.len());
-        for (i, name) in names.iter().enumerate() {
-            name_strings_slice[i] = EncodedSlice::from_bytes(name);
-            paths_strings[i] = EncodedSlice::from_bytes(paths[i]);
-        }
-        JSValue::from_entries(global_this, name_strings_slice, paths_strings, true)
+        let strings: Vec<EncodedSlice> = names
+            .iter()
+            .chain(paths)
+            .map(|s| EncodedSlice::from_bytes(s))
+            .collect();
+        let (names, paths) = strings.split_at(names.len());
+        JSValue::from_entries(global_this, names, paths)
     }
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_style(_this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_core::String::static_("nextjs").to_js(global_this)
+        bun_core::String::from_static("nextjs").to_js(global_this)
     }
 
     // Codegen's `host_fn_finalize` calls this via `|b| FileSystemRouter::finalize(b)`
@@ -844,7 +846,7 @@ impl MatchedRoute {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_kind(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        BunString::static_(kind_enum::classify(this.route().name)).to_js(global_this)
+        BunString::from_static(kind_enum::classify(this.route().name)).to_js(global_this)
     }
 
     pub(crate) fn create_query_object(

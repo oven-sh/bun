@@ -321,7 +321,7 @@ unsigned SourceProvider::hash() const
 
 extern "C" BunString ZigSourceProvider__getSourceSlice(SourceProvider* provider)
 {
-    return Bun::toStringView(provider->source());
+    return Bun::borrowStringView(provider->source());
 }
 
 }; // namespace Zig

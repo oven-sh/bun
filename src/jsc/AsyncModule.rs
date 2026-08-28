@@ -2,7 +2,7 @@ use core::ffi::c_void;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_bundler::transpiler::ParseResult;
-use bun_core::{EncodedSlice, String as BunString};
+use bun_core::{EncodedSlice, Str, String as BunString, StringView};
 use bun_install::dependency::Dependency;
 use bun_install::{DependencyID, Resolution};
 use bun_io::KeepAlive;
@@ -12,7 +12,7 @@ use crate::bun_string_jsc;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
     self as jsc, EncodedSliceJsc as _, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise,
-    JSValue, JsError, JsResult, ResolvedSource, StringJsc as _, StrongOptional,
+    JSValue, JsError, JsResult, ResolvedSource, StrJsc as _, StrongOptional,
 };
 
 bun_core::declare_scope!(AsyncModule, hidden);
@@ -156,8 +156,8 @@ impl AsyncModule {
         global_this: &JSGlobalObject,
         promise: JSValue,
         result: Result<ResolvedSource, crate::CrateError>,
-        specifier: &BunString,
-        referrer: &BunString,
+        specifier: &Str,
+        referrer: &Str,
         log: &mut bun_ast::Log,
     ) -> JsResult<()> {
         jsc::mark_binding();
@@ -197,8 +197,8 @@ unsafe extern "C" {
         global_object: &JSGlobalObject,
         promise_value: JSValue,
         res: &mut ErrorableResolvedSource,
-        specifier: &BunString,
-        referrer: &BunString,
+        specifier: &Str,
+        referrer: &Str,
     );
 }
 
@@ -643,8 +643,8 @@ impl AsyncModule {
             bun_io::AllocatorType::Js,
         ));
         let result = this.resume_loading_module(&mut log);
-        let spec = BunString::borrow_utf8(this.specifier());
-        let referrer = BunString::borrow_utf8(this.referrer());
+        let spec = StringView::utf8(this.specifier());
+        let referrer = StringView::utf8(this.referrer());
         Self::fulfill(
             global_this,
             this.promise.get().unwrap(),
@@ -767,7 +767,7 @@ impl AsyncModule {
             error_instance.put(
                 global_this,
                 b"name",
-                BunString::static_(name).to_js(global_this)?,
+                BunString::from_static(name).to_js(global_this)?,
             );
             error_instance.put(
                 global_this,
@@ -963,7 +963,7 @@ impl AsyncModule {
             error_instance.put(
                 global_this,
                 b"name",
-                BunString::static_(name).to_js(global_this)?,
+                BunString::from_static(name).to_js(global_this)?,
             );
             error_instance.put(
                 global_this,
@@ -1196,7 +1196,7 @@ impl AsyncModule {
             let mut resolved_source = unsafe {
                 (*jsc_vm).ref_counted_resolved_source(
                     printer.ctx.get_written(),
-                    &BunString::from_bytes(specifier),
+                    &StringView::utf8(specifier),
                     path.text,
                     None,
                 )
@@ -1209,7 +1209,7 @@ impl AsyncModule {
 
         Ok(ResolvedSource {
             source_code: BunString::clone_latin1(printer.ctx.get_written()),
-            source_url: BunString::from_bytes(path.text),
+            source_url: BunString::clone_utf8(path.text),
             is_commonjs_module,
             ..Default::default()
         })

@@ -78,8 +78,6 @@ pub mod regular_expression;
 pub mod script_execution_status;
 #[path = "sizes.rs"]
 pub mod sizes;
-#[path = "SourceProvider.rs"]
-pub mod source_provider;
 #[path = "URLSearchParams.rs"]
 pub mod url_search_params;
 #[path = "WTF.rs"]
@@ -388,7 +386,6 @@ pub use self::js_uint8_array::JSUint8Array;
 pub use self::marked_argument_buffer::MarkedArgumentBuffer;
 pub use self::regular_expression::RegularExpression;
 pub use self::script_execution_status::ScriptExecutionStatus;
-pub use self::source_provider::SourceProvider;
 pub use self::url_search_params::URLSearchParams;
 pub use self::zig_stack_frame_code::ZigStackFrameCode;
 pub use self::zig_stack_frame_position::ZigStackFramePosition;
@@ -468,7 +465,7 @@ pub mod bun_cpu_profiler;
 pub mod bun_heap_profiler;
 #[path = "bun_string_jsc.rs"]
 pub mod bun_string_jsc;
-pub use bun_string_jsc::{ErrorKind, StringJsc, Utf8WithStringJsc};
+pub use bun_string_jsc::{ErrorKind, StrJsc, StringJsc, Utf8WithStringJsc};
 #[path = "comptime_string_map_jsc.rs"]
 pub mod comptime_string_map_jsc;
 #[path = "EventLoopHandle.rs"]

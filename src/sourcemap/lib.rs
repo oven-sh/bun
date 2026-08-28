@@ -345,7 +345,7 @@ unsafe extern "C" {
 }
 
 impl SourceProviderMap {
-    /// `Bun::toStringView` — a view into the provider's source.
+    /// `Bun::borrowStringView` — a view into the provider's source.
     pub(crate) fn get_source_slice(&self) -> bun_core::StringView<'_> {
         ZigSourceProvider__getSourceSlice(self)
     }
@@ -372,7 +372,7 @@ impl SourceProvider for SourceProviderMap {
 /// default-`None` optional capabilities so each provider only overrides what
 /// it actually has.
 pub trait SourceProvider {
-    /// `Bun::toStringView`: a `StringView` into the provider's source.
+    /// `Bun::borrowStringView`: a `StringView` into the provider's source.
     fn get_source_slice(&self) -> bun_core::StringView<'_>;
     fn to_source_content_ptr(&self) -> SourceContentPtr;
 
@@ -434,9 +434,9 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                 debug_assert!(source.tag() == bun_core::Tag::EncodedSlice);
 
                 let maybe_found_url = if source.is_8bit() {
-                    find_source_mapping_url_u8(source.latin1())
+                    find_source_mapping_url_u8(source.latin1_slice())
                 } else {
-                    find_source_mapping_url_u16(source.utf16())
+                    find_source_mapping_url_u16(source.utf16_slice())
                 };
 
                 let Some(found_url) = maybe_found_url else {

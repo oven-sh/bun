@@ -1,6 +1,6 @@
 use crate::jsc::{JSGlobalObject, JSValue};
-use bun_core::String;
 use bun_core::StringBuilder;
+use bun_core::{Str, String};
 use bun_sql::postgres::protocol::error_response::ErrorResponse;
 use bun_sql::postgres::protocol::field_message::FieldMessage;
 
@@ -15,23 +15,23 @@ pub(crate) fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSV
     }
     let _ = b.allocate();
 
-    let mut severity: &String = &String::DEAD;
-    let mut code: &String = &String::DEAD;
-    let mut message: &String = &String::DEAD;
-    let mut detail: &String = &String::DEAD;
-    let mut hint: &String = &String::DEAD;
-    let mut position: &String = &String::DEAD;
-    let mut internal_position: &String = &String::DEAD;
-    let mut internal: &String = &String::DEAD;
-    let mut where_: &String = &String::DEAD;
-    let mut schema: &String = &String::DEAD;
-    let mut table: &String = &String::DEAD;
-    let mut column: &String = &String::DEAD;
-    let mut datatype: &String = &String::DEAD;
-    let mut constraint: &String = &String::DEAD;
-    let mut file: &String = &String::DEAD;
-    let mut line: &String = &String::DEAD;
-    let mut routine: &String = &String::DEAD;
+    let mut severity: &Str = &String::DEAD;
+    let mut code: &Str = &String::DEAD;
+    let mut message: &Str = &String::DEAD;
+    let mut detail: &Str = &String::DEAD;
+    let mut hint: &Str = &String::DEAD;
+    let mut position: &Str = &String::DEAD;
+    let mut internal_position: &Str = &String::DEAD;
+    let mut internal: &Str = &String::DEAD;
+    let mut where_: &Str = &String::DEAD;
+    let mut schema: &Str = &String::DEAD;
+    let mut table: &Str = &String::DEAD;
+    let mut column: &Str = &String::DEAD;
+    let mut datatype: &Str = &String::DEAD;
+    let mut constraint: &Str = &String::DEAD;
+    let mut file: &Str = &String::DEAD;
+    let mut line: &Str = &String::DEAD;
+    let mut routine: &Str = &String::DEAD;
 
     for msg in this.messages.iter() {
         match msg {
@@ -86,7 +86,7 @@ pub(crate) fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSV
     }
     let _ = needs_newline;
 
-    fn maybe_slice(s: &String) -> Option<&[u8]> {
+    fn maybe_slice(s: &Str) -> Option<&[u8]> {
         if s.is_empty() {
             None
         } else {

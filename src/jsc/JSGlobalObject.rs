@@ -4,7 +4,7 @@ use core::fmt::Arguments;
 use crate::EncodedSliceJsc as _;
 use crate::Error as JscError;
 use crate::ErrorCode as NodeErrorCode;
-use crate::StringJsc as _;
+use crate::StrJsc as _;
 use crate::bun_string_jsc::{ErrorKind, error_instance};
 use crate::error_code::ErrorBuilder;
 use crate::virtual_machine::VirtualMachine;
@@ -13,7 +13,7 @@ use crate::{
     MAX_SAFE_INTEGER, MIN_SAFE_INTEGER, VM,
 };
 use bun_core::EncodedSlice;
-use bun_core::StringView;
+use bun_core::{Str, StringView};
 
 use bun_core::String as BunString;
 use bun_core::{Output, fmt as bun_fmt};
@@ -306,7 +306,7 @@ impl JSGlobalObject {
             debug_assert!(self.has_exception());
             return JsError::Thrown;
         }
-        let name_value = match BunString::static_("TODOError").to_js(self) {
+        let name_value = match BunString::from_static("TODOError").to_js(self) {
             Ok(v) => v,
             Err(_) => return JsError::Thrown,
         };
@@ -697,14 +697,14 @@ impl JSGlobalObject {
 
     pub(crate) fn run_on_load_plugins(
         &self,
-        namespace_: &BunString,
-        path: &BunString,
+        namespace_: &Str,
+        path: &Str,
         target: BunPluginTarget,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
-        let ns = (namespace_.length() > 0).then_some(namespace_);
-        let result =
-            crate::from_js_host_call(self, || Bun__runOnLoadPlugins(self, ns, path, target))?;
+        let result = crate::from_js_host_call(self, || {
+            Bun__runOnLoadPlugins(self, namespace_, path, target)
+        })?;
         if result.is_undefined_or_null() {
             return Ok(None);
         }
@@ -713,15 +713,14 @@ impl JSGlobalObject {
 
     pub(crate) fn run_on_resolve_plugins(
         &self,
-        namespace_: &BunString,
-        path: &BunString,
-        source: &BunString,
+        namespace_: &Str,
+        path: &Str,
+        source: &Str,
         target: BunPluginTarget,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
-        let ns = (namespace_.length() > 0).then_some(namespace_);
         let result = crate::from_js_host_call(self, || {
-            Bun__runOnResolvePlugins(self, ns, path, source, target)
+            Bun__runOnResolvePlugins(self, namespace_, path, source, target)
         })?;
         if result.is_undefined_or_null() {
             return Ok(None);
@@ -741,16 +740,12 @@ impl JSGlobalObject {
         buf
     }
 
-    /// An argument-free ASCII literal is atomized (`String::static_`);
+    /// An argument-free ASCII literal is atomized (`String::from_static`);
     /// anything else is formatted/copied once.
     fn error_instance(&self, kind: ErrorKind, args: Arguments<'_>) -> JSValue {
         match args.as_str() {
             Some(_) => error_instance(&BunString::create_format(args), self, kind),
-            None => error_instance(
-                &StringView::borrow_utf8(&self.error_message(args)),
-                self,
-                kind,
-            ),
+            None => error_instance(&StringView::utf8(&self.error_message(args)), self, kind),
         }
     }
 
@@ -1413,8 +1408,8 @@ use bun_core::fmt::VecWriter as WriteVec;
 extern "C" fn Zig__GlobalObject__resolve(
     res: &mut ErrorableString,
     global: &JSGlobalObject,
-    specifier: &BunString,
-    source: &BunString,
+    specifier: &Str,
+    source: &Str,
     query: &mut BunString,
 ) {
     crate::mark_binding();
@@ -1479,21 +1474,19 @@ unsafe extern "C" {
     ) -> BunString;
 
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
-    // ABI-identical to non-null `*const`); `Option<&BunString>` is ABI-identical
-    // to a nullable `*const BunString` via the guaranteed null-pointer
-    // optimization (C++ reads `nullptr` as "no namespace"); `&BunString` is a
-    // non-null `*const BunString` borrow.
+    // ABI-identical to non-null `*const`); `&Str` is a non-null
+    // `const BunString*` borrow.
     safe fn Bun__runOnLoadPlugins(
         global: &JSGlobalObject,
-        namespace_: Option<&BunString>,
-        path: &BunString,
+        namespace_: &Str,
+        path: &Str,
         target: BunPluginTarget,
     ) -> JSValue;
     safe fn Bun__runOnResolvePlugins(
         global: &JSGlobalObject,
-        namespace_: Option<&BunString>,
-        path: &BunString,
-        source: &BunString,
+        namespace_: &Str,
+        path: &Str,
+        source: &Str,
         target: BunPluginTarget,
     ) -> JSValue;
 
@@ -1525,12 +1518,12 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         errors: *const JSValue,
         len: usize,
-        message: &BunString,
+        message: &Str,
     ) -> JSValue;
     safe fn JSC__JSGlobalObject__createAggregateErrorWithArray(
         global: &JSGlobalObject,
         error_array: JSValue,
-        message: &BunString,
+        message: &Str,
         options: JSValue,
     ) -> JSValue;
     safe fn JSC__JSGlobalObject__generateHeapSnapshot(this: &JSGlobalObject) -> JSValue;

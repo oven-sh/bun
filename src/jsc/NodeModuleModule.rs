@@ -36,7 +36,7 @@ impl ApiLoader {
 #[unsafe(no_mangle)]
 extern "C" fn NodeModuleModule__findPath(
     global: &JSGlobalObject,
-    request_bun_str: &BunString,
+    request_bun_str: &bun_core::Str,
     paths_maybe: *mut JSArray,
 ) -> JSValue {
     // `JSArray` is an `opaque_ffi!` ZST handle; `opaque_ref` is the centralised
@@ -49,7 +49,7 @@ extern "C" fn NodeModuleModule__findPath(
 // https://github.com/nodejs/node/blob/40ef9d541ed79470977f90eb445c291b95ab75a0/lib/internal/modules/cjs/loader.js#L666
 fn find_path(
     global: &JSGlobalObject,
-    request_bun_str: &BunString,
+    request_bun_str: &bun_core::Str,
     paths_maybe: Option<&JSArray>,
 ) -> JsResult<JSValue> {
     let request_slice = request_bun_str.to_utf8();
@@ -86,8 +86,8 @@ fn find_path(
 }
 
 fn find_path_inner(
-    request: &BunString,
-    cur_path: &BunString,
+    request: &bun_core::Str,
+    cur_path: &bun_core::Str,
     global: &JSGlobalObject,
 ) -> JsResult<Option<BunString>> {
     Ok(VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
@@ -235,7 +235,7 @@ pub fn find_longest_registered_extension<'a>(
 #[unsafe(no_mangle)]
 extern "C" fn NodeModuleModule__onRequireExtensionModify(
     global: &JSGlobalObject,
-    str: &BunString,
+    str: &bun_core::Str,
     loader: ApiLoader,
     value: JSValue,
 ) {
@@ -248,7 +248,7 @@ extern "C" fn NodeModuleModule__onRequireExtensionModify(
 #[unsafe(no_mangle)]
 extern "C" fn NodeModuleModule__onRequireExtensionModifyNonFunction(
     global: &JSGlobalObject,
-    str: &BunString,
+    str: &bun_core::Str,
 ) {
     let str_slice = str.to_utf8();
     if on_require_extension_modify_non_function(global, str_slice.slice()).is_err() {

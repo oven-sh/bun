@@ -1,7 +1,7 @@
 //! JSC host fns for `bun_install::npm`, kept here so that `install/` has
 //! no `JSValue`/`JSGlobalObject`/`CallFrame` references.
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StrJsc as _};
 
 pub fn operating_system_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_install::npm;
@@ -70,7 +70,7 @@ impl ManifestBindings {
 #[bun_jsc::host_fn]
 fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bstr::BStr;
-    use bun_core::String as BunString;
+    use bun_core::StringView;
     use bun_install::npm;
     use bun_jsc::JsError;
     use std::io::Write as _;
@@ -154,5 +154,5 @@ fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         }
     }
 
-    BunString::borrow_utf8(&buf).to_js_by_parse_json(global)
+    StringView::utf8(&buf).to_js_by_parse_json(global)
 }

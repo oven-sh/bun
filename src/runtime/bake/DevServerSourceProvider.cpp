@@ -8,7 +8,7 @@ extern "C" void Bun__addDevServerSourceProvider(void* bun_vm, Bake::DevServerSou
 // Exported for the Rust side to access DevServerSourceProvider.
 extern "C" BunString DevServerSourceProvider__getSourceSlice(Bake::DevServerSourceProvider* provider)
 {
-    return Bun::toStringView(provider->source());
+    return Bun::borrowStringView(provider->source());
 }
 
 extern "C" MiCString DevServerSourceProvider__getSourceMapJSON(Bake::DevServerSourceProvider* provider)

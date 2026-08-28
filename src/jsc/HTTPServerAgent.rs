@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::VirtualMachineRef as VirtualMachine;
-use bun_core::String as BunString;
+use bun_core::{Str, String as BunString};
 
 pub struct HTTPServerAgent {
     /// Underlying C++ agent. Set to null when not enabled.
@@ -93,7 +93,7 @@ impl InspectorHTTPServerAgent {
         agent: *mut InspectorHTTPServerAgent,
         server_id: ServerId,
         hot_reload_id: HotReloadId,
-        address: &BunString,
+        address: &Str,
         start_time: f64,
         server_instance: *mut c_void,
     ) {
@@ -102,7 +102,7 @@ impl InspectorHTTPServerAgent {
         // opaque token, so passing the raw pointer through is sound.
         let agent = Self::opaque_mut(agent);
         // SAFETY: `[[ZIG_EXPORT(nothrow)]]` C++ shim; `agent` proven non-null
-        // above; remaining args are by-value scalars / `&BunString`.
+        // above; remaining args are by-value scalars / `&Str`.
         unsafe {
             crate::cpp::raw::Bun__HTTPServerAgent__notifyServerStarted(
                 core::ptr::from_mut(agent).cast(),

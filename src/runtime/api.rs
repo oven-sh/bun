@@ -281,10 +281,10 @@ fn with_text_format_source_encoded<R>(
             _latin1_hold = s;
             if _latin1_hold.is_8bit() {
                 encoding = SourceEncoding::Latin1Text;
-                break 'bytes _latin1_hold.latin1();
+                break 'bytes _latin1_hold.latin1_slice();
             }
             encoding = SourceEncoding::Utf16Text;
-            break 'bytes bytemuck::cast_slice(_latin1_hold.utf16());
+            break 'bytes bytemuck::cast_slice(_latin1_hold.utf16_slice());
         }
         _str_hold = StringOrBuffer::String(s.into_utf8_with_string());
         _str_hold.slice()

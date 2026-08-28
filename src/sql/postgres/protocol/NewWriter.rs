@@ -91,7 +91,7 @@ impl<C: WriterContext> NewWriter<C> {
     }
 
     // Named `bun_string` (not `string`) to avoid colliding with `string(&[u8])` above.
-    pub fn bun_string(self, value: &bun_core::String) -> Result<(), AnyPostgresError> {
+    pub fn bun_string(self, value: &bun_core::Str) -> Result<(), AnyPostgresError> {
         if value.is_empty() {
             self.write(&[0u8])?;
             return Ok(());

@@ -205,7 +205,7 @@ CPP_DECL JSC::EncodedJSValue JSC__JSValue__fastGetDirect_(JSC::EncodedJSValue JS
 CPP_DECL void JSC__JSValue__forEach(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(JSC::VM* arg0, JSC::JSGlobalObject* arg1, void* arg2, JSC::EncodedJSValue JSValue3));
 CPP_DECL void JSC__JSValue__forEachProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(JSC::JSGlobalObject* arg0, void* arg1, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool arg4, bool arg5));
 CPP_DECL void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(JSC::JSGlobalObject* arg0, void* arg1, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool arg4, bool arg5));
-CPP_DECL JSC::EncodedJSValue JSC__JSValue__fromEntries(JSC::JSGlobalObject* arg0, EncodedSlice* arg1, EncodedSlice* arg2, size_t arg3, bool arg4);
+CPP_DECL JSC::EncodedJSValue JSC__JSValue__fromEntries(JSC::JSGlobalObject* arg0, const EncodedSlice* arg1, const EncodedSlice* arg2, size_t arg3);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__fromInt64NoTruncate(JSC::JSGlobalObject* arg0, int64_t arg1);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__fromUInt64NoTruncate(JSC::JSGlobalObject* arg0, uint64_t arg1);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__bigIntFromLatin1(JSC::JSGlobalObject* arg0, const uint8_t* arg1, size_t arg2);

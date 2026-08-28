@@ -18,7 +18,7 @@ use bun_core as bun;
 use bun_core::Output;
 use bun_core::{EncodedSlice, String as BunString, Utf8Bytes, WTFStringImplExt as _, strings};
 use bun_http_types::MimeType::MimeType;
-use bun_jsc::{EncodedSliceJsc as _, StringJsc as _, bun_string_jsc};
+use bun_jsc::{EncodedSliceJsc as _, StrJsc as _, StringJsc as _, bun_string_jsc};
 use bun_ptr::RefPtr;
 use bun_sys::{self, Fd};
 
@@ -546,11 +546,11 @@ impl BlobExt for Blob {
                 }
                 fn cancel(c: *mut H) {
                     let err = jsc::SystemError {
-                        code: BunString::static_("ECANCELED"),
-                        message: BunString::static_(
+                        code: BunString::from_static("ECANCELED"),
+                        message: BunString::from_static(
                             "The file read did not complete before its thread stopped",
                         ),
-                        syscall: BunString::static_("read"),
+                        syscall: BunString::from_static("read"),
                         ..Default::default()
                     };
                     // The read's thread stopped; this runs at teardown (the unrun job's release,
@@ -603,7 +603,7 @@ impl BlobExt for Blob {
                                 path: BunString::clone_utf8(
                                     t.blob.store().and_then(|s| s.get_path()).unwrap_or(b""),
                                 ),
-                                syscall: BunString::static_("fetch"),
+                                syscall: BunString::from_static("fetch"),
                                 ..Default::default()
                             };
                             t.done(ReadBytesResult::Err(Box::new(err)))
@@ -4082,10 +4082,10 @@ pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &BunString) {
+pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &bun_core::Str) {
     this.is_jsdom_file.set(true);
     if !path_str.is_empty() && this.get_file_name().is_none() {
-        this.name.set(path_str.clone());
+        this.name.set(path_str.to_owned());
     }
 }
 
@@ -5260,7 +5260,7 @@ const WRITE_PERMISSIONS: bun_sys::Mode = 0o664;
 fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
-    str: &BunString,
+    str: &bun_core::Str,
     needs_async: &mut bool,
 ) -> JSValue {
     let fd: Fd = if !NEEDS_OPEN {
@@ -6353,7 +6353,7 @@ impl Any {
                 let str =
                     BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
                 *self = Any::Blob(Blob::default());
-                if str.length() == 0 {
+                if str.is_empty() {
                     return Ok(JSValue::NULL);
                 }
                 str.to_js_by_parse_json(global)
@@ -6482,7 +6482,7 @@ impl Any {
         match self {
             Any::Blob(blob) => blob.is_detached(),
             Any::InternalBlob(ib) => ib.bytes.is_empty(),
-            Any::WTFStringImpl(s) => super::body::wtf_impl(s).length() == 0,
+            Any::WTFStringImpl(s) => super::body::wtf_impl(s).is_empty(),
         }
     }
 }

@@ -379,7 +379,7 @@ void BunPlugin::Base::append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSObject* fu
     }
 }
 
-JSC::JSObject* BunPlugin::Group::find(JSC::JSGlobalObject* globalObject, String& path)
+JSC::JSObject* BunPlugin::Group::find(JSC::JSGlobalObject* globalObject, StringView path)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -729,17 +729,17 @@ DEFINE_VISIT_CHILDREN(JSModuleMock);
 
 EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path)
 {
-    Group* groupPtr = this->group(namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : String());
+    Group* groupPtr = this->group(namespaceString->view().view);
     if (groupPtr == nullptr) {
         return JSValue::encode(jsUndefined());
     }
     Group& group = *groupPtr;
 
-    auto pathString = path->toWTFString(BunString::ZeroCopy);
-
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* function = group.find(globalObject, pathString);
+
+    auto pathString = path->view();
+    auto* function = group.find(globalObject, pathString.view);
     RETURN_IF_EXCEPTION(scope, {});
     if (!function) {
         return JSValue::encode(JSC::jsUndefined());
@@ -749,9 +749,9 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, const B
 
     JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
     const auto& builtinNames = WebCore::builtinNames(vm);
-    paramsObject->putDirect(
-        vm, builtinNames.pathPublicName(),
-        jsString(vm, pathString));
+    auto* pathJS = Bun::toJS(globalObject, *path);
+    RETURN_IF_EXCEPTION(scope, {});
+    paramsObject->putDirect(vm, builtinNames.pathPublicName(), pathJS);
     arguments.append(paramsObject);
 
     auto result = AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
@@ -799,7 +799,7 @@ std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path
 
 EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path, const BunString* importer)
 {
-    Group* groupPtr = this->group(namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : String());
+    Group* groupPtr = this->group(namespaceString->view().view);
     if (groupPtr == nullptr) {
         return JSValue::encode(jsUndefined());
     }
@@ -813,7 +813,7 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, cons
     auto& callbacks = group.callbacks;
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    WTF::String pathString = path->toWTFString(BunString::ZeroCopy);
+    auto pathString = path->view();
 
     JSC::MarkedArgumentBuffer matchedCallbacks;
     matchedCallbacks.ensureCapacity(filters.size());
@@ -822,7 +822,7 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, cons
         return {};
     }
     for (size_t i = 0; i < filters.size(); i++) {
-        auto matchResult = filters[i].get()->match(globalObject, pathString, 0);
+        auto matchResult = filters[i].get()->match(globalObject, pathString.view, 0);
         RETURN_IF_EXCEPTION(scope, {});
         if (!matchResult) {
             continue;
@@ -837,6 +837,15 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, cons
         JSC::throwOutOfMemoryError(globalObject, scope);
         return {};
     }
+    if (matchedCallbacks.isEmpty()) {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    const auto& builtinNames = WebCore::builtinNames(vm);
+    auto* pathJS = Bun::toJS(globalObject, *path);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* importerJS = Bun::toJS(globalObject, *importer);
+    RETURN_IF_EXCEPTION(scope, {});
 
     for (size_t i = 0; i < matchedCallbacks.size(); i++) {
         auto* function = matchedCallbacks.at(i).getObject();
@@ -844,14 +853,9 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, cons
         JSC::MarkedArgumentBuffer arguments;
 
         JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
-        const auto& builtinNames = WebCore::builtinNames(vm);
-        auto* pathJS = Bun::toJS(globalObject, *path);
-        RETURN_IF_EXCEPTION(scope, {});
         paramsObject->putDirect(
             vm, builtinNames.pathPublicName(),
             pathJS);
-        auto* importerJS = Bun::toJS(globalObject, *importer);
-        RETURN_IF_EXCEPTION(scope, {});
         paramsObject->putDirect(
             vm, builtinNames.importerPublicName(),
             importerJS);
@@ -917,7 +921,7 @@ Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObj
     return Zig::JSModuleMock::createStructure(vm, globalObject, prototype);
 }
 
-JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specifier, bool& wasModuleMock)
+JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, const BunString* specifier, bool& wasModuleMock)
 {
     auto fallback = [&]() -> JSC::JSValue {
         return JSValue::decode(Bun__runVirtualModule(globalObject, specifier));
@@ -927,7 +931,7 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
         return fallback();
     }
     auto& virtualModules = *globalObject->onLoadPlugins.virtualModules;
-    WTF::String specifierString = specifier->toWTFString(BunString::ZeroCopy);
+    auto specifierString = specifier->toWTFString();
 
     if (auto virtualModuleFn = virtualModules.get(specifierString)) {
         auto& vm = JSC::getVM(globalObject);

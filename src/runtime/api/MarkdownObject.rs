@@ -4,7 +4,7 @@ use bun_core::StackCheck;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, PinnedArrayBuffer,
-    RangeErrorOptions, StringJsc as _,
+    RangeErrorOptions, StrJsc as _,
 };
 // Note: the `bun_md` crate's lib.rs is a
 // thin mod-decl shim, so alias the `root` module (which re-exports BlockType,
@@ -810,7 +810,11 @@ impl<'a> ParseRenderer<'a> {
             md::BlockType::Th | md::BlockType::Td => {
                 let alignment = md::types::alignment_from_data(entry.data);
                 if let Some(align_str) = md::types::alignment_name(alignment) {
-                    props.put(g, b"align", bun_core::String::static_(align_str).to_js(g)?);
+                    props.put(
+                        g,
+                        b"align",
+                        bun_core::String::from_static(align_str).to_js(g)?,
+                    );
                 }
             }
             _ => {}
@@ -1010,7 +1014,7 @@ impl<'a> ParseRenderer<'a> {
                 js_array_push(parent_children, g, obj)?;
             }
             md::TextType::Softbr => {
-                let str = bun_core::String::static_("\n").to_js(g)?;
+                let str = bun_core::String::from_static("\n").to_js(g)?;
                 self.marked_args.append(str);
                 js_array_push(parent_children, g, str)?;
             }
@@ -1539,7 +1543,7 @@ impl<'a> JsCallbackRenderer<'a> {
             md::BlockType::Th | md::BlockType::Td => {
                 let alignment = md::types::alignment_from_data(data);
                 let align_js = if let Some(align_str) = md::types::alignment_name(alignment) {
-                    bun_core::String::static_(align_str).to_js(g)?
+                    bun_core::String::from_static(align_str).to_js(g)?
                 } else {
                     JSValue::UNDEFINED
                 };

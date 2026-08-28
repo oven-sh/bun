@@ -11,8 +11,8 @@
 //! accepts either shape and always emits well-formed XML or throws.
 
 use bun_collections::HashMap;
-use bun_core::String as BunString;
 use bun_core::{StackCheck, strings};
+use bun_core::{Str, String as BunString, StringView};
 use bun_js_parser_jsc::ExprJsc;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, wtf};
 use bun_parsers::xml::{self, XML};
@@ -182,7 +182,7 @@ fn is_node(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
         // still marks the shape.
         if value.get(global, key)?.is_some()
             || value
-                .get_own(global, &BunString::static_(key.as_bytes()))?
+                .get_own(global, &BunString::from_static(key.as_bytes()))?
                 .is_some()
         {
             return Ok(true);
@@ -224,7 +224,7 @@ impl Space {
         }
         if space.is_string() {
             let str = space.to_bun_string(global)?;
-            if str.length() == 0 {
+            if str.is_empty() {
                 return Ok(Space::Minified);
             }
             return Ok(Space::Str(str));
@@ -443,7 +443,7 @@ impl Stringifier {
                     .into());
             }
             let text = comment.to_bun_string(global)?;
-            let len = text.length();
+            let len = text.len();
             let mut i = 0;
             let mut prev_dash = false;
             while i < len {
@@ -481,7 +481,7 @@ impl Stringifier {
             }
             let target = target.to_bun_string(global)?;
             self.check_name(global, &target, "processing instruction target")?;
-            if target.length() == 3 {
+            if target.len() == 3 {
                 let lower = |i| target.char_at(i) | 0x20;
                 if lower(0) == u16::from(b'x')
                     && lower(1) == u16::from(b'm')
@@ -497,7 +497,7 @@ impl Stringifier {
                 Some(data) if data.is_null() => {}
                 Some(data) if data.is_string() => {
                     let data = data.to_bun_string(global)?;
-                    let len = data.length();
+                    let len = data.len();
                     if len > 0 {
                         let mut i = 0;
                         let mut prev_q = false;
@@ -549,7 +549,7 @@ impl Stringifier {
         global: &JSGlobalObject,
         document: JSValue,
     ) -> StringifyResult<()> {
-        let mut root: Option<(bun_core::StringView<'_>, JSValue)> = None;
+        let mut root: Option<(StringView<'_>, JSValue)> = None;
         let iter =
             jsc::JSPropertyIterator::init(global, document.to_object(global)?, iter_options())?;
         while let Some((key, prop_value)) = iter.next()? {
@@ -613,7 +613,7 @@ impl Stringifier {
     fn stringify_compact_element(
         &mut self,
         global: &JSGlobalObject,
-        name: &BunString,
+        name: &Str,
         value: JSValue,
         separate: bool,
     ) -> StringifyResult<()> {
@@ -638,7 +638,7 @@ impl Stringifier {
     fn stringify_compact_array(
         &mut self,
         global: &JSGlobalObject,
-        name: &BunString,
+        name: &Str,
         value: JSValue,
         separate: bool,
     ) -> StringifyResult<()> {
@@ -670,14 +670,14 @@ impl Stringifier {
     fn stringify_compact_leaf(
         &mut self,
         global: &JSGlobalObject,
-        name: &BunString,
+        name: &Str,
         value: JSValue,
     ) -> StringifyResult<()> {
         self.check_name(global, name, "element")?;
         match self.scalar(global, value, "element content")? {
             Scalar::Skip => {}
             Scalar::Empty => self.append_empty_element(name),
-            Scalar::Text(text) if text.length() == 0 => self.append_empty_element(name),
+            Scalar::Text(text) if text.is_empty() => self.append_empty_element(name),
             Scalar::Text(text) => {
                 self.builder.append_lchar(b'<');
                 self.builder.append_string(name);
@@ -693,7 +693,7 @@ impl Stringifier {
     fn stringify_compact_object(
         &mut self,
         global: &JSGlobalObject,
-        name: &BunString,
+        name: &Str,
         value: JSValue,
     ) -> StringifyResult<()> {
         self.check_name(global, name, "element")?;
@@ -718,7 +718,7 @@ impl Stringifier {
                 }
             } else if key.eq_ascii(b"#text") {
                 match self.scalar(global, child, "#text")? {
-                    Scalar::Text(text) if text.length() > 0 => has_text = true,
+                    Scalar::Text(text) if !text.is_empty() => has_text = true,
                     _ => {}
                 }
             } else if key.starts_with_ascii(b"#") {
@@ -812,10 +812,10 @@ impl Stringifier {
     fn check_name(
         &mut self,
         global: &JSGlobalObject,
-        name: &BunString,
+        name: &Str,
         what: &'static str,
     ) -> StringifyResult<()> {
-        let len = name.length();
+        let len = name.len();
         let mut valid = len > 0;
         let mut i = 0;
         while valid && i < len {
@@ -841,13 +841,13 @@ impl Stringifier {
 
     // ── output pieces ──────────────────────────────────────────────────────
 
-    fn append_empty_element(&mut self, name: &BunString) {
+    fn append_empty_element(&mut self, name: &Str) {
         self.builder.append_lchar(b'<');
         self.builder.append_string(name);
         self.builder.append_latin1(b"/>");
     }
 
-    fn append_end_tag(&mut self, name: &BunString) {
+    fn append_end_tag(&mut self, name: &Str) {
         self.builder.append_latin1(b"</");
         self.builder.append_string(name);
         self.builder.append_lchar(b'>');
@@ -859,8 +859,8 @@ impl Stringifier {
     fn append_attribute(
         &mut self,
         global: &JSGlobalObject,
-        name: &BunString,
-        value: &BunString,
+        name: &Str,
+        value: &Str,
     ) -> StringifyResult<()> {
         self.check_name(global, name, "attribute")?;
         self.builder.append_lchar(b' ');
@@ -873,17 +873,17 @@ impl Stringifier {
 
     /// Character data with `& < >` and CR escaped (`>` for the `]]>` rule,
     /// CR because a literal one would be normalized to LF when parsed).
-    fn append_text(&mut self, global: &JSGlobalObject, text: &BunString) -> StringifyResult<()> {
+    fn append_text(&mut self, global: &JSGlobalObject, text: &Str) -> StringifyResult<()> {
         self.append_escaped(global, text, false)
     }
 
     fn append_escaped(
         &mut self,
         global: &JSGlobalObject,
-        text: &BunString,
+        text: &Str,
         attribute: bool,
     ) -> StringifyResult<()> {
-        let len = text.length();
+        let len = text.len();
         let mut i = 0;
         while i < len {
             let (cp, width) = code_point_at(text, i);
@@ -937,9 +937,9 @@ impl Stringifier {
 /// The code point starting at UTF-16 index `i` and how many code units it
 /// spans. Unpaired surrogates are returned as-is (and rejected by the `Char`
 /// check).
-fn code_point_at(s: &BunString, i: usize) -> (u32, usize) {
+fn code_point_at(s: &Str, i: usize) -> (u32, usize) {
     let c = s.char_at(i);
-    if strings::u16_is_lead(c) && i + 1 < s.length() {
+    if strings::u16_is_lead(c) && i + 1 < s.len() {
         let next = s.char_at(i + 1);
         if strings::u16_is_trail(next) {
             return (strings::u16_get_supplementary(c, next), 2);

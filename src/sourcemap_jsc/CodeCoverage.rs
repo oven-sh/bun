@@ -1023,8 +1023,8 @@ impl ByteRangeMapping {
 
 #[unsafe(no_mangle)]
 extern "C" fn ByteRangeMapping__generate(
-    str_: &bun_core::String,
-    source_contents_str: &bun_core::String,
+    str_: &bun_core::Str,
+    source_contents_str: &bun_core::Str,
     source_id: i32,
 ) {
     // SAFETY: thread_map() returns a pointer into this thread's owned Box<HashMap>;
@@ -1032,7 +1032,7 @@ extern "C" fn ByteRangeMapping__generate(
     // this thread for the duration of this call.
     let map = unsafe { &mut *thread_map() };
 
-    let source_url = str_.clone().into_utf8();
+    let source_url = str_.to_owned().into_utf8();
     let hash = bun_wyhash::hash(source_url.slice());
     let source_contents = source_contents_str.to_utf8();
 
@@ -1046,7 +1046,7 @@ extern "C" fn ByteRangeMapping__getSourceID(this: &ByteRangeMapping) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn ByteRangeMapping__find(path: &bun_core::String) -> Option<NonNull<ByteRangeMapping>> {
+extern "C" fn ByteRangeMapping__find(path: &bun_core::Str) -> Option<NonNull<ByteRangeMapping>> {
     let slice = path.to_utf8();
 
     let map_ptr = thread_map_opt()?;
@@ -1060,7 +1060,7 @@ extern "C" fn ByteRangeMapping__find(path: &bun_core::String) -> Option<NonNull<
 #[unsafe(no_mangle)]
 extern "C" fn ByteRangeMapping__findExecutedLines(
     global_this: &JSGlobalObject,
-    source_url: &bun_core::String,
+    source_url: &bun_core::Str,
     blocks_ptr: NonNull<BasicBlockRange>,
     blocks_len: usize,
     function_start_offset: usize,

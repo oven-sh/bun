@@ -1252,8 +1252,7 @@ JSC::EncodedJSValue INVALID_STATE(JSC::ThrowScope& throwScope, JSC::JSGlobalObje
 
 JSC::EncodedJSValue STRING_TOO_LONG(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
 {
-    auto message = makeString("Cannot create a string longer than "_s, WTF::String ::MaxLength, " characters"_s);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_STRING_TOO_LONG, message));
+    throwScope.throwException(globalObject, createStringTooLongError(globalObject));
     throwScope.release();
     return {};
 }
@@ -1704,7 +1703,7 @@ static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
 
 extern "C" JSC::EncodedJSValue Bun__createErrorWithCode(JSC::JSGlobalObject* globalObject, ErrorCode code, const BunString* message)
 {
-    return JSValue::encode(createError(globalObject, code, message->toWTFString(BunString::ZeroCopy)));
+    return JSValue::encode(createError(globalObject, code, message->toWTFString()));
 }
 
 void throwBoringSSLError(JSGlobalObject* globalObject, JSC::ThrowScope& scope, int errorCode)
@@ -1786,6 +1785,11 @@ extern "C" JSC::EncodedJSValue WebCore__CommonAbortReason__toJS(JSC::JSGlobalObj
 JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, const String& message)
 {
     return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, message);
+}
+
+JSC::JSObject* Bun::createStringTooLongError(JSC::JSGlobalObject* globalObject)
+{
+    return Bun::createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG, makeString("Cannot create a string longer than "_s, WTF::String::MaxLength, " characters"_s));
 }
 
 JSC::EncodedJSValue Bun::throwInvalidThisCallError(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, const ASCIILiteral typeName)

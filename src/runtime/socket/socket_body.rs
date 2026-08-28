@@ -1204,29 +1204,29 @@ impl<const SSL: bool> NewSocket<SSL> {
                 sys::SystemErrno::ECONNREFUSED as c_int
             };
             let code_ = if errno == sys::SystemErrno::ENOENT as c_int {
-                BunString::static_("ENOENT")
+                BunString::from_static("ENOENT")
             } else if errno == sys::SystemErrno::ENOTSOCK as c_int {
-                BunString::static_("ENOTSOCK")
+                BunString::from_static("ENOTSOCK")
             } else if errno == sys::SystemErrno::EACCES as c_int {
-                BunString::static_("EACCES")
+                BunString::from_static("EACCES")
             } else if errno == sys::SystemErrno::EINVAL as c_int {
-                BunString::static_("EINVAL")
+                BunString::from_static("EINVAL")
             } else if errno == sys::SystemErrno::ECONNRESET as c_int {
-                BunString::static_("ECONNRESET")
+                BunString::from_static("ECONNRESET")
             } else if errno == sys::SystemErrno::EADDRINUSE as c_int {
-                BunString::static_("EADDRINUSE")
+                BunString::from_static("EADDRINUSE")
             } else if errno == sys::SystemErrno::EADDRNOTAVAIL as c_int {
-                BunString::static_("EADDRNOTAVAIL")
+                BunString::from_static("EADDRNOTAVAIL")
             } else {
-                BunString::static_("ECONNREFUSED")
+                BunString::from_static("ECONNREFUSED")
             };
             #[cfg(windows)]
             let errno_ = -sys::windows::libuv::e_discriminant_to_uv(errno_ as u16)
                 .unwrap_or(sys::windows::libuv::UV_ECONNREFUSED);
             SystemError {
                 errno: -errno_,
-                message: BunString::static_("Failed to connect"),
-                syscall: BunString::static_("connect"),
+                message: BunString::from_static("Failed to connect"),
+                syscall: BunString::from_static("connect"),
                 code: code_,
                 ..Default::default()
             }
@@ -5184,7 +5184,7 @@ pub mod testing_apis {
     }
 
     #[cfg(socket_fault_injection)]
-    fn parse_errno_name(name: &bun_core::String) -> Option<c_int> {
+    fn parse_errno_name(name: &bun_core::Str) -> Option<c_int> {
         macro_rules! map {
             ($($s:literal => $v:expr,)*) => {
                 $(if name.eq_ascii($s) { return Some($v as c_int); })*

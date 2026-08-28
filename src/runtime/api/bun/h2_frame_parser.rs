@@ -5682,7 +5682,7 @@ impl H2FrameParser {
 
         // Encode trailer headers using HPACK
         while let Some((header_name, js_value)) = iter.next()? {
-            if header_name.length() == 0 {
+            if header_name.is_empty() {
                 continue;
             }
 
@@ -6165,7 +6165,7 @@ impl H2FrameParser {
                 },
             )?;
             while let Some((header_name, js_value)) = iter.next()? {
-                if header_name.length() == 0 {
+                if header_name.is_empty() {
                     continue;
                 }
                 let name_slice = header_name.to_utf8();
@@ -6756,7 +6756,7 @@ impl H2FrameParser {
             )?;
 
             while let Some((header_name, js_value)) = iter.next()? {
-                if header_name.length() == 0 {
+                if header_name.is_empty() {
                     continue;
                 }
 

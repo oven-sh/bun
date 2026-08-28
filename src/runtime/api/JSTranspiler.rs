@@ -23,7 +23,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, ArgumentsSlice, CallFrame, ComptimeStringMapExt, JSArrayIterator, JSGlobalObject,
     JSPromise, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell, JsResult, LogJsc,
-    StringJsc,
+    StrJsc as _, StringJsc,
 };
 use bun_resolver::package_json::{MacroMap, PackageJSON};
 use bun_resolver::tsconfig_json::TSConfigJSON;
@@ -1549,7 +1549,10 @@ fn named_exports_to_js(
     }
     index_sort::sort_slice_unstable_by(&mut keys, |a, b| a.cmp(b));
 
-    let names: Vec<BunString> = keys.into_iter().map(BunString::from_bytes).collect();
+    let names: Vec<bun_core::StringView<'_>> = keys
+        .into_iter()
+        .map(bun_core::StringView::from_bytes)
+        .collect();
     bun_string_jsc::to_js_array(global, &names)
 }
 
@@ -1586,7 +1589,7 @@ fn named_imports_to_js(
 
         array.ensure_still_alive();
         let path = bun_string_jsc::create_utf8_for_js(global, record.path.text)?;
-        let kind = BunString::static_(record.kind.label()).to_js(global)?;
+        let kind = BunString::from_static(record.kind.label()).to_js(global)?;
         let entry = JSValue::create_object2(global, &path_label, &kind_label, path, kind)?;
         array.put_index(global, i, entry)?;
         i += 1;

@@ -183,7 +183,7 @@ fn js_function_resolve_object_url(
     }
     let str = url_arg.to_bun_string(global_object)?;
 
-    if !str.starts_with_ascii(b"blob:") || str.length() < SPECIFIER_LEN {
+    if !str.starts_with_ascii(b"blob:") || str.len() < SPECIFIER_LEN {
         return Ok(JSValue::UNDEFINED);
     }
 

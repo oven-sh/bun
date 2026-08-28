@@ -132,7 +132,6 @@ impl Holder {
                 frames_ptr: self.frames.as_mut_ptr(),
                 frames_len: 0,
                 frames_cap: Self::FRAME_COUNT as u8,
-                referenced_source_provider: None,
             },
             errno: 0,
             syscall: String::EMPTY,

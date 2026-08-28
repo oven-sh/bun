@@ -37,6 +37,7 @@
 #include "../modules/ObjectModule.h"
 #include "JSCommonJSModule.h"
 #include "IsolatedModuleCache.h"
+#include "ErrorCode.h"
 #include "../modules/_NativeModule.h"
 
 #include "JSCommonJSExtensions.h"
@@ -305,7 +306,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
                 result.value.sourceText.value = contentsValue;
             }
         } else if (JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(contentsValue)) {
-            result.value.sourceText.string = EncodedSlice { reinterpret_cast<const unsigned char*>(view->vector()), view->byteLength() };
+            result.value.sourceText.string = Zig::utf8Slice(view->span());
             result.value.sourceText.value = contentsValue;
         }
     }
@@ -429,7 +430,7 @@ static JSValue handleVirtualModuleResult(
             object);
         auto source = JSC::SourceCode(
             JSC::SyntheticSourceProvider::create(WTF::move(function),
-                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
+                JSC::SourceOrigin(), specifier->toWTFString()));
         JSC::ensureStillAliveHere(object);
         RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
     }
@@ -439,8 +440,8 @@ static JSValue handleVirtualModuleResult(
         JSFunction* performPromiseThenFunction = globalObject->performPromiseThenFunction();
         auto callData = JSC::getCallData(performPromiseThenFunction);
         ASSERT(callData.type != CallData::Type::None);
-        auto specifierString = specifier->toWTFString(BunString::ZeroCopy);
-        auto referrerString = referrer->toWTFString(BunString::ZeroCopy);
+        auto specifierString = specifier->toWTFString();
+        auto referrerString = referrer->toWTFString();
         PendingVirtualModuleResult* pendingModule = PendingVirtualModuleResult::create(globalObject, specifierString, referrerString, wasModuleMock);
         JSC::JSPromise* internalPromise = pendingModule->internalPromise();
         MarkedArgumentBuffer arguments;
@@ -511,7 +512,7 @@ extern "C" void Bun__onFulfillAsyncModule(
     } else {
         auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
         if (Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
-            Bun::IsolatedModuleCache::insert(vm, specifier->toWTFString(BunString::ZeroCopy), provider.get());
+            Bun::IsolatedModuleCache::insert(vm, specifier->toWTFString(), provider.get());
         }
         promise->resolve(globalObject, vm, JSC::JSSourceCode::create(vm, JSC::SourceCode(WTF::move(provider))));
         scope.assertNoExceptionExceptTermination();
@@ -847,8 +848,12 @@ JSValue fetchCommonJSModuleNonBuiltin(
     // When parsing tsconfig.*.json or jsconfig.*.json, we go through Bun's JSON
     // parser instead to support comments and trailing commas.
     if (res->result.value.tag == SyntheticModuleType::JSONForObjectLoader) {
-        WTF::String jsonSource = res->result.value.source_code.toWTFString(BunString::NonNull);
-        JSC::JSValue value = JSC::JSONParseWithException(globalObject, jsonSource);
+        auto jsonSource = res->result.value.source_code.view();
+        if (jsonSource.view.isNull()) [[unlikely]] {
+            Bun::ERR::STRING_TOO_LONG(scope, globalObject);
+            return {};
+        }
+        JSC::JSValue value = JSC::JSONParseWithException(globalObject, jsonSource.view);
         RETURN_IF_EXCEPTION(scope, {});
 
         target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, 0);
@@ -1003,7 +1008,7 @@ static JSValue fetchESMSourceCode(
             }
         }
 
-        auto moduleKey = specifier->toWTFString(BunString::ZeroCopy);
+        auto moduleKey = specifier->toWTFString();
 
         // bun:wrap and a few other builtins return real JS source (not a
         // synthetic generator). Their providers are identical across globals,
@@ -1081,7 +1086,7 @@ static JSValue fetchESMSourceCode(
 
     const bool useIsolationCache = Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute);
     if (useIsolationCache) {
-        if (auto* cached = Bun::IsolatedModuleCache::lookup(vm, specifier->toWTFString(BunString::ZeroCopy))) {
+        if (auto* cached = Bun::IsolatedModuleCache::lookup(vm, specifier->toWTFString())) {
             if (cached->sourceType() != JSC::SourceProviderSourceType::Program) {
                 RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(Ref(*cached)))));
             }
@@ -1151,8 +1156,10 @@ static JSValue fetchESMSourceCode(
     // When parsing tsconfig.*.json or jsconfig.*.json, we go through Bun's JSON
     // parser instead to support comments and trailing commas.
     if (res->result.value.tag == SyntheticModuleType::JSONForObjectLoader) {
-        WTF::String jsonSource = res->result.value.source_code.toWTFString(BunString::NonNull);
-        JSC::JSValue value = JSC::JSONParseWithException(globalObject, jsonSource);
+        auto jsonSource = res->result.value.source_code.view();
+        if (jsonSource.view.isNull()) [[unlikely]]
+            RELEASE_AND_RETURN(scope, reject(Bun::createStringTooLongError(globalObject)));
+        JSC::JSValue value = JSC::JSONParseWithException(globalObject, jsonSource.view);
         if (scope.exception()) [[unlikely]] {
             auto* exception = scope.exception();
             (void)scope.tryClearException();
@@ -1165,7 +1172,7 @@ static JSValue fetchESMSourceCode(
             value);
         auto source = JSC::SourceCode(
             JSC::SyntheticSourceProvider::create(WTF::move(function),
-                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
+                JSC::SourceOrigin(), specifier->toWTFString()));
         JSC::ensureStillAliveHere(value);
         RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
     }
@@ -1182,7 +1189,7 @@ static JSValue fetchESMSourceCode(
             value);
         auto source = JSC::SourceCode(
             JSC::SyntheticSourceProvider::create(WTF::move(function),
-                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
+                JSC::SourceOrigin(), specifier->toWTFString()));
         JSC::ensureStillAliveHere(value);
         RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
     } else if (res->result.value.tag == SyntheticModuleType::ExportDefaultObject) {
@@ -1197,14 +1204,14 @@ static JSValue fetchESMSourceCode(
             value);
         auto source = JSC::SourceCode(
             JSC::SyntheticSourceProvider::create(WTF::move(function),
-                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
+                JSC::SourceOrigin(), specifier->toWTFString()));
         JSC::ensureStillAliveHere(value);
         RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
     }
 
     auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
     if (useIsolationCache) {
-        Bun::IsolatedModuleCache::insert(vm, specifier->toWTFString(BunString::ZeroCopy), provider.get());
+        Bun::IsolatedModuleCache::insert(vm, specifier->toWTFString(), provider.get());
     }
     RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(WTF::move(provider)))));
 }

@@ -713,8 +713,12 @@ impl WTFStringImplStruct {
     pub(crate) const S_REF_COUNT_INCREMENT: u32 = 0x2;
 
     #[inline]
-    pub fn length(&self) -> u32 {
-        self.m_length
+    pub fn len(&self) -> usize {
+        self.m_length as usize
+    }
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.m_length == 0
     }
     #[inline]
     pub fn is_8bit(&self) -> bool {

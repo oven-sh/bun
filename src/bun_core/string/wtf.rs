@@ -82,7 +82,7 @@ impl WTFStringImplExt for WTFStringImplStruct {
     #[inline]
     fn utf8_slice(&self) -> &[u8] {
         debug_assert!(self.can_use_as_utf8());
-        self.raw_bytes(self.length() as usize)
+        self.raw_bytes(self.len())
     }
 }
 

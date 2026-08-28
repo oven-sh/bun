@@ -1,4 +1,4 @@
-use bun_jsc::{JSGlobalObject, JSValue, StringJsc as _};
+use bun_jsc::{JSGlobalObject, JSValue, StrJsc as _};
 
 pub mod bun_install_js_bindings {
     use super::*;
@@ -33,7 +33,7 @@ pub mod bun_install_js_bindings {
         use core::ptr::NonNull;
 
         use bstr::BStr;
-        use bun_core::String as BunString;
+        use bun_core::StringView;
         use bun_install::lockfile::lockfile_json_stringify_for_debugging::{
             WriteStream, WriteStreamOptions, json_stringify,
         };
@@ -111,6 +111,6 @@ pub mod bun_install_js_bindings {
         json_stringify(&lockfile_, &mut w).expect("Vec<u8> JSON writer is infallible");
         let stringified = w.into_bytes();
 
-        BunString::borrow_utf8(&stringified).to_js_by_parse_json(global)
+        StringView::utf8(&stringified).to_js_by_parse_json(global)
     }
 }

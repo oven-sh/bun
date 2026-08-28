@@ -1,6 +1,6 @@
 use bun_collections::HashMap;
 use bun_core::StackCheck;
-use bun_core::String as BunString;
+use bun_core::{Str, StringView};
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, TemporalType, wtf,
 };
@@ -146,7 +146,7 @@ struct Stringifier {
 /// iterator-borrowed keys on the `stringify_table_body` recursion stack.
 struct Path<'p> {
     parent: Option<&'p Path<'p>>,
-    key: &'p BunString,
+    key: StringView<'p>,
 }
 
 impl Stringifier {
@@ -263,7 +263,7 @@ impl Stringifier {
                     self.mark_visiting(global, value)?;
                     let child = Path {
                         parent: path,
-                        key: &prop_name,
+                        key: prop_name,
                     };
                     self.stringify_table_body(global, value, Some(&child), true)?;
                     self.visiting.remove(&value);
@@ -273,7 +273,7 @@ impl Stringifier {
                     self.mark_visiting(global, value)?;
                     let child = Path {
                         parent: path,
-                        key: &prop_name,
+                        key: prop_name,
                     };
                     let mut items = value.array_iterator(global)?;
                     while let Some(item) = items.next()? {
@@ -428,10 +428,10 @@ impl Stringifier {
             self.append_path(parent);
             self.builder.append_lchar(b'.');
         }
-        self.append_key_segment(path.key);
+        self.append_key_segment(&path.key);
     }
 
-    fn append_key_segment(&mut self, name: &BunString) {
+    fn append_key_segment(&mut self, name: &Str) {
         if is_bare_key(name) {
             self.builder.append_string(name);
         } else {
@@ -439,7 +439,7 @@ impl Stringifier {
         }
     }
 
-    fn append_basic_quoted(&mut self, str: &BunString) {
+    fn append_basic_quoted(&mut self, str: &Str) {
         append_basic_quoted_to(&mut self.builder, str);
     }
 
@@ -555,7 +555,7 @@ impl Stringifier {
 
     // ── errors ─────────────────────────────────────────────────────────────
 
-    fn err_null_value(&mut self, global: &JSGlobalObject, key: &BunString) -> StringifyError {
+    fn err_null_value(&mut self, global: &JSGlobalObject, key: &Str) -> StringifyError {
         global
             .throw(format_args!(
                 "TOML cannot represent null (key '{key}'); remove the key or use a sentinel value",
@@ -623,11 +623,11 @@ fn temporal_name(t: TemporalType) -> &'static str {
     }
 }
 
-fn is_bare_key(name: &BunString) -> bool {
-    if name.length() == 0 {
+fn is_bare_key(name: &Str) -> bool {
+    if name.is_empty() {
         return false;
     }
-    for i in 0..name.length() {
+    for i in 0..name.len() {
         let c = name.char_at(i);
         let ok = c < 0x80 && {
             let b = c as u8;
@@ -642,9 +642,9 @@ fn is_bare_key(name: &BunString) -> bool {
 
 /// TOML basic string with escapes. Unpaired surrogates become U+FFFD, the
 /// same USVString conversion `TOML.parse` applies to its string input.
-fn append_basic_quoted_to(builder: &mut wtf::StringBuilder, str: &BunString) {
+fn append_basic_quoted_to(builder: &mut wtf::StringBuilder, str: &Str) {
     builder.append_lchar(b'"');
-    let len = str.length();
+    let len = str.len();
     let mut i = 0;
     while i < len {
         let c = str.char_at(i);

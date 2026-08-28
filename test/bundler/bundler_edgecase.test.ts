@@ -730,6 +730,25 @@ describe("bundler", () => {
       expect(api.readFile("/out.js")).toMatch(/(?:async\s+)?function\s+action\s*\(\)\s*\{\s*"use server";/);
     },
   });
+  itBundled("edgecase/DirectiveLikeStringInNestedBlockMinified", {
+    files: {
+      "/entry.js": /* js */ `
+        export function f() {
+          try {
+            "debug label";
+            g();
+          } catch {}
+        }
+        function g() {}
+      `,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      // Only a function body has a directive prologue; a leading string in any
+      // other block is a side-effect-free expression and minify drops it.
+      expect(api.readFile("/out.js")).not.toContain("debug label");
+    },
+  });
   itBundled("edgecase/DirectiveMultipleDedup", {
     files: {
       "/entry.js": /* js */ `

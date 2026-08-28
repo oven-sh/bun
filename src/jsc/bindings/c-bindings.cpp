@@ -1113,7 +1113,19 @@ extern "C" void Bun__signpost_emit(os_log_t log, os_signpost_type_t type, os_sig
 
 #if OS(DARWIN) || defined(__linux__) || defined(__FreeBSD__)
 
-#define BLOB_HEADER_ALIGNMENT 16 * 1024
+#if OS(DARWIN)
+// exe_format/macho.rs expands the __BUN segment in place and keeps the payload
+// 16KB-aligned (the page size on Apple Silicon).
+#define BLOB_HEADER_ALIGNMENT (16 * 1024)
+#else
+// On ELF the section only ever holds this 8-byte header; exe_format/elf.rs
+// appends the payload at a page-aligned vaddr. An alignment above the linker's
+// max-page-size raises the RW PT_LOAD's p_align past the other segments', and
+// lld then places it so that round_down(p_vaddr, p_align) overlaps the previous
+// segment's pages. The kernel ignores p_align at execve so the binary runs, but
+// strict loaders (UPX's stub) map the overlap and corrupt the image (#40752).
+#define BLOB_HEADER_ALIGNMENT 8
+#endif
 
 extern "C" {
 struct BlobHeader {

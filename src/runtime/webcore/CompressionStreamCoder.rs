@@ -696,15 +696,13 @@ impl CompressionStreamCoder {
     }
 }
 
-/// A chunk's bytes for the pool thread: a pinned ArrayBuffer's backing
-/// store (its pin + GC root is the paired [`PinnedArrayBuffer`] on the JS side)
-/// or an owned copy.
+/// A chunk's bytes for the pool thread: what the paired [`PinnedArrayBuffer`] on the JS side keeps valid, or an owned copy.
 pub(crate) enum AsyncInput {
     Pinned { ptr: *const u8, len: usize },
     Owned(Vec<u8>),
 }
-// SAFETY: `Pinned.ptr` is a backing store pinned + rooted by the paired
-// `PinnedArrayBuffer` for as long as the job lives; read only under the pool borrow.
+// SAFETY: `Pinned.ptr` points at bytes the paired `PinnedArrayBuffer` keeps
+// valid for as long as the job lives; read only under the pool borrow.
 unsafe impl Send for AsyncInput {}
 
 impl AsyncInput {
@@ -718,12 +716,7 @@ impl AsyncInput {
         if !chunk.is_cell() {
             return (Self::Owned(fallback.to_vec()), None);
         }
-        if let Some(buf) = PinnedArrayBuffer::root(global, chunk) {
-            // A resizable non-shared backing can `mprotect()` pages out on
-            // `resize()`; pinning does not block that, so spill to a copy.
-            if buf.resizable && !buf.shared {
-                return (Self::Owned(fallback.to_vec()), None);
-            }
+        if let Some(buf) = PinnedArrayBuffer::root_read_only(global, chunk) {
             return (
                 Self::Pinned {
                     ptr: buf.ptr,

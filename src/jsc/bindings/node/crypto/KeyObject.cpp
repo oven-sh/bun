@@ -1631,10 +1631,6 @@ void KeyObject::getKeyFormatAndType(
     KeyEncodingContext ctx,
     EVPKeyPointer::AsymmetricKeyEncodingConfig& config)
 {
-    // if (!formatType) {
-    //     ASSERT(ctx == KeyEncodingContext::Generate);
-    //     config.output_key_object = true;
-    // } else {
     config.output_key_object = false;
 
     config.format = formatType;
@@ -1646,7 +1642,6 @@ void KeyObject::getKeyFormatAndType(
             || (ctx == KeyEncodingContext::Generate && config.format == EVPKeyPointer::PKFormatType::JWK));
         config.type = EVPKeyPointer::PKEncodingType::PKCS1;
     }
-    // }
 }
 
 EVPKeyPointer::PrivateKeyEncodingConfig KeyObject::getPrivateKeyEncoding(

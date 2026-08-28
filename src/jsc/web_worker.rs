@@ -355,17 +355,18 @@ impl WebWorker {
         if !inherit_exec_argv {
             let hooks = runtime_hooks().expect("RuntimeHooks not installed");
             // SAFETY: caller passed valid (ptr,len) borrowed from C++ WorkerOptions;
-            // the hook only reads the slice. Only honours `--no-addons` today;
-            // `None` on parse failure keeps the parent's setting.
+            // the hook only reads the slice.
             let parsed = unsafe {
-                (hooks.parse_worker_exec_argv_allow_addons)(bun_core::ffi::slice(
+                (hooks.parse_worker_exec_argv_flags)(bun_core::ffi::slice(
                     exec_argv_ptr,
                     exec_argv_len,
                 ))
             };
-            if let Some(allow) = parsed {
-                let parent_allows = transform_options.allow_addons.unwrap_or(true);
-                transform_options.allow_addons = Some(parent_allows && allow);
+            if let Some(flags) = parsed {
+                let parent_allows_addons = transform_options.allow_addons.unwrap_or(true);
+                transform_options.allow_addons = Some(parent_allows_addons && flags.allow_addons);
+                let parent_allows_ffi_cc = transform_options.allow_ffi_cc.unwrap_or(true);
+                transform_options.allow_ffi_cc = Some(parent_allows_ffi_cc && flags.allow_ffi_cc);
             }
         }
         // The worker's `process.env` starts as a copy of the parent's now (as in

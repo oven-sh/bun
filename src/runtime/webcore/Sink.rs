@@ -313,6 +313,24 @@ pub trait JsSinkType: Sized + JsSinkAbi {
     fn end_from_js(&mut self, global: &JSGlobalObject) -> sys::Result<JSValue>;
     fn flush(&mut self) -> sys::Result<()>;
     fn start(&mut self, config: streams::Start) -> sys::Result<()>;
+    /// `controller.close(reason)` with an argument: the pump's source failed,
+    /// so the bytes written so far are a truncated body. `reason` is the
+    /// source's error and may be nullish. The default keeps the clean end for
+    /// sinks whose owner handles the pump promise rejection.
+    ///
+    /// Raw pointer: failing can re-enter the sink through its owner and may
+    /// free it.
+    ///
+    /// # Safety
+    /// `this` is the cell's live sink.
+    unsafe fn close_with_error(
+        this: *mut Self,
+        _global: &JSGlobalObject,
+        _reason: JSValue,
+    ) -> sys::Result<()> {
+        // SAFETY: caller contract; `end` does not free the sink.
+        unsafe { (*this).end(None) }
+    }
 
     fn construct(_this: &mut core::mem::MaybeUninit<Self>) {
         // Only reached when `HAS_CONSTRUCT = false` callers misroute; the
@@ -619,15 +637,23 @@ impl<T: JsSinkType> JSSink<T> {
     /// `${abi_name}__close` body — called from
     /// `${controller}__close` and `${name}__doClose` in JSSink.cpp with a raw
     /// `m_sinkPtr` (not a host-fn callframe), so exceptions become `.zero`.
-    pub(crate) fn js_close(
+    /// `reason` is the `close(reason)` argument, or the empty value when
+    /// `close()` had no argument.
+    ///
+    /// # Safety
+    /// `this` is the cell's live sink.
+    pub(crate) unsafe fn js_close(
         global: &crate::webcore::jsc::JSGlobalObject,
-        this: &mut T,
+        this: *mut T,
+        reason: crate::webcore::jsc::JSValue,
     ) -> crate::webcore::jsc::JSValue {
         use crate::webcore::jsc::JSValue;
         use bun_sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
 
-        if let Some(err) = this.get_pending_error() {
+        // SAFETY: caller contract; the borrow ends before `close_with_error`,
+        // which may re-enter or free the sink.
+        if let Some(err) = unsafe { (*this).get_pending_error() } {
             // `throw_error` sets the pending JS exception and returns the
             // `JsError` for `?`-propagation; this host fn returns bare
             // `JSValue`, so report and return ZERO (caller checks exception).
@@ -635,8 +661,16 @@ impl<T: JsSinkType> JSSink<T> {
             return JSValue::ZERO;
         }
 
+        let result = if reason.is_empty() {
+            // SAFETY: as above; `end` does not free the sink.
+            unsafe { (*this).end(None) }
+        } else {
+            // SAFETY: caller contract.
+            unsafe { T::close_with_error(this, global, reason) }
+        };
+
         // TODO: properly propagate exception upwards
-        match this.end(None) {
+        match result {
             sys::Result::Ok(()) => JSValue::UNDEFINED,
             sys::Result::Err(err) => match err.to_js(global) {
                 Ok(v) => {

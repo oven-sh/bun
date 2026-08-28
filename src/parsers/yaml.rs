@@ -787,7 +787,7 @@ pub enum ParseError {
     #[error("CyclicMerge")]
     CyclicMerge,
     #[error("DuplicateKey")]
-    DuplicateKey,
+    DuplicateKey { pos: Pos },
 }
 
 bun_core::oom_from_alloc!(ParseError);
@@ -2166,9 +2166,7 @@ impl ParseResultError {
             ParseError::CyclicMerge => ParseResultError::CyclicMerge {
                 pos: parser.token.start,
             },
-            ParseError::DuplicateKey => ParseResultError::DuplicateKey {
-                pos: parser.token.start,
-            },
+            ParseError::DuplicateKey { pos } => ParseResultError::DuplicateKey { pos },
         }
     }
 }
@@ -2756,11 +2754,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 match self.token.data {
                     TokenData::CollectEntry => {
                         let value = Expr::init(E::Null {}, self.token.start.loc());
-                        props.append(G::Property {
-                            key: Some(key),
-                            value: Some(value),
-                            ..Default::default()
-                        })?;
+                        self.append_flow_null(&mut props, key, value)?;
 
                         self.context.set(Context::FlowKey)?;
                         let r = self.scan(ScanOptions::default());
@@ -2770,11 +2764,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                     TokenData::MappingEnd => {
                         let value = Expr::init(E::Null {}, self.token.start.loc());
-                        props.append(G::Property {
-                            key: Some(key),
-                            value: Some(value),
-                            ..Default::default()
-                        })?;
+                        self.append_flow_null(&mut props, key, value)?;
                         continue;
                     }
                     TokenData::MappingValue => {}
@@ -2790,11 +2780,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     TokenData::MappingEnd | TokenData::CollectEntry
                 ) {
                     let value = Expr::init(E::Null {}, self.token.start.loc());
-                    props.append(G::Property {
-                        key: Some(key),
-                        value: Some(value),
-                        ..Default::default()
-                    })?;
+                    self.append_flow_null(&mut props, key, value)?;
                 } else {
                     // [147] the value is ns-flow-node; threading the value's
                     // own indent as current_mapping_indent makes the Scalar
@@ -3353,10 +3339,40 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
 
         if self.unique_keys && props.contains_key(&key) {
-            return Err(ParseError::DuplicateKey);
+            // Position at the duplicate key itself, not the token that
+            // happened to follow its value (delimiter/EOF/newline).
+            return Err(ParseError::DuplicateKey {
+                pos: Pos::from(key.loc.to_usize()),
+            });
         }
 
         props.record_key(&key)?;
+        Ok(props.append(G::Property {
+            key: Some(key),
+            value: Some(value),
+            ..Default::default()
+        })?)
+    }
+
+    /// Append a value-less flow-map entry (`{a}` / `{a,}`, implicit null
+    /// value). The null value cannot be a merge key, but its key still takes
+    /// the `unique_keys` path so `{a, a: 1}` is rejected exactly like a
+    /// valued duplicate would be. `record_key` stays gated on `unique_keys`
+    /// to avoid touching the merge index in the default (last-wins) mode.
+    fn append_flow_null(
+        &mut self,
+        props: &mut MappingProps,
+        key: Expr,
+        value: Expr,
+    ) -> Result<(), ParseError> {
+        if self.unique_keys {
+            if props.contains_key(&key) {
+                return Err(ParseError::DuplicateKey {
+                    pos: Pos::from(key.loc.to_usize()),
+                });
+            }
+            props.record_key(&key)?;
+        }
         Ok(props.append(G::Property {
             key: Some(key),
             value: Some(value),
@@ -4962,6 +4978,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.inc(1);
                     self.skip_s_white();
                     if Enc::wide(self.next()) == 0x23 /* '#' */ {
+                        // A header comment (`value: | # note`) is a real
+                        // comment: record it so Document.comments and
+                        // toString() round-trips keep it.
+                        let start = self.pos;
                         self.inc(1);
                         while !self.is_b_char_or_eof() {
                             if Enc::wide(self.next()) == 0 {
@@ -4969,6 +4989,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                             self.inc(1);
                         }
+                        let end = self.pos;
+                        let line = self.line;
+                        self.comments.push(ParsedComment {
+                            start,
+                            end,
+                            line,
+                        });
                     }
                     __c = Enc::wide(self.next());
                     continue;

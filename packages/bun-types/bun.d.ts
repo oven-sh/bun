@@ -1556,6 +1556,51 @@ declare module "bun" {
      * ```
      */
     export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string;
+
+    /**
+     * Parse a YAML string into a comment-preserving {@link Document}. The
+     * document retains any comments found in the source and can be mutated
+     * with `setIn` / `deleteIn` and serialized back with `toString`.
+     *
+     * @category Utilities
+     *
+     * @param input The YAML string to parse
+     * @param options Optional parse behavior controls
+     * @returns A mutable, comment-preserving YAML document
+     *
+     * @example
+     * ```ts
+     * import { YAML } from "bun";
+     *
+     * const doc = YAML.parseDocument("key: value # note");
+     * doc.setIn("key", "changed");
+     * doc.comment("top");
+     * console.log(doc.toString());
+     * ```
+     */
+    export function parseDocument(input: string | null | undefined, options?: ParseOptions): Document;
+
+    /**
+     * A comment-preserving YAML document, mirroring the `yaml` npm package's
+     * `Document` API. Created either with {@link parseDocument} or directly
+     * via `new Bun.YAML.Document(value)`.
+     *
+     * @category Utilities
+     */
+    export class Document {
+      /** Construct a document wrapping a JavaScript value. */
+      constructor(value?: unknown);
+      /** The document's JavaScript value. */
+      toJS(): unknown;
+      /** Serialize the document back to YAML, with comments appended. */
+      toString(space?: string | number): string;
+      /** Set a value at `path`; returns `this` for chaining. */
+      setIn(path: string | readonly (string | number)[], value: unknown): Document;
+      /** Delete the value at `path`; returns `this` for chaining. */
+      deleteIn(path: string | readonly (string | number)[]): Document;
+      /** Append a comment line; returns `this` for chaining. */
+      comment(text: string): Document;
+    }
   }
 
   /**

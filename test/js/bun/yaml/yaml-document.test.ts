@@ -48,6 +48,41 @@ describe("Bun.YAML.Document", () => {
       expect(out).toContain("Header comment");
     });
 
+    test("does not duplicate the line preceding an inline comment", () => {
+      // Regression: the whole line up to the comment was stored, so the
+      // mapping entry appeared twice in the serialized output.
+      const doc = YAML.parseDocument("a: 1 # note\n");
+      const out = doc.toString();
+      expect(out).toContain("# note");
+      expect(out.match(/a: 1/g)).toHaveLength(1);
+    });
+
+    test("preserves non-ASCII comment text", () => {
+      // Regression: comments were filtered down to ASCII or re-encoded as
+      // Latin-1, dropping/mangling every non-ASCII character.
+      const doc = YAML.parseDocument("a: 1 # héllo 🦀\n");
+      expect(doc.toString()).toContain("héllo 🦀");
+      const d2 = YAML.parseDocument("a: 1");
+      d2.comment("héllo 🦀");
+      expect(d2.toString()).toContain("héllo 🦀");
+    });
+
+    test("retains a comment on a block-scalar header", () => {
+      // `value: | # note` — the header comment was consumed but not recorded.
+      const doc = YAML.parseDocument("value: | # note\n  text\n");
+      expect(doc.toString()).toContain("# note");
+    });
+
+    test("works when parseDocument is destructured off the namespace", () => {
+      // Regression: a destructured `this` is undefined, and the fallback
+      // returned a bare object with no prototype methods.
+      const { parseDocument } = YAML;
+      const doc = parseDocument("a: 1");
+      expect(doc.toJS()).toEqual({ a: 1 });
+      doc.setIn("a", 2);
+      expect(doc.toJS()).toEqual({ a: 2 });
+    });
+
     test("uniqueKeys option rejects duplicate keys", () => {
       expect(() =>
         YAML.parseDocument("key: 1\nkey: 2", { uniqueKeys: true }),
@@ -142,6 +177,27 @@ describe("Bun.YAML.Document", () => {
       expect(doc.toJS()).toEqual({ items: [1, 999, 3] });
     });
 
+    test("rejects non-numeric array indices instead of writing element 0", () => {
+      // Regression: `bun_string_to_u32` mapped garbage to 0, so
+      // `setIn(["items", "name"], v)` silently overwrote element 0.
+      const doc = YAML.parseDocument("items: [1, 2, 3]");
+      expect(() => doc.setIn(["items", "name"], 99)).toThrow();
+      expect(doc.toJS()).toEqual({ items: [1, 2, 3] });
+    });
+
+    test("trailing separator in a string path is ignored", () => {
+      // Regression: `a.` produced ["a", ""] and wrote a ""-named property.
+      const doc = YAML.parseDocument("a: 1");
+      doc.setIn("a.", 2);
+      expect(doc.toJS()).toEqual({ a: 2 });
+    });
+
+    test("empty path is a no-op", () => {
+      const doc = YAML.parseDocument("a: 1");
+      doc.setIn("", 2);
+      expect(doc.toJS()).toEqual({ a: 1 });
+    });
+
     test("throws when no value provided", () => {
       const doc = YAML.parseDocument("x: 1");
       expect(() => doc.setIn("x")).toThrow();
@@ -171,6 +227,16 @@ describe("Bun.YAML.Document", () => {
       const doc = YAML.parseDocument("x: 1");
       doc.deleteIn("z.q.w");
       expect(doc.toJS()).toEqual({ x: 1 });
+    });
+
+    test("does not wipe a scalar document value on a miss", () => {
+      // Regression: delete_in_impl returned undefined for primitive/missing
+      // nodes, and the document value was overwritten with it.
+      const doc = YAML.parseDocument("hello");
+      doc.deleteIn("a.b");
+      expect(doc.toJS()).toBe("hello");
+      doc.deleteIn(["a"]);
+      expect(doc.toJS()).toBe("hello");
     });
 
     test("throws when no path provided", () => {
@@ -225,6 +291,15 @@ describe("Bun.YAML.Document", () => {
     test("creates document with initial value", () => {
       const doc = new YAML.Document({ hello: "world" });
       expect(doc.toJS()).toEqual({ hello: "world" });
+    });
+
+    test("prototype methods are not enumerable", () => {
+      // Regression: `put` installed the five methods as enumerable, so
+      // `for...in` over a Document listed them.
+      const doc = YAML.parseDocument("a: 1");
+      const names: string[] = [];
+      for (const k in doc) names.push(k);
+      expect(names).toEqual([]);
     });
 
     test("creates empty document with no args", () => {

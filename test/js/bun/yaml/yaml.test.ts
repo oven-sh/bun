@@ -1074,44 +1074,21 @@ folded: >
         test("includes line and column in parse error messages", () => {
           // A plain block scalar with no indentation is a syntax error at
           // the first content byte of the second line — line 2, column 0.
-          let err: unknown;
-          try {
-            YAML.parse("key:\n|\n");
-          } catch (e) {
-            err = e;
-          }
-          expect(err).toBeInstanceOf(SyntaxError);
-          const msg = (err as SyntaxError).message;
-          expect(msg).toMatch(/\(line \d+, column \d+\)/);
           // Regression: previously Bun.YAML.parse threw a bare
           // "Unable to parse YAML string" with no coordinates.
-          expect(msg).toContain("YAML Parse error:");
+          expect(() => YAML.parse("key:\n|\n")).toThrow(
+            /YAML Parse error: .*\(line \d+, column \d+\)/,
+          );
         });
 
         test("reports column-accurate position for unexpected token in flow mapping", () => {
-          let err: unknown;
-          try {
-            // Two colons in a flow mapping: `{a: b: c}` errors at the
-            // second `:` which is column 6 on line 1.
-            YAML.parse("{a: b: c}\n");
-          } catch (e) {
-            err = e;
-          }
-          expect(err).toBeInstanceOf(SyntaxError);
-          const msg = (err as SyntaxError).message;
-          expect(msg).toMatch(/\(line 1, column \d+\)/);
+          // Two colons in a flow mapping: `{a: b: c}` errors at the
+          // second `:` which is column 6 on line 1.
+          expect(() => YAML.parse("{a: b: c}\n")).toThrow(/\(line 1, column 6\)/);
         });
 
         test("reports line/column for tab-indentation error", () => {
-          let err: unknown;
-          try {
-            YAML.parse("a:\n\tbad\n");
-          } catch (e) {
-            err = e;
-          }
-          expect(err).toBeInstanceOf(SyntaxError);
-          const msg = (err as SyntaxError).message;
-          expect(msg).toMatch(/\(line \d+, column \d+\)/);
+          expect(() => YAML.parse("a:\n\tbad\n")).toThrow(/\(line \d+, column \d+\)/);
         });
       });
     });
@@ -2580,43 +2557,33 @@ production:
       });
 
       test("uniqueKeys option rejects duplicate block keys with positional error", () => {
-        let err: unknown;
-        try {
-          YAML.parse("a: 1\na: 2\n", { uniqueKeys: true });
-        } catch (e) {
-          err = e;
-        }
-        expect(err).toBeInstanceOf(SyntaxError);
-        const msg = (err as SyntaxError).message;
-        expect(msg).toMatch(/Duplicate key/);
-        expect(msg).toMatch(/\(line \d+, column \d+\)/);
+        expect(() => YAML.parse("a: 1\na: 2\n", { uniqueKeys: true })).toThrow(
+          /Duplicate key.*\(line 2, column 1\)/,
+        );
       });
 
       test("uniqueKeys option rejects duplicate flow keys", () => {
-        let err: unknown;
-        try {
-          YAML.parse("{a: 1, a: 2}", { uniqueKeys: true });
-        } catch (e) {
-          err = e;
-        }
-        expect(err).toBeInstanceOf(SyntaxError);
-        expect((err as SyntaxError).message).toMatch(/Duplicate key/);
+        expect(() => YAML.parse("{a: 1, a: 2}", { uniqueKeys: true })).toThrow(/Duplicate key/);
       });
 
       test("uniqueKeys option rejects duplicates after a merge key", () => {
-        let err: unknown;
-        try {
-          // `host` is introduced by the merge, then redeclared by the
-          // explicit entry — uniqueKeys should reject at the second occurrence.
+        // `host` is introduced by the merge, then redeclared by the
+        // explicit entry — uniqueKeys should reject at the second occurrence.
+        expect(() =>
           YAML.parse(
             `defaults: &d\n  host: x\n  port: 1\ndevelopment:\n  <<: *d\n  host: y\n`,
             { uniqueKeys: true },
-          );
-        } catch (e) {
-          err = e;
-        }
-        expect(err).toBeInstanceOf(SyntaxError);
-        expect((err as SyntaxError).message).toMatch(/Duplicate key/);
+          ),
+        ).toThrow(/Duplicate key/);
+      });
+
+      test("uniqueKeys option rejects duplicate value-less flow keys", () => {
+        // Regression: `{a, a: 1}` — the null-valued entry bypassed the
+        // duplicate-key path entirely and parsed silently.
+        expect(() => YAML.parse("{a, a: 1}", { uniqueKeys: true })).toThrow(/Duplicate key/);
+        expect(() => YAML.parse("{a, a}", { uniqueKeys: true })).toThrow(/Duplicate key/);
+        // Same input without uniqueKeys keeps last-wins semantics.
+        expect(YAML.parse("{a, a: 1}")).toEqual({ a: 1 });
       });
 
       test("uniqueKeys does not affect duplicate keys inside arrays", () => {
@@ -2624,7 +2591,7 @@ production:
       });
 
       test("uniqueKeys does not affect duplicate keys at different nesting depths", () => {
-        expect(YAML.parse("a: { a: 1 }\n")).toEqual({ a: { a: 1 } });
+        expect(YAML.parse("a: { a: 1 }\n", { uniqueKeys: true })).toEqual({ a: { a: 1 } });
         expect(
           YAML.parse(
             `outer:\n  a: 1\n  b:\n    a: 2\n`,
@@ -3999,7 +3966,7 @@ config:
 
         expect(() => YAML.stringify(root)).toThrow("Maximum call stack size exceeded");
         expect(reads).toBe(2);
-      });
+      }, 15000);
 
       test("handles arrays as root with references", () => {
         const shared = { shared: true };

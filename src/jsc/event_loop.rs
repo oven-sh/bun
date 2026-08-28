@@ -706,6 +706,11 @@ impl EventLoop {
             .as_ptr()
     }
 
+    /// `usockets_loop()` without the panic, for callers that can run before `ensure_waker`.
+    pub fn try_usockets_loop(&self) -> Option<*mut uws::Loop> {
+        self.uws_loop.map(|l| l.as_ptr())
+    }
+
     /// [`usockets_loop`](Self::usockets_loop) as the platform-native loop
     /// (`us_loop_t*` on POSIX, its `uv_loop_t*` on Windows).
     #[inline]

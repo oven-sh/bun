@@ -3,7 +3,7 @@ type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
 const { SafeMap } = require("internal/primordials");
-const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
+const { throwNotImplemented } = require("internal/shared");
 const {
   validateString,
   validateObject,
@@ -76,6 +76,8 @@ const {
   14: MessageChannel,
   15: BroadcastChannel,
   16: WebWorker,
+  17: _workerHasRef,
+  18: _workerEventLoopUtilization,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
@@ -97,6 +99,8 @@ const {
   // instance. This is so that it can emit the `worker` event on the process with the
   // node:worker_threads instance instead of the Web Worker instance.
   new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker,
+  (worker: WebWorker) => boolean | undefined,
+  (worker: WebWorker) => [number, number] | null,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
@@ -104,6 +108,9 @@ type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 // Used to ensure that Blobs created to hold the source code for `eval: true` Workers get cleaned up
 // after their Worker exits
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
+// Looked up here, not in the constructor: diagnostics_channel's registry is a Map, and `new Worker()`
+// has to keep working after user code replaces Map.prototype (the tamper tests in worker_threads.test.ts).
+const workerThreadsChannel = require("node:diagnostics_channel").channel("worker_threads");
 
 function injectFakeEmitter(Class) {
   // Per-instance registry mapping each event to (user listener -> wrapper), so
@@ -134,7 +141,7 @@ function injectFakeEmitter(Class) {
 
   function wrapped(run, listener) {
     return function (event) {
-      return listener(run(event));
+      return listener.$call(this, run(event));
     };
   }
 
@@ -201,7 +208,7 @@ function injectFakeEmitter(Class) {
     // a listener that already fired.
     function onceWrapper(ev) {
       registryFor(target, false)?.get(event)?.delete(listener);
-      return wrapper(ev);
+      return wrapper.$call(target, ev);
     }
     register(this, event, listener, onceWrapper, { once: true });
     return this;
@@ -988,6 +995,39 @@ class Worker extends EventEmitter {
       }
       urlRevokeRegistry.register(this.#worker, this.#urlToRevoke);
     }
+    this.#emitAsyncHooksInit();
+    if (workerThreadsChannel.hasSubscribers) {
+      workerThreadsChannel.publish({ worker: this });
+    }
+  }
+
+  #emitAsyncHooksInit() {
+    const { tickInitHooks, newAsyncId } = require("internal/async_hooks_tick");
+    const count = tickInitHooks.length;
+    if (count === 0) return;
+    const worker = this;
+    // node's WORKER handle: answers while the parent still holds the thread
+    // (through 'exit'), undefined once it has been released.
+    const resource = {
+      hasRef() {
+        return _workerHasRef(worker.#worker);
+      },
+    };
+    const asyncId = newAsyncId();
+    // Snapshot: enable()/disable() from inside a hook must not affect the
+    // in-flight dispatch (node stages such mutations in tmp_array).
+    const snapshot = $newArrayWithSize<Function>(count);
+    for (let i = 0; i < count; i++) snapshot[i] = tickInitHooks[i];
+    for (let i = 0; i < count; i++) {
+      try {
+        snapshot[i](asyncId, "WORKER", 0, resource);
+      } catch (err) {
+        try {
+          console.error(typeof err?.stack === "string" ? err.stack : err);
+        } catch {}
+        process.exit(1);
+      }
+    }
   }
 
   get threadId() {
@@ -1031,15 +1071,13 @@ class Worker extends EventEmitter {
 
   get performance() {
     return (this.#performance ??= {
-      eventLoopUtilization() {
-        warnNotImplementedOnce("worker_threads.Worker.performance");
-        return {
-          idle: 0,
-          active: 0,
-          utilization: 0,
-        };
-      },
+      eventLoopUtilization: this.#eventLoopUtilization.bind(this),
     });
+  }
+
+  #eventLoopUtilization(utilization1, utilization2) {
+    const { internalEventLoopUtilization } = require("internal/perf/event_loop_utilization");
+    return internalEventLoopUtilization(_workerEventLoopUtilization(this.#worker), utilization1, utilization2);
   }
 
   terminate(callback: unknown) {
@@ -1207,7 +1245,9 @@ class Worker extends EventEmitter {
     // if not the message is the actual error
     const message = event.message;
     if (message !== "") {
+      const code = error?.code;
       error = new Error(message, { cause: event });
+      if (typeof code === "string") error.code = code;
       const stack = event?.stack;
       if (stack) {
         error.stack = stack;

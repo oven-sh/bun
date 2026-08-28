@@ -59,17 +59,50 @@ pub use bun_sys_jsc::error_jsc::TestingAPIs::translate_uv_error_to_e as sys_sys_
 pub use bun_http_jsc::headers_jsc::h2_live_counts as http_h2_client_testing_ap_is_live_counts;
 pub use bun_http_jsc::headers_jsc::h3_quic_live_counts as http_h3_client_testing_ap_is_quic_live_counts;
 
-/// Lives here (not in `src/bun.rs`)
-/// because the flag it reads — `cli::Arguments::Bun__Node__UseSystemCA` — is
-/// owned by `bun_runtime`; placing the body in a lower crate would invert the
-/// dependency edge.
+/// This thread's resolved `--use-system-ca` decision (see `VirtualMachine::use_system_ca`);
+/// `undefined` when nothing decided it, in which case tls.ts falls back to NODE_USE_SYSTEM_CA the
+/// way the process default store does:
+/// https://github.com/nodejs/node/blob/v26.3.0/src/node_options.cc#L2207
 pub(crate) fn bun_get_use_system_ca(
     _global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let v =
-        crate::cli::Arguments::Bun__Node__UseSystemCA.load(core::sync::atomic::Ordering::Relaxed);
-    Ok(JSValue::js_boolean(v))
+    Ok(
+        match bun_jsc::virtual_machine::VirtualMachine::get().use_system_ca {
+            Some(v) => JSValue::js_boolean(v),
+            None => JSValue::UNDEFINED,
+        },
+    )
+}
+
+/// Process-wide `--use-openssl-ca`, under which the default store holds neither the bundled nor
+/// the system roots; `getCACertificates('default')` leaves them out to match, as node's does:
+/// https://github.com/nodejs/node/blob/v26.3.0/lib/tls.js#L157
+pub(crate) fn bun_get_use_openssl_ca(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    Ok(JSValue::js_boolean(crate::cli::Arguments::use_openssl_ca()))
+}
+
+/// `[elapsedSinceLoopStartMs, idleMs]` for THIS thread's loop — the two numbers
+/// performance.eventLoopUtilization() is defined in terms of (node derives
+/// active as now - loopStart - idle) — or `null` before the loop has begun.
+pub(crate) fn bun_get_loop_elu(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    let vm = bun_jsc::virtual_machine::VirtualMachine::get();
+    // SAFETY: the VM owns this loop (installed by `ensure_waker` before any JS ran; `usockets_loop`
+    // panics rather than return null) and this runs on its thread. Raw *mut, no &Loop — a
+    // &mut PosixLoop is live above us via tick_with_timeout for the whole tick.
+    // Idle before elapsed, so the derived active (elapsed - idle) never dips negative.
+    let raw_idle_ns = unsafe { bun_uws::us_loop_idle_ns((*vm.event_loop).usockets_loop()) };
+    let idle_ms = vm.loop_idle_ms(raw_idle_ns);
+    let Some(elapsed_ms) = vm.loop_elapsed_ms() else {
+        return Ok(JSValue::NULL);
+    };
+    let arr = JSValue::create_empty_array(global, 2)?;
+    arr.put_index(global, 0, JSValue::js_number(elapsed_ms))?;
+    arr.put_index(global, 1, JSValue::js_number(idle_ms))?;
+    Ok(arr)
 }
 
 mod css {

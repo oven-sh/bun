@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import net from "net";
 import perf, { PerformanceObserver } from "perf_hooks";
 
@@ -119,6 +119,100 @@ test("export surface matches Node v26.3.0", () => {
       .filter(k => !nodeExports.includes(k))
       .sort(),
   ).toEqual(["PerformanceNodeTiming"]);
+});
+
+// node: all zeros until the event loop has begun (i.e. during the entry point's synchronous
+// evaluation, however long it spins); real numbers once the loop is running. Verified against
+// node v26.3.0.
+test("eventLoopUtilization is zero before the loop starts and counts only loop time after", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { performance } = require("perf_hooks");
+      const end = Date.now() + 50; while (Date.now() < end) {}
+      const before = performance.eventLoopUtilization();
+      // Arm the timer from inside the loop: armed at the top level, a slow (debug) build's
+      // post-entry work can outlast it, and the first poll then returns without parking.
+      setImmediate(() => setTimeout(() => {
+        const after = performance.eventLoopUtilization();
+        console.log(JSON.stringify({ before, activeExcludesTopLevelSpin: after.active < 50, idleSeen: after.idle > 0, utilInRange: after.utilization > 0 && after.utilization < 1 }));
+      }, 20));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+    out: {
+      before: { idle: 0, active: 0, utilization: 0 },
+      activeExcludesTopLevelSpin: true,
+      idleSeen: true,
+      utilInRange: true,
+    },
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+// Same with an entry point that imports: the ticks that load the graph are not the loop starting.
+// An import is transpiled off-thread and the loop parks until it is ready. util.js is big enough that
+// this park always happens; a one-line import is usually ready before the park, so a stamp taken
+// there only showed up under load.
+test("eventLoopUtilization is still zero at the top level of an entry point with imports", async () => {
+  let util = "export const x = 1;\n";
+  for (let i = 0; i < 600; i++) {
+    util += `export function f${i}(a, b) { if (a > b) { return a - b + ${i}; } return [a, b, ${i}].map(v => v * 2).reduce((p, c) => p + c, 0); }\n`;
+  }
+  using dir = tempDir("elu-imports", {
+    "util.js": util,
+    "main.js": `
+      import { x } from "./util.js";
+      import { performance } from "perf_hooks";
+      const end = Date.now() + 50; while (Date.now() < end) {}
+      console.log(JSON.stringify(performance.eventLoopUtilization()), x);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: '{"idle":0,"active":0,"utilization":0} 1', stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
+// A top-level await is the loop running (node stamps loopStart before its first uv_run): what came
+// before it is still zeros, what comes after reports the time the await parked the loop.
+test("eventLoopUtilization counts the loop time spent in a top-level await", async () => {
+  using dir = tempDir("elu-tla", {
+    "main.mjs": `
+      import { performance } from "perf_hooks";
+      const before = performance.eventLoopUtilization();
+      await new Promise(r => setTimeout(r, 100));
+      const after = performance.eventLoopUtilization();
+      console.log(JSON.stringify({ before, idleAfter: after.idle >= 50, parkNotCharged: after.active < 50 }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout), stderr }).toEqual({
+    out: { before: { idle: 0, active: 0, utilization: 0 }, idleAfter: true, parkNotCharged: true },
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
 });
 
 // The options defaults must not read through a polluted Object.prototype.

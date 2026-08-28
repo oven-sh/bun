@@ -85,6 +85,9 @@ pub struct WebWorker {
     unresolved_specifier: Box<[u8]>,
     preloads: Vec<Box<[u8]>>,
     name: bun_core::ZBox,
+    /// `--cpu-prof` on the parent applies to workers that inherit its execArgv (as in node, where
+    /// the flag is per-process); a worker with its own execArgv profiles only if that says so.
+    parent_cpu_profiler_config: Option<crate::bun_cpu_profiler::CPUProfilerConfig>,
 
     // ---- Cross-thread ----------------------------------------------------------
     ref_count: bun_ptr::ThreadSafeRefCount<WebWorker>,
@@ -96,6 +99,11 @@ pub struct WebWorker {
     /// ancestor) asks it to terminate. `None` before `start_vm()` publishes it
     /// and after `shutdown()` unpublishes it.
     vm_handle: bun_threading::Guarded<Option<crate::VmHandle>>,
+    /// What the parent's `eventLoopUtilization()` reads (node reports all zeros outside this
+    /// window): published once the worker's loop has started, taken back in `shutdown()` before
+    /// the loop is destroyed, so a reader holding the lock always sees a live loop. Holds no VM
+    /// state: the stamps are copied out, and the loop is read only through its atomic counter.
+    elu: bun_threading::Guarded<Option<EluSource>>,
 
     // ---- Parent-thread only ---------------------------------------------------
     /// Keep-alive on the parent's event loop: taken in `create()`, toggled by
@@ -130,6 +138,22 @@ struct WorkerVmInit {
     transform_options: bun_options_types::schema::api::TransformOptions,
     env_map: bun_dotenv::Map,
     proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
+    /// The worker's own `execArgv` parsed (node's per-Environment options), or the defaults when
+    /// it inherits the parent's.
+    exec_argv: virtual_machine::WorkerExecArgv,
+    has_own_exec_argv: bool,
+    /// Resolved per node_worker.cc: the parent's decision, re-derived from a custom `env`, then
+    /// overridden by the flags (own execArgv, else the parent's), which are also what children
+    /// inherit as `use_system_ca_flag`.
+    use_system_ca: Option<bool>,
+    use_system_ca_flag: Option<bool>,
+}
+
+/// See [`WebWorker::elu`]. The stamps never change once the loop has started, so copies are exact.
+struct EluSource {
+    loop_: *mut bun_uws::Loop,
+    loop_start_ns: u64,
+    loop_idle_base_ns: u64,
 }
 
 enum EntryOutcome {
@@ -155,6 +179,7 @@ pub enum Status {
 // even when C++ mutates through it. `proxy` is the opaque C++ `WorkerMessagingProxy*`
 // round-tripped from `create()`; it is only ever handed back to C++.
 unsafe extern "C" {
+    safe fn WebWorker__workerThreadStarted(proxy: *mut c_void);
     safe fn WebWorker__workerGlobalScopeStarted(proxy: *mut c_void, global: &JSGlobalObject);
     safe fn WebWorker__workerGlobalScopeDestroyed(
         proxy: *mut c_void,
@@ -296,6 +321,9 @@ impl WebWorker {
         inherit_exec_argv: bool,
         exec_argv_ptr: *const WTFStringImpl,
         exec_argv_len: usize,
+        // `NODE_USE_SYSTEM_CA` from the worker's own `env` option (1 / 0), or -1 when it inherits
+        // the env.
+        env_use_system_ca: i8,
         preload_modules_ptr: *const BunString,
         preload_modules_len: usize,
     ) -> *mut WebWorker {
@@ -352,23 +380,39 @@ impl WebWorker {
         let parent_ref = unsafe { &*parent };
         let store_fd = parent_ref.transpiler.resolver.store_fd;
         let mut transform_options = (*parent_ref.transpiler.options.transform_options).clone();
-        if !inherit_exec_argv {
+        // A worker's own `execArgv` carries node's per-Environment options (parsed with the
+        // RunCommand param table, hence the hook); without one it inherits the parent's.
+        let exec_argv: virtual_machine::WorkerExecArgv = if inherit_exec_argv {
+            Default::default()
+        } else {
             let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-            // SAFETY: caller passed valid (ptr,len) borrowed from C++ WorkerOptions;
-            // the hook only reads the slice.
-            let parsed = unsafe {
-                (hooks.parse_worker_exec_argv_flags)(bun_core::ffi::slice(
-                    exec_argv_ptr,
-                    exec_argv_len,
-                ))
-            };
-            if let Some(flags) = parsed {
-                let parent_allows_addons = transform_options.allow_addons.unwrap_or(true);
-                transform_options.allow_addons = Some(parent_allows_addons && flags.allow_addons);
-                let parent_allows_ffi_cc = transform_options.allow_ffi_cc.unwrap_or(true);
-                transform_options.allow_ffi_cc = Some(parent_allows_ffi_cc && flags.allow_ffi_cc);
+            // SAFETY: caller passed valid (ptr,len) borrowed from the C++ WorkerOptions, alive
+            // for the proxy's lifetime; the hook only reads the slice.
+            unsafe {
+                (hooks.parse_worker_exec_argv)(bun_core::ffi::slice(exec_argv_ptr, exec_argv_len))
             }
+        };
+        // A Worker cannot re-enable what its parent disabled.
+        if let Some(allow_addons) = exec_argv.allow_addons {
+            let parent_allows = transform_options.allow_addons.unwrap_or(true);
+            transform_options.allow_addons = Some(parent_allows && allow_addons);
         }
+        if let Some(allow_ffi_cc) = exec_argv.allow_ffi_cc {
+            let parent_allows = transform_options.allow_ffi_cc.unwrap_or(true);
+            transform_options.allow_ffi_cc = Some(parent_allows && allow_ffi_cc);
+        }
+        // node_worker.cc: a Worker starts from the parent's resolved option, a custom `env`
+        // re-derives it from that env, and then the flags (its own execArgv's, else the parent's)
+        // win.
+        let use_system_ca_flag = if inherit_exec_argv {
+            parent_ref.use_system_ca_flag
+        } else {
+            exec_argv.use_system_ca
+        };
+        let use_system_ca_base = match env_use_system_ca {
+            -1 => parent_ref.use_system_ca,
+            v => Some(v == 1),
+        };
         // The worker's `process.env` starts as a copy of the parent's now (as in
         // Node). Proxy-env values may be RefCountedEnvValue bytes owned by the
         // parent's proxy_env_storage: snapshot slots + map under its lock so
@@ -390,6 +434,10 @@ impl WebWorker {
             transform_options,
             env_map,
             proxy_env_slots,
+            exec_argv,
+            has_own_exec_argv: !inherit_exec_argv,
+            use_system_ca: use_system_ca_flag.or(use_system_ca_base),
+            use_system_ca_flag,
         };
 
         // The construction ref: handed to C++ on success, dropped on failure.
@@ -418,9 +466,12 @@ impl WebWorker {
             } else {
                 name_str.to_owned_slice_z()
             },
+            // SAFETY: `parent` is live (see above); read on the parent's own thread.
+            parent_cpu_profiler_config: unsafe { (*parent).cpu_profiler_config.clone() },
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             requested_terminate: AtomicBool::new(false),
             vm_handle: bun_threading::Guarded::new(None),
+            elu: bun_threading::Guarded::new(None),
             vm: Cell::new(core::ptr::null_mut()),
             parent_poll_ref: JsCell::new(KeepAlive::init()),
             join_handle: JsCell::new(None),
@@ -532,6 +583,12 @@ impl WebWorker {
         });
     }
 
+    /// Whether this worker currently keeps the parent's loop alive (node's `Worker::HasRef`).
+    #[unsafe(export_name = "WebWorker__hasRef")]
+    pub(crate) extern "C" fn has_ref(this: &WebWorker) -> bool {
+        this.with_parent_poll_ref(|poll| poll.is_active())
+    }
+
     /// Ask the thread to stop: set `requested_terminate`, raise a
     /// TerminationException in its VM at the next safepoint, wake its loop.
     /// Any thread that holds a ref (the proxy) may call this.
@@ -557,6 +614,30 @@ impl WebWorker {
             // safepoint and its loop woken.
             handle.request_termination();
         }
+    }
+
+    /// The parent reading this worker's loop counters for `eventLoopUtilization()`: false outside
+    /// the window in which [`WebWorker::elu`] is published (node reports all-zero then). Idle is
+    /// read before elapsed, in node's order, so `active = elapsed - idle` cannot come out negative.
+    #[unsafe(export_name = "WebWorker__getELU")]
+    pub extern "C" fn get_elu(
+        this: &WebWorker,
+        out_elapsed_ms: &mut f64,
+        out_idle_ms: &mut f64,
+    ) -> bool {
+        let elu = this.elu.lock();
+        let Some(src) = elu.as_ref() else {
+            return false;
+        };
+        // SAFETY: published with a live loop and taken back before that loop is destroyed, both
+        // under this lock; `us_loop_idle_ns` only reads the loop's atomic counters.
+        let raw_idle_ns = unsafe { bun_uws::us_loop_idle_ns(src.loop_) };
+        let Some(elapsed_ms) = VirtualMachine::loop_elapsed_ms_since(src.loop_start_ns) else {
+            return false;
+        };
+        *out_idle_ms = VirtualMachine::loop_idle_ms_above(src.loop_idle_base_ns, raw_idle_ns);
+        *out_elapsed_ms = elapsed_ms;
+        true
     }
 
     /// The parent is releasing this thread: drop the keep-alive on the parent's
@@ -585,6 +666,11 @@ impl WebWorker {
     #[inline]
     pub(crate) fn execution_context_id(&self) -> u32 {
         self.execution_context_id
+    }
+
+    /// The `worker.threadId` node exposes (context ids start at 1 on the main thread).
+    pub(crate) fn thread_id(&self) -> u32 {
+        self.execution_context_id.saturating_sub(1)
     }
 
     /// The C++ `WorkerMessagingProxy`, handed to `Zig__GlobalObject__create` so
@@ -666,6 +752,10 @@ impl WebWorker {
             transform_options,
             env_map,
             proxy_env_slots,
+            mut exec_argv,
+            has_own_exec_argv,
+            use_system_ca,
+            use_system_ca_flag,
         } = init;
 
         // worker-thread only field; no other thread reads `arena`.
@@ -694,6 +784,8 @@ impl WebWorker {
                 env_loader: NonNull::new(loader_ptr),
                 store_fd: self.store_fd,
                 graph: crate::virtual_machine::standalone_module_graph(),
+                use_system_ca,
+                use_system_ca_flag,
                 ..Default::default()
             },
         )?;
@@ -715,6 +807,37 @@ impl WebWorker {
             vm_ref.is_main_thread = false;
             VirtualMachine::set_is_main_thread_vm(false);
             vm_ref.on_unhandled_rejection = on_unhandled_rejection;
+
+            // `--cpu-prof` / `--cpu-prof-md` (with -name/-dir/-interval) in this worker's execArgv,
+            // or the parent's profiling options when the worker has no execArgv of its own, as node's
+            // per-Environment options work. The profile is written by the VM's exit path.
+            let profile = if exec_argv.cpu_prof || exec_argv.cpu_prof_md {
+                Some(crate::bun_cpu_profiler::CPUProfilerConfig {
+                    name: exec_argv.cpu_prof_name.take().unwrap_or_default(),
+                    dir: exec_argv.cpu_prof_dir.take().unwrap_or_default(),
+                    md_format: exec_argv.cpu_prof_md,
+                    json_format: exec_argv.cpu_prof,
+                    interval: exec_argv
+                        .cpu_prof_interval
+                        .unwrap_or(bun_options_types::context::CpuProf::DEFAULT_INTERVAL),
+                    thread_id: self.thread_id(),
+                })
+            } else if !has_own_exec_argv {
+                self.parent_cpu_profiler_config.as_ref().map(|c| {
+                    crate::bun_cpu_profiler::CPUProfilerConfig {
+                        thread_id: self.thread_id(),
+                        ..c.clone()
+                    }
+                })
+            } else {
+                None
+            };
+            if let Some(config) = profile {
+                // The sampling interval is thread-local: set it from this thread.
+                crate::bun_cpu_profiler::set_sampling_interval(config.interval);
+                vm_ref.cpu_profiler_config = Some(config);
+                crate::bun_cpu_profiler::start_cpu_profiler(vm_ref.jsc_vm_mut());
+            }
         }
 
         // Publish now (rather than at the end of startVM) so that:
@@ -795,6 +918,10 @@ impl WebWorker {
             return self.shutdown();
         }
 
+        // The thread is up: the parent sees 'online' before the entry point runs, as in node
+        // (its bootstrap posts UP_AND_RUNNING right before evaluating the entry).
+        WebWorker__workerThreadStarted(self.messaging_proxy);
+
         // `preloads` is owned by `self` (heap `WebWorker` outlives the VM).
         // `preload: Vec<Box<[u8]>>` — clone the boxes (cheap, ≤handful).
         vm.as_mut().preload.clone_from(&self.preloads);
@@ -857,6 +984,17 @@ impl WebWorker {
         // standalone module graph, or `self.unresolved_specifier` — all of
         // which outlive the worker VM. `vm.main` stores it as a raw BACKREF
         // (see `VirtualMachine::set_main`); no lifetime extension needed.
+        // A worker's script runs inside its already-running loop (node's worker bootstrap is a loop
+        // iteration), so its ELU counts from here; the main thread's counts from its first poll.
+        vm.mark_loop_started();
+        // SAFETY: `event_loop()` is this VM's live loop; `init_worker` installed its uSockets loop.
+        let loop_ = unsafe { (*vm.event_loop()).usockets_loop() };
+        // Taken back in `shutdown()` step 1, before teardown destroys that loop.
+        *self.elu.lock() = Some(EluSource {
+            loop_,
+            loop_start_ns: vm.loop_start_ns.load(Ordering::Acquire),
+            loop_idle_base_ns: vm.loop_idle_base_ns.load(Ordering::Acquire),
+        });
         let promise = match vm.as_mut().load_entry_point_for_web_worker(path) {
             Ok(p) => p,
             Err(_) => {
@@ -921,10 +1059,8 @@ impl WebWorker {
 
         self.flush_logs(vm);
         log!("[{}] event loop start", self.execution_context_id);
-        // Pending -> Running: 'online' is posted to the parent and messages/tasks
-        // that arrived while the entry point was loading are delivered. After the
-        // entry point on purpose, so the parent observes 'online' only once the
-        // worker's top-level code has run (up to its first top-level await).
+        // Started -> Running: messages and tasks that arrived while the entry point
+        // was loading are delivered now, and later ones are routed directly.
         WebWorker__workerGlobalScopeStarted(self.messaging_proxy, vm.global());
         self.set_status(Status::Running);
 
@@ -1008,6 +1144,9 @@ impl WebWorker {
 
         // ---- 1. Unpublish vm ------------------------------------------------
         drop(self.vm_handle.lock().take());
+        // A parent mid-read holds this lock, so the loop it is reading outlives the read; the
+        // teardown below is what destroys the loop.
+        *self.elu.lock() = None;
         let vm_ptr = self.vm.replace(core::ptr::null_mut());
 
         // ---- 2. User exit handlers -----------------------------------------

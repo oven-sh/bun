@@ -677,6 +677,15 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'extract_ssl_config ssl_config;
     };
 
+    // No `tls` options, but this thread's --use-system-ca decision differs from the process
+    // default the HTTP thread's shared client context was built with: give the request a config of
+    // its own (interned, so all such requests share one cached context).
+    if ssl_config.is_none() && vm.tls_use_system_ca_differs_from_process() {
+        ssl_config = Some(ssl_config_intern_for_http(
+            crate::socket::tls_true_defaults(vm),
+        ));
+    }
+
     // unix: string | undefined
     unix_socket_path = 'extract_unix_socket_path: {
         let objects_to_try = [

@@ -16,14 +16,16 @@ pub(crate) enum ProfilerError {
     FilenameTooLong,
 }
 
+#[derive(Clone)]
 pub struct CPUProfilerConfig {
-    // CLI-arg-backed and
-    // process-lifetime, so `&'static` is sound (no struct lifetime params).
-    pub name: &'static [u8],
-    pub dir: &'static [u8],
+    /// Empty: the default `CPU.<date>.<pid>.<tid>.<seq>` name / the cwd.
+    pub name: Box<[u8]>,
+    pub dir: Box<[u8]>,
     pub md_format: bool,
     pub json_format: bool,
     pub interval: u32,
+    /// `worker.threadId` (0 on the main thread): the tid segment of node's default profile names.
+    pub thread_id: u32,
 }
 
 // C++ function declarations
@@ -110,7 +112,7 @@ fn write_profile_to_file(
         let errno = err.get_errno();
         if errno == Errno::ENOENT || errno == Errno::EPERM || errno == Errno::EACCES {
             if !config.dir.is_empty() {
-                let _ = Fd::cwd().make_path(config.dir);
+                let _ = Fd::cwd().make_path(&config.dir);
                 // Retry write
                 let retry_result = bun_sys::File::write_file_os_path(
                     Fd::cwd(),
@@ -149,21 +151,21 @@ fn build_output_path(
                 let ext: &[u8] = if is_md_format { b".md" } else { b".cpuprofile" };
                 let mut cursor = std::io::Cursor::new(&mut filename_buf[..]);
                 cursor
-                    .write_all(config.name)
+                    .write_all(&config.name)
                     .and_then(|_| cursor.write_all(ext))
                     .map_err(|_| ProfilerError::FilenameTooLong)?;
                 let len = usize::try_from(cursor.position()).expect("int cast");
                 break 'blk &filename_buf[..len];
             } else {
-                break 'blk config.name;
+                break 'blk &config.name;
             }
         }
     } else {
-        generate_default_filename(&mut filename_buf, is_md_format)?
+        generate_default_filename(&mut filename_buf, is_md_format, config.thread_id)?
     };
 
     if !config.dir.is_empty() {
-        path.join(&[config.dir])
+        path.join(&[&config.dir])
             .map_err(|_| ProfilerError::FilenameTooLong)?;
     }
 
@@ -177,10 +179,11 @@ fn build_output_path(
 fn generate_default_filename(
     buf: &mut PathBuffer,
     md_format: bool,
+    thread_id: u32,
 ) -> Result<&[u8], ProfilerError> {
     let extension: &str = if md_format { ".md" } else { ".cpuprofile" };
     let mut cursor = std::io::Cursor::new(&mut buf[..]);
-    write_diagnostic_filename(&mut cursor, "CPU", extension)
+    write_diagnostic_filename(&mut cursor, "CPU", extension, thread_id)
         .map_err(|_| ProfilerError::FilenameTooLong)?;
     let len = usize::try_from(cursor.position()).expect("int cast");
     Ok(&buf[..len])
@@ -192,6 +195,7 @@ pub(crate) fn write_diagnostic_filename(
     cursor: &mut dyn std::io::Write,
     prefix: &str,
     extension: &str,
+    tid: u32,
 ) -> std::io::Result<()> {
     #[cfg(windows)]
     let pid = bun_sys::windows::GetCurrentProcessId();
@@ -206,7 +210,7 @@ pub(crate) fn write_diagnostic_filename(
 
     write!(
         cursor,
-        "{prefix}.{year:04}{month:02}{day:02}.{hour:02}{minute:02}{second:02}.{pid}.0.{seq:03}{extension}"
+        "{prefix}.{year:04}{month:02}{day:02}.{hour:02}{minute:02}{second:02}.{pid}.{tid}.{seq:03}{extension}"
     )
 }
 

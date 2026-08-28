@@ -87,6 +87,8 @@ namespace uWS {
         int allow_partial_trust_chain = 0;
         const char *sigalgs = nullptr;
         const char *ecdh_curve = nullptr;
+        /* 0 = process default, 1 = include system CAs, -1 = exclude (see libusockets.h) */
+        int use_system_ca = 0;
 
         /* Conversion operator used internally */
         operator struct us_bun_socket_context_options_t() const {

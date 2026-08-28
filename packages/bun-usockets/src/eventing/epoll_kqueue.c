@@ -514,6 +514,10 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         }
     }
 
+    const uint64_t idle_start_ns = will_idle_inside_event_loop ? us_internal_monotonic_ns() : 0;
+    if (will_idle_inside_event_loop)
+        __atomic_store_n(&loop->data.idle_entry_ns, idle_start_ns, __ATOMIC_SEQ_CST);
+
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
     /* A zero timespec already has a fast path in ep_poll (fs/eventpoll.c):
@@ -531,6 +535,18 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         will_idle_inside_event_loop ? 0 : KEVENT_FLAG_IMMEDIATE,
         timeout);
 #endif
+
+    if (will_idle_inside_event_loop) {
+        /* us_loop_idle_ns (another thread) retries while idle_seq is odd or changed underneath it, so
+         * it never observes the entry cleared without the park added (a non-monotonic sample). */
+        __atomic_add_fetch(&loop->data.idle_seq, 1, __ATOMIC_SEQ_CST);
+        /* Clock read inside the odd window: a reader's own clock read (taken before it validated an
+         * even seq) is then never later than the park length we record, so samples stay monotonic. */
+        uint64_t now = us_internal_monotonic_ns();
+        __atomic_store_n(&loop->data.idle_entry_ns, 0, __ATOMIC_SEQ_CST);
+        __atomic_add_fetch(&loop->data.idle_ns, now - idle_start_ns, __ATOMIC_SEQ_CST);
+        __atomic_add_fetch(&loop->data.idle_seq, 1, __ATOMIC_SEQ_CST);
+    }
 
     /* Before anything can allocate again. */
     if (handed_off)

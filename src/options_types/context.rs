@@ -587,6 +587,12 @@ pub struct CpuProf {
     pub json_format: bool,
 }
 
+impl CpuProf {
+    /// Sampling interval in microseconds without `--cpu-prof-interval`; a Worker's execArgv falls
+    /// back to it the same way.
+    pub const DEFAULT_INTERVAL: u32 = 1000;
+}
+
 impl Default for CpuProf {
     // See `ContextData::default` — folded into the single startup call site.
     #[inline(always)]
@@ -595,7 +601,7 @@ impl Default for CpuProf {
             enabled: false,
             name: Box::default(),
             dir: Box::default(),
-            interval: 1000,
+            interval: Self::DEFAULT_INTERVAL,
             md_format: false,
             json_format: false,
         }

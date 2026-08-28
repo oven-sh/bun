@@ -26,6 +26,7 @@
 
 #include "config.h"
 #include "WorkerMessagingProxy.h"
+#include <JavaScriptCore/ErrorInstance.h>
 
 #include "BunClientData.h"
 #include "GlobalEventScope.h"
@@ -67,12 +68,16 @@ void* WebWorker__create(
     bool defaultExecArgv,
     StringImpl** execArgvPtr,
     size_t execArgvLen,
+    // NODE_USE_SYSTEM_CA as seen by the worker's own `env` option: 1 / 0, or -1 when it inherits the env.
+    int8_t envUseSystemCa,
     BunString* preloadModulesPtr,
     size_t preloadModulesLen);
 // Raise a TerminationException in the worker VM at its next safepoint and wake its loop. Any thread.
 void WebWorker__requestTermination(void*);
 // Toggle the keep-alive this worker holds on the parent event loop. Parent thread.
 void WebWorker__setRef(void*, bool);
+bool WebWorker__hasRef(void* worker);
+bool WebWorker__getELU(void* worker, double* elapsedMs, double* idleMs);
 // Release that keep-alive. Parent thread.
 void WebWorker__releaseParentPollRef(void*);
 // Block until the OS thread has exited. Parent thread, after the worker reported destroyed or was
@@ -140,6 +145,12 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
                                                })
                                                .value_or(std::span<WTF::StringImpl*> {});
 
+    int8_t envUseSystemCa = -1;
+    if (m_options.env) {
+        auto it = m_options.env->find("NODE_USE_SYSTEM_CA"_s);
+        envUseSystemCa = it != m_options.env->end() && it->value == "1"_s ? 1 : 0;
+    }
+
     // The thread holds a ref on the proxy until releaseWorkerThread().
     ref();
     BunString errorMessage = BunStringEmpty;
@@ -162,6 +173,7 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
         !m_options.execArgv.has_value(),
         execArgv.data(),
         execArgv.size(),
+        envUseSystemCa,
         preloadModules.begin(),
         preloadModules.size());
     m_options.preloadModules.clear();
@@ -188,6 +200,24 @@ void WorkerMessagingProxy::setKeepAlive(bool keepAlive)
     if (m_askedToTerminate || m_keepAliveReleased || !m_workerThread)
         return;
     WebWorker__setRef(m_workerThread, keepAlive);
+}
+
+std::optional<bool> WorkerMessagingProxy::hasRef() const
+{
+    ASSERT(!m_scriptExecutionContext || m_scriptExecutionContext->isContextThread());
+    if (!m_workerThread)
+        return std::nullopt;
+    return WebWorker__hasRef(m_workerThread);
+}
+
+bool WorkerMessagingProxy::eventLoopUtilization(double& elapsedMs, double& idleMs)
+{
+    ASSERT(!m_scriptExecutionContext || m_scriptExecutionContext->isContextThread());
+    // The proxy holds a ref on the thread object until releaseWorkerThread(), so it is readable
+    // here; whether its VM is still there is answered under the thread's own lock.
+    if (!m_workerThread)
+        return false;
+    return WebWorker__getELU(m_workerThread, &elapsedMs, &idleMs);
 }
 
 void WorkerMessagingProxy::workerObjectDestroyed()
@@ -227,6 +257,7 @@ bool WorkerMessagingProxy::postTaskToWorkerGlobalScope(Function<void(ScriptExecu
         Locker lock { m_pendingTasksLock };
         switch (m_state.load()) {
         case State::Pending:
+        case State::Started:
             m_pendingTasks.append(WTF::move(task));
             return true;
         case State::Running:
@@ -378,26 +409,36 @@ void WorkerMessagingProxy::drainMessagesToWorkerObject(ScriptExecutionContext& c
 
 // ---- WorkerObjectProxy / WorkerReportingProxy (worker thread) -----------------------------------
 
-void WorkerMessagingProxy::workerGlobalScopeStarted(Zig::GlobalObject& workerGlobalObject)
+void WorkerMessagingProxy::workerThreadStarted()
 {
-    auto& context = *workerGlobalObject.scriptExecutionContext();
-    ASSERT(context.identifier() == m_workerContextIdentifier);
-
-    // Pending -> Running under the lock postTaskToWorkerGlobalScope() takes, and before 'online' is
-    // posted: a parent-side 'online' handler may immediately post a task and must find Running.
-    Deque<Function<void(ScriptExecutionContext&)>> pendingTasks;
     {
+        // An exiting parent (parentContextWillDestroy) may already have moved this to Closing.
         Locker lock { m_pendingTasksLock };
-        m_state.store(State::Running);
-        pendingTasks = std::exchange(m_pendingTasks, {});
+        auto expected = State::Pending;
+        if (!m_state.compare_exchange_strong(expected, State::Started))
+            return;
     }
-
     ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext&) {
         RefPtr workerObject = protectedThis->m_workerObject;
         if (!workerObject || !workerObject->hasEventListeners(eventNames().openEvent))
             return;
         workerObject->dispatchEvent(Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No));
     });
+}
+
+void WorkerMessagingProxy::workerGlobalScopeStarted(Zig::GlobalObject& workerGlobalObject)
+{
+    auto& context = *workerGlobalObject.scriptExecutionContext();
+    ASSERT(context.identifier() == m_workerContextIdentifier);
+
+    // Started -> Running under the lock postTaskToWorkerGlobalScope() takes, so a task is either
+    // queued here (and run below) or posted directly, never lost.
+    Deque<Function<void(ScriptExecutionContext&)>> pendingTasks;
+    {
+        Locker lock { m_pendingTasksLock };
+        m_state.store(State::Running);
+        pendingTasks = std::exchange(m_pendingTasks, {});
+    }
 
     // Tasks and messages that arrived while Pending. If the entry module installed a 'message'
     // listener they run now; otherwise on the next tick, so a listener added right after startup
@@ -437,16 +478,39 @@ void WorkerMessagingProxy::postMessageToWorkerObject(MessageWithMessagePorts&& m
     }
 }
 
-void WorkerMessagingProxy::postMessageErrorToWorkerObject(String&& message)
+void WorkerMessagingProxy::postMessageErrorToWorkerObject(String&& message, String&& code)
 {
-    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, message = WTF::move(message).isolatedCopy()](ScriptExecutionContext&) {
+    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, message = WTF::move(message).isolatedCopy(), code = WTF::move(code).isolatedCopy()](ScriptExecutionContext& context) {
         RefPtr workerObject = protectedThis->m_workerObject;
         if (!workerObject)
             return;
         ErrorEvent::Init init;
         init.message = message;
+        // The thrown value could not be cloned; `code` is all the parent can otherwise recover of it.
+        if (!code.isNull()) {
+            auto* globalObject = context.globalObject();
+            auto& vm = JSC::getVM(globalObject);
+            auto* carrier = JSC::createError(globalObject, message);
+            carrier->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), JSC::jsString(vm, code));
+            init.error = carrier;
+        }
         workerObject->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
     });
+}
+
+// A string `error.code` on the thrown value, read without leaving an exception behind.
+static String errorCodeOf(JSC::JSGlobalObject& globalObject, JSC::JSValue value)
+{
+    auto& vm = JSC::getVM(&globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (!value.isObject() || scope.exception())
+        return {};
+    JSC::JSValue codeValue = value.getObject()->getIfPropertyExists(&globalObject, WebCore::builtinNames(vm).codePublicName());
+    String code;
+    if (!scope.exception() && codeValue && codeValue.isString())
+        code = codeValue.toWTFString(&globalObject);
+    CLEAR_IF_EXCEPTION(scope);
+    return code;
 }
 
 bool WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& workerGlobalObject, JSC::JSValue value)
@@ -458,18 +522,23 @@ bool WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& 
 
     auto serialized = SerializedScriptValue::create(workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
     CLEAR_IF_EXCEPTION(scope);
+    // Cloning an Error reads `stack`; when that getter throws (a throwing Error.prepareStackTrace),
+    // Node drops only `stack` (lib/internal/error_serdes.js TryGetAllProperties) rather than the
+    // whole error, so retry once with an own undefined `stack` that cannot run the getter again.
+    if (!serialized && !vm.hasPendingTerminationException()) {
+        if (auto* errorInstance = dynamicDowncast<JSC::ErrorInstance>(value)) {
+            errorInstance->putDirect(vm, vm.propertyNames->stack, JSC::jsUndefined(), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+            errorInstance->setStackPropertyAlreadyMaterialized();
+            serialized = SerializedScriptValue::create(workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
+            CLEAR_IF_EXCEPTION(scope);
+        }
+    }
     if (!serialized)
         return false;
 
     // Structured clone keeps only the standard Error fields; Node's worker 'error' event also
     // preserves a string `error.code` (lib/internal/error_serdes.js).
-    String errorCode;
-    if (value.isObject()) {
-        JSC::JSValue codeValue = value.getObject()->getIfPropertyExists(&workerGlobalObject, WebCore::builtinNames(vm).codePublicName());
-        if (!scope.exception() && codeValue && codeValue.isString())
-            errorCode = codeValue.toWTFString(&workerGlobalObject);
-        CLEAR_IF_EXCEPTION(scope);
-    }
+    String errorCode = errorCodeOf(workerGlobalObject, value);
 
     return ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, serialized = serialized.releaseNonNull(), errorCode = WTF::move(errorCode).isolatedCopy()](ScriptExecutionContext& context) {
         RefPtr workerObject = protectedThis->m_workerObject;
@@ -494,11 +563,11 @@ void WorkerMessagingProxy::postErrorToWorkerObject(Zig::GlobalObject& workerGlob
 {
     switch (m_options.kind) {
     case WorkerOptions::Kind::Web:
-        postMessageErrorToWorkerObject(String { message });
+        postMessageErrorToWorkerObject(String { message }, {});
         return;
     case WorkerOptions::Kind::Node:
         if (!postSerializedErrorToWorkerObject(workerGlobalObject, error))
-            postMessageErrorToWorkerObject(String { message });
+            postMessageErrorToWorkerObject(String { message }, errorCodeOf(workerGlobalObject, error));
         return;
     }
 }

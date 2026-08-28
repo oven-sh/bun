@@ -24,10 +24,11 @@
 #include <ws2tcpip.h>
 #endif
 
+#include "crypto/root_certs_header.h"
+
 extern SSL_CTX *us_ssl_ctx_build_raw(
     struct us_bun_socket_context_options_t options,
     enum create_bun_socket_error_t *err);
-extern X509_STORE *us_get_default_ca_store(void);
 extern struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl);
 
 #define US_QUIC_READ_BUF (16 * 1024)
@@ -1195,8 +1196,9 @@ us_quic_socket_context_t *us_create_quic_client_context(
     SSL_CTX_set_max_proto_version(ssl, TLS1_3_VERSION);
     /* Same root store the H1/H2 client uses (bundled Mozilla roots + platform
      * CAs + NODE_EXTRA_CA_CERTS); set_default_verify_paths alone doesn't find
-     * the system store on macOS/Windows. */
-    SSL_CTX_set_cert_store(ssl, us_get_default_ca_store());
+     * the system store on macOS/Windows. The shared store is never mutated on
+     * this path, and set_cert_store takes the getter's up-ref. */
+    SSL_CTX_set_cert_store(ssl, us_get_shared_default_ca_store(us_default_use_system_ca()));
     SSL_CTX_set_custom_verify(ssl, SSL_VERIFY_PEER, us_quic_client_verify);
 
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *)

@@ -123,7 +123,7 @@ fn build_output_path(
 fn generate_default_filename(buf: &mut PathBuffer, text_format: bool) -> Result<&[u8], Error> {
     let extension: &str = if text_format { ".md" } else { ".heapprofile" };
     let mut cursor = std::io::Cursor::new(&mut buf[..]);
-    crate::bun_cpu_profiler::write_diagnostic_filename(&mut cursor, "Heap", extension)
+    crate::bun_cpu_profiler::write_diagnostic_filename(&mut cursor, "Heap", extension, 0)
         .map_err(|_| crate::CrateError::Sys(bun_errno::SystemErrno::ENOSPC))?;
     let written = usize::try_from(cursor.position()).expect("int cast");
     Ok(&buf.as_slice()[..written])

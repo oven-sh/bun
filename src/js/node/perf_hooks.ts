@@ -116,12 +116,11 @@ function createPerformanceNodeTiming() {
   return object;
 }
 
-function eventLoopUtilization(_utilization1, _utilization2) {
-  return {
-    idle: 0,
-    active: 0,
-    utilization: 0,
-  };
+const getLoopELU = $newRustFunction("bun.rs", "getLoopELU", 0);
+const { internalEventLoopUtilization } = require("internal/perf/event_loop_utilization");
+
+function eventLoopUtilization(utilization1, utilization2) {
+  return internalEventLoopUtilization(getLoopELU(), utilization1, utilization2);
 }
 
 const { PerformanceResourceTiming } = globalThis;

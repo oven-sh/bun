@@ -525,6 +525,10 @@ struct us_bun_socket_context_options_t {
     const char *sigalgs;
     /* Colon-separated named-group list applied via SSL_CTX_set1_groups_list. */
     const char *ecdh_curve;
+    /* Whether the default root store of this context includes the system's trusted CAs (node's
+     * per-Environment --use-system-ca): 0 = the process default (CLI flags / NODE_USE_SYSTEM_CA),
+     * 1 = include, -1 = exclude. Only matters when no `ca`/`ca_file_name` is given. */
+    int use_system_ca;
 };
 
 enum create_bun_socket_error_t {

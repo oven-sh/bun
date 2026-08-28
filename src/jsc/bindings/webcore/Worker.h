@@ -64,6 +64,11 @@ public:
     bool hasExited() const { return m_contextProxy->isClosingOrClosed(); }
     bool isOnline() const { return m_contextProxy->isOnline(); }
     void setKeepAlive(bool);
+    // Whether this Worker keeps the parent's event loop alive; nullopt once the thread is released.
+    std::optional<bool> hasRef() const;
+    // `[elapsedSinceLoopStartMs, idleMs]` of the worker's loop, read live from this (the parent)
+    // thread. False once the thread has gone (node reports all-zero then).
+    bool eventLoopUtilization(double& elapsedMs, double& idleMs);
 
     // Node worker_threads: 'message'/'error'/'messageerror' are not delivered once terminate() was
     // called; 'close' (which carries the exit code) always is.

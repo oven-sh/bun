@@ -121,6 +121,36 @@ void us_internal_sweep_if_due(struct us_loop_t *loop) {
 #endif
 
 
+/* The clock us_loop_idle_ns accumulates in, so eventLoopUtilization's elapsed and idle share one
+ * time base (they diverge across system sleep otherwise: CLOCK_MONOTONIC keeps counting on macOS,
+ * the uptime clock std::time::Instant uses does not). */
+uint64_t us_loop_idle_clock_ns(void) {
+#ifdef LIBUS_USE_LIBUV
+    return uv_hrtime();
+#else
+    return us_internal_monotonic_ns();
+#endif
+}
+
+uint64_t us_loop_idle_ns(struct us_loop_t *loop) {
+#ifdef LIBUS_USE_LIBUV
+    return uv_metrics_idle_time(loop->uv_loop);
+#else
+    uint64_t idle, entry, now;
+    for (;;) {
+        uint64_t seq = __atomic_load_n(&loop->data.idle_seq, __ATOMIC_SEQ_CST);
+        if (seq & 1) continue;
+        idle = __atomic_load_n(&loop->data.idle_ns, __ATOMIC_SEQ_CST);
+        entry = __atomic_load_n(&loop->data.idle_entry_ns, __ATOMIC_SEQ_CST);
+        now = entry > 0 ? us_internal_monotonic_ns() : 0;
+        if (__atomic_load_n(&loop->data.idle_seq, __ATOMIC_SEQ_CST) == seq) break;
+    }
+    if (entry > 0 && now > entry)
+        idle += now - entry;
+    return idle;
+#endif
+}
+
 void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
     void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop)) {
     // We allocate with calloc, so we only need to initialize the specific fields in use.

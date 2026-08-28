@@ -218,7 +218,7 @@ describe.skipIf(!isLinux)("node:fs errno outside the SystemErrno table", () => {
       syscall: "fsync",
       helperBin: tryBuildHelper("__NR_fsync"),
       snippet: `
-        const fs = require("node:fs");
+        import * as fs from "node:fs";
         const fd = fs.openSync(process.argv[1], "r+");
         try {
           fs.fsyncSync(fd);
@@ -232,7 +232,7 @@ describe.skipIf(!isLinux)("node:fs errno outside the SystemErrno table", () => {
       syscall: "ftruncate",
       helperBin: tryBuildHelper("__NR_ftruncate"),
       snippet: `
-        const fs = require("node:fs");
+        import * as fs from "node:fs";
         const fd = fs.openSync(process.argv[1], "r+");
         try {
           fs.ftruncateSync(fd, 0);
@@ -265,8 +265,8 @@ describe.skipIf(!isLinux)("node:fs errno outside the SystemErrno table", () => {
     return JSON.parse(out.stdout.trim());
   }
 
-  for (const c of cases) {
-    test.concurrent(`${c.syscall}: a code above the table keeps its number and reports EUNKNOWN`, async () => {
+  describe.each(cases)("$syscall", c => {
+    test.concurrent("a code above the table keeps its number and reports EUNKNOWN", async () => {
       const result = await callWithErrno(c, ENOTSUPP);
       if (result == null) return;
       expect(result).toEqual({
@@ -278,7 +278,7 @@ describe.skipIf(!isLinux)("node:fs errno outside the SystemErrno table", () => {
       });
     });
 
-    test.concurrent(`${c.syscall}: a code in the table keeps its name`, async () => {
+    test.concurrent("a code in the table keeps its name", async () => {
       const result = await callWithErrno(c, EACCES);
       if (result == null) return;
       expect(result).toEqual({
@@ -289,5 +289,5 @@ describe.skipIf(!isLinux)("node:fs errno outside the SystemErrno table", () => {
         message: `EACCES: permission denied, ${c.syscall}`,
       });
     });
-  }
+  });
 });

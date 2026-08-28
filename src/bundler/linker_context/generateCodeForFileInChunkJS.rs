@@ -256,11 +256,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
     // The top-level directive must come first (the non-wrapped case is handled
     // by the chunk generation code, although only for the chunk's own entry
-    // point file, whose directive `post_process_js_chunk` prints at the top of
-    // the chunk). esbuild checks the file's entry point kind here, but it links
-    // each entry point on its own when code splitting is off. This graph is
-    // shared, so another entry point that this chunk pulls in as a wrapped
-    // dependency still needs the directive inside its wrapper.
+    // point). Another entry point can be a wrapped dependency of this chunk.
     let is_chunk_entry_point =
         chunk.is_entry_point() && chunk.entry_point.source_index() as usize == source_index;
     if flags.wrap != WrapKind::None

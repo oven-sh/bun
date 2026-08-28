@@ -223,13 +223,9 @@ pub struct Lexer<'a> {
     pub(crate) has_react_hooks_block_suppression: bool,
     pub(crate) preserve_all_comments_before: bool,
     pub(crate) is_legacy_octal_literal: bool,
-    /// Location of the backslash of the most recent legacy octal escape
-    /// (`\1`, `\08`, `\8`) decoded by `to_e_string`. Compared against the
-    /// string token's start to tell whether it belongs to the current literal.
+    /// Backslash of the most recent legacy octal escape decoded by `to_e_string`.
     pub(crate) legacy_octal_loc: Loc,
-    /// Range of the first `-->` or `<!--` legacy HTML comment marker. These
-    /// are an error in ECMAScript modules, which the parser only knows once
-    /// the whole file is scanned.
+    /// The first `-->` or `<!--` marker; an error once the file is known to be an ES module.
     pub(crate) legacy_html_comment_range: Range,
     pub(crate) is_log_disabled: bool,
     pub(crate) comments_to_preserve_before: Vec<js_ast::G::Comment>,
@@ -497,18 +493,14 @@ impl<'a> Lexer<'a> {
                             continue;
                         }
 
-                        // legacy octal escapes: 1-3 octal digits, decoded leniently.
-                        // Sloppy mode allows them, and the parser reports them in the
-                        // visit pass when the scope turns out to be strict.
+                        // legacy octal escapes: 1-3 digits, an error only in strict mode
                         0x30..=0x37 => {
                             // `iter` is on the first digit; the backslash is one byte before it.
                             let octal_start = (iter.i as usize).saturating_sub(1);
 
                             let mut is_bad = false;
                             let mut value: i64 = (c2 - 0x30) as i64;
-                            // Every path below leaves `iter` on the last consumed digit, so a
-                            // digit that is not part of the escape is lexed again by the outer
-                            // loop. `iterator.next` leaves `iter` untouched at end of text.
+                            // Every path leaves `iter` on the last consumed digit.
                             let mut prev = iter;
 
                             if iterator.next(&mut iter) {
@@ -2036,8 +2028,7 @@ impl<'a> Lexer<'a> {
         self.scan_legacy_html_comment_body("-->");
     }
 
-    /// Handles the legacy `<!--` HTML single-line open comment. Entered with
-    /// `self.code_point` on the `!` of `<!--`.
+    /// Handles `<!--`. Entered with `self.code_point` on the `!`.
     #[cold]
     #[inline(never)]
     fn scan_legacy_html_open_comment(&mut self) {
@@ -2048,8 +2039,7 @@ impl<'a> Lexer<'a> {
         self.scan_legacy_html_comment_body("<!--");
     }
 
-    /// Records the marker of the first legacy HTML comment (they are an error
-    /// in an ECMAScript module), warns, and consumes the rest of the line.
+    /// Records the first marker, warns, and consumes the rest of the line.
     fn scan_legacy_html_comment_body(&mut self, marker: &str) {
         if self.legacy_html_comment_range.len == 0 {
             self.legacy_html_comment_range = self.range();

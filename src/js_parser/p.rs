@@ -266,10 +266,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub(crate) hoisted_ref_for_sloppy_mode_block_fn: RefRefMap,
 
-    /// Source ranges of legacy octal number literals (`010`, `08`), keyed by
-    /// the literal's `Loc.start`. `E::Number` is stored inline in `Expr` with
-    /// no room for a flag, and whether the literal is an error is only known
-    /// in the visit pass once the scope's strict mode is final.
+    /// Legacy octal number literals (`010`, `08`) by `Loc.start`, for the visit pass.
     pub(crate) legacy_octal_literals: HashMap<i32, bun_ast::Range>,
 
     // Used for forcing CommonJS
@@ -2864,9 +2861,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.options.bundle || self.options.features.minify_identifiers
     }
 
-    /// True when the file has syntax that makes it an ECMAScript module. The
-    /// module type from the file extension or package.json does not count: a
-    /// file with no import or export is evaluated as CommonJS at runtime.
+    /// ESM syntax only; a `.mjs` file with no import or export runs as CommonJS.
     #[inline]
     pub(crate) fn is_file_considered_esm(&self) -> bool {
         self.esm_import_keyword.len > 0
@@ -2874,12 +2869,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             || self.top_level_await_keyword.len > 0
     }
 
-    /// Duplicate function declarations are forbidden in nested blocks in strict
-    /// mode. Separately, they are also forbidden at the top-level of modules.
-    /// This check is delayed until hoisting instead of being done when the
-    /// functions are declared because the whole file has to be scanned to know
-    /// whether it is in strict mode (or is a module): an `export {}` clause can
-    /// come at the end of the file.
+    /// Runs at hoisting time because `export {}` at the end of the file can make the scope strict.
     fn check_for_duplicate_function_declarations(&mut self, scope: js_ast::StoreRef<Scope>) {
         let is_module_top_level = scope.parent.is_none() && self.is_file_considered_esm();
         let is_strict_block = scope.strict_mode != js_ast::StrictModeKind::SloppyMode
@@ -4384,8 +4374,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// Explains why `scope` is in strict mode: the phrase that completes
-    /// "... cannot be used {}" and the note that points at the trigger.
+    /// The phrase that completes "... cannot be used {}" and the note that points at the trigger.
     pub(crate) fn why_strict_mode(
         &self,
         scope: js_ast::StoreRef<Scope>,
@@ -4665,8 +4654,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(ref_)
     }
 
-    /// Call while the lexer is on a `TNumericLiteral` that became the
-    /// `E::Number` at `loc`. Remembers legacy octal literals for the visit pass.
+    /// Call while the lexer is on the `TNumericLiteral` that became the `E::Number` at `loc`.
     pub(crate) fn check_for_legacy_octal_literal(&mut self, loc: bun_ast::Loc) {
         if self.lexer.is_legacy_octal_literal {
             let range = self.lexer.range();
@@ -4674,10 +4662,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Strict mode forbids declaring a reserved word, `eval`, or `arguments`.
-    /// Runs in the visit pass so the scope's strict mode is final (ESM and class
-    /// bodies only become strict after parsing, and a function's own
-    /// "use strict" applies to its name and parameters).
+    /// Visit-pass check, since ESM and class bodies only become strict after parsing.
     pub(crate) fn validate_declared_symbol_name(&mut self, loc: bun_ast::Loc, name: &[u8]) {
         if js_lexer::is_strict_mode_reserved_word(name) {
             self.mark_strict_mode_feature(

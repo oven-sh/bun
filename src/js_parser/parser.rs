@@ -1466,7 +1466,6 @@ pub struct ParseStatementOptions<'a> {
     pub(crate) is_typescript_declare: bool,
     pub(crate) is_for_loop_init: bool,
     /// Only a module body or a function body starts with a directive prologue.
-    /// A string statement at the start of a block is an expression.
     pub(crate) allow_directive_prologue: bool,
 }
 

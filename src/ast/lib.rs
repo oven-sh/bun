@@ -2687,8 +2687,7 @@ impl Source {
         }
     }
 
-    /// The range of the legacy octal escape (`\1`, `\08`, `\012`, `\8`) whose
-    /// backslash is at `loc`.
+    /// Range of the legacy octal escape (`\1`, `\08`, `\8`) whose backslash is at `loc`.
     pub fn range_of_legacy_octal_escape(&self, loc: Loc) -> Range {
         let text = &self.contents[loc.i()..];
         let mut r = Range { loc, len: 0 };

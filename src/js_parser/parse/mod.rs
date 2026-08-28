@@ -1495,14 +1495,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 scope.strict_mode = StrictModeKind::ExplicitStrictMode;
                                 scope.use_strict_loc = directive_loc;
 
-                                // Inside a function, strict mode actually propagates from the child
-                                // scope to the parent scope:
-                                //
-                                //   // This is a syntax error
-                                //   function fn(arguments) {
-                                //     "use strict";
-                                //   }
-                                //
+                                // The directive also covers the parameters.
                                 if scope.kind == js_ast::scope::Kind::FunctionBody {
                                     if let Some(mut parent) = scope.parent {
                                         if parent.kind == js_ast::scope::Kind::FunctionArgs

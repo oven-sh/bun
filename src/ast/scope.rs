@@ -29,10 +29,7 @@ pub struct Scope {
     /// so iteration yields safe `Deref` instead of `unsafe { child.as_ref() }`.
     pub children: AstVec<StoreRef<Scope>>,
     pub members: MemberHashMap,
-    /// Members that a later declaration in the same scope replaced (`var x;
-    /// var x` or `function f() {} function f() {}`). `hoist_symbols` reads
-    /// this to report duplicate function declarations once it knows whether
-    /// the scope ended up in strict mode. `AstVec`: arena-backed.
+    /// Members that a later declaration in this scope replaced (`function f() {} function f() {}`).
     pub replaced: AstVec<Member>,
     /// `AstVec`: arena-backed.
     pub generated: AstVec<Ref>,

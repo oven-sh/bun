@@ -113,8 +113,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.push_scope_for_visit_pass(ScopeKind::FunctionBody, body_loc)
             .expect("unreachable");
 
-        // The function's own "use strict" directive applies to its name, so the
-        // name is checked against the body scope rather than the enclosing one.
+        // The body's own "use strict" applies to the name, so check it in the body scope.
         if let Some(name) = func.name {
             if let Some(name_ref) = name.ref_.to_nullable() {
                 let symbol_name = self.load_name_from_ref(name_ref);
@@ -184,10 +183,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         func
     }
 
-    /// The location of the function body's own "use strict" directive, if any.
-    /// The parse pass drops the directive statement and records it on the body
-    /// scope, which is a child of the current (FunctionArgs) scope. A directive
-    /// inherited from an enclosing scope is located before the body.
+    /// The body's own "use strict" directive, read from the FunctionBody child scope.
     fn fn_body_use_strict_loc(&self, body_loc: bun_ast::Loc) -> Option<bun_ast::Loc> {
         let args_scope = self.current_scope();
         debug_assert!(args_scope.kind == ScopeKind::FunctionArgs);

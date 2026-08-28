@@ -1674,9 +1674,7 @@ pub struct EString {
     pub next: Option<StoreRef<EString>>,
     pub end: Option<StoreRef<EString>>,
     pub rope_len: u32,
-    /// Location of the first legacy octal escape (`\1`, `\08`, `\8`) in the
-    /// literal's source text, or `Loc::EMPTY`. The lexer decodes these
-    /// leniently; the visit pass reports them where strict mode forbids them.
+    /// Backslash of the first legacy octal escape (`\1`, `\08`, `\8`), or `Loc::EMPTY`.
     pub legacy_octal_loc: crate::Loc,
     pub prefer_template: bool,
     pub is_utf16: bool,

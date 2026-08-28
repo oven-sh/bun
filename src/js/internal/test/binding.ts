@@ -92,6 +92,18 @@ function internalBinding(name: string) {
       return { TCP: TestTCPWrap, constants: { SOCKET: 0, SERVER: 1 } };
     case "util":
       return { isInsideNodeModules };
+    case "worker":
+      // node's env port is the thread's control channel to its parent.
+      return { getEnvMessagePort: require("internal/worker/messaging").getMainThreadPort };
+    case "js_stream":
+      // A host object the structured-clone serializer rejects, which is all the tests probe.
+      return {
+        JSStream: class JSStream {
+          constructor() {
+            return new TextEncoder();
+          }
+        },
+      };
     case "cares_wrap":
       // Only the pure IP-normalizer the vendored tls/dns tests reach for; the
       // resolver surface lives in node:dns.

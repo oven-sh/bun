@@ -9,6 +9,7 @@
 #pragma once
 
 #include "ScriptExecutionContext.h"
+#include <wtf/Deque.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
@@ -29,6 +30,8 @@ public:
     void subscribe(const String& name, ScriptExecutionContext&, BroadcastChannel&);
     void unsubscribe(const String& name, BroadcastChannel&);
     void post(const String& name, BroadcastChannel& source, Ref<SerializedScriptValue>&&);
+    // Synchronous pop of one undispatched message, for receiveMessageOnPort(channel).
+    RefPtr<SerializedScriptValue> takePending(const String& name, BroadcastChannel&);
 
 private:
     friend class WTF::NeverDestroyed<BunBroadcastChannelRegistry>;
@@ -42,6 +45,8 @@ private:
         // Raw pointer used only for identity comparison under the lock;
         // never dereferenced.
         BroadcastChannel* identity;
+        // Posted but not yet dispatched; kept here so posting needs no strong channel ref.
+        Deque<Ref<SerializedScriptValue>> pending;
     };
 
     WTF::Lock m_lock;

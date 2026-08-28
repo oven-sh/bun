@@ -1,6 +1,7 @@
 // Hardcoded module "node:crypto"
 const StringDecoder = require("node:string_decoder").StringDecoder;
 const LazyTransform = require("internal/streams/lazy_transform");
+const { guardCallback } = require("internal/shared");
 const { defineCustomPromisifyArgs } = require("internal/promisify");
 const Writable = require("internal/streams/writable");
 const { CryptoHasher } = Bun;
@@ -132,10 +133,28 @@ crypto_exports.constants = $processBindingConstants.crypto;
 
 crypto_exports.KeyObject = KeyObject;
 
-crypto_exports.generateKey = generateKey;
+// Like node's MakeCallback, the trailing callback runs inside the active domain.
+function wrapDomainCallbackLast(fn, name) {
+  function wrapper() {
+    if (process.domain != null) {
+      const n = arguments.length;
+      if (n > 0 && typeof arguments[n - 1] === "function") {
+        const args = new Array(n);
+        for (let i = 0; i < n - 1; i++) args[i] = arguments[i];
+        args[n - 1] = guardCallback(arguments[n - 1]);
+        return fn.$apply(this, args);
+      }
+    }
+    return fn.$apply(this, arguments);
+  }
+  Object.defineProperty(wrapper, "name", { __proto__: null, value: name, configurable: true });
+  Object.defineProperty(wrapper, "length", { __proto__: null, value: fn.length, configurable: true });
+  return wrapper;
+}
+crypto_exports.generateKey = wrapDomainCallbackLast(generateKey, "generateKey");
 crypto_exports.generateKeySync = generateKeySync;
-defineCustomPromisifyArgs(generateKeyPair, ["publicKey", "privateKey"]);
-crypto_exports.generateKeyPair = generateKeyPair;
+crypto_exports.generateKeyPair = wrapDomainCallbackLast(generateKeyPair, "generateKeyPair");
+defineCustomPromisifyArgs(crypto_exports.generateKeyPair, ["publicKey", "privateKey"]);
 crypto_exports.generateKeyPairSync = generateKeyPairSync;
 
 crypto_exports.createSecretKey = createSecretKey;
@@ -149,10 +168,10 @@ crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
   return CryptoHasher.hash(algorithm, input, outputEncoding);
 };
 
-crypto_exports.pbkdf2 = pbkdf2;
+crypto_exports.pbkdf2 = wrapDomainCallbackLast(pbkdf2, "pbkdf2");
 crypto_exports.pbkdf2Sync = pbkdf2Sync;
 
-crypto_exports.hkdf = hkdf;
+crypto_exports.hkdf = wrapDomainCallbackLast(hkdf, "hkdf");
 crypto_exports.hkdfSync = hkdfSync;
 
 crypto_exports.getCurves = getCurves;
@@ -190,7 +209,7 @@ Object.assign(Sign.prototype, {
 });
 
 crypto_exports.Sign = Sign;
-crypto_exports.sign = sign;
+crypto_exports.sign = wrapDomainCallbackLast(sign, "sign");
 
 function createSign(algorithm, options?) {
   return new Sign(algorithm, options);
@@ -221,7 +240,7 @@ Object.assign(Verify.prototype, {
 });
 
 crypto_exports.Verify = Verify;
-crypto_exports.verify = verify;
+crypto_exports.verify = wrapDomainCallbackLast(verify, "verify");
 
 function createVerify(algorithm, options?) {
   return new Verify(algorithm, options);
@@ -302,10 +321,12 @@ crypto_exports.createHmac = function createHmac(hmac, key, options) {
 
 crypto_exports.getHashes = getHashes;
 
-crypto_exports.randomInt = randomInt;
-crypto_exports.randomFill = randomFill;
+const domainAwareRandomBytes = wrapDomainCallbackLast(randomBytes, "randomBytes");
+
+crypto_exports.randomInt = wrapDomainCallbackLast(randomInt, "randomInt");
+crypto_exports.randomFill = wrapDomainCallbackLast(randomFill, "randomFill");
 crypto_exports.randomFillSync = randomFillSync;
-crypto_exports.randomBytes = randomBytes;
+crypto_exports.randomBytes = domainAwareRandomBytes;
 crypto_exports.randomUUID = randomUUID;
 crypto_exports.randomUUIDv7 = randomUUIDv7;
 
@@ -365,7 +386,7 @@ function checkArgon2(algorithm, parameters) {
   return { message, nonce, secret, associatedData, tagLength, passes, parallelism, memory, type };
 }
 
-crypto_exports.argon2 = function argon2(algorithm, parameters, callback) {
+crypto_exports.argon2 = wrapDomainCallbackLast(function argon2(algorithm, parameters, callback) {
   parameters = checkArgon2(algorithm, parameters);
 
   validateFunction(callback, "callback");
@@ -385,7 +406,7 @@ crypto_exports.argon2 = function argon2(algorithm, parameters, callback) {
       callback(null, result);
     },
   );
-};
+}, "argon2");
 crypto_exports.argon2Sync = function argon2Sync(algorithm, parameters) {
   parameters = checkArgon2(algorithm, parameters);
 
@@ -402,9 +423,9 @@ crypto_exports.argon2Sync = function argon2Sync(algorithm, parameters) {
   );
 };
 
-crypto_exports.checkPrime = checkPrime;
+crypto_exports.checkPrime = wrapDomainCallbackLast(checkPrime, "checkPrime");
 crypto_exports.checkPrimeSync = checkPrimeSync;
-crypto_exports.generatePrime = generatePrime;
+crypto_exports.generatePrime = wrapDomainCallbackLast(generatePrime, "generatePrime");
 crypto_exports.generatePrimeSync = generatePrimeSync;
 
 crypto_exports.secureHeapUsed = secureHeapUsed;
@@ -419,7 +440,7 @@ Object.defineProperty(crypto_exports, "fips", {
 
 for (const rng of ["pseudoRandomBytes", "prng", "rng"]) {
   Object.defineProperty(crypto_exports, rng, {
-    value: deprecate(randomBytes, `crypto.${rng} is deprecated.`, "DEP0115"),
+    value: deprecate(domainAwareRandomBytes, `crypto.${rng} is deprecated.`, "DEP0115"),
     enumerable: false,
     configurable: true,
   });
@@ -551,7 +572,7 @@ crypto_exports.createECDH = function createECDH(curve) {
   crypto_exports.getCiphers = getCiphers;
 }
 
-crypto_exports.scrypt = scrypt;
+crypto_exports.scrypt = wrapDomainCallbackLast(scrypt, "scrypt");
 crypto_exports.scryptSync = scryptSync;
 
 crypto_exports.publicEncrypt = publicEncrypt;

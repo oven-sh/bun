@@ -222,23 +222,22 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
         return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"port\" argument must be a MessagePort instance"_s);
     }
 
+    // node: `undefined` when empty, else `{ message }` (so a posted undefined is distinguishable).
+    bool hadMessage = false;
+    JSValue message;
     if (auto* messagePort = dynamicDowncast<JSMessagePort>(port)) {
-        // node: `undefined` when the queue is empty, otherwise `{ message }` — built
-        // here so a posted `undefined`/falsy value is distinguishable from "empty".
-        bool hadMessage = false;
-        JSValue message = messagePort->wrapped().tryTakeMessage(lexicalGlobalObject, hadMessage);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!hadMessage)
-            return JSC::JSValue::encode(jsUndefined());
-        auto* result = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), 1);
-        result->putDirect(vm, JSC::Identifier::fromString(vm, "message"_s), message);
-        return JSC::JSValue::encode(result);
-    } else if (dynamicDowncast<JSBroadcastChannel>(port)) {
-        // TODO: support broadcast channels
-        return JSC::JSValue::encode(jsUndefined());
+        message = messagePort->wrapped().tryTakeMessage(lexicalGlobalObject, hadMessage);
+    } else if (auto* broadcastChannel = dynamicDowncast<JSBroadcastChannel>(port)) {
+        message = broadcastChannel->wrapped().tryTakeMessage(lexicalGlobalObject, hadMessage);
+    } else {
+        return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"port\" argument must be a MessagePort instance"_s);
     }
-
-    return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"port\" argument must be a MessagePort instance"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!hadMessage)
+        return JSC::JSValue::encode(jsUndefined());
+    auto* result = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), 1);
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "message"_s), message);
+    return JSC::JSValue::encode(result);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMessagePortIsActive, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

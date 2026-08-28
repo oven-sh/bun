@@ -117,7 +117,7 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
       thrown:
         mode === "json"
           ? { name: "TypeError", message: "JSON.stringify cannot serialize cyclic structures." }
-          : { name: "DataCloneError", message: "The object can not be cloned." },
+          : { name: "DataCloneError", message: "callback() {} could not be cloned." },
     });
   });
 });

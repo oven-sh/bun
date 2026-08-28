@@ -77,6 +77,10 @@ public:
 
     // Called on this channel's context thread with one message.
     void dispatchMessage(Ref<SerializedScriptValue>&&);
+    // Pops one registry-queued message and dispatches it as a 'message' event.
+    void dispatchPendingMessage();
+    // node:worker_threads receiveMessageOnPort — synchronous single pop.
+    JSC::JSValue tryTakeMessage(JSC::JSGlobalObject*, bool& hadMessage);
 
     void jsRef(JSGlobalObject*);
     void jsUnref(JSGlobalObject*);

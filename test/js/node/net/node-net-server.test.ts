@@ -18,6 +18,33 @@ describe("net.createServer listen", () => {
     done();
   });
 
+  it("a cluster worker listening on a hostname keeps ipv6Only in the query", async () => {
+    // The host is resolved first; the flags must survive the resolution and reach
+    // the primary. NODE_UNIQUE_ID makes node:cluster load as a worker. (reusePort
+    // makes the listen exclusive, which skips the primary, so only ipv6Only here.)
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const cluster = require("node:cluster");
+        cluster._getServer = (server, query) => {
+          console.log(JSON.stringify({ address: require("node:net").isIP(query.address) !== 0, flags: query.flags }));
+          process.exit(0);
+        };
+        require("node:net").createServer().listen({ port: 0, host: "localhost", ipv6Only: true });
+        `,
+      ],
+      env: { ...bunEnv, NODE_UNIQUE_ID: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ address: true, flags: 1 });
+    expect(exitCode).toBe(0);
+  });
+
   // No secondary setTimeout deadline: the test runner already bounds each test,
   // and a real listen failure reaches done() via the 'error' listener below.
   const failOnError = (server: Server, done: (err?: unknown) => void) => (err: unknown) => {

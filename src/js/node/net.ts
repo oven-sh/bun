@@ -48,6 +48,9 @@ const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
+const NumberParseInt = Number.parseInt;
+const StringPrototypeIndexOf = String.prototype.indexOf;
+const StringPrototypeSlice = String.prototype.slice;
 const MathMin = Math.min;
 
 let uvBinding;
@@ -3523,6 +3526,7 @@ function Server(options?, connectionListener?) {
   this._usingWorkers = false;
   this.workers = [];
   this._unref = false;
+  this._listeningId = 1;
 
   this[bunSocketServerOptions] = undefined;
   // Server option coercion matches Node's Server constructor:
@@ -3567,6 +3571,7 @@ Server.prototype.unref = function unref() {
 
 Server.prototype.close = function close(callback) {
   this[kClusterListeningId] = (this[kClusterListeningId] || 0) + 1;
+  this._listeningId++;
   if (typeof callback === "function") {
     if (!this._handle) {
       this.once("close", function close() {
@@ -3806,6 +3811,8 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     throw $ERR_SERVER_ALREADY_LISTEN();
   }
 
+  this._listeningId++;
+
   if (onListen != null) {
     this.once("listening", onListen);
   }
@@ -3826,6 +3833,25 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       }
     } else {
       options[kSocketClass] = Socket;
+    }
+
+    if (typeof hostname === "string" && hostname !== "" && path == null && fd == null && isIP(hostname) === 0) {
+      lookupAndListen(
+        this,
+        port,
+        hostname,
+        backlog,
+        exclusive,
+        ipv6Only,
+        reusePort,
+        readableAll,
+        writableAll,
+        fd,
+        tls,
+        contexts,
+        onListen,
+      );
+      return this;
     }
 
     const flags = (ipv6Only === true ? 1 : 0) | (reusePort === true ? 2 : 0);
@@ -4026,6 +4052,81 @@ function emitListeningNextTick(self) {
 }
 
 let cluster;
+// fe80::/10, as node's isIpv6LinkLocal (lib/net.js).
+function isIpv6LinkLocal(ip) {
+  if (!isIPv6(ip)) return false;
+  const firstColon = StringPrototypeIndexOf.$call(ip, ":");
+  if (firstColon === 0) return false; // "::..." - first group is zero
+  const firstGroup = NumberParseInt(StringPrototypeSlice.$call(ip, 0, firstColon), 16);
+  return (firstGroup & 0xffc0) === 0xfe80;
+}
+
+// The first non link-local address, else the first address.
+function filterOnlyValidAddress(addresses) {
+  for (const address of addresses) {
+    if (!isIpv6LinkLocal(address.address)) {
+      return address;
+    }
+  }
+  return addresses[0];
+}
+
+// node's lookupAndListen (lib/net.js): resolve the host, bind the first non link-local address.
+function lookupAndListen(
+  server,
+  port,
+  hostname,
+  backlog,
+  exclusive,
+  ipv6Only,
+  reusePort,
+  readableAll,
+  writableAll,
+  fd,
+  tls,
+  contexts,
+  onListen,
+) {
+  if (dns === undefined) dns = require("node:dns");
+  const flags = (ipv6Only === true ? 1 : 0) | (reusePort === true ? 2 : 0);
+  const listeningId = server._listeningId;
+  dns.lookup(hostname, { all: true }, (err, addresses) => {
+    if (listeningId !== server._listeningId) {
+      return;
+    }
+    if (err) {
+      server.emit("error", err);
+      return;
+    }
+    const validAddress = filterOnlyValidAddress(addresses);
+    const family = validAddress?.family || 4;
+    try {
+      listenInCluster(
+        server,
+        validAddress?.address,
+        port,
+        family,
+        backlog,
+        fd,
+        exclusive,
+        ipv6Only,
+        reusePort,
+        readableAll,
+        writableAll,
+        flags,
+        undefined,
+        null,
+        validAddress?.address,
+        tls,
+        contexts,
+        onListen,
+      );
+    } catch (listenErr) {
+      process.nextTick(emitErrorNextTick, server, formatListenError(listenErr, validAddress?.address, port));
+    }
+  });
+}
+
 function listenInCluster(
   server,
   address,
@@ -4049,48 +4150,6 @@ function listenInCluster(
   exclusive = !!exclusive;
 
   if (cluster === undefined) cluster = require("node:cluster");
-
-  if (
-    !cluster.isPrimary &&
-    !exclusive &&
-    typeof address === "string" &&
-    address.length > 0 &&
-    typeof port === "number" &&
-    port >= 0 &&
-    isIP(address) === 0
-  ) {
-    const lookupListeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2259-L2278
-    require("node:dns").lookup(address, (err, ip, family) => {
-      if (lookupListeningId !== server[kClusterListeningId]) return;
-      if (err) {
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2268-L2269
-        server.emit("error", err);
-        return;
-      }
-      listenInCluster(
-        server,
-        ip,
-        port,
-        family === 6 ? 6 : 4,
-        backlog,
-        fd,
-        exclusive,
-        ipv6Only,
-        reusePort,
-        readableAll,
-        writableAll,
-        flags,
-        options,
-        path,
-        hostname,
-        tls,
-        contexts,
-        onListen,
-      );
-    });
-    return;
-  }
 
   if (cluster.isPrimary || exclusive) {
     server[kRealListen](

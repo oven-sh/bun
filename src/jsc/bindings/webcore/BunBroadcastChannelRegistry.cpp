@@ -66,6 +66,8 @@ void BunBroadcastChannelRegistry::post(const String& name, BroadcastChannel& sou
         for (auto& sub : it->value) {
             if (sub.identity == &source)
                 continue;
+            // Queued here so receiveMessageOnPort can take it synchronously.
+            sub.pending.append(message.copyRef());
             targets.append({ sub.ctxId, sub.ctxLoopKind, sub.channel });
         }
     }
@@ -74,12 +76,28 @@ void BunBroadcastChannelRegistry::post(const String& name, BroadcastChannel& sou
     // Same-context subscribers share a task queue, so this preserves the
     // spec-mandated (message-major, creation-minor) delivery order.
     for (auto& [ctxId, ctxLoopKind, weakChannel] : targets) {
-        ScriptExecutionContext::postTaskTo(ctxId, ctxLoopKind, [weakChannel, message = message.copyRef()](ScriptExecutionContext&) mutable {
+        ScriptExecutionContext::postTaskTo(ctxId, ctxLoopKind, [weakChannel](ScriptExecutionContext&) mutable {
             // Resolve on the target thread so any last deref happens here.
             if (RefPtr channel = weakChannel.get())
-                channel->dispatchMessage(WTF::move(message));
+                channel->dispatchPendingMessage();
         });
     }
+}
+
+RefPtr<SerializedScriptValue> BunBroadcastChannelRegistry::takePending(const String& name, BroadcastChannel& channel)
+{
+    Locker locker { m_lock };
+    auto it = m_subscribers.find(name);
+    if (it == m_subscribers.end())
+        return nullptr;
+    for (auto& sub : it->value) {
+        if (sub.identity != &channel)
+            continue;
+        if (sub.pending.isEmpty())
+            return nullptr;
+        return sub.pending.takeFirst();
+    }
+    return nullptr;
 }
 
 } // namespace WebCore

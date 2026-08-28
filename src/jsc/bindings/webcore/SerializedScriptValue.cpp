@@ -44,6 +44,7 @@
 #include "JSDOMConvertBufferSource.h"
 #include "JSDOMException.h"
 #include "JSDOMGlobalObject.h"
+#include "JSMessageChannel.h"
 #include "JSMessagePort.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
@@ -1115,7 +1116,14 @@ private:
         }
 
         if (value.isSymbol()) {
-            code = SerializationReturnCode::DataCloneError;
+            VM& vm = m_lexicalGlobalObject->vm();
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            // node (V8) names the failing value: `Symbol(foo) could not be cloned.`
+            auto descriptionExpected = asSymbol(value)->tryGetDescriptiveString();
+            String description = descriptionExpected ? descriptionExpected.value() : String("Symbol()"_s);
+            WebCore::propagateException(*m_lexicalGlobalObject, scope,
+                Exception { DataCloneError, makeString(description, " could not be cloned."_s) });
+            code = SerializationReturnCode::ExistingExceptionError;
             return true;
         }
 
@@ -2090,8 +2098,30 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             // All supported objects other than plain Object have been handled; throw
             // DataCloneError otherwise. NapiPrototype, ObjectPrototype, and process.env
             // are allowed (Node supports structuredClone(process.env) as a plain object).
-            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info() && !Bun::isProcessEnvClassInfo(inObject->classInfo()))
-                return SerializationReturnCode::DataCloneError;
+            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info() && !Bun::isProcessEnvClassInfo(inObject->classInfo())) {
+                // node's error for a MessageChannel in a message.
+                if (inObject->inherits<JSMessageChannel>()) {
+                    WebCore::propagateException(*m_lexicalGlobalObject, scope,
+                        Exception { DataCloneError, "Object that needs transfer was found in message but not listed in transferList"_s });
+                    return SerializationReturnCode::ExistingExceptionError;
+                }
+                // node names a rejected callable by its source text, anything else as a host object.
+                if (auto* function = dynamicDowncast<JSC::JSFunction>(inObject)) {
+                    JSString* sourceString = function->toString(m_lexicalGlobalObject);
+                    RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+                    String source = sourceString->value(m_lexicalGlobalObject);
+                    RETURN_IF_EXCEPTION(scope, SerializationReturnCode::ExistingExceptionError);
+                    WebCore::propagateException(*m_lexicalGlobalObject, scope,
+                        Exception { DataCloneError, makeString(source, " could not be cloned."_s) });
+                } else if (inObject->isCallable()) {
+                    WebCore::propagateException(*m_lexicalGlobalObject, scope,
+                        Exception { DataCloneError, makeString("function "_s, inObject->classInfo()->className, "() { [native code] } could not be cloned."_s) });
+                } else {
+                    WebCore::propagateException(*m_lexicalGlobalObject, scope,
+                        Exception { DataCloneError, "Cannot clone object of unsupported type."_s });
+                }
+                return SerializationReturnCode::ExistingExceptionError;
+            }
             inputObjectStack.append(inObject);
             indexStack.append(0);
             propertyStack.append(PropertyNameArrayBuilder(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude));

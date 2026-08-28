@@ -74,7 +74,7 @@ const {
   // worker_threads (#40268).
   13: _MessagePort,
   14: MessageChannel,
-  15: BroadcastChannel,
+  15: WebBroadcastChannel,
   16: WebWorker,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
@@ -98,6 +98,53 @@ const {
   // node:worker_threads instance instead of the Web Worker instance.
   new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker,
 ];
+
+// node's BroadcastChannel (lib/internal/worker/io.js) argument handling on top of the WHATWG class.
+class BroadcastChannel extends WebBroadcastChannel {
+  #closed = false;
+
+  constructor(name?: unknown) {
+    if (arguments.length === 0) throw $ERR_MISSING_ARGS("name");
+    // node's `${name}` under V8; JSC words the symbol failure differently.
+    if (typeof name === "symbol") throw new TypeError("Cannot convert a Symbol value to a string");
+    super(`${name}`);
+  }
+
+  // node brand-checks `this` before validating arguments.
+  static #check(channel: BroadcastChannel) {
+    if (!(#closed in channel)) throw $ERR_INVALID_THIS("BroadcastChannel");
+  }
+
+  get name() {
+    BroadcastChannel.#check(this);
+    return super.name;
+  }
+
+  close() {
+    BroadcastChannel.#check(this);
+    this.#closed = true;
+    super.close();
+  }
+
+  postMessage(message: unknown) {
+    BroadcastChannel.#check(this);
+    if (arguments.length === 0) throw $ERR_MISSING_ARGS("message");
+    if (this.#closed) throw new DOMException("BroadcastChannel is closed.", "InvalidStateError");
+    super.postMessage(message);
+  }
+
+  ref() {
+    BroadcastChannel.#check(this);
+    super.ref();
+    return this;
+  }
+
+  unref() {
+    BroadcastChannel.#check(this);
+    super.unref();
+    return this;
+  }
+}
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 
@@ -948,7 +995,7 @@ class Worker extends EventEmitter {
     // threadId is only assigned once the WebWorker exists; register the hub-side
     // control port with the messaging hub now.
     this.#messagingThreadId = this.#worker.threadId;
-    messaging.registerMainThreadPort(this.#messagingThreadId, portToMain);
+    messaging.registerMainThreadPort(this.#messagingThreadId, portToMain, this.#onCouldNotSerializeError.bind(this));
     // The transfer is committed - release fds that were transferred but are
     // not referenced from workerData (nothing will deserialize them).
     options[kFinalizeJSTransferables]?.();
@@ -1199,6 +1246,11 @@ class Worker extends EventEmitter {
     }
     this.#onExitPromise = e.code;
     this.emit("exit", e.code);
+  }
+
+  // node's Worker[kOnCouldNotSerializeErr].
+  #onCouldNotSerializeError() {
+    this.emit("error", $ERR_WORKER_UNSERIALIZABLE_ERROR("Serializing an uncaught exception failed"));
   }
 
   #onError(event: ErrorEvent) {

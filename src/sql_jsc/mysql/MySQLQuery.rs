@@ -330,8 +330,7 @@ impl MySQLQuery {
         // read-only derefs below into one safe `Deref`; the `.Pending` arm's
         // status write goes through `get_statement()`.
         let stmt = self.statement.as_ref().expect("set above").as_non_null();
-        let stmt_ref = bun_ptr::ParentRef::from(stmt);
-        let stmt: *mut MySQLStatement = stmt.as_ptr();
+        let (stmt, stmt_ref) = (stmt.as_ptr(), bun_ptr::ParentRef::from(stmt));
         match stmt_ref.status {
             my_sql_statement::Status::Failed => {
                 debug!("failed");

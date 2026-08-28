@@ -636,7 +636,7 @@ pub unsafe fn host_fn_finalize<T>(this: *mut T, f: impl FnOnce(alloc::boxed::Box
     f(boxed)
 }
 
-/// Finalizer for an `refCounted: true` class: the wrapper held one ref on an
+/// Finalizer for a `refCounted: true` class: the wrapper held one ref on an
 /// intrusively refcounted payload. Runs the type's `&self` hook (clear a
 /// `this_value`, mark finalized, …) and drops that ref.
 ///

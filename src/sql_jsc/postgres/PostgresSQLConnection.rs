@@ -1421,12 +1421,9 @@ impl PostgresSQLConnection {
         // black_box launder (b818e70e1c57-style) is no longer needed.
         // The connection is kept alive by the caller's `ref_and_close` ref
         // bracket for the duration of this loop, so re-entry never frees `*self`.
-        while let Some(request) = self.requests.get().front().map(RefPtr::as_non_null) {
-            // The queue's `RefPtr` keeps the query live. R-2: `ParentRef`
-            // yields `&T` only — `PostgresSQLQuery` is Cell/JsCell-backed. Raw
-            // `*mut` retained for `discard_request` below.
-            let request_ptr = request.as_ptr();
-            let request = ParentRef::from(request);
+        // The queue's `RefPtr` keeps the query live. R-2: `ParentRef` yields
+        // `&T` only — `PostgresSQLQuery` is Cell/JsCell-backed.
+        while let Some(request) = self.current() {
             match request.status.get() {
                 // pending we will fail the request and the stmt will be marked as error ConnectionClosed too
                 QueryStatus::Pending => {
@@ -1465,7 +1462,7 @@ impl PostgresSQLConnection {
                 // just ignore success and fail cases
                 QueryStatus::Success | QueryStatus::Fail => {}
             }
-            self.discard_request(request_ptr);
+            self.discard_request(&request);
         }
     }
 
@@ -1515,8 +1512,13 @@ impl PostgresSQLConnection {
     /// Pop the FIFO head if it is still `request` (re-entrant JS may already
     /// have removed it), dropping the queue's ref.
     #[inline]
-    fn discard_request(&self, request: *mut PostgresSQLQuery) {
-        if self.requests.get().front().map(RefPtr::as_ptr) == Some(request) {
+    fn discard_request(&self, request: &PostgresSQLQuery) {
+        if self
+            .requests
+            .get()
+            .front()
+            .is_some_and(|f| core::ptr::eq(f.as_ptr(), request))
+        {
             self.requests.with_mut(|q| q.pop_front());
         }
     }
@@ -1781,21 +1783,18 @@ impl PostgresSQLConnection {
         // expanded as a closure called at every return point below.
         macro_rules! defer_cleanup {
             ($self:ident) => {{
-                while let Some(result) = $self.requests.get().front().map(RefPtr::as_non_null) {
-                    // The queue's `RefPtr` keeps the query live. R-2:
-                    // `ParentRef` yields `&T` only — `PostgresSQLQuery` is
-                    // Cell/JsCell-backed.
-                    let result_ptr = result.as_ptr();
-                    let result = ParentRef::from(result);
+                // The queue's `RefPtr` keeps the query live. R-2: `ParentRef`
+                // yields `&T` only — `PostgresSQLQuery` is Cell/JsCell-backed.
+                while let Some(result) = $self.current() {
                     // An item may be in the success or failed state and still be inside the queue (see deinit later comments)
                     // so we do the cleanup here
                     match result.status.get() {
                         QueryStatus::Success => {
-                            $self.discard_request(result_ptr);
+                            $self.discard_request(&result);
                             continue;
                         }
                         QueryStatus::Fail => {
-                            $self.discard_request(result_ptr);
+                            $self.discard_request(&result);
                             continue;
                         }
                         _ => break, // truly current item
@@ -1809,9 +1808,7 @@ impl PostgresSQLConnection {
         {
             // The queue's `RefPtr` keeps the query live. R-2: `ParentRef`
             // yields `&T` only — `PostgresSQLQuery` is Cell/JsCell-backed.
-            let req = self.requests.get()[offset].as_non_null();
-            let req_ptr: *mut PostgresSQLQuery = req.as_ptr();
-            let req = ParentRef::from(req);
+            let req = ParentRef::from(self.requests.get()[offset].as_non_null());
             match req.status.get() {
                 QueryStatus::Pending => {
                     // Optimistically account for this request leaving Pending; the
@@ -1852,7 +1849,7 @@ impl PostgresSQLConnection {
                                 req.on_write_fail(err, self.global(), self.get_queries_array());
                             }
                             if offset == 0 {
-                                self.discard_request(req_ptr);
+                                self.discard_request(&req);
                             } else {
                                 // deinit later
                                 req.status.set(QueryStatus::Fail);
@@ -1884,7 +1881,7 @@ impl PostgresSQLConnection {
                                         req.on_js_error(ev, self.global());
                                     }
                                     if offset == 0 {
-                                        self.discard_request(req_ptr);
+                                        self.discard_request(&req);
                                     } else {
                                         // deinit later
                                         req.status.set(QueryStatus::Fail);
@@ -1899,7 +1896,7 @@ impl PostgresSQLConnection {
                                             "query value was freed earlier than expected"
                                         );
                                         if offset == 0 {
-                                            self.discard_request(req_ptr);
+                                            self.discard_request(&req);
                                         } else {
                                             // deinit later
                                             req.status.set(QueryStatus::Fail);
@@ -1948,7 +1945,7 @@ impl PostgresSQLConnection {
                                                 );
                                             }
                                             if offset == 0 {
-                                                self.discard_request(req_ptr);
+                                                self.discard_request(&req);
                                             } else {
                                                 // deinit later
                                                 req.status.set(QueryStatus::Fail);
@@ -1980,7 +1977,7 @@ impl PostgresSQLConnection {
                                                 );
                                             }
                                             if offset == 0 {
-                                                self.discard_request(req_ptr);
+                                                self.discard_request(&req);
                                             } else {
                                                 // deinit later
                                                 req.status.set(QueryStatus::Fail);
@@ -2035,7 +2032,7 @@ impl PostgresSQLConnection {
                                                 "query value was freed earlier than expected"
                                             );
                                             if offset == 0 {
-                                                self.discard_request(req_ptr);
+                                                self.discard_request(&req);
                                             } else {
                                                 // deinit later
                                                 req.status.set(QueryStatus::Fail);
@@ -2071,7 +2068,7 @@ impl PostgresSQLConnection {
                                                 );
                                             }
                                             if offset == 0 {
-                                                self.discard_request(req_ptr);
+                                                self.discard_request(&req);
                                             } else {
                                                 // deinit later
                                                 req.status.set(QueryStatus::Fail);
@@ -2110,7 +2107,7 @@ impl PostgresSQLConnection {
                                                 "query value was freed earlier than expected"
                                             );
                                             debug_assert!(offset == 0);
-                                            self.discard_request(req_ptr);
+                                            self.discard_request(&req);
                                             continue;
                                         };
                                         let binding_value =
@@ -2145,7 +2142,7 @@ impl PostgresSQLConnection {
                                                 );
                                             }
                                             debug_assert!(offset == 0);
-                                            self.discard_request(req_ptr);
+                                            self.discard_request(&req);
                                             debug!(
                                                 "parseAndBindAndExecute failed: {}",
                                                 <&'static str>::from(err)
@@ -2191,7 +2188,7 @@ impl PostgresSQLConnection {
                                             );
                                         }
                                         debug_assert!(offset == 0);
-                                        self.discard_request(req_ptr);
+                                        self.discard_request(&req);
                                         debug!("write query failed: {}", <&'static str>::from(err));
                                         continue;
                                     }
@@ -2209,7 +2206,7 @@ impl PostgresSQLConnection {
                                             );
                                         }
                                         debug_assert!(offset == 0);
-                                        self.discard_request(req_ptr);
+                                        self.discard_request(&req);
                                         debug!(
                                             "write query (sync) failed: {}",
                                             <&'static str>::from(err)
@@ -2268,7 +2265,7 @@ impl PostgresSQLConnection {
                         offset += 1;
                         continue;
                     }
-                    self.discard_request(req_ptr);
+                    self.discard_request(&req);
                     continue;
                 }
                 QueryStatus::Fail => {
@@ -2277,7 +2274,7 @@ impl PostgresSQLConnection {
                         offset += 1;
                         continue;
                     }
-                    self.discard_request(req_ptr);
+                    self.discard_request(&req);
                     continue;
                 }
             }

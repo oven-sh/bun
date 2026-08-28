@@ -621,8 +621,8 @@ impl S3UploadStreamWrapper {
     pub(crate) fn handle_resolve_stream(&mut self) {
         bun_output::scoped_log!(S3UploadStream, "handleResolveStream");
         self.detach_sink();
-        // SAFETY: `self` is a live Box allocation; this balances the pump ref.
-        unsafe { Self::deref(std::ptr::from_mut::<Self>(self)) };
+        // SAFETY: `self` is a live Box allocation; this adopts the pump ref.
+        drop(unsafe { RefPtr::from_raw(std::ptr::from_mut::<Self>(self)) });
     }
 
     /// Stream pump rejected. Rejects the caller's end_promise, fails the upload,
@@ -630,12 +630,8 @@ impl S3UploadStreamWrapper {
     pub(crate) fn handle_reject_stream(&mut self, err: JSValue) {
         bun_output::scoped_log!(S3UploadStream, "handleRejectStream");
         self.detach_sink();
-        // scope-exit deref via guard (keeps borrowck happy)
-        let _deref_guard = scopeguard::guard(std::ptr::from_mut::<Self>(self), |s| {
-            // SAFETY: s points to self which is alive for the duration of the guard; deref_
-            // decrements ref_count and may free self only after all borrows above are released
-            unsafe { Self::deref(s) }
-        });
+        // SAFETY: adopts the pump ref; released at scope exit, after the borrows below.
+        let _pump_ref = unsafe { RefPtr::from_raw(std::ptr::from_mut::<Self>(self)) };
         if self.end_promise.has_value() && !err.is_empty_or_undefined_or_null() {
             // if we have a explicit error, reject the promise
             // if not when calling .fail will create a S3Error instance
@@ -652,12 +648,8 @@ impl S3UploadStreamWrapper {
 
     fn resolve(result: S3UploadResult, self_: &mut Self) -> JsResult<()> {
         bun_output::scoped_log!(S3UploadStream, "resolve");
-        // scope-exit deref via guard (keeps borrowck happy)
-        let _deref_guard = scopeguard::guard(std::ptr::from_mut::<Self>(self_), |s| {
-            // SAFETY: s points to self_ which is alive for the duration of the guard; deref_
-            // decrements ref_count and may free self only after all borrows above are released
-            unsafe { Self::deref(s) }
-        });
+        // SAFETY: adopts the upload's ref; released at scope exit, after the borrows below.
+        let _upload_ref = unsafe { RefPtr::from_raw(std::ptr::from_mut::<Self>(self_)) };
         let global = self_.global;
         // The native teardown (source close, pump-ref release, completion callback)
         // runs on every path; the promise slots are settled until one settle leaves an
@@ -795,8 +787,6 @@ bun_jsc::jsc_host_abi! {
 }
 
 impl Drop for S3UploadStreamWrapper {
-    /// RefCount finalizer body. Allocation is freed by
-    /// `deref_()` when the last ref is dropped; this `Drop` only handles side effects.
     fn drop(&mut self) {
         bun_output::scoped_log!(S3UploadStream, "deinit {}", self.sink.is_some());
         self.detach_sink();

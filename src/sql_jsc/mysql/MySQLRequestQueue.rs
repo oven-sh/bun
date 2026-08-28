@@ -133,9 +133,7 @@ impl MySQLRequestQueue {
                 // is a separate heap allocation — never aliases the queue or
                 // `*connection`. R-2: `ParentRef` yields `&T` only — every
                 // method body is `&self` (interior mutability).
-                let request = queue_ref.requests.get()[offset].as_non_null();
-                let req = ParentRef::from(request);
-                let request = request.as_ptr();
+                let req = ParentRef::from(queue_ref.requests.get()[offset].as_non_null());
 
                 if req.is_completed() {
                     if offset > 0 {
@@ -176,7 +174,8 @@ impl MySQLRequestQueue {
                     // R-2: `on_error` takes `&self`.
                     conn_ref.on_error(Some(req.get()), err);
                     if offset == 0
-                        && queue_ref.requests.get().front().map(RefPtr::as_ptr) == Some(request)
+                        && (queue_ref.requests.get().front())
+                            .is_some_and(|f| core::ptr::eq(f.as_ptr(), req.get()))
                     {
                         queue_ref.requests.with_mut(|q| q.pop_front());
                     }

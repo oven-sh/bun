@@ -34,8 +34,7 @@ use {
 declare_scope!(WebViewHost, hidden);
 
 pub(crate) struct HostProcess {
-    /// `None` only while the exit callback tears this down.
-    process: Option<ProcessHandle>,
+    process: ProcessHandle,
     /// Set by [`Bun__WebViewHost__retire`]: the exit is reaped but not reported to C++.
     retired: bool,
 }
@@ -61,7 +60,7 @@ extern "C" fn Bun__WebViewHost__kill() {
         {
             // SAFETY: INSTANCE is set to a live heap-allocated pointer in
             // spawn() and cleared in on_process_exit before the box is dropped.
-            let _ = i.process.as_ref().map(|p| p.kill(9));
+            let _ = (*i.process.as_ptr()).kill(9);
         }
     }
 }
@@ -76,7 +75,7 @@ extern "C" fn Bun__WebViewHost__retire() {
         return;
     };
     host.retired = true;
-    let _ = host.process.as_ref().map(|p| p.kill(9));
+    let _ = host.process.kill(9);
 }
 
 /// Lazy: first `new Bun.WebView()` calls this via C++. Returns the parent
@@ -128,16 +127,15 @@ bun_spawn::link_impl_ProcessExit! {
         // Child died (EVFILT_PROC). Socket onClose may or may not have fired
         // already (clean FIN vs SIGKILL/SIGSEGV). Tell C++ to reject any
         // pending promises and mark the host dead.
-        on_process_exit(process, status, _rusage) => {
+        on_process_exit(_process, status, _rusage) => {
             scoped_log!(WebViewHost, "child exited: {}", status);
-            // `process` is the exit callback's pointer to our process.
-            (*this).process.take().expect("set at spawn").release_in_exit_handler(process);
             // A retired host was already unpublished by Bun__WebViewHost__retire.
             if !(*this).retired {
                 let signo: i32 = status.signal_code().map_or(0, |s| s as i32);
                 Bun__WebViewHost__childDied(signo);
             }
-            // `this` was heap-allocated in spawn().
+            // `this` was heap-allocated in spawn(); dropping it releases our
+            // ref on the process.
             drop(bun_core::heap::take(this));
             let _ = INSTANCE.compare_exchange(
                 this,
@@ -217,13 +215,13 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
         // per-thread `jsc::EventLoop`.
         let event_loop = unsafe { EventLoopHandle::init((*vm).event_loop().cast()) };
         let self_ptr = bun_core::heap::into_raw(Box::new(HostProcess {
-            process: Some(spawned.to_process_handle(event_loop)),
+            process: spawned.to_process_handle(event_loop),
             retired: false,
         }));
         // SAFETY: `self_ptr` is the freshly-allocated Box that owns `process`
         // and outlives it.
         let process = unsafe {
-            let process = (*self_ptr).process.as_ref().expect("just set");
+            let process = &(*self_ptr).process;
             process
                 .process_mut()
                 .set_exit_handler(ProcessExit::new(ProcessExitKind::HostProcess, self_ptr));

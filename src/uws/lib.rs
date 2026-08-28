@@ -812,7 +812,7 @@ pub mod ssl_wrapper {
                 // SAFETY: ssl was created by SSL_new and is owned by self; SSL_free also frees the input and output BIOs.
                 unsafe { boring_sys::SSL_free(ssl.as_ptr()) };
             }
-            self.ctx.take();
+            self.ctx.set(None);
         }
 
         fn trigger_handshake_callback(&self, success: bool, result: us_bun_verify_error_t) {

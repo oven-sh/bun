@@ -2086,8 +2086,9 @@ trait WrapperLike: bun_ptr::AnyRefCounted + Sized {
 }
 
 /// Forwarding `WrapperLike` impl — every wrapper type's trait impl is a pure
-/// pass-through to inherent / `JsClass`-codegen methods. `$field` is the wrapper's `DetachablePtr<$raw>`; `$suspended` is the
-/// `lol_html::HtmlRewriter` accessor for the parked unit of that type.
+/// pass-through to inherent / `JsClass`-codegen methods. `$field` is the
+/// wrapper's `DetachablePtr<$raw>`; `$suspended` is the `lol_html::HtmlRewriter`
+/// accessor for the parked unit of that type.
 /// `Element` implements the trait by hand: its `detach` also has to
 /// invalidate the `AttributeIterator`s it handed out.
 macro_rules! impl_wrapper_like {

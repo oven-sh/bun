@@ -128,7 +128,7 @@ impl NativeSocket {
         socket: *mut crate::socket::NewSocket<SSL>,
         h2: RefPtr<H2FrameParser>,
     ) {
-        self.detach();
+        debug_assert!(matches!(self.0.get(), BunSocket::None));
         // BACKREF: `socket` is the live `m_ctx` borrowed from the JS wrapper
         // rooted by the caller's `socket_js`.
         let socket_nn = NonNull::new(socket).expect("NewSocket m_ctx");
@@ -1157,8 +1157,8 @@ pub struct H2FrameParser {
 }
 
 impl H2FrameParser {
-    /// `RefCounted` destructor: drop in place, then return the slot to the
-    /// pool (or free the Box). `this`: sole owner, refcount zero.
+    /// `RefCounted` destructor (and the constructor's error path): drop in
+    /// place, then return the slot to the pool (or free the Box).
     fn release(this: *mut Self) {
         if ENABLE_ALLOCATOR_POOL {
             POOL.with_borrow_mut(|pool| {
@@ -7480,6 +7480,7 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Expected socket argument")));
         }
 
+        this.detach_native_socket();
         if let Some(socket) = TLSSocket::from_js(socket_js) {
             bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
             this.native_socket.attach::<true>(socket, this.ref_guard());
@@ -7492,8 +7493,6 @@ impl H2FrameParser {
             // if we started with non native and go to native we now control the backpressure internally
             this.has_nonnative_backpressure.set(false);
             let _ = this.flush();
-        } else {
-            this.detach_native_socket();
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -7614,10 +7613,9 @@ impl H2FrameParser {
         } else {
             bun_core::heap::into_raw(Box::new(init))
         };
-        // The remaining `?` sites below may throw a JS
-        // exception; the guard returns the slot to the pool / frees the Box on that
-        // path. Defused on success.
-        // On the error path `this` has refcount 1 and no other owners.
+        // The remaining `?` sites below may throw a JS exception; the guard
+        // drops `this` (its `Drop` detaches any socket attached below) and
+        // returns the slot to the pool / frees the Box. Defused on success.
         let guard = scopeguard::guard(this, Self::release);
         // SAFETY: `this` was just allocated above; unique ownership, non-null.
         // R-2: deref as shared — every method below takes `&self`.

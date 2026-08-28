@@ -1385,7 +1385,7 @@ impl Listener {
             }
         }
 
-        // SecureContext was already borrowed above; build the SSL_CTX from
+        // A SecureContext's ctx was already cloned above; build the SSL_CTX from
         // SSLConfig only if no SecureContext was passed. doConnect hands
         // `socket.owned_ssl_ctx` to the per-VM connect group.
         if ssl_enabled && owned_ssl_ctx.is_none() {

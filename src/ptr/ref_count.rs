@@ -480,16 +480,6 @@ pub unsafe trait CellRefCounted: Sized {
         }
     }
 
-    /// Safe [`ref_`](Self::ref_) for a `NonNull<Self>` handle.
-    ///
-    /// The `unsafe trait` contract guarantees `this` points to a live
-    /// intrusively-refcounted `Self`; [`BackRef`](crate::BackRef) turns that
-    /// into a shared borrow without the caller spelling `unsafe`.
-    #[inline]
-    fn ref_nn(this: NonNull<Self>) {
-        crate::BackRef::from(this).ref_();
-    }
-
     /// Safe [`deref`](Self::deref) for a `NonNull<Self>` handle.
     ///
     /// The single audited `unsafe` lives here in `bun_ptr`, beside the trait
@@ -501,29 +491,6 @@ pub unsafe trait CellRefCounted: Sized {
         // heap-allocated `Self` whose allocation `destroy` knows how to free;
         // `NonNull` guarantees non-null. The caller owns one ref.
         unsafe { Self::deref(this.as_ptr()) };
-    }
-}
-
-/// Run `before(&*this)` then reclaim `this` as a `Box<T>` and drop it.
-///
-/// Intended as the body of a `#[ref_count(destroy = …)]` target, where the
-/// wrapper needs to detach/invalidate itself before field `Drop` impls run.
-/// The raw-pointer deref is audited here once so per-type `destroy` bodies in
-/// callers stay `unsafe`-free.
-///
-/// Callers must only pass a pointer that originated from
-/// `Box::into_raw` / `heap::into_raw` and is the sole remaining owner — the
-/// same precondition as [`CellRefCounted::destroy`], which is the only
-/// sanctioned call site.
-#[inline]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn destroy_box_with<T>(this: *mut T, before: impl FnOnce(&T)) {
-    debug_assert!(!this.is_null());
-    // SAFETY: `CellRefCounted::destroy` contract — `this` is the sole live
-    // owner of a `Box`-allocated `T`; `before` only observes it shared.
-    unsafe {
-        before(&*this);
-        drop(Box::from_raw(this));
     }
 }
 

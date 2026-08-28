@@ -1494,6 +1494,12 @@ pub struct RefData {
     pub(crate) phase: RefDataValue,
     pub(crate) ref_count: bun_ptr::RefCount<RefData>,
 }
+impl Drop for RefData {
+    fn drop(&mut self) {
+        let _g = group_begin!();
+        bun_core::scoped_log!(bun_test_group, "refData: {}", self.phase);
+    }
+}
 impl RefData {
     pub(crate) fn has_one_ref(&self) -> bool {
         self.ref_count.has_one_ref()

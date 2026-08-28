@@ -745,6 +745,12 @@ impl fmt::Display for ScopeFunctions {
     }
 }
 
+impl Drop for ScopeFunctions {
+    fn drop(&mut self) {
+        let _g = group_log::begin();
+    }
+}
+
 fn create_unbound(global: &JSGlobalObject, mode: Mode, each: JSValue, cfg: BaseScopeCfg) -> JSValue {
     let _g = group_log::begin();
 

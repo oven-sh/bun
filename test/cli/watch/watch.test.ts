@@ -226,83 +226,75 @@ const noCrashReportEnv = { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH
 // dumps disabled. RLIMIT_CORE is inherited across exec.
 const noCoreCmd = (argv: string[]) => ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...argv];
 
-it.skipIf(isWindows)(
-  "--watch names the errno when the re-exec of the binary fails",
-  async () => {
-    using dir = tempDir("watch-reexec-fails", {
-      "app.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
-    });
-    const exe = linkBunExe(String(dir));
+it.skipIf(isWindows)("--watch names the errno when the re-exec of the binary fails", async () => {
+  using dir = tempDir("watch-reexec-fails", {
+    "app.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
+  });
+  const exe = linkBunExe(String(dir));
 
-    const proc = spawn({
-      // --debug-crash-handler-use-trace-string skips the debug build's slow
-      // backtrace symbolication so the child exits promptly.
-      cmd: noCoreCmd([exe, "--debug-crash-handler-use-trace-string", "--watch", "app.js"]),
-      cwd: String(dir),
-      env: noCrashReportEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    watchee = proc;
-    const stderr = proc.stderr.text();
-    const { waitFor, release } = stdoutWaiter(proc);
+  const proc = spawn({
+    // --debug-crash-handler-use-trace-string skips the debug build's slow
+    // backtrace symbolication so the child exits promptly.
+    cmd: noCoreCmd([exe, "--debug-crash-handler-use-trace-string", "--watch", "app.js"]),
+    cwd: String(dir),
+    env: noCrashReportEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  watchee = proc;
+  const stderr = proc.stderr.text();
+  const { waitFor, release } = stdoutWaiter(proc);
 
-    await waitFor("iter first");
-    release();
+  await waitFor("iter first");
+  release();
 
-    // The path the reload will execve() no longer exists.
-    rmSync(exe);
-    await Bun.write(join(String(dir), "app.js"), `console.log("iter second");`);
+  // The path the reload will execve() no longer exists.
+  rmSync(exe);
+  await Bun.write(join(String(dir), "app.js"), `console.log("iter second");`);
 
-    const [err, exitCode] = await Promise.all([stderr, proc.exited]);
-    expect(err).toContain("Unexpected error while reloading: ENOENT");
-    expect(exitCode).not.toBe(0);
-  },
-  30000,
-);
+  const [err, exitCode] = await Promise.all([stderr, proc.exited]);
+  expect(err).toContain("Unexpected error while reloading: ENOENT");
+  expect(exitCode).not.toBe(0);
+});
 
 // A crash under --watch restarts the process from the crash handler. When that
 // execve() fails as well, the error line must name the errno and must reach
 // stderr before the handler re-raises the fatal signal.
-it.skipIf(isWindows)(
-  "--watch crash auto-restart reports a failed re-exec by errno name",
-  async () => {
-    using dir = tempDir("watch-crash-reexec-fails", {
-      "app.js": `
+it.skipIf(isWindows)("--watch crash auto-restart reports a failed re-exec by errno name", async () => {
+  using dir = tempDir("watch-crash-reexec-fails", {
+    "app.js": `
         import { crash_handler } from "bun:internal-for-testing";
         console.log("iter first");
         process.stdin.on("data", () => crash_handler.segfault());
       `,
-    });
-    const exe = linkBunExe(String(dir));
+  });
+  const exe = linkBunExe(String(dir));
 
-    const proc = spawn({
-      cmd: noCoreCmd([exe, "--debug-crash-handler-use-trace-string", "--watch", "app.js"]),
-      cwd: String(dir),
-      env: noCrashReportEnv,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    watchee = proc;
-    const stderr = proc.stderr.text();
-    const { waitFor, release } = stdoutWaiter(proc);
+  const proc = spawn({
+    cmd: noCoreCmd([exe, "--debug-crash-handler-use-trace-string", "--watch", "app.js"]),
+    cwd: String(dir),
+    env: noCrashReportEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  watchee = proc;
+  const stderr = proc.stderr.text();
+  const { waitFor, release } = stdoutWaiter(proc);
 
-    await waitFor("iter first");
-    release();
+  await waitFor("iter first");
+  release();
 
-    // Crash only after the path the restart will execve() is gone.
-    rmSync(exe);
-    proc.stdin.write("crash\n");
-    await proc.stdin.end();
+  // Crash only after the path the restart will execve() is gone.
+  rmSync(exe);
+  proc.stdin.write("crash\n");
+  await proc.stdin.end();
 
-    const [err, exitCode] = await Promise.all([stderr, proc.exited]);
-    expect(err).toContain("Bun is auto-restarting due to crash");
-    expect(err).toContain("ENOENT: No such file or directory: Failed to reload process (execve)");
-    expect(exitCode).not.toBe(0);
-  },
-  30000,
-);
+  const [err, exitCode] = await Promise.all([stderr, proc.exited]);
+  expect(err).toContain("Bun is auto-restarting due to crash");
+  expect(err).toContain("ENOENT: No such file or directory: Failed to reload process (execve)");
+  expect(exitCode).not.toBe(0);
+});
 
 // A script that registers a SIGTERM handler and then spins in synchronous
 // code must still restart on file change: the watcher thread posts the reload

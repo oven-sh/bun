@@ -52,10 +52,6 @@ function rejected(message: string) {
   return { stdout: `error: parsing failed: ${message}`, stderr: "", exitCode: 0 };
 }
 
-function minified(output: string) {
-  return { stdout: `ok: ${output}`, stderr: "", exitCode: 0 };
-}
-
 // --- :nth-child(An+B of <selectors>) ---
 
 test.concurrent("an of-list made only of a pseudo-element invalidates the rule", async () => {
@@ -103,16 +99,15 @@ test.concurrent("an empty selector before a comma invalidates the of-list", asyn
   );
 });
 
-test.concurrent("valid of-lists still parse and minify", async () => {
-  expect(await minifyInChild(":nth-child(even of li.important) {width: 20px}")).toEqual(
-    minified(":nth-child(2n of li.important){width:20px}"),
+// Valid input never reaches the empty of-list, so it does not need a child process.
+test("valid of-lists still parse and minify", () => {
+  expect(minifyTest(":nth-child(even of li.important) {width: 20px}", "")).toBe(
+    ":nth-child(2n of li.important){width:20px}",
   );
-  expect(await minifyInChild(":nth-last-child(2n of li.important, .other) {width: 20px}")).toEqual(
-    minified(":nth-last-child(2n of li.important, .other){width:20px}"),
+  expect(minifyTest(":nth-last-child(2n of li.important, .other) {width: 20px}", "")).toBe(
+    ":nth-last-child(2n of li.important, .other){width:20px}",
   );
-  expect(await minifyInChild("a:nth-child(2n of *) { color: red }")).toEqual(
-    minified("a:nth-child(2n of *){color:red}"),
-  );
+  expect(minifyTest("a:nth-child(2n of *) { color: red }", "")).toBe("a:nth-child(2n of *){color:red}");
 });
 
 // --- :has(<relative-selector-list>) ---
@@ -133,9 +128,9 @@ test.concurrent("a valid selector does not rescue a :has() list with an invalid 
   );
 });
 
-test.concurrent("valid :has() lists still parse and minify", async () => {
-  expect(await minifyInChild("a:has(.x) { color: red }")).toEqual(minified("a:has(.x){color:red}"));
-  expect(await minifyInChild("a:has(> .x, ~ .y) { color: red }")).toEqual(minified("a:has(>.x,~.y){color:red}"));
+test("valid :has() lists still parse and minify", () => {
+  expect(minifyTest("a:has(.x) { color: red }", "")).toBe("a:has(.x){color:red}");
+  expect(minifyTest("a:has(> .x, ~ .y) { color: red }", "")).toBe("a:has(>.x,~.y){color:red}");
 });
 
 // --- empty selectors ---

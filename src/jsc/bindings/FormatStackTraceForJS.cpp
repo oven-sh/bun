@@ -673,8 +673,16 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
     }
 
     if (source->stackTrace()) {
-        destination->stackTrace()->appendVector(*source->stackTrace());
-        source->stackTrace()->clear();
+        // The GC marks these under the cell lock; the barrier re-greys an old destination that now holds young frames.
+        {
+            WTF::Locker locker { destination->cellLock() };
+            destination->stackTrace()->appendVector(*source->stackTrace());
+        }
+        {
+            WTF::Locker locker { source->cellLock() };
+            source->stackTrace()->clear();
+        }
+        vm.writeBarrier(destination);
     }
 
     return JSC::JSValue::encode(jsUndefined());
@@ -724,18 +732,23 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
         WTF::Vector<JSC::StackFrame> emptyTrace;
         result = computeErrorInfoToJSValue(vm, emptyTrace, line, column, sourceURL, errorObject, nullptr);
     } else {
-        auto ownedStackTrace = makeUnique<WTF::Vector<JSC::StackFrame>>(WTF::move(*stackTrace));
         JSC::MarkedArgumentBuffer protectedFrameCells;
-        protectedFrameCells.ensureCapacity(ownedStackTrace->size() * 2);
-        for (auto& frame : *ownedStackTrace) {
-            if (auto* callee = frame.callee())
-                protectedFrameCells.append(callee);
-            if (auto* codeBlock = frame.codeBlock())
-                protectedFrameCells.append(codeBlock);
-        }
+        protectedFrameCells.ensureCapacity(stackTrace->size() * 2);
         if (protectedFrameCells.hasOverflowed()) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return {};
+        }
+        std::unique_ptr<WTF::Vector<JSC::StackFrame>> ownedStackTrace;
+        {
+            // The GC reads the frames under the cell lock. Root the cells before the move takes them out of the error.
+            WTF::Locker locker { errorObject->cellLock() };
+            for (auto& frame : *stackTrace) {
+                if (auto* callee = frame.callee())
+                    protectedFrameCells.append(callee);
+                if (auto* codeBlock = frame.codeBlock())
+                    protectedFrameCells.append(codeBlock);
+            }
+            ownedStackTrace = makeUnique<WTF::Vector<JSC::StackFrame>>(WTF::move(*stackTrace));
         }
         result = computeErrorInfoToJSValue(vm, *ownedStackTrace, line, column, sourceURL, errorObject, nullptr);
         errorObject->setStackFrames(vm, {});

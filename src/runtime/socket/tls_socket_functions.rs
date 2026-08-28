@@ -185,9 +185,12 @@ pub(super) mod ffi {
         );
         pub(crate) safe fn SSL_get_ex_data(ssl: &SSL, idx: c_int) -> *mut c_void;
         /// Save/restore the per-loop BIO routing state around in-handshake JS
-        /// callbacks (defined in usockets' openssl.c).
-        pub(crate) safe fn us_internal_ssl_loop_state_save(ssl: &SSL, out5: *mut *mut c_void);
-        pub(crate) safe fn us_internal_ssl_loop_state_restore(saved5: *mut *mut c_void);
+        /// callbacks (defined in usockets' openssl.c). The caller's snapshot
+        /// array must have exactly `us_internal_ssl_loop_state_slots()`
+        /// elements (US_SSL_LOOP_STATE_SLOTS in internal.h).
+        pub(crate) safe fn us_internal_ssl_loop_state_slots() -> c_int;
+        pub(crate) safe fn us_internal_ssl_loop_state_save(ssl: &SSL, out: *mut *mut c_void);
+        pub(crate) safe fn us_internal_ssl_loop_state_restore(saved: *mut *mut c_void);
         pub(crate) safe fn SSL_renegotiate(ssl: &SSL) -> c_int;
         pub(crate) safe fn SSL_set_renegotiate_mode(
             ssl: &SSL,
@@ -894,30 +897,29 @@ pub(crate) fn set_key_cert(
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
-    // SAFETY: `sc` is a live SecureContext; borrow() hands back an owned
-    // reference and SSL_set_SSL_CTX takes its own, so release the temporary.
+    // SAFETY: `sc` is a live SecureContext; SSL_set_SSL_CTX takes its own reference.
     unsafe {
-        let ctx = (*sc).borrow();
-        ffi::SSL_set_SSL_CTX(ssl_ptr.cast(), ctx.cast());
+        let ctx = &(*sc).ctx;
+        ffi::SSL_set_SSL_CTX(ssl_ptr.cast(), ctx.as_ptr().cast());
         // SSL_set_SSL_CTX stops retargeting the certificate once ClientHello
         // processing has reached ALPN selection, and Node supports calling
         // setKeyCert from ALPNCallback - apply the identity directly.
-        let leaf = ffi::SSL_CTX_get0_certificate(ctx.cast());
-        let pkey = ffi::SSL_CTX_get0_privatekey(ctx.cast());
+        let leaf = ffi::SSL_CTX_get0_certificate(ctx.as_ptr().cast());
+        let pkey = ffi::SSL_CTX_get0_privatekey(ctx.as_ptr().cast());
         if !leaf.is_null() && !pkey.is_null() {
             let ok_cert = ffi::SSL_use_certificate(ssl_ptr.cast(), leaf);
             let ok_key = ffi::SSL_use_PrivateKey(ssl_ptr.cast(), pkey);
             let mut ok_chain = 1;
             let mut chain: *mut core::ffi::c_void = core::ptr::null_mut();
-            if ffi::SSL_CTX_get0_chain_certs(ctx.cast(), &raw mut chain) == 1 && !chain.is_null() {
+            if ffi::SSL_CTX_get0_chain_certs(ctx.as_ptr().cast(), &raw mut chain) == 1
+                && !chain.is_null()
+            {
                 ok_chain = ffi::SSL_set1_chain(ssl_ptr.cast(), chain);
             }
             if ok_cert != 1 || ok_key != 1 || ok_chain != 1 {
-                boringssl::SSL_CTX_free(ctx.cast());
                 return Err(global.throw(format_args!("setKeyCert failed to apply the context")));
             }
         }
-        boringssl::SSL_CTX_free(ctx.cast());
     }
     Ok(JSValue::UNDEFINED)
 }

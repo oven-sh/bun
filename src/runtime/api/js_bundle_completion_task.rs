@@ -46,7 +46,7 @@ use crate::server::html_bundle;
 
 /// See module doc for the layering rationale.
 #[derive(bun_ptr::RefCounted)]
-#[ref_count(destroy = Self::deinit, debug_name = "JSBundleCompletionTask")]
+#[ref_count(debug_name = "JSBundleCompletionTask")]
 pub struct JSBundleCompletionTask {
     // NOTE: this should arguably be a thread-safe refcount, but it is the plain
     // (non-atomic) `RefCount<Self>` — a pre-existing discrepancy. See the
@@ -104,26 +104,17 @@ pub(crate) enum Stage {
     ReleasedUnstarted = 3,
 }
 
-impl JSBundleCompletionTask {
-    /// `RefCounted` destructor — last ref dropped.
-    ///
-    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-    /// whose generated trait `destructor` upholds the sole-owner contract.
-    fn deinit(this: *mut Self) {
-        // SAFETY: refcount hit zero; `this` is the sole owner of a
-        // `heap::alloc`'d allocation.
-        let mut boxed = unsafe { bun_core::heap::take(this) };
+impl Drop for JSBundleCompletionTask {
+    fn drop(&mut self) {
         // Already `Done` (and this may be the bundle thread) for a build
         // released unstarted; see `stop_for_vm_teardown`.
-        if boxed.poll_ref.is_active() {
-            boxed.poll_ref.disable();
+        if self.poll_ref.is_active() {
+            self.poll_ref.disable();
         }
-        if let Some(plugin) = boxed.plugins.take() {
-            // `plugin` is the live FFI handle stashed at construction;
-            // last-ref drop is the only place that releases it.
+        if let Some(plugin) = self.plugins.take() {
+            // The FFI handle stashed at construction.
             Plugin::destroy(plugin.as_ptr());
         }
-        // Owned fields (`config`, `log`, `result`, `promise`) drop with the Box.
     }
 }
 

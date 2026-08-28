@@ -1053,10 +1053,6 @@ impl JSTranspiler {
 
         Ok(bun_core::heap::into_raw(this))
     }
-
-    pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box_noop(self);
-    }
 }
 
 impl Drop for JSTranspiler {

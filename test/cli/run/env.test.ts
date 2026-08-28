@@ -13,6 +13,7 @@ import {
   tempDir,
   tempDirWithFiles,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import { parseEnv } from "node:util";
 import path from "path";
 
@@ -737,6 +738,89 @@ describe.concurrent("--env-file", () => {
   test("should ignore a file that doesn't exist", async () => {
     const res = await runEnvFile(["--env-file=.env.nonexisting"]);
     expect(res.stdout).toBe("");
+  });
+});
+
+// A `.env` entry that is a directory, a FIFO, or a unix socket is not an env
+// file. The loader skips it without a message and without blocking, and still
+// loads the sibling `.env.local`.
+describe.concurrent(".env that is not a regular file", () => {
+  const files = {
+    "package.json": JSON.stringify({ name: "dotenv-not-a-file" }),
+    ".env.local": "BUNTEST_LOCAL=1\n",
+    "index.ts": "console.log(process.env.BUNTEST_LOCAL);",
+  };
+
+  async function run(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...bunEnv, NODE_ENV: undefined },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  test("directory", async () => {
+    using dir = tempDir("dotenv-dir", { ...files, ".env/keep": "" });
+
+    const install = await run(String(dir), "install");
+    expect(install.stderr).not.toContain("error loading .env file");
+    expect(install.exitCode).toBe(0);
+
+    const script = await run(String(dir), "index.ts");
+    expect(script.stderr).toBe("");
+    expect(script.stdout).toBe("1");
+    expect(script.exitCode).toBe(0);
+  });
+
+  // The resolver's directory listing drops a FIFO entry, so the loader only
+  // sees one through a symlink. Without O_NONBLOCK the open blocks until a
+  // writer appears.
+  test.skipIf(isWindows)("FIFO behind a symlink", async () => {
+    using dir = tempDir("dotenv-fifo", files);
+    mkfifo(path.join(String(dir), "fifo"));
+    fs.symlinkSync("fifo", path.join(String(dir), ".env"));
+
+    const install = await run(String(dir), "install");
+    expect(install.stderr).not.toContain("error loading .env file");
+    expect(install.exitCode).toBe(0);
+
+    const script = await run(String(dir), "index.ts");
+    expect(script.stderr).toBe("");
+    expect(script.stdout).toBe("1");
+    expect(script.exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("--env-file pointing at a FIFO", async () => {
+    using dir = tempDir("dotenv-fifo-arg", files);
+    mkfifo(path.join(String(dir), "fifo"));
+
+    const script = await run(String(dir), "--env-file=fifo,.env.local", "index.ts");
+    expect(script.stderr).toBe("");
+    expect(script.stdout).toBe("1");
+    expect(script.exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("unix socket behind a symlink", async () => {
+    using dir = tempDir("dotenv-sock", files);
+    using listener = Bun.listen({
+      unix: path.join(String(dir), "sock"),
+      socket: { data() {} },
+    });
+    fs.symlinkSync("sock", path.join(String(dir), ".env"));
+
+    const install = await run(String(dir), "install");
+    expect(install.stderr).not.toContain("ENXIO");
+    expect(install.exitCode).toBe(0);
+
+    const script = await run(String(dir), "index.ts");
+    expect(script.stderr).toBe("");
+    expect(script.stdout).toBe("1");
+    expect(script.exitCode).toBe(0);
   });
 });
 

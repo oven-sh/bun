@@ -182,6 +182,61 @@ test("object destructuring of a macro result keeps every bound property regardle
   expect(exitCode).toBe(0);
 });
 
+// A Response or Blob returned from a macro is inlined by its content type: JSON is parsed into an object
+// literal, text becomes a string, anything else becomes a base64 data URL. The type has to be classified
+// with its parameters stripped: `Response.json()` and most servers send `application/json;charset=utf-8`.
+test("a macro that returns a JSON or text Response or Blob is inlined by its content type", async () => {
+  await using server = Bun.serve({ port: 0, fetch: () => Response.json({ from: "server" }) });
+  using dir = tempDir("macro-response-content-type", {
+    "m.ts": [
+      `export function json() {`,
+      `  return Response.json({ a: 1, b: [true, null, "x"] });`,
+      `}`,
+      `export function jsonHeader() {`,
+      `  return new Response('{"b":2}', { headers: { "content-type": "application/json" } });`,
+      `}`,
+      `export function fetched() {`,
+      `  return fetch(process.env.MACRO_TEST_URL!);`,
+      `}`,
+      `export function text() {`,
+      `  return new Response("hello", { headers: { "content-type": "text/plain; charset=utf-8" } });`,
+      `}`,
+      `export function blobJson() {`,
+      `  return new Blob(['{"c":3}'], { type: "application/json; charset=utf-8" });`,
+      `}`,
+      `export function binary() {`,
+      `  return new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "application/octet-stream" } });`,
+      `}`,
+    ].join("\n"),
+    "index.ts": [
+      `import { json, jsonHeader, fetched, text, blobJson, binary } from "./m.ts" with { type: "macro" };`,
+      `console.log(JSON.stringify([json(), jsonHeader(), fetched(), text(), blobJson(), binary()]));`,
+      ``,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: { ...bunEnv, MACRO_TEST_URL: server.url.href },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Debug builds print "[macro] call <name>" to stdout before the script's own output.
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({
+    lastLine: JSON.stringify([
+      { a: 1, b: [true, null, "x"] },
+      { b: 2 },
+      { from: "server" },
+      "hello",
+      { c: 3 },
+      "data:application/octet-stream;base64,AQID",
+    ]),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 // A macro's `await` is serviced by the VM's macro event loop, so completions have to be routed by which
 // loop was current when their work started: what the macro started goes to the macro loop (or the wait
 // hangs), what the program started stays on the regular loop (or program callbacks run mid-transpile),

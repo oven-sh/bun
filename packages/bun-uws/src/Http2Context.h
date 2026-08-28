@@ -152,14 +152,25 @@ static inline unsigned char *hpackEncodeInteger(unsigned char *dst, uint8_t pref
     return dst;
 }
 
-/* RFC 9113 §8.2.1 field validity, beyond what HPACK decoding guarantees. */
+/* RFC 9113 §8.2.1 field validity, beyond what HPACK decoding guarantees: a
+ * name is an RFC 9110 token with no uppercase letter, optionally behind the
+ * single ':' of a pseudo-header. The token set is the one the HTTP/1 parser
+ * (isFieldNameByte) and the HTTP/3 header-set interface accept. */
 static inline bool validFieldName(const char *p, unsigned n) {
-    if (n == 0) return false;
-    for (unsigned i = 0; i < n; i++) {
+    unsigned i = n && p[0] == ':';
+    if (i == n) return false;
+    for (; i < n; i++) {
         unsigned char c = (unsigned char) p[i];
-        if (c <= 0x20 || c >= 0x7f || (c >= 'A' && c <= 'Z') || (c == ':' && i != 0)) return false;
+        if (!isTokenByte(c) || (c >= 'A' && c <= 'Z')) return false;
     }
     return true;
+}
+
+/* The methods Bun.serve can represent: the HTTP/1 parser's strict set, in
+ * their RFC 9110 case-sensitive wire form. */
+static inline bool isKnownMethod(std::string_view method) {
+    for (unsigned char c : method) if (!((c >= 'A' && c <= 'Z') || c == '-')) return false;
+    return Bun__HTTPMethod__from(method.data(), method.size()) != -1;
 }
 
 /* The request fields validation cares about. lshpack reports the HPACK
@@ -193,11 +204,14 @@ static inline Field classify(int hpackIndex, std::string_view name) {
     return Field::Other;
 }
 
+/* RFC 9113 §8.2.1: field-content (RFC 9110 §5.5) with no leading or trailing
+ * whitespace. HTAB is the only control byte allowed; DEL and obs-text pass,
+ * as they do through the HTTP/1 parser. */
 static inline bool validFieldValue(const char *p, unsigned n) {
     if (n && (p[0] == ' ' || p[0] == '\t' || p[n - 1] == ' ' || p[n - 1] == '\t')) return false;
     for (unsigned i = 0; i < n; i++) {
         unsigned char c = (unsigned char) p[i];
-        if (c == '\r' || c == '\n' || c == 0) return false;
+        if (c < 0x20 && c != '\t') return false;
     }
     return true;
 }
@@ -1700,6 +1714,12 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
     stream->remoteClosed = endStream;
     streams.push_back(stream);
     progressed = true;
+    if (!http2::isKnownMethod(method)) {
+        /* RFC 9110 §15.6.2. The router would dispatch it to the "any" handler,
+         * which cannot represent the method and would report GET. */
+        stream->writeStatus("501 Not Implemented")->end();
+        return !closed;
+    }
     return dispatchRequest(stream, list.data(), (unsigned) list.size());
 }
 

@@ -851,10 +851,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             self.push_scope_for_visit_pass(ScopeKind::ClassBody, class.body_loc)
                 .expect("unreachable");
-
-            // Class decorators were visited above and do not count.
-            let outer_ts_decorators_use_private_names =
-                core::mem::replace(&mut self.ts_decorators_use_private_names, false);
+            let class_body_scope = self.current_scope;
 
             let mut constructor_function: Option<bun_ast::StoreRef<E::Function>> = None;
             let properties: &mut [G::Property] = class.properties.slice_mut();
@@ -1009,10 +1006,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.fn_only_data_visit.is_this_nested = old_is_this_captured;
             }
 
-            class.ts_decorators_use_private_names = core::mem::replace(
-                &mut self.ts_decorators_use_private_names,
-                outer_ts_decorators_use_private_names,
-            );
+            class.ts_decorators_use_private_names = self
+                .ts_decorator_scopes_using_private_names
+                .iter()
+                .position(|scope| *scope == class_body_scope)
+                .inspect(|&i| {
+                    self.ts_decorator_scopes_using_private_names.swap_remove(i);
+                })
+                .is_some();
 
             if Self::IS_TYPESCRIPT_ENABLED {
                 // `lower_standard_decorators_stmt` owns field placement for such classes.

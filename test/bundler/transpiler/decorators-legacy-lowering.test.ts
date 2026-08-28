@@ -109,11 +109,12 @@ const fixtures: Record<string, Fixture> = {
         static { console.log("static block") }
         m(@pd(Q.#p) a: any) {}
         @pd(Q.#p + 1) b: any;
+        @pd(new (class { read() { return Q.#p + 2 } })().read()) c: any;
         static #q = (console.log("static field"), 2);
       }
       console.log(Object.getOwnPropertyNames(Q.prototype).join(","));
     `,
-    expected: "static block\nstatic field\ndec arg = 1\ndec arg = 2\nconstructor,m\n",
+    expected: "static block\nstatic field\ndec arg = 1\ndec arg = 2\ndec arg = 3\nconstructor,m\n",
   },
   "a private name of another class in a decorator keeps the calls outside": {
     source: `

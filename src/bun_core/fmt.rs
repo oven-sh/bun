@@ -2605,6 +2605,30 @@ pub fn bytes(n: usize) -> SizeFormatter {
     }
 }
 
+/// Byte count in IEC units (base 1024): `0B`, `512B`, `1.50KiB`, `11.77MiB`.
+pub(crate) struct SizeBinFormatter {
+    value: usize,
+}
+
+impl Display for SizeBinFormatter {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let value = self.value;
+        if value < 1024 {
+            return write!(f, "{value}B");
+        }
+        // `log2(usize::MAX) / 10` is at most 6, so the index stays in bounds.
+        const MAGS_IEC: &[u8] = b"KMGTPE";
+        let log2 = (usize::BITS - 1 - value.leading_zeros()) as usize;
+        let magnitude = log2 / 10;
+        let scaled = value as f64 / 1024f64.powi(magnitude as i32);
+        write!(f, "{scaled:.2}{}iB", MAGS_IEC[magnitude - 1] as char)
+    }
+}
+
+pub(crate) fn size_bin(bytes: usize) -> SizeBinFormatter {
+    SizeBinFormatter { value: bytes }
+}
+
 /// Lowercase hex encode into `out` (must be `2 * input.len()`). Used by
 /// Bun's hash printers.
 pub fn bytes_to_hex_lower(input: &[u8], out: &mut [u8]) -> usize {

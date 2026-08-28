@@ -1023,11 +1023,11 @@ pub mod allocators {
 // generic statics, so the storage is emitted at the *declare site* instead:
 //
 //   bss_string_list! { pub dirname_store: 4096, 129 }
-//   // → static STORAGE: SyncUnsafeCell<MaybeUninit<BSSStringList<4096,129>>>
-//   //   pub fn dirname_store() -> *mut BSSStringList<4096,129>
+//   // → static STORAGE: AtomicPtr<BSSStringList<4096, 129, 1024>>
+//   //   pub fn dirname_store() -> *mut BSSStringList<4096, 129, 1024>
 //
-// The accessor lazily field-initializes via `init_at` under `std::sync::Once`.
-// Returning `&'static mut` means callers must not hold overlapping unique
+// The accessor heap-allocates and field-initializes via `init_at` on first
+// call. It returns a raw `*mut`; callers must not hold overlapping unique
 // borrows.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -1808,7 +1808,7 @@ impl<ValueType, const COUNT: usize> Drop for BSSList<ValueType, COUNT> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// BSSStringList<_COUNT, _ITEM_LENGTH>
+// BSSStringList<COUNT, ITEM_LENGTH, OVERFLOW_BLOCK_SIZE>
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Append-only list.

@@ -6314,11 +6314,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-/// The (unscoped) npm package a specifier (`react/jsx-runtime`) or a resolved file path
-/// (`.../node_modules/react/index.js`, in the platform's syntax) belongs to; `None` for scoped and non-package paths.
+/// The unscoped npm package a specifier (`react/x`) or a file path (`...node_modules<sep>react<sep>x.js`) is in.
 fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
-    // A specifier separates with `/`; the part of a file path after `node_modules<sep>` separates with the
-    // platform's separators.
     let (name_to_use, separators): (&[u8], &[u8]) =
         match strings::last_index_of(path.text, bun_paths::NODE_MODULES_NEEDLE) {
             Some(node_modules) => (

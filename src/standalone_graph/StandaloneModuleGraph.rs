@@ -1142,8 +1142,7 @@ fn encode_text_module(
     )
 }
 
-/// The embedded bunfs key for an output file, relative to the prefix: `/`-separated (a `dest_path` may carry a
-/// native `public_path` prefix on Windows, and `find_assume_standalone_path` normalizes lookups to `/`).
+/// The embedded bunfs key for an output file, relative to the prefix; `/`-separated like the graph's lookups.
 fn module_dest_path(output_file: &OutputFile) -> std::borrow::Cow<'_, [u8]> {
     let dest_path = bun_core::strings::remove_leading_dot_slash(&output_file.dest_path);
     #[cfg(windows)]

@@ -4929,7 +4929,7 @@ declare module "bun" {
 
   interface WebSocketEventMap {
     close: CloseEvent;
-    error: Event;
+    error: ErrorEvent;
     message: MessageEvent;
     open: Event;
   }
@@ -5009,9 +5009,10 @@ declare module "bun" {
     onmessage: ((this: WebSocket, ev: MessageEvent) => any) | null;
 
     /**
-     * Event handler for error event
+     * Event handler for error event. Bun dispatches an {@link ErrorEvent}, so
+     * `ev.message` and `ev.error` describe the failure.
      */
-    onerror: ((this: WebSocket, ev: Event) => any) | null;
+    onerror: ((this: WebSocket, ev: ErrorEvent) => any) | null;
 
     /**
      * Event handler for close event
@@ -9667,10 +9668,10 @@ declare module "bun" {
      */
     resize(width: number, height: number): Promise<void>;
 
-    /** Navigate back in session history. */
-    back(): Promise<void>;
-    /** Navigate forward in session history. */
-    forward(): Promise<void>;
+    /** Navigate back in session history. Resolves without navigating when there is no previous entry. */
+    goBack(): Promise<void>;
+    /** Navigate forward in session history. Resolves without navigating when there is no next entry. */
+    goForward(): Promise<void>;
     /** Reload the current page. */
     reload(): Promise<void>;
 

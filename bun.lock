@@ -30,6 +30,7 @@
       "name": "bun-types",
       "dependencies": {
         "@types/node": "*",
+        "undici-types": "*",
       },
     },
   },

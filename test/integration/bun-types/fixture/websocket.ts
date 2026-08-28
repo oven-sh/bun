@@ -129,7 +129,7 @@ import { expectType } from "./utilities";
   };
 
   ws.onerror = event => {
-    expectType(event).is<Event>();
+    expectType(event).is<ErrorEvent>();
   };
 
   ws.onclose = event => {
@@ -268,4 +268,23 @@ import { expectType } from "./utilities";
 
   // Terminate the connection immediately
   ws.terminate();
+}
+
+// The "error" event is an ErrorEvent, like the one Bun dispatches at runtime.
+// https://github.com/oven-sh/bun/issues/36329
+{
+  const ws = new WebSocket("wss://dev.local");
+
+  ws.addEventListener("error", event => {
+    expectType(event).is<ErrorEvent>();
+    expectType(event.message).is<string>();
+    expectType(event.error).is<any>();
+  });
+
+  const handleError = (event: ErrorEvent) => {
+    expectType(event.error).is<any>();
+  };
+
+  ws.addEventListener("error", handleError);
+  ws.onerror = handleError;
 }

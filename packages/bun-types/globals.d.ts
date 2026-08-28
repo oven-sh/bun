@@ -66,10 +66,62 @@ declare module "bun" {
     type LibEmptyOrReadableStreamBYOBRequest = LibDomIsLoaded extends true
       ? {}
       : import("node:stream/web").ReadableStreamBYOBRequest;
+
+    /**
+     * What the `FormData` iteration methods return. With lib.dom loaded this is
+     * the `FormDataIterator` that lib.dom.d.ts declares for the same methods, so
+     * the two declarations of each method agree. Without it, `Request` and
+     * `Response` come from undici-types, whose `FormData` returns plain
+     * iterators, so `await request.formData()` must stay assignable to the
+     * global `FormData`.
+     */
+    type LibFormDataIteratorOrIterableIterator<T> = LibDomIsLoaded extends true
+      ? FormDataIterator<T>
+      : IterableIterator<T>;
+
+    /**
+     * Like a `BodyMixin`, but implemented by more types, such as
+     * `Blob`, `ReadableStream`, and `Response`.
+     *
+     * It has no `blob()` method because it's the lowest common
+     * denominator of these objects: a `Blob` in Bun does not have a
+     * `.blob()` method.
+     */
+    interface BunConsumerConvenienceMethods {
+      /**
+       * Consume as text
+       */
+      text(): Promise<string>;
+
+      /**
+       * Consume as a Uint8Array, backed by an ArrayBuffer
+       */
+      bytes(): Promise<Uint8Array<ArrayBuffer>>;
+
+      /**
+       * Consume as JSON
+       */
+      json(): Promise<any>;
+    }
+
+    /**
+     * The methods Bun adds to `ReadableStream`. Both the global `ReadableStream`
+     * interface (whether lib.dom.d.ts declares it or not) and the one exported
+     * by `node:stream/web` (see overrides.d.ts) extend this, so the two stay
+     * assignable to each other.
+     */
+    interface BunReadableStreamConsumerMethods extends BunConsumerConvenienceMethods {
+      /**
+       * Consume as a Blob
+       */
+      blob(): Promise<Blob>;
+    }
   }
 }
 
-interface ReadableStream<R = any> extends Bun.__internal.LibEmptyOrNodeReadableStream<R> {}
+interface ReadableStream<R = any>
+  extends Bun.__internal.LibEmptyOrNodeReadableStream<R>,
+    Bun.__internal.BunReadableStreamConsumerMethods {}
 declare var ReadableStream: Bun.__internal.UseLibDomIfAvailable<
   "ReadableStream",
   {
@@ -1032,6 +1084,20 @@ declare class BuildMessage {
   readonly level: "error" | "warning" | "info" | "debug" | "verbose";
 }
 
+//#region ECMAScript additions
+/*
+ * This region declares ECMAScript features that Bun supports, so that they
+ * type-check regardless of the `lib` compiler option. TypeScript's own lib
+ * files, and libraries such as core-js, declare the same members. Interface
+ * merging turns a signature that differs from the standard one into an extra
+ * overload, and a library that re-declares the standard signature in an
+ * interface that extends the global one then fails with TS2430. So every
+ * signature in this region must stay identical to the one in the TypeScript
+ * lib file named in the comment above it.
+ * test/integration/bun-types/fixture/core-js-types.ts checks that it does.
+ */
+
+// lib.es2022.error.d.ts
 interface ErrorOptions {
   /**
    * The cause of the error.
@@ -1046,16 +1112,19 @@ interface Error {
   cause?: unknown;
 }
 
+// lib.es2022.error.d.ts (constructor), lib.esnext.error.d.ts (`isError`).
+// `captureStackTrace` and `stackTraceLimit` are not in a lib file. @types/node
+// declares them too, with these exact types.
 interface ErrorConstructor {
   new (message?: string, options?: ErrorOptions): Error;
 
   /**
    * Check if a value is an instance of Error
    *
-   * @param value - The value to check
+   * @param error - The value to check
    * @returns True if the value is an instance of Error, false otherwise
    */
-  isError(value: unknown): value is Error;
+  isError(error: unknown): error is Error;
 
   /**
    * Create .stack property on a target object
@@ -1068,38 +1137,37 @@ interface ErrorConstructor {
   stackTraceLimit: number;
 }
 
+// lib.es2024.arraybuffer.d.ts
 interface ArrayBufferConstructor {
-  new (byteLength: number, options: { maxByteLength?: number }): ArrayBuffer;
+  new (byteLength: number, options?: { maxByteLength?: number }): ArrayBuffer;
 }
 
 interface ArrayBuffer {
   /**
-   * The length of the ArrayBuffer in bytes.
+   * Resize an ArrayBuffer in-place. The ArrayBuffer must have been created
+   * with a `maxByteLength`.
    */
-  readonly byteLength: number;
+  resize(newByteLength?: number): void;
+}
 
-  /**
-   * Resize an ArrayBuffer in-place.
-   */
-  resize(byteLength: number): ArrayBuffer;
-
-  /**
-   * Returns a section of an ArrayBuffer.
-   */
-  slice(begin: number, end?: number): ArrayBuffer;
+// lib.es2024.sharedmemory.d.ts
+interface SharedArrayBufferConstructor {
+  new (byteLength: number, options?: { maxByteLength?: number }): SharedArrayBuffer;
 }
 
 interface SharedArrayBuffer {
   /**
-   * Grow the SharedArrayBuffer in-place.
+   * Grow the SharedArrayBuffer in-place. The SharedArrayBuffer must have been
+   * created with a `maxByteLength`.
    */
-  grow(size: number): SharedArrayBuffer;
+  grow(newByteLength?: number): void;
 }
 
+// lib.esnext.array.d.ts
 interface ArrayConstructor {
   /**
    * Create an array from an iterable or async iterable object.
-   * Values from the iterable are awaited.
+   * Values from a sync iterable are awaited.
    *
    * ```ts
    * await Array.fromAsync([1]); // [1]
@@ -1107,34 +1175,209 @@ interface ArrayConstructor {
    * await Array.fromAsync((async function*() { yield 1 })()); // [1]
    * ```
    *
-   * @param arrayLike - The iterable or async iterable to convert to an array.
+   * @param iterableOrArrayLike - The iterable or async iterable to convert to an array.
    * @returns A {@link Promise} that resolves with a new {@link Array} containing the awaited values
    */
-  fromAsync<T>(arrayLike: AsyncIterable<T> | Iterable<T> | ArrayLike<T>): Promise<Awaited<T>[]>;
+  fromAsync<T>(
+    iterableOrArrayLike: AsyncIterable<T> | Iterable<T | PromiseLike<T>> | ArrayLike<T | PromiseLike<T>>,
+  ): Promise<T[]>;
 
   /**
    * Create an array from an iterable or async iterable object.
-   * Values from the iterable are awaited. Results of the map function are also awaited.
+   * Values from a sync iterable are awaited. Results of the map function are also awaited.
    *
    * ```ts
-   * await Array.fromAsync([1]); // [1]
-   * await Array.fromAsync([Promise.resolve(1)]); // [1]
-   * await Array.fromAsync((async function*() { yield 1 })()); // [1]
    * await Array.fromAsync([1], (n) => n + 1); // [2]
    * await Array.fromAsync([1], (n) => Promise.resolve(n + 1)); // [2]
    * ```
    *
-   * @param arrayLike - The iterable or async iterable to convert to an array.
-   * @param mapFn - A mapper function that transforms each element of `arrayLike` after awaiting them.
+   * @param iterableOrArrayLike - The iterable or async iterable to convert to an array.
+   * @param mapFn - A mapper function that transforms each element of `iterableOrArrayLike` after awaiting it.
    * @param thisArg - The `this` to which `mapFn` is bound.
    * @returns A {@link Promise} that resolves with a new {@link Array} containing the awaited values
    */
   fromAsync<T, U>(
-    arrayLike: AsyncIterable<T> | Iterable<T> | ArrayLike<T>,
-    mapFn?: (value: T, index: number) => U,
+    iterableOrArrayLike: AsyncIterable<T> | Iterable<T> | ArrayLike<T>,
+    mapFn: (value: Awaited<T>, index: number) => U,
     thisArg?: any,
   ): Promise<Awaited<U>[]>;
 }
+
+// lib.es2024.promise.d.ts
+interface PromiseWithResolvers<T> {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: any) => void;
+}
+
+// lib.es2024.promise.d.ts (`withResolvers`), lib.es2025.promise.d.ts (`try`)
+interface PromiseConstructor {
+  /**
+   * Create a deferred promise with its `resolve` and `reject` functions exposed,
+   * so code outside the promise can settle it.
+   *
+   * @example
+   * ```ts
+   * const { promise, resolve, reject } = Promise.withResolvers<string>();
+   *
+   * setTimeout(() => {
+   *  resolve("Hello world!");
+   * }, 1000);
+   *
+   * await promise; // "Hello world!"
+   * ```
+   */
+  withResolvers<T>(): PromiseWithResolvers<T>;
+
+  /**
+   * Run a function and return a promise of its result. If the function throws,
+   * the returned promise rejects with the thrown error.
+   *
+   * @param callbackFn - The function to run
+   * @param args - The arguments to pass to the function. This is similar to `setTimeout` and avoids the extra closure.
+   * @returns A promise that resolves with the function's result
+   */
+  try<T, U extends unknown[]>(callbackFn: (...args: U) => T | PromiseLike<T>, ...args: U): Promise<Awaited<T>>;
+}
+
+// lib.esnext.collection.d.ts
+interface Map<K, V> {
+  /**
+   * Returns the value associated with `key`. If there is none, `defaultValue`
+   * is inserted for `key` and returned.
+   *
+   * @example
+   * ```ts
+   * const counts = new Map<string, number[]>();
+   * counts.getOrInsert("a", []).push(1);
+   * ```
+   */
+  getOrInsert(key: K, defaultValue: V): V;
+  /**
+   * Returns the value associated with `key`. If there is none, `callback` is
+   * called with `key`, and its result is inserted for `key` and returned.
+   *
+   * @example
+   * ```ts
+   * const groups = new Map<string, string[]>();
+   * groups.getOrInsertComputed("a", () => []).push("first");
+   * ```
+   */
+  getOrInsertComputed(key: K, callback: (key: K) => V): V;
+}
+
+interface WeakMap<K extends WeakKey, V> {
+  /**
+   * Returns the value associated with `key`. If there is none, `defaultValue`
+   * is inserted for `key` and returned.
+   */
+  getOrInsert(key: K, defaultValue: V): V;
+  /**
+   * Returns the value associated with `key`. If there is none, `callback` is
+   * called with `key`, and its result is inserted for `key` and returned.
+   */
+  getOrInsertComputed(key: K, callback: (key: K) => V): V;
+}
+
+// lib.es2025.regexp.d.ts
+interface RegExpConstructor {
+  /**
+   * Escapes any potential regex syntax characters in a string, and returns a
+   * new string that can be safely used as a literal pattern for the RegExp()
+   * constructor.
+   *
+   * [MDN Reference](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp/escape)
+   *
+   * @example
+   * ```ts
+   * const re = new RegExp(RegExp.escape("foo.bar"));
+   * re.test("foo.bar"); // true
+   * re.test("foo!bar"); // false
+   * ```
+   */
+  escape(string: string): string;
+}
+
+// lib.esnext.typedarrays.d.ts
+interface Uint8Array {
+  /**
+   * Convert the Uint8Array to a base64 encoded string
+   */
+  toBase64(options?: { alphabet?: "base64" | "base64url" | undefined; omitPadding?: boolean | undefined }): string;
+
+  /**
+   * Decode a base64 encoded string into this Uint8Array, starting at index 0.
+   * Decoding stops when the array is full.
+   *
+   * @param string The base64 encoded string to decode into the array
+   * @param options Options for decoding the base64 string
+   */
+  setFromBase64(
+    string: string,
+    options?: {
+      alphabet?: "base64" | "base64url" | undefined;
+      lastChunkHandling?: "loose" | "strict" | "stop-before-partial" | undefined;
+    },
+  ): {
+    /**
+     * The number of characters read from the base64 string
+     */
+    read: number;
+    /**
+     * The number of bytes written to the Uint8Array.
+     * Never greater than the `.byteLength` of this Uint8Array
+     */
+    written: number;
+  };
+
+  /**
+   * Convert the Uint8Array to a hex encoded string
+   */
+  toHex(): string;
+
+  /**
+   * Decode a hex encoded string into this Uint8Array, starting at index 0.
+   * Decoding stops when the array is full.
+   *
+   * @param string The hex encoded string to decode into the array. The string must have
+   * an even number of characters, contain only hexadecimal characters, and contain no whitespace.
+   */
+  setFromHex(string: string): {
+    /**
+     * The number of characters read from the hex string
+     */
+    read: number;
+    /**
+     * The number of bytes written to the Uint8Array.
+     * Never greater than the `.byteLength` of this Uint8Array
+     */
+    written: number;
+  };
+}
+
+interface Uint8ArrayConstructor {
+  /**
+   * Create a new Uint8Array from a base64 encoded string
+   * @param string The base64 encoded string to convert to a Uint8Array
+   * @param options Options for decoding the base64 string
+   * @returns A new Uint8Array containing the decoded data
+   */
+  fromBase64(
+    string: string,
+    options?: {
+      alphabet?: "base64" | "base64url" | undefined;
+      lastChunkHandling?: "loose" | "strict" | "stop-before-partial" | undefined;
+    },
+  ): Uint8Array<ArrayBuffer>;
+
+  /**
+   * Create a new Uint8Array from a hex encoded string
+   * @param string The hex encoded string to convert to a Uint8Array
+   * @returns A new Uint8Array containing the decoded data
+   */
+  fromHex(string: string): Uint8Array<ArrayBuffer>;
+}
+//#endregion
 
 interface ConsoleOptions {
   stdout: import("stream").Writable;
@@ -1404,39 +1647,6 @@ interface EventSourceInit {
   withCredentials?: boolean;
 }
 
-interface PromiseConstructor {
-  /**
-   * Create a deferred promise with its `resolve` and `reject` functions exposed,
-   * so code outside the promise can settle it.
-   *
-   * @example
-   * ```ts
-   * const { promise, resolve, reject } = Promise.withResolvers();
-   *
-   * setTimeout(() => {
-   *  resolve("Hello world!");
-   * }, 1000);
-   *
-   * await promise; // "Hello world!"
-   * ```
-   */
-  withResolvers<T>(): {
-    promise: Promise<T>;
-    resolve: (value?: T | PromiseLike<T>) => void;
-    reject: (reason?: any) => void;
-  };
-
-  /**
-   * Run a function and return a promise of its result. If the function throws,
-   * the returned promise rejects with the thrown error.
-   *
-   * @param fn - The function to run
-   * @param args - The arguments to pass to the function. This is similar to `setTimeout` and avoids the extra closure.
-   * @returns A promise that resolves with the function's result
-   */
-  try<T, A extends any[] = []>(fn: (...args: A) => T | PromiseLike<T>, ...args: A): Promise<T>;
-}
-
 interface Navigator {
   readonly userAgent: string;
   readonly platform: "MacIntel" | "Win32" | "Linux x86_64";
@@ -1526,78 +1736,6 @@ declare var Blob: Bun.__internal.UseLibDomIfAvailable<
     new (blobParts?: Bun.BlobPart[], options?: BlobPropertyBag): Blob;
   }
 >;
-
-interface Uint8Array {
-  /**
-   * Convert the Uint8Array to a base64 encoded string
-   */
-  toBase64(options?: { alphabet?: "base64" | "base64url"; omitPadding?: boolean }): string;
-
-  /**
-   * Set the contents of the Uint8Array from a base64 encoded string
-   * @param base64 The base64 encoded string to decode into the array
-   * @param offset Optional starting index to begin setting the decoded bytes (default: 0)
-   */
-  setFromBase64(
-    base64: string,
-    offset?: number,
-  ): {
-    /**
-     * The number of bytes read from the base64 string
-     */
-    read: number;
-    /**
-     * The number of bytes written to the Uint8Array.
-     * Never greater than the `.byteLength` of this Uint8Array
-     */
-    written: number;
-  };
-
-  /**
-   * Convert the Uint8Array to a hex encoded string
-   */
-  toHex(): string;
-
-  /**
-   * Set the contents of the Uint8Array from a hex encoded string
-   * @param hex The hex encoded string to decode into the array. The string must have
-   * an even number of characters, contain only hexadecimal characters, and contain no whitespace.
-   */
-  setFromHex(hex: string): {
-    /**
-     * The number of bytes read from the hex string
-     */
-    read: number;
-    /**
-     * The number of bytes written to the Uint8Array.
-     * Never greater than the `.byteLength` of this Uint8Array
-     */
-    written: number;
-  };
-}
-
-interface Uint8ArrayConstructor {
-  /**
-   * Create a new Uint8Array from a base64 encoded string
-   * @param base64 The base64 encoded string to convert to a Uint8Array
-   * @param options Options for decoding the base64 string
-   * @returns A new Uint8Array containing the decoded data
-   */
-  fromBase64(
-    base64: string,
-    options?: {
-      alphabet?: "base64" | "base64url";
-      lastChunkHandling?: "loose" | "strict" | "stop-before-partial";
-    },
-  ): Uint8Array<ArrayBuffer>;
-
-  /**
-   * Create a new Uint8Array from a hex encoded string
-   * @param hex The hex encoded string to convert to a Uint8Array
-   * @returns A new Uint8Array containing the decoded data
-   */
-  fromHex(hex: string): Uint8Array<ArrayBuffer>;
-}
 
 interface BroadcastChannel extends Bun.__internal.LibEmptyOrBroadcastChannel {}
 declare var BroadcastChannel: Bun.__internal.UseLibDomIfAvailable<
@@ -1705,11 +1843,22 @@ interface FormData {
   set(name: string, value: string): void;
   set(name: string, blobValue: Blob, filename?: string): void;
   forEach(callbackfn: (value: Bun.FormDataEntryValue, key: string, parent: FormData) => void, thisArg?: any): void;
-  keys(): IterableIterator<string>;
-  values(): IterableIterator<string>;
-  entries(): IterableIterator<[string, string]>;
+  /** Returns an iterator over the `[name, value]` pairs of every entry in the list. Same as {@link FormData.entries}. */
+  [Symbol.iterator](): Bun.__internal.LibFormDataIteratorOrIterableIterator<[string, Bun.FormDataEntryValue]>;
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/entries) */
+  entries(): Bun.__internal.LibFormDataIteratorOrIterableIterator<[string, Bun.FormDataEntryValue]>;
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/keys) */
+  keys(): Bun.__internal.LibFormDataIteratorOrIterableIterator<string>;
+  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/FormData/values) */
+  values(): Bun.__internal.LibFormDataIteratorOrIterableIterator<Bun.FormDataEntryValue>;
 }
 declare var FormData: Bun.__internal.UseLibDomIfAvailable<"FormData", { prototype: FormData; new (): FormData }>;
+
+// Declared exactly as in lib.dom.d.ts so that the two declarations merge when lib.dom is loaded.
+// Without lib.dom, FormData does not use it (see Bun.__internal.LibFormDataIteratorOrIterableIterator).
+interface FormDataIterator<T> extends IteratorObject<T, BuiltinIteratorReturn, unknown> {
+  [Symbol.iterator](): FormDataIterator<T>;
+}
 
 interface EventSource extends Bun.__internal.LibEmptyOrEventSource {}
 declare var EventSource: Bun.__internal.UseLibDomIfAvailable<
@@ -2156,21 +2305,3 @@ declare namespace fetch {
   ): void;
 }
 //#endregion
-
-interface RegExpConstructor {
-  /**
-   * Escapes any potential regex syntax characters in a string, and returns a
-   * new string that can be safely used as a literal pattern for the RegExp()
-   * constructor.
-   *
-   * [MDN Reference](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp/escape)
-   *
-   * @example
-   * ```ts
-   * const re = new RegExp(RegExp.escape("foo.bar"));
-   * re.test("foo.bar"); // true
-   * re.test("foo!bar"); // false
-   * ```
-   */
-  escape(string: string): string;
-}

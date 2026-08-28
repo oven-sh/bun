@@ -547,7 +547,7 @@ fn get_ptr_slice(
 
             if !byte_off.as_number().is_finite() {
                 return Err(global_this
-                    .throw_invalid_arguments(format_args!("ptr must be a finite number.")));
+                    .throw_invalid_arguments(format_args!("byteOffset must be a finite number")));
             }
         } else if !byte_off.is_empty_or_undefined_or_null() {
             return Err(

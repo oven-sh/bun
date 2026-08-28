@@ -1609,6 +1609,42 @@ impl<'a> Parser<'a> {
             }
         }
 
+        if let Some(allowed_hosts) = serve_obj.get(b"allowedHosts") {
+            if let Some(v) = allowed_hosts.as_bool() {
+                self.ctx.args.serve_allowed_hosts = if v {
+                    api::AllowedHosts::Any
+                } else {
+                    api::AllowedHosts::BuiltIn
+                };
+            } else if let ExprData::EArray(arr) = &allowed_hosts.data {
+                let raw = arr.items.slice();
+                let mut hosts: Vec<Box<[u8]>> = Vec::with_capacity(raw.len());
+                for item in raw {
+                    self.expect_string(item)?;
+                    let host = estring_to_owned(
+                        item.data
+                            .e_string()
+                            .expect("infallible: variant checked")
+                            .get(),
+                        self.bump,
+                    );
+                    if !api::AllowedHosts::is_valid_entry(&host) {
+                        self.add_error(
+                            item.loc,
+                            b"Expected allowedHosts entry to be a hostname without a scheme, port, or path (a leading \".\" allows subdomains)",
+                        )?;
+                    }
+                    hosts.push(host);
+                }
+                self.ctx.args.serve_allowed_hosts = api::AllowedHosts::List(hosts);
+            } else {
+                self.add_error(
+                    allowed_hosts.loc,
+                    b"Expected allowedHosts to be an array of hostnames or true",
+                )?;
+            }
+        }
+
         if let Some(minify) = serve_obj.get(b"minify") {
             if let Some(v) = minify.as_bool() {
                 self.ctx.args.serve_minify_syntax = Some(v);

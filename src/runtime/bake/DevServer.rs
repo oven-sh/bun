@@ -1352,8 +1352,9 @@ pub(super) enum DevHandlerId {
 /// rebound origin (`attacker.com` → 127.0.0.1) presents `Host: attacker.com`;
 /// rejecting non-loopback / non-IP / non-configured hostnames prevents the
 /// attacker's page from reading bundled source via same-origin fetch.
-/// `development.allowedHosts` extends the list for names the developer
-/// trusts (mDNS names, tunnels, `/etc/hosts` entries).
+/// `development.allowedHosts` (or `[serve.static] allowedHosts`) extends the
+/// list for names the developer trusts (mDNS names, tunnels, `/etc/hosts`
+/// entries). It does not relax `is_allowed_dev_origin`.
 pub(crate) fn is_allowed_dev_host(dev: &DevServer, req: &Request) -> bool {
     is_allowed_host_header(req, dev.server.as_ref().map(|server| server.config()))
 }
@@ -1476,7 +1477,9 @@ fn host_forbidden(resp: AnyResponse) {
         resp.write_status(b"403 Forbidden");
         resp.end(
             b"Blocked: Host header does not match the dev server.\n\
-              To allow this hostname, add it to \"development.allowedHosts\" in Bun.serve().\n",
+              To allow this hostname, add it to allowedHosts: \
+              \"development.allowedHosts\" in Bun.serve(), \
+              or \"allowedHosts\" under [serve.static] in bunfig.toml.\n",
             false,
         );
     });

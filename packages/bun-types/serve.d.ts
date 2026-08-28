@@ -599,7 +599,12 @@ declare module "bun" {
            * name, a tunnel, or an `/etc/hosts` entry. An entry with a leading
            * `.` allows that domain and every subdomain of it. Entries are
            * hostnames without a port. Pass `true` to answer every `Host`,
-           * which removes the DNS rebinding protection.
+           * which removes the DNS rebinding protection. The HMR WebSocket
+           * still requires the `Origin` header to match the request's `Host`.
+           *
+           * The same option is `allowedHosts` under `[serve.static]` in
+           * `bunfig.toml`, which also applies to `bun ./index.html`. A value
+           * passed here takes precedence.
            *
            * @example
            * ```ts

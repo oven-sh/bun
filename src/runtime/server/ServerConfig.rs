@@ -17,6 +17,7 @@ use super::web_socket_server_context::WebSocketServerContext;
 use super::{AnyRoute, AnyServer};
 use crate::server::jsc::{JSGlobalObject, JSPropertyIterator, JSValue, JsResult, Strong};
 use bun_core::fmt as bun_fmt;
+pub use bun_options_types::schema::api::AllowedHosts;
 
 pub use crate::socket::ssl_config::SSLConfig;
 use crate::socket::ssl_config::SSLConfigFromJs;
@@ -39,8 +40,9 @@ pub struct ServerConfig {
     pub(crate) max_request_body_size: usize,
     pub(crate) development: DevelopmentOption,
     pub(crate) broadcast_console_log_from_browser_to_server_for_bake: bool,
-    /// `development.allowedHosts`: extra `Host` header values the dev server
-    /// answers for. See `bake::is_allowed_host_header`.
+    /// Extra `Host` header values the dev server answers for, from
+    /// `[serve.static] allowedHosts` or `development.allowedHosts`. See
+    /// `bake::is_allowed_host_header`.
     pub(crate) allowed_hosts: AllowedHosts,
 
     /// Enable automatic workspace folders for Chrome DevTools
@@ -150,58 +152,37 @@ impl DevelopmentOption {
     }
 }
 
-/// Which `Host` header values the dev server answers for. The built-in list
-/// (`localhost`, `*.localhost`, IP literals, the bound `hostname`) always
-/// applies; `development.allowedHosts` adds to it or turns the check off.
-#[derive(Default)]
-pub enum AllowedHosts {
-    #[default]
-    BuiltIn,
-    /// Hostnames without a port. An entry with a leading `.` allows that
-    /// domain and every subdomain of it.
-    List(Vec<Box<[u8]>>),
-    /// `allowedHosts: true`: every `Host` header is accepted.
-    Any,
-}
-
-impl AllowedHosts {
-    fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<AllowedHosts> {
-        const EXPECTED: &str =
-            "Bun.serve() expects 'development.allowedHosts' to be an array of hostnames or true";
-        if value.is_boolean() {
-            return Ok(if value == JSValue::TRUE {
-                AllowedHosts::Any
-            } else {
-                AllowedHosts::BuiltIn
-            });
-        }
-        if !value.is_cell() || !value.js_type().is_array() {
+/// `development.allowedHosts`: `true`, or an array of hostnames.
+fn allowed_hosts_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<AllowedHosts> {
+    const EXPECTED: &str =
+        "Bun.serve() expects 'development.allowedHosts' to be an array of hostnames or true";
+    if value.is_boolean() {
+        return Ok(if value == JSValue::TRUE {
+            AllowedHosts::Any
+        } else {
+            AllowedHosts::BuiltIn
+        });
+    }
+    if !value.is_cell() || !value.js_type().is_array() {
+        return Err(global.throw_invalid_arguments(format_args!("{EXPECTED}")));
+    }
+    let mut iter = value.array_iterator(global)?;
+    let mut hosts: Vec<Box<[u8]>> = Vec::new();
+    while let Some(item) = iter.next()? {
+        if !item.is_string() {
             return Err(global.throw_invalid_arguments(format_args!("{EXPECTED}")));
         }
-        let mut iter = value.array_iterator(global)?;
-        let mut hosts: Vec<Box<[u8]>> = Vec::new();
-        while let Some(item) = iter.next()? {
-            if !item.is_string() {
-                return Err(global.throw_invalid_arguments(format_args!("{EXPECTED}")));
-            }
-            let host = item.to_utf8(global)?;
-            // `.` alone would match every host with a trailing dot, and an
-            // empty entry would match a malformed `Host` header. A scheme,
-            // port, or path never matches anything, so reject those early.
-            if host.is_empty()
-                || &*host == b"."
-                || strings::index_of_any(&host, b":/?#*\t\r\n ").is_some()
-            {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "Bun.serve() expects each entry of 'development.allowedHosts' to be a hostname \
-                     without a scheme, port, or path (a leading \".\" allows subdomains), got \"{}\"",
-                    bstr::BStr::new(&*host),
-                )));
-            }
-            hosts.push(Box::<[u8]>::from(&*host));
+        let host = item.to_utf8(global)?;
+        if !AllowedHosts::is_valid_entry(&host) {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Bun.serve() expects each entry of 'development.allowedHosts' to be a hostname \
+                 without a scheme, port, or path (a leading \".\" allows subdomains), got \"{}\"",
+                bstr::BStr::new(&*host),
+            )));
         }
-        Ok(AllowedHosts::List(hosts))
+        hosts.push(Box::<[u8]>::from(&*host));
     }
+    Ok(AllowedHosts::List(hosts))
 }
 
 impl ServerConfig {
@@ -687,6 +668,12 @@ impl ServerConfig {
             } else {
                 DevelopmentOption::Development
             },
+            allowed_hosts: vm
+                .transpiler
+                .options
+                .transform_options
+                .serve_allowed_hosts
+                .clone(),
 
             // If this is a node:cluster child, let's default to SO_REUSEPORT.
             // That way you don't have to remember to set reusePort: true in Bun.serve() when using node:cluster.
@@ -773,7 +760,7 @@ impl ServerConfig {
 
                 if let Some(v) = dev.get(global, "allowedHosts")? {
                     if !v.is_undefined_or_null() {
-                        args.allowed_hosts = AllowedHosts::from_js(global, v)?;
+                        args.allowed_hosts = allowed_hosts_from_js(global, v)?;
                     }
                 }
             } else {

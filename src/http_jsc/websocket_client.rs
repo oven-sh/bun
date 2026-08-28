@@ -1416,9 +1416,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             payload_length_frame_bytes: Cell::new([0u8; 8]),
             payload_length_frame_len: Cell::new(0),
             pending_initial_task: Cell::new(None),
-            deflate: RefCell::new(
-                deflate_params.and_then(|params| WebSocketDeflate::init(*params).ok()),
-            ),
+            deflate: RefCell::new(deflate_params.map(|params| WebSocketDeflate::init(*params))),
             receiving_compressed: Cell::new(false),
             message_is_compressed: Cell::new(false),
             secure: Cell::new(secure),

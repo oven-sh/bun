@@ -3620,6 +3620,7 @@ pub mod bv2_impl {
                             ..Default::default()
                         });
                         *client_item = G::Property {
+                            flags: E::own_key_property_flags(&export_name),
                             key: Some(export_name),
                             value: Some(server.new_expr(E::Object {
                                 properties: bun_ast::g::PropertyList::from_owned_slice(Box::new([

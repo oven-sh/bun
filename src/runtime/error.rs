@@ -543,6 +543,16 @@ impl Error {
             Self::Js(_) => "JSError",
         }
     }
+
+    /// The env loader already printed this one; error sinks exit without adding a second line.
+    pub(crate) fn is_env_file_load_failed(&self) -> bool {
+        matches!(
+            self,
+            Self::Bundler(bun_bundler::Error::Dotenv(
+                bun_dotenv::Error::EnvFileLoadFailed
+            ))
+        )
+    }
 }
 
 impl From<std::io::Error> for Error {

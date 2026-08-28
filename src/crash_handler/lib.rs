@@ -1267,7 +1267,7 @@ mod draft {
             super::out_of_memory();
         } else if matches!(
             name,
-            b"InvalidArgument" | b"Invalid Bunfig" | b"InstallFailed"
+            b"InvalidArgument" | b"Invalid Bunfig" | b"InstallFailed" | b"EnvFileLoadFailed"
         ) {
             // Already printed their own diagnostics; exit quietly below.
         } else if name == b"SyntaxError" {

@@ -1408,6 +1408,14 @@ pub mod command {
         Ok(())
     }
 
+    #[cold]
+    fn run_scripts_failed_exit(err: &crate::Error) -> ! {
+        if !err.is_env_file_load_failed() {
+            pretty_errorln!("<r><red>error<r>: {}", err.name());
+        }
+        Global::exit(1);
+    }
+
     /// `bun [run] <script>` / `bun --version` / bare `bun`. The dominant tag
     /// pair — kept out-of-line so `start` is a jump table, but *not* `#[cold]`.
     #[inline(never)]
@@ -1430,15 +1438,13 @@ pub mod command {
         if ctx.parallel || ctx.sequential {
             // Result<Infallible, _>: if this returns at all, it's Err.
             let Err(err) = super::multi_run::run(ctx);
-            pretty_errorln!("<r><red>error<r>: {}", err.name());
-            Global::exit(1);
+            run_scripts_failed_exit(&err);
         }
 
         if !ctx.filters.is_empty() || ctx.workspaces {
             // Result<Infallible, _>: if this returns at all, it's Err.
             let Err(err) = super::filter_run::run_scripts_with_filter(ctx);
-            pretty_errorln!("<r><red>error<r>: {}", err.name());
-            Global::exit(1);
+            run_scripts_failed_exit(&err);
         }
 
         // Node: `-i foo.js` runs the script; `-i -e code` evals then enters the

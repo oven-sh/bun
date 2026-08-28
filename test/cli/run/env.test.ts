@@ -673,6 +673,19 @@ describe.concurrent("--env-file", () => {
     };
   }
 
+  async function spawnEnvFile(cmd: string[], cwd = dir) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      cwd,
+      env: { ...bunEnv, NODE_ENV: undefined },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
   test("single arg", async () => {
     expect((await runEnvFile(["--env-file", ".env.a"])).stdout).toBe("BUNTEST_A=1");
     expect((await runEnvFile(["--env-file=.env.a"])).stdout).toBe("BUNTEST_A=1");
@@ -726,7 +739,7 @@ describe.concurrent("--env-file", () => {
   });
 
   test("empty string disables default dotenv behavior", async () => {
-    expect((await runEnvFile(["--env-file=''"])).stdout).toBe("");
+    expect((await runEnvFile(["--env-file="])).stdout).toBe("");
   });
 
   test("should correctly ignore invalid values and parse the rest", async () => {
@@ -734,9 +747,153 @@ describe.concurrent("--env-file", () => {
     expect(res.stdout).toBe("BUNTEST_A=1,BUNTEST_B=1,BUNTEST_C=1,BUNTEST_D=,BUNTEST_E=1");
   });
 
-  test("should ignore a file that doesn't exist", async () => {
-    const res = await runEnvFile(["--env-file=.env.nonexisting"]);
-    expect(res.stdout).toBe("");
+  // https://github.com/oven-sh/bun/issues/21105
+  // Default .env discovery stays silent when nothing is there (covered by
+  // "when arg missing, fallback to default dotenv behavior" above).
+  describe("errors when an explicit env file cannot be loaded", () => {
+    const missing = 'error: ENOENT loading env file ".env.nonexisting"\n';
+
+    test("bun <file>", async () => {
+      expect(await spawnEnvFile(["--env-file=.env.nonexisting", `${dir}/index.ts`])).toEqual({
+        stdout: "",
+        stderr: missing,
+        exitCode: 1,
+      });
+    });
+
+    test("bun run <file>", async () => {
+      expect(await spawnEnvFile(["--env-file=.env.nonexisting", "run", `${dir}/index.ts`])).toEqual({
+        stdout: "",
+        stderr: missing,
+        exitCode: 1,
+      });
+    });
+
+    test("bun -e", async () => {
+      expect(await spawnEnvFile(["--env-file=.env.nonexisting", "-e", "console.log('ran')"])).toEqual({
+        stdout: "",
+        stderr: missing,
+        exitCode: 1,
+      });
+    });
+
+    // `./` makes bun open the file directly and boot the shell runner; a bare
+    // name goes through the package.json script lookup instead (covered below).
+    test("bun ./file.sh", async () => {
+      using shDir = tempDir("dotenv-missing-sh", { "script.sh": "echo ran\n" });
+      expect(await spawnEnvFile(["--env-file=.env.nonexisting", "./script.sh"], String(shDir))).toEqual({
+        stdout: "",
+        stderr: missing,
+        exitCode: 1,
+      });
+    });
+
+    test("node ./file.sh (argv0=node)", async () => {
+      using shDir = tempDir("dotenv-missing-sh-node", { "script.sh": "echo ran\n" });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--env-file=.env.nonexisting", "./script.sh"],
+        argv0: "node",
+        cwd: String(shDir),
+        env: { ...bunEnv, NODE_ENV: undefined },
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: missing, exitCode: 1 });
+    });
+
+    test("bun test", async () => {
+      using testDir = tempDir("dotenv-missing-test", {
+        "a.test.ts": "import { test } from 'bun:test'; test('ran', () => {});",
+      });
+      const { stdout, stderr, exitCode } = await spawnEnvFile(
+        ["--env-file=.env.nonexisting", "test", "a.test.ts"],
+        String(testDir),
+      );
+      // Only the version banner, which is printed before env files load; no test ran.
+      expect(stdout).toMatch(/^bun test v[^\n]*\n$/);
+      expect(stderr).toBe(missing);
+      expect(exitCode).toBe(1);
+    });
+
+    // Each of these runs package.json scripts through a different CLI entry
+    // point, and each has its own error sink that must not add a second line.
+    test.each([
+      ["bun run <script>", ["run", "go"]],
+      ["bun <file.sh> (bare name, resolved like a script)", ["script.sh"]],
+      ["bun run --parallel <script>", ["run", "--parallel", "go"]],
+      ["bun run --filter <script>", ["run", "--filter", "*", "go"]],
+    ])("%s", async (_, args) => {
+      using scriptDir = tempDir("dotenv-missing-script", {
+        "package.json": JSON.stringify({ name: "pkg", scripts: { go: "echo ran" } }),
+        "script.sh": "echo ran\n",
+      });
+      expect(await spawnEnvFile(["--env-file=.env.nonexisting", ...args], String(scriptDir))).toEqual({
+        stdout: "",
+        stderr: missing,
+        exitCode: 1,
+      });
+    });
+
+    test("one missing in a comma list of several", async () => {
+      expect(await spawnEnvFile(["--env-file=.env.a,.env.nonexisting,.env.b", `${dir}/index.ts`])).toEqual({
+        stdout: "",
+        stderr: missing,
+        exitCode: 1,
+      });
+    });
+
+    test("a directory (opens, then fails to read)", async () => {
+      const { stdout, stderr, exitCode } = await spawnEnvFile(["--env-file=subdir", `${dir}/index.ts`]);
+      expect(stdout).toBe("");
+      // The errno differs by platform (EISDIR on POSIX).
+      expect(stderr).toMatch(/^error: \w+ loading env file "subdir"\n$/);
+      expect(exitCode).toBe(1);
+    });
+
+    // A pipe opens fine but cannot be read the way a file is (pread), so this is
+    // a read failure outside the set a default .env file tolerates. It used to
+    // exit 1 without printing anything. A shell pipeline is used because
+    // Bun.spawn's stdin: "pipe" hands the child a socket, which fails at open.
+    test.skipIf(isWindows)("a pipe (opens, then fails to read with an errno defaults never see)", async () => {
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", 'echo BUNTEST_P=1 | exec "$0" --env-file=/dev/stdin "$1"', bunExe(), `${dir}/index.ts`],
+        cwd: dir,
+        env: { ...bunEnv, NODE_ENV: undefined },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "",
+        stderr: 'error: ESPIPE loading env file "/dev/stdin"\n',
+        exitCode: 1,
+      });
+    });
+
+    test("a worker inherits the values instead of re-reading the file", async () => {
+      using workerDir = tempDir("dotenv-worker", {
+        ".env.w": "BUNTEST_W=1",
+        // --env-file turned default discovery off in the parent; the worker must not turn it back on.
+        ".env": "BUNTEST_DOTENV=1",
+        "index.ts": `
+          import { unlinkSync } from "fs";
+          unlinkSync(".env.w");
+          const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
+          worker.onmessage = ({ data }) => {
+            console.log(data);
+            worker.terminate();
+          };
+        `,
+        "worker.ts": `postMessage(JSON.stringify({ w: process.env.BUNTEST_W, dotenv: process.env.BUNTEST_DOTENV }));`,
+      });
+      expect(await spawnEnvFile(["--env-file=.env.w", "index.ts"], String(workerDir))).toEqual({
+        stdout: '{"w":"1"}\n',
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
 });
 
@@ -1131,6 +1288,55 @@ test.skipIf(!canUseRunuser)("process.env is preserved when cwd lacks read permis
     // Restore permissions so tempDir cleanup can remove the directory.
     fs.chmodSync(noreadDir, 0o755);
   }
+});
+
+// Explicit files are opened by path, so they must not depend on the cwd
+// listing that default .env discovery needs. Same execute-only cwd setup as above.
+describe.skipIf(!canUseRunuser)("--env-file when cwd lacks read permission", () => {
+  function runAsNobodyIn(files: Record<string, string>, envFileArg: string) {
+    using dir = tempDir("env-file-eacces", { ...files, "noread/.keep": "" });
+    const noreadDir = path.join(dir, "noread");
+    fs.chmodSync(dir, 0o755);
+    for (const name of Object.keys(files)) fs.chmodSync(path.join(dir, name), 0o644);
+    fs.chmodSync(noreadDir, 0o111);
+    try {
+      const result = Bun.spawnSync({
+        cmd: [
+          "runuser",
+          "-m",
+          "-u",
+          "nobody",
+          "--",
+          "/bin/sh",
+          "-c",
+          `cd '${noreadDir}' && exec '${bunExe()}' --env-file='${path.join(dir, envFileArg)}' '${path.join(dir, "script.ts")}'`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      return { stdout: result.stdout.toString(), stderr: result.stderr.toString(), exitCode: result.exitCode };
+    } finally {
+      fs.chmodSync(noreadDir, 0o755);
+    }
+  }
+
+  const script = { "script.ts": 'console.log(process.env.MY_VAR ?? "unset");' };
+
+  test("an existing file is still loaded", () => {
+    expect(runAsNobodyIn({ ...script, "vars.env": "MY_VAR=from-file\n" }, "vars.env")).toEqual({
+      stdout: "from-file\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a missing file still fails", () => {
+    const { stdout, stderr, exitCode } = runAsNobodyIn(script, "missing.env");
+    expect(stdout).toBe("");
+    expect(stderr).toMatch(/^error: ENOENT loading env file ".*\/missing\.env"\n$/);
+    expect(exitCode).toBe(1);
+  });
 });
 
 // `st_size` is only a hint (sparse file, writer racing the loader): the env

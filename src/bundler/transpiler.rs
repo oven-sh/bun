@@ -770,17 +770,11 @@ impl<'a> Transpiler<'a> {
                     self.resolver.opts.set_production(true);
                 }
 
-                // Load the project root for .env file discovery. If the cwd
-                // (or a parent) is unreadable, readDirInfo may return null;
-                // bail out of .env file loading in that case, but process
-                // env vars were already loaded above.
+                // The listing only feeds default `.env*` discovery; `--env-file` opens by path.
                 let top_level_dir = self.fs().top_level_dir;
-                let dir_info = match self.resolver.read_dir_info(top_level_dir) {
-                    Ok(Some(d)) => d,
-                    _ => return Ok(()),
-                };
+                let dir_info = self.resolver.read_dir_info(top_level_dir).ok().flatten();
 
-                if let Some(tsconfig) = dir_info.tsconfig_json() {
+                if let Some(tsconfig) = dir_info.and_then(|d| d.tsconfig_json()) {
                     merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
                 }
 
@@ -794,12 +788,13 @@ impl<'a> Transpiler<'a> {
                         .fs
                         .entries_mutex
                         .lock_guard();
-                    match dir_info.get_entries_ref_locked(self.resolver.generation) {
-                        Some(entries) => dot_env::DirEntryKeys(
-                            entries.data.iter().map(|(k, _)| Box::from(&**k)).collect(),
-                        ),
-                        None => return Ok(()),
-                    }
+                    dot_env::DirEntryKeys(
+                        dir_info
+                            .and_then(|d| d.get_entries_ref_locked(self.resolver.generation))
+                            .map_or_else(Vec::new, |entries| {
+                                entries.data.iter().map(|(k, _)| Box::from(&**k)).collect()
+                            }),
+                    )
                 };
 
                 // `Env.files: Box<[Box<[u8]>]>` but `Loader::load`

@@ -603,9 +603,32 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // Out-param constructor — `configure_env_for_run` writes the whole struct.
         // `Transpiler` holds `&Arena`/`Box`/enum fields (non-null invariants),
         // so callers MUST pass a `MaybeUninit` slot.
-        this_transpiler.write(Transpiler::init(arena, ctx.log, args, env)?);
-        // SAFETY: fully written on the line above.
-        let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
+        let this_transpiler = this_transpiler.write(Transpiler::init(arena, ctx.log, args, env)?);
+        let result = Self::configure_run_transpiler(
+            ctx,
+            this_transpiler,
+            env_is_none,
+            log_errors,
+            store_root_fd,
+            with_linker,
+        );
+        if result.is_err() {
+            // SAFETY: written above and handed out to nobody else; callers
+            // treat the slot as uninitialized on `Err`, so this is its only
+            // release.
+            unsafe { this_transpiler.deinit() };
+        }
+        result
+    }
+
+    fn configure_run_transpiler(
+        ctx: &mut ContextData,
+        this_transpiler: &mut Transpiler<'static>,
+        env_is_none: bool,
+        log_errors: bool,
+        store_root_fd: bool,
+        with_linker: bool,
+    ) -> crate::Result<bun_resolver::DirInfoRef> {
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
         let env_loader = this_transpiler.env_mut();
         env_loader.quiet = true;
@@ -677,7 +700,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
             // Always skip default .env files for package.json script runner
             // (the script's own bun instance loads .env)
-            let _ = this_transpiler.run_env_loader(true);
+            this_transpiler.run_env_loader(true)?;
         }
 
         // Re-derive after `run_env_loader` — that call creates its own
@@ -1724,6 +1747,10 @@ impl RunCommand {
         let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
             Output::error_writer(),
         ));
+
+        if err.is_env_file_load_failed() {
+            Global::exit(1);
+        }
 
         pretty_errorln!(
             "<r><red>error<r>: Failed to run <b>{}<r> due to error <b>{}<r>",
@@ -3015,6 +3042,10 @@ impl RunCommand {
         let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
             Output::error_writer(),
         ));
+
+        if err.is_env_file_load_failed() {
+            Global::exit(1);
+        }
 
         Output::err(
             err,

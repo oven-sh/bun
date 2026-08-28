@@ -855,41 +855,34 @@ impl Loader {
             return Ok(());
         }
 
+        // Asked for by name (`--env-file`), so failing to load it is fatal, as in Node.
         let file = match bun_sys::open_file(file_path, bun_sys::OpenFlags::READ_ONLY) {
             Ok(f) => f,
-            Err(_) => {
-                // prevent retrying
-                self.custom_files_loaded.insert(file_path)?;
-                return Ok(());
-            }
+            Err(err) => return Err(explicit_env_file_failed(file_path, err.name())),
         };
 
-        match read_env_file_contents(&file)? {
-            ReadEnvFile::Empty => {}
-            ReadEnvFile::ReadErr(err) => {
-                if !self.quiet {
-                    bun_core::pretty_errorln!(
-                        "<r><red>{}<r> error loading {} file",
-                        bstr::BStr::new(err.name()),
-                        bstr::BStr::new(file_path)
-                    );
-                }
-            }
-            ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
-            }
-        }
+        let buf = match file.read_to_end() {
+            Ok(buf) => buf,
+            Err(err) => return Err(explicit_env_file_failed(file_path, err.name())),
+        };
+        Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
 
         self.custom_files_loaded.insert(file_path)?;
         Ok(())
     }
 }
 
-/// Shared post-open tail of `load_env_file` / `load_env_file_dynamic`:
-/// `File::read_to_end` (fstat-presized) with the recoverable-errno filter.
-/// The two callers differ in their open path, open-error handling, and the
-/// memo slot they write — those stay in the callers. Only the shared read
-/// tail is factored here.
+fn explicit_env_file_failed(file_path: &[u8], errno_name: &[u8]) -> crate::Error {
+    bun_core::err_generic!(
+        "{} loading env file {}",
+        bstr::BStr::new(errno_name),
+        bun_core::fmt::QuotedFormatter { text: file_path },
+    );
+    Output::flush();
+    crate::Error::EnvFileLoadFailed
+}
+
+/// Read tail of `load_env_file`: `read_to_end` plus the errnos that merely skip a default file.
 enum ReadEnvFile {
     /// Zero-length — caller marks the slot and returns.
     Empty,

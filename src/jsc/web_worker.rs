@@ -668,6 +668,13 @@ impl WebWorker {
             proxy_env_slots,
         } = init;
 
+        // `--env-file` values are in the env map cloned below; re-reading fails if a file is gone.
+        if !transform_options.env_files.is_empty() {
+            transform_options.env_files.clear();
+            // Explicit files disabled default `.env` discovery in the parent; keep it that way.
+            transform_options.disable_default_env_files = true;
+        }
+
         // worker-thread only field; no other thread reads `arena`.
         self.arena.set(Some(bun_alloc::Arena::new()));
 

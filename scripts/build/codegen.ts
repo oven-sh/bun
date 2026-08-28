@@ -466,13 +466,15 @@ function emitCompressedEmbeds({ n, cfg, o, dirStamp }: Ctx): void {
 
 function emitRuntimeJs({ n, cfg, o, dirStamp }: Ctx): void {
   const src = resolve(cfg.cwd, "src", "runtime.bun.js");
+  // `runtime.bun.js` re-exports `runtime.js`; esbuild bundles both into the output.
+  const shared = resolve(cfg.cwd, "src", "runtime.js");
   const out = resolve(cfg.codegenDir, "runtime.out.js");
 
   n.build({
     outputs: [out],
     rule: "esbuild",
     inputs: [src],
-    implicitInputs: [o.rootInstall],
+    implicitInputs: [shared, o.rootInstall],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,

@@ -919,8 +919,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             js_ast::ExprData::EArrow(e) => {
                 self.for_each_arg_expr(e.args.slice_mut(), &mut |p, a| p.rewrite_expr(a, kind));
+                // A `super` rewrite in the body gets its temporaries per call.
+                let temps_before = self.temp_refs_to_declare.len();
                 let stmts = e.body.stmts.slice_mut();
                 self.rewrite_stmts(stmts, kind);
+                e.body.stmts =
+                    self.declare_capture_temps_in_fn_body(e.body.stmts, temps_before, e.body.loc);
             }
             // A function and a class body bind their own `this`, `super` and
             // `new.target`; only a renamed class reference reaches into them.
@@ -1917,7 +1921,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             loc: class_name_loc,
         };
         self.for_each_arg_expr(f.func.args.slice_mut(), &mut |p, a| p.rewrite_expr(a, kind));
+        // The temporaries of a rewritten `super` update belong to the method's
+        // own frame, like the receiver captures of lowered private accesses.
+        let temps_before = self.temp_refs_to_declare.len();
         self.rewrite_stmts(f.func.body.stmts.slice_mut(), kind);
+        f.func.body.stmts =
+            self.declare_capture_temps_in_fn_body(f.func.body.stmts, temps_before, f.func.body.loc);
         if let Some(rk) = name_rewrite {
             self.rewrite_expr(value, rk);
         }

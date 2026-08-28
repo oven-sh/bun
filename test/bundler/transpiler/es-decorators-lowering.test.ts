@@ -924,6 +924,36 @@ describe("ES decorators lowering", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("a super update in an extracted method or a moved arrow gets its temporaries per call", async () => {
+    // The base setter re-enters the same method (or arrow) on another receiver
+    // before the outer call returns its old value.
+    const { stdout, stderr, exitCode } = await runInline(`
+      const dec = (v, ctx) => {};
+      class B {
+        _v = 10;
+        get x() { return this._v }
+        set x(v) { this._v = v; if (this.hook) { const h = this.hook; this.hook = null; h() } }
+        static _s = 10;
+        static get y() { return this._s }
+        static set y(v) { this._s = v; if (this.hook) { const h = this.hook; this.hook = null; h() } }
+      }
+      class C extends B {
+        @dec a = 1;
+        #m() { return super.x++ }
+        run() { return this.#m() }
+        static f = () => super.y++;
+      }
+      const c1 = new C(), c2 = new C();
+      c2._v = 100;
+      c1.hook = () => c2.run();
+      C.hook = () => C.f();
+      console.log(c1.run(), c1._v, c2._v, C.f(), C._s);
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("10 11 101 10 12\n");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent(
     "TypeScript useDefineForClassFields: false installs private methods before parameter properties",
     async () => {
@@ -1195,12 +1225,21 @@ describe("ES decorators lowering output", () => {
 
   test("`super` in extracted private methods uses the class or its prototype as home", () => {
     const out = js.transformSync(
-      `const dec = () => {}; class A extends B { @dec m() {} #pm() { return super.greet(); } static #spm() { return super.sm(); } }`,
+      `const dec = () => {}; class A extends B { @dec m() {} #pm() { return super.greet(); } static #spm() { return super.sm(); } #inc() { return super.n++ } static g = () => super.n++; }`,
     );
     expect(out).toMatch(
       /_pm_fn\$\d+ = function\(\) \{\n  return __superGet\w*\(A\.prototype, this, "greet"\)\.call\(this\);\n\};/,
     );
     expect(out).toMatch(/_spm_fn\$\d+ = function\(\) \{\n  return __superGet\w*\(A, this, "sm"\)\.call\(this\);\n\};/);
+    // The temporaries of a `super` update are declared in the method or arrow
+    // that runs it, not next to the class.
+    expect(out).toMatch(
+      /_inc_fn\$\d+ = function\(\) \{\n  var (_tmp\$\d+), (_old\$\d+);\n  return __superSet\w*\(A\.prototype, this, "n", \(\1 = __superGet\w*\(A\.prototype, this, "n"\), \2 = \1\+\+, \1\)\), \2;\n\};/,
+    );
+    expect(out).toMatch(
+      /__publicField\w*\(A, "g", \(\) => \{\n  var _tmp\$\d+, _old\$\d+;\n  return __superSet\w*\(A, A, "n", /,
+    );
+    expect(out).not.toMatch(/^var [^\n]*_tmp\$/m);
     expect(out).not.toContain("super.");
     expect(out).not.toContain("_home");
   });

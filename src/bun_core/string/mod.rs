@@ -1786,13 +1786,9 @@ pub mod printer {
         }
     }
 
-    /// Marks a byte that does not start a well-formed WTF-8 sequence. Negative so it
-    /// cannot collide with a code unit.
     const MALFORMED: i32 = -1;
 
-    /// Same algorithm as `bun_js_printer::write_pre_quoted_string`, except that
-    /// malformed UTF-8 input becomes U+FFFD instead of raw bytes, so the output is
-    /// always valid UTF-8.
+    /// Same algorithm as `bun_js_printer::write_pre_quoted_string`, except malformed UTF-8 becomes U+FFFD.
     /// PERF: (quote_char, ascii_only, json, encoding) are runtime params —
     /// profile if it shows up on a hot path.
     pub fn write_pre_quoted_string<W: PrinterWriter + ?Sized>(
@@ -1828,8 +1824,7 @@ pub mod printer {
             let c: i32 = match encoding {
                 StrEncoding::Utf8 => {
                     if width == 1 {
-                        // `wtf8_byte_sequence_length_with_invalid` also returns 1 for a
-                        // stray continuation byte or a 0xF8..=0xFF lead.
+                        // width 1 with a byte >= 0x80 is a stray continuation byte or an invalid lead.
                         if text_in[i] >= 0x80 {
                             MALFORMED
                         } else {
@@ -1850,13 +1845,12 @@ pub mod printer {
             };
 
             if c == MALFORMED {
-                // Replace only the offending byte and resync on the next one, so the
-                // bytes after a truncated sequence are not lost.
                 if ascii_only {
                     writer.write_all(&bmp_escape(0xFFFD))?;
                 } else {
                     writer.write_all("\u{FFFD}".as_bytes())?;
                 }
+                // One byte, not `width`, so the bytes after a truncated sequence survive.
                 i += 1;
                 continue;
             }

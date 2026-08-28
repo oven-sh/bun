@@ -38,9 +38,7 @@ pub mod js_lexer {
 pub mod js_printer {
     use super::strings::Encoding;
     use core::fmt;
-    /// Writes `input` as a `"`-quoted JSON string literal. Control characters,
-    /// lone surrogates and U+2028/U+2029 become `\u` escapes and malformed UTF-8
-    /// becomes U+FFFD, so the output is always valid JSON and valid UTF-8.
+    /// Always valid JSON and valid UTF-8: lone surrogates become `\u` escapes, malformed bytes U+FFFD.
     pub fn write_json_string(input: &[u8], f: &mut impl fmt::Write, enc: Encoding) -> fmt::Result {
         f.write_char('"')?;
         write_pre_quoted_string(input, f, b'"', false, enc)?;
@@ -3540,8 +3538,6 @@ fn splat_byte_all(w: &mut impl fmt::Write, byte: u8, count: usize) -> fmt::Resul
     Ok(())
 }
 
-/// `"`-quoted JSON string literal for UTF-8 input. Same output as
-/// [`js_printer::write_json_string`] with [`strings::Encoding::Utf8`].
 #[inline]
 pub fn encode_json_string(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Result {
     js_printer::write_json_string(s, w, strings::Encoding::Utf8)

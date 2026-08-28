@@ -3223,6 +3223,81 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("var arguments = 1;");
     },
   });
+  // A `with` statement in a sloppy CommonJS dependency cannot run inside an
+  // ESM bundle (modules are strict), so bundling it to ESM is an error in the
+  // dependency instead of a SyntaxError when the bundle loads.
+  itBundled("edgecase/SloppyWithStatementESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        const dep = require("./dep.cjs");
+        console.log(dep);
+      `,
+      "/dep.cjs": /* js */ `
+        var obj = { foo() { return "foo" } };
+        with (obj) { module.exports = foo() }
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/dep.cjs": ["With statements cannot be used with the ESM output format due to strict mode"],
+    },
+  });
+  itBundled("edgecase/SloppyDeleteBareNameESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        x = 1;
+        delete x;
+        console.log(typeof x);
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/entry.js": ["Delete of a bare identifier cannot be used with the ESM output format due to strict mode"],
+    },
+  });
+  itBundled("edgecase/SloppyWithStatementCJSOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        const dep = require("./dep.cjs");
+        console.log(dep);
+      `,
+      "/dep.cjs": /* js */ `
+        var obj = { foo() { return "foo" } };
+        with (obj) { module.exports = foo() }
+      `,
+    },
+    format: "cjs",
+    run: { stdout: "foo" },
+  });
+  // A for-in initializer is lowered to an assignment before the loop, so it is
+  // not an error for any output format.
+  itBundled("edgecase/SloppyForInInitializerIsLowered", {
+    files: {
+      "/entry.js": /* js */ `
+        for (var i = "init" in {}) ;
+        console.log(i);
+      `,
+    },
+    format: "esm",
+    run: { stdout: "init" },
+  });
+  // The sloppy-mode constructs that an ES module rejects are reported in the
+  // file that has ESM syntax, no matter the output format.
+  itBundled("edgecase/StrictModeConstructsInESMFileCJSOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        export let n = 010;
+        with (x) y;
+      `,
+    },
+    format: "cjs",
+    bundleErrors: {
+      "/entry.js": [
+        "Legacy octal literals cannot be used in an ECMAScript module",
+        "With statements cannot be used in an ECMAScript module",
+      ],
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

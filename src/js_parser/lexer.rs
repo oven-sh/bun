@@ -152,6 +152,8 @@ pub struct LexerSnapshot<'a> {
     pub(crate) has_react_hooks_block_suppression: bool,
     pub(crate) preserve_all_comments_before: bool,
     pub(crate) is_legacy_octal_literal: bool,
+    pub(crate) legacy_octal_loc: Loc,
+    pub(crate) legacy_html_comment_range: Range,
     pub(crate) is_log_disabled: bool,
     pub(crate) code_point: CodePoint,
     pub(crate) identifier: &'a [u8],
@@ -221,6 +223,14 @@ pub struct Lexer<'a> {
     pub(crate) has_react_hooks_block_suppression: bool,
     pub(crate) preserve_all_comments_before: bool,
     pub(crate) is_legacy_octal_literal: bool,
+    /// Location of the backslash of the most recent legacy octal escape
+    /// (`\1`, `\08`, `\8`) decoded by `to_e_string`. Compared against the
+    /// string token's start to tell whether it belongs to the current literal.
+    pub(crate) legacy_octal_loc: Loc,
+    /// Range of the first `-->` or `<!--` legacy HTML comment marker. These
+    /// are an error in ECMAScript modules, which the parser only knows once
+    /// the whole file is scanned.
+    pub(crate) legacy_html_comment_range: Range,
     pub(crate) is_log_disabled: bool,
     pub(crate) comments_to_preserve_before: Vec<js_ast::G::Comment>,
     pub(crate) code_point: CodePoint,
@@ -337,6 +347,8 @@ impl<'a> Lexer<'a> {
             has_react_hooks_block_suppression: self.has_react_hooks_block_suppression,
             preserve_all_comments_before: self.preserve_all_comments_before,
             is_legacy_octal_literal: self.is_legacy_octal_literal,
+            legacy_octal_loc: self.legacy_octal_loc,
+            legacy_html_comment_range: self.legacy_html_comment_range,
             is_log_disabled: self.is_log_disabled,
             code_point: self.code_point,
             identifier: self.identifier,
@@ -375,6 +387,8 @@ impl<'a> Lexer<'a> {
         self.has_react_hooks_block_suppression = original.has_react_hooks_block_suppression;
         self.preserve_all_comments_before = original.preserve_all_comments_before;
         self.is_legacy_octal_literal = original.is_legacy_octal_literal;
+        self.legacy_octal_loc = original.legacy_octal_loc;
+        self.legacy_html_comment_range = original.legacy_html_comment_range;
         self.is_log_disabled = original.is_log_disabled;
         self.code_point = original.code_point;
         self.identifier = original.identifier;
@@ -483,81 +497,73 @@ impl<'a> Lexer<'a> {
                             continue;
                         }
 
-                        // legacy octal literals
+                        // legacy octal escapes: 1-3 octal digits, decoded leniently.
+                        // Sloppy mode allows them, and the parser reports them in the
+                        // visit pass when the scope turns out to be strict.
                         0x30..=0x37 => {
-                            let octal_start = (iter.i as usize + width2 as usize).saturating_sub(2);
+                            // `iter` is on the first digit; the backslash is one byte before it.
+                            let octal_start = (iter.i as usize).saturating_sub(1);
 
-                            // 1-3 digit octal
                             let mut is_bad = false;
                             let mut value: i64 = (c2 - 0x30) as i64;
+                            // Every path below leaves `iter` on the last consumed digit, so a
+                            // digit that is not part of the escape is lexed again by the outer
+                            // loop. `iterator.next` leaves `iter` untouched at end of text.
                             let mut prev = iter;
 
-                            if !iterator.next(&mut iter) {
-                                if value == 0 {
-                                    buf.push(0);
-                                    return Ok(());
-                                }
-                                self.syntax_error()?;
-                                return Ok(());
-                            }
-
-                            let c3: CodePoint = iter.c;
-
-                            match c3 {
-                                0x30..=0x37 => {
-                                    value = value * 8 + (c3 - 0x30) as i64;
-                                    prev = iter;
-                                    if !iterator.next(&mut iter) {
-                                        return self.syntax_error();
-                                    }
-
-                                    let c4 = iter.c;
-                                    match c4 {
-                                        0x30..=0x37 => {
-                                            let temp = value * 8 + (c4 - 0x30) as i64;
-                                            if temp < 256 {
-                                                value = temp;
-                                            } else {
-                                                iter = prev;
+                            if iterator.next(&mut iter) {
+                                match iter.c {
+                                    0x30..=0x37 => {
+                                        value = value * 8 + (iter.c - 0x30) as i64;
+                                        prev = iter;
+                                        if iterator.next(&mut iter) {
+                                            match iter.c {
+                                                0x30..=0x37 => {
+                                                    let temp = value * 8 + (iter.c - 0x30) as i64;
+                                                    if temp < 256 {
+                                                        value = temp;
+                                                    } else {
+                                                        iter = prev;
+                                                    }
+                                                }
+                                                0x38 | 0x39 => {
+                                                    is_bad = true;
+                                                    iter = prev;
+                                                }
+                                                _ => {
+                                                    iter = prev;
+                                                }
                                             }
                                         }
-                                        0x38 | 0x39 => {
-                                            is_bad = true;
-                                        }
-                                        _ => {
-                                            iter = prev;
-                                        }
                                     }
-                                }
-                                0x38 | 0x39 => {
-                                    is_bad = true;
-                                }
-                                _ => {
-                                    iter = prev;
+                                    0x38 | 0x39 => {
+                                        is_bad = true;
+                                        iter = prev;
+                                    }
+                                    _ => {
+                                        iter = prev;
+                                    }
                                 }
                             }
 
                             iter.c = i32::try_from(value).expect("int cast");
-                            if is_bad {
-                                // `octal_start` is text-relative like `iter.i`;
-                                // map back to absolute source position the same
-                                // way every sibling error path does (e.g.
-                                // `start + hex_start` in the `\u{}` branch).
-                                self.add_range_error(
-                                    Range {
-                                        loc: Loc {
-                                            start: i32::try_from(start + octal_start)
-                                                .expect("int cast"),
-                                        },
-                                        len: i32::try_from(iter.i as usize - octal_start).unwrap(),
-                                    },
-                                    format_args!("Invalid legacy octal literal"),
-                                )
-                                .expect("unreachable");
+
+                            // Forbid the use of octal escapes other than "\0"
+                            let octal_end = iter.i as usize + iter.width as usize;
+                            if is_bad || &text[octal_start..octal_end] != b"\\0" {
+                                self.legacy_octal_loc = Loc {
+                                    start: i32::try_from(start + octal_start).expect("int cast"),
+                                };
                             }
                         }
                         0x38 | 0x39 => {
                             iter.c = c2;
+
+                            // Forbid the invalid octal escapes "\8" and "\9"
+                            self.legacy_octal_loc = Loc {
+                                start: i32::try_from(start + (iter.i as usize).saturating_sub(1))
+                                    .expect("int cast"),
+                            };
                         }
                         // 2-digit hexadecimal
                         0x78 => {
@@ -972,16 +978,6 @@ impl<'a> Lexer<'a> {
             self.expect(T::TSemicolon)?;
         }
         Ok(())
-    }
-
-    #[cold]
-    #[inline(never)]
-    pub(crate) fn add_unsupported_syntax_error(&mut self, msg: &[u8]) -> Result<(), Error> {
-        self.add_error(
-            self.end,
-            format_args!("Unsupported syntax: {}", bstr::BStr::new(msg)),
-        );
-        Err(Error::SyntaxError)
     }
 
     // This is an edge case that doesn't really exist in the wild, so it doesn't
@@ -1638,10 +1634,8 @@ impl<'a> Lexer<'a> {
                         // Handle legacy HTML-style comments
                         0x21 => {
                             if self.peek("--".len()) == b"--" {
-                                self.add_unsupported_syntax_error(
-                                    b"Legacy HTML comments not implemented yet!",
-                                )?;
-                                return Ok(());
+                                self.scan_legacy_html_open_comment();
+                                continue;
                             }
 
                             self.token = T::TLessThan;
@@ -2039,10 +2033,34 @@ impl<'a> Lexer<'a> {
     fn scan_legacy_html_close_comment(&mut self) {
         // Consume the `>` of `-->`.
         self.step();
-        self.log().add_range_warning(
+        self.scan_legacy_html_comment_body("-->");
+    }
+
+    /// Handles the legacy `<!--` HTML single-line open comment. Entered with
+    /// `self.code_point` on the `!` of `<!--`.
+    #[cold]
+    #[inline(never)]
+    fn scan_legacy_html_open_comment(&mut self) {
+        // Consume the `!--` of `<!--`.
+        self.step();
+        self.step();
+        self.step();
+        self.scan_legacy_html_comment_body("<!--");
+    }
+
+    /// Records the marker of the first legacy HTML comment (they are an error
+    /// in an ECMAScript module), warns, and consumes the rest of the line.
+    fn scan_legacy_html_comment_body(&mut self, marker: &str) {
+        if self.legacy_html_comment_range.len == 0 {
+            self.legacy_html_comment_range = self.range();
+        }
+        self.log().add_range_warning_fmt(
             Some(self.source),
             self.range(),
-            b"Treating \"-->\" as the start of a legacy HTML single-line comment",
+            format_args!(
+                "Treating \"{}\" as the start of a legacy HTML single-line comment",
+                marker
+            ),
         );
 
         loop {
@@ -2229,6 +2247,8 @@ impl<'a> Lexer<'a> {
             has_react_hooks_block_suppression: false,
             preserve_all_comments_before: false,
             is_legacy_octal_literal: false,
+            legacy_octal_loc: Loc::EMPTY,
+            legacy_html_comment_range: Range::NONE,
             is_log_disabled: false,
             comments_to_preserve_before: Vec::new(),
             code_point: -1,
@@ -3036,6 +3056,10 @@ impl<'a> Lexer<'a> {
                 }
                 0x30..=0x37 | 0x5F => {
                     base = 8.0;
+                    self.is_legacy_octal_literal = true;
+                }
+                // "08" and "09" are decimal, but strict mode forbids them too.
+                0x38 | 0x39 => {
                     self.is_legacy_octal_literal = true;
                 }
                 _ => {}

@@ -299,27 +299,28 @@ describe("invalid-escape caret points at the backslash (#31134)", () => {
       pattern: "\\u{110000}",
       expectCol: 7,
     },
-    // Legacy-octal `\08`/`\09`:
+    // Legacy-octal `\08`/`\09`. Sloppy mode allows them, so the error needs
+    // strict mode:
     {
       name: "\\08 double-quote with prefix",
-      source: 'var a = "aaaaa\\08";',
-      msg: "Invalid legacy octal literal",
+      source: '"use strict"; var a = "aaaaa\\08";',
+      msg: "Legacy octal escape sequences cannot be used in strict mode",
       pattern: "\\08",
-      expectCol: 15,
+      expectCol: 29,
     },
     {
       name: "\\08 double-quote without prefix",
-      source: 'var a = "\\08";',
-      msg: "Invalid legacy octal literal",
+      source: '"use strict"; var a = "\\08";',
+      msg: "Legacy octal escape sequences cannot be used in strict mode",
       pattern: "\\08",
-      expectCol: 10,
+      expectCol: 24,
     },
     {
       name: "\\09 single-quote with prefix",
-      source: "var a = 'aaaaa\\09';",
-      msg: "Invalid legacy octal literal",
+      source: "\"use strict\"; var a = 'aaaaa\\09';",
+      msg: "Legacy octal escape sequences cannot be used in strict mode",
       pattern: "\\09",
-      expectCol: 15,
+      expectCol: 29,
     },
   ];
 

@@ -92,13 +92,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // not emitted: it is not necessary and it was causing breakages.
     }
 
-    fn e_string(_: &mut Self, _e: &mut Expr, _: ExprIn) {
-        // If you're using this, you're probably not using 0-prefixed legacy octal notation
-        // if e.LegacyOctalLoc.Start > 0 {
+    fn e_string(p: &mut Self, e: &mut Expr, _: ExprIn) {
+        let str_ = e.data.e_string().expect("infallible: variant checked");
+        let legacy_octal_loc = str_.legacy_octal_loc;
+        if legacy_octal_loc.start > 0 {
+            if str_.prefer_template {
+                p.log().add_range_error(
+                    Some(p.source),
+                    p.source.range_of_legacy_octal_escape(legacy_octal_loc),
+                    b"Legacy octal escape sequences cannot be used in template literals",
+                );
+            } else if p.is_strict_mode() {
+                p.mark_strict_mode_feature(
+                    StrictModeFeature::LegacyOctalEscape,
+                    p.source.range_of_legacy_octal_escape(legacy_octal_loc),
+                    b"",
+                )
+                .expect("unreachable");
+            }
+        }
     }
 
-    fn e_number(_: &mut Self, _e: &mut Expr, _: ExprIn) {
-        // idc about legacy octal loc
+    fn e_number(p: &mut Self, e: &mut Expr, _: ExprIn) {
+        if !p.legacy_octal_literals.is_empty() && p.is_strict_mode() {
+            if let Some(range) = p.legacy_octal_literals.get(&e.loc.start).copied() {
+                p.mark_strict_mode_feature(StrictModeFeature::LegacyOctalLiteral, range, b"")
+                    .expect("unreachable");
+            }
+        }
     }
 
     fn e_this(p: &mut Self, e: &mut Expr, _: ExprIn) {
@@ -688,6 +709,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut e_ = expr.data.e_template().expect("infallible: variant checked");
         if e_.tag.is_some() {
             p.visit_expr(e_.tag.as_mut().unwrap());
+        } else {
+            // Untagged templates never allow legacy octal escapes, in any mode.
+            let legacy_octal_loc = core::iter::once(&e_.head)
+                .chain(e_.parts().iter().map(|part| &part.tail))
+                .find_map(|contents| match contents {
+                    E::TemplateContents::Cooked(cooked) if cooked.legacy_octal_loc.start > 0 => {
+                        Some(cooked.legacy_octal_loc)
+                    }
+                    _ => None,
+                });
+            if let Some(legacy_octal_loc) = legacy_octal_loc {
+                p.log().add_range_error(
+                    Some(p.source),
+                    p.source.range_of_legacy_octal_escape(legacy_octal_loc),
+                    b"Legacy octal escape sequences cannot be used in template literals",
+                );
+            }
         }
 
         // Visit the interpolation values before the macro dispatch below: its
@@ -1218,6 +1256,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             Op::UnDelete => {
+                if matches!(e_.value.data, Data::EIdentifier(_)) {
+                    p.mark_strict_mode_feature(
+                        StrictModeFeature::DeleteBareName,
+                        js_lexer::range_of_identifier(p.source, e_.value.loc),
+                        b"",
+                    )
+                    .expect("unreachable");
+                }
                 p.visit_expr_in_out(&mut e_.value, ExprIn::default());
             }
             _ => {
@@ -2432,7 +2478,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             args_mut,
             &VisitArgsOpts {
                 has_rest_arg: e_.has_rest_arg,
-                body: dupe,
+                body_loc: e_.body.loc,
                 is_unique_formal_parameters: true,
             },
         );

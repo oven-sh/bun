@@ -29,12 +29,20 @@ pub struct Scope {
     /// so iteration yields safe `Deref` instead of `unsafe { child.as_ref() }`.
     pub children: AstVec<StoreRef<Scope>>,
     pub members: MemberHashMap,
+    /// Members that a later declaration in the same scope replaced (`var x;
+    /// var x` or `function f() {} function f() {}`). `hoist_symbols` reads
+    /// this to report duplicate function declarations once it knows whether
+    /// the scope ended up in strict mode. `AstVec`: arena-backed.
+    pub replaced: AstVec<Member>,
     /// `AstVec`: arena-backed.
     pub generated: AstVec<Ref>,
 
     // This is used to store the ref of the label symbol for ScopeLabel scopes.
     pub label_ref: Ref,
     pub label_stmt_is_loop: bool,
+
+    /// The location of the "use strict" directive for `ExplicitStrictMode`.
+    pub use_strict_loc: crate::Loc,
 
     // If a scope contains a direct eval() expression, then none of the symbols
     // inside that scope can be renamed. We conservatively assume that the
@@ -69,9 +77,11 @@ impl Scope {
         parent: None,
         children: AstAlloc::vec(),
         members: MemberHashMap::new_in(AstAlloc),
+        replaced: AstAlloc::vec(),
         generated: AstAlloc::vec(),
         label_ref: Ref::NONE,
         label_stmt_is_loop: false,
+        use_strict_loc: crate::Loc::EMPTY,
         contains_direct_eval: false,
         forbid_arguments: false,
         strict_mode: StrictModeKind::SloppyMode,

@@ -482,6 +482,7 @@ fn codegen_reactive_function(
         directives.push(Stmt::alloc(
             S::Directive {
                 value: store_str(d.as_bytes()),
+                legacy_octal_loc: Loc::EMPTY,
             },
             Loc::EMPTY,
         ));

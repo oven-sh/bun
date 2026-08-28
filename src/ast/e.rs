@@ -1674,6 +1674,10 @@ pub struct EString {
     pub next: Option<StoreRef<EString>>,
     pub end: Option<StoreRef<EString>>,
     pub rope_len: u32,
+    /// Location of the first legacy octal escape (`\1`, `\08`, `\8`) in the
+    /// literal's source text, or `Loc::EMPTY`. The lexer decodes these
+    /// leniently; the visit pass reports them where strict mode forbids them.
+    pub legacy_octal_loc: crate::Loc,
     pub prefer_template: bool,
     pub is_utf16: bool,
     /// Set only by the TOML parser on a date/time literal (`data` is its
@@ -1710,6 +1714,7 @@ impl Default for EString {
             next: None,
             end: None,
             rope_len: 0,
+            legacy_octal_loc: crate::Loc::EMPTY,
             is_utf16: false,
             toml_datetime: None,
         }
@@ -1758,6 +1763,7 @@ impl EString {
             next: None,
             end: None,
             rope_len: 0,
+            legacy_octal_loc: crate::Loc::EMPTY,
             is_utf16: false,
             toml_datetime: None,
         }
@@ -2022,6 +2028,7 @@ impl EString {
             next: self.next,
             end: self.end,
             rope_len: self.rope_len,
+            legacy_octal_loc: self.legacy_octal_loc,
             is_utf16: self.is_utf16,
             toml_datetime: self.toml_datetime,
         }

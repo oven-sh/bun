@@ -2687,6 +2687,23 @@ impl Source {
         }
     }
 
+    /// The range of the legacy octal escape (`\1`, `\08`, `\012`, `\8`) whose
+    /// backslash is at `loc`.
+    pub fn range_of_legacy_octal_escape(&self, loc: Loc) -> Range {
+        let text = &self.contents[loc.i()..];
+        let mut r = Range { loc, len: 0 };
+        if text.len() >= 2 && text[0] == b'\\' {
+            r.len = 2;
+            while r.len < 4 && (r.len as usize) < text.len() {
+                if !text[r.len as usize].is_ascii_digit() {
+                    break;
+                }
+                r.len += 1;
+            }
+        }
+        r
+    }
+
     pub fn range_of_string(&self, loc: Loc) -> Range {
         if loc.start < 0 {
             return Range::NONE;

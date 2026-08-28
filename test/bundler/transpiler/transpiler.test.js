@@ -2676,7 +2676,9 @@ console.log(<div {...obj} key="after" />);`),
     });
 
     it("exponentiation", () => {
-      expectPrinted("(delete x) ** 0", "(delete x) ** 0");
+      // `expectPrinted` wraps the code in `export default`, and deleting a
+      // bare identifier is an error in an ECMAScript module.
+      expectPrinted_("(delete x) ** 0", "(delete x) ** 0");
       expectPrinted("(delete x.prop) ** 0", "(delete x.prop) ** 0");
       expectPrinted("(delete x[0]) ** 0", "(delete x[0]) ** 0");
 
@@ -2705,7 +2707,7 @@ console.log(<div {...obj} key="after" />);`),
       expectPrinted("(~1) ** 2", "(~1) ** 2");
       expectPrinted("(!1) ** 2", "false ** 2");
       expectPrinted("(void x) ** 2", "(void x) ** 2");
-      expectPrinted("(delete x) ** 2", "(delete x) ** 2");
+      expectPrinted_("(delete x) ** 2", "(delete x) ** 2");
       expectPrinted("(typeof x) ** 2", "(typeof x) ** 2");
       expectPrinted("undefined ** 2", "undefined ** 2");
 
@@ -3540,14 +3542,17 @@ class Foo {
     );
 
     // Strict mode implied by `export`, by a class body, and by top-level await.
-    expectParseError("export {}; let eval = 1", 'Declarations with the name "eval" cannot be used in strict mode');
+    expectParseError(
+      "export {}; let eval = 1",
+      'Declarations with the name "eval" cannot be used in an ECMAScript module',
+    );
     expectParseError(
       "class A { m(arguments) {} }",
       'Declarations with the name "arguments" cannot be used in strict mode',
     );
     expectParseError(
       "await 1; var arguments = 1",
-      'Declarations with the name "arguments" cannot be used in strict mode',
+      'Declarations with the name "arguments" cannot be used in an ECMAScript module',
     );
 
     // Sloppy mode allows all of them when the transpiler is not bundling.

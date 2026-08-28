@@ -130,9 +130,7 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         // SAFETY: `symbols` points to the live `c.graph.symbols`; read-only here.
         let symbols_ref: &symbol::Map = unsafe { &*symbols };
         if source_index == Index::RUNTIME.value() {
-            // The runtime ships every helper, and most bundles use a few. Only
-            // the helpers that survived tree shaking print, so only the globals
-            // they reference may take a name away from user code.
+            // Only the runtime helpers a chunk keeps may take a global's name away from user code.
             renamer::compute_reserved_names_for_live_parts(
                 all_parts[source_index as usize].as_slice(),
                 &c.graph.parts_live[source_index as usize],

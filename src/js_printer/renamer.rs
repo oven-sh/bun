@@ -1230,9 +1230,7 @@ pub fn compute_reserved_names_for_scope(
     }
 }
 
-/// Like `compute_reserved_names_for_scope`, but only for the symbols that the
-/// live parts use. A part that tree shaking dropped never prints, so a global it
-/// references must not push a user's declaration of the same name out of the way.
+/// `compute_reserved_names_for_scope` for the symbols the live parts use; a part that tree shaking dropped never prints.
 pub fn compute_reserved_names_for_live_parts(
     parts: &[js_ast::Part],
     live: &bun_collections::AutoBitSet,

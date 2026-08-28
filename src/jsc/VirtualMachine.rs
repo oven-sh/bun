@@ -998,8 +998,8 @@ impl VirtualMachine {
     }
 
     /// Let the main VM's heap take the executable's initial module graph without collecting: everything allocated
-    /// while it loads is live, so collections before it finishes only re-mark it. The budget is the size of the embedded
-    /// payload (capped); after the first collection JSC's usual sizing applies. Workers load a fraction of the graph and
+    /// while it loads is live, so collections before it finishes only re-mark it. The budget is what loading the graph
+    /// reads (bytecode, records, string table; capped); after the first collection JSC's usual sizing applies. Workers load a fraction of the graph and
     /// keep the default.
     fn let_heap_take_initial_module_graph(
         &self,
@@ -1010,7 +1010,7 @@ impl VirtualMachine {
         }
         const MIN_BUDGET: usize = 8 * 1024 * 1024;
         const MAX_BUDGET: usize = 128 * 1024 * 1024;
-        let budget = graph.payload_len().clamp(MIN_BUDGET, MAX_BUDGET);
+        let budget = graph.module_graph_load_bytes().clamp(MIN_BUDGET, MAX_BUDGET);
         if budget > MIN_BUDGET {
             JSC__Heap__setInitialAllocationBudget(self.jsc_vm(), budget);
         }

@@ -3161,11 +3161,6 @@ void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* global,
     moduleLoader->removeEntry(identifier);
 }
 
-void JSC__Heap__setInitialAllocationBudget(JSC::VM* vm, size_t bytes)
-{
-    vm->heap.setInitialAllocationBudget(bytes);
-}
-
 void JSC__VM__collectAsync(JSC::VM* vm)
 {
     JSC::JSLockHolder lock(*vm);

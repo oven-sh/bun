@@ -330,8 +330,15 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     fn bytecode_string_table(&self) -> &'static [u8] {
         self.bytecode_string_table
     }
-    fn payload_len(&self) -> usize {
-        self.bytes.len()
+    fn module_graph_load_bytes(&self) -> usize {
+        let modules: usize = self
+            .files
+            .values()
+            .iter()
+            .map(|f| if f.bytecode.is_empty() { f.contents.len() } else { f.bytecode.len() } + f.module_info.len())
+            .sum();
+        let builtins: usize = self.builtin_bytecode.iter().map(|&(_, bytes)| bytes.len()).sum();
+        modules + builtins + self.bytecode_string_table.len()
     }
 }
 

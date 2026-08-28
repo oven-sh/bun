@@ -12,15 +12,14 @@ macro_rules! impl_get_errno_libc {
     ($($t:ty),+ $(,)?) => {$(
         impl $crate::GetErrno for $t {
             #[inline]
-            fn get_errno(self) -> $crate::E {
+            fn raw_errno(self) -> u16 {
                 // `as i64` would zero-extend u32, never matching -1. Compare
                 // against the type's own all-ones value instead (== -1 for
                 // signed, == MAX for unsigned — both are libc's failure rc).
                 if self == !(0 as $t) {
-                    u16::try_from($crate::posix::errno())
-                        .map_or($crate::E::EUNKNOWN, $crate::E::from_raw)
+                    u16::try_from($crate::posix::errno()).unwrap_or($crate::E::EUNKNOWN as u16)
                 } else {
-                    $crate::E::SUCCESS
+                    0
                 }
             }
         }
@@ -242,7 +241,17 @@ pub mod posix {
 /// `-errno` from `usize`, Darwin/FreeBSD read thread-local errno on `-1`,
 /// Windows ignores `rc` and reads `GetLastError()`/`WSAGetLastError()`).
 pub trait GetErrno: Copy {
-    fn get_errno(self) -> E;
+    /// The OS error number behind this return value, `0` when it is a success.
+    /// On POSIX this is the kernel's errno, which is not bound to the `E` table
+    /// (FUSE pass-through, `ENOTSUPP` 524). Store this one in `bun_sys::Error`
+    /// so the user sees the real number.
+    fn raw_errno(self) -> u16;
+
+    /// [`raw_errno`](Self::raw_errno) decoded into the table; an undeclared code is `E::EUNKNOWN`.
+    #[inline]
+    fn get_errno(self) -> E {
+        E::from_raw(self.raw_errno())
+    }
 }
 
 // Free-function shim over the trait method. POSIX-only:
@@ -503,13 +512,39 @@ mod errno_name_tests {
         assert_eq!(e_from_negated(-524), E::EUNKNOWN);
         assert_eq!(e_from_negated(-(E::EUNKNOWN as i32)), E::EUNKNOWN);
 
-        // Linux raw syscalls hand back `-errno` in the return register.
+        // Linux raw syscalls hand back `-errno` in the return register. The
+        // enum collapses an undeclared code; `raw_errno` keeps it.
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             assert_eq!((-524isize as usize).get_errno(), E::EUNKNOWN);
+            assert_eq!((-524isize as usize).raw_errno(), 524);
             assert_eq!((-2isize as usize).get_errno(), E::ENOENT);
+            assert_eq!((-2isize as usize).raw_errno(), 2);
             assert_eq!(7usize.get_errno(), E::SUCCESS);
+            assert_eq!(7usize.raw_errno(), 0);
+            assert_eq!((-4096isize as usize).raw_errno(), 0);
         }
+    }
+
+    /// The libc convention: `-1` means failure and the thread-local errno holds
+    /// the code, which can be one the table does not declare.
+    #[cfg(not(windows))]
+    #[test]
+    fn libc_raw_errno_is_the_thread_local_value() {
+        let set_errno = |value: core::ffi::c_int| {
+            // SAFETY: the calling thread's own errno slot, valid for the life of the thread.
+            unsafe { *bun_core::ffi::errno_ptr() = value };
+        };
+        set_errno(524);
+        assert_eq!((-1i32).raw_errno(), 524);
+        assert_eq!((-1i32).get_errno(), E::EUNKNOWN);
+        set_errno(2);
+        assert_eq!((-1i32).raw_errno(), 2);
+        assert_eq!((-1i32).get_errno(), E::ENOENT);
+        // A successful return never consults errno.
+        set_errno(524);
+        assert_eq!(0i32.raw_errno(), 0);
+        assert_eq!(0i32.get_errno(), E::SUCCESS);
     }
 
     /// `win32_errno_name` translation contract: known `GetLastError()` codes

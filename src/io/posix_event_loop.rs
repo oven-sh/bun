@@ -43,9 +43,9 @@ fn errno_sys<R>(rc: R, syscall: sys::Tag) -> Option<sys::Result<()>>
 where
     R: sys::GetErrno,
 {
-    match sys::get_errno(rc) {
-        sys::E::SUCCESS => None,
-        e => Some(sys::Result::Err(sys::Error::from_code(e, syscall))),
+    match rc.raw_errno() {
+        0 => None,
+        errno => Some(sys::Result::Err(sys::Error::new(errno, syscall))),
     }
 }
 

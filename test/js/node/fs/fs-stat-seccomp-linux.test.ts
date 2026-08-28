@@ -206,35 +206,55 @@ describe.skipIf(!isLinux)("fs.stat seccomp statx fallback", () => {
 });
 
 // The kernel is not bound to the errno table bun knows: FUSE filesystems and
-// some drivers return codes above EHWPOISON (133). fs.fsyncSync decodes the
-// errno through SystemErrno::from_raw; a code outside the table must report
-// as EUNKNOWN instead of becoming an invalid enum value (a debug build used
-// to die on an assertion there).
+// some drivers return codes above EHWPOISON (133). Such a code must reach JS
+// as node reports it, `errno` = the negated kernel number, with the `code`
+// string bun uses for an unmapped errno (EUNKNOWN), on both native error
+// paths: the node:fs helpers that decode a return value through `GetErrno`
+// (fsync) and the `bun_sys` wrappers that read the thread-local errno
+// (ftruncate).
 describe.skipIf(!isLinux)("node:fs errno outside the SystemErrno table", () => {
-  const helperBin = tryBuildHelper("__NR_fsync");
+  const cases = [
+    {
+      syscall: "fsync",
+      helperBin: tryBuildHelper("__NR_fsync"),
+      snippet: `
+        const fs = require("node:fs");
+        const fd = fs.openSync(process.argv[1], "r+");
+        try {
+          fs.fsyncSync(fd);
+          console.log(JSON.stringify({ threw: false }));
+        } catch (e) {
+          console.log(JSON.stringify({ threw: true, errno: e.errno, code: e.code, syscall: e.syscall, message: e.message }));
+        }
+      `,
+    },
+    {
+      syscall: "ftruncate",
+      helperBin: tryBuildHelper("__NR_ftruncate"),
+      snippet: `
+        const fs = require("node:fs");
+        const fd = fs.openSync(process.argv[1], "r+");
+        try {
+          fs.ftruncateSync(fd, 0);
+          console.log(JSON.stringify({ threw: false }));
+        } catch (e) {
+          console.log(JSON.stringify({ threw: true, errno: e.errno, code: e.code, syscall: e.syscall, message: e.message }));
+        }
+      `,
+    },
+  ];
 
-  const snippet = `
-    const fs = require("node:fs");
-    const fd = fs.openSync(process.argv[1], "r");
-    try {
-      fs.fsyncSync(fd);
-      console.log(JSON.stringify({ threw: false }));
-    } catch (e) {
-      console.log(JSON.stringify({ threw: true, errno: e.errno, code: e.code, syscall: e.syscall, message: e.message }));
-    }
-  `;
-
-  // fs.fsyncSync in a bun subprocess whose fsync(2) fails with `errno`.
-  // Returns the parsed result line, or null on an environment skip.
-  async function fsyncWithErrno(errno: number) {
-    if (helperBin == null) {
-      console.warn("SKIP fsync seccomp: cc or seccomp headers not available");
+  // Runs the case's node:fs call in a bun subprocess whose syscall fails with
+  // `errno`. Returns the parsed result line, or null on an environment skip.
+  async function callWithErrno(c: (typeof cases)[number], errno: number) {
+    if (c.helperBin == null) {
+      console.warn(`SKIP ${c.syscall} seccomp: cc or seccomp headers not available`);
       return null;
     }
-    using dir = tempDir("fsync-seccomp-target", { "file.txt": "hello" });
-    const out = await runUnderSeccomp(helperBin, errno, snippet, [join(String(dir), "file.txt")]);
+    using dir = tempDir(`${c.syscall}-seccomp-target`, { "file.txt": "hello" });
+    const out = await runUnderSeccomp(c.helperBin, errno, c.snippet, [join(String(dir), "file.txt")]);
     if (out == null) {
-      console.warn("SKIP fsync seccomp: seccomp not permitted in this environment");
+      console.warn(`SKIP ${c.syscall} seccomp: seccomp not permitted in this environment`);
       return null;
     }
     // Don't assert empty stderr — ASAN builds emit a startup warning there.
@@ -245,28 +265,29 @@ describe.skipIf(!isLinux)("node:fs errno outside the SystemErrno table", () => {
     return JSON.parse(out.stdout.trim());
   }
 
-  test.concurrent("a code above the table reports EUNKNOWN", async () => {
-    const result = await fsyncWithErrno(ENOTSUPP);
-    if (result == null) return;
-    expect(result).toEqual({
-      threw: true,
-      errno: expect.any(Number),
-      code: "EUNKNOWN",
-      syscall: "fsync",
-      message: "EUNKNOWN: unknown error, fsync",
+  for (const c of cases) {
+    test.concurrent(`${c.syscall}: a code above the table keeps its number and reports EUNKNOWN`, async () => {
+      const result = await callWithErrno(c, ENOTSUPP);
+      if (result == null) return;
+      expect(result).toEqual({
+        threw: true,
+        errno: -ENOTSUPP,
+        code: "EUNKNOWN",
+        syscall: c.syscall,
+        message: `EUNKNOWN: unknown error, ${c.syscall}`,
+      });
     });
-    expect(result.errno).toBeLessThan(0);
-  });
 
-  test.concurrent("a code in the table keeps its name", async () => {
-    const result = await fsyncWithErrno(EACCES);
-    if (result == null) return;
-    expect(result).toEqual({
-      threw: true,
-      errno: -EACCES,
-      code: "EACCES",
-      syscall: "fsync",
-      message: "EACCES: permission denied, fsync",
+    test.concurrent(`${c.syscall}: a code in the table keeps its name`, async () => {
+      const result = await callWithErrno(c, EACCES);
+      if (result == null) return;
+      expect(result).toEqual({
+        threw: true,
+        errno: -EACCES,
+        code: "EACCES",
+        syscall: c.syscall,
+        message: `EACCES: permission denied, ${c.syscall}`,
+      });
     });
-  });
+  }
 });

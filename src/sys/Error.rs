@@ -287,8 +287,10 @@ impl Error {
         }
     }
 
-    /// Decode `self.errno` (+ `from_libuv` on Windows) into a validated `SystemErrno`.
-    /// Shared by `name()` / `get_error_code_tag_name()`; a fallible discriminant lookup.
+    /// Decode `self.errno` (+ `from_libuv` on Windows) into a `SystemErrno`.
+    /// Shared by `name()` / `get_error_code_tag_name()`. `None` only for errno `0`
+    /// on POSIX; a non-zero errno the table does not declare is `EUNKNOWN`, and
+    /// `self.errno` keeps the real number for `to_system_error`.
     #[inline]
     fn resolve_system_errno(&self) -> Option<SystemErrno> {
         #[cfg(windows)]
@@ -304,15 +306,17 @@ impl Error {
             // Do NOT call `SystemErrno::init` here — on Windows its u16/i32 entry points map
             // Win32/WSA error codes to errnos and would corrupt a value that is already a
             // SystemErrno discriminant (e.g. discriminant 1/EPERM → Win32(1) → EISDIR).
-            E::try_from_raw(self.errno).map(|e| SystemErrno::from_raw(e as u16))
+            Some(
+                E::try_from_raw(self.errno)
+                    .map_or(SystemErrno::EUNKNOWN, |e| SystemErrno::from_raw(e as u16)),
+            )
         }
         #[cfg(not(windows))]
         {
-            if self.errno > 0 && self.errno < SystemErrno::MAX {
-                SystemErrno::init(self.errno as i64)
-            } else {
-                None
+            if self.errno == 0 {
+                return None;
             }
+            Some(self.get_errno())
         }
     }
 

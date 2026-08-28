@@ -552,6 +552,7 @@ function expectBundled(
     generateOutput = true,
     onAfterApiBundle,
     throw: _throw = false,
+    timeoutScale: _timeoutScale, // consumed by itBundled when registering the test
     ...unknownProps
   } = opts;
 
@@ -679,8 +680,8 @@ function expectBundled(
     if (generateOutput === false) outputPaths = [];
 
     outfile = useOutFile ? path.join(root, outfile ?? (compile ? "/out" : "/out.js")) : undefined;
-    // `bun build --compile` appends `.exe` on Windows when the name has no extension; that is the file tests read.
-    if (outfile && compile && isWindows && path.extname(outfile) === "") outfile += ".exe";
+    // `bun build --compile` appends `.exe` on Windows unless the name already ends with it; that is the file tests read.
+    if (outfile && compile && isWindows && !outfile.endsWith(".exe")) outfile += ".exe";
     outdir = !useOutFile && generateOutput ? path.join(root, outdir ?? "/out") : undefined;
     metafile = metafile ? path.join(root, metafile) : undefined;
     outputPaths = (

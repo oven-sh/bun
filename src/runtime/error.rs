@@ -56,8 +56,6 @@ pub enum Error {
     IsMissingHeaderLineEnd,
     #[error("is missing header colon separator")]
     IsMissingHeaderColonSeparator,
-    #[error("EndOfStream")]
-    EndOfStream,
     #[error("TooSmall")]
     TooSmall,
     #[error("InvalidValue")]
@@ -420,7 +418,6 @@ impl Error {
             Self::IsMissingHeaderEnd => "is missing header end",
             Self::IsMissingHeaderLineEnd => "is missing header line end",
             Self::IsMissingHeaderColonSeparator => "is missing header colon separator",
-            Self::EndOfStream => "EndOfStream",
             Self::TooSmall => "TooSmall",
             Self::InvalidValue => "InvalidValue",
             Self::ConnectionFailed => "ConnectionFailed",

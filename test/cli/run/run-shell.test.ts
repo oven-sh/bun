@@ -49,11 +49,16 @@ describe.concurrent("run-shell", () => {
     // build (event loop fds, the cwd fd, stdin), so scan upward. A lower
     // limit fails earlier with a different error, and a limit one above it
     // fails on the second dup, so the scan cannot step over the window.
+    //
+    // At startup bun walks the cwd's directory chain with one open fd per
+    // level. From a deep temp dir that walk needs more fds than the dup
+    // does, and no limit reaches the dup. Run from `/` so the walk is one
+    // directory.
     let stderr: string | undefined;
     for (let limit = 6; limit <= 16; limit++) {
       await using proc = Bun.spawn({
-        cmd: ["/bin/sh", "-c", `ulimit -n ${limit} && exec "$0" "$1"`, bunExe(), "hello.sh"],
-        cwd: String(dir),
+        cmd: ["/bin/sh", "-c", `ulimit -n ${limit} && exec "$0" "$1"`, bunExe(), join(String(dir), "hello.sh")],
+        cwd: "/",
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",

@@ -242,6 +242,35 @@ impl Loader {
         None
     }
 
+    /// Bun's install cache: where `bun install` extracts packages and where `bun build --compile`
+    /// keeps the downloaded executables of other targets. The first one set wins:
+    /// `$BUN_INSTALL_CACHE_DIR`, `cache_directory` (`--cache-dir` or bunfig `install.cache.dir`),
+    /// `$BUN_INSTALL/install/cache`, `$XDG_CACHE_HOME/.bun/install/cache`, `$HOME/.bun/install/cache`,
+    /// and last `node_modules/.bun-cache`. A relative path resolves against the top-level directory.
+    pub fn install_cache_directory_path(&self, cache_directory: Option<&[u8]>) -> Vec<u8> {
+        use bun_paths::resolve_path::{join_abs_string, platform};
+        let top_level_dir = bun_paths::fs::FileSystem::instance().top_level_dir();
+        let abs =
+            |parts: &[&[u8]]| join_abs_string::<platform::Loose>(top_level_dir, parts).to_vec();
+
+        if let Some(dir) = self.get(b"BUN_INSTALL_CACHE_DIR") {
+            return abs(&[dir]);
+        }
+        if let Some(dir) = cache_directory.filter(|dir| !dir.is_empty()) {
+            return abs(&[dir]);
+        }
+        if let Some(dir) = self.get(b"BUN_INSTALL") {
+            return abs(&[dir, b"install/", b"cache/"]);
+        }
+        if let Some(dir) = bun_core::env_var::XDG_CACHE_HOME.get() {
+            return abs(&[dir, b".bun/", b"install/", b"cache/"]);
+        }
+        if let Some(dir) = bun_core::env_var::HOME.get() {
+            return abs(&[dir, b".bun/", b"install/", b"cache/"]);
+        }
+        abs(&[b"node_modules/.bun-cache"])
+    }
+
     pub fn is_ci(&self) -> bool {
         self.get(b"CI")
             .or_else(|| self.get(b"TDDIUM"))

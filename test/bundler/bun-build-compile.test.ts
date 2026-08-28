@@ -1,6 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
-import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  cpSync,
+  existsSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  writeFileSync,
+} from "node:fs";
+import { gzipSync } from "node:zlib";
 import { join } from "path";
 
 describe("Bun.build compile", () => {
@@ -953,6 +964,118 @@ describe("compiled binary in a deleted cwd", () => {
     },
     60_000,
   );
+});
+
+// `--compile --target=<another platform>` downloads that platform's bun from npm and keeps it in
+// bun's install cache, the same directory `bun install` uses. `BUN_COMPILE_TARGET_TARBALL_URL`
+// points the download at a local server, so nothing here touches the network. The served "bun" is
+// a placeholder, not an executable, so the build fails after the download. The tests only check
+// where the download is cached.
+describe("cross-compile executable cache", () => {
+  // Another CPU than the host, so the executable is never this bun and always comes from the cache.
+  const target = isArm64 ? "bun-linux-x64" : "bun-linux-arm64";
+  const placeholder = `placeholder for ${target}\n`;
+
+  function octal(n: number, width: number): string {
+    return n.toString(8).padStart(width - 1, "0") + "\0";
+  }
+
+  // A gzipped ustar archive with one entry, `package/bin/bun`, like the npm tarballs.
+  function tarball(): Buffer {
+    const body = Buffer.from(placeholder);
+    const header = Buffer.alloc(512, 0);
+    header.write("package/bin/bun", 0, 100, "utf8");
+    header.write(octal(0o755, 8), 100); // mode
+    header.write(octal(0, 8), 108); // uid
+    header.write(octal(0, 8), 116); // gid
+    header.write(octal(body.length, 12), 124); // size
+    header.write(octal(0, 12), 136); // mtime
+    header.fill(" ", 148, 156); // checksum placeholder
+    header.write("0", 156); // regular file
+    header.write("ustar\0", 257);
+    header.write("00", 263);
+    let sum = 0;
+    for (let i = 0; i < 512; i++) sum += header[i];
+    header.write(octal(sum, 8), 148);
+    const pad = Buffer.alloc((512 - (body.length % 512)) % 512, 0);
+    return gzipSync(Buffer.concat([header, body, pad, Buffer.alloc(1024, 0)]));
+  }
+
+  // Runs the cross-compile of `<dir>/project/app.js`. `env` sets the variables the cache directory
+  // comes from; `null` unsets one. HOME points into `dir`, so a wrongly placed download shows up
+  // there and not in the real home directory.
+  async function crossCompile(dir: string, env: Record<string, string | null>, args: string[] = []) {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: () => new Response(tarball(), { headers: { "Content-Type": "application/octet-stream" } }),
+    });
+    const childEnv: Record<string, string | undefined> = {
+      ...bunEnv,
+      HOME: join(dir, "home"),
+      USERPROFILE: join(dir, "home"),
+      BUN_INSTALL_CACHE_DIR: undefined,
+      BUN_INSTALL: undefined,
+      XDG_CACHE_HOME: undefined,
+      BUN_COMPILE_TARGET_TARBALL_URL: `http://127.0.0.1:${server.port}/bun.tgz`,
+    };
+    for (const [key, value] of Object.entries(env)) {
+      childEnv[key] = value ?? undefined;
+    }
+    for (const key of Object.keys(childEnv)) {
+      if (childEnv[key] === undefined) delete childEnv[key];
+    }
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", `--target=${target}`, ...args, "app.js", "--outfile", "app"],
+      env: childEnv,
+      cwd: join(dir, "project"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The download worked and the build failed on the placeholder, not earlier.
+    expect(stderr).toContain("failed to write compiled executable");
+    expect(existsSync(join(dir, "home", ".bun"))).toBe(false);
+    expect(existsSync(join(dir, "project", ".bun-cache"))).toBe(false);
+  }
+
+  // The cache directory holds the download and nothing else.
+  function cachedDownload(cacheDir: string): string {
+    const entries = readdirSync(cacheDir);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toStartWith("bun-linux-");
+    return readFileSync(join(cacheDir, entries[0]), "utf8");
+  }
+
+  const files = { "project/app.js": `console.log("hi");`, "home/.keep": "" };
+
+  test.concurrent("caches the download under $XDG_CACHE_HOME/.bun/install/cache", async () => {
+    using dir = tempDir("compile-cache-xdg", files);
+    await crossCompile(String(dir), { XDG_CACHE_HOME: join(String(dir), "xdg") });
+    expect(cachedDownload(join(String(dir), "xdg", ".bun", "install", "cache"))).toBe(placeholder);
+  });
+
+  test.concurrent("caches the download under $BUN_INSTALL/install/cache", async () => {
+    using dir = tempDir("compile-cache-bun-install", files);
+    await crossCompile(String(dir), { BUN_INSTALL: join(String(dir), "bun-install") });
+    expect(cachedDownload(join(String(dir), "bun-install", "install", "cache"))).toBe(placeholder);
+  });
+
+  // `--env=disable` makes `bun build` load .env files without inlining them into the bundle.
+  test.concurrent("caches the download under BUN_INSTALL_CACHE_DIR from a .env file", async () => {
+    using dir = tempDir("compile-cache-dotenv", files);
+    const cacheDir = join(String(dir), "dotenv-cache");
+    writeFileSync(join(String(dir), "project", ".env"), `BUN_INSTALL_CACHE_DIR=${cacheDir.replaceAll("\\", "/")}\n`);
+    await crossCompile(String(dir), {}, ["--env=disable"]);
+    expect(cachedDownload(cacheDir)).toBe(placeholder);
+  });
+
+  // Without a home directory the cache goes under the project's node_modules, like `bun install`.
+  test.concurrent.skipIf(isWindows)("caches the download under node_modules/.bun-cache without HOME", async () => {
+    using dir = tempDir("compile-cache-no-home", files);
+    await crossCompile(String(dir), { HOME: null });
+    expect(cachedDownload(join(String(dir), "project", "node_modules", ".bun-cache"))).toBe(placeholder);
+  });
 });
 
 // file command test works well

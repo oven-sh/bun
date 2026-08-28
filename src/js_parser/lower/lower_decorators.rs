@@ -174,8 +174,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Without a renamer the printer emits `original_name` verbatim, so the
     /// name gets a per-file counter: two decorated classes in one scope must
     /// not share `_init`, and user code may already use `_x`. With a renamer
-    /// the symbol is recorded as declared by the current part so the
-    /// top-level pass renames collisions.
+    /// the symbol is a `var` binding of the enclosing function or module so
+    /// the renamers rename collisions.
     fn new_sym(&mut self, kind: js_ast::symbol::Kind, name: &'a [u8]) -> Ref {
         let name: &'a [u8] = if self.will_use_renamer() {
             name
@@ -191,9 +191,54 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .as_bytes()
         };
         let ref_ = self.new_symbol(kind, name);
-        VecExt::append(&mut self.current_scope_mut().generated, ref_);
-        self.record_declared_symbol(ref_);
+        self.declare_var_binding(ref_);
         ref_
+    }
+
+    /// Registers a generated symbol as a `var` binding of the current
+    /// position. The lowering declares its temporaries with `var`, so they
+    /// belong to the nearest function or module scope, not to a block the
+    /// class sits in: otherwise the renamer lets two class expressions in
+    /// sibling blocks share `_x`. Nested scopes are renamed from
+    /// `scope.generated`, the top level of a file from `Part.declared_symbols`.
+    fn declare_var_binding(&mut self, ref_: Ref) {
+        let mut scope = self.current_scope_ref();
+        while !scope.kind_stops_hoisting() {
+            scope = scope.parent.expect("the module scope stops hoisting");
+        }
+        VecExt::append(&mut scope.generated, ref_);
+        self.declared_symbols
+            .append(bun_ast::DeclaredSymbol {
+                ref_,
+                is_top_level: scope == self.module_scope,
+            })
+            .expect("oom");
+    }
+
+    /// A `var` temporary for a value that the rewritten code reads twice (the
+    /// receiver of `obj.#x`, a `super` key). `drain_capture_temp_decls`
+    /// declares it.
+    fn capture_temp(&mut self, name: &'a [u8]) -> Ref {
+        let ref_ = self.new_sym(js_ast::symbol::Kind::Other, name);
+        self.temp_refs_to_declare.push(crate::parser::TempRef {
+            r#ref: ref_,
+            ..Default::default()
+        });
+        ref_
+    }
+
+    /// Name of the WeakMap behind an `accessor`: `_<key>` for a plain name,
+    /// otherwise a counter, since `accessor "x y"` must not declare `var _x y`.
+    fn accessor_storage_name(&self, key: &Expr, counter: &mut usize) -> &'a [u8] {
+        if let js_ast::ExprData::EString(s) = &key.data
+            && s.is_utf8()
+            && js_lexer::is_identifier(&s.data)
+        {
+            return self.bump_name2(b"_", &s.data);
+        }
+        let name = self.bump_name(b"_accessor_storage", Some(*counter));
+        *counter += 1;
+        name
     }
 
     /// Single var declaration statement.
@@ -368,7 +413,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ) {
             return (key, key);
         }
-        let key_ref = self.generate_temp_ref(Some(b"_key"));
+        let key_ref = self.capture_temp(b"_key");
         let write = self.assign_to(key_ref, key, l);
         let read = self.use_ref(key_ref, l);
         (write, read)
@@ -650,7 +695,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let method = self.super_get(home, key, loc);
                     if call.optional_chain.is_some() {
                         // `super.m?.()` => `(_m = __superGet(...)) == null ? void 0 : _m.call(C, ...)`
-                        let tmp_ref = self.generate_temp_ref(Some(b"_m"));
+                        let tmp_ref = self.capture_temp(b"_m");
                         let stored = self.assign_to(tmp_ref, method, loc);
                         let null = self.new_expr(E::Null {}, loc);
                         let test = self.new_expr(
@@ -779,7 +824,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // `__superSet` evaluates its key before the value, so the set
                     // carries the capture and the inner get reuses it.
                     let (set_key, get_key) = self.super_key_once(key, loc);
-                    let tmp_ref = self.generate_temp_ref(Some(b"_tmp"));
+                    let tmp_ref = self.capture_temp(b"_tmp");
                     let current = self.super_get(home, get_key, loc);
                     let read_into_tmp = self.assign_to(tmp_ref, current, loc);
                     let tmp = self.use_ref(tmp_ref, loc);
@@ -797,7 +842,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         self.super_set(home, set_key, value, loc)
                     } else {
                         // `super.x++` => `(__superSet(..., "x", (_tmp = __superGet(...), _old = _tmp++, _tmp)), _old)`
-                        let old_ref = self.generate_temp_ref(Some(b"_old"));
+                        let old_ref = self.capture_temp(b"_old");
                         let save_old = self.assign_to(old_ref, update, loc);
                         let tmp_again = self.use_ref(tmp_ref, loc);
                         let value = read_into_tmp
@@ -1159,7 +1204,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             js_ast::ExprData::EThis(_) => (obj_expr, self.new_expr(E::This {}, obj_expr.loc)),
             _ => {
-                let tmp_ref = self.generate_temp_ref(Some(b"_obj"));
+                let tmp_ref = self.capture_temp(b"_obj");
                 let write = self.assign_to(tmp_ref, obj_expr, l);
                 let read = self.use_ref(tmp_ref, l);
                 (write, read)
@@ -1426,7 +1471,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // The update runs on a temporary so ToNumeric applies to the
                     // read value (a string increments as a number, a BigInt stays
                     // a BigInt), the same as `++` on a plain variable.
-                    let tmp_ref = self.generate_temp_ref(Some(b"_tmp"));
+                    let tmp_ref = self.capture_temp(b"_tmp");
                     let current = self.private_get_expr(get_obj, &info, expr_loc);
                     let read_into_tmp = self.assign_to(tmp_ref, current, expr_loc);
                     let tmp = self.use_ref(tmp_ref, expr_loc);
@@ -1444,7 +1489,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         *expr = self.private_set_expr(set_obj, &info, value, expr_loc);
                     } else {
                         // `o.#x++` => `(__privateSet(o, _x, (_tmp = __privateGet(o, _x), _old = _tmp++, _tmp)), _old)`
-                        let old_ref = self.generate_temp_ref(Some(b"_old"));
+                        let old_ref = self.capture_temp(b"_old");
                         let save_old = self.assign_to(old_ref, update, expr_loc);
                         let tmp_again = self.use_ref(tmp_ref, expr_loc);
                         let value = read_into_tmp
@@ -2606,17 +2651,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 } else if k == 4 {
                     // Decorated public auto-accessor → WeakMap
-                    let accessor_name: &'a [u8] = 'brk: {
-                        if let js_ast::ExprData::EString(s) = &key_expr.data
-                            && s.is_utf8()
-                        {
-                            break 'brk p.bump_name2(b"_", &s.data);
-                        }
-                        let name =
-                            p.bump_name(b"_accessor_storage", Some(accessor_storage_counter));
-                        accessor_storage_counter += 1;
-                        name
-                    };
+                    let accessor_name =
+                        p.accessor_storage_name(&key_expr, &mut accessor_storage_counter);
                     let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, accessor_name);
                     private_extra_ref = Some(wm_ref);
                     let wme = p.new_weak_map_expr(loc);
@@ -2984,16 +3020,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             if is_accessor {
                 // Undecorated auto-accessor → WeakMap + getter/setter
-                let accessor_name: &'a [u8] = 'brk: {
-                    if let js_ast::ExprData::EString(s) = &key_expr.data
-                        && s.is_utf8()
-                    {
-                        break 'brk p.bump_name2(b"_", &s.data);
-                    }
-                    let name = p.bump_name(b"_accessor_storage", Some(accessor_storage_counter));
-                    accessor_storage_counter += 1;
-                    name
-                };
+                let accessor_name =
+                    p.accessor_storage_name(&key_expr, &mut accessor_storage_counter);
                 let wm_ref = p.new_sym(js_ast::symbol::Kind::Other, accessor_name);
                 let wme = p.new_weak_map_expr(loc);
                 prefix_stmts.push(p.var_decl(wm_ref, Some(wme), loc));

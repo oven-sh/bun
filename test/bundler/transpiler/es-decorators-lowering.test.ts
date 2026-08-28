@@ -531,6 +531,98 @@ const extraSections = `
   }
   out.issue29837 = new B().names();
 }
+
+// Private names in static blocks and static initializers of a lowered class:
+// brand checks, private calls, a function declared in the block, and a nested
+// class that keeps its own private fields.
+{
+  class SB {
+    @dec m() {}
+    #a() { return "a"; }
+    static #s() { return "s"; }
+    accessor #x = 0;
+    static accessor y = #a in new SB();
+    static {
+      function check(o) { return #a in o; }
+      SB.checks = [#a in new SB(), #a in {}, #x in new SB(), check(new SB()), check({}), this.#s()];
+      class Inner { accessor b = 1; #y = 0; inc() { return this.#y++; } }
+      const inner = new Inner();
+      inner.inc();
+      SB.inner = [inner.inc(), inner.b];
+    }
+    inc() { return this.#x++; }
+  }
+  const sb = new SB();
+  sb.inc();
+  out.staticBlockPrivate = [SB.checks, SB.y, SB.inner, sb.inc()];
+}
+
+// Only the class's own \`this\` and inner name are rewritten in relocated
+// static code: a plain function keeps its \`this\`, a shadowing binding wins,
+// and after a class decorator both name the replaced class.
+{
+  const swap = (value, ctx) => class extends value { static extra = "extra"; };
+  const C = class Foo {
+    @dec static fn = function () { return this; };
+    @dec static shadow = (function Foo() { return Foo; })();
+  };
+  @swap class D { @dec static s = this.extra; }
+  const E = @swap class Bar { @dec static s = Bar.extra; static t = this.extra; };
+  const obj = {};
+  out.relocatedScopes = [C.fn.call(obj) === obj, typeof C.shadow === "function" && C.shadow !== C, D.s, E.s, E.t];
+}
+
+// Generated names avoid globals the file references only after the class,
+// a method parameter named like a lowered member's storage, and a class
+// named like a temporary.
+{
+  globalThis._init = "global init";
+  globalThis._G = "global G";
+  class G { @dec m() {} }
+  class Store {
+    #value = 0;
+    @dec set(_value) { this.#value = _value; return this; }
+    get() { return this.#value; }
+  }
+  const answer = (value, ctx) => () => 42;
+  @dec class init { @dec m() { return init; } }
+  const K = class { @answer x = 1; };
+  out.temporaryNames = [_init, _G, typeof G, new Store().set(5).get(), new init().m() === init, new K().x];
+}
+
+// The temporary that captures a private call receiver does not clobber a
+// user binding of the same name, and two class expressions in sibling blocks
+// do not share their hoisted temporaries.
+{
+  const _obj = "outer";
+  class R {
+    @dec m() {}
+    #secret() { return "secret"; }
+    static #staticSecret() { return "static secret"; }
+    self() { return this; }
+    static self() { return R; }
+    run() { return [this.self().#secret(), _obj]; }
+    static { R.fromBlock = [R.self().#staticSecret(), _obj]; }
+  }
+  let A2, B2;
+  { A2 = class { @dec m() {} accessor x = "a"; }; }
+  const a2 = new A2();
+  { B2 = class { @dec m() {} accessor x = "b"; }; }
+  out.temporaryScopes = [...new R().run(), ...R.fromBlock, a2.x, new B2().x];
+}
+
+// Accessor keys that are not identifiers.
+{
+  class SK {
+    accessor "x y" = 1;
+    @dec accessor "x-y" = 2;
+    static accessor "x y" = 3;
+    accessor 0 = 4;
+  }
+  const sk = new SK();
+  sk["x y"] += 10;
+  out.accessorKeys = [sk["x y"], sk["x-y"], SK["x y"], sk[0]];
+}
 `;
 
 const extraExpected = {
@@ -575,6 +667,11 @@ const extraExpected = {
     "Child.childOnly:childOnly=child_childOnly",
   ],
   issue29837: ["B", "A"],
+  staticBlockPrivate: [[true, false, true, true, false, "s"], true, [1, 1], 1],
+  relocatedScopes: [true, true, "extra", "extra", "extra"],
+  temporaryNames: ["global init", "global G", "function", 5, true, 42],
+  temporaryScopes: ["secret", "outer", "static secret", "outer", "a", "b"],
+  accessorKeys: [11, 2, 3, 4],
 };
 
 function buildFixture(cjs: boolean) {
@@ -932,7 +1029,7 @@ describe("ES decorators lowering output", () => {
     expect(out).toMatch(/__publicField\w*\(A, "u", __superSet\w*\(A, A, "z", 2\)\);/);
     // An optional call checks the looked-up method, not `.call`.
     expect(out).toMatch(
-      /__publicField\w*\(A, "o", \((__bun_temp_ref_\w+\$) = __superGet\w*\(A, A, "q"\)\) == null \? void 0 : \1\.call\(A\)\);/,
+      /__publicField\w*\(A, "o", \((_m\$\d+) = __superGet\w*\(A, A, "q"\)\) == null \? void 0 : \1\.call\(A\)\);/,
     );
     // A tagged template keeps the class as the receiver.
     expect(out).toMatch(/__publicField\w*\(A, "g", __superGet\w*\(A, A, "tag"\)\.bind\(A\)`x`\);/);
@@ -952,15 +1049,15 @@ describe("ES decorators lowering output", () => {
       `const dec = () => {}; class A { @dec m() {} #x = 1; inc() { return this.#x++ } pre() { return ++this.#x } add(v) { this.#x += v } nul(v) { this.#x ??= v } }`,
     );
     expect(out).toMatch(
-      /return __privateSet\w*\(this, _x\$\d+, \((__bun_temp_ref_\w+\$) = __privateGet\w*\(this, _x\$\d+\), (__bun_temp_ref_\w+\$) = \1\+\+, \1\)\), \2;/,
+      /return __privateSet\w*\(this, _x\$\d+, \((_tmp\$\d+) = __privateGet\w*\(this, _x\$\d+\), (_old\$\d+) = \1\+\+, \1\)\), \2;/,
     );
     expect(out).toMatch(
-      /return __privateSet\w*\(this, _x\$\d+, \((__bun_temp_ref_\w+\$) = __privateGet\w*\(this, _x\$\d+\), \+\+\1\)\);/,
+      /return __privateSet\w*\(this, _x\$\d+, \((_tmp\$\d+) = __privateGet\w*\(this, _x\$\d+\), \+\+\1\)\);/,
     );
     expect(out).toMatch(/__privateSet\w*\(this, _x\$\d+, __privateGet\w*\(this, _x\$\d+\) \+ v\);/);
     expect(out).toMatch(/__privateGet\w*\(this, _x\$\d+\) \?\? __privateSet\w*\(this, _x\$\d+, v\);/);
     // Temporaries are declared in the method that uses them.
-    expect(out).toMatch(/inc\(\) \{\n    var __bun_temp_ref_\w+\$, __bun_temp_ref_\w+\$;/);
+    expect(out).toMatch(/inc\(\) \{\n    var _tmp\$\d+, _old\$\d+;/);
   });
 
   test("`super` in extracted private methods uses the class or its prototype as home", () => {

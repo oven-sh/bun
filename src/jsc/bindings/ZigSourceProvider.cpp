@@ -228,7 +228,8 @@ extern "C" void Bun__DecoderStringTable__install(JSC::VM* vm, const uint8_t* byt
 
 extern "C" uint32_t Bun__EncoderStringTable__slotFor(JSC::EncoderStringTable* table, const BunString* string)
 {
-    return table->slotFor(*string->toWTFString().impl());
+    WTF::String wtf = string->toWTFString();
+    return table->slotFor(wtf.isNull() ? *WTF::emptyString().impl() : *wtf.impl());
 }
 
 extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sourceProviderURL, const BunString* inputSourceCode, uint32_t depth, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, JSC::EncoderStringTable* externalStrings)

@@ -2856,7 +2856,7 @@ fn transpile_source_code_inner(
                     let is_commonjs_module = already_bundled.is_common_js();
                     let bytecode_cache = Bytecode::owned(already_bundled.into_bytecode());
                     return Ok(ResolvedSource {
-                        source_code: bun_core::String::clone_latin1(&source.contents),
+                        source_code: bun_core::String::clone_utf8(&source.contents),
                         source_url: input_specifier.create_if_different(path.text),
                         already_bundled: true,
                         bytecode_cache,
@@ -3257,7 +3257,7 @@ fn transpile_source_code_inner(
                 // `None`.
                 debug_assert!(cache.output_code.is_none());
                 let written_len = written.len();
-                let source_code = bun_core::String::clone_latin1(written);
+                let source_code = bun_core::String::clone_utf8(written);
                 // `printer.ctx.buffer.deinit()`: release the
                 // large/--smol print buffer now instead of holding it until the
                 // next transpile. Replacing the printer drops the old buffer

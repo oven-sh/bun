@@ -62,6 +62,20 @@ describe("bundler", () => {
       expect(exitCode).toBe(0);
     });
   }
+  // A chunk with non-ASCII text is embedded as UTF-16; reading it back as a file must still give the UTF-8 text.
+  itBundled("compile/NonAsciiChunkReadsBackAsUTF8", {
+    compile: true,
+    banner: "// ✓ résumé",
+    files: {
+      "/entry.ts": /* js */ `
+        import { readFileSync, statSync } from "node:fs";
+        const text = readFileSync(Bun.main, "utf8");
+        const viaBlob = await Bun.file(Bun.main).text();
+        console.log(text.includes("// ✓ résumé"), viaBlob === text, statSync(Bun.main).size === Buffer.byteLength(text));
+      `,
+    },
+    run: { stdout: "true true true" },
+  });
   itBundled("compile/HelloWorldWithProcessVersionsBun", {
     compile: true,
     files: {

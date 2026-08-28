@@ -571,6 +571,7 @@ pub struct File {
     pub cached_blob: std::sync::OnceLock<NonNull<Blob>>,
     pub encoding: Encoding,
     wtf_string: std::sync::OnceLock<BunString>,
+    utf8: std::sync::OnceLock<Box<[u8]>>,
     // BACKREF into the embedded section; JSC mutates the bytecode buffer in place.
     pub bytecode: *mut [u8],
     pub module_info: *mut [u8],
@@ -595,9 +596,24 @@ impl File {
             && (self.side == FileSide::Client || !self.loader.is_javascript_like())
     }
 
+    /// `contents` as the file's bytes: the section itself, or a UTF-8 transcode of a UTF-16 body made once.
+    pub fn utf8_contents(&self) -> &[u8] {
+        if self.encoding != Encoding::Utf16 {
+            return self.contents.as_bytes();
+        }
+        self.utf8.get_or_init(|| {
+            let bytes = self.contents.as_bytes();
+            // SAFETY: even byte count at a 2-byte-aligned offset of a section that is never freed.
+            let units = unsafe {
+                core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2)
+            };
+            bun_core::strings::to_utf8_alloc_with_type(units).into_boxed_slice()
+        })
+    }
+
     pub fn stat(&self) -> Stat {
         let mut result: Stat = bun_core::ffi::zeroed();
-        result.st_size = self.contents.len() as _;
+        result.st_size = self.utf8_contents().len() as _;
         // `Stat` is `libc::stat` (POSIX) / `uv_stat_t` (Windows, `st_mode: u64`).
         result.st_mode = (libc::S_IFREG | 0o644) as _;
         result
@@ -1014,6 +1030,7 @@ impl StandaloneModuleGraph {
                     cached_blob: std::sync::OnceLock::new(),
                     encoding: module.encoding,
                     wtf_string: std::sync::OnceLock::new(),
+                    utf8: std::sync::OnceLock::new(),
                 },
             );
         }
@@ -1130,9 +1147,12 @@ fn encode_text_module(
     string_builder: &mut bun_core::StringBuilder,
     utf8: &[u8],
 ) -> (StringPointer, Encoding, u32) {
-    let string = BunString::clone_utf8(utf8);
     if utf8.is_empty() {
         return (string_builder.append_count_z(utf8), Encoding::Latin1, 0);
+    }
+    let string = BunString::clone_utf8(utf8);
+    if string.is_dead() {
+        bun_alloc::out_of_memory();
     }
     if string.is_8bit() {
         let bytes = string.latin1();

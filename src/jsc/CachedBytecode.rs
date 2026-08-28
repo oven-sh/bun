@@ -123,6 +123,9 @@ impl CachedBytecode {
         };
         // The same Latin-1 / UTF-16 string the executable stores (`encode_text_module`), so the source key matches.
         let source = BunString::clone_utf8(input);
+        if source.is_dead() {
+            bun_alloc::out_of_memory();
+        }
         let mut this: Option<NonNull<CachedBytecode>> = None;
         let mut out_size: usize = 0;
         let mut out_ptr: Option<NonNull<u8>> = None;

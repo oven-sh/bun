@@ -107,9 +107,9 @@ describe("bundler", () => {
         stdout: "1,2,3,4,5,6 1+2+3+4+5+6éф",
         validate({ stderr }) {
           const count = (text: string) => stderr.split("\n").filter(l => l.includes(text)).length;
-          // bun:main carries no bytecode; every chunk must hit.
-          expect(count("[Disk Cache] Cache miss")).toBeLessThanOrEqual(1);
-          expect(count("[Disk Cache] Cache hit")).toBeGreaterThanOrEqual(3);
+          // bun:main carries no bytecode; the entry and its two chunks must hit.
+          expect(count("[Disk Cache] Cache miss")).toBe(1);
+          expect(count("[Disk Cache] Cache hit")).toBe(3);
         },
       },
     });

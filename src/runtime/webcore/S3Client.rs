@@ -7,6 +7,7 @@ use crate::webcore::blob::store::S3Ext as _;
 use crate::webcore::s3::MultiPartUploadOptions;
 use crate::webcore::s3::client::{ACL, S3Credentials, StorageClass};
 use bun_jsc::{CallFrame, ConsoleFormatter, ErrorCode, JSGlobalObject, JSValue, JsResult};
+use bun_ptr::RefPtr;
 
 use super::s3_file as S3File;
 
@@ -37,11 +38,7 @@ pub(crate) trait S3CredentialsExt {
     fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]>;
     #[allow(clippy::too_many_arguments)]
     fn get_credentials_with_options(
-        // Takes `&S3Credentials` (not by-value) — `bun_s3_signing::S3Credentials`
-        // has a private `ref_count` field and no `Clone`, so callers holding a borrow
-        // (e.g. `&RefPtr<S3Credentials>` deref) cannot produce an owned copy. The
-        // real impl in `s3/credentials_jsc.rs` deep-copies internally.
-        this: &S3Credentials,
+        this: &RefPtr<S3Credentials>,
         default_options: MultiPartUploadOptions,
         options: Option<JSValue>,
         default_acl: Option<ACL>,
@@ -61,7 +58,7 @@ impl S3CredentialsExt for S3Credentials {
     }
     #[inline]
     fn get_credentials_with_options(
-        this: &S3Credentials,
+        this: &RefPtr<S3Credentials>,
         default_options: MultiPartUploadOptions,
         options: Option<JSValue>,
         default_acl: Option<ACL>,
@@ -248,7 +245,7 @@ where
 
 #[bun_jsc::JsClass]
 pub struct S3Client {
-    pub(crate) credentials: bun_ptr::RefPtr<S3Credentials>,
+    pub(crate) credentials: RefPtr<S3Credentials>,
     pub(crate) options: MultiPartUploadOptions,
     pub(crate) acl: Option<ACL>,
     pub(crate) storage_class: Option<StorageClass>,
@@ -269,14 +266,14 @@ impl S3Client {
         // `Transpiler::env_mut` is the safe accessor for the process-singleton
         // dotenv loader (set during init). `get_s3_credentials` takes `&mut self`
         // only to lazily memoize — single-threaded JS event-loop discipline applies.
-        let env_creds = crate::webcore::fetch::s3_credentials_from_env(
+        let env_creds = RefPtr::new(crate::webcore::fetch::s3_credentials_from_env(
             global
                 .bun_vm()
                 .as_mut()
                 .transpiler
                 .env_mut()
                 .get_s3_credentials(),
-        );
+        ));
         let aws_options = <S3Credentials as S3CredentialsExt>::get_credentials_with_options(
             &env_creds,
             MultiPartUploadOptions::default(),
@@ -287,7 +284,7 @@ impl S3Client {
             global,
         )?;
         Ok(Box::new(S3Client {
-            credentials: aws_options.credentials.dupe(),
+            credentials: aws_options.credentials,
             options: aws_options.options,
             acl: aws_options.acl,
             storage_class: aws_options.storage_class,
@@ -637,14 +634,14 @@ impl S3Client {
 
         // get credentials from env — `Transpiler::env_mut` is the safe accessor
         // for the process-singleton dotenv loader (set during init).
-        let existing_credentials = crate::webcore::fetch::s3_credentials_from_env(
+        let existing_credentials = RefPtr::new(crate::webcore::fetch::s3_credentials_from_env(
             global
                 .bun_vm()
                 .as_mut()
                 .transpiler
                 .env_mut()
                 .get_s3_credentials(),
-        );
+        ));
 
         let blob = S3File::construct_s3_file_with_s3_credentials(
             global,

@@ -36,11 +36,11 @@ disallowed-methods = [
   { path = "str::rfind", reason = "use bun_core::strings::last_index_of_char / last_index_of on .as_bytes() (highway SIMD)" },
   { path = "str::contains", reason = "use bun_core::strings::contains_char / contains on .as_bytes() (highway SIMD)" },
   { path = "str::split_once", reason = "use bun_core::strings::split_once_char / split_once on .as_bytes() (highway SIMD)" },
-  { path = "str::rsplit_once", reason = "use bun_core::strings::rsplit_once_char / rsplit_once on .as_bytes() (highway SIMD)" },
+  { path = "str::rsplit_once", reason = "use bun_core::strings::rsplit_once_char / last_index_of on .as_bytes() (highway SIMD)" },
   { path = "str::split", reason = "use bun_core::strings::split on .as_bytes() (highway SIMD)" },
   { path = "str::rsplit", reason = "use bun_core::strings on .as_bytes() (highway SIMD)" },
   { path = "str::splitn", reason = "use bun_core::strings::split / split_once on .as_bytes() (highway SIMD)" },
-  { path = "str::rsplitn", reason = "use bun_core::strings::rsplit_once on .as_bytes() (highway SIMD)" },
+  { path = "str::rsplitn", reason = "use bun_core::strings::rsplit_once_char / last_index_of on .as_bytes() (highway SIMD)" },
   { path = "str::split_terminator", reason = "use bun_core::strings::split on .as_bytes() (highway SIMD)" },
   { path = "str::rsplit_terminator", reason = "use bun_core::strings on .as_bytes() (highway SIMD)" },
   { path = "str::split_inclusive", reason = "use bun_core::strings::index_of_char in a loop on .as_bytes() (highway SIMD)" },
@@ -73,7 +73,7 @@ disallowed-methods = [
   { path = "bstr::ByteSlice::split_str", reason = "use bun_core::strings::split (highway memmem)" },
   { path = "bstr::ByteSlice::rsplit_str", reason = "use bun_core::strings (highway memrmem)" },
   { path = "bstr::ByteSlice::split_once_str", reason = "use bun_core::strings::split_once (highway memmem)" },
-  { path = "bstr::ByteSlice::rsplit_once_str", reason = "use bun_core::strings::rsplit_once (highway memrmem)" },
+  { path = "bstr::ByteSlice::rsplit_once_str", reason = "use bun_core::strings::last_index_of (highway memrmem)" },
   { path = "bstr::ByteSlice::replace", reason = "use bun_core::strings::replace_owned (highway memmem)" },
 ]
 

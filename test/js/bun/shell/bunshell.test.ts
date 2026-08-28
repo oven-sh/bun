@@ -8,7 +8,17 @@ import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { chmodSync, mkdirSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
-import { bunExe, isPosix, isWindows, rss, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import {
+  bunExe,
+  isLinux,
+  isPosix,
+  isWindows,
+  rss,
+  runWithErrorPromise,
+  tempDir,
+  tempDirWithFiles,
+  tmpdirSync,
+} from "harness";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -89,6 +99,18 @@ describe("bunshell", () => {
             .runAsTest(cmdstr)
         : "",
     );
+
+    // Every write to /dev/full fails with ENOSPC. Like bash, the builtin exits 1;
+    // the errno is not the exit code (it was 65508 for echo and which).
+    test.skipIf(!isLinux)("builtins exit 1 when an output write fails", async () => {
+      const exitCodes = {
+        echo: (await $`echo hi > /dev/full`.nothrow()).exitCode,
+        which: (await $`which sh > /dev/full`.nothrow()).exitCode,
+        export: (await $`export FOO=bar; export > /dev/full`.nothrow()).exitCode,
+        cd: (await $`cd /nonexistent-dir 2> /dev/full`.nothrow()).exitCode,
+      };
+      expect(exitCodes).toEqual({ echo: 1, which: 1, export: 1, cd: 1 });
+    });
   });
 
   describe("concurrency", () => {

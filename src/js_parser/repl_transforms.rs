@@ -21,8 +21,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// This transforms code for interactive evaluation:
     /// - Wraps the last expression in { value: expr } for result capture
     /// - Wraps code with await in async IIFE with variable hoisting
-    /// - Puts the module-level `directives` back in front (node's repl evaluates them);
-    ///   returns `false` when the parts were left untouched
+    /// - Puts the module-level `directives` back in front; returns `false` if parts were left as is
     pub(crate) fn apply_repl_transforms<'bump>(
         &mut self,
         parts: &mut BumpVec<'bump, js_ast::Part>,

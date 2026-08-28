@@ -198,9 +198,9 @@ it("fd_prestat_get and fd_prestat_dir_name fail for fds that are not preopens", 
 
   // A regular file fd from path_open is not a preopen either.
   const pathLen = memory.write("inside.txt", pathPtr);
-  expect(
-    wasi.wasiImport.path_open(preopenFd, 0, pathPtr, pathLen, 0, WASI_RIGHT_FD_READ, BigInt(0), 0, fdPtr),
-  ).toBe(WASI_ESUCCESS);
+  expect(wasi.wasiImport.path_open(preopenFd, 0, pathPtr, pathLen, 0, WASI_RIGHT_FD_READ, BigInt(0), 0, fdPtr)).toBe(
+    WASI_ESUCCESS,
+  );
   const fileFd = view.getUint32(fdPtr, true);
   expect(wasi.wasiImport.fd_prestat_get(fileFd, prestatPtr)).toBe(WASI_EINVAL);
   expect(wasi.wasiImport.fd_prestat_dir_name(fileFd, namePtr, 64)).toBe(WASI_EINVAL);

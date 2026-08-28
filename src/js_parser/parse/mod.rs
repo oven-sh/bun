@@ -1684,15 +1684,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             ) {
                             SkipTypeParameterResult::DidNotSkipAnything => {}
                             result => {
-                                if is_ambiguous_less_than {
-                                    p.log().add_range_error(
-                                        Some(p.source),
-                                        less_than_range,
-                                        b"This syntax is not allowed in files with the \".mts\" or \".cts\" extension",
-                                    );
-                                }
                                 p.lexer.next()?;
-                                return p.parse_paren_expr(
+                                let expr = p.parse_paren_expr(
                                     async_range.loc,
                                     level,
                                     ParenExprOpts {
@@ -1701,7 +1694,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             == SkipTypeParameterResult::DefinitelyTypeParameters,
                                         ..Default::default()
                                     },
-                                );
+                                )?;
+                                // "async<T>(x)" is a call of a function named "async" and stays valid
+                                if is_ambiguous_less_than
+                                    && matches!(expr.data, js_ast::ExprData::EArrow(_))
+                                {
+                                    p.log().add_range_error(
+                                        Some(p.source),
+                                        less_than_range,
+                                        b"This syntax is not allowed in files with the \".mts\" or \".cts\" extension",
+                                    );
+                                }
+                                return Ok(expr);
                             }
                         }
                     }

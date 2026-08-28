@@ -1661,6 +1661,17 @@ function foo() {}
         ["async-arrow.cts", "let f = async <T>() => {};", null],
         ["async-arrow-args.mts", "let f = async <T>(x: T) => x;", null],
         ["async-arrow-args.cts", "let f = async <T>(x: T) => x;", null],
+        // A call of a function named "async" with type arguments is not an arrow function.
+        [
+          "async-call.mts",
+          "const async = <T,>(x: T) => x; console.log(async<number>(42), async<string>('s'));",
+          "42 s",
+        ],
+        [
+          "async-call.cts",
+          "const async = <T,>(x: T) => x; console.log(async<number>(42), async<string>('s'));",
+          "42 s",
+        ],
         ["allowed.mts", allowedSource, '[1,"s",[1,2],3,true,false,1,2,"function","function"]'],
         ["allowed.cts", allowedSource, '[1,"s",[1,2],3,true,false,1,2,"function","function"]'],
         [

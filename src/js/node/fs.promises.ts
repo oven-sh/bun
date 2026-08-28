@@ -2,7 +2,6 @@
 const types = require("node:util/types");
 const EventEmitter = require("node:events");
 const fs = require("internal/fs/binding") as $ZigGeneratedClasses.NodeJSFS;
-const { Glob } = require("internal/fs/glob");
 const {
   validateInteger,
   validateBoolean,
@@ -244,7 +243,7 @@ const _appendFile = fs.appendFile.bind(fs);
 // Argument validation must run at the first .next(), not at call time: Node's
 // fs/promises glob is an async generator whose body constructs Glob lazily.
 async function* glob(pattern, options) {
-  yield* new Glob(pattern, options).glob();
+  yield* new (require("internal/fs/glob").Glob)(pattern, options).glob();
 }
 
 const exports = {
@@ -361,10 +360,8 @@ const exports = {
     return fs.rm(path, options);
   },
   rmdir: async function rmdir(path, options) {
-    // node throws for any defined `recursive`, not just truthy ones
-    if (options?.recursive !== undefined) {
-      throw $ERR_INVALID_ARG_VALUE("options.recursive", options.recursive, "is no longer supported");
-    }
+    // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.
+    if (options?.recursive) return exports.rm(path, options);
     return fs.rmdir(path, options);
   },
   writev: async (fd, buffers, position) => {

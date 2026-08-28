@@ -82,7 +82,7 @@ void JSNodeHTTPServerSocketPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-    reifyStaticProperties(vm, info(), JSNodeHTTPServerSocketPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, info(), JSNodeHTTPServerSocketPrototypeTableValues, *this);
     this->structure()->setMayBePrototype(true);
 }
 

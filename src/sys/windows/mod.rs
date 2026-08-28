@@ -1210,6 +1210,8 @@ pub const EXCEPTION_ACCESS_VIOLATION: u32 = 0xC0000005;
 pub const EXCEPTION_DATATYPE_MISALIGNMENT: u32 = 0x80000002;
 pub const EXCEPTION_ILLEGAL_INSTRUCTION: u32 = 0xC000001D;
 pub const EXCEPTION_STACK_OVERFLOW: u32 = 0xC00000FD;
+/// Exit code of a process terminated by the default `CTRL_C_EVENT` handler.
+pub const STATUS_CONTROL_C_EXIT: u32 = 0xC000013A;
 
 /// `EXCEPTION_RECORD` (winnt.h).
 #[repr(C)]

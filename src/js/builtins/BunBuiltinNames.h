@@ -57,7 +57,6 @@ using namespace JSC;
     macro(bunNativePtr) \
     macro(bytes) \
     macro(cancel) \
-    macro(checkBufferRead) \
     macro(checks) \
     macro(close) \
     macro(cmd) \
@@ -68,7 +67,6 @@ using namespace JSC;
     macro(createUninitializedArrayBuffer) \
     macro(ctimeMs) \
     macro(data) \
-    macro(dataView) \
     macro(decode) \
     macro(dest) \
     macro(dirname) \
@@ -92,7 +90,6 @@ using namespace JSC;
     macro(filename) \
     macro(flush) \
     macro(format) \
-    macro(fulfillModuleSync) \
     macro(handleEvent) \
     macro(headers) \
     macro(highWaterMark) \
@@ -204,10 +201,30 @@ class BunBuiltinNames {
     WTF_MAKE_NONCOPYABLE(BunBuiltinNames);
     friend class JSVMClientData;
     explicit BunBuiltinNames(JSC::VM&);
-    ~BunBuiltinNames();
 
 public:
-    BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+    ~BunBuiltinNames();
+    // For a VM without JSVMClientData that still needs to parse builtins (ahead-of-time bytecode generation).
+    static std::unique_ptr<BunBuiltinNames> createStandalone(JSC::VM& vm) { return std::unique_ptr<BunBuiltinNames>(new BunBuiltinNames(vm)); }
+
+    enum class Name : uint16_t {
+#define BUN_BUILTIN_NAME_ENUM(name) k_##name,
+        BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(BUN_BUILTIN_NAME_ENUM)
+#undef BUN_BUILTIN_NAME_ENUM
+        Count_
+    };
+    static constexpr size_t count = static_cast<size_t>(Name::Count_);
+
+    // The identifiers live in two arrays (built by a loop over a string table
+    // in the .cpp) rather than one member per name; the accessors index them.
+#define BUN_DECLARE_BUILTIN_IDENTIFIER_ACCESSOR(name) \
+    const JSC::Identifier& name##PublicName() const { return m_publicNames[static_cast<size_t>(Name::k_##name)]; } \
+    const JSC::Identifier& name##PrivateName() const { return m_privateNames[static_cast<size_t>(Name::k_##name)]; }
+    BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(BUN_DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+#undef BUN_DECLARE_BUILTIN_IDENTIFIER_ACCESSOR
+
+    const JSC::Identifier& publicName(Name name) const { return m_publicNames[static_cast<size_t>(name)]; }
+    const JSC::Identifier& privateName(Name name) const { return m_privateNames[static_cast<size_t>(name)]; }
 
     const JSC::Identifier& resolvePublicName() const { return m_vm.propertyNames->resolve;}
     const JSC::Identifier& inspectCustomPublicName() {
@@ -220,7 +237,8 @@ public:
 private:
     JSC::VM& m_vm;
     JSC::Identifier m_inspectCustomPublicName {};
-    BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(DECLARE_BUILTIN_NAMES)
+    std::array<JSC::Identifier, count> m_publicNames;
+    std::array<JSC::Identifier, count> m_privateNames;
 };
 
 } // namespace WebCore

@@ -3,7 +3,7 @@ use core::mem::size_of;
 
 use bun_ast::Loc;
 use bun_collections::MultiArrayList;
-use bun_core::{self, ZigStringSlice};
+use bun_core::{self, Utf8Bytes};
 use bun_core::{declare_scope, scoped_log};
 use bun_semver::String as SemverString;
 
@@ -47,17 +47,6 @@ pub struct Mapping {
     pub original: LineColumnOffset,
     pub source_index: i32,
     pub name_index: i32, // = -1
-}
-
-impl Default for Mapping {
-    fn default() -> Self {
-        Self {
-            generated: LineColumnOffset::default(),
-            original: LineColumnOffset::default(),
-            source_index: 0,
-            name_index: -1,
-        }
-    }
 }
 
 /// Optimization: if we don't care about the "names" column, then don't store the names.
@@ -356,7 +345,7 @@ impl Lookup {
     ///
     /// This data is freed after printed on the assumption that printing
     /// errors to the console are rare (this isnt used for error.stack)
-    pub fn get_source_code(self, base_filename: &[u8]) -> Option<ZigStringSlice> {
+    pub fn get_source_code(self, base_filename: &[u8]) -> Option<Utf8Bytes<'static>> {
         let bytes: Vec<u8> = 'bytes: {
             if let Some(code) = self.prefetched_source_code {
                 break 'bytes code.into_vec();
@@ -383,7 +372,7 @@ impl Lookup {
                 // per-index decompression cache through a `OnceLock`.
                 let code = unsafe { (*serialized).source_file_contents(index) };
 
-                return Some(ZigStringSlice::from_utf8_never_free(code?));
+                return Some(Utf8Bytes::Borrowed(code?));
             }
 
             if let Some(parsed) = provider.get_source_map(
@@ -415,7 +404,7 @@ impl Lookup {
             }
         };
 
-        Some(ZigStringSlice::init_owned(bytes))
+        Some(Utf8Bytes::Owned(bytes))
     }
 }
 

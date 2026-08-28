@@ -338,6 +338,70 @@ describe("oversized inputs", () => {
   });
 });
 
+describe("RSA-PSS saltLength", () => {
+  // saltLength is an unsigned long, but the OpenSSL setter takes an int whose
+  // negative values select a salt length: -1 is the digest length and -2 means
+  // "whatever fits" on sign and "accept any salt length" on verify. 2**32 - 1
+  // and 2**32 - 2 used to turn into exactly those two values.
+  it("rejects values that do not fit in an int instead of treating them as the -1/-2 selectors", async () => {
+    const { privateKey, publicKey } = await crypto.subtle.generateKey(
+      { name: "RSA-PSS", modulusLength: 1024, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      false,
+      ["sign", "verify"],
+    );
+    const data = new TextEncoder().encode("hello");
+    const signedWithSalt20 = await crypto.subtle.sign({ name: "RSA-PSS", saltLength: 20 }, privateKey, data);
+
+    const sign = (saltLength: number) =>
+      crypto.subtle.sign({ name: "RSA-PSS", saltLength }, privateKey, data).then(
+        () => "signed",
+        e => `rejected ${e.name}`,
+      );
+    const verifySalt20Signature = (saltLength: number) =>
+      crypto.subtle.verify({ name: "RSA-PSS", saltLength }, publicKey, signedWithSalt20, data).then(
+        ok => String(ok),
+        e => `rejected ${e.name}`,
+      );
+
+    expect({
+      sign: {
+        "2**32 - 1": await sign(2 ** 32 - 1),
+        "2**32 - 2": await sign(2 ** 32 - 2),
+        "2**31": await sign(2 ** 31),
+        // Fits in an int; BoringSSL rejects it because it does not fit the key.
+        "2**31 - 1": await sign(2 ** 31 - 1),
+        // 1024-bit key, SHA-256: 128 - 32 - 2 = 94 is the largest salt that fits.
+        "95": await sign(95),
+        "94": await sign(94),
+      },
+      verify: {
+        "2**32 - 1": await verifySalt20Signature(2 ** 32 - 1),
+        "2**32 - 2": await verifySalt20Signature(2 ** 32 - 2),
+        "2**31": await verifySalt20Signature(2 ** 31),
+        "32": await verifySalt20Signature(32),
+        "20": await verifySalt20Signature(20),
+      },
+    }).toEqual({
+      sign: {
+        "2**32 - 1": "rejected OperationError",
+        "2**32 - 2": "rejected OperationError",
+        "2**31": "rejected OperationError",
+        "2**31 - 1": "rejected OperationError",
+        "95": "rejected OperationError",
+        "94": "signed",
+      },
+      verify: {
+        "2**32 - 1": "rejected OperationError",
+        "2**32 - 2": "rejected OperationError",
+        "2**31": "rejected OperationError",
+        // A salt length that does not match the signature is a failed verification, not an error.
+        "32": "false",
+        "20": "true",
+      },
+    });
+  });
+});
+
 describe("Ed25519", () => {
   describe("generateKey", () => {
     it("should return CryptoKeys without namedCurve in algorithm field", async () => {

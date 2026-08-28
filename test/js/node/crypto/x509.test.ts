@@ -42,6 +42,19 @@ lGNHf1nq+j8dNaMGmheHKQ==
 -----END CERTIFICATE-----
 `;
 
+// Self-signed, brainpoolP256r1 key (a curve BoringSSL does not support, so publicKey cannot be decoded).
+const brainpoolCertPem = `-----BEGIN CERTIFICATE-----
+MIIBfTCCASSgAwIBAgIUbtq88KPedDaNbLVSO/txNjRWPicwCgYIKoZIzj0EAwIw
+FDESMBAGA1UEAwwJYnJhaW5wb29sMB4XDTI2MDgyMzIwMDAyMVoXDTM2MDgyMDIw
+MDAyMVowFDESMBAGA1UEAwwJYnJhaW5wb29sMFowFAYHKoZIzj0CAQYJKyQDAwII
+AQEHA0IABG8tl/XkdDFsqeIkd03yEF82Ivy1xzmsN8/NekZJzuwDSLlCCIbX2k6z
+JUoTfqdTxRL4ccrI4cXpqDxZPPaywMOjUzBRMB0GA1UdDgQWBBRpnrKAVW6DXXNk
+BABmxqGZ3WvcPDAfBgNVHSMEGDAWgBRpnrKAVW6DXXNkBABmxqGZ3WvcPDAPBgNV
+HRMBAf8EBTADAQH/MAoGCCqGSM49BAMCA0cAMEQCIBssqQu642CLwl1dfD7WoD0D
+qGl/+1Di3abpA8YZOtoyAiAiScaiKhxu48bWQXYW5ZoQNzAfBIwL4krTuLVAKYZc
+Vg==
+-----END CERTIFICATE-----`;
+
 describe("X509Certificate.checkHost()", () => {
   const cert = new X509Certificate(wildcardSanCertPem);
   const cnOnly = new X509Certificate(cnOnlyCertPem);
@@ -105,6 +118,18 @@ describe("X509Certificate.subjectAltName", () => {
   });
 });
 
+describe("X509Certificate getters that fail", () => {
+  test("publicKey throws on every access when the key cannot be decoded (nothing stale is cached)", () => {
+    const cert = new X509Certificate(brainpoolCertPem);
+    expect(() => cert.publicKey).toThrow(expect.objectContaining({ code: "ERR_OSSL_X509_PUBLIC_KEY_DECODE_ERROR" }));
+    expect(() => cert.publicKey).toThrow(expect.objectContaining({ code: "ERR_OSSL_X509_PUBLIC_KEY_DECODE_ERROR" }));
+    // The rest of the certificate is still readable and cached.
+    expect(cert.fingerprint256).toMatch(/^([0-9A-F]{2}:){31}[0-9A-F]{2}$/);
+    expect(cert.fingerprint256).toBe(cert.fingerprint256);
+    expect(cert.toLegacyObject().fingerprint256).toBe(cert.fingerprint256);
+  });
+});
+
 describe("X509Certificate.prototype property descriptors", () => {
   // validFromDate/validToDate were registered as CustomAccessorOrValue instead of
   // CustomAccessor, so reading their descriptors asserted in debug builds.
@@ -132,5 +157,29 @@ describe("X509Certificate.prototype property descriptors", () => {
     expect(getFrom.call(cert)).toBeInstanceOf(Date);
     expect(getFrom.call(cert)).toEqual(cert.validFromDate);
     expect(getTo.call(cert)).toEqual(cert.validToDate);
+  });
+});
+
+describe("X509Certificate with an empty subject/issuer DN", () => {
+  // Self-signed, `openssl req -x509 -subj "/"`: both names are empty sequences.
+  const emptyDN = `-----BEGIN CERTIFICATE-----
+MIIBVjCB/aADAgECAhQuLsSmUr9yJhK85A6fr6KJxbEtYDAKBggqhkjOPQQDAjAA
+MCAXDTI2MDgyMTA2NDgzOVoYDzIxMjYwNzI4MDY0ODM5WjAAMFkwEwYHKoZIzj0C
+AQYIKoZIzj0DAQcDQgAEGcl07hz+Ga1M2lw9m8AcNiT3BtxyF0Yd4LNbAecfbGTy
+frdyY7uFQMgDJFcSRpuGxCKVBtL1Ba4OvyyHzK5lAKNTMFEwHQYDVR0OBBYEFE8M
+P5LabG8GsdSx97we9lwExHqZMB8GA1UdIwQYMBaAFE8MP5LabG8GsdSx97we9lwE
+xHqZMA8GA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDSAAwRQIgVfqEVOsOI/6d
+hkcWEa9g5HIqxKTzvSMRYn6eH6gefDYCIQCAl55J4qfVTELr1B5REAw5LFnQRBGN
+vKS1+tUUY19gsw==
+-----END CERTIFICATE-----`;
+
+  test("subject/issuer are undefined and toLegacyObject() does not throw (matches Node)", () => {
+    const cert = new X509Certificate(emptyDN);
+    expect(cert.subject).toBeUndefined();
+    expect(cert.issuer).toBeUndefined();
+    const legacy = cert.toLegacyObject();
+    expect(legacy.subject).toEqual({});
+    expect(legacy.issuer).toEqual({});
+    expect(cert.checkIssued(cert)).toBe(true);
   });
 });

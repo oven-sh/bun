@@ -15,7 +15,6 @@ pub use self::unicode::{
     decode_wtf8_rune_t_multibyte, wtf8_byte_sequence_length,
     wtf8_byte_sequence_length_with_invalid,
 };
-pub use unicode_draft::CodePointZero;
 
 // Sub-modules (peer files under `src/string/immutable/`).
 #[path = "immutable/escapeHTML.rs"]
@@ -2057,7 +2056,6 @@ pub fn must_escape_yaml_string(contents: &[u8]) -> bool {
 #[derive(Copy, Clone)]
 pub struct QuoteEscapeFormatFlags {
     pub quote_char: u8,
-    pub ascii_only: bool,
     pub json: bool,
     pub str_encoding: Encoding,
 }
@@ -2066,7 +2064,6 @@ impl Default for QuoteEscapeFormatFlags {
     fn default() -> Self {
         Self {
             quote_char: b'"',
-            ascii_only: false,
             json: false,
             str_encoding: Encoding::Utf8,
         }
@@ -2094,9 +2091,7 @@ impl core::fmt::Display for QuoteEscapeFormat<'_> {
             self.data,
             &mut buf,
             self.flags.quote_char,
-            // Hardcoded `false` regardless of
-            // `flags.ascii_only`; the field is dead in QuoteEscapeFormat.
-            false,
+            false, // ascii_only
             self.flags.json,
             self.flags.str_encoding,
         )

@@ -60,7 +60,6 @@ pub use crate::properties::{
     css_modules::Composes,
     custom::{TokenList, TokenListFns},
 };
-pub use crate::rules::custom_media::CustomMediaRule as CustomMedia;
 pub use crate::rules::{
     self as css_rules, CssRule, CssRuleList, Location, MinifyContext, StyleContext,
     import::{ImportConditions, ImportRule},
@@ -74,7 +73,7 @@ pub use crate::selectors::{
     parser::{Component, PseudoClass, PseudoElement, Selector, SelectorList},
     selector,
 };
-pub use crate::values::ident::{CustomIdentFns, DashedIdentFns, IdentFns};
+pub use crate::values::ident::{CustomIdentFns, DashedIdentFns};
 
 pub use crate::values::{
     color::ColorFallbackKind,
@@ -337,7 +336,7 @@ fn parse_at_rule<P: AtRuleParser>(
         }
     };
     let next = match input.next() {
-        Ok(v) => v.clone(),
+        Ok(v) => *v,
         Err(_) => {
             return match P::rule_without_block(parser, prelude, start) {
                 Ok(v) => Ok(v),
@@ -540,6 +539,23 @@ fn parse_nested_block<T>(
     parser: &mut Parser,
     parsefn: impl FnOnce(&mut Parser) -> CssResult<T>,
 ) -> CssResult<T> {
+    // Everything that does not depend on `T` lives in the two out-of-line
+    // halves so the ~135 instantiations of this fn stay small.
+    let state = nested_block_enter(parser)?;
+    let result = parser.parse_entirely((), |(), p| parsefn(p));
+    nested_block_exit(parser, state, result.is_err());
+    result
+}
+
+#[derive(Clone, Copy)]
+struct NestedBlockState {
+    block_type: BlockType,
+    saved_stop_before: Delimiters,
+    start_position: usize,
+}
+
+#[inline(never)]
+fn nested_block_enter(parser: &mut Parser) -> CssResult<NestedBlockState> {
     let block_type = parser.at_start_of.take().unwrap_or_else(|| {
         panic!(
             "\nA nested parser can only be created when a Function,\n\
@@ -585,17 +601,24 @@ fn parse_nested_block<T>(
     let saved_stop_before = parser.stop_before;
     parser.stop_before = closing_delimiter;
     parser.at_start_of = None;
-    let result = parser.parse_entirely((), |(), p| parsefn(p));
+    Ok(NestedBlockState {
+        block_type,
+        saved_stop_before,
+        start_position,
+    })
+}
+
+#[inline(never)]
+fn nested_block_exit(parser: &mut Parser, state: NestedBlockState, is_err: bool) {
     if let Some(block_type2) = parser.at_start_of.take() {
         consume_until_end_of_block(block_type2, &mut parser.input.tokenizer);
     }
-    parser.stop_before = saved_stop_before;
-    let found_close = consume_until_end_of_block(block_type, &mut parser.input.tokenizer);
-    if result.is_err() && !found_close {
-        record_unclosed_block_at_eof(parser, start_position);
+    parser.stop_before = state.saved_stop_before;
+    let found_close = consume_until_end_of_block(state.block_type, &mut parser.input.tokenizer);
+    if is_err && !found_close {
+        record_unclosed_block_at_eof(parser, state.start_position);
     }
     parser.input.nesting_depth -= 1;
-    result
 }
 
 // ───────────────────────── parser-protocol traits ─────────────────────────
@@ -690,57 +713,14 @@ pub trait AtRuleParser {
     ) -> CssResult<Self::AtRule>;
 }
 
-#[derive(Default)]
-pub struct DefaultAtRuleParser;
-
-impl CustomAtRuleParser for DefaultAtRuleParser {
-    type Prelude = ();
-    type AtRule = DefaultAtRule;
-
-    fn parse_prelude(
-        _this: &mut Self,
-        name: &[u8],
-        input: &mut Parser,
-        _: &ParserOptions,
-    ) -> CssResult<()> {
-        Err(input.new_error(BasicParseErrorKind::at_rule_invalid(name)))
-    }
-
-    fn parse_block(
-        _this: &mut Self,
-        _: (),
-        _: &ParserState,
-        input: &mut Parser,
-        _: &ParserOptions,
-        _: bool,
-    ) -> CssResult<DefaultAtRule> {
-        Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid))
-    }
-
-    fn rule_without_block(
-        _this: &mut Self,
-        _: (),
-        _: &ParserState,
-        _: &ParserOptions,
-        _: bool,
-    ) -> Maybe<DefaultAtRule, ()> {
-        Err(())
-    }
-
-    fn on_import_rule(_this: &mut Self, _: &mut ImportRule, _: u32, _: u32) {}
-    fn on_layer_rule(_this: &mut Self, _: &SmallList<LayerName, 1>) {}
-    fn enclosing_layer_length(_this: &mut Self) -> u32 {
-        0
-    }
-    fn push_to_enclosing_layer(_this: &mut Self, _: LayerName) {}
-    fn reset_enclosing_layer(_this: &mut Self, _: u32) {}
-    fn bump_anon_layer_count(_this: &mut Self, _: i32) {}
-}
-
 pub type BundlerAtRule = DefaultAtRule;
 
+/// The at-rule hooks for both `StyleSheet::parse` (`track_layers_and_imports`
+/// off: every hook is a no-op) and `parse_bundler`, so the rule parsers are
+/// instantiated once.
 pub struct BundlerAtRuleParser<'a> {
     pub(crate) arena: &'a Bump,
+    pub(crate) track_layers_and_imports: bool,
     /// Raw pointer aliasing the same `Vec` that `Parser.import_records`
     /// points to. Both views are raw pointers sharing a single
     /// SharedRW provenance (see `parse_bundler`); each materialises a
@@ -794,6 +774,9 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         start_position: u32,
         end_position: u32,
     ) {
+        if !this.track_layers_and_imports {
+            return;
+        }
         // SAFETY: `import_records` shares raw-pointer provenance with
         // `Parser.import_records` (see field doc / `parse_bundler`). This hook
         // runs synchronously between parser accesses, so the fresh `&mut`
@@ -825,7 +808,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
     }
 
     fn on_layer_rule(this: &mut Self, layers: &SmallList<LayerName, 1>) {
-        if this.anon_layer_count > 0 {
+        if !this.track_layers_and_imports || this.anon_layer_count > 0 {
             return;
         }
         this.layer_names
@@ -852,6 +835,9 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
     }
 
     fn push_to_enclosing_layer(this: &mut Self, name: LayerName) {
+        if !this.track_layers_and_imports {
+            return;
+        }
         this.enclosing_layer.v.append_slice(name.v.slice());
     }
 
@@ -864,6 +850,9 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
     }
 
     fn bump_anon_layer_count(this: &mut Self, amount: i32) {
+        if !this.track_layers_and_imports {
+            return;
+        }
         if amount > 0 {
             this.anon_layer_count += u32::try_from(amount).expect("int cast");
         } else {
@@ -2558,12 +2547,19 @@ mod stylesheet_impl {
         ) -> Maybe<(StyleSheet<DefaultAtRule>, StylesheetExtra), Err<ParserError>> {
             // Returns the concrete `StyleSheet<DefaultAtRule>`. Callers that
             // need a custom at-rule call `parse_with` directly.
-            let mut default_at_rule_parser = DefaultAtRuleParser;
+            let mut at_rule_parser = BundlerAtRuleParser {
+                arena,
+                track_layers_and_imports: false,
+                import_records: core::ptr::null_mut(),
+                layer_names: Vec::new(),
+                anon_layer_count: 0,
+                enclosing_layer: LayerName::default(),
+            };
             StyleSheet::<DefaultAtRule>::parse_with(
                 arena,
                 code,
                 options,
-                &mut default_at_rule_parser,
+                &mut at_rule_parser,
                 import_records.map(core::ptr::NonNull::from),
                 source_index,
             )
@@ -2774,6 +2770,7 @@ mod stylesheet_impl {
             let import_records_ptr = core::ptr::NonNull::from(import_records);
             let mut at_rule_parser = BundlerAtRuleParser {
                 arena,
+                track_layers_and_imports: true,
                 import_records: import_records_ptr.as_ptr(),
                 layer_names: Vec::new(),
                 anon_layer_count: 0,
@@ -2896,7 +2893,7 @@ where
                 };
                 parse_qualified_rule(&start, self.input, self.parser, delimiters)
             } else {
-                let token = tok.clone();
+                let token = *tok;
                 self.input
                     .parse_until_after(Delimiters::SEMICOLON, move |_i| {
                         Err(start.source_location().new_unexpected_token_error(token))
@@ -3306,7 +3303,7 @@ impl<'a> Parser<'a> {
                 }
                 _ => {
                     if tok.is_parse_error() {
-                        let tok = tok.clone();
+                        let tok = *tok;
                         return Err(self.new_unexpected_token_error(tok));
                     }
                 }
@@ -3320,7 +3317,7 @@ impl<'a> Parser<'a> {
         if let Token::Percentage { unit_value, .. } = tok {
             return Ok(*unit_value);
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3330,7 +3327,7 @@ impl<'a> Parser<'a> {
         if matches!(tok, Token::Comma) {
             return Ok(());
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3344,7 +3341,7 @@ impl<'a> Parser<'a> {
                 return Ok(iv);
             }
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3355,7 +3352,7 @@ impl<'a> Parser<'a> {
         if let Token::Number(n) = tok {
             return Ok(n.value);
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3367,7 +3364,7 @@ impl<'a> Parser<'a> {
                 return Ok(());
             }
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3377,7 +3374,7 @@ impl<'a> Parser<'a> {
         if matches!(tok, Token::OpenParen) {
             return Ok(());
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3387,7 +3384,7 @@ impl<'a> Parser<'a> {
         if matches!(tok, Token::Colon) {
             return Ok(());
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3397,7 +3394,7 @@ impl<'a> Parser<'a> {
         if let Token::QuotedString(s) = tok {
             return Ok(*s);
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3407,7 +3404,7 @@ impl<'a> Parser<'a> {
         if let Token::Ident(s) = tok {
             return Ok(*s);
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3421,7 +3418,7 @@ impl<'a> Parser<'a> {
             Token::QuotedString(s) => return Ok(*s),
             _ => {}
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3433,7 +3430,7 @@ impl<'a> Parser<'a> {
                 return Ok(());
             }
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3443,7 +3440,7 @@ impl<'a> Parser<'a> {
         if let Token::Function(fn_name) = tok {
             return Ok(*fn_name);
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3455,7 +3452,7 @@ impl<'a> Parser<'a> {
                 return Ok(());
             }
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3465,7 +3462,7 @@ impl<'a> Parser<'a> {
         if matches!(tok, Token::OpenCurly) {
             return Ok(());
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3482,7 +3479,7 @@ impl<'a> Parser<'a> {
             }
             _ => {}
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3501,7 +3498,7 @@ impl<'a> Parser<'a> {
             }
             _ => {}
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(start_location.new_unexpected_token_error(tok))
     }
 
@@ -3615,9 +3612,13 @@ impl<'a> Parser<'a> {
         closure: C,
         parsefn: impl FnOnce(C, &mut Parser) -> CssResult<T>,
     ) -> CssResult<T> {
-        let result = parsefn(closure, self)?;
-        self.expect_exhausted()?;
-        Ok(result)
+        // Hand `result` back as-is rather than `?`-unwrapping and re-wrapping
+        // it: `T` is often large and this fn has ~160 instantiations.
+        let result = parsefn(closure, self);
+        if result.is_ok() {
+            self.expect_exhausted()?;
+        }
+        result
     }
 
     /// Check whether the input is exhausted. That is, if `.next()` would
@@ -3626,7 +3627,7 @@ impl<'a> Parser<'a> {
         let start = self.state();
         let result: CssResult<()> = match self.next() {
             Ok(t) => {
-                let t = t.clone();
+                let t = *t;
                 Err(start.source_location().new_unexpected_token_error(t))
             }
             Err(e) => {
@@ -3702,7 +3703,7 @@ impl<'a> Parser<'a> {
             // SAFETY: see `Parser.import_records` field doc.
             import_record_count: self
                 .import_records
-                .map(|ptr| u32::try_from(unsafe { (*ptr.as_ptr()).len() }).unwrap())
+                .map(|ptr| unsafe { (*ptr.as_ptr()).len() } as u32)
                 .unwrap_or(0),
         }
     }
@@ -3753,7 +3754,7 @@ impl<'a> Parser<'a> {
     /// Create a new unexpected token or EOF ParseError at the current location
     pub(crate) fn new_error_for_next_token(&mut self) -> ParseError<ParserError> {
         let token = match self.next() {
-            Ok(t) => t.clone(),
+            Ok(t) => *t,
             Err(e) => return e,
         };
         self.new_error(BasicParseErrorKind::unexpected_token(token))
@@ -3983,13 +3984,13 @@ pub mod nth {
                         }
                     }
                 } else {
-                    let tok = next_tok.clone();
+                    let tok = *next_tok;
                     return Err(input.new_unexpected_token_error(tok));
                 }
             }
             _ => {}
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(input.new_unexpected_token_error(tok))
     }
 
@@ -4027,7 +4028,7 @@ pub mod nth {
                 return Ok((a, b_sign * b));
             }
         }
-        let tok = tok.clone();
+        let tok = *tok;
         Err(input.new_unexpected_token_error(tok))
     }
 

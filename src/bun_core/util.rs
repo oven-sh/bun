@@ -1042,10 +1042,17 @@ impl Fd {
             .copied()
             .unwrap_or(Fd::INVALID)
     }
+    /// The Windows `AT_FDCWD`; [`Fd::decode_windows`] maps it to the PEB's
+    /// current directory handle. Handles fit in 32 bits, bit 63 is the uv tag
+    /// and `INVALID_HANDLE_VALUE` masks to all of bits 0..63, so bit 62 alone
+    /// is out of band.
+    #[cfg(windows)]
+    const WINDOWS_CWD: u64 = 1 << 62;
+
     #[cfg(windows)]
     #[inline]
     pub fn cwd() -> Fd {
-        Fd::from_system(fd::windows_current_directory_handle())
+        Fd(Self::WINDOWS_CWD)
     }
 
     /// Whether this is the process's stdin/stdout/stderr.
@@ -1097,9 +1104,12 @@ impl Fd {
         match self.kind() {
             FdKind::System => {
                 // A stored value of 0 decodes to INVALID_HANDLE_VALUE.
-                let n = self.value_as_system();
-                let h = if n == 0 { usize::MAX } else { n as usize };
-                DecodeWindows::Windows(h as *mut core::ffi::c_void)
+                let h = match self.value_as_system() {
+                    0 => usize::MAX as *mut core::ffi::c_void,
+                    Self::WINDOWS_CWD => fd::windows_current_directory_handle(),
+                    n => n as usize as *mut core::ffi::c_void,
+                };
+                DecodeWindows::Windows(h)
             }
             // Direct extract — do NOT recurse into self.uv() (which calls decode_windows).
             FdKind::Uv => DecodeWindows::Uv((self.0 & FD_VALUE_MASK) as u32 as i32),
@@ -1450,6 +1460,9 @@ impl core::fmt::Display for Fd {
         }
         #[cfg(windows)]
         {
+            if fd == Fd::cwd() {
+                return w.write_str("[cwd]");
+            }
             match fd.decode_windows() {
                 DecodeWindows::Windows(_) => write!(w, "{}[handle]", fd.value_as_system()),
                 DecodeWindows::Uv(n) => write!(w, "{}[libuv]", n),
@@ -2917,9 +2930,7 @@ pub mod time {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EmbedKind {
     Codegen,
-    CodegenEager,
     Src,
-    SrcEager,
 }
 
 #[doc(hidden)]
@@ -2928,10 +2939,8 @@ pub fn __runtime_embed_load(kind: EmbedKind, sub: &'static str) -> String {
     // → bytes), so the bytes are valid UTF-8 by construction.
     let from = |b: &'static [u8]| unsafe { ::core::str::from_utf8_unchecked(b) };
     let mut p = match kind {
-        EmbedKind::Codegen | EmbedKind::CodegenEager => {
-            ::std::path::PathBuf::from(from(crate::build_options::CODEGEN_PATH))
-        }
-        EmbedKind::Src | EmbedKind::SrcEager => {
+        EmbedKind::Codegen => ::std::path::PathBuf::from(from(crate::build_options::CODEGEN_PATH)),
+        EmbedKind::Src => {
             let mut b = ::std::path::PathBuf::from(from(crate::build_options::BASE_PATH));
             b.push("src");
             b
@@ -2947,8 +2956,8 @@ pub fn __runtime_embed_load(kind: EmbedKind, sub: &'static str) -> String {
 }
 
 /// Per-call-site embedded file.
-/// `$root` must be one of the bare idents `Codegen` /
-/// `CodegenEager` / `Src` / `SrcEager` and `$sub_path` a string literal.
+/// `$root` must be one of the bare idents `Codegen` / `Src` and `$sub_path` a
+/// string literal.
 ///
 /// The `cfg(bun_codegen_embed)` split lives **inside** the macro so call
 /// sites never repeat the `#[cfg]`/`#[cfg(not)]` pair (which is error-prone
@@ -2965,10 +2974,8 @@ pub fn __runtime_embed_load(kind: EmbedKind, sub: &'static str) -> String {
 /// whenever `bun_codegen_embed` is set).
 #[macro_export]
 macro_rules! runtime_embed_file {
-    (Codegen,      $sub:literal) => { $crate::__runtime_embed_impl!(@codegen $sub) };
-    (CodegenEager, $sub:literal) => { $crate::__runtime_embed_impl!(@codegen $sub) };
-    (Src,          $sub:literal) => { $crate::__runtime_embed_impl!(@src     $sub) };
-    (SrcEager,     $sub:literal) => { $crate::__runtime_embed_impl!(@src     $sub) };
+    (Codegen, $sub:literal) => { $crate::__runtime_embed_impl!(@codegen $sub) };
+    (Src,     $sub:literal) => { $crate::__runtime_embed_impl!(@src     $sub) };
 }
 
 #[doc(hidden)]

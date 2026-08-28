@@ -38,8 +38,8 @@ using namespace JSC;
 extern "C" size_t Bun__getEnvCount(JSGlobalObject* globalObject, void** list_ptr);
 extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
 
-extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const ZigString* name, ZigString* value);
-extern "C" bool Bun__getEnvValueBunString(JSGlobalObject* globalObject, const BunString* name, BunString* value);
+extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const EncodedSlice* name, EncodedSlice* value);
+extern "C" BunString Bun__getEnvValueBunString(JSGlobalObject* globalObject, const BunString* name);
 extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
 extern "C" bool Bun__Node__ProcessPendingDeprecation;
 
@@ -213,8 +213,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
     if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
+    EncodedSlice name = toEncodedSlice(propertyName.publicName());
+    EncodedSlice value = { nullptr, 0 };
 
     if (name.len == 0) [[unlikely]]
         return JSValue::encode(jsUndefined());
@@ -243,8 +243,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterProxyEnvironmentVariable, (JSGlobalObject * glo
         return JSValue::encode(jsUndefined());
 
     BunString name = Bun::toStringView(propertyName.publicName());
-    BunString value = { BunStringTag::Dead };
-    if (!Bun__getEnvValueBunString(globalObject, &name, &value)) {
+    BunString value = Bun__getEnvValueBunString(globalObject, &name);
+    if (value.tag == BunStringTag::Dead) {
         return JSValue::encode(jsUndefined());
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, value.toWTFString())));
@@ -295,8 +295,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
 
     auto* clientData = WebCore::clientData(vm);
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
+    EncodedSlice name = toEncodedSlice(propertyName.publicName());
+    EncodedSlice value = { nullptr, 0 };
 
     auto hasExistingValue = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().dataPrivateName());
     RETURN_IF_EXCEPTION(scope, {});
@@ -389,8 +389,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeTLSRejectUnauthorizedGetter, (JSGlobalObject * gl
         return JSValue::encode(result);
     }
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
+    EncodedSlice name = toEncodedSlice(propertyName.publicName());
+    EncodedSlice value = { nullptr, 0 };
 
     if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
         return JSValue::encode(jsUndefined());
@@ -437,8 +437,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsBunConfigVerboseFetchGetter, (JSGlobalObject * global
         return JSValue::encode(result);
     }
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
+    EncodedSlice name = toEncodedSlice(propertyName.publicName());
+    EncodedSlice value = { nullptr, 0 };
 
     if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
         return JSValue::encode(jsUndefined());
@@ -471,7 +471,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * global
 }
 
 #if OS(WINDOWS)
-extern "C" void Bun__Process__editWindowsEnvVar(BunString, BunString);
+extern "C" void Bun__Process__editWindowsEnvVar(const BunString*, const BunString*);
 
 // Windows Proxy set/defineProperty write path: DEP0104 + ToString via coerceEnvValue,
 // plus the TZ side effect so it survives `delete process.env.TZ`. Returns the string.
@@ -531,9 +531,13 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
     if (arg2.isCell()) {
         WTF::String string2 = arg2.toWTFString(global);
         RETURN_IF_EXCEPTION(scope, {});
-        Bun__Process__editWindowsEnvVar(Bun::toString(string1), Bun::toString(string2));
+        BunString k = Bun::toString(string1);
+        BunString v = Bun::toString(string2);
+        Bun__Process__editWindowsEnvVar(&k, &v);
     } else {
-        Bun__Process__editWindowsEnvVar(Bun::toString(string1), { .tag = BunStringTag::Dead });
+        BunString k = Bun::toString(string1);
+        BunString v = { .tag = BunStringTag::Dead };
+        Bun__Process__editWindowsEnvVar(&k, &v);
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
@@ -549,10 +553,9 @@ static ALWAYS_INLINE void syncWindowsEnv(SharedEnvStore* store, const String& ke
 #if OS(WINDOWS)
     if (!store || !store->isMainRooted())
         return;
-    if (value)
-        Bun__Process__editWindowsEnvVar(Bun::toString(key), Bun::toString(*value));
-    else
-        Bun__Process__editWindowsEnvVar(Bun::toString(key), { .tag = BunStringTag::Dead });
+    BunString k = Bun::toString(key);
+    BunString v = value ? Bun::toString(*value) : BunString { .tag = BunStringTag::Dead };
+    Bun__Process__editWindowsEnvVar(&k, &v);
 #else
     UNUSED_PARAM(store);
     UNUSED_PARAM(key);
@@ -613,12 +616,12 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static JSSharedEnvMap* create(JSC::VM& vm, JSC::Structure* structure)
     {
-        JSSharedEnvMap* ptr = new (NotNull, JSC::allocateCell<JSSharedEnvMap>(vm)) JSSharedEnvMap(vm, structure);
+        JSSharedEnvMap* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSSharedEnvMap))) JSSharedEnvMap(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -1074,8 +1077,8 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         // This causes strange issues when the environment variable name is an integer.
         if (chars[0] >= '0' && chars[0] <= '9') [[unlikely]] {
             if (auto index = parseIndex(identifier)) {
-                ZigString valueString = { nullptr, 0 };
-                ZigString nameStr = toZigString(name);
+                EncodedSlice valueString = { nullptr, 0 };
+                EncodedSlice nameStr = toEncodedSlice(name);
                 if (Bun__getEnvValue(globalObject, &nameStr, &valueString)) {
                     JSValue value = jsString(vm, Zig::toStringCopy(valueString));
                     RETURN_IF_EXCEPTION(scope, {});

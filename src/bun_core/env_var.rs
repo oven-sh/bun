@@ -280,7 +280,6 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_INTERNAL_INTERACTIVE_ASSUME_TTY, "BUN_INTERNAL_INTERACTIVE_ASSUME_TTY", {});
     new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN, "BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN", {});
     new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT, "BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT", {});
-    new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF, "BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF", {});
     new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB, "BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304, "BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304", {});
     new_feature_flag!(pub BUN_NO_CODESIGN_MACHO_BINARY, "BUN_NO_CODESIGN_MACHO_BINARY", {});
@@ -490,11 +489,6 @@ pub(crate) mod kind {
                 deser: DeserOpts::DEFAULT,
             };
         }
-        impl Default for CtorOptions {
-            fn default() -> Self {
-                Self::DEFAULT
-            }
-        }
 
         /// Control how deserializing and deserialization errors are handled.
         ///
@@ -535,11 +529,6 @@ pub(crate) mod kind {
                 error_handling: ErrorHandling::DebugWarn,
                 empty_string_as: EmptyStringAs::Erroneous,
             };
-        }
-        impl Default for DeserOpts {
-            fn default() -> Self {
-                Self::DEFAULT
-            }
         }
 
         // `ip` (var_name + opts) lives on the struct so handle_error can read it; it is

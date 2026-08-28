@@ -121,7 +121,7 @@ pub(crate) use compat::Feature;
 /// Alias of `error::ParserErrorKind`.
 pub use error::ParserErrorKind as ParseErrorKind;
 pub use properties::custom::{TokenList, TokenListFns};
-pub use values::ident::{CustomIdentFns, DashedIdentFns, IdentFns};
+pub use values::ident::IdentFns;
 pub use values::string::{CssString as CSSString, CssStringFns as CSSStringFns};
 
 // `css::generic::*` is an alternate spelling of the protocol traits +
@@ -345,7 +345,9 @@ pub struct Dimension {
 // Every `&'static [u8]` payload actually borrows the parser arena/source text and
 // must not outlive the arena; `&'static` is the crate-wide placeholder until the
 // bumpalo arena lifetime is plumbed through.
-#[derive(Clone, Debug)]
+// `Copy`: every payload is a borrowed slice or scalar, and with `Copy` the
+// derived `clone()` is a plain 24-byte copy instead of a per-variant match.
+#[derive(Clone, Copy, Debug)]
 pub enum Token {
     Ident(&'static [u8]),
     Function(&'static [u8]),

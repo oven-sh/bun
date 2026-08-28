@@ -882,14 +882,6 @@ pub mod kernel32 {
         pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
         pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
-        /// `SetFileTime` (`fileapi.h`). Any of the three `FILETIME` pointers
-        /// may be null to leave that timestamp unchanged.
-        pub fn SetFileTime(
-            hFile: HANDLE,
-            lpCreationTime: *const FILETIME,
-            lpLastAccessTime: *const FILETIME,
-            lpLastWriteTime: *const FILETIME,
-        ) -> BOOL;
         /// `CreateProcessW` (`processthreadsapi.h`).
         pub fn CreateProcessW(
             lpApplicationName: LPCWSTR,
@@ -1604,8 +1596,8 @@ pub struct RTL_USER_PROCESS_PARAMETERS {
     pub hStdOutput: HANDLE,
     pub hStdError: HANDLE,
     /// `CURDIR` — `{ UNICODE_STRING DosPath; HANDLE Handle; }`. `Fd::cwd()`
-    /// reads the handle so `openat(Fd::cwd(), …)` resolves relative paths
-    /// against the live process cwd via `NtCreateFile`'s `RootDirectory`.
+    /// decodes to this handle so `openat(Fd::cwd(), …)` resolves relative
+    /// paths against the live process cwd via `NtCreateFile`'s `RootDirectory`.
     pub CurrentDirectory: CURDIR,
     pub DllPath: UNICODE_STRING,
     pub ImagePathName: UNICODE_STRING,

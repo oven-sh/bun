@@ -22,6 +22,7 @@
 // Tests adapted from https://github.com/nodejs/node/blob/main/test/parallel/test-util.js
 
 import assert from "assert";
+import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import util from "util";
@@ -383,6 +384,74 @@ describe("util", () => {
   it("format", () => {
     expect(util.format("%s:%s", "foo")).toBe("foo:%s");
   });
+  // Messages verified against the node v26.3.0 binary.
+  const invalidArgType = message =>
+    expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", name: "TypeError", message });
+  it("formatWithOptions and inspect.defaultOptions validate their options like Node", () => {
+    function opts() {}
+    // Arrays are allowed for formatWithOptions (kValidateObjectAllowArray), functions and null are not.
+    expect(util.formatWithOptions([], "%s", 1)).toBe("1");
+    expect(() => util.formatWithOptions(opts, "x")).toThrow(
+      invalidArgType('The "inspectOptions" argument must be of type object. Received function opts'),
+    );
+    expect(() => util.formatWithOptions(null, "x")).toThrow(
+      invalidArgType('The "inspectOptions" argument must be of type object. Received null'),
+    );
+    const saved = { ...util.inspect.defaultOptions };
+    try {
+      expect(() => (util.inspect.defaultOptions = opts)).toThrow(
+        invalidArgType('The "options" argument must be of type object. Received function opts'),
+      );
+      expect(() => (util.inspect.defaultOptions = [])).toThrow(
+        invalidArgType('The "options" argument must be of type object. Received an instance of Array'),
+      );
+      expect(() => (util.inspect.defaultOptions = { depth: 3 })).not.toThrow();
+    } finally {
+      util.inspect.defaultOptions = saved;
+    }
+    expect(() => util.stripVTControlCharacters(1)).toThrow(
+      invalidArgType('The "str" argument must be of type string. Received type number (1)'),
+    );
+  });
+  // Ported from the validateObject block of node's test/parallel/test-validators.js (v26.3.0).
+  it("validateObject honors the kValidateObject* flags like Node", () => {
+    const { validateObject, kValidateObjectAllowNullable, kValidateObjectAllowArray, kValidateObjectAllowFunction } =
+      exposedInternals["internal/validators"];
+    const err = expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", name: "TypeError" });
+    function fn() {}
+    const allFlags = kValidateObjectAllowNullable | kValidateObjectAllowArray | kValidateObjectAllowFunction;
+
+    validateObject({}, "foo");
+    validateObject({ a: 42, b: "foo" }, "foo");
+    for (const val of [undefined, null, true, false, 0, 0.0, 42, "", "string", [], fn]) {
+      expect(() => validateObject(val, "foo")).toThrow(err);
+    }
+
+    validateObject(null, "foo", kValidateObjectAllowNullable);
+    validateObject([], "foo", kValidateObjectAllowArray);
+    validateObject(fn, "foo", kValidateObjectAllowFunction);
+    for (const val of [{}, null, [], fn]) {
+      expect(() => validateObject(val, "foo", allFlags)).not.toThrow();
+    }
+
+    // Each flag only admits its own kind of value.
+    expect(() => validateObject(null, "foo", kValidateObjectAllowArray | kValidateObjectAllowFunction)).toThrow(
+      invalidArgType('The "foo" argument must be of type object. Received null'),
+    );
+    expect(() => validateObject([], "foo", kValidateObjectAllowNullable | kValidateObjectAllowFunction)).toThrow(
+      invalidArgType('The "foo" argument must be of type object. Received an instance of Array'),
+    );
+    expect(() => validateObject(fn, "foo", kValidateObjectAllowNullable | kValidateObjectAllowArray)).toThrow(
+      invalidArgType('The "foo" argument must be of type object. Received function fn'),
+    );
+    expect(() => validateObject(undefined, "foo", allFlags)).toThrow(
+      invalidArgType('The "foo" argument must be of type object. Received undefined'),
+    );
+    expect(() => validateObject("string", "foo", allFlags)).toThrow(
+      invalidArgType("The \"foo\" argument must be of type object. Received type string ('string')"),
+    );
+  });
+
   it("formatWithOptions", () => {
     expect(util.formatWithOptions({ colors: true }, "%s:%s", "foo")).toBe("foo:%s");
     expect(util.formatWithOptions({ colors: true }, "wow(%o)", { obj: true })).toBe(

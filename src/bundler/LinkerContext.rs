@@ -61,12 +61,9 @@ pub(crate) use crate::linker_context::scan_imports_and_exports::scan_imports_and
 
 pub(crate) use crate::linker_context::compute_chunks::compute_chunks;
 pub use crate::linker_context::metafile_builder as MetafileBuilder;
-pub use crate::linker_context::output_file_list_builder as OutputFileListBuilder;
-pub use crate::linker_context::static_route_visitor as StaticRouteVisitor;
 // do_step5 / create_exports_for_file are inherent methods on LinkerContext (see
 // `linker_context/doStep5.rs`), not free functions — no item re-export.
 pub(crate) use crate::linker_context::compute_cross_chunk_dependencies::compute_cross_chunk_dependencies;
-pub use crate::linker_context::do_step5;
 pub(crate) use crate::linker_context::generate_chunks_in_parallel::generate_chunks_in_parallel;
 pub(crate) use crate::linker_context::post_process_css_chunk::post_process_css_chunk;
 pub(crate) use crate::linker_context::post_process_html_chunk::post_process_html_chunk;
@@ -125,6 +122,11 @@ pub struct LinkerContext<'a> {
     pub(crate) framework: Option<bun_ptr::BackRef<bake::Framework>>,
 
     pub(crate) mangled_props: MangledProps,
+
+    /// One name per binding that crosses a chunk boundary, shared by the
+    /// chunk that exports it and every chunk that imports it
+    /// (`assign_cross_chunk_names`). Values live in the linker arena.
+    pub(crate) cross_chunk_names: bun_collections::HashMap<bun_ast::Ref, &'static [u8]>,
 }
 
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
@@ -158,6 +160,7 @@ impl<'a> Default for LinkerContext<'a> {
             dev_server: None,
             framework: None,
             mangled_props: Default::default(),
+            cross_chunk_names: Default::default(),
         }
     }
 }
@@ -326,17 +329,36 @@ impl<'a> LinkerContext<'a> {
         self.pending_task_count.fetch_sub(1, Ordering::Relaxed);
     }
 
+    /// An `import()` — or a split `require()` — whose target is a
+    /// chunk entry point: the record is resolved at runtime against the
+    /// target's chunk instead of binding to a wrapper.
     pub(crate) fn is_external_dynamic_import(
         &self,
         record: &ImportRecord,
         source_index: u32,
     ) -> bool {
         use crate::linker_graph::FileColumns as _;
-        self.graph.code_splitting
-            && record.kind == ImportKind::Dynamic
+        if !self.graph.code_splitting || record.source_index.get() == source_index {
+            return false;
+        }
+        let crosses_chunk = match record.kind {
+            ImportKind::Dynamic => true,
+            ImportKind::Require => record
+                .flags
+                .contains(bun_ast::ImportRecordFlags::CROSS_CHUNK_REQUIRE),
+            _ => false,
+        };
+        crosses_chunk
             && self.graph.files.items_entry_point_kind()[record.source_index.get() as usize]
                 .is_entry_point()
-            && record.source_index.get() != source_index
+    }
+
+    /// `"sideEffects": false` (or the resolver's equivalent), unless
+    /// `--ignore-dce-annotations` says not to trust it.
+    pub(crate) fn file_has_no_side_effects(&self, source_index: u32) -> bool {
+        self.parse_graph().input_files.items_side_effects()[source_index as usize]
+            != SideEffects::HasSideEffects
+            && !self.options.ignore_dce_annotations
     }
 
     /// Note: this should call a `MimallocArena` debug hook
@@ -850,8 +872,6 @@ impl<'a> LinkerContext<'a> {
         let import_records: *const [bun_ast::import_record::List<'a>] =
             self.graph.ast.items_import_records();
         let css_reprs: *const [crate::bundled_ast::CssCol] = self.graph.ast.items_css();
-        let side_effects: *const [SideEffects] =
-            self.parse_graph().input_files.items_side_effects();
         let entry_point_kinds: *const [EntryPoint::Kind] =
             std::ptr::from_ref(self.graph.files.items_entry_point_kind());
         let entry_points: *const [crate::IndexInt] = self.graph.entry_points.items_source_index();
@@ -865,7 +885,6 @@ impl<'a> LinkerContext<'a> {
         // nor form a competing `&mut` to any read-only column.
         let (
             entry_points,
-            side_effects,
             import_records,
             entry_point_kinds,
             css_reprs,
@@ -876,7 +895,6 @@ impl<'a> LinkerContext<'a> {
         ) = unsafe {
             (
                 &*entry_points,
-                &*side_effects,
                 &*import_records,
                 &*entry_point_kinds,
                 &*css_reprs,
@@ -892,7 +910,6 @@ impl<'a> LinkerContext<'a> {
             let _trace2 = bun::perf::trace("Bundler.markFileLiveForTreeShaking");
 
             let mut ctx = TreeShakeCtx {
-                side_effects,
                 parts,
                 parts_live,
                 import_records,
@@ -999,6 +1016,21 @@ impl<'a> LinkerContext<'a> {
         let mut worker = scopeguard::guard(worker, |w| w.unget());
         if let crate::chunk::Content::Javascript(_) = chunk.content {
             Self::generate_js_renamer_(*ctx, &mut **worker, chunk, chunk_index);
+        }
+    }
+
+    /// Second half of the minifying renamer under code splitting: names every
+    /// slot `assign_cross_chunk_names` did not pin. Writes `chunk.renamer` only.
+    pub(crate) fn finish_js_renamer(
+        _ctx: &GenerateChunkCtx,
+        chunk: *mut Chunk,
+        _chunk_index: usize,
+    ) {
+        // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task.
+        let chunk: &mut Chunk = unsafe { &mut *chunk };
+        if let crate::bun_renamer::ChunkRenamer::Minify(r) = &mut chunk.renamer {
+            // Only allocation can fail here.
+            bun_core::handle_oom(r.finish());
         }
     }
 
@@ -1252,6 +1284,10 @@ impl From<BunError> for LinkError {
 
 pub struct LinkerOptions {
     pub(crate) generate_bytecode_cache: bool,
+    pub(crate) generate_internal_module_bytecode: bool,
+    /// See `CompileTargetBuiltins::Target`.
+    pub(crate) target_builtins: Option<std::sync::Arc<[u8]>>,
+    pub(crate) bytecode_depth: u32,
     pub(crate) output_format: Format,
     pub(crate) ignore_dce_annotations: bool,
     pub(crate) emit_dce_annotations: bool,
@@ -1262,6 +1298,10 @@ pub struct LinkerOptions {
     pub(crate) banner: &'static [u8],
     pub(crate) footer: &'static [u8],
     pub(crate) css_chunking: bool,
+    /// Code splitting: side-effect-free chunks whose summed source size is
+    /// below this also fold into a chunk more entry points load (0 = off).
+    /// See `merge_small_chunks`.
+    pub(crate) min_chunk_size: u64,
     pub(crate) source_maps: SourceMapOption,
     pub(crate) target: Target,
     pub(crate) compile_mode: CompileMode,
@@ -1291,6 +1331,9 @@ impl Default for LinkerOptions {
     fn default() -> Self {
         Self {
             generate_bytecode_cache: false,
+            generate_internal_module_bytecode: false,
+            target_builtins: None,
+            bytecode_depth: u32::MAX,
             output_format: Format::Esm,
             ignore_dce_annotations: false,
             emit_dce_annotations: true,
@@ -1301,6 +1344,7 @@ impl Default for LinkerOptions {
             banner: b"",
             footer: b"",
             css_chunking: false,
+            min_chunk_size: 0,
             source_maps: SourceMapOption::None,
             target: Target::Browser,
             compile_mode: CompileMode::None,
@@ -1596,6 +1640,9 @@ pub struct ChunkMeta {
     pub(crate) imports: ChunkMetaMap,
     pub(crate) exports: ChunkMetaMap,
     pub(crate) dynamic_imports: ArrayHashMap<crate::IndexInt, ()>,
+    /// Split `require()` targets, kept apart from `dynamic_imports`
+    /// only so the metafile labels them `require-call`.
+    pub(crate) require_imports: ArrayHashMap<crate::IndexInt, ()>,
 }
 
 pub(crate) type ChunkMetaMap = ArrayHashMap<Ref, ()>;
@@ -2414,114 +2461,109 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    pub(crate) fn append_isolated_hashes_for_imported_chunks(
-        &self,
-        hash: &mut ContentHasher,
-        chunks: &mut [Chunk],
-        index: u32,
-        chunk_visit_map: &mut AutoBitSet,
-    ) {
-        // Only visit each chunk at most once. This is important because there may be
-        // cycles in the chunk import graph. If there's a cycle, we want to include
-        // the hash of every chunk involved in the cycle (along with all of their
-        // dependencies). This depth-first traversal will naturally do that.
-        if chunk_visit_map.is_set(index as usize) {
-            return;
-        }
-        chunk_visit_map.set(index as usize);
-
-        // Visit the other chunks that this chunk imports before visiting this chunk
-        // Note: reshaped for borrowck — collect imports first to avoid aliasing &chunks[index] with recursive &mut chunks
-        let cross_chunk_imports: Vec<u32> = chunks[index as usize]
-            .cross_chunk_imports
-            .slice()
-            .iter()
-            .map(|import| import.chunk_index)
-            .collect();
-        for chunk_index in cross_chunk_imports {
-            self.append_isolated_hashes_for_imported_chunks(
-                hash,
-                chunks,
-                chunk_index,
-                chunk_visit_map,
-            );
-        }
-
-        // Mix in hashes for content referenced via output pieces. JS chunks
-        // express cross-chunk dependencies via `cross_chunk_imports` above, but
-        // HTML (and CSS) chunks only reference other chunks through pieces, so
-        // recurse on those too.
-        // Note: reshaped for borrowck — collect piece queries first so the
-        // `&chunks[index]` borrow is dropped before the recursive `&mut chunks`
-        // calls in the Chunk/Scb arms below. `final_rel_path` is re-indexed per
-        // Asset arm (not hoisted) because it is now `Box<[u8]>` (not `Copy`).
-        let piece_queries: Vec<(crate::chunk::QueryKind, u32)> =
-            if let crate::chunk::IntermediateOutput::Pieces(pieces) =
-                &chunks[index as usize].intermediate_output
-            {
-                pieces
-                    .slice()
-                    .iter()
-                    .map(|p| (p.query.kind(), p.query.index()))
-                    .collect()
-            } else {
-                Vec::new()
-            };
-
-        for (kind, piece_index) in piece_queries {
-            match kind {
-                crate::chunk::QueryKind::Asset => {
-                    let mut from_chunk_dir = bun_paths::resolve_path::dirname::<
-                        bun_paths::resolve_path::platform::Posix,
-                    >(
-                        &chunks[index as usize].final_rel_path
-                    );
-                    if from_chunk_dir == b"." {
-                        from_chunk_dir = b"";
-                    }
-
-                    let source_index = piece_index;
-                    let parse_graph = self.parse_graph();
-                    let additional_files: &[AdditionalFile] =
-                        parse_graph.input_files.items_additional_files()[source_index as usize]
-                            .slice();
-                    debug_assert!(!additional_files.is_empty());
-                    match &additional_files[0] {
-                        AdditionalFile::OutputFile(output_file_id) => {
-                            let path = &parse_graph.additional_output_files
-                                [*output_file_id as usize]
-                                .dest_path;
-                            hash.write(bun_paths::resolve_path::relative_platform::<
-                                bun_paths::resolve_path::platform::Posix,
-                                false,
-                            >(from_chunk_dir, path));
+    /// Each chunk's final content hash: its own isolated hash (plus the
+    /// asset paths its output pieces reference) and that of every chunk it
+    /// transitively reaches through cross-chunk imports or output pieces, so a
+    /// change anywhere below a chunk renames it. Cycles are fine: reachability
+    /// is a fixpoint over bitsets, and each chunk digests its own hash first,
+    /// then the rest of its closure in chunk order (so two chunks that reach
+    /// each other still differ).
+    pub(crate) fn final_chunk_hashes(&self, chunks: &[Chunk]) -> Result<Vec<u64>, AllocError> {
+        let n = chunks.len();
+        let mut own: Vec<u64> = Vec::with_capacity(n);
+        let mut edges: Vec<Vec<u32>> = Vec::with_capacity(n);
+        for chunk in chunks {
+            let mut hash = ContentHasher::default();
+            let mut out: Vec<u32> = chunk
+                .cross_chunk_imports
+                .slice()
+                .iter()
+                .map(|import| import.chunk_index)
+                .collect();
+            if let crate::chunk::IntermediateOutput::Pieces(pieces) = &chunk.intermediate_output {
+                for piece in pieces.slice() {
+                    match piece.query.kind() {
+                        crate::chunk::QueryKind::Asset => {
+                            let mut from_chunk_dir =
+                                bun_paths::resolve_path::dirname::<
+                                    bun_paths::resolve_path::platform::Posix,
+                                >(&chunk.final_rel_path);
+                            if from_chunk_dir == b"." {
+                                from_chunk_dir = b"";
+                            }
+                            let parse_graph = self.parse_graph();
+                            let additional_files: &[AdditionalFile] =
+                                parse_graph.input_files.items_additional_files()
+                                    [piece.query.index() as usize]
+                                    .slice();
+                            debug_assert!(!additional_files.is_empty());
+                            if let AdditionalFile::OutputFile(output_file_id) = &additional_files[0]
+                            {
+                                let path = &parse_graph.additional_output_files
+                                    [*output_file_id as usize]
+                                    .dest_path;
+                                hash.write(bun_paths::resolve_path::relative_platform::<
+                                    bun_paths::resolve_path::platform::Posix,
+                                    false,
+                                >(from_chunk_dir, path));
+                            }
                         }
-                        AdditionalFile::SourceIndex(_) => {}
+                        crate::chunk::QueryKind::Chunk => out.push(piece.query.index()),
+                        crate::chunk::QueryKind::Scb => {
+                            let chunk_index = self.graph.files.items_entry_point_chunk_index()
+                                [piece.query.index() as usize];
+                            if chunk_index != u32::MAX {
+                                out.push(chunk_index);
+                            }
+                        }
+                        crate::chunk::QueryKind::None | crate::chunk::QueryKind::HtmlImport => {}
                     }
                 }
-                crate::chunk::QueryKind::Chunk => {
-                    self.append_isolated_hashes_for_imported_chunks(
-                        hash,
-                        chunks,
-                        piece_index,
-                        chunk_visit_map,
-                    );
+            }
+            hash.write(&chunk.isolated_hash.to_ne_bytes());
+            own.push(hash.digest());
+            edges.push(out);
+        }
+
+        let mut reach: Vec<AutoBitSet> = Vec::with_capacity(n);
+        for i in 0..n {
+            let mut bits = AutoBitSet::init_empty(n)?;
+            bits.set(i);
+            reach.push(bits);
+        }
+        loop {
+            let mut changed = false;
+            for i in 0..n {
+                for &j in &edges[i] {
+                    let j = j as usize;
+                    if j == i || reach[j].subset_of(&reach[i]) {
+                        continue;
+                    }
+                    let other = reach[j].clone()?;
+                    reach[i].set_union(&other);
+                    changed = true;
                 }
-                crate::chunk::QueryKind::Scb => {
-                    self.append_isolated_hashes_for_imported_chunks(
-                        hash,
-                        chunks,
-                        self.graph.files.items_entry_point_chunk_index()[piece_index as usize],
-                        chunk_visit_map,
-                    );
-                }
-                crate::chunk::QueryKind::None | crate::chunk::QueryKind::HtmlImport => {}
+            }
+            if !changed {
+                break;
             }
         }
 
-        // Mix in the hash for this chunk
-        let chunk = &chunks[index as usize];
-        hash.write(&chunk.isolated_hash.to_ne_bytes());
+        Ok(reach
+            .iter()
+            .enumerate()
+            .map(|(i, bits)| {
+                let mut hash = ContentHasher::default();
+                hash.write(&own[i].to_ne_bytes());
+                let mut iter = bits.iterator::<true, true>();
+                while let Some(j) = iter.next() {
+                    if j != i {
+                        hash.write(&own[j].to_ne_bytes());
+                    }
+                }
+                hash.digest()
+            })
+            .collect())
     }
 
     // Sort cross-chunk exports by chunk name for determinism
@@ -2591,7 +2633,6 @@ impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
 // DFS). Packing the slices into a borrowed context struct keeps each step at
 // 3-4 register-sized arguments.
 pub(crate) struct TreeShakeCtx<'a, 'r> {
-    pub(crate) side_effects: &'r [SideEffects],
     pub(crate) parts: &'r [bun_ast::PartList<'a>],
     pub(crate) parts_live: &'r mut [bun_collections::AutoBitSet],
     pub(crate) import_records: &'r [bun_ast::import_record::List<'a>],
@@ -2823,9 +2864,7 @@ impl<'a> LinkerContext<'a> {
 
                     // Don't include this module for its side effects if it can be
                     // considered to have no side effects
-                    let se = ctx.side_effects[other_source_index as usize];
-
-                    if se != SideEffects::HasSideEffects && !self.options.ignore_dce_annotations {
+                    if self.file_has_no_side_effects(other_source_index) {
                         continue;
                     }
 

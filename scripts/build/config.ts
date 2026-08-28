@@ -29,7 +29,7 @@ export type WebKitMode = "prebuilt" | "local";
  * (Config.os/arch/windows) which is what we're building FOR.
  *
  * Host vs target matters for rust-only cross-compile: a linux CI box
- * can cross-compile libbun_rust.a for any linux abi/arch and (with the
+ * can cross-compile libbun_runtime.a for any linux abi/arch and (with the
  * right SDK) darwin. Target determines cargo's `--target` triple and
  * rustflags; host determines shell syntax (cmd vs sh), quoting, and
  * tool executable suffixes.
@@ -122,7 +122,7 @@ export interface Config {
   lto: boolean;
   /**
    * Cross-language LTO: rustc emits LLVM bitcode (`-Clinker-plugin-lto`) into
-   * `libbun_rust.a` so the final lld `-flto=thin` link sees through Rust↔C++
+   * `libbun_runtime.a` so the final lld `-flto=thin` link sees through Rust↔C++
    * call edges. When false but `lto` is true, both halves still LTO
    * independently (C++ via `-flto=thin`, Rust via `[profile.release] lto =
    * "fat"`); only the cross-language inlining is lost.
@@ -237,7 +237,7 @@ export interface Config {
   rustLlvmVersion: string | undefined;
   /**
    * `rustc --print sysroot`. Used to locate rustc's bundled `llvm-nm` for
-   * reading LTO bitcode in `libbun_rust.a` — clang's `llvm-nm` may lag
+   * reading LTO bitcode in `libbun_runtime.a` — clang's `llvm-nm` may lag
    * rustc's LLVM major and reject the bitcode (#53609, #53656). Unlike
    * `rustLld`, this is needed regardless of whether cross-language LTO is
    * actually using rust-lld as the linker.
@@ -828,7 +828,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const crossLangLto = lto && !(windows && host.os === "windows");
 
   // Cross-language LTO bitcode-version skew: `-Clinker-plugin-lto` makes
-  // rustc emit raw LLVM bitcode into libbun_rust.a. LLVM bitcode is
+  // rustc emit raw LLVM bitcode into libbun_runtime.a. LLVM bitcode is
   // forward-compatible only (newer reader, older writer), so when rustc's
   // bundled LLVM is ahead of clang's, clang's ld.lld rejects the rust .o
   // files ("Unknown attribute kind"). rust-lld is built against rustc's

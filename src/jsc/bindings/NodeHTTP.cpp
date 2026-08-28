@@ -12,6 +12,7 @@
 #include "JSFetchHeaders.h"
 #include <bun-uws/src/App.h>
 #include <bun-uws/src/Http3Response.h>
+#include <bun-uws/src/Http2Context.h>
 #include "ZigGeneratedClasses.h"
 #include "ScriptExecutionContext.h"
 #include "AsyncContextFrame.h"
@@ -225,7 +226,6 @@ extern "C" EncodedJSValue Bun__NodeHTTP__buildRawHeadersArray(JSC::JSGlobalObjec
                 array->initializeIndex(initializationScope, i, JSValue::decode(argValues[i]));
             }
         } else {
-            RETURN_IF_EXCEPTION(scope, {});
             array = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), arrayValues);
             RETURN_IF_EXCEPTION(scope, {});
         }
@@ -308,7 +308,6 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     // capacity keeps the capture heap-allocation-free for the common case.
     WTF::Vector<uint8_t, 1024> flatHeaders;
     assignHeadersFromUWebSocketsForCall(request, methodString, args, flatHeaders, globalObject, vm);
-    RETURN_IF_EXCEPTION(scope, {});
 
     bool hasBody = false;
     WebCore::JSNodeHTTPResponse* nodeHTTPResponseObject = uncheckedDowncast<WebCore::JSNodeHTTPResponse>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, upgrade_ctx, nodeHttpResponsePtr)));
@@ -858,7 +857,10 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
     return obj;
 }
 
-static void writeFetchHeadersToH3Response(WebCore::FetchHeaders& headers, uWS::Http3Response* res)
+/* Http2Response and Http3Response share this surface: headers are buffered
+ * as a list and framed by the transport, so there is no Transfer-Encoding. */
+template<typename Response, typename ResponseData>
+static void writeFetchHeadersToStreamResponse(WebCore::FetchHeaders& headers, Response* res)
 {
     auto& internalHeaders = headers.internalHeaders();
     auto* data = res->getHttpResponseData();
@@ -895,16 +897,16 @@ static void writeFetchHeadersToH3Response(WebCore::FetchHeaders& headers, uWS::H
 
     for (const auto& header : internalHeaders.commonHeaders()) {
         if (header.key == WebCore::HTTPHeaderName::ContentLength) {
-            if (!(data->state & uWS::Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
-                data->state |= uWS::Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+            if (!(data->state & ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
+                data->state |= ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;
                 res->writeMark();
             }
         }
         if (header.key == WebCore::HTTPHeaderName::Date) {
-            data->state |= uWS::Http3ResponseData::HTTP_WROTE_DATE_HEADER;
+            data->state |= ResponseData::HTTP_WROTE_DATE_HEADER;
         }
-        // HTTP/3 has no Transfer-Encoding; if a user header reaches here it
-        // was already stripped by doWriteHeaders().
+        // No Transfer-Encoding on these transports; if a user header reaches
+        // here it was already stripped by doWriteHeaders().
         writeOne(WebCore::httpHeaderNameString(header.key), header.value);
     }
 
@@ -922,8 +924,11 @@ extern "C" void WebCore__FetchHeaders__toUWSResponse(WebCore::FetchHeaders* arg0
     case UWSResponseKind::SSL:
         writeFetchHeadersToUWSResponse<true>(*arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
         break;
+    case UWSResponseKind::H2:
+        writeFetchHeadersToStreamResponse<uWS::Http2Response, uWS::Http2ResponseData>(*arg0, reinterpret_cast<uWS::Http2Response*>(arg2));
+        break;
     case UWSResponseKind::H3:
-        writeFetchHeadersToH3Response(*arg0, reinterpret_cast<uWS::Http3Response*>(arg2));
+        writeFetchHeadersToStreamResponse<uWS::Http3Response, uWS::Http3ResponseData>(*arg0, reinterpret_cast<uWS::Http3Response*>(arg2));
         break;
     }
 }

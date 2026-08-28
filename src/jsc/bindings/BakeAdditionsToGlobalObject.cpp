@@ -31,15 +31,10 @@ extern "C" SYSV_ABI EncodedJSValue Bake__createDevServerFrameworkRequestArgsObje
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
 
     object->putDirectOffset(vm, 0, JSValue::decode(routerTypeMain));
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
     object->putDirectOffset(vm, 1, JSValue::decode(routeModules));
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
     object->putDirectOffset(vm, 2, JSValue::decode(clientEntryUrl));
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
     object->putDirectOffset(vm, 3, JSValue::decode(styles));
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
     object->putDirectOffset(vm, 4, JSValue::decode(params));
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
 
     return JSValue::encode(object);
 }
@@ -89,7 +84,7 @@ extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getBundleNewRouteJSFunction(JSC::J
     return JSValue::encode(value);
 }
 
-extern "C" SYSV_ABI JSC::EncodedJSValue Bake__bundleNewRouteJSFunctionImpl(JSC::JSGlobalObject* globalObject, void* requestPtr, BunString url);
+extern "C" SYSV_ABI JSC::EncodedJSValue Bake__bundleNewRouteJSFunctionImpl(JSC::JSGlobalObject* globalObject, void* requestPtr, const BunString* url);
 BUN_DEFINE_HOST_FUNCTION(jsFunctionBakeGetBundleNewRouteJSFunction, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -119,7 +114,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBakeGetBundleNewRouteJSFunction, (JSC::JSGlob
     BunString url = Bun::toString(urlValue.getString(globalObject));
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
 
-    return Bake__bundleNewRouteJSFunctionImpl(globalObject, request->m_ctx, url);
+    return Bake__bundleNewRouteJSFunctionImpl(globalObject, request->m_ctx, &url);
 }
 
 extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getNewRouteParamsJSFunction(JSC::JSGlobalObject* globalObject)

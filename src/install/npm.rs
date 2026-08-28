@@ -17,6 +17,7 @@ use bun_url::{OwnedURL, URL};
 use bun_wyhash::Wyhash11;
 
 use crate::bin::{self, Bin};
+use crate::bun_fs::FileSystem;
 use crate::external_slice::ExternalPackageNameHashList;
 use crate::integrity::Integrity;
 use crate::{
@@ -159,7 +160,6 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         headers.entries,
         header_buf,
         b"",
-        None,
         None,
         http::FetchRedirect::Follow,
     );
@@ -375,7 +375,6 @@ pub mod registry {
                 'outer: {
                     if registry.password.is_empty() {
                         let mut pathname: &[u8] = url.pathname;
-                        // defer { url.pathname = pathname; url.path = pathname; } — applied below
                         let mut needs_to_check_slash = true;
                         while let Some(colon) = strings::last_index_of_char(pathname, b':') {
                             let mut segment = &pathname[colon + 1..];
@@ -1356,22 +1355,10 @@ pub mod package_manifest {
             cache_dir: Fd,
         ) -> Result<(), Error> {
             let file_id = Wyhash11::hash(0, this.name());
-            let mut dest_path_buf = [0u8; 512 + 64];
+            let mut tmp_path_buf = [0u8; 64];
+            let tmp_path = FileSystem::tmpname(b"npm", &mut tmp_path_buf, bun_core::fast_random())?;
             let mut out_path_buf =
                 [0u8; ("18446744073709551615".len() * 2) + "_".len() + ".npm".len() + 1];
-            let mut dest_path_stream = bun_io::FixedBufferStream::new_mut(&mut dest_path_buf);
-            let file_id_hex_fmt = bun_fmt::hex_int_lower::<16>(file_id);
-            let hex_timestamp: usize =
-                usize::try_from(bun_core::time::milli_timestamp().max(0)).expect("int cast");
-            let hex_timestamp_fmt = bun_fmt::hex_int_lower::<16>(hex_timestamp as u64);
-            write!(
-                dest_path_stream,
-                "{}.npm-{}",
-                file_id_hex_fmt, hex_timestamp_fmt
-            )?;
-            dest_path_stream.write_byte(0)?;
-            let pos = dest_path_stream.pos;
-            let tmp_path = bun_core::ZStr::from_buf_mut(&mut dest_path_buf, pos - 1);
             let out_path = Self::manifest_file_name(&mut out_path_buf, file_id, scope)?;
             Self::write_file(this, scope, tmp_path, tmpdir, cache_dir, out_path)
         }

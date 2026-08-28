@@ -650,7 +650,7 @@ export function findRustLld(os: OS): {
   if (rustc === undefined) return none;
 
   // The link-only CI mode runs `findRustLld()` on an agent that downloads
-  // `libbun_rust.a` rather than building it, so the pinned nightly may not be
+  // `libbun_runtime.a` rather than building it, so the pinned nightly may not be
   // installed there yet. `rustc --print sysroot` (a rustup proxy invocation)
   // would auto-install — but the download blows past a short spawnSync timeout
   // and the silent failure leaves `rustLld` undefined, which falls back to the

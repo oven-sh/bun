@@ -8,7 +8,7 @@
 use core::ffi::c_int;
 use core::ptr;
 
-use bun_collections::{ArrayHashMap, StringArrayHashMap};
+use bun_collections::StringArrayHashMap;
 use bun_core::{MutableString, slice_to_nul, strings};
 use bun_core::{Output, ZStr, slice_as_bytes};
 #[cfg(unix)]
@@ -1156,34 +1156,6 @@ pub mod archiver {
     pub struct Context {
         pub pluckers: Vec<Plucker>,
         pub overwrite_list: StringArrayHashMap<()>,
-        pub all_files: EntryMap,
-    }
-
-    // U64Context: hash = truncate u64→u32, eql = ==; the
-    // keys are already wyhash u64s, so truncation is the entire hash.
-    pub type EntryMap = ArrayHashMap<u64, *mut u8, U64Context>;
-
-    #[derive(Default, Clone, Copy)]
-    pub struct U64Context;
-    impl bun_collections::array_hash_map::ArrayHashContext<u64> for U64Context {
-        #[inline]
-        fn hash(&self, k: &u64) -> u32 {
-            *k as u32 // @truncate
-        }
-        #[inline]
-        fn eql(&self, a: &u64, b: &u64, _: usize) -> bool {
-            a == b
-        }
-    }
-    impl bun_collections::array_hash_map::ArrayHashAdapter<u64, u64> for U64Context {
-        #[inline]
-        fn hash(&self, k: &u64) -> u32 {
-            *k as u32 // @truncate
-        }
-        #[inline]
-        fn eql(&self, a: &u64, b: &u64, _: usize) -> bool {
-            a == b
-        }
     }
 
     pub struct Plucker {
@@ -1229,8 +1201,6 @@ pub use archiver::{Context, ExtractOptions, Plucker};
 pub trait ArchiveAppender {
     /// Mirrors `@hasDecl(Child, "onFirstDirectoryName")`.
     const HAS_ON_FIRST_DIRECTORY_NAME: bool = false;
-    /// Mirrors `@hasDecl(Child, "appendMutable")`.
-    const HAS_APPEND_MUTABLE: bool = false;
 
     fn needs_first_dirname(&self) -> bool {
         false
@@ -1238,10 +1208,6 @@ pub trait ArchiveAppender {
     fn on_first_directory_name(&mut self, _name: &[u8]) {}
 
     fn append(&mut self, path: &[u8]) -> crate::Result<&[u8]> {
-        let _ = path;
-        unreachable!()
-    }
-    fn append_mutable(&mut self, path: &[OSPathChar]) -> crate::Result<&mut [OSPathChar]> {
         let _ = path;
         unreachable!()
     }
@@ -1365,7 +1331,6 @@ impl Archiver {
                         else {
                             continue 'loop_;
                         };
-                        // defer opened.close()
                         let _close_guard = scopeguard::guard(opened, |fd| fd.close());
                         let stat_size = bun_sys::get_file_size(opened)?;
 
@@ -1800,19 +1765,6 @@ impl Archiver {
                                     } else {
                                         0u64
                                     };
-
-                                    if A::HAS_APPEND_MUTABLE {
-                                        let result = ctx_
-                                            .all_files
-                                            .get_or_put_adapted(&h, &archiver::U64Context)
-                                            .expect("unreachable");
-                                        if !result.found_existing {
-                                            *result.value_ptr = appender
-                                                .append_mutable(path_slice)?
-                                                .as_mut_ptr()
-                                                .cast::<u8>();
-                                        }
-                                    }
 
                                     for plucker_ in ctx_.pluckers.iter_mut() {
                                         if plucker_.filename_hash == h {

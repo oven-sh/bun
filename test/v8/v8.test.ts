@@ -470,6 +470,10 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       // next cycle before Stop() of the current one (see @datadog/pprof).
       await checkSameOutput("test_v8_cpu_profiler_overlapping_sessions");
     });
+    it("StartProfiling/StopProfiling key sessions by title and GetTitle returns it", async () => {
+      // google's pprof addon uses the title-keyed overloads (#19678).
+      await checkSameOutput("test_v8_cpu_profiler_title_api");
+    });
   });
 
   describe("uv_os_getpid", () => {

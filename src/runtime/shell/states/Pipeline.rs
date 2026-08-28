@@ -357,6 +357,5 @@ impl Pipeline {
         // child; when those drop they close. Any unclaimed ones (error path)
         // were closed inline above.
         me.pipes = None;
-        me.base.end_scope();
     }
 }

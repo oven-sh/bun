@@ -45,18 +45,21 @@ impl JSCDeferredWorkTask {
 }
 
 /// JSC helper threads (DeferredWorkTimer): deliver a deferred-work job to the
-/// VM's loop, or run its release path here if the VM is gone.
+/// VM's `kind` loop (captured by `JSCTaskScheduler::onAddPendingWork` on the JS
+/// thread when the work was registered), or run its release path here if the
+/// VM is gone.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
     r: *const crate::vm_handle::Shared,
     task: *mut JSCDeferredWorkTask,
+    kind: crate::LoopKind,
 ) {
     crate::mark_binding!();
     // SAFETY: C++ passes the reference its JSVMClientData holds.
     let handle = unsafe { crate::VmHandle::borrow_ref(r) };
     // `create_from` heap-allocates with the auto-delete bit set.
     let ct = ConcurrentTask::create_from(task);
-    if let crate::vm_handle::Posted::Refused(ct) = handle.post(crate::LoopKind::Regular, ct) {
+    if let crate::vm_handle::Posted::Refused(ct) = handle.post(kind, ct) {
         // SAFETY: refused ⇒ we own the ConcurrentTask box; the C++ job's ticket
         // was already cancelled by the VM teardown (DeferredWorkTimer is shut
         // down before ~VM), so dropping the job pointer here loses nothing.

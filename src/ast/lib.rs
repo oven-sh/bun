@@ -84,6 +84,20 @@ pub enum ImportKind {
 // - packages/bun-types/bun.d.ts
 
 impl ImportKind {
+    /// With code splitting, whether an edge of this kind puts its target in a
+    /// chunk of its own that is loaded when the expression runs, rather than
+    /// in the importer's static closure. `require()` qualifies only when the
+    /// output runs in Bun, which loads the chunk synchronously through
+    /// `import.meta.require`.
+    #[inline]
+    pub fn can_be_lazy_chunk(self, target_is_bun: bool) -> bool {
+        match self {
+            ImportKind::Dynamic => true,
+            ImportKind::Require => target_is_bun,
+            _ => false,
+        }
+    }
+
     #[inline]
     pub fn label(self) -> &'static [u8] {
         match self {
@@ -1217,16 +1231,6 @@ pub struct MetadataResolve {
     pub err: crate::Error,
 }
 
-impl Default for MetadataResolve {
-    fn default() -> Self {
-        MetadataResolve {
-            specifier: BabyString::new(0, 0),
-            import_kind: ImportKind::default(),
-            err: crate::Error::ModuleNotFound,
-        }
-    }
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // Range
 // ───────────────────────────────────────────────────────────────────────────
@@ -2049,12 +2053,23 @@ impl Log {
         })
     }
 
-    #[cold]
+    #[inline]
     pub fn add_range_error_with_notes(
         &mut self,
         source: Option<&Source>,
         r: Range,
         text: impl IntoText,
+        notes: Box<[Data]>,
+    ) {
+        self.add_range_error_with_notes_text(source, r, text.into_text(), notes)
+    }
+
+    #[cold]
+    fn add_range_error_with_notes_text(
+        &mut self,
+        source: Option<&Source>,
+        r: Range,
+        text: Cow<'static, [u8]>,
         notes: Box<[Data]>,
     ) {
         self.errors += 1;
@@ -2071,8 +2086,15 @@ impl Log {
         self.msgs.push(msg);
     }
 
+    /// Generic only over the text conversion; the body is shared so each
+    /// `&[u8; N]` literal length does not get its own copy.
+    #[inline]
+    pub fn add_error(&mut self, source: Option<&Source>, loc: Loc, text: impl IntoText) {
+        self.add_error_text(source, loc, text.into_text());
+    }
+
     #[cold]
-    pub fn add_error(&mut self, _source: Option<&Source>, loc: Loc, text: impl IntoText) {
+    fn add_error_text(&mut self, _source: Option<&Source>, loc: Loc, text: Cow<'static, [u8]>) {
         self.errors += 1;
         let data = self.tracked_range_data(
             _source,
@@ -2768,9 +2790,14 @@ impl Source {
     }
 }
 
+#[inline]
 pub fn range_data(source: Option<&Source>, r: Range, text: impl IntoText) -> Data {
+    range_data_text(source, r, text.into_text())
+}
+
+fn range_data_text(source: Option<&Source>, r: Range, text: Cow<'static, [u8]>) -> Data {
     Data {
-        text: text.into_text(),
+        text,
         location: Location::init_or_null(source, r),
     }
 }

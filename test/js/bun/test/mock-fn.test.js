@@ -725,6 +725,42 @@ describe("mock()", () => {
     );
     expect(fn()).toBe("1");
   });
+  test("withImplementation (callback throws)", () => {
+    const fn = jest.fn(() => "1");
+    expect(() =>
+      fn.withImplementation(
+        () => "2",
+        () => {
+          expect(fn()).toBe("2");
+          throw new Error("from callback");
+        },
+      ),
+    ).toThrow("from callback");
+  });
+  test("withImplementation restores a queued mockImplementationOnce chain", () => {
+    const fn = jest.fn(() => "base");
+    fn.mockImplementationOnce(() => "a").mockImplementationOnce(() => "b");
+    fn.withImplementation(
+      () => "temp",
+      () => {
+        expect(fn()).toBe("temp");
+      },
+    );
+    fn.mockImplementationOnce(() => "c");
+    expect([fn(), fn(), fn(), fn()]).toEqual(["a", "b", "c", "base"]);
+  });
+  test("copying name/length from the implementation propagates getter errors", () => {
+    const impl = function () {};
+    Object.defineProperty(impl, "length", {
+      get() {
+        throw new Error("length getter");
+      },
+    });
+    expect(() => jest.fn(impl)).toThrow("length getter");
+    const obj = { method: impl };
+    expect(() => jest.spyOn(obj, "method")).toThrow("length getter");
+    expect(obj.method).toBe(impl);
+  });
   test("withImplementation (async)", async () => {
     const fn = jest.fn(() => "1");
     expect(fn()).toBe("1");

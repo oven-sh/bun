@@ -8,6 +8,7 @@
 "defaulted_failure:src/bun_core/string/immutable.rs" = 1
 
 [bun_css]
+"derived_field:src/css/properties/margin_padding.rs" = 105
 
 [bun_install]
 "defaulted_failure:src/install/npm.rs" = 1
@@ -18,7 +19,6 @@
 
 [bun_jsc]
 "defaulted_failure:src/jsc/ConsoleObject.rs" = 4
-"same_match_twice:src/jsc/VirtualMachine.rs" = 1
 
 [bun_parsers]
 "parallel_vecs:src/parsers/xml.rs" = 1

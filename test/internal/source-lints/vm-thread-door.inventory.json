@@ -16,14 +16,6 @@
   "src/jsc/Debugger.rs": {
     "thread spawn": 1
   },
-  "src/jsc/JSCell.rs": {
-    "unsafe impl Send": [
-      "JsCell<T>"
-    ],
-    "unsafe impl Sync": [
-      "JsCell<T>"
-    ]
-  },
   "src/jsc/JSSecrets.rs": {
     "unsafe impl Send": [
       "SecretsOptions"
@@ -56,11 +48,6 @@
       "WatchChangedPaths"
     ]
   },
-  "src/jsc/node_path.rs": {
-    "unsafe impl Send": [
-      "ThreadSafe<T>"
-    ]
-  },
   "src/jsc/web_worker.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [
@@ -71,12 +58,12 @@
     "unsafe impl Send": [
       "Blob",
       "Bytes",
-      "StoreRef"
+      "Store"
     ],
     "unsafe impl Sync": [
       "Blob",
       "Bytes",
-      "StoreRef"
+      "Store"
     ]
   },
   "src/runtime/api/JSTranspiler.rs": {
@@ -186,6 +173,11 @@
     ],
     "unsafe impl Sync": [
       "PathWatcherManager"
+    ]
+  },
+  "src/runtime/node/types.rs": {
+    "unsafe impl Send": [
+      "ThreadIsolated<T>"
     ]
   },
   "src/runtime/shell/IOReader.rs": {

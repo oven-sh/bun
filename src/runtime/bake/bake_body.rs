@@ -69,18 +69,6 @@ fn get_boolean_loose(
     }
 }
 
-/// `JSValue.getOptional(JSValue, ..)` — local shim: filters undefined/null.
-fn get_optional_value(
-    target: JSValue,
-    global: &JSGlobalObject,
-    property: &[u8],
-) -> JsResult<Option<JSValue>> {
-    match target.get(global, property)? {
-        Some(v) if !v.is_undefined_or_null() => Ok(Some(v)),
-        _ => Ok(None),
-    }
-}
-
 /// `JSValue.getFunction` — local shim until `bun_jsc` grows it.
 fn get_function(
     target: JSValue,
@@ -205,14 +193,14 @@ impl UserOptions {
             );
         }
 
-        if let Some(js_options) = get_optional_value(config, global, b"bundlerOptions")? {
-            if let Some(server_options) = get_optional_value(js_options, global, b"server")? {
+        if let Some(js_options) = config.get_optional::<JSValue>(global, b"bundlerOptions")? {
+            if let Some(server_options) = js_options.get_optional::<JSValue>(global, b"server")? {
                 bundler_options.server = BuildConfigSubset::from_js(global, server_options)?;
             }
-            if let Some(client_options) = get_optional_value(js_options, global, b"client")? {
+            if let Some(client_options) = js_options.get_optional::<JSValue>(global, b"client")? {
                 bundler_options.client = BuildConfigSubset::from_js(global, client_options)?;
             }
-            if let Some(ssr_options) = get_optional_value(js_options, global, b"ssr")? {
+            if let Some(ssr_options) = js_options.get_optional::<JSValue>(global, b"ssr")? {
                 bundler_options.ssr = BuildConfigSubset::from_js(global, ssr_options)?;
             }
         }
@@ -410,7 +398,7 @@ impl BuildConfigSubset {
         let mut options = BuildConfigSubset::default();
 
         'brk: {
-            let Some(val) = get_optional_value(js_options, global, b"sourcemap")? else {
+            let Some(val) = js_options.get_optional::<JSValue>(global, b"sourcemap")? else {
                 break 'brk;
             };
             if let Some(sourcemap) = source_map_mode_from_js(global, val)? {
@@ -427,7 +415,8 @@ impl BuildConfigSubset {
         }
 
         'brk: {
-            let Some(minify_options) = get_optional_value(js_options, global, b"minify")? else {
+            let Some(minify_options) = js_options.get_optional::<JSValue>(global, b"minify")?
+            else {
                 break 'brk;
             };
             if minify_options.is_boolean() && minify_options.as_boolean() {
@@ -837,7 +826,7 @@ impl Framework {
             Some(ServerComponents {
                 separate_ssr_graph: 'brk: {
                     // Intentionally not using a truthiness check
-                    let prop = match get_optional_value(sc, global, b"separateSSRGraph")? {
+                    let prop = match sc.get_optional::<JSValue>(global, b"separateSSRGraph")? {
                         Some(p) => p,
                         None => {
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -1094,7 +1083,7 @@ impl Framework {
             built_in_modules,
         };
 
-        if let Some(plugin_array) = get_optional_value(opts, global, b"plugins")? {
+        if let Some(plugin_array) = opts.get_optional::<JSValue>(global, b"plugins")? {
             bundler_options.parse_plugin_array(plugin_array, global)?;
         }
 

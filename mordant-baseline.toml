@@ -33,7 +33,6 @@
 "error_collapsed_to_bool:src/runtime/api/bun/h2_frame_parser.rs" = 32
 "error_collapsed_to_bool:src/runtime/ffi/ffi_body.rs" = 1
 "field_valid_only_when:src/runtime/shell/builtin/rm.rs" = 1
-"reimplemented_helper:src/runtime/api/bun/Terminal.rs" = 1
 "reimplemented_helper:src/runtime/hw_exports.rs" = 1
 "same_match_twice:src/runtime/cli/pack_command.rs" = 1
 "same_match_twice:src/runtime/cli/update_interactive_command.rs" = 2

@@ -211,30 +211,6 @@ impl Default for Options {
     }
 }
 
-// Local extension shims for typed optional property reads. Typed
-// `getOptional` is not yet a single inherent generic on `bun_jsc::JSValue`;
-// these wrap `get` + the per-type coercion. `withAsyncContextIfNeeded` is the
-// inherent `JSValue::with_async_context_if_needed` in `bun_jsc` — call sites
-// resolve to that directly, no shim here.
-trait JSValueTerminalExt {
-    fn get_optional_i32(self, global: &JSGlobalObject, name: &[u8]) -> JsResult<Option<i32>>;
-    fn get_optional_value(self, global: &JSGlobalObject, name: &[u8]) -> JsResult<Option<JSValue>>;
-}
-impl JSValueTerminalExt for JSValue {
-    fn get_optional_i32(self, global: &JSGlobalObject, name: &[u8]) -> JsResult<Option<i32>> {
-        match self.get(global, name)? {
-            Some(v) if !v.is_undefined_or_null() => Ok(Some(v.coerce::<i32>(global)?)),
-            _ => Ok(None),
-        }
-    }
-    fn get_optional_value(self, global: &JSGlobalObject, name: &[u8]) -> JsResult<Option<JSValue>> {
-        match self.get(global, name)? {
-            Some(v) if !v.is_undefined_or_null() => Ok(Some(v)),
-            _ => Ok(None),
-        }
-    }
-}
-
 impl Options {
     /// Maximum length for terminal name (e.g., "xterm-256color")
     /// Longest known terminfo names are ~23 chars; 128 allows for custom terminals
@@ -247,13 +223,13 @@ impl Options {
     ) -> JsResult<Options> {
         let mut options = Options::default();
 
-        if let Some(n) = js_options.get_optional_i32(global_object, b"cols")? {
+        if let Some(n) = js_options.get_optional::<i32>(global_object, b"cols")? {
             if n > 0 && n <= 65535 {
                 options.cols = u16::try_from(n).expect("int cast");
             }
         }
 
-        if let Some(n) = js_options.get_optional_i32(global_object, b"rows")? {
+        if let Some(n) = js_options.get_optional::<i32>(global_object, b"rows")? {
             if n > 0 && n <= 65535 {
                 options.rows = u16::try_from(n).expect("int cast");
             }
@@ -270,19 +246,19 @@ impl Options {
             }
         }
 
-        if let Some(v) = js_options.get_optional_value(global_object, b"data")? {
+        if let Some(v) = js_options.get_optional::<JSValue>(global_object, b"data")? {
             if v.is_cell() && v.is_callable() {
                 options.data_callback = Some(v.with_async_context_if_needed(global_object));
             }
         }
 
-        if let Some(v) = js_options.get_optional_value(global_object, b"exit")? {
+        if let Some(v) = js_options.get_optional::<JSValue>(global_object, b"exit")? {
             if v.is_cell() && v.is_callable() {
                 options.exit_callback = Some(v.with_async_context_if_needed(global_object));
             }
         }
 
-        if let Some(v) = js_options.get_optional_value(global_object, b"drain")? {
+        if let Some(v) = js_options.get_optional::<JSValue>(global_object, b"drain")? {
             if v.is_cell() && v.is_callable() {
                 options.drain_callback = Some(v.with_async_context_if_needed(global_object));
             }

@@ -1701,6 +1701,7 @@ describe.concurrent('package.json "imports" keys that start with "#/"', () => {
         "#/*": "./src/*",
         "#/config": "./src/config.js",
         "#/lib/*": { import: "./src/lib/*.mjs", default: "./src/lib/*.cjs" },
+        "#plain": "./src/plain.js",
         "#dep": "dep",
       },
     }),
@@ -1708,6 +1709,7 @@ describe.concurrent('package.json "imports" keys that start with "#/"', () => {
     "src/config.js": `export const config = "config";`,
     "src/lib/util.mjs": `export const util = "esm";`,
     "src/lib/util.cjs": `exports.util = "cjs";`,
+    "src/plain.js": `export const plain = "plain";`,
     "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
     "node_modules/dep/index.js": `export const d = "dep";`,
   };
@@ -1719,12 +1721,14 @@ describe.concurrent('package.json "imports" keys that start with "#/"', () => {
         import { v } from "#/foo.js";
         import { config } from "#/config";
         import { util } from "#/lib/util";
+        import { plain } from "#plain";
         import { d } from "#dep";
-        console.log(JSON.stringify({ v, config, util, d }));
+        const { config: dynamic } = await import("#/config");
+        console.log(JSON.stringify({ v, config, util, plain, d, dynamic }));
       `,
     });
     expect(await runWildcardScript(String(dir), "index.js")).toEqual({
-      stdout: JSON.stringify({ v: 42, config: "config", util: "esm", d: "dep" }),
+      stdout: JSON.stringify({ v: 42, config: "config", util: "esm", plain: "plain", d: "dep", dynamic: "config" }),
       stderr: "",
       exitCode: 0,
     });
@@ -1737,11 +1741,12 @@ describe.concurrent('package.json "imports" keys that start with "#/"', () => {
         const { v } = require("#/foo.js");
         const { config } = require("#/config");
         const { util } = require("#/lib/util");
-        console.log(JSON.stringify({ v, config, util }));
+        const { plain } = require("#plain");
+        console.log(JSON.stringify({ v, config, util, plain }));
       `,
     });
     expect(await runWildcardScript(String(dir), "index.cjs")).toEqual({
-      stdout: JSON.stringify({ v: 42, config: "config", util: "cjs" }),
+      stdout: JSON.stringify({ v: 42, config: "config", util: "cjs", plain: "plain" }),
       stderr: "",
       exitCode: 0,
     });

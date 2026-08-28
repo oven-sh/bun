@@ -111,20 +111,17 @@ impl Assigns {
         let label = node.slice()[*idx as usize].label;
         *idx += 1;
 
-        // Join multi-word expansions with a single space. `ExpansionOut` stores all words contiguously in `buf`
-        // with `bounds` marking inter-word offsets, so the merged value is
-        // `buf` with a space inserted at each boundary.
-        let value: Vec<u8> = if out.bounds.is_empty() {
+        // Join multi-word expansions with a single space.
+        let value: Vec<u8> = if out.word_count() <= 1 {
             out.buf
         } else {
-            let mut merged = Vec::with_capacity(out.buf.len() + out.bounds.len());
-            let mut prev = 0usize;
-            for &b in &out.bounds {
-                merged.extend_from_slice(&out.buf[prev..b as usize]);
-                merged.push(b' ');
-                prev = b as usize;
+            let mut merged = Vec::with_capacity(out.buf.len() + out.word_count());
+            for (i, word) in out.words().enumerate() {
+                if i != 0 {
+                    merged.push(b' ');
+                }
+                merged.extend_from_slice(word);
             }
-            merged.extend_from_slice(&out.buf[prev..]);
             merged
         };
 

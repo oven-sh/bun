@@ -128,6 +128,69 @@ console.log(JSON.stringify(Bun.$.braces("{" + inner)));`,
   });
 });
 
+// The expansion collected its words into one buffer and recorded a word
+// boundary only when that buffer was already non-empty, so an empty variant
+// at the start of the list had no representation and was dropped: `{,b}`
+// gave ["b"] while `{b,}` gave ["b", ""]. Every variant is an argv word.
+describe("empty brace variants are argv words in every position", () => {
+  // With `-e` there is no script path, so the user args start at argv[1].
+  const printArgv = "console.log(JSON.stringify(process.argv.slice(1)))";
+  const cases: [string, string[]][] = [
+    ["{,b}", ["", "b"]],
+    ["{b,}", ["b", ""]],
+    ["{,}", ["", ""]],
+    ["{,,,}", ["", "", "", ""]],
+    ["{,,b}", ["", "", "b"]],
+    ["{,a,b}", ["", "a", "b"]],
+    ["{a,,b}", ["a", "", "b"]],
+    ["{a,b,}", ["a", "b", ""]],
+    ["x{,,}", ["x", "x", "x"]],
+    ["{,}y", ["y", "y"]],
+    ["{,b}{,c}", ["", "c", "b", "bc"]],
+    ["{{,a},b}", ["", "a", "b"]],
+    ["x {,b} y", ["x", "", "b", "y"]],
+    // A quoted empty prefix belongs to the same word, it is not a word of its own.
+    ['""{,b}', ["", "b"]],
+    ['""{,,}', ["", "", ""]],
+  ];
+
+  test.concurrent.each(cases)("%s", async (words, expected) => {
+    const { stdout, stderr, exitCode } = await $`${bunExe()} -e ${printArgv} ${{ raw: words }}`
+      .env(bunEnv)
+      .nothrow()
+      .quiet();
+    expect({ argv: JSON.parse(stdout.toString()), stderr: stderr.toString(), exitCode }).toEqual({
+      argv: expected,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("builtin echo prints the empty word", async () => {
+    expect(await $`echo {,b}`.text()).toBe(" b\n");
+    expect(await $`echo {,}`.text()).toBe(" \n");
+  });
+
+  // An empty word in command position is a command name that does not exist.
+  // It must not take the "no command name" exit, which ran nothing and exited 0.
+  test.concurrent.each(["{,false}", "{,echo} hi", '"" echo hi'])("%s is command not found", async cmd => {
+    const { stdout, stderr, exitCode } = await $`${{ raw: cmd }}`.nothrow().quiet();
+    expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+      stdout: "",
+      stderr: "bun: command not found: \n",
+      exitCode: 1,
+    });
+  });
+
+  // Assignments join the words with a space, so an empty variant keeps its slot.
+  test("assignment keeps the empty variant", async () => {
+    expect(await $`FOO={,b}; echo "[$FOO]"`.text()).toBe("[ b]\n");
+    expect(await $`FOO={a,}; echo "[$FOO]"`.text()).toBe("[a ]\n");
+    const printFoo = "console.log(JSON.stringify(process.env.FOO))";
+    expect(await $`FOO={,b} ${bunExe()} -e ${printFoo}`.env(bunEnv).text()).toBe(`" b"\n`);
+  });
+});
+
 // A shell word combining brace + glob (`src/*.{ts,tsx}`, `{src,lib}/*.ts`) was
 // brace-expanded but the resulting `*` patterns were never globbed (the
 // brace-expand state always transitioned to Done instead of re-entering glob).

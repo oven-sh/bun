@@ -364,24 +364,11 @@ impl Cmd {
                             interp.as_cmd_mut(this).exit_code = Some(out.out_exit_code);
                         }
                     }
-                    // `out.bounds` splits the expansion into multiple argv
-                    // words (glob/IFS).
                     let me = interp.as_cmd_mut(this);
-                    if out.bounds.is_empty() {
-                        // An empty
-                        // expansion that did *not* see a `""` literal pushes
-                        // no arg at all — `$unset` vanishes, only `""` yields
-                        // an empty argv word.
-                        if !out.buf.is_empty() || out.has_quoted_empty {
-                            me.args.push(out.buf);
-                        }
+                    if out.word_count() == 1 {
+                        me.args.push(out.buf);
                     } else {
-                        let mut prev = 0usize;
-                        for &b in &out.bounds {
-                            me.args.push(out.buf[prev..b as usize].to_vec());
-                            prev = b as usize;
-                        }
-                        me.args.push(out.buf[prev..].to_vec());
+                        me.args.extend(out.words().map(<[u8]>::to_vec));
                     }
                 }
                 CmdState::ExpandingRedirect { ref mut idx } => {
@@ -389,7 +376,7 @@ impl Cmd {
                     // Zero words or >1 word (glob/brace split) leave the buffer
                     // empty so the ambiguous-redirect check in
                     // `Builtin::init_redirections` / `init_subproc_redirections` fires.
-                    let mut buf = if out.bounds.is_empty() {
+                    let mut buf = if out.word_count() == 1 {
                         out.buf
                     } else {
                         Vec::new()
@@ -416,9 +403,6 @@ impl Cmd {
             }
         }
 
-        // Empty/null argv[0] → exit
-        // with the exit code from a sole command-substitution (stashed by
-        // `child_done` from `Expansion::out_exit_code`), else 0.
         let first_arg: Vec<u8> = {
             let me = interp.as_cmd(this);
             match me.args.first() {
@@ -426,7 +410,16 @@ impl Cmd {
                     // strip the trailing NUL we just added
                     a[..a.len() - 1].to_vec()
                 }
-                _ => {
+                // An empty argv[0] word (`""`, an empty brace variant) is a name that does not exist.
+                Some(_) => {
+                    return Builtin::cmd_write_failing_error(
+                        interp,
+                        this,
+                        format_args!("bun: command not found: \n"),
+                    );
+                }
+                // No argv at all runs nothing. A sole `$(...)` argv0 passes its exit code on.
+                None => {
                     let exit = me.exit_code.unwrap_or(0);
                     let parent = me.base.parent;
                     return interp.child_done(parent, this, exit);

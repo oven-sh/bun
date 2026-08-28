@@ -40,9 +40,8 @@ pub struct Expansion {
     /// Whether the in-flight command substitution was `"$(...)"` (no IFS
     /// splitting on its result). Only meaningful while `state == CmdSubst`.
     pub(crate) cmd_subst_quoted: bool,
-    /// The atom is an assignment value: `A=v`, or a declaration-builtin
-    /// operand like `export A=v`. Command-substitution output is not field
-    /// split (POSIX 2.9.1: assignment words undergo no field splitting).
+    /// The atom is an assignment value (`A=v`, `export A=v`), so
+    /// command-substitution output is not field split (POSIX 2.9.1).
     pub(crate) assign_ctx: bool,
     /// Set when a `""`/`''` literal
     /// was seen so an *empty* expansion is still pushed as an argv word.

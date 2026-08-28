@@ -2702,8 +2702,7 @@ impl RunCommand {
         Ok(false)
     }
 
-    /// The `node_modules/.bin` directories `configure_path_for_run` prepended
-    /// to PATH: everything before the original PATH and its delimiter.
+    /// The `node_modules/.bin` directories `configure_path_for_run` put in front of PATH.
     fn prepended_bin_dirs<'a>(path: &'a [u8], original_path: &[u8]) -> &'a [u8] {
         if original_path.len() < path.len() {
             &path[..path.len() - (original_path.len() + 1)]
@@ -2712,10 +2711,7 @@ impl RunCommand {
         }
     }
 
-    /// After `Script not found "<typed>"`: point at the package.json scripts,
-    /// the `node_modules/.bin` entries (`bin_dirs` is the PATH-delimited list
-    /// of those directories) and, when `include_commands`, the `bun` commands
-    /// that `typed` looks like a typo of.
+    /// After `Script not found`: the scripts, `.bin` entries and commands `typed` is a typo of.
     fn print_did_you_mean(
         typed: &[u8],
         package_json: Option<&PackageJSON>,
@@ -2757,8 +2753,7 @@ impl RunCommand {
                 if name.starts_with(b".") {
                     continue;
                 }
-                // On Windows a bin is installed with shims next to it:
-                // `tsc`, `tsc.cmd`, `tsc.ps1`, `tsc.bunx`, `tsc.exe`.
+                // Windows installs shims next to a bin: `tsc`, `tsc.cmd`, `tsc.ps1`, `tsc.bunx`.
                 if cfg!(windows) {
                     const SHIM_EXTENSIONS: &[&[u8]] =
                         &[b".cmd", b".ps1", b".bunx", b".exe", b".bat"];
@@ -2789,9 +2784,7 @@ impl RunCommand {
             }
         }
 
-        // A script is spelled `bun run x`: `bun x` would be the command of
-        // the same name (`bun build` bundles, `bun run build` runs the script).
-        // A command is spelled by its name, whichever alias was the closest.
+        // A script as `bun run x` (`bun build` would bundle), a command by its name.
         let picked = did_you_mean::closest(
             typed,
             &candidates,

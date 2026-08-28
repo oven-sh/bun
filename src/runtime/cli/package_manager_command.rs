@@ -31,8 +31,7 @@ use bun_collections::index_sort;
 pub(crate) use crate::cli::pack_command::PackCommand;
 pub(crate) use crate::cli::scan_command::ScanCommand;
 
-/// What follows `bun pm`. [`PmSubcommand::ALL`] is the one list of the words,
-/// so an unknown word can be pointed at the closest of them.
+/// What follows `bun pm`; [`PmSubcommand::ALL`] is the one list of the words.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PmSubcommand {
     Scan,
@@ -57,8 +56,7 @@ enum PmSubcommand {
 }
 
 impl PmSubcommand {
-    /// In the order `bun pm --help` lists them. `list` is the alias of `ls`
-    /// (`bun list` and `bun pm list`).
+    /// In `bun pm --help` order; `list` is the alias of `ls`.
     const ALL: &'static [(&'static [u8], PmSubcommand)] = &[
         (b"scan", PmSubcommand::Scan),
         (b"pack", PmSubcommand::Pack),
@@ -89,8 +87,7 @@ impl PmSubcommand {
             .map(|&(_, subcommand)| subcommand)
     }
 
-    /// The first word listed for the subcommand, which is the one `bun pm
-    /// --help` shows (`ls`, not `list`).
+    /// The first word listed for the subcommand: `ls`, not `list`.
     fn name(self) -> &'static [u8] {
         PmSubcommand::ALL
             .iter()

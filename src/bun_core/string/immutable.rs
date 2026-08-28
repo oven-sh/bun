@@ -1199,10 +1199,7 @@ pub fn has_prefix_case_insensitive(str: &[u8], prefix: &[u8]) -> bool {
     has_prefix_case_insensitive_t(str, prefix)
 }
 
-/// The optimal string alignment distance between `a` and `b`: how many
-/// single-byte insertions, deletions, substitutions and swaps of two adjacent
-/// bytes turn one into the other. ASCII letters compare case-insensitively.
-/// For "did you mean" suggestions: `edit_distance(b"buidl", b"build") == 1`.
+/// Edit distance counting adjacent swaps as one (optimal string alignment), ASCII case-insensitive.
 pub fn edit_distance(a: &[u8], b: &[u8]) -> usize {
     if a.is_empty() || b.is_empty() {
         return a.len() + b.len();

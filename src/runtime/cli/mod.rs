@@ -972,8 +972,7 @@ pub mod command {
         }
     }
 
-    /// One `bun <name>` command: the name `bun --help` lists it under, the
-    /// other words that select it, and what it dispatches to.
+    /// A `bun <name>` command: its name in `bun --help`, its other words, and its `Tag`.
     pub(crate) struct RootCommand {
         pub(crate) name: &'static [u8],
         pub(crate) aliases: &'static [&'static [u8]],
@@ -993,8 +992,7 @@ pub mod command {
             self.name == word || self.aliases.contains(&word)
         }
 
-        /// Whether this is a command a user is told about: not one reserved
-        /// for later, nor one bun runs on itself.
+        /// A command to suggest: not a reserved word, not one bun runs on itself.
         pub(crate) fn is_for_users(&self) -> bool {
             !matches!(
                 self.tag,
@@ -1006,8 +1004,7 @@ pub mod command {
         }
     }
 
-    /// Every word `bun <word>` dispatches on. Anything else is
-    /// [`Tag::AutoCommand`]: a file or a package.json script.
+    /// Every word `bun <word>` dispatches on; anything else is [`Tag::AutoCommand`].
     pub(crate) static ROOT_COMMANDS: &[RootCommand] = &[
         RootCommand::new(b"init", &[], Tag::InitCommand),
         RootCommand::new(b"build", &[b"bun"], Tag::BuildCommand),

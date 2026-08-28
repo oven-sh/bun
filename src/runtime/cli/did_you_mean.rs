@@ -1,7 +1,4 @@
-//! The `note: did you mean "bun run build"?` that follows a name bun could
-//! not dispatch: a `bun run <script>`, a `bun <command>`, a `bun pm
-//! <subcommand>`. The caller gathers the words it would have accepted;
-//! [`closest`] picks the ones the typo is close to, [`note`] prints them.
+//! The `note: did you mean "bun run build"?` after a word bun could not dispatch.
 
 use std::io::Write as _;
 
@@ -10,13 +7,7 @@ use bun_core::strings;
 /// At most this many are suggested.
 const LIMIT: usize = 3;
 
-/// The candidates `typed` looks like a typo of, closest first, at most
-/// [`LIMIT`]. A candidate is close when its word is within one edit per three
-/// typed bytes, at least one, so `tset` finds `test` and `typechek` finds
-/// `typecheck`, or when `typed` is a prefix of it, so `build` finds
-/// `build:client`. ASCII case does not count as a difference. Of candidates
-/// that are the `same` thing (a command and its alias, a word listed twice)
-/// only the closest is kept, the first listed on a tie.
+/// The candidates `typed` is a typo of, closest first, at most [`LIMIT`], one per `same` group.
 pub(crate) fn closest<'a, T>(
     typed: &[u8],
     candidates: &'a [T],
@@ -49,9 +40,7 @@ pub(crate) fn closest<'a, T>(
     picked
 }
 
-/// Prints `note: did you mean "a", "b" or "c"?` for the commands, each
-/// already spelled the way the user should type it (`bun run build`).
-/// Prints nothing for an empty list.
+/// `note: did you mean "a", "b" or "c"?`, with the commands spelled as the user types them.
 pub(crate) fn note(commands: &[Vec<u8>]) {
     if commands.is_empty() {
         return;

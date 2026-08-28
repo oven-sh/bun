@@ -473,8 +473,8 @@ describe("compile-exec-argv runtime flags reach the VM", () => {
   // then keeps it alive). A binary that dropped `--inspect` and runs without
   // `hold` exits at once, so its stderr ends without a URL.
   const entry = /* js */ `
-    const dns = require("node:dns");
-    console.log(JSON.stringify({ execArgv: process.execArgv, dnsOrder: dns.getDefaultResultOrder() }));
+    import { getDefaultResultOrder } from "node:dns";
+    console.log(JSON.stringify({ execArgv: process.execArgv, dnsOrder: getDefaultResultOrder() }));
     if (process.argv.includes("hold")) setTimeout(() => {}, 10_000);
   `;
   const waitFlags = ["--inspect-wait=127.0.0.1:0", "--dns-result-order=ipv4first"];

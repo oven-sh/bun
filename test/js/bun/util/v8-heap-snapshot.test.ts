@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "node:path";
 
 const fixture = join(import.meta.dir, "v8-heap-snapshot-fixture.ts");
@@ -88,6 +88,35 @@ test("v8.writeHeapSnapshot() with path", async () => {
   const path = join(String(dir), "test.heapsnapshot");
   expect(await runFixture("write-path", { args: [path] })).toEqual({ returnedPath: path, ...structure });
 });
+
+// #40686: the builder stored one 96-byte Node per heap cell in a contiguous
+// WTF::Vector, whose single-allocation cap is ~2GiB. Past ~15M live cells the
+// vector growth tripped that cap and aborted the process (SIGABRT) inside the
+// marking walk. 16M small objects reproduce it. The walk visits every live
+// cell, so the heap has to actually be this large; ~30s and ~4GB RSS in a
+// release build, but 10-100x slower under debug/ASAN, hence the skip there.
+test.skipIf(isDebug || isASAN)(
+  "v8 heap snapshot of a 16M-object heap does not crash",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const items = Array.from({ length: 16_000_000 }, (_, i) => ({ i }));
+         const snapshot = Bun.generateHeapSnapshot("v8");
+         console.log(items.length, snapshot.length > 100_000_000);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("16000000 true\n");
+    expect(exitCode).toBe(0);
+  },
+  240_000,
+);
 
 test("v8 heap snapshot labels Web Streams internal edges", async () => {
   const edges = await runFixture("stream-edges");

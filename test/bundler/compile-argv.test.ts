@@ -527,17 +527,24 @@ describe("compile-exec-argv runtime flags reach the VM", () => {
       expect(url.hostname).toBe("127.0.0.1");
 
       const ws = new WebSocket(url.href);
+      // A dropped socket or a dead inspectee rejects whatever is awaited
+      // instead of leaving it to the test timeout.
+      const failed = Promise.withResolvers<never>();
+      failed.promise.catch(() => {});
+      ws.onerror = event => failed.reject(new Error("WebSocket error", { cause: event }));
+      ws.onclose = event => failed.reject(new Error(`WebSocket closed (${event.code})`));
+      proc.exited.then(code => failed.reject(new Error(`inspectee exited (${code}) before the inspector answered`)));
+
       const opened = Promise.withResolvers<void>();
       ws.onopen = () => opened.resolve();
-      ws.onerror = event => opened.reject(new Error("WebSocket error", { cause: event }));
-      await opened.promise;
+      await Promise.race([opened.promise, failed.promise]);
 
       // Releases the wait. A connected client keeps the process alive, so
       // close once the inspector has acknowledged the message.
       const reply = Promise.withResolvers<unknown>();
       ws.onmessage = event => reply.resolve(JSON.parse(String(event.data)));
       ws.send(JSON.stringify({ id: 1, method: "Inspector.initialized", params: {} }));
-      expect(await reply.promise).toEqual({ id: 1, result: {} });
+      expect(await Promise.race([reply.promise, failed.promise])).toEqual({ id: 1, result: {} });
       ws.close();
 
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);

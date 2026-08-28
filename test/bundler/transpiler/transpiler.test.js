@@ -5721,9 +5721,27 @@ describe("JSX grammar edge cases", () => {
     // JSXAttributeValue: JSXElement | JSXFragment (no braces).
     const cases = [
       ["self-closing", '<div icon=<Icon/> label="x" />', '<div icon={<Icon/>} label="x" />', "Icon"],
+      ["self-closing with no space before the outer />", "<a b=<c/>/>", "<a b={<c/>}/>", '"c"'],
       ["with children", "<div a=<b>{1}</b> />", "<div a={<b>{1}</b>} />", '"b"'],
+      ["with text children", "<a b=<c>hi</c>>child</a>", "<a b={<c>hi</c>}>child</a>", '"hi"'],
+      [
+        "with an expression, a spread and mixed children",
+        "<a b=<c d={1} {...e}>{f}<g /></c> />",
+        "<a b={<c d={1} {...e}>{f}<g /></c>} />",
+        '"g"',
+      ],
       ["fragment", "<div data-ab=<><a/><b/></> />", "<div data-ab={<><a/><b/></>} />", "fragment"],
+      ["empty fragment", "<a b=<></> />", "<a b={<></>} />", "fragment"],
+      ["fragment with text", "<Trans values=<>x</> />", "<Trans values={<>x</>} />", '"x"'],
       ["nested", "<div a=<b c=<d/> /> />", "<div a={<b c={<d/>} />} />", '"d"'],
+      [
+        "nested, followed by a string and a boolean attribute",
+        '<a b=<c d=<e /> /> f="1" g />',
+        '<a b={<c d={<e />} />} f="1" g />',
+        "g: true",
+      ],
+      ["member expression tag", "<A b=<C.D /> />", "<A b={<C.D />} />", "C.D"],
+      ["key prop", "<a key=<c /> />", "<a key={<c />} />", '"c"'],
       ["followed by a spread", "<div a=<b/> {...rest} />", "<div a={<b/>} {...rest} />", "...rest"],
       ["with element children", "<div a=<b/>><c/></div>", "<div a={<b/>}><c/></div>", '"c"'],
     ];
@@ -5736,6 +5754,12 @@ describe("JSX grammar edge cases", () => {
         expect(out).toContain(marker === "fragment" ? fragment[runtime] : marker);
       });
     }
+
+    it.each(["tsx/automatic", "tsx/classic"])("%s: type arguments on the outer and the nested tag", combo => {
+      const out = transpilers[combo].transformSync("export const el = <A<T> b=<C<U> /> />;");
+      expect(out).toBe(transpilers[combo].transformSync("export const el = <A<T> b={<C<U> />} />;"));
+      expect(out).toContain("(C,");
+    });
 
     it.each(combos)("%s: the nested element is checked like any other element", combo => {
       expect(parseError(transpilers[combo], "x = <div a=<b></c> />").message).toBe(

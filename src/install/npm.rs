@@ -665,6 +665,17 @@ pub mod registry {
             if list.is_empty() || is_opaque_path(query_free_path(url)) {
                 return None;
             }
+            // The key comes from the WHATWG serialisation while the request goes to
+            // the authority the fast parser read; a URL the two read differently
+            // (`https://a#@b/x.tgz`) gets nothing.
+            if let Ok(whatwg) = URL::from_string(&bun_core::String::borrow_utf8(url.href)) {
+                let whatwg = whatwg.url();
+                if !whatwg.hostname.eq_ignore_ascii_case(url.hostname)
+                    || whatwg.get_port_auto() != url.get_port_auto()
+                {
+                    return None;
+                }
+            }
             bun_ini::RegistryKey::from_url(url.href)
                 .walk()
                 .find_map(|key| list.iter().find(|entry| *entry.key == *key))

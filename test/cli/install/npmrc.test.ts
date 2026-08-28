@@ -2130,6 +2130,28 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     expect(cdn.requests.map(r => r.auth)).not.toContain("Bearer registry-token");
   });
 
+  // The key is built from the WHATWG serialisation; the request goes to the authority
+  // Bun's fast parser reads. A URL the two read differently must match no line.
+  test("a dist.tarball whose authority the two parsers read differently gets no line", async () => {
+    using cdn = mockRegistry("Bearer registry-token", { secure: true, tarballPath: "/x.tgz" });
+    using registry = mockRegistry("Bearer registry-token", {
+      secure: true,
+      tarballPath: "/x.tgz",
+      // `https://<registry>#@<cdn>/x.tgz`: WHATWG stops the authority at `#` (host =
+      // registry); the fast parser reads `<registry>#` as userinfo (host = cdn).
+      tarballOrigin: () => `${registry.origin}#@${cdn.host}`,
+    });
+    using dir = tempDir("npmrc-url-auth-parser-split", {
+      "package.json": packageJson,
+      ".npmrc": [`registry=${registry.origin}/`, `//${registry.host}/:_authToken=registry-token`, ""].join("\n"),
+    });
+
+    await install(String(dir));
+
+    expect(registry.requests[0]).toEqual({ path: "/no-deps", auth: "Bearer registry-token" });
+    expect(cdn.requests.map(r => r.auth)).not.toContain("Bearer registry-token");
+  });
+
   // A redundant `/./` resolves within the line's path, so the line applies, as it does
   // in npm after `new URL()`.
   test("a redundant dot segment in a cross-host dist.tarball still resolves the line", async () => {

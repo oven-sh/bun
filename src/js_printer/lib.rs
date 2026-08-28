@@ -2214,8 +2214,8 @@ pub(crate) mod __gated_printer {
 
             // A `using` or `await using` declaration admits only identifier
             // bindings, never a binding pattern.
-            let allow_destructuring = bun_core::FeatureFlags::SAME_TARGET_BECOMES_DESTRUCTURING
-                && !kind.is_using();
+            let allow_destructuring =
+                bun_core::FeatureFlags::SAME_TARGET_BECOMES_DESTRUCTURING && !kind.is_using();
 
             let mut needs_comma = false;
             'decls: while !decls.is_empty() {

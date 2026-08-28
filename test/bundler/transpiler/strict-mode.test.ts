@@ -110,9 +110,7 @@ describe("strict mode early errors", () => {
       "<!-- a comment\nx",
       "x <!-- a comment\ny",
     ];
-    for (const code of sloppy) {
-      test(JSON.stringify(code), () => expectNoParseError(code));
-    }
+    test.each(sloppy)("%j", code => expectNoParseError(code));
   });
 
   describe("legacy octal escapes decode leniently in sloppy mode", () => {
@@ -211,9 +209,7 @@ describe("strict mode early errors", () => {
       ["'use strict'; (function(a, a) {})", '"a" cannot be bound multiple times in the same parameter list'],
       ["'use strict'; ((a, a) => {})", '"a" cannot be bound multiple times in the same parameter list'],
     ];
-    for (const [code, message] of cases) {
-      test(JSON.stringify(code), () => expectParseError(code, message));
-    }
+    test.each(cases)("%j", (code, message) => expectParseError(code, message));
 
     test("\\0 is not a legacy octal escape", () => {
       expectNoParseError("'use strict'; let x = '\\0'");
@@ -277,9 +273,7 @@ describe("strict mode early errors", () => {
       ["(a, a) => {}", bindingError],
       ["class A { m(a, a) {} }", bindingError],
     ];
-    for (const [code, message] of cases) {
-      test(JSON.stringify(code), () => expectParseError(code, message));
-    }
+    test.each(cases)("%j", (code, message) => expectParseError(code, message));
 
     describe('"use strict" needs a simple parameter list', () => {
       const nonSimple = 'Cannot use a "use strict" directive in a function with a non-simple parameter list';
@@ -308,9 +302,7 @@ describe("strict mode early errors", () => {
         ["'use strict'; function f([x]) {}", []],
         ["'use strict'; function f([x]) { 'use strict' }", [nonSimple]],
       ];
-      for (const [code, messages] of cases) {
-        test(JSON.stringify(code), () => expectParseError(code, ...messages));
-      }
+      test.each(cases)("%j", (code, messages) => expectParseError(code, ...messages));
     });
 
     test("the note points at the directive inside the function", () => {
@@ -391,9 +383,7 @@ describe("strict mode early errors", () => {
       ["for await (x of y); with (y) z", "With statements cannot be used in an ECMAScript module"],
       ["with (y) z; for await (x of y);", "With statements cannot be used in an ECMAScript module"],
     ];
-    for (const [code, message] of cases) {
-      test(JSON.stringify(code), () => expectParseError(code, message));
-    }
+    test.each(cases)("%j", (code, message) => expectParseError(code, message));
 
     test("dynamic import does not make the file a module", () => {
       expectNoParseError("import(x); with (y) z");
@@ -467,9 +457,7 @@ describe("strict mode early errors", () => {
       ["class eval {}", 'Declarations with the name "eval" cannot be used in strict mode'],
       ["(class arguments {})", 'Declarations with the name "arguments" cannot be used in strict mode'],
     ];
-    for (const [code, message] of cases) {
-      test(JSON.stringify(code), () => expectParseError(code, message));
-    }
+    test.each(cases)("%j", (code, message) => expectParseError(code, message));
 
     test("the note points at the class keyword", () => {
       expect(parseErrors("class f {\n  x() { with (x) y }\n}")).toEqual([
@@ -509,21 +497,15 @@ describe("strict mode early errors", () => {
     ];
 
     describe("are allowed at the top level of a script and of a function", () => {
-      for (const code of cases) {
-        test(JSON.stringify(code), () => {
-          expectNoParseError(code);
-          expectNoParseError("'use strict'; " + code);
-          expectNoParseError("function foo() { 'use strict'; " + code + " }");
-        });
-      }
+      test.each(cases)("%j", code => {
+        expectNoParseError(code);
+        expectNoParseError("'use strict'; " + code);
+        expectNoParseError("function foo() { 'use strict'; " + code + " }");
+      });
     });
 
     describe("are an error at the top level of a module", () => {
-      for (const code of cases) {
-        test(JSON.stringify(code + " export {}"), () => {
-          expectParseError(code + " export {}", alreadyDeclared);
-        });
-      }
+      test.each(cases)("%j export {}", code => expectParseError(code + " export {}", alreadyDeclared));
       test("the notes explain why", () => {
         expect(parseErrors("function f() {} function f() {}\nexport {}")).toEqual([
           {
@@ -552,16 +534,14 @@ describe("strict mode early errors", () => {
         ["{ function f() {} function f() {} } export {}", exportNote],
         ["switch (0) { case 1: function f() {} default: function f() {} } export {}", exportNote],
       ];
-      for (const [code, note] of strictCases) {
-        test(JSON.stringify(code), () => {
-          const errors = parseErrors(code);
-          expect(errors.map(e => e.message)).toEqual([alreadyDeclared]);
-          expect(errors[0].notes.map(n => n.message)).toEqual([
-            '"f" was originally declared here',
-            expect.stringContaining(note),
-          ]);
-        });
-      }
+      test.each(strictCases)("%j", (code, note) => {
+        const errors = parseErrors(code);
+        expect(errors.map(e => e.message)).toEqual([alreadyDeclared]);
+        expect(errors[0].notes.map(n => n.message)).toEqual([
+          '"f" was originally declared here',
+          expect.stringContaining(note),
+        ]);
+      });
     });
 
     test("var is never a duplicate", () => {

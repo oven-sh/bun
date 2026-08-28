@@ -866,22 +866,12 @@ test("bun pm whoami still works", async () => {
   expect(exitCode).toBe(1);
 });
 
-describe("bun pm whoami user-agent", () => {
-  // The machine that runs this test may itself be a CI runner. Strip its
-  // markers so each case controls exactly which ones the child sees.
-  const cleanEnv: Record<string, string | undefined> = { ...bunEnv };
-  for (const key of [
-    "CI",
-    "BUILDKITE",
-    "GITHUB_ACTIONS",
-    "GITLAB_CI",
-    "CIRCLECI",
-    "TRAVIS",
-    "JENKINS_URL",
-    "BUILD_ID",
-  ]) {
-    delete cleanEnv[key];
-  }
+describe.concurrent("bun pm whoami user-agent", () => {
+  // The host may itself be a CI runner. Drop its `CI` so each case decides.
+  // AGOLA_GIT_REF is the first probe in the vendor table, so no other marker
+  // that leaks from the host can shadow it.
+  const cleanEnv = { ...bunEnv };
+  delete cleanEnv.CI;
 
   async function whoamiUserAgent(extraEnv: Record<string, string>): Promise<string | null> {
     let userAgent: string | null = null;
@@ -919,7 +909,7 @@ describe("bun pm whoami user-agent", () => {
   const baseUserAgent = `Bun/${Bun.version} ${process.platform} ${process.arch} workspaces/false`;
 
   test("names the CI vendor", async () => {
-    expect(await whoamiUserAgent({ GITHUB_ACTIONS: "true" })).toBe(`${baseUserAgent} ci/github-actions`);
+    expect(await whoamiUserAgent({ AGOLA_GIT_REF: "refs/heads/main" })).toBe(`${baseUserAgent} ci/agola-ci`);
   });
 
   test("CI=false is not CI", async () => {
@@ -927,7 +917,7 @@ describe("bun pm whoami user-agent", () => {
   });
 
   test("CI=false wins over a vendor variable", async () => {
-    expect(await whoamiUserAgent({ CI: "false", GITHUB_ACTIONS: "true" })).toBe(baseUserAgent);
+    expect(await whoamiUserAgent({ CI: "false", AGOLA_GIT_REF: "refs/heads/main" })).toBe(baseUserAgent);
   });
 });
 

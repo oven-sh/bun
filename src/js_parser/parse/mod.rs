@@ -1328,10 +1328,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.expect(T::TStringLiteral)?;
         }
 
-        // `with { ... }` import attributes, or the deprecated `assert { ... }`
-        // import assertions, which Bun treats the same way. `with` is a keyword
-        // so a newline may precede it; `assert` is a contextual keyword and the
-        // grammar forbids a newline before it.
+        // `with` is a keyword, so a newline may precede it; the deprecated `assert` may not.
         if p.lexer.token == T::TWith
             || (!p.lexer.has_newline_before && p.lexer.is_contextual_keyword(b"assert"))
         {
@@ -1393,9 +1390,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 path.loader = Some(bun_ast::Loader::SqliteEmbedded);
                             }
                         }
-                        // A `type` Bun has no loader for stays on the record. The
-                        // bundler and the module loader report it when they load
-                        // the file, so an external import keeps it verbatim.
+                        // An unknown `type` stays on the record; whoever loads the file reports it.
                     }
                     b"embed" => {
                         if value == b"true" {

@@ -90,8 +90,7 @@ bun_core::comptime_string_map! {
         b"json5" => Loader::Json5,
         b"xml" => Loader::Xml,
         b"wasm" => Loader::Wasm,
-        // The `type` value JSC reserves for WebAssembly modules; `import x from
-        // "./a.wasm" with { type: "webassembly" }` loads like a plain `.wasm` import.
+        // JSC's reserved `type` for WebAssembly modules; loads like a plain `.wasm` import.
         b"webassembly" => Loader::Wasm,
         b"napi" => Loader::Napi,
         b"node" => Loader::Napi,

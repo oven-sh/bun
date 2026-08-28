@@ -2460,8 +2460,7 @@ impl Import {
         self.import_record_index == u32::MAX
     }
 
-    /// The `with: { ... }` (or `assert: { ... }`) object literal of the
-    /// `import()` options, when the options are an object literal.
+    /// The `with` (or `assert`) object literal of the `import()` options.
     fn import_attributes_object(&self) -> Option<StoreRef<Object>> {
         let crate::ExprData::EObject(obj) = &self.options.data else {
             return None;
@@ -2473,9 +2472,7 @@ impl Import {
         Some(with_obj)
     }
 
-    /// The import attributes of `import(path, { with: { key: "value" } })`,
-    /// in source order. `None` when the `with` object is not a plain object
-    /// literal of string-literal keys and values.
+    /// The `with: { key: "value" }` entries of an `import()` call, in source order.
     pub fn import_record_attributes<'b>(
         &self,
         bump: &'b Bump,

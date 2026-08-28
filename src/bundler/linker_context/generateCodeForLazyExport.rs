@@ -379,10 +379,7 @@ pub(crate) fn generate_code_for_lazy_export(
         if matches!(c.target.data, ExprData::ERequireCallTarget))
         && this.options.output_format != crate::options::OutputFormat::Cjs;
 
-    // `new_lazy_export_ast(.., runtime_api_call)` wraps the value in a call to a
-    // runtime helper (`__toBytes("...")`) through a generated symbol that no
-    // import statement binds. Bind it to the runtime's export here; the part
-    // that ends up holding the call depends on it below.
+    // A lazy export's runtime helper call (`__toBytes(...)`) has no import binding its symbol.
     let runtime_api_call = runtime_api_call_target(this, source_index, &expr);
     if let Some((local_ref, actual_ref)) = runtime_api_call {
         // SAFETY: the lazy export's own symbol; no other borrow of it is live.
@@ -555,8 +552,7 @@ pub(crate) fn generate_code_for_lazy_export(
     Ok(())
 }
 
-/// `(generated symbol, runtime export)` when `expr` is a call to a runtime
-/// helper through a generated symbol, as `new_lazy_export_ast` builds it.
+/// `(generated symbol, runtime export)` of a lazy export's runtime helper call.
 fn runtime_api_call_target(
     this: &LinkerContext,
     source_index: IndexInt,

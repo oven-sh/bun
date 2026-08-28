@@ -689,10 +689,7 @@ pub mod analyze_transpiled_module {
             StringID(idx)
         }
 
-        /// The `ScriptFetchParameters` JSC's parser creates from the printed
-        /// `with { type: ... }` clause (`ScriptFetchParameters::parseType`):
-        /// `json` and `webassembly` are built in, any other value is
-        /// host-defined, and an import with no `type` attribute has none.
+        /// Mirrors `ScriptFetchParameters::parseType`: json, webassembly, or host-defined.
         pub(crate) fn fetch_parameters_for(
             &mut self,
             import_record: &ImportRecord,
@@ -6267,9 +6264,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// Prints the import attributes clause of a record that has one, as
-        /// written: ` with { key: "value", ... }`. The legacy `assert` keyword is
-        /// always printed as `with`; no current engine accepts `assert` only.
+        /// Prints ` with { key: "value", ... }`; the legacy `assert` keyword prints as `with`.
         pub(crate) fn print_import_attributes(&mut self, import_record: &ImportRecord) {
             let attributes = import_record.attributes;
             if attributes.is_empty() {

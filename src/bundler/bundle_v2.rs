@@ -4353,8 +4353,7 @@ pub mod bv2_impl {
                         let target = targets[index];
                         let mut template: options::PathTemplate =
                             if matches!(loader, Loader::Text | Loader::Bytes) {
-                                // Text and bytes modules ignore `--asset-naming`: without `[hash]`
-                                // two same-named files would share one path.
+                                // Text and bytes modules ignore `--asset-naming`: `[hash]` keeps names apart.
                                 options::PathTemplate::ASSET.into()
                             } else {
                                 let mut template: options::PathTemplate =
@@ -6151,9 +6150,7 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        /// The attributes that take part in a record's module-graph key. The
-        /// dev server's incremental graph is keyed by path alone, so it keeps
-        /// one module per path.
+        /// The dev server's incremental graph is keyed by path alone, so it ignores attributes.
         pub(crate) fn module_graph_key_attributes(
             &self,
             import_record: &ImportRecord,
@@ -6165,9 +6162,7 @@ pub mod bv2_impl {
             }
         }
 
-        /// Reports a `with { type: "..." }` whose value names no loader. Only
-        /// for a file the bundler loads itself: an external import keeps the
-        /// clause verbatim for the target runtime to interpret.
+        /// Reports a `type` that names no loader; an external import keeps the clause verbatim.
         fn has_unsupported_type_attribute(
             &mut self,
             source: &bun_ast::Source,

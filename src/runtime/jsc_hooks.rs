@@ -3384,9 +3384,7 @@ fn transpile_source_code_inner(
             })
         }
 
-        // ────────────────────────────────────────────────────────────────────
-        // `with { type: "bytes" }` — the file's bytes as a `Uint8Array`.
-        // ────────────────────────────────────────────────────────────────────
+        // `with { type: "bytes" }`: the file's bytes as a `Uint8Array`.
         L::Bytes => {
             let owned: Vec<u8>;
             let bytes: &[u8] = if let Some(source) = args.virtual_source {
@@ -3410,8 +3408,7 @@ fn transpile_source_code_inner(
                         return Err(global_object.throw_value(err.to_js(global_object)?).into());
                     }
                 };
-                // The watcher takes the fd when it adopts the file; `file`
-                // closes it otherwise.
+                // The watcher takes the fd when it adopts the file; `file` closes it otherwise.
                 let mut should_close = true;
                 maybe_watch_file(
                     jsc_vm,
@@ -3834,13 +3831,7 @@ export default db;
         }
 
         if file.loader == Loader::Bytes {
-            // A `with { type: "bytes" }` import the bundler embedded as an asset
-            // (`Loader::Bytes` arm of `ParseTask`): the section holds the raw
-            // bytes, read back through the `/$bunfs/` virtual root like the
-            // sqlite shim above.
-            // CommonJS, in the wrapped form `JSCommonJSModule::evaluate` expects,
-            // so that the bundler's `require("<bunfs path>")` gets the array
-            // itself rather than a module namespace.
+            // A wrapped CommonJS shim, so `require("<bunfs path>")` gets the array itself.
             const BYTES_MODULE_SOURCE_STANDALONE: &[u8] = b"\
 // @bun @bun-cjs
 (function(exports, require, module, __filename, __dirname) {
@@ -4123,8 +4114,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
         loader = Some(Loader::Text);
     }
     if let Some(attr_str) = type_attribute_str {
-        // JSC accepts any `type` value and hands it here; one that names no
-        // loader is an error, as in Node (ERR_IMPORT_ATTRIBUTE_UNSUPPORTED).
+        // A `type` that names no loader is an error, as in Node.
         let Some(attr_loader) = Loader::from_string(attr_str) else {
             return Err(crate::Error::UnsupportedImportAttributeType);
         };

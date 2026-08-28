@@ -5,19 +5,20 @@ import path from "path";
 import { globAllSources } from "../../../scripts/glob-sources.ts";
 
 // Everything another thread delivers to the bundle thread (a finished parse,
-// a plugin's answer to an onResolve/onLoad, a `defer()` call) goes through
-// `post::<E>()` in src/bundler/post.rs. A bundle runs either on the JS loop of
-// the VM that owns it (bake) or on a mini loop of its own (`Bun.build`,
-// `bun build`), and the two are fed differently, so `post()` is the one place
-// that matches on `AnyEventLoop::Js` / `AnyEventLoop::Mini` and the one caller
-// of the mini loop's `enqueue_task_concurrent_with_extra_ctx`. Each event is
-// then one `Event::run`, whichever loop it arrives on.
+// a plugin's answer to an onResolve/onLoad, a `defer()` call, the `.defer()`
+// hop coming back) goes through `post::<E>()` in src/bundler/post.rs. A bundle
+// runs either on the JS loop of the VM that owns it (bake) or on a mini loop
+// of its own (`Bun.build`, `bun build`), and the two are fed differently, so
+// `post()` is the one place that matches on `AnyEventLoop::Js` /
+// `AnyEventLoop::Mini` and the one caller of the mini loop's
+// `enqueue_task_concurrent_with_extra_ctx`. Each event is then one
+// `Event::run`, whichever loop it arrives on.
 //
 // This tree used to have that match written out at every producer (parse
-// completion twice, resolve and load settlement, defer), each with its own
-// pair of per-loop handlers, and the pairs drifted: `defer()` marked the
-// `Load` as deferred on the mini-loop handler only. A new producer gets an
-// `Event` impl and calls `post()`; it does not get its own match.
+// completion twice, resolve and load settlement, defer, and then the deferred
+// batch's return), each with its own pair of per-loop handlers that nothing
+// kept in step. A new producer gets an `Event` impl and calls `post()`; it
+// does not get its own match, not even a one-armed one.
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const ALLOWED = "src/bundler/post.rs";
@@ -43,7 +44,7 @@ const tracked: Set<string> | null = (() => {
   return new Set(r.stdout.toString().split("\0").filter(Boolean));
 })();
 
-const BANNED = [/\bAnyEventLoop::Js\b/, /\benqueue_task_concurrent_with_extra_ctx\b/];
+const BANNED = [/\bAnyEventLoop::Js\b/, /\bAnyEventLoop::Mini\b/, /\benqueue_task_concurrent_with_extra_ctx\b/];
 
 const offenders: string[] = [];
 let scanned = 0;
@@ -82,8 +83,9 @@ test("post() is where the bundle's loop is matched and fed", () => {
   expect({
     present: postRs !== null,
     matchesJsArm: postRs !== null && BANNED[0].test(postRs),
-    enqueuesOnMiniLoop: postRs !== null && BANNED[1].test(postRs),
-  }).toEqual({ present: true, matchesJsArm: true, enqueuesOnMiniLoop: true });
+    matchesMiniArm: postRs !== null && BANNED[1].test(postRs),
+    enqueuesOnMiniLoop: postRs !== null && BANNED[2].test(postRs),
+  }).toEqual({ present: true, matchesJsArm: true, matchesMiniArm: true, enqueuesOnMiniLoop: true });
 });
 
 test("no other bundler code dispatches on the bundle's loop or enqueues on it directly", () => {

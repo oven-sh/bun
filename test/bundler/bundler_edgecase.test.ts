@@ -2765,6 +2765,8 @@ describe("bundler", () => {
       ...deepChainFiles,
     },
     backend: "cli",
+    // writing 7000 fixture files is slow on Windows; the build itself is well under a second
+    timeoutScale: 6,
     run: { stdout: String(deepChainDepth) },
   });
   // Top-level await in the entry makes `validate_tla` / `propagate_async` walk
@@ -2778,6 +2780,7 @@ describe("bundler", () => {
       ...deepChainFiles,
     },
     backend: "cli",
+    timeoutScale: 6,
     onAfterBundle(api) {
       const out = api.readFile("out.js");
       expect(out).toContain(`init_m${deepChainDepth - 2}`);

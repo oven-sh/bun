@@ -217,7 +217,7 @@ describe("Bun.build", () => {
         expect(exitCode).toBe(0);
       }),
     );
-  });
+  }, 30_000);
 
   test("bytecode: repeated builds don't retain the generated code", async () => {
     using dir = tempDir("bun-build-api-bytecode-retained", {

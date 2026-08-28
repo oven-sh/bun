@@ -240,6 +240,24 @@ describe("bundler", () => {
     },
   });
 
+  // External resolution still wins over the unknown-type check when a plugin declines.
+  itBundled("import-attributes/unknown-type-on-external-with-onresolve-no-match", {
+    target: "node",
+    external: ["pkg"],
+    files: {
+      "/entry.js": /* js */ `
+        import x from "pkg" with { type: "custom" };
+        console.log(x);
+      `,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /^pkg$/ }, () => undefined);
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain(`import x from "pkg" with { type: "custom" };`);
+    },
+  });
+
   // Re-exports carry the attribute to the bundled module too.
   itBundled("import-attributes/bundled-re-exports", {
     target: "bun",

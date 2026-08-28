@@ -2349,23 +2349,8 @@ pub mod bv2_impl {
             let transpiler: *mut Transpiler<'a> = self.transpiler_for_target(target);
             let source_dir =
                 Fs::PathName::init(&import_record.source_file).dir_with_trailing_slash();
-            let key_attributes: &'static [bun_ast::ImportAttribute] = {
-                // SAFETY: `source` and the record are columns of `self.graph`, which
-                // `has_unsupported_type_attribute` does not touch.
-                let source: &bun_ast::Source = unsafe {
-                    bun_ptr::detach_lifetime_ref(
-                        &self.graph.input_files.items_source()
-                            [import_record.importer_source_index as usize],
-                    )
-                };
-                let record: &ImportRecord = unsafe {
-                    bun_ptr::detach_lifetime_ref(self.plugin_import_record(import_record))
-                };
-                if self.has_unsupported_type_attribute(source, record, target.bake_graph()) {
-                    return;
-                }
-                self.module_graph_key_attributes(record)
-            };
+            let key_attributes: &'static [bun_ast::ImportAttribute] =
+                self.module_graph_key_attributes(self.plugin_import_record(import_record));
             let mut module_key_buf: Vec<u8> = Vec::new();
 
             // Check the FileMap first for in-memory files
@@ -2377,6 +2362,9 @@ pub mod bv2_impl {
                 ) {
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
+                    if self.plugin_import_has_unsupported_type_attribute(import_record, target) {
+                        return;
+                    }
                     let module_key = ImportRecord::module_graph_key(
                         path_primary.text,
                         key_attributes,
@@ -2611,6 +2599,9 @@ pub mod bv2_impl {
             };
 
             if resolve_result.flags.is_external() {
+                return;
+            }
+            if self.plugin_import_has_unsupported_type_attribute(import_record, target) {
                 return;
             }
 
@@ -6185,6 +6176,25 @@ pub mod bv2_impl {
             debug_assert!(import_record.kind != ImportKind::EntryPointBuild);
             &self.graph.ast.items_import_records()[import_record.importer_source_index as usize]
                 .as_slice()[import_record.import_record_index as usize]
+        }
+
+        /// `has_unsupported_type_attribute` for the importer behind a plugin `onResolve`.
+        fn plugin_import_has_unsupported_type_attribute(
+            &mut self,
+            import_record: &jsc_api::JSBundler::MiniImportRecord,
+            target: options::Target,
+        ) -> bool {
+            // SAFETY: `source` and the record are columns of `self.graph`, which
+            // `has_unsupported_type_attribute` does not touch.
+            let source: &bun_ast::Source = unsafe {
+                bun_ptr::detach_lifetime_ref(
+                    &self.graph.input_files.items_source()
+                        [import_record.importer_source_index as usize],
+                )
+            };
+            let record: &ImportRecord =
+                unsafe { bun_ptr::detach_lifetime_ref(self.plugin_import_record(import_record)) };
+            self.has_unsupported_type_attribute(source, record, target.bake_graph())
         }
 
         /// The dev server's incremental graph is keyed by path alone, so it ignores attributes.

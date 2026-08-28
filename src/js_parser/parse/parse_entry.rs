@@ -69,8 +69,7 @@ pub struct Parser<'a> {
 pub struct Options<'a> {
     pub jsx: options::JSX::Pragma,
     pub ts: bool,
-    /// ".mts" and ".cts" files reject the JSX-ambiguous "<T>x" cast and "<T>() => {}"
-    /// arrow function. "<T,>() => {}" and "<T extends U>() => {}" stay valid.
+    /// ".mts" and ".cts" files reject the JSX-ambiguous "<T>x" cast and "<T>() => {}" arrow
     pub ts_no_ambiguous_less_than: bool,
     pub keep_names: bool,
     pub ignore_dce_annotations: bool,

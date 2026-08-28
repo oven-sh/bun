@@ -353,14 +353,49 @@ pub mod registry {
     /// The rightmost credential marker in `pathname`, as `(start, marker, opt)`.
     /// Anchoring on the marker rather than on any `:` or `/` keeps a colon or slash
     /// inside the value (base64 holds `/`) from ending the scan, and leaves one that
-    /// merely belongs to the path alone.
+    /// merely belongs to the path alone. Names match case-insensitively, so
+    /// `:_AuthToken=` is adopted rather than left in the request path.
     fn last_embedded_marker(pathname: &[u8]) -> Option<(usize, &'static [u8], EmbeddedOpt)> {
         EMBEDDED_MARKERS
             .iter()
             .filter_map(|&(marker, opt)| {
-                bun_core::last_index_of(pathname, marker).map(|i| (i, marker, opt))
+                last_index_of_ignore_case(pathname, marker).map(|i| (i, marker, opt))
             })
             .max_by_key(|&(i, _, _)| i)
+    }
+
+    fn last_index_of_ignore_case(hay: &[u8], needle: &[u8]) -> Option<usize> {
+        (0..=hay.len().checked_sub(needle.len())?)
+            .rev()
+            .find(|&i| hay[i..i + needle.len()].eq_ignore_ascii_case(needle))
+    }
+
+    /// A trailing `:<word>=` segment, or `/_<word>=`, whose word names no known option
+    /// (`:_passwd=`, `:authtoken=`): a typo'd credential. Its start, so the value is
+    /// stripped from the request path; it is never adopted. `/<word>=` without the
+    /// underscore is left alone, since a plain path segment may hold `=`.
+    fn last_unknown_credential_marker(pathname: &[u8]) -> Option<usize> {
+        let mut end = pathname.len();
+        while let Some(start) = pathname[..end]
+            .iter()
+            .rposition(|&c| c == b':' || c == b'/')
+        {
+            let rest = &pathname[start + 1..];
+            if let Some(eq) = strings::index_of_char_usize(rest, b'=') {
+                let word = &rest[..eq];
+                let shaped = word
+                    .first()
+                    .is_some_and(|&c| c == b'_' || c.is_ascii_alphabetic())
+                    && word
+                        .iter()
+                        .all(|&c| c == b'_' || c == b'-' || c.is_ascii_alphanumeric());
+                if shaped && (pathname[start] == b':' || word[0] == b'_') {
+                    return Some(start);
+                }
+            }
+            end = start;
+        }
+        None
     }
 
     /// Strip trailing credential segments out of `url.pathname`. Runs before the
@@ -373,7 +408,19 @@ pub mod registry {
         let mut pathname: &'a [u8] = url.pathname;
 
         // Right to left: the credentials are appended after the path.
-        while let Some((start, marker, opt)) = last_embedded_marker(pathname) {
+        loop {
+            let Some((start, marker, opt)) = last_embedded_marker(pathname) else {
+                // No known marker left; a typo'd one still must not ship in the path.
+                let Some(start) = last_unknown_credential_marker(pathname) else {
+                    break;
+                };
+                pathname = if pathname[start] == b'/' {
+                    &pathname[..start + 1]
+                } else {
+                    &pathname[..start]
+                };
+                continue;
+            };
             let mut value = &pathname[start + marker.len()..];
             // The slash that closes the URL (`/:_authToken=S/`) is not part of the value.
             if let Some(unslashed) = value.strip_suffix(b"/") {

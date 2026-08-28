@@ -1396,6 +1396,27 @@ describe.concurrent("bun-install", () => {
         expect(seen).toEqual({ path: "/a=b/c/@myorg%2fpkg", auth: null });
       });
 
+      it("leaves a plain `=` in a trailing path segment alone", async () => {
+        const seen = await probeEmbedded("/api/npm=1/", () => "");
+        expect(seen).toEqual({ path: "/api/npm=1/@myorg%2fpkg", auth: null });
+      });
+
+      // Marker names match case-insensitively; a value under a case variant is adopted.
+      it("adopts an embedded _AuthToken spelled with a capital", async () => {
+        const seen = await probeEmbedded("/api/:_AuthToken=T", () => "");
+        expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: "Bearer T" });
+      });
+
+      // A typo'd credential name is still a credential: stripped from the path, never
+      // adopted. main's blunt colon split removed it too.
+      it.each(["/api/:_passwd=SECRET", "/api/:authtoken=SECRET", "/api/_secret=SECRET"])(
+        "strips a typo'd credential segment %s without adopting it",
+        async registryPath => {
+          const seen = await probeEmbedded(registryPath, () => "");
+          expect(seen).toEqual({ path: "/api/@myorg%2fpkg", auth: null });
+        },
+      );
+
       // `--registry` used to bypass the scope builder; with a trailing slash after the
       // marker the token went out in every request path.
       it("strips an embedded _authToken from a --registry URL with a trailing slash", async () => {

@@ -369,8 +369,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     return JSValue::encode(returnValue);
 }
 
-// Header values are ByteStrings (https://fetch.spec.whatwg.org/#concept-header-value):
-// one byte per code unit on the wire, not UTF-8. Same '?' fallback as String::latin1().
+// Header values are ByteStrings (https://fetch.spec.whatwg.org/#concept-header-value): one byte per code unit, like String::latin1().
 static WTF::CString latin1FromUTF16(std::span<const char16_t> characters)
 {
     std::span<char> buffer;

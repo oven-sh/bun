@@ -633,15 +633,19 @@ test.concurrent.skipIf(isWindows)(
     const bin = join(root, "bin");
     mkdirSync(bin);
     const running = join(root, "git-running");
+    const exited = join(root, "git-exited");
     const gotSigint = join(root, "git-got-sigint");
     const quote = (path: string) => `'${path.replaceAll("'", "'\\''")}'`;
-    // A fake git. Each process appends a line to `running` when it starts and
-    // blocks until the test deletes that file. A SIGINT that bun forwards to
-    // one of them is recorded in `gotSigint`, which makes every other fake git
-    // (the concurrent clone, the retry over ssh) exit at once.
+    const lineCount = (file: string) => (existsSync(file) ? readFileSync(file, "utf8").split("\n").length - 1 : 0);
+    // A fake git. Each process appends a line to `running` when it starts, to
+    // `exited` when it ends, and blocks until the test deletes `running`. A
+    // SIGINT that bun forwards to one of them is recorded in `gotSigint`, which
+    // makes every other fake git (the concurrent clone, the retry over ssh)
+    // exit at once.
     writeFileSync(
       join(bin, "git"),
       `#!/bin/sh
+trap 'echo $$ >> ${quote(exited)}' EXIT
 trap ': > ${quote(gotSigint)}; exit 130' INT
 echo $$ >> ${quote(running)}
 i=0
@@ -668,16 +672,23 @@ exit 1
     const stderr = proc.stderr.text();
     try {
       const deadline = Date.now() + 20_000;
-      const runningGits = () => (existsSync(running) ? readFileSync(running, "utf8").split("\n").length - 1 : 0);
-      while (runningGits() < 2) {
+      while (lineCount(running) < 2) {
         if (proc.exitCode !== null || proc.signalCode !== null) {
           throw new Error(`install exited before it ran git:\n${await stderr}`);
         }
-        if (Date.now() > deadline) throw new Error(`install ran ${runningGits()} of 2 clones`);
+        if (Date.now() > deadline) throw new Error(`install ran ${lineCount(running)} of 2 clones`);
         await Bun.sleep(10);
       }
       proc.kill("SIGINT");
       await Promise.all([stdout, stderr, proc.exited]);
+      // Read the marker only once every fake git has exited. A trap that fires
+      // after bun is gone still counts.
+      const started = lineCount(running);
+      rmSync(running, { force: true });
+      while (lineCount(exited) < started) {
+        if (Date.now() > deadline) throw new Error(`${lineCount(exited)} of ${started} fake gits exited`);
+        await Bun.sleep(10);
+      }
       expect({ signalCode: proc.signalCode, gitGotSigint: existsSync(gotSigint) }).toEqual({
         signalCode: "SIGINT",
         gitGotSigint: false,

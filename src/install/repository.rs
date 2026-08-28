@@ -152,46 +152,53 @@ static GIT_ENV: bun_core::RacyCell<Option<GitEnv>> = bun_core::RacyCell::new(Non
 
 impl GitEnv {
     pub(crate) fn get(loader: &mut bun_dotenv::Loader) -> &'static GitEnv {
-        // SAFETY: only the install thread reaches this; once `Some` the value is
-        // never reassigned, so the `&'static` stays valid.
-        let slot = unsafe { &mut *GIT_ENV.get() };
-        slot.get_or_insert_with(|| {
-            // Note: currently if the user sets this to some value that causes
-            // a prompt for a password, the stdout of the prompt will be masked
-            // by further output of the rest of the install process.
-            // A value can still be entered, but we need to find a workaround
-            // so the user can see what is being prompted. By default the settings
-            // below will cause no prompt and throw instead.
-            let mut map = bun_core::handle_oom(loader.map.clone_with_allocator());
-
-            if map.get(b"GIT_ASKPASS").is_none() {
-                let config = SloppyGlobalGitConfig::get();
-                if !config.has_askpass {
-                    bun_core::handle_oom(map.put(b"GIT_ASKPASS", b"echo"));
-                }
+        let slot = GIT_ENV.get();
+        // SAFETY: only the install thread reaches this. The slot is written
+        // once, before any reference into it exists, and never reassigned.
+        unsafe {
+            if (*slot).is_none() {
+                *slot = Some(Self::init(loader));
             }
+            (*slot).as_ref().unwrap()
+        }
+    }
 
-            if map.get(b"GIT_SSH_COMMAND").is_none() {
-                let config = SloppyGlobalGitConfig::get();
-                if !config.has_ssh_command {
-                    bun_core::handle_oom(map.put(
-                        b"GIT_SSH_COMMAND",
-                        b"ssh -oStrictHostKeyChecking=accept-new",
-                    ));
-                }
+    fn init(loader: &mut bun_dotenv::Loader) -> GitEnv {
+        // Note: currently if the user sets this to some value that causes
+        // a prompt for a password, the stdout of the prompt will be masked
+        // by further output of the rest of the install process.
+        // A value can still be entered, but we need to find a workaround
+        // so the user can see what is being prompted. By default the settings
+        // below will cause no prompt and throw instead.
+        let mut map = bun_core::handle_oom(loader.map.clone_with_allocator());
+
+        if map.get(b"GIT_ASKPASS").is_none() {
+            let config = SloppyGlobalGitConfig::get();
+            if !config.has_askpass {
+                bun_core::handle_oom(map.put(b"GIT_ASKPASS", b"echo"));
             }
+        }
 
-            // Spawns exec the path as given (no `PATH` search), and the child
-            // runs with `map`, so resolve `git` on that `PATH`.
-            let mut git_buf = bun_paths::path_buffer_pool::get();
-            let git = bun_which::which(&mut git_buf, map.get(b"PATH").unwrap_or(b""), b"", b"git")
-                .map(|git| ZBox::from_bytes(git.as_bytes()));
-
-            GitEnv {
-                envp: bun_core::handle_oom(map.create_null_delimited_env_map()),
-                git,
+        if map.get(b"GIT_SSH_COMMAND").is_none() {
+            let config = SloppyGlobalGitConfig::get();
+            if !config.has_ssh_command {
+                bun_core::handle_oom(map.put(
+                    b"GIT_SSH_COMMAND",
+                    b"ssh -oStrictHostKeyChecking=accept-new",
+                ));
             }
-        })
+        }
+
+        // Spawns exec the path as given (no `PATH` search), and the child
+        // runs with `map`, so resolve `git` on that `PATH`.
+        let mut git_buf = bun_paths::path_buffer_pool::get();
+        let git = bun_which::which(&mut git_buf, map.get(b"PATH").unwrap_or(b""), b"", b"git")
+            .map(|git| ZBox::from_bytes(git.as_bytes()));
+
+        GitEnv {
+            envp: bun_core::handle_oom(map.create_null_delimited_env_map()),
+            git,
+        }
     }
 }
 

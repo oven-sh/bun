@@ -1,6 +1,17 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isPosix,
+  isWindows,
+  mergeWindowEnvs,
+  tempDir,
+} from "harness";
 import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
@@ -443,6 +454,27 @@ describe.if(isPosix)("SIGABRT/SIGTRAP are caught by the crash handler", () => {
 
     await resolve_handler.promise;
     expect(sent).toBe(true);
+  });
+
+  // JavaScriptCore, WTF and bun's own C++ crash through WTF's RELEASE_ASSERT /
+  // CRASH(): a trap instruction on macOS, abort() elsewhere. On arm64 that trap
+  // was `brk #0xbb08`, which macOS 26 answers with SIGKILL before any SIGTRAP
+  // handler runs, so the child died with an empty stderr. Bun's WebKit emits
+  // `brk #0` there (oven-sh/WebKit#485). This drives a real JSC assertion, not
+  // the `trap` hook with its own instruction: structureHeapSizeInKB must be a
+  // power of two, and 3072 fails the RELEASE_ASSERT in StructureMemoryManager's
+  // constructor during JSC::initialize(). ASAN builds install no signal handlers.
+  test.skipIf(isASAN).concurrent("a JavaScriptCore release assertion produces a crash report", async () => {
+    await using proc = Bun.spawn({
+      cmd: noCoreCmd([bunExe(), "-e", "1", "--debug-crash-handler-use-trace-string"]),
+      env: { ...noReportEnv, BUN_JSC_structureHeapSizeInKB: "3072" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain(isMacOS ? "Trap instruction" : "abort() called");
+    expect(stderr).toContain("oh no: Bun has crashed");
+    expect(proc.signalCode).toBe(isMacOS ? "SIGTRAP" : "SIGABRT");
   });
 
   // process.abort() is a deliberate user action, not a Bun crash. It must still

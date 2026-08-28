@@ -30,212 +30,11 @@ use crate::jsc::JSValue;
 #[path = "Timer.rs"]
 pub mod timer;
 
-// ─── impl_timer_object! ──────────────────────────────────────────────────────
-// Shared scaffold for `TimeoutObject` / `ImmediateObject`: both are a
-// `#[JsClass]` payload of `{ref_count, event_loop_timer, internals}` whose
-// JS-facing host-fns are pure forwarders to `TimerObjectInternals`. The macro
-// emits the parts shared by both types so each `*.rs` file holds only its
-// type-specific surface (`init`, `do_refresh`, cached-prop accessors,
-// `run_immediate_task`).
-//
-// Emits, at the call-site module path (so `#[JsClass]`/`#[host_fn]` produce the
-// same extern symbol names as before — `Timeout__create`, `TimeoutPrototype__*`,
-// `ImmediateClass__construct`, …):
-//   - `#[bun_jsc::JsClass(name = $js_name)] pub struct $T { … }`
-//   - `bun_event_loop::impl_timer_owner!($T; from_timer_ptr => event_loop_timer)`
-//   - `impl RefCounted for $T` (intrusive `ref_count` field, `deinit` destructor)
-//   - `impl Default for $T` (`EventLoopTimer::init_paused(EventLoopTimerTag::$tag)`)
-//   - `impl $T`: `ref_`/`deref`/`deinit`/`init_with`/`constructor`/`finalize`
-//     and the forwarder host-fns `to_primitive`/`do_ref`/`do_unref`/`has_ref`/
-//     `get_destroyed`/`dispose`.
-//
-// Type-specific items (`init`, `do_refresh`, `close`, cached-prop get/set,
-// `run_immediate_task`) go in a *second* `impl $T` block in the caller's file.
-//
-// Paths in the body are written `super::…` / `::crate_name::…` because the
-// macro is invoked *from the child module* (`super::impl_timer_object!(…)`),
-// so `super` at the expansion site resolves back here to `timer/mod.rs`.
-macro_rules! impl_timer_object {
-    ($T:ident, $tag:ident, $js_name:literal) => {
-        #[::bun_jsc::JsClass(name = $js_name)]
-        #[derive(::bun_ptr::RefCounted)]
-        pub struct $T {
-            pub ref_count: ::bun_ptr::RefCount<Self>,
-            pub event_loop_timer: super::EventLoopTimer,
-            pub internals: super::TimerObjectInternals,
-        }
-
-        ::bun_event_loop::impl_timer_owner!($T; from_timer_ptr => event_loop_timer);
-
-        impl ::core::ops::Drop for $T {
-            fn drop(&mut self) {
-                // SAFETY: last ref gone; JS thread with RuntimeState installed.
-                unsafe { self.internals.deinit() }
-            }
-        }
-
-        impl ::core::default::Default for $T {
-            fn default() -> Self {
-                Self {
-                    ref_count: ::bun_ptr::RefCount::init(),
-                    // `init_paused`: next=EPOCH, state=PENDING, heap zeroed.
-                    event_loop_timer: super::EventLoopTimer::init_paused(
-                        super::EventLoopTimerTag::$tag,
-                    ),
-                    // Default-constructed here, then overwritten in `init()`.
-                    internals: super::TimerObjectInternals::default(),
-                }
-            }
-        }
-
-        impl $T {
-            // Re-export the refcount mixin's ops as inherent fns so
-            // `TimerObjectInternals`'s `container_of` dispatch resolves.
-
-            /// Increment the intrusive refcount.
-            ///
-            /// # Safety
-            /// `this` must point to a live, `heap::alloc`-allocated `Self`.
-            #[inline]
-            pub unsafe fn ref_(this: *mut Self) {
-                // SAFETY: caller contract.
-                unsafe { ::bun_ptr::RefCount::<Self>::ref_(this) }
-            }
-
-            /// Decrement the intrusive refcount; on zero drops the `Box`.
-            /// After this returns `this` may dangle.
-            ///
-            /// # Safety
-            /// `this` must point to a live, `heap::alloc`-allocated `Self`.
-            #[inline]
-            pub unsafe fn deref(this: *mut Self) {
-                // SAFETY: caller contract.
-                unsafe { ::bun_ptr::RefCount::<Self>::deref(this) }
-            }
-
-            /// Shared body of `TimeoutObject::init` / `ImmediateObject::init`:
-            /// heap-allocate → `to_js_ptr` → `internals.init` →
-            /// inspector `did_schedule_async_call`. The per-type `init` fn
-            /// picks `kind`/`interval` and forwards here.
-            pub fn init_with(
-                global: &::bun_jsc::JSGlobalObject,
-                id: i32,
-                kind: super::Kind,
-                interval: u32,
-                callback: ::bun_jsc::JSValue,
-                arguments: ::bun_jsc::JSValue,
-            ) -> ::bun_jsc::JSValue {
-                // Heap-allocate; `*mut Self` is the
-                // `m_ctx` payload of the codegen'd JSCell wrapper. Ownership
-                // transfers to the wrapper via `to_js_ptr`; freed by
-                // `deref → deinit → heap::take`.
-                let payload: *mut Self =
-                    ::bun_core::heap::into_raw(::std::boxed::Box::new(Self::default()));
-                // SAFETY: `to_js_ptr` is the `#[JsClass]`-generated `*__create`
-                // shim; `payload` is a fresh heap allocation whose ownership
-                // transfers to the GC wrapper.
-                let js_value = unsafe { Self::to_js_ptr(payload, global) };
-                // Round-trip ABI check.
-                debug_assert!(
-                    <Self as ::bun_jsc::JsClass>::from_js(js_value) == Some(payload),
-                    concat!($js_name, "__create ABI mismatch"),
-                );
-                let _keep = ::bun_jsc::EnsureStillAlive(js_value);
-                // SAFETY: `payload` was just allocated above and is exclusively
-                // owned here; `internals.init()` writes every field.
-                unsafe {
-                    (*payload).internals.init(
-                        js_value, global, id, kind, interval, callback, arguments,
-                    );
-                }
-                if global.bun_vm().as_mut().is_inspector_enabled() {
-                    ::bun_jsc::Debugger::did_schedule_async_call(
-                        global,
-                        ::bun_jsc::Debugger::AsyncCallType::DOMTimer,
-                        super::ID { id, kind: kind.big() }.async_id(),
-                        kind != super::Kind::SetInterval,
-                    );
-                }
-                js_value
-            }
-
-            // C-ABI shim (`${name}Class__construct`) is emitted by
-            // `#[bun_jsc::JsClass]` via `host_fn_construct_result`; do not also
-            // annotate with `#[host_fn]` here.
-            pub fn constructor(
-                global: &::bun_jsc::JSGlobalObject,
-                _frame: &::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JsResult<*mut Self> {
-                Err(global.throw(format_args!(concat!($js_name, " is not constructible"))))
-            }
-
-            #[::bun_jsc::host_fn(method)]
-            pub fn to_primitive(
-                this: &Self,
-                _global: &::bun_jsc::JSGlobalObject,
-                _frame: &::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
-                this.internals.to_primitive()
-            }
-
-            #[::bun_jsc::host_fn(method)]
-            pub fn do_ref(
-                this: &Self,
-                global: &::bun_jsc::JSGlobalObject,
-                frame: &::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
-                this.internals.do_ref(global, frame.this())
-            }
-
-            #[::bun_jsc::host_fn(method)]
-            pub fn do_unref(
-                this: &Self,
-                global: &::bun_jsc::JSGlobalObject,
-                frame: &::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
-                this.internals.do_unref(global, frame.this())
-            }
-
-            #[::bun_jsc::host_fn(method)]
-            pub fn has_ref(
-                this: &Self,
-                _global: &::bun_jsc::JSGlobalObject,
-                _frame: &::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
-                this.internals.has_ref()
-            }
-
-            pub fn finalize(&self) {
-                self.internals.finalize()
-            }
-
-            #[::bun_jsc::host_fn(getter)]
-            pub fn get_destroyed(
-                this: &Self,
-                _global: &::bun_jsc::JSGlobalObject,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
-                Ok(::bun_jsc::JSValue::from(this.internals.get_destroyed()))
-            }
-
-            #[::bun_jsc::host_fn(method)]
-            pub fn dispose(
-                this: &Self,
-                global: &::bun_jsc::JSGlobalObject,
-                _frame: &::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
-                this.internals.cancel(global.bun_vm_ptr());
-                Ok(::bun_jsc::JSValue::UNDEFINED)
-            }
-        }
-    };
-}
-pub(crate) use impl_timer_object;
-
-#[path = "TimeoutObject.rs"]
-pub mod timeout_object;
-
-#[path = "ImmediateObject.rs"]
-pub mod immediate_object;
+#[path = "TimerObject.rs"]
+pub mod timer_object;
+pub use timer_object::{
+    Flags as TimerFlags, Immediate, ImmediateObject, Timeout, TimeoutObject, TimerKind, TimerObject,
+};
 
 #[path = "DateHeaderTimer.rs"]
 mod date_header_timer_draft;
@@ -517,19 +316,11 @@ impl EventLoopDelayMonitor {
     }
 }
 
-// ─── TimerObjectInternals / TimeoutObject / ImmediateObject ─────────────────
-
-pub mod timer_object_internals;
-pub use timer_object_internals::{Flags as TimerFlags, TimerObjectInternals};
-
 /// `jsc.WebCore.AbortSignal.Timeout` — real struct lives in `bun_jsc` (which
 /// this crate depends on). Re-exported here so `All::update`'s
 /// field-parent-pointer epoch-bump and `dispatch::fire_timer` resolve the same
 /// `event_loop_timer`/`flags` offsets the low tier wrote.
 pub use crate::jsc::abort_signal::Timeout as AbortSignalTimeout;
-
-pub use self::immediate_object::ImmediateObject;
-pub use self::timeout_object::TimeoutObject;
 
 /// Recover the
 /// [`TimerFlags`] slot for the three JS-timer container tags
@@ -538,7 +329,7 @@ pub use self::timeout_object::TimeoutObject;
 /// Returns a raw `NonNull` so the caller decides read vs. write:
 /// [`EventLoopTimer::less`] reads `.epoch()` on the heap-compare hot path;
 /// [`All::update`] writes `.set_epoch()` on the JS thread. The two
-/// `internals.flags` arms store `Cell<TimerFlags>`; `Cell<T>` is
+/// `TimerObject` arms store `Cell<TimerFlags>`; `Cell<T>` is
 /// `#[repr(transparent)]` so the `addr_of!` → `.cast()` is layout-sound.
 ///
 /// # Safety
@@ -556,14 +347,13 @@ pub(crate) unsafe fn js_timer_flags_ptr(
         let p: *const TimerFlags = match (*t).tag {
             EventLoopTimerTag::TimeoutObject => {
                 let parent = TimeoutObject::from_timer_ptr(t);
-                addr_of!((*parent).internals.flags).cast()
+                addr_of!((*parent).flags).cast()
             }
             EventLoopTimerTag::ImmediateObject => {
                 let parent = ImmediateObject::from_timer_ptr(t);
-                addr_of!((*parent).internals.flags).cast()
+                addr_of!((*parent).flags).cast()
             }
-            // `AbortSignal.Timeout` stores
-            // `flags` directly (not under `.internals`, not `Cell`-wrapped).
+            // `AbortSignal.Timeout` stores `flags` bare (not `Cell`-wrapped).
             EventLoopTimerTag::AbortSignalTimeout => {
                 let parent = AbortSignalTimeout::from_timer_ptr(t);
                 addr_of!((*parent).flags)
@@ -593,7 +383,7 @@ pub(crate) struct All {
     /// Whether we have emitted a warning for passing NaN for the timeout duration
     pub(crate) warned_not_number: bool,
     /// Incremented when timers are scheduled or rescheduled. See
-    /// TimerObjectInternals.epoch. Masked to 25 bits on increment.
+    /// `TimerFlags::epoch`. Masked to 25 bits on increment.
     pub(crate) epoch: u32,
     pub(crate) immediate_ref_count: i32,
     #[cfg(windows)]
@@ -1058,7 +848,7 @@ impl All {
         // up-front and form a *short-lived* `&mut` only around `next()`,
         // dropping it before `fire()` so no `&mut All` is held across the
         // re-entrant call (mirroring the raw-ptr pattern in
-        // `TimerObjectInternals::run_immediate_task`).
+        // `ImmediateObject::run_immediate_task`).
         //
         // TODO: the call-site auto-ref at jsc_hooks.rs (`(*state).timer
         // .drain_timers(...)`) still creates a `&mut All` for the call frame
@@ -1232,7 +1022,7 @@ impl All {
         this: *mut Self,
         vm: *mut crate::jsc::virtual_machine::VirtualMachine,
     ) {
-        let mut to_cancel: Vec<*const TimerObjectInternals> = Vec::new();
+        let mut timeouts: Vec<*const TimeoutObject> = Vec::new();
         let mut signal_timeouts: Vec<*mut AbortSignalTimeout> = Vec::new();
         let mut stack: Vec<*mut EventLoopTimer> = Vec::new();
 
@@ -1258,18 +1048,9 @@ impl All {
                 EventLoopTimerTag::TimeoutObject => {
                     // SAFETY: tag invariant — `node` IS the `event_loop_timer`
                     // field of a live `TimeoutObject`.
-                    let parent = unsafe { TimeoutObject::from_timer_ptr(node) };
-                    // SAFETY: `parent` points at the live `TimeoutObject` recovered
-                    // above; `addr_of!` projects the in-bounds `internals` field.
-                    to_cancel.push(unsafe { core::ptr::addr_of!((*parent).internals) });
+                    timeouts.push(unsafe { TimeoutObject::from_timer_ptr(node) });
                 }
-                EventLoopTimerTag::ImmediateObject => {
-                    // SAFETY: tag invariant — see above.
-                    let parent = unsafe { ImmediateObject::from_timer_ptr(node) };
-                    // SAFETY: `parent` points at the live `ImmediateObject` recovered
-                    // above; `addr_of!` projects the in-bounds `internals` field.
-                    to_cancel.push(unsafe { core::ptr::addr_of!((*parent).internals) });
-                }
+                // Immediates are never linked into the timer heaps.
                 EventLoopTimerTag::AbortSignalTimeout => {
                     // SAFETY: tag invariant — `node` IS the `event_loop_timer`
                     // field of a live boxed `abort_signal::Timeout`.
@@ -1279,12 +1060,12 @@ impl All {
             }
         }
 
-        for internals in to_cancel {
-            // SAFETY: each pointer was collected from the live heap; the
-            // parent box is still alive (the +1 ref `cancel()` releases is
-            // exactly the one keeping it pinned). `cancel()` may free the
-            // parent on the final deref — never touched again.
-            unsafe { (*internals).cancel(vm) };
+        for t in timeouts {
+            // SAFETY: each pointer was collected from the live heap; the box is
+            // still alive (the +1 ref `cancel()` releases is exactly the one
+            // keeping it pinned). `cancel()` may free it on the final deref —
+            // never touched again.
+            unsafe { (*t).cancel(vm) };
         }
 
         // `AbortSignal.timeout()` boxes are owned by the C++ `AbortSignal`, so
@@ -1324,7 +1105,7 @@ pub(crate) enum CountdownOverflowBehavior {
 // LAYERING: `Kind`/`KindBig` moved DOWN to `bun_event_loop` so `TimerFlags`
 // (also moved down) can name them without a `bun_runtime` dep — needed by
 // `bun_jsc::abort_signal::Timeout.flags`. `Kind::big()` lives next to the
-// type so `TimeoutObject`/`TimerObjectInternals` can call it as a method.
+// type so `TimerObject` can call it as a method.
 pub use bun_event_loop::EventLoopTimer::{Kind, KindBig};
 
 /// Sized to be the same as one pointer.

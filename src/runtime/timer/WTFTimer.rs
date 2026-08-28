@@ -4,7 +4,7 @@
 //! jsc/runtime crate cycle: the low-tier `bun_jsc::VirtualMachine.timer` is a
 //! `()` placeholder, so this module resolves the timer heap through
 //! [`crate::jsc_hooks::runtime_state`] instead — the same pattern
-//! `TimerObjectInternals` uses.
+//! `TimerObject` uses.
 
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};

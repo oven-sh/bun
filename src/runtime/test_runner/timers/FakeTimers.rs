@@ -9,7 +9,7 @@ use crate::api::cron::CronJob;
 use crate::jsc::virtual_machine::VirtualMachine;
 use crate::timer::{
     AbortSignalTimeout, ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
-    InHeap, TimerObjectInternals, TimeoutObject, TimerHeap,
+    InHeap, TimeoutObject, TimerHeap,
 };
 
 // JSMock C++ bindings (fake timers are only used by bun:test, so these stay local).
@@ -129,16 +129,16 @@ fn from_el_timespec(t: &ElTimespec) -> Timespec {
 
 /// Owners of the nodes [`FakeTimers::clear`] popped, still to be told their
 /// timer is gone. Released only once the `FakeTimers` borrow has ended: these
-/// paths re-enter `timer::All` (`TimerObjectInternals::cancel` → `All::remove`,
+/// paths re-enter `timer::All` (`TimeoutObject::cancel` → `All::remove`,
 /// `Timeout` deinit → `timer_remove`).
 #[derive(Default)]
 #[must_use]
 struct ClearedTimers {
     /// Marking `state = CANCELLED` alone strands the `Box<TimeoutObject>`: its
-    /// refcount sticks at 2 (wrapper +1 from `init_with`, heap +1 from
-    /// `reschedule`) and `internals.this_value` still GC-roots the wrapper, so
+    /// refcount sticks at 2 (wrapper +1 from `init`, heap +1 from
+    /// `reschedule`) and its `this_value` still GC-roots the wrapper, so
     /// neither side ever frees.
-    pinned: Vec<core::ptr::NonNull<TimerObjectInternals>>,
+    pinned: Vec<core::ptr::NonNull<TimeoutObject>>,
     /// Likewise, an unlinked `AbortSignal.timeout()` timer is still its
     /// signal's `m_timeout`, and `JSAbortSignalOwner::isReachableFromOpaqueRoots`
     /// pins an observed signal's wrapper for as long as that is set. Only the
@@ -151,7 +151,7 @@ struct ClearedTimers {
 impl ClearedTimers {
     fn release(self, vm: *mut VirtualMachine) {
         for p in self.pinned {
-            TimerObjectInternals::release_heap_pin(p, vm);
+            TimeoutObject::release_heap_pin(p, vm);
         }
         for t in self.signal_timeouts {
             // SAFETY: `clear` popped `t` from the fake heap, so its box is
@@ -208,9 +208,8 @@ impl FakeTimers {
                 (*timer).state = EventLoopTimerState::CANCELLED;
                 match (*timer).tag {
                     EventLoopTimerTag::TimeoutObject => {
-                        let parent = TimeoutObject::from_timer_ptr(timer);
                         cleared.pinned.push(core::ptr::NonNull::new_unchecked(
-                            core::ptr::addr_of_mut!((*parent).internals),
+                            TimeoutObject::from_timer_ptr(timer),
                         ));
                     }
                     EventLoopTimerTag::AbortSignalTimeout => {

@@ -841,7 +841,7 @@ unsafe fn __bun_run_immediate_task(
     task: *mut (),
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
 ) -> bool {
-    // SAFETY: per fn contract — the only producer (`TimerObjectInternals::init`)
+    // SAFETY: per fn contract — the only producer (`TimerObject::init`)
     // stores a `*mut crate::timer::ImmediateObject`, so the cast is the identity.
     unsafe {
         crate::timer::ImmediateObject::run_immediate_task(
@@ -864,7 +864,7 @@ unsafe fn __bun_cancel_pending_immediate(
     task: *mut (),
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
 ) {
-    // SAFETY: per fn contract — the only producer (`TimerObjectInternals::init`)
+    // SAFETY: per fn contract — the only producer (`TimerObject::init`)
     // stores a `*mut crate::timer::ImmediateObject`, so the cast is the identity.
     unsafe {
         crate::timer::ImmediateObject::cancel_pending(
@@ -917,7 +917,7 @@ pub(crate) unsafe fn __bun_fire_timer(
     now: *const ElTimespec,
     vm: *mut (),
 ) -> bun_event_loop::JsResult<()> {
-    use crate::timer::{ImmediateObject, TimeoutObject, TimerObjectInternals, WTFTimer};
+    use crate::timer::{ImmediateObject, TimeoutObject, WTFTimer};
 
     /// Recover the embedding container from `t` (the popped timer slot).
     macro_rules! owner {
@@ -948,26 +948,19 @@ pub(crate) unsafe fn __bun_fire_timer(
         }};
     }
     let fired: JsResult<()> = match tag {
-        // ── JS-exposed timers (TimerObjectInternals::fire) ───────────────
+        // ── JS-exposed timers (TimerObject::fire) ────────────────────────
         // `Bun__JSTimeout__call` reports the callback's exception itself.
+        // `fire` takes `*mut Self` (noalias re-entrancy — see its doc) and may
+        // free the container.
         EventLoopTimerTag::TimeoutObject => {
-            let container = owner!(TimeoutObject, event_loop_timer);
-            // SAFETY: container derived from a live `TimeoutObject`; do NOT
-            // form `&mut *container` — `internals.fire` may `deref()` and free.
-            let internals = unsafe { core::ptr::addr_of_mut!((*container).internals) };
-            // SAFETY: per fn contract — `now` is the live snapshot; `vm` is the
-            // per-thread VM. `fire` may free the container; `t` is dead after.
-            // `fire` takes `*mut Self` (noalias re-entrancy — see its doc).
-            unsafe { TimerObjectInternals::fire(internals, &*now, vm) };
-            Ok(())
+            timer_arm!(TimeoutObject, event_loop_timer, |c, now, vm| {
+                TimeoutObject::fire(c, &*now, vm)
+            })
         }
         EventLoopTimerTag::ImmediateObject => {
-            let container = owner!(ImmediateObject, event_loop_timer);
-            // SAFETY: see TimeoutObject arm.
-            let internals = unsafe { core::ptr::addr_of_mut!((*container).internals) };
-            // SAFETY: see TimeoutObject arm.
-            unsafe { TimerObjectInternals::fire(internals, &*now, vm) };
-            Ok(())
+            timer_arm!(ImmediateObject, event_loop_timer, |c, now, vm| {
+                ImmediateObject::fire(c, &*now, vm)
+            })
         }
         EventLoopTimerTag::WTFTimer => {
             timer_arm!(WTFTimer, event_loop_timer, |c, now, vm| WTFTimer::fire(

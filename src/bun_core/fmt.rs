@@ -44,6 +44,7 @@ pub mod js_printer {
         write_pre_quoted_string(input, f, b'"', false, enc)?;
         f.write_char('"')
     }
+    /// The escaped body without the quotes, in JSON mode (`json = true`).
     pub(crate) fn write_pre_quoted_string(
         input: &[u8],
         f: &mut impl fmt::Write,
@@ -51,17 +52,36 @@ pub mod js_printer {
         ascii_only: bool,
         enc: Encoding,
     ) -> fmt::Result {
-        // Writes the escaped body WITHOUT surrounding quotes. Delegate to the
-        // canonical impl in `string::printer` (a byte-sink writer) and bridge
-        // the result into the `fmt::Write`. In JSON mode (`json = true`) every
-        // non-printable scalar (including lone surrogates) is emitted as an
-        // ASCII escape.
-        let mut buf: Vec<u8> = Vec::with_capacity(input.len() + 8);
         crate::string::printer::write_pre_quoted_string(
-            input, &mut buf, quote, ascii_only, true, enc,
+            input,
+            &mut FmtSink(f),
+            quote,
+            ascii_only,
+            true,
+            enc,
         )
-        .map_err(|_| fmt::Error)?;
-        f.write_str(&String::from_utf8_lossy(&buf))
+        .map_err(|_| fmt::Error)
+    }
+
+    /// Byte sink over a `fmt::Write` for `string::printer`, which writes escapes,
+    /// ASCII runs and whole code points, so every chunk is UTF-8 on its own.
+    struct FmtSink<'a, W: fmt::Write>(&'a mut W);
+
+    impl<W: fmt::Write> crate::io::Write for FmtSink<'_, W> {
+        fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
+            match super::strings::str_utf8(buf) {
+                Some(s) => self.0.write_str(s),
+                None => buf.utf8_chunks().try_for_each(|chunk| {
+                    self.0.write_str(chunk.valid())?;
+                    if chunk.invalid().is_empty() {
+                        Ok(())
+                    } else {
+                        self.0.write_char(char::REPLACEMENT_CHARACTER)
+                    }
+                }),
+            }
+            .map_err(|_| crate::CrateError::FmtError)
+        }
     }
 }
 use strum::IntoStaticStr;

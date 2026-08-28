@@ -1779,7 +1779,8 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
 
     if let Some(reporter) = args.option(b"--reporter") {
         if reporter == b"junit" {
-            if ctx.test_options.reporter_outfile.is_none() {
+            // A `--parallel` worker only collects for the coordinator's file.
+            if ctx.test_options.reporter_outfile.is_none() && !args.flag(b"--test-worker") {
                 Output::err_generic(
                     "--reporter=junit requires --reporter-outfile [file] to specify where to save the XML report",
                     (),

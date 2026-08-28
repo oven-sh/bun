@@ -1297,7 +1297,7 @@ impl BunTest {
             return; // the exception should not be visible (eg m_terminationException)
         };
 
-        let junit_ctx: *mut core::ffi::c_void = 'ctx: {
+        let failure_ctx: *mut core::ffi::c_void = 'ctx: {
             if handle_status != HandleUncaughtExceptionResult::ShowHandledError {
                 break 'ctx core::ptr::null_mut();
             }
@@ -1306,9 +1306,11 @@ impl BunTest {
             };
             // SAFETY: `BunTest.reporter` carries write provenance from `enter_file`'s
             // `&mut`; single-threaded test runner, no other borrow live here.
-            match unsafe { (*reporter.as_ptr()).reporters.junit.as_deref_mut() } {
-                Some(junit) => core::ptr::from_mut(junit).cast(),
-                None => core::ptr::null_mut(),
+            let reporter = unsafe { &mut *reporter.as_ptr() };
+            if reporter.jest.test_options.reporters.junit {
+                core::ptr::from_mut(&mut reporter.test_failure).cast()
+            } else {
+                core::ptr::null_mut()
             }
         };
 
@@ -1331,13 +1333,13 @@ impl BunTest {
         }
 
         let vm = global_this.bun_vm().as_mut();
-        if !junit_ctx.is_null() {
+        if !failure_ctx.is_null() {
             vm.on_print_error_zig_exception =
-                Some(crate::cli::test_command::JunitReporter::record_failure_cb);
-            vm.on_print_error_zig_exception_ctx = junit_ctx;
+                Some(crate::cli::test_command::TestFailure::record_cb);
+            vm.on_print_error_zig_exception_ctx = failure_ctx;
         }
         vm.run_error_handler(exception, None);
-        if !junit_ctx.is_null() {
+        if !failure_ctx.is_null() {
             vm.on_print_error_zig_exception = None;
             vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();
         }

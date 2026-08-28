@@ -161,6 +161,10 @@ pub struct Imports {
     pub(crate) __privateAdd: Ref,
     pub(crate) __privateSet: Ref,
     pub(crate) __privateMethod: Ref,
+    pub(crate) __privateWrapper: Ref,
+    pub(crate) __superGet: Ref,
+    pub(crate) __superSet: Ref,
+    pub(crate) __superWrapper: Ref,
     pub(crate) __decoratorStart: Ref,
     pub(crate) __decoratorMetadata: Ref,
     pub(crate) __runInitializers: Ref,
@@ -176,7 +180,7 @@ pub struct Imports {
 }
 
 impl Imports {
-    pub const ALL: [&'static [u8]; 27] = [
+    pub const ALL: [&'static [u8]; 31] = [
         b"__name",
         b"__require",
         b"__export",
@@ -193,6 +197,10 @@ impl Imports {
         b"__privateAdd",
         b"__privateSet",
         b"__privateMethod",
+        b"__privateWrapper",
+        b"__superGet",
+        b"__superSet",
+        b"__superWrapper",
         b"__decoratorStart",
         b"__decoratorMetadata",
         b"__runInitializers",
@@ -209,7 +217,7 @@ impl Imports {
     /// Rust stable cannot sort in `const`; precomputed here and verified by
     /// the test in `tests` below.
     #[cfg_attr(not(test), allow(dead_code))]
-    const ALL_SORTED: [&'static [u8]; 27] = [
+    const ALL_SORTED: [&'static [u8]; 31] = [
         b"$$typeof",
         b"__EARLY_RETURN_SENTINEL",
         b"__MEMO_CACHE_SENTINEL",
@@ -231,42 +239,50 @@ impl Imports {
         b"__privateIn",
         b"__privateMethod",
         b"__privateSet",
+        b"__privateWrapper",
         b"__promiseAll",
         b"__publicField",
         b"__reExport",
         b"__require",
         b"__runInitializers",
+        b"__superGet",
+        b"__superSet",
+        b"__superWrapper",
         b"__using",
     ];
 
     /// When generating the list of runtime imports, we sort it for determinism.
     /// This is a lookup table so we don't need to resort the strings each time
-    pub const ALL_SORTED_INDEX: [usize; 27] = [
+    pub const ALL_SORTED_INDEX: [usize; 31] = [
         15, // __name
-        24, // __require
+        25, // __require
         7,  // __export
-        23, // __reExport
+        24, // __reExport
         9,  // __exportValue
         8,  // __exportDefault
         14, // __merge
         11, // __legacyDecorateClassTS
         12, // __legacyDecorateParamTS
         13, // __legacyMetadataTS
-        22, // __publicField
+        23, // __publicField
         18, // __privateIn
         17, // __privateGet
         16, // __privateAdd
         20, // __privateSet
         19, // __privateMethod
+        21, // __privateWrapper
+        27, // __superGet
+        28, // __superSet
+        29, // __superWrapper
         6,  // __decoratorStart
         5,  // __decoratorMetadata
-        25, // __runInitializers
+        26, // __runInitializers
         4,  // __decorateElement
         0,  // $$typeof
-        26, // __using
+        30, // __using
         3,  // __callDispose
         10, // __jsonParse
-        21, // __promiseAll
+        22, // __promiseAll
         2,  // __MEMO_CACHE_SENTINEL
         1,  // __EARLY_RETURN_SENTINEL
     ];
@@ -293,17 +309,21 @@ impl Imports {
             13 => self.__privateAdd,
             14 => self.__privateSet,
             15 => self.__privateMethod,
-            16 => self.__decoratorStart,
-            17 => self.__decoratorMetadata,
-            18 => self.__runInitializers,
-            19 => self.__decorateElement,
-            20 => self.dollar_dollar_typeof,
-            21 => self.__using,
-            22 => self.__callDispose,
-            23 => self.__jsonParse,
-            24 => self.__promiseAll,
-            25 => self.__MEMO_CACHE_SENTINEL,
-            26 => self.__EARLY_RETURN_SENTINEL,
+            16 => self.__privateWrapper,
+            17 => self.__superGet,
+            18 => self.__superSet,
+            19 => self.__superWrapper,
+            20 => self.__decoratorStart,
+            21 => self.__decoratorMetadata,
+            22 => self.__runInitializers,
+            23 => self.__decorateElement,
+            24 => self.dollar_dollar_typeof,
+            25 => self.__using,
+            26 => self.__callDispose,
+            27 => self.__jsonParse,
+            28 => self.__promiseAll,
+            29 => self.__MEMO_CACHE_SENTINEL,
+            30 => self.__EARLY_RETURN_SENTINEL,
             _ => return None,
         };
         r.to_nullable()
@@ -328,17 +348,21 @@ impl Imports {
             13 => Some(&mut self.__privateAdd),
             14 => Some(&mut self.__privateSet),
             15 => Some(&mut self.__privateMethod),
-            16 => Some(&mut self.__decoratorStart),
-            17 => Some(&mut self.__decoratorMetadata),
-            18 => Some(&mut self.__runInitializers),
-            19 => Some(&mut self.__decorateElement),
-            20 => Some(&mut self.dollar_dollar_typeof),
-            21 => Some(&mut self.__using),
-            22 => Some(&mut self.__callDispose),
-            23 => Some(&mut self.__jsonParse),
-            24 => Some(&mut self.__promiseAll),
-            25 => Some(&mut self.__MEMO_CACHE_SENTINEL),
-            26 => Some(&mut self.__EARLY_RETURN_SENTINEL),
+            16 => Some(&mut self.__privateWrapper),
+            17 => Some(&mut self.__superGet),
+            18 => Some(&mut self.__superSet),
+            19 => Some(&mut self.__superWrapper),
+            20 => Some(&mut self.__decoratorStart),
+            21 => Some(&mut self.__decoratorMetadata),
+            22 => Some(&mut self.__runInitializers),
+            23 => Some(&mut self.__decorateElement),
+            24 => Some(&mut self.dollar_dollar_typeof),
+            25 => Some(&mut self.__using),
+            26 => Some(&mut self.__callDispose),
+            27 => Some(&mut self.__jsonParse),
+            28 => Some(&mut self.__promiseAll),
+            29 => Some(&mut self.__MEMO_CACHE_SENTINEL),
+            30 => Some(&mut self.__EARLY_RETURN_SENTINEL),
             _ => None,
         }
     }

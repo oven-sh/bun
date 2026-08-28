@@ -419,6 +419,50 @@ const extraSections = `
   out.namedExprNested = [E.inner.w, E.inner[3], new E.inner().m() === E, E.obj[3], E.obj.g, E.fn().slice(0, 2), E.fn()[2] === E, E.z];
 }
 
+// Every form of \`super\` and of a lowered private member, in code that left
+// the class body, with \`Reflect\` and \`Object\` shadowed. The expected values
+// are what node prints for the same class without the decorator.
+{
+  const Reflect = null;
+  const Object = null;
+  class SB {
+    static v = 1;
+    static get g() { return "g"; }
+    static tag(s, ...vals) { return this.name + ":" + s.raw.join("|") + vals.join(","); }
+    static sm() { return "sm:" + this.name; }
+    greet() { return "hi:" + this.n; }
+  }
+  class SC extends SB {
+    @dec static m() {}
+    n = 7;
+    static y = super.v;
+    static opt1 = super.missing?.();
+    static opt2 = super.sm?.();
+    static tagged = super.tag\`a\${1}b\${2}\`;
+    static destructured = ([super.d1, { k: super.d2 = 9 }, ...super.rest] = [5, {}, 6, 7], [SC.d1, SC.d2, SC.rest]);
+    static loop = (() => {
+      const seen = [];
+      for (super.it of [1, 2]) seen.push(SC.it);
+      for (super.key in { a: 1 }) seen.push(SC.key);
+      return seen;
+    })();
+    #pm() { return super.greet() + "/" + super.sm?.() + "/" + super.missing?.(); }
+    static #spm() { return super.sm() + "/" + super.g; }
+    #tag(s, ...vals) { return this.n + ":" + s.raw.join("|") + vals.join(","); }
+    #a = 1;
+    #b = 2;
+    swap() {
+      [this.#a, this.#b] = [this.#b, this.#a];
+      ({ x: this.#a = 10 } = {});
+      for (this.#b of [30]) {}
+      return [this.#a, this.#b];
+    }
+    call() { return [this.#pm(), SC.#spm(), this.#tag\`q\${1}\`]; }
+  }
+  out.superForms = [SC.y, SC.opt1, SC.opt2, SC.tagged, SC.destructured, SC.loop];
+  out.privateForms = [new SC().call(), new SC().swap()];
+}
+
 // https://github.com/oven-sh/bun/issues/28118
 {
   const id = (value, context) => value;
@@ -501,6 +545,11 @@ const extraExpected = {
   relocated: [1, true, [1, 1], 2, 1, [1, 1]],
   relocatedAsync: 1,
   namedExprNested: [3, "k", true, 3, 3, [3, 3], true, 6],
+  superForms: [1, null, "sm:SC", "SC:a|b|1,2", [5, 9, [6, 7]], [1, 2, "a"]],
+  privateForms: [
+    ["hi:7/undefined/undefined", "sm:SC/g", "7:q|1"],
+    [10, 30],
+  ],
   issue28118: "hello",
   issue31917: ["s", "t"],
   issue31929: ["function", true],
@@ -869,18 +918,24 @@ describe("ES decorators lowering output", () => {
     expect(out).not.toContain("this");
   });
 
-  test("`super` in relocated static code goes through the class's prototype", () => {
+  test("`super` in relocated static code goes through the runtime helpers", () => {
     const out = js.transformSync(
-      `const dec = () => {}; class A extends B { @dec m() {} static s = super.x; static t = super.y(1); static u = (super.z = 2); }`,
+      `const dec = () => {}; class A extends B { @dec m() {} static s = super.x; static t = super.y(1); static u = (super.z = 2); static o = super.q?.(); static g = super.tag\`x\`; static { [super.a, ...super.r] = v; for (super.i of v) {} } }`,
     );
-    expect(out).toMatch(/__publicField\w*\(A, "s", Reflect\.get\(Object\.getPrototypeOf\(A\), "x", A\)\);/);
+    expect(out).toMatch(/__publicField\w*\(A, "s", __superGet\w*\(A, A, "x"\)\);/);
+    expect(out).toMatch(/__publicField\w*\(A, "t", __superGet\w*\(A, A, "y"\)\.call\(A, 1\)\);/);
+    expect(out).toMatch(/__publicField\w*\(A, "u", __superSet\w*\(A, A, "z", 2\)\);/);
+    // An optional call checks the looked-up method, not `.call`.
     expect(out).toMatch(
-      /__publicField\w*\(A, "t", Reflect\.get\(Object\.getPrototypeOf\(A\), "y", A\)\.call\(A, 1\)\);/,
+      /__publicField\w*\(A, "o", \((__bun_temp_ref_\w+\$) = __superGet\w*\(A, A, "q"\)\) == null \? void 0 : \1\.call\(A\)\);/,
     );
-    expect(out).toMatch(
-      /__publicField\w*\(A, "u", \(Reflect\.set\(Object\.getPrototypeOf\(A\), "z", (__bun_temp_ref_\w+\$) = 2, A\), \1\)\);/,
-    );
+    // A tagged template keeps the class as the receiver.
+    expect(out).toMatch(/__publicField\w*\(A, "g", __superGet\w*\(A, A, "tag"\)\.bind\(A\)`x`\);/);
+    // Destructuring and loop targets go through a wrapper.
+    expect(out).toMatch(/\[__superWrapper\w*\(A, A, "a"\)\._, \.\.\.__superWrapper\w*\(A, A, "r"\)\._\] = v;/);
+    expect(out).toMatch(/for \(__superWrapper\w*\(A, A, "i"\)\._ of v\)/);
     expect(out).not.toContain("super.");
+    expect(out).not.toContain("Reflect");
     // The base class is captured once and the class extends the capture.
     expect(out).toMatch(/var _base\$\d+ = B,/);
     expect(out).toMatch(/class A extends _base\$\d+ \{/);
@@ -901,6 +956,28 @@ describe("ES decorators lowering output", () => {
     expect(out).toMatch(/__privateGet\w*\(this, _x\$\d+\) \?\? __privateSet\w*\(this, _x\$\d+, v\);/);
     // Temporaries are declared in the method that uses them.
     expect(out).toMatch(/inc\(\) \{\n    var __bun_temp_ref_\w+\$, __bun_temp_ref_\w+\$;/);
+  });
+
+  test("`super` in extracted private methods uses the class or its prototype as home", () => {
+    const out = js.transformSync(
+      `const dec = () => {}; class A extends B { @dec m() {} #pm() { return super.greet(); } static #spm() { return super.sm(); } }`,
+    );
+    expect(out).toMatch(
+      /_pm_fn\$\d+ = function\(\) \{\n  return __superGet\w*\(A\.prototype, this, "greet"\)\.call\(this\);\n\};/,
+    );
+    expect(out).toMatch(/_spm_fn\$\d+ = function\(\) \{\n  return __superGet\w*\(A, A, "sm"\)\.call\(A\);\n\};/);
+    expect(out).not.toContain("super.");
+  });
+
+  test("lowered private members as template tags and destructuring targets", () => {
+    const out = js.transformSync(
+      `const dec = () => {}; class A { @dec m() {} #x = 1; #pm() {} get #g() { return 1 } set #g(v) {} sw() { [this.#x, { k: this.#g = 2 }] = v; for (this.#x of v) {} } tg() { return this.#pm\`t\` } }`,
+    );
+    expect(out).toMatch(
+      /\[__privateWrapper\w*\(this, _x\$\d+\)\._, \{ k: __privateWrapper\w*\(this, _g\$\d+, _g_set\$\d+, _g_get\$\d+\)\._ = 2 \}\] = v;/,
+    );
+    expect(out).toMatch(/for \(__privateWrapper\w*\(this, _x\$\d+\)\._ of v\)/);
+    expect(out).toMatch(/return __privateMethod\w*\(this, _pm\$\d+, _pm_fn\$\d+\)\.bind\(this\)`t`;/);
   });
 
   test("private methods: brands are added before the method extra initializers", () => {

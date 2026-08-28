@@ -990,13 +990,13 @@ var require_wasi = __commonJS({
                   // an append fd passes null so O_APPEND positions the write at EOF
                   const position = stats.append || stats.offset === void 0 ? null : Number(stats.offset);
                   const i = fs.writeSync(stats.real, iov, w, iov.byteLength - w, position);
-                  if (IS_REGULAR && !stats.append) {
+                  if (!stats.append && (IS_REGULAR || stats.offset !== void 0)) {
                     stats.offset = (stats.offset === void 0 ? BigInt(0) : stats.offset) + BigInt(i);
                   }
                   w += i;
                 }
                 if (IS_REGULAR && stats.append && w > 0) {
-                  stats.offset = BigInt(fs.fstatSync(stats.real).size);
+                  stats.offset = BigInt(this.fstatSync(stats.real).size);
                 }
                 written += w;
               }

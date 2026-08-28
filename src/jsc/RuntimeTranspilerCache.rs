@@ -679,11 +679,8 @@ impl RuntimeTranspilerCache {
         }
     }
 
-    /// `<tmpdir>/bun-<euid>/@t@`, the last resort when there is no home
-    /// directory. A cache entry runs as code and other users can write to the
-    /// temp directory, so the root is per-user and used only when neither it
-    /// nor its parent can be replaced by another user. Returns 0 to mean
-    /// "cache disabled".
+    /// `<tmpdir>/bun-<euid>/@t@`, or 0 (disabled) when another user could
+    /// replace the root or its parent: a planted entry would run as code.
     #[cfg(unix)]
     fn tmpdir_cache_dir(top: &[u8], buf: &mut PathBuffer) -> usize {
         let euid = sys::c::geteuid();
@@ -735,9 +732,7 @@ impl RuntimeTranspilerCache {
         path_handler::join_abs_string_buf_z::<platform::Loose>(top, &mut buf[..], parts).len()
     }
 
-    /// Whether another user can rename or unlink entries of this directory:
-    /// it is group/other writable and the sticky bit does not limit that to
-    /// the entry owner and a trusted directory owner (us or root).
+    /// Group/other writable, and not sticky with us or root as the owner.
     #[cfg(unix)]
     fn entries_replaceable_by_others(st: &sys::Stat, euid: libc::uid_t) -> bool {
         let mode = st.st_mode as sys::Mode;

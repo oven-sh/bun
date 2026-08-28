@@ -564,6 +564,11 @@ export const linearFifoOrderedRemoveProbe = $newRustFunction(
   "TestingAPIs.orderedRemoveProbe",
   1,
 ) as (scenario: number) => number[];
+export const bitSetCopyIntoProbe = $newRustFunction("collections/bit_set.rs", "TestingAPIs.copyIntoProbe", 3) as (
+  srcLength: number,
+  dstLength: number,
+  srcBits: number[],
+) => number[];
 export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
 
 interface setSocketOptionsFn {

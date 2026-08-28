@@ -521,21 +521,25 @@ impl DynamicBitSetUnmanaged {
 
     /// `self.masks[i] = f(self.masks[i], other.masks[i])` for every mask word.
     /// Centralises the binary set-op loop (`set_union` / `set_intersection` /
-    /// `set_exclude` / `toggle_set` / `copy_into`) behind a single audited
-    /// raw-pointer access. Raw pointers — not `masks_slice{,_mut}` — because
-    /// `other.masks` may alias `self.masks` when both are views from the same
-    /// `DynamicBitSetList`; forming overlapping `&mut [usize]` / `&[usize]`
-    /// would be UB. `f` receives copied `usize` values, so the per-index read
-    /// happens-before the write even when `src == dst`.
+    /// `set_exclude`) behind a single audited raw-pointer access. Raw pointers
+    /// — not `masks_slice{,_mut}` — because `other.masks` may alias
+    /// `self.masks` when both are views from the same `DynamicBitSetList`;
+    /// forming overlapping `&mut [usize]` / `&[usize]` would be UB. `f`
+    /// receives copied `usize` values, so the per-index read happens-before
+    /// the write even when `src == dst`.
+    ///
+    /// `other` must have at least as many mask words as `self`.
     #[inline(always)]
     fn zip_masks_raw(&mut self, other: &Self, mut f: impl FnMut(usize, usize) -> usize) {
         let num_masks = Self::num_masks(self.bit_length);
+        debug_assert!(Self::num_masks(other.bit_length) >= num_masks);
         let dst = self.masks;
         let src = other.masks;
         for i in 0..num_masks {
-            // SAFETY: `i < num_masks(self.bit_length)`; `dst`/`src` each point
-            // at ≥ `num_masks` initialized words (`resize`/`List::at` invariant).
-            // The two pointers may be equal — see method doc.
+            // SAFETY: `i < num_masks(self.bit_length)`; `dst` points at
+            // `num_masks` initialized words (`resize`/`List::at` invariant) and
+            // the caller guarantees `src` covers at least as many. The two
+            // pointers may be equal — see method doc.
             unsafe { *dst.add(i) = f(*dst.add(i), *src.add(i)) };
         }
     }
@@ -778,6 +782,9 @@ impl DynamicBitSetUnmanaged {
         self.masks_slice_mut()[num_masks - 1] &= last_item_mask;
     }
 
+    /// Copies the bits of `other` into `self`. The two sets may differ in
+    /// length: bits of `self` past `other.bit_length` are cleared, and bits of
+    /// `other` past `self.bit_length` are dropped.
     pub fn copy_into(&mut self, other: &Self) {
         let bit_length = self.bit_length;
         // avoid underflow if bit_length is zero
@@ -785,8 +792,15 @@ impl DynamicBitSetUnmanaged {
             return;
         }
 
-        let num_masks = Self::num_masks(self.bit_length);
-        self.zip_masks_raw(other, |_, b| b);
+        let num_masks = Self::num_masks(bit_length);
+        let shared_masks = Self::num_masks(other.bit_length).min(num_masks);
+        // SAFETY: `shared_masks` is within both allocations: `other.masks`
+        // points at `num_masks(other.bit_length)` initialized words and
+        // `self.masks` at `num_masks` (`resize`/`List::at` invariant). Raw
+        // pointers because the two may be equal when both are views from the
+        // same `DynamicBitSetList`; `ptr::copy` allows overlap.
+        unsafe { ptr::copy(other.masks, self.masks, shared_masks) };
+        self.masks_slice_mut()[shared_masks..].fill(0);
 
         let padding_bits =
             u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).expect("int cast");
@@ -1228,8 +1242,8 @@ impl DynamicBitSet {
         self.unmanaged.capacity()
     }
 
-    /// Copy all set/unset bits from `self` into `other` (which must have
-    /// `bit_length >= self.bit_length`). Port of `DynamicBitSet.copyInto`.
+    /// Copy all set/unset bits from `self` into `other`. Bits of `other` past
+    /// `self.bit_length` are cleared. Port of `DynamicBitSet.copyInto`.
     #[inline]
     pub fn copy_into(&self, other: &mut Self) {
         other.unmanaged.copy_into(&self.unmanaged);
@@ -1410,4 +1424,75 @@ pub struct Range {
     pub start: usize,
     /// The index immediately after the last bit of interest.
     pub end: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn set_indices(set: &DynamicBitSet) -> Vec<usize> {
+        let mut out = Vec::new();
+        let mut it = set.iterator::<true, true>();
+        while let Some(i) = it.next() {
+            out.push(i);
+        }
+        out
+    }
+
+    // `PackageInstaller::fix_cached_lockfile_package_slices` grows
+    // `successfully_installed` this way: the old set has one mask word, the
+    // new one has two. The copy must not read past the old set's single word.
+    #[test]
+    fn copy_into_grows_across_a_word_boundary() {
+        let mut src = DynamicBitSet::init_empty(64).unwrap();
+        src.set(0);
+        src.set(17);
+        src.set(63);
+
+        let mut dst = DynamicBitSet::init_empty(65).unwrap();
+        dst.set(64);
+        src.copy_into(&mut dst);
+
+        assert_eq!(set_indices(&dst), [0, 17, 63]);
+        assert_eq!(dst.count(), 3);
+    }
+
+    #[test]
+    fn copy_into_from_an_empty_set_clears_the_destination() {
+        let src = DynamicBitSet::init_empty(0).unwrap();
+        let mut dst = DynamicBitSet::init_empty(130).unwrap();
+        dst.set(1);
+        dst.set(64);
+        dst.set(129);
+        src.copy_into(&mut dst);
+
+        assert_eq!(set_indices(&dst), []);
+    }
+
+    #[test]
+    fn copy_into_drops_bits_past_the_destination_length() {
+        let mut src = DynamicBitSet::init_empty(70).unwrap();
+        src.set(3);
+        src.set(64);
+        src.set(69);
+
+        let mut dst = DynamicBitSet::init_empty(66).unwrap();
+        src.copy_into(&mut dst);
+
+        assert_eq!(set_indices(&dst), [3, 64]);
+        assert_eq!(dst.count(), 2);
+    }
+
+    #[test]
+    fn copy_into_same_length_is_a_plain_copy() {
+        let mut src = DynamicBitSet::init_empty(100).unwrap();
+        src.set(5);
+        src.set(99);
+
+        let mut dst = DynamicBitSet::init_empty(100).unwrap();
+        dst.set(50);
+        src.copy_into(&mut dst);
+
+        assert!(dst.unmanaged.eql(&src.unmanaged));
+    }
 }

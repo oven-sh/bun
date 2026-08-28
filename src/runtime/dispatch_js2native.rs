@@ -87,9 +87,11 @@ pub use css::prefix_test as css_jsc_css_internals_prefix_test;
 pub use css::prefix_test_with_options as css_jsc_css_internals_prefix_test_with_options;
 pub use css::test_with_options as css_jsc_css_internals_test_with_options;
 
-// `LinearFifo` has no JSC consumer of its own; this `bun:internal-for-testing`
-// probe lives in `bun_runtime` (which depends on both `bun_collections` and
-// `bun_jsc`) rather than inventing a JSC edge into the collections crate.
+// `LinearFifo` and `DynamicBitSet` have no JSC consumer of their own; these
+// `bun:internal-for-testing` probes live in `bun_runtime` (which depends on
+// both `bun_collections` and `bun_jsc`) rather than inventing a JSC edge into
+// the collections crate.
+pub(crate) use crate::bit_set_testing::copy_into_probe as collections_bit_set_testing_ap_is_copy_into_probe;
 pub(crate) use crate::linear_fifo_testing::ordered_remove_probe as collections_linear_fifo_testing_ap_is_ordered_remove_probe;
 
 // ported from: generated_js2native.rs

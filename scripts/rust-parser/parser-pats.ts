@@ -1,7 +1,7 @@
 // Patterns.
 
-import { TypeParser } from "./parser-types.ts";
 import type * as ast from "./ast.ts";
+import { TypeParser } from "./parser-types.ts";
 
 export abstract class PatParser extends TypeParser {
   /** A pattern, with top-level `|` alternatives. */

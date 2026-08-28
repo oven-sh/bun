@@ -1,9 +1,9 @@
 // Items and the file root. `Parser` is the concrete class.
 
-import { flattenTokenTrees, lex, RustLexError, type Token, type TokenTree } from "./lexer.ts";
-import { ExprParser } from "./parser-exprs.ts";
-import { RustParseError } from "./parser-base.ts";
 import type * as ast from "./ast.ts";
+import { flattenTokenTrees, lex, RustLexError, type Token, type TokenTree } from "./lexer.ts";
+import { RustParseError } from "./parser-base.ts";
+import { ExprParser } from "./parser-exprs.ts";
 
 /** Keywords a `default`/`const`/`async`/`unsafe`/`safe` qualifier may be followed by in item position. */
 const QUALIFIED_ITEM_KEYWORDS = new Set([

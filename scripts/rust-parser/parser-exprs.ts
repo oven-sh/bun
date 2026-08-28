@@ -1,8 +1,8 @@
 // Expressions, blocks, and statements.
 
+import type * as ast from "./ast.ts";
 import { flattenTokenTrees, splitTokenTrees, type Token, type TokenTree } from "./lexer.ts";
 import { PatParser } from "./parser-pats.ts";
-import type * as ast from "./ast.ts";
 
 const PREC_ASSIGN = 1;
 const PREC_RANGE = 2;

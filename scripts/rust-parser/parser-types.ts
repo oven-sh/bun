@@ -1,7 +1,7 @@
 // Types, generic parameters and arguments, bounds, where clauses.
 
-import { ParserBase } from "./parser-base.ts";
 import type * as ast from "./ast.ts";
+import { ParserBase } from "./parser-base.ts";
 
 export abstract class TypeParser extends ParserBase {
   /** A type, with `+` bounds allowed after `dyn`/`impl`. */

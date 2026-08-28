@@ -30,10 +30,10 @@ import {
 } from "./parser-items.ts";
 
 export type * from "./ast.ts";
+export { buildTokenTrees, flattenTokenTrees, lex, splitTokenTrees, tokenTreesText } from "./lexer.ts";
+export type { LiteralKind, Token, TokenKind } from "./lexer.ts";
 export { RustParseError } from "./parser-base.ts";
-export { lex, buildTokenTrees, splitTokenTrees, flattenTokenTrees, tokenTreesText } from "./lexer.ts";
-export type { Token, TokenKind, LiteralKind } from "./lexer.ts";
-export { parseExpr as parseRustExpr, parseType as parseRustType, parsePat as parseRustPat, attributesInTokens };
+export { attributesInTokens, parseExpr as parseRustExpr, parsePat as parseRustPat, parseType as parseRustType };
 
 type Node = ast.Node;
 type NodeKind = ast.NodeKind;

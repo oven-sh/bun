@@ -9,7 +9,7 @@
 // `macro_rules!` bodies).
 
 import type { TokenTree } from "./lexer.ts";
-export type { Comment, TokenTree, TokenGroup, TokenLeaf } from "./lexer.ts";
+export type { Comment, TokenGroup, TokenLeaf, TokenTree } from "./lexer.ts";
 
 export interface Span {
   start: number;

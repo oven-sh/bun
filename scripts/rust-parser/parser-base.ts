@@ -3,8 +3,8 @@
 // expressions, items) so that each file stays readable. Methods a lower layer
 // needs from a higher one are declared abstract here.
 
-import { buildTokenTrees, type Token, type TokenTree } from "./lexer.ts";
 import type * as ast from "./ast.ts";
+import { buildTokenTrees, type Token, type TokenTree } from "./lexer.ts";
 
 export class RustParseError extends Error {
   constructor(

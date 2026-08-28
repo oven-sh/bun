@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { exists, mkdir, writeFile } from "fs/promises";
 import { bunEnv, bunExe, bunEnv as env, normalizeBunSnapshot, readdirSorted, tempDir, tmpdirSync } from "harness";
 import { cpSync } from "node:fs";
@@ -864,6 +864,71 @@ test("bun pm whoami still works", async () => {
 
   // Exit code will be non-zero due to missing auth
   expect(exitCode).toBe(1);
+});
+
+describe("bun pm whoami user-agent", () => {
+  // The machine that runs this test may itself be a CI runner. Strip its
+  // markers so each case controls exactly which ones the child sees.
+  const cleanEnv: Record<string, string | undefined> = { ...bunEnv };
+  for (const key of [
+    "CI",
+    "BUILDKITE",
+    "GITHUB_ACTIONS",
+    "GITLAB_CI",
+    "CIRCLECI",
+    "TRAVIS",
+    "JENKINS_URL",
+    "BUILD_ID",
+  ]) {
+    delete cleanEnv[key];
+  }
+
+  async function whoamiUserAgent(extraEnv: Record<string, string>): Promise<string | null> {
+    let userAgent: string | null = null;
+    using registry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        userAgent = req.headers.get("user-agent");
+        return Response.json({ username: "whoami-ua" });
+      },
+    });
+    using dir = tempDir("bun-pm-whoami-ua", {
+      "package.json": JSON.stringify({ name: "whoami-ua", version: "1.0.0" }),
+      "bunfig.toml": Bun.TOML.stringify({
+        install: {
+          cache: false,
+          registry: { url: `http://localhost:${registry.port}`, token: "whoami-ua-token" },
+        },
+      }),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", "whoami"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...cleanEnv, ...extraEnv },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("whoami-ua\n");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return userAgent;
+  }
+
+  const baseUserAgent = `Bun/${Bun.version} ${process.platform} ${process.arch} workspaces/false`;
+
+  test("names the CI vendor", async () => {
+    expect(await whoamiUserAgent({ GITHUB_ACTIONS: "true" })).toBe(`${baseUserAgent} ci/github-actions`);
+  });
+
+  test("CI=false is not CI", async () => {
+    expect(await whoamiUserAgent({ CI: "false" })).toBe(baseUserAgent);
+  });
+
+  test("CI=false wins over a vendor variable", async () => {
+    expect(await whoamiUserAgent({ CI: "false", GITHUB_ACTIONS: "true" })).toBe(baseUserAgent);
+  });
 });
 
 test.each([

@@ -182,7 +182,7 @@ impl Snapshots {
 
         // doesn't exist. append to file bytes and add to hashmap.
         // Prevent snapshot creation in CI environments unless --update-snapshots is used
-        if crate::cli::ci_info::is_ci() {
+        if bun_core::ci_info::is_ci() {
             if !self.update_snapshots {
                 // Store the snapshot name for error reporting
                 self.last_error_snapshot_name = Some(name_with_counter.into_boxed_slice());

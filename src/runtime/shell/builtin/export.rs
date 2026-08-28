@@ -31,9 +31,6 @@ impl Export {
         let mut errors = Vec::new();
         for i in 0..argc {
             let s = Builtin::of(interp, cmd).arg_bytes(i);
-            if s.is_empty() {
-                continue;
-            }
             let (name, value) = match bun_core::strings::index_of_char_usize(s, b'=') {
                 Some(eq) => (&s[..eq], &s[eq + 1..]),
                 None => (s, &b""[..]),

@@ -1399,12 +1399,13 @@ describe("deno_task", () => {
       .stdout("1 testing test this out\n")
       .runAsTest("exported vars 2");
 
-    TestBuilder.command`export 1abc a-b=5 =x ok=1; ${BUN} -e ${"console.log(JSON.stringify([process.env['1abc'], process.env['a-b'], process.env.ok]))"}`
+    TestBuilder.command`export 1abc a-b=5 =x "" ok=1; ${BUN} -e ${"console.log(JSON.stringify([process.env['1abc'], process.env['a-b'], process.env.ok]))"}`
       .stdout('[null,null,"1"]\n')
       .stderr(
         "export: `1abc`: not a valid identifier\n" +
           "export: `a-b=5`: not a valid identifier\n" +
-          "export: `=x`: not a valid identifier\n",
+          "export: `=x`: not a valid identifier\n" +
+          "export: ``: not a valid identifier\n",
       )
       .testMini()
       .runAsTest("export rejects invalid identifiers and keeps the valid ones");

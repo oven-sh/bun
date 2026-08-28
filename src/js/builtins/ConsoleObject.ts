@@ -149,14 +149,19 @@ export function createCreateTask() {
     return f.$call(undefined);
   }
 
-  return function createTask(name) {
-    if (typeof name !== "string" || name.length === 0) {
-      throw new Error("First argument must be a non-empty string.");
-    }
-    const task = { run };
-    $putByIdDirectPrivate(task, "consoleTask", true);
-    return task;
+  // a shorthand method, so `new console.createTask(...)` throws like in Node
+  // and the function name survives bundling
+  const { createTask } = {
+    createTask(name: string) {
+      if (typeof name !== "string" || name.length === 0) {
+        throw new Error("First argument must be a non-empty string.");
+      }
+      const task = { run };
+      $putByIdDirectPrivate(task, "consoleTask", true);
+      return task;
+    },
   };
+  return createTask;
 }
 
 // This is the `console.Console` constructor. It is mostly copied from Node.

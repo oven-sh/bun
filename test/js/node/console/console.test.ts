@@ -157,6 +157,10 @@ describe("console.createTask", () => {
     });
   });
 
+  test("createTask is not a constructor", () => {
+    expect(() => new (console.createTask as any)("x")).toThrow(TypeError);
+  });
+
   test("Console class instances do not have createTask", () => {
     const c = new Console({ stdout: process.stdout, stderr: process.stderr });
     expect("createTask" in c).toBe(false);

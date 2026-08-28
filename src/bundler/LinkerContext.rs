@@ -4282,6 +4282,16 @@ impl InsideWrapperPrefix {
         Ok(())
     }
 
+    /// A directive prologue has to be the first thing in the wrapper, ahead
+    /// of the dependency calls that `append_sync_dependency` inserts at
+    /// `sync_dependencies_end`. Call this before any dependency is appended.
+    pub(crate) fn append_directive(&mut self, directive: bun_ast::StoreStr) {
+        debug_assert!(self.stmts.len() == self.sync_dependencies_end && !self.has_async_dependency);
+        self.stmts
+            .push(Stmt::alloc(S::Directive { value: directive }, Loc::EMPTY));
+        self.sync_dependencies_end += 1;
+    }
+
     pub(crate) fn append_non_dependency_slice(&mut self, stmts: &[Stmt]) -> Result<(), AllocError> {
         self.stmts.extend_from_slice(stmts);
         Ok(())

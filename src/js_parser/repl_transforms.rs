@@ -21,46 +21,37 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// This transforms code for interactive evaluation:
     /// - Wraps the last expression in { value: expr } for result capture
     /// - Wraps code with await in async IIFE with variable hoisting
+    ///
+    /// `directives` is the module-level directive prologue that `_parse`
+    /// stripped from the top-level statements. Node's repl evaluates a
+    /// directive as a string expression, so the transform puts the directives
+    /// back in front of the statements. Returns `true` when it did so (the
+    /// caller then drops them from `Ast.directives`), `false` when it left the
+    /// parts untouched.
     pub(crate) fn apply_repl_transforms<'bump>(
         &mut self,
         parts: &mut BumpVec<'bump, js_ast::Part>,
         bump: &'bump Bump,
-    ) -> Result<(), bun_alloc::AllocError> {
+        directives: &[Stmt],
+    ) -> Result<bool, bun_alloc::AllocError> {
         // Skip transform if there's a top-level return (indicates module pattern)
         if self.has_top_level_return {
-            return Ok(());
+            return Ok(false);
         }
 
         // Collect all statements
-        let mut total_stmts_count: usize = 0;
+        let mut total_stmts_count: usize = directives.len();
         for part in parts.iter() {
             total_stmts_count += part.stmts.len();
         }
 
-        // A prologue "use strict" was consumed into module-scope strict mode and dropped, but
-        // node's repl still evaluates the directive as a string expression. Reinject it at the
-        // front, like the CJS wrapper's preserve_strict_mode.
-        let reinject_strict = self.module_scope().strict_mode
-            == js_ast::StrictModeKind::ExplicitStrictMode
-            && !(!parts.is_empty()
-                && !parts[0].stmts.is_empty()
-                && matches!(parts[0].stmts[0].data, StmtData::SDirective(_)));
-        total_stmts_count += usize::from(reinject_strict);
-
         if total_stmts_count == 0 {
-            return Ok(());
+            return Ok(true);
         }
 
         // Collect all statements into a single array
         let mut all_stmts = BumpVec::with_capacity_in(total_stmts_count, bump);
-        if reinject_strict {
-            all_stmts.push(self.s(
-                S::Directive {
-                    value: b"use strict".into(),
-                },
-                self.module_scope_directive_loc,
-            ));
-        }
+        all_stmts.extend_from_slice(directives);
         for part in parts.iter() {
             for stmt in part.stmts.iter() {
                 all_stmts.push(*stmt);
@@ -80,7 +71,8 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
 
         // Apply transform with is_async based on presence of top-level await
-        self.repl_transform_with_hoisting(parts, all_stmts, bump, has_top_level_await)
+        self.repl_transform_with_hoisting(parts, all_stmts, bump, has_top_level_await)?;
+        Ok(true)
     }
 
     /// Transform code with hoisting and IIFE wrapper

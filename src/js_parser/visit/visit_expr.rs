@@ -97,8 +97,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // if e.LegacyOctalLoc.Start > 0 {
     }
 
-    fn e_number(_: &mut Self, _e: &mut Expr, _: ExprIn) {
-        // idc about legacy octal loc
+    fn e_number(p: &mut Self, e: &mut Expr, _: ExprIn) {
+        if !p.legacy_octal_literals.is_empty() && p.is_strict_mode() {
+            // Parsed in source order, so the ranges are sorted by start.
+            if let Ok(i) = p
+                .legacy_octal_literals
+                .binary_search_by_key(&e.loc.start, |r| r.loc.start)
+            {
+                let range = p.legacy_octal_literals[i];
+                p.mark_strict_mode_feature(StrictModeFeature::LegacyOctalLiteral, range, b"")
+                    .expect("unreachable");
+            }
+        }
     }
 
     fn e_this(p: &mut Self, e: &mut Expr, _: ExprIn) {

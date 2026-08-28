@@ -78,6 +78,11 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             let hmr_api_ref = ast.wrapper_ref;
 
+            // The module's directive prologue leads the HMR wrapper body.
+            for directive in ast.directives.slice() {
+                stmts.inside_wrapper_prefix.append_directive(*directive);
+            }
+
             // SAFETY: see `parts` raw-pointer note above.
             for part in unsafe { (*parts).iter() } {
                 let part_stmts: &[Stmt] = part.stmts.slice();
@@ -254,24 +259,20 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
     let output_format = c.options.output_format;
 
-    // The top-level directive must come first (the non-wrapped case is handled
-    // by the chunk generation code, although only for the entry point)
-    if flags.wrap != WrapKind::None
-        && ast
-            .flags
-            .contains(AstFlags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE)
-        && !chunk.is_entry_point()
-        && !output_format.is_always_strict_mode()
-    {
-        stmts
-            .inside_wrapper_prefix
-            .append_non_dependency(Stmt::alloc(
-                S::Directive {
-                    value: bun_ast::StoreStr::new(b"use strict"),
-                },
-                bun_ast::Loc::EMPTY,
-            ))
-            .expect("unreachable");
+    // The top-level directives must come first. The chunk generation code
+    // prints them at the top of the chunk for the chunk's own entry point.
+    // Every other wrapped file gets them inside its wrapper, including an
+    // entry point that another entry point's chunk pulls in as a dependency.
+    let is_chunk_entry_point_file =
+        chunk.is_entry_point() && chunk.entry_point.source_index() as usize == source_index;
+    if flags.wrap != WrapKind::None && !is_chunk_entry_point_file {
+        for directive in ast.directives.slice() {
+            // Every ES module is already in strict mode
+            if output_format.is_always_strict_mode() && directive.slice() == b"use strict" {
+                continue;
+            }
+            stmts.inside_wrapper_prefix.append_directive(*directive);
+        }
     }
 
     // `convert_stmts_for_chunk` takes `&mut c` inside the loop body, so capture

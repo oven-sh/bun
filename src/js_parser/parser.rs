@@ -1056,6 +1056,7 @@ pub struct ParsedPath<'a> {
 pub enum StrictModeFeature {
     EvalOrArguments,
     ReservedWord,
+    LegacyOctalLiteral,
 }
 
 #[derive(Clone, Copy)]
@@ -1457,6 +1458,10 @@ pub struct ParseStatementOptions<'a> {
     pub(crate) is_name_optional: bool,
     pub(crate) is_typescript_declare: bool,
     pub(crate) is_for_loop_init: bool,
+    /// Only a module body or a function body starts with a directive
+    /// prologue. A string statement at the start of a block, a class static
+    /// block, or a TypeScript namespace is an ordinary expression statement.
+    pub(crate) allow_directive_prologue: bool,
 }
 
 impl<'a> ParseStatementOptions<'a> {

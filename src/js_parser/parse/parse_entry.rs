@@ -438,6 +438,7 @@ impl<'a> Parser<'a> {
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
             scope: StatementScope::Module,
+            allow_directive_prologue: true,
             ..Default::default()
         };
 
@@ -628,6 +629,7 @@ impl<'a> Parser<'a> {
             exports_kind,
             WrapMode::None,
             b"",
+            &[],
         )?))
     }
 }
@@ -825,6 +827,7 @@ impl<'a> Parser<'a> {
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
             scope: StatementScope::Module,
+            allow_directive_prologue: true,
             ..Default::default()
         };
         let mut parse_tracer = bun_core::perf::trace("JSParser::parse");
@@ -896,6 +899,48 @@ impl<'a> Parser<'a> {
                 import_bindings,
             )));
         }
+
+        // Strip off all leading directives. They go on `Ast.directives` so
+        // that the printer and the linker can emit them ahead of hoisted
+        // imports and generated statements, where a directive prologue has
+        // to be for engines and tools to honor it.
+        let directives: &'a [Stmt];
+        let stmts: &'a mut [Stmt] = {
+            let mut directive_list = BumpVec::<Stmt>::new_in(p.arena);
+            let mut total_count: usize = 0;
+            let mut kept_count: usize = 0;
+            for i in 0..stmts.len() {
+                let stmt = stmts[i];
+                match stmt.data {
+                    js_ast::StmtData::SComment(_) => {
+                        stmts[kept_count] = stmt;
+                        kept_count += 1;
+                        total_count += 1;
+                    }
+                    js_ast::StmtData::SDirective(directive) => {
+                        // Remove duplicate directives
+                        let is_duplicate = directive_list.iter().any(|existing| {
+                            matches!(existing.data, js_ast::StmtData::SDirective(prev)
+                                if prev.value.slice() == directive.value.slice())
+                        });
+                        if !is_duplicate {
+                            directive_list.push(stmt);
+                        }
+                        total_count += 1;
+                    }
+                    // Stop when the directive prologue ends
+                    _ => break,
+                }
+            }
+            directives = directive_list.into_bump_slice();
+            if kept_count < total_count {
+                stmts.copy_within(total_count.., kept_count);
+                let new_len = stmts.len() - (total_count - kept_count);
+                stmts.split_at_mut(new_len).0
+            } else {
+                stmts
+            }
+        };
 
         let mut before = BumpVec::<js_ast::Part>::new_in(p.arena);
         let mut after = BumpVec::<js_ast::Part>::new_in(p.arena);
@@ -2170,7 +2215,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?;
+        let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang, directives)?;
 
         if reject_import_statements {
             // An empty range marks a parser-generated record, like the JSX runtime import.

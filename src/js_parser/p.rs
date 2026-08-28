@@ -447,7 +447,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) delete_target: js_ast::ExprData,
     pub(crate) loop_body: js_ast::StmtData,
     pub(crate) module_scope: js_ast::StoreRef<js_ast::Scope>,
-    pub(crate) module_scope_directive_loc: bun_ast::Loc,
     pub(crate) is_control_flow_dead: bool,
 
     /// True while `visit_single_stmt` is visiting a non-block body. `if`,
@@ -542,6 +541,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // makes it easier to quickly scan the top-level statements for "var" locals
     // with the guarantee that all will be found.
     pub(crate) relocated_top_level_vars: List<'a, js_ast::LocRef>,
+
+    // Source ranges of legacy octal literals (`010`), in source order. Whether
+    // one is an error depends on strict mode, which is only fully known in the
+    // visit pass (an `export` further down makes the whole file strict).
+    pub(crate) legacy_octal_literals: List<'a, bun_ast::Range>,
 
     // ArrowFunction is a special case in the grammar. Although it appears to be
     // a PrimaryExpression, it's actually an AssignmentExpression. This means if
@@ -3180,6 +3184,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `parent != scope` (fresh alloc) so the two `&mut` do not alias.
         VecExt::append(&mut parent.children, scope);
         scope.strict_mode = parent.strict_mode;
+        scope.use_strict_loc = parent.use_strict_loc;
 
         self.current_scope = scope;
 
@@ -4236,6 +4241,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )
             .into_bump_str()
             .as_bytes(),
+            StrictModeFeature::LegacyOctalLiteral => b"Legacy octal literals",
         };
 
         let scope = self.current_scope();
@@ -4256,7 +4262,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     why = b"All code inside a class is implicitly in strict mode";
                     where_ = self.enclosing_class_keyword;
                 }
-                _ => {}
+                js_ast::StrictModeKind::ExplicitStrictMode => {
+                    why = b"Strict mode is triggered by the \"use strict\" directive here";
+                    where_ = self.source.range_of_string(scope.use_strict_loc);
+                }
+                js_ast::StrictModeKind::SloppyMode => {}
             }
             if why.is_empty() {
                 why = bun_alloc::arena_format!(
@@ -5181,7 +5191,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn is_valid_assignment_target(&self, expr: &Expr) -> bool {
         match &expr.data {
             js_ast::ExprData::EIdentifier(ident) => {
-                !is_eval_or_arguments(self.load_name_from_ref(ident.ref_))
+                // Assigning to "eval" or "arguments" is only an error in strict mode
+                !self.is_strict_mode() || !is_eval_or_arguments(self.load_name_from_ref(ident.ref_))
             }
             js_ast::ExprData::EDot(e) => e.optional_chain.is_none(),
             js_ast::ExprData::EIndex(e) => e.optional_chain.is_none(),
@@ -7800,6 +7811,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         exports_kind: js_ast::ExportsKind,
         wrap_mode: WrapMode,
         hashbang: &'a [u8],
+        // The module-level directive prologue, as `S::Directive` statements in
+        // source order. `_parse` strips them out of the top-level statements.
+        mut directives: &'a [Stmt],
     ) -> Result<Box<js_ast::Ast<'a>>, crate::Error> {
         use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
         use crate::scan::scan_imports::ImportScanner;
@@ -8117,32 +8131,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
             }
 
-            let mut total_stmts_count: usize = 0;
+            // The directive prologue moves inside the wrapper so that a
+            // "use strict" still governs the module's code.
+            let mut total_stmts_count: usize = directives.len();
             for part in parts.iter() {
                 total_stmts_count += part.stmts.len();
             }
-
-            let preserve_strict_mode = self.module_scope().strict_mode
-                == js_ast::StrictModeKind::ExplicitStrictMode
-                && !(parts.len() > 0
-                    && parts[0].stmts.len() > 0
-                    && matches!(parts[0].stmts[0].data, js_ast::StmtData::SDirective(_)));
-
-            total_stmts_count += usize::from(preserve_strict_mode);
 
             // Stmt is not Default; fill with `Stmt::empty()`.
             let stmts_to_copy = arena.alloc_slice_fill_with(total_stmts_count, |_| Stmt::empty());
             {
                 let mut remaining_stmts = &mut stmts_to_copy[..];
-                if preserve_strict_mode {
-                    remaining_stmts[0] = self.s(
-                        S::Directive {
-                            value: b"use strict".into(),
-                        },
-                        self.module_scope_directive_loc,
-                    );
-                    remaining_stmts = &mut remaining_stmts[1..];
-                }
+                remaining_stmts[..directives.len()].copy_from_slice(directives);
+                remaining_stmts = &mut remaining_stmts[directives.len()..];
+                directives = &[];
 
                 for part in parts.iter() {
                     let src = part.stmts.slice();
@@ -8189,7 +8191,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.options.repl_mode {
             // `apply_repl_transforms` is declared in ast::repl_transforms as an
             // `impl P` mixin.
-            self.apply_repl_transforms(parts, arena)?;
+            if self.apply_repl_transforms(parts, arena, directives)? {
+                directives = &[];
+            }
         }
 
         let mut top_level_symbols_to_parts = bun_ast::ast_result::TopLevelSymbolToParts::default();
@@ -8282,7 +8286,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let char_freq: Option<js_ast::CharFreq> = self.compute_character_frequency();
 
-        let module_scope_strict = self.module_scope().strict_mode;
+        let directives: bun_ast::StoreSlice<bun_ast::StoreStr> = if directives.is_empty() {
+            bun_ast::StoreSlice::EMPTY
+        } else {
+            bun_ast::StoreSlice::new(arena.alloc_slice_fill_with(directives.len(), |i| {
+                match directives[i].data {
+                    js_ast::StmtData::SDirective(directive) => directive.value,
+                    _ => unreachable!("module directives are S::Directive statements"),
+                }
+            }))
+        };
+
         // Scope is not `Clone` (Vec/HashMap members), so move it out and leave
         // a default in `*self.module_scope`. `to_ast` is terminal — the parser
         // does not touch `module_scope` afterwards.
@@ -8340,11 +8354,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             export_keyword: self.esm_export_keyword,
             top_level_symbols_to_parts,
             char_freq,
-            directive: if module_scope_strict == js_ast::StrictModeKind::ExplicitStrictMode {
-                Some(bun_ast::StoreStr::new(b"use strict"))
-            } else {
-                None
-            },
+            directives,
             nested_scope_slot_counts,
 
             require_ref,
@@ -8724,7 +8734,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             import_items_for_namespace: Default::default(),
             is_import_item: Default::default(),
             scope_order_to_visit: &[],
-            module_scope_directive_loc: bun_ast::Loc::default(),
             is_control_flow_dead: false,
             is_inside_single_stmt_body: false,
             is_revisit_for_substitution: false,
@@ -8734,6 +8743,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             temp_refs_to_declare: BumpVec::new_in(arena),
             temp_ref_count: 0,
             relocated_top_level_vars: BumpVec::new_in(arena),
+            legacy_octal_literals: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
             const_values: Default::default(),
             binary_expression_stack: BumpVec::new_in(arena),

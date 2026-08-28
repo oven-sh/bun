@@ -1448,7 +1448,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut return_without_semicolon_start: i32 = -1;
         opts.lexical_decl = LexicalDecl::AllowAll;
-        let mut is_directive_prologue = true;
+        let mut is_directive_prologue = opts.allow_directive_prologue;
 
         loop {
             for comment in p.lexer.comments_to_preserve_before.iter() {
@@ -1480,21 +1480,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if !str_.prefer_template {
                             is_directive_prologue = true;
 
-                            if str_.eql_comptime(b"use strict") {
-                                skip = true;
-                                // Track "use strict" directives
-                                p.current_scope_mut().strict_mode =
-                                    StrictModeKind::ExplicitStrictMode;
-                                if p.current_scope == p.module_scope {
-                                    p.module_scope_directive_loc = stmt.loc;
-                                }
-                            } else if str_.eql_comptime(b"use asm") && !p.options.repl_mode {
+                            if str_.eql_comptime(b"use asm") && !p.options.repl_mode {
+                                // Deliberately remove "use asm" directives. The asm.js
+                                // validator would reject the transformed output and
+                                // engines print a warning when validation fails.
+                                //
                                 // In the REPL the directive stays a string
                                 // statement so it evaluates as the result,
                                 // like node ('use asm' prints 'use asm').
                                 skip = true;
                                 stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
                             } else {
+                                let directive_loc = expr.value.loc;
+                                let is_use_strict = str_.eql_comptime(b"use strict");
                                 let bytes = str_.string(p.arena).expect("OOM");
                                 stmt = Stmt::alloc(
                                     S::Directive {
@@ -1502,6 +1500,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     },
                                     stmt.loc,
                                 );
+
+                                if is_use_strict {
+                                    // Track "use strict" directives
+                                    let mut scope = p.current_scope;
+                                    scope.strict_mode = StrictModeKind::ExplicitStrictMode;
+                                    scope.use_strict_loc = directive_loc;
+
+                                    // Inside a function, strict mode propagates from the
+                                    // body scope to the argument scope:
+                                    //
+                                    //   // This is a syntax error
+                                    //   function fn(arguments) {
+                                    //     "use strict";
+                                    //   }
+                                    //
+                                    if scope.kind == js_ast::scope::Kind::FunctionBody {
+                                        if let Some(mut parent) = scope.parent {
+                                            if parent.kind == js_ast::scope::Kind::FunctionArgs
+                                                && parent.strict_mode == StrictModeKind::SloppyMode
+                                            {
+                                                parent.strict_mode =
+                                                    StrictModeKind::ExplicitStrictMode;
+                                                parent.use_strict_loc = directive_loc;
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

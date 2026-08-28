@@ -22,12 +22,14 @@ enum State {
 impl Export {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let argc = Builtin::of(interp, cmd).args_slice().len();
-        if argc == 0 {
+        // POSIX end-of-options marker: `export -- NAME=value`.
+        let start = usize::from(argc > 0 && Builtin::of(interp, cmd).arg_bytes(0) == b"--");
+        if start >= argc {
             // No args: print all exported vars.
             return Self::print_all(interp, cmd);
         }
         let mut errors = Vec::new();
-        for i in 0..argc {
+        for i in start..argc {
             let s = Builtin::of(interp, cmd).arg_bytes(i);
             let (name, value) = match bun_core::strings::index_of_char_usize(s, b'=') {
                 Some(eq) => (&s[..eq], &s[eq + 1..]),

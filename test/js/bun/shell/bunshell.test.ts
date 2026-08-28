@@ -1417,6 +1417,15 @@ describe("deno_task", () => {
       .runAsTest("export exits 1 on an invalid identifier");
 
     TestBuilder.command`export _ok OK2=1 && echo done`.stdout("done\n").runAsTest("export accepts valid identifiers");
+
+    TestBuilder.command`export -- FOO=bar && echo $FOO && export -- && echo done`
+      .stdout(stdout => {
+        expect(stdout).toStartWith("bar\n");
+        expect(stdout).toContain("FOO=bar\n");
+        expect(stdout).not.toContain("--=");
+        expect(stdout).toEndWith("done\n");
+      })
+      .runAsTest("export treats a leading -- as the end of options");
   });
 
   describe("pipeline", async () => {

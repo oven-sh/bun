@@ -2,7 +2,9 @@
 use crate::Error;
 use crate::lexer::T;
 use crate::p::P;
-use crate::parser::{ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag};
+use crate::parser::{
+    FnOrArrowDataParse, ParseStatementOptions, Ref, SkipTypeParameterResult, TypeParameterFlag,
+};
 use crate::typescript;
 use crate::typescript::SkipTypeOptions;
 use crate::typescript::identifier::{Kind as TsIdentKind, kind_for_identifier};
@@ -1562,6 +1564,59 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Err(crate::Error::Backtrack);
         }
         Ok(())
+    }
+
+    /// Decides whether the ":" after the ")" of a parenthesized expression is
+    /// an arrow function return type when that expression is the middle
+    /// operand of a conditional, i.e. between its "?" and ":". Separate from
+    /// `try_skip_type_script_arrow_return_type_with_backtracking` because it
+    /// is much more expensive: it has to parse the arrow body.
+    ///
+    /// The TypeScript compiler parses the whole arrow function and then
+    /// backtracks to the colon unless another colon follows the body:
+    ///
+    ///   x = a ? (b) : c => d;
+    ///   y = a ? (b) : c => d : e;
+    ///
+    /// In "x" the first colon pairs with the "?" because the arrow function
+    /// "(b) : c => d" is not followed by a colon. In "y" the first colon starts
+    /// a return type because the arrow function is followed by a colon. So the
+    /// colon before the arrow body must pair with the "?" unless there is
+    /// another colon to pair with it after the body.
+    ///
+    /// The body is parsed once here and thrown away, then parsed again by the
+    /// caller when this returns true. Unlike the lexer-only backtracking above,
+    /// parsing an expression mutates parser state, so the whole parser is
+    /// restored from a snapshot. The current scope is the arrow's
+    /// `FunctionArgs` scope; the body is parsed with no arguments declared so
+    /// that scope's members stay untouched.
+    pub(crate) fn is_type_script_arrow_return_type_after_question_and_before_colon(
+        &mut self,
+        arrow_data: &FnOrArrowDataParse,
+    ) -> Result<bool, Error> {
+        self.mark_type_script_only();
+        let snapshot = self.parser_snapshot();
+        self.lexer.is_log_disabled = true;
+
+        let mut data = arrow_data.clone();
+        let result: Result<(), Error> = (|| {
+            self.lexer.expect(T::TColon)?;
+            self.skip_typescript_return_type()?;
+            self.parse_arrow_body(&mut [], &mut data)?;
+            // There must be a colon following the arrow function body to pair
+            // with the leading "?"
+            self.lexer.expect(T::TColon)?;
+            Ok(())
+        })();
+
+        self.restore_parser_snapshot(snapshot);
+        match result {
+            Ok(()) => Ok(true),
+            // A syntax error in the attempt means the colon pairs with the "?".
+            // Running out of stack or memory is not a property of the attempt.
+            Err(err @ (Error::StackOverflow | Error::Alloc(_))) => Err(err),
+            Err(_) => Ok(false),
+        }
     }
 
     // ─────────────────────── try_* wrappers ───────────────────────

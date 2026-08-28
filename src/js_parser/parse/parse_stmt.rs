@@ -923,7 +923,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // "export type foo = ..."
                                 let type_range = p.lexer.range();
                                 p.lexer.next()?;
-                                if p.lexer.has_newline_before {
+                                // "export type\n{ foo }" and "export type\n* from 'bar'" are
+                                // fine: only a type alias name must be on the same line.
+                                if p.lexer.has_newline_before
+                                    && p.lexer.token != T::TOpenBrace
+                                    && p.lexer.token != T::TAsterisk
+                                {
                                     p.log().add_error_fmt(
                                         Some(p.source),
                                         type_range.end(),
@@ -1485,7 +1490,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Err(crate::Error::SyntaxError);
                 }
 
-                let mut default_name = p.lexer.identifier;
+                let default_name = p.lexer.identifier;
                 let default_name_raw = p.lexer.raw();
                 stmt = S::Import {
                     namespace_ref: Ref::NONE,
@@ -1543,28 +1548,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if default_name == b"type" {
                         match p.lexer.token {
                             T::TIdentifier => {
-                                if p.lexer.identifier != b"from" {
-                                    default_name = p.lexer.identifier;
-                                    stmt.default_name.as_mut().unwrap().loc = p.lexer.loc();
-                                    p.lexer.next()?;
+                                let name = p.lexer.identifier;
+                                let name_loc = p.lexer.loc();
+                                p.lexer.next()?;
 
-                                    if p.lexer.token == T::TEquals {
-                                        // "import type foo = require('bar');"
-                                        // "import type foo = bar.baz;"
-                                        opts.is_typescript_declare = true;
-                                        return p.parse_type_script_import_equals_stmt(
-                                            loc,
-                                            opts,
-                                            stmt.default_name.unwrap().loc,
-                                            default_name,
-                                        );
-                                    } else {
-                                        // "import type foo from 'bar';"
-                                        p.lexer.expect_contextual_keyword(b"from")?;
-                                        let _ = p.parse_path()?;
-                                        p.lexer.expect_or_insert_semicolon()?;
-                                        return Ok(p.s(S::TypeScript {}, loc));
-                                    }
+                                if p.lexer.token == T::TEquals {
+                                    // "import type foo = require('bar');"
+                                    // "import type from = require('bar');"
+                                    // "import type foo = bar.baz;"
+                                    opts.is_typescript_declare = true;
+                                    return p.parse_type_script_import_equals_stmt(
+                                        loc, opts, name_loc, name,
+                                    );
+                                } else if p.lexer.token == T::TStringLiteral && name == b"from" {
+                                    // "import type from 'bar';"
+                                    // A value import of the default export, named "type".
+                                    let path = p.parse_path()?;
+                                    p.lexer.expect_or_insert_semicolon()?;
+                                    return p.process_import_statement(stmt, path, loc, false);
+                                } else {
+                                    // "import type foo from 'bar';"
+                                    // "import type from from 'bar';"
+                                    p.lexer.expect_contextual_keyword(b"from")?;
+                                    let _ = p.parse_path()?;
+                                    p.lexer.expect_or_insert_semicolon()?;
+                                    return Ok(p.s(S::TypeScript {}, loc));
                                 }
                             }
                             T::TAsterisk => {

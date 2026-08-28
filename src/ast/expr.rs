@@ -722,6 +722,10 @@ impl Expr {
 pub enum EFlags {
     None,
     TsDecorator,
+    /// The expression is the middle operand of a conditional: between its
+    /// `?` and its `:`. A TypeScript arrow return type there is ambiguous
+    /// with the conditional's own `:`.
+    AfterQuestionAndBeforeColon,
 }
 
 // `is_missing` lives in the `init`/`allocate` impl block below.

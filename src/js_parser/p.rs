@@ -118,6 +118,13 @@ impl<'a> ImportRecordList<'a> {
             Self::Borrowed(v) => v.len(),
         }
     }
+    #[inline]
+    fn truncate(&mut self, len: usize) {
+        match self {
+            Self::Owned(v) => v.truncate(len),
+            Self::Borrowed(v) => v.truncate(len),
+        }
+    }
 
     /// Transfer the
     /// backing storage into a `Vec<ImportRecord>` and leave `self` empty
@@ -155,6 +162,33 @@ impl<'a> core::ops::DerefMut for NamedImportsType<'a> {
             Self::Borrowed(v) => *v,
         }
     }
+}
+
+/// See [`P::parser_snapshot`].
+pub(crate) struct ParserSnapshot<'a> {
+    lexer: js_lexer::LexerSnapshot<'a>,
+    log_msgs_len: usize,
+    log_errors: u32,
+    log_warnings: u32,
+    allow_in: bool,
+    allow_private_identifiers: bool,
+    has_classic_runtime_warned: bool,
+    has_non_local_export_declare_inside_namespace: bool,
+    should_fold_typescript_constant_expressions: bool,
+    fn_or_arrow_data_parse: FnOrArrowDataParse,
+    latest_arrow_arg_loc: bun_ast::Loc,
+    forbid_suffix_after_as_loc: bun_ast::Loc,
+    after_arrow_body_loc: bun_ast::Loc,
+    esm_import_keyword: bun_ast::Range,
+    esm_export_keyword: bun_ast::Range,
+    enclosing_class_keyword: bun_ast::Range,
+    current_scope: js_ast::StoreRef<Scope>,
+    current_scope_children_len: usize,
+    scopes_in_order_len: usize,
+    scopes_in_order_for_enum_len: usize,
+    symbols_len: usize,
+    allocated_names_len: usize,
+    import_records_len: usize,
 }
 
 pub(crate) type NeedsJSXType = bool;
@@ -7309,6 +7343,107 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             item.parent = Some(parent);
             VecExt::append(&mut parent.children, item);
         }
+    }
+
+    /// Capture everything the parse pass mutates, so that a speculative parse
+    /// of a whole expression (not just a type) can be undone with
+    /// [`Self::restore_parser_snapshot`]. The lexer-only backtracking in
+    /// `parse_skip_typescript.rs` is not enough for that: parsing an
+    /// expression declares symbols, pushes scopes, records dynamic imports
+    /// and logs errors through `P::log()`, which ignores
+    /// `lexer.is_log_disabled`.
+    ///
+    /// Growable lists are captured as lengths and truncated on restore. The
+    /// attempt's arena allocations (AST nodes, `Scope`s) are left in the arena
+    /// and become unreachable.
+    pub(crate) fn parser_snapshot(&self) -> ParserSnapshot<'a> {
+        let log = self.log();
+        ParserSnapshot {
+            lexer: self.lexer.snapshot(),
+            log_msgs_len: log.msgs.len(),
+            log_errors: log.errors,
+            log_warnings: log.warnings,
+            allow_in: self.allow_in,
+            allow_private_identifiers: self.allow_private_identifiers,
+            has_classic_runtime_warned: self.has_classic_runtime_warned,
+            has_non_local_export_declare_inside_namespace: self
+                .has_non_local_export_declare_inside_namespace,
+            should_fold_typescript_constant_expressions: self
+                .should_fold_typescript_constant_expressions,
+            fn_or_arrow_data_parse: self.fn_or_arrow_data_parse.clone(),
+            latest_arrow_arg_loc: self.latest_arrow_arg_loc,
+            forbid_suffix_after_as_loc: self.forbid_suffix_after_as_loc,
+            after_arrow_body_loc: self.after_arrow_body_loc,
+            esm_import_keyword: self.esm_import_keyword,
+            esm_export_keyword: self.esm_export_keyword,
+            enclosing_class_keyword: self.enclosing_class_keyword,
+            current_scope: self.current_scope,
+            current_scope_children_len: self.current_scope.children.len(),
+            scopes_in_order_len: self.scopes_in_order.len(),
+            scopes_in_order_for_enum_len: self.scopes_in_order_for_enum.len(),
+            symbols_len: self.symbols.len(),
+            allocated_names_len: self.allocated_names.len(),
+            import_records_len: self.import_records.len(),
+        }
+    }
+
+    /// Undo every parse-pass mutation made since [`Self::parser_snapshot`].
+    pub(crate) fn restore_parser_snapshot(&mut self, snapshot: ParserSnapshot<'a>) {
+        self.lexer.restore(&snapshot.lexer);
+
+        let log = self.log();
+        log.msgs.truncate(snapshot.log_msgs_len);
+        log.errors = snapshot.log_errors;
+        log.warnings = snapshot.log_warnings;
+
+        self.allow_in = snapshot.allow_in;
+        self.allow_private_identifiers = snapshot.allow_private_identifiers;
+        self.has_classic_runtime_warned = snapshot.has_classic_runtime_warned;
+        self.has_non_local_export_declare_inside_namespace =
+            snapshot.has_non_local_export_declare_inside_namespace;
+        self.should_fold_typescript_constant_expressions =
+            snapshot.should_fold_typescript_constant_expressions;
+        self.fn_or_arrow_data_parse = snapshot.fn_or_arrow_data_parse;
+        self.latest_arrow_arg_loc = snapshot.latest_arrow_arg_loc;
+        self.forbid_suffix_after_as_loc = snapshot.forbid_suffix_after_as_loc;
+        self.after_arrow_body_loc = snapshot.after_arrow_body_loc;
+        self.esm_import_keyword = snapshot.esm_import_keyword;
+        self.esm_export_keyword = snapshot.esm_export_keyword;
+        self.enclosing_class_keyword = snapshot.enclosing_class_keyword;
+
+        // Every scope pushed since the snapshot is a descendant of the scope
+        // that was current, appended to its `children` (`pop_and_flatten_scope`
+        // re-appends flattened grandchildren there too) and to
+        // `scopes_in_order`, so truncating both drops the whole subtree.
+        let mut scope = snapshot.current_scope;
+        scope.children.truncate(snapshot.current_scope_children_len);
+        self.current_scope = scope;
+        self.scopes_in_order.truncate(snapshot.scopes_in_order_len);
+        while self.scopes_in_order_for_enum.len() > snapshot.scopes_in_order_for_enum_len {
+            self.scopes_in_order_for_enum.pop();
+        }
+
+        // Symbols declared since the snapshot are only reachable from the
+        // discarded scopes and AST, except for enum and namespace refs, which
+        // also key `ref_to_ts_namespace_member`. Drop those keys too, so a
+        // symbol that later reuses the index does not inherit namespace data.
+        if self.symbols.len() > snapshot.symbols_len {
+            self.symbols.truncate(snapshot.symbols_len);
+            if TYPESCRIPT {
+                self.ts_use_counts.truncate(snapshot.symbols_len);
+            }
+            let stale: Vec<Ref> = self
+                .ref_to_ts_namespace_member
+                .keys()
+                .filter(|ref_| ref_.inner_index() as usize >= snapshot.symbols_len)
+                .copied()
+                .collect();
+            for ref_ in stale {
+                self.ref_to_ts_namespace_member.remove(&ref_);
+            }
+        }
+        self.allocated_names.truncate(snapshot.allocated_names_len);
+        self.import_records.truncate(snapshot.import_records_len);
     }
 
     /// When not transpiling we dont use the renamer, so our solution is to generate really

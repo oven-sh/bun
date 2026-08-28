@@ -288,6 +288,162 @@ describe("Bun.Transpiler", () => {
       err("x = a ? b c", 'Expected ":" but found "c"');
     });
 
+    it("arrow function return type between the ? and : of a conditional", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      // "(b) : c => d" is only an arrow function with a return type when another
+      // ":" follows its body. Otherwise the ":" pairs with the "?".
+      exp("x = a ? (b) : c => d", "x = a ? b : (c) => d;\n");
+      exp("x = a ? (b) : c => d : e", "x = a ? (b) => d : e;\n");
+      exp("x = a ? (b) : (c) => d", "x = a ? b : (c) => d;\n");
+      exp("x = a ? (b = 1) : c => c + 1", "x = a ? b = 1 : (c) => c + 1;\n");
+      exp("const r = a ? (x = 1) : y => y + 1", "const r = a ? x = 1 : (y) => y + 1;\n");
+      exp("x = a ? (b) : c => { return d }", "x = a ? b : (c) => {\n  return d;\n};\n");
+      exp("x = a ? (b) : c => { return d } : e", "x = a ? (b) => {\n  return d;\n} : e;\n");
+      exp("x = a ? (b) : c => d ? e : f", "x = a ? b : (c) => d ? e : f;\n");
+      exp("x = a ? (b) : c => d ? e : f : g", "x = a ? (b) => d ? e : f : g;\n");
+      exp("x = a ? (b) : c => e : f ? (g) : h => i", "x = a ? (b) => e : f ? g : (h) => i;\n");
+      exp("x = a ? (b) : c => e : f ? (g) : h => i : j", "x = a ? (b) => e : f ? (g) => i : j;\n");
+      exp("x = [a ? (b) : c => d, e]", "x = [a ? b : (c) => d, e];\n");
+      exp("x = f(a ? (b) : c => d, e)", "x = f(a ? b : (c) => d, e);\n");
+      exp("x = a ? (b, c) : d => e : f", "x = a ? (b, c) => e : f;\n");
+      exp("x = a ? ([b], {c}) : d => e : f", "x = a ? ([b], { c }) => e : f;\n");
+      exp("x = a ? (...b) : d => e : f", "x = a ? (...b) => e : f;\n");
+      exp("x = a ? (b?: number) : d => e : f", "x = a ? (b) => e : f;\n");
+      exp("x = a ? (b) : c<d> => e : f", "x = a ? (b) => e : f;\n");
+      exp("x = a ? (b) : c is d => e : f", "x = a ? (b) => e : f;\n");
+      exp("a ? (1 + 2) : (3 + 4)", "a ? 1 + 2 : 3 + 4;\n");
+
+      // https://github.com/evanw/esbuild/issues/4241
+      exp("x = a ? (b = c) : d", "x = a ? b = c : d;\n");
+      exp("x = a ? (b = c) : d => e", "x = a ? b = c : (d) => e;\n");
+      exp("x = a ? (b = c) : T => d : (e = f)", "x = a ? (b = c) => d : e = f;\n");
+      exp("x = a ? (b = c) : T => d : (e = f) : T => g", "x = a ? (b = c) => d : (e = f) => g;\n");
+      exp("x = a ? b ? c : (d = e) : f => g", "x = a ? b ? c : d = e : (f) => g;\n");
+      exp("x = a ? b ? (c = d) => e : (f = g) : h => i", "x = a ? b ? (c = d) => e : f = g : (h) => i;\n");
+      exp("x = a ? b ? (c = d) : T => e : (f = g) : h => i", "x = a ? b ? (c = d) => e : f = g : (h) => i;\n");
+      exp(
+        "x = a ? b ? (c = d) : T => e : (f = g) : (h = i) : T => j",
+        "x = a ? b ? (c = d) => e : f = g : (h = i) => j;\n",
+      );
+      exp("x = a ? (b) : T => c : d", "x = a ? (b) => c : d;\n");
+      exp("x = a ? b - (c) : d => e", "x = a ? b - c : (d) => e;\n");
+      exp("x = a ? b = (c) : T => d : e", "x = a ? b = (c) => d : e;\n");
+      err("x = a ? (b = c) : T => d : (e = f) : g", 'Expected ";" but found ":"');
+      err("x = a ? b ? (c = d) : T => e : (f = g)", 'Expected ":" but found end of file');
+      err("x = a ? - (b) : c => d : e", 'Expected ";" but found ":"');
+      err("x = a ? b - (c) : d => e : f", 'Expected ";" but found ":"');
+      err("x = a ? (b) : (c) => d : e", 'Expected ";" but found ":"');
+
+      // Newlines are important (they trigger backtracking)
+      exp("x = (\n  a ? (b = c) : { d: e }\n)", "x = a ? b = c : { d: e };\n");
+
+      // The attempt to parse the arrow body must see the same parser state as
+      // the real parse: private names and the "in" operator.
+      exp(
+        "x = class { #y; y = a ? (b : T) : T => this.#y : c }",
+        "x = class {\n  #y;\n  y = a ? (b) => this.#y : c;\n};\n",
+      );
+      exp("for (x = a ? () : T => b in c : d; ; ) ;", "for (x = a ? () => (b in c) : d;; )\n  ;\n");
+
+      // A discarded attempt must leave no scopes, symbols, import records or
+      // enum bookkeeping behind.
+      exp(
+        "x = a ? (b) : c => { function f(q = () => { let z = 1; return z }) { class K { #p; m() { return this.#p } } return new K } return f() }",
+        "x = a ? b : (c) => {\n  function f(q = () => {\n    let z = 1;\n    return z;\n  }) {\n\n    class K {\n      #p;\n      m() {\n        return this.#p;\n      }\n    }\n    return new K;\n  }\n  return f();\n};\n",
+      );
+      exp(
+        "x = a ? (b) : c => { import('d'); return import.meta.url }",
+        'x = a ? b : (c) => {\n  import("d");\n  return import.meta.url;\n};\n',
+      );
+      exp(
+        "x = a ? (b) : c => { import('d'); return import.meta.url } : e",
+        'x = a ? (b) => {\n  import("d");\n  return import.meta.url;\n} : e;\n',
+      );
+      const enumBody = "enum E { A = 1, B = A * 2 } return E.B";
+      const enumOut = '  let E;\n  ((E) => {\n    E[E["A"] = 1] = "A";\n    E[E["B"] = 2] = "B";\n  })(E ||= {});\n  return 2 /* B */;\n';
+      exp(`x = a ? (b) : c => { ${enumBody} }`, `x = a ? b : (c) => {\n${enumOut}};\n`);
+      exp(`x = a ? (b) : c => { ${enumBody} } : e`, `x = a ? (b) => {\n${enumOut}} : e;\n`);
+      exp(
+        "x = a ? (b) : c => { return a ? (b) : c => d : e } : f",
+        "x = a ? (b) => {\n  return a ? (b) => d : e;\n} : f;\n",
+      );
+    });
+
+    it("type-only import syntax", () => {
+      const exp = ts.expectPrinted_;
+      const errStartsWith = (code, prefix) => {
+        let message;
+        try {
+          ts.parsed(code, false, false);
+        } catch (er) {
+          message = (er instanceof AggregateError ? er.errors[0] : er).message;
+        }
+        expect(message).toStartWith(prefix);
+      };
+
+      exp("import type foo from 'bar'; x", "x;\n");
+      exp("import type foo from 'bar'\nx", "x;\n");
+      exp("import type from from 'bar'; x", "x;\n");
+      exp("import type * as foo from 'bar'; x", "x;\n");
+      exp("import type {foo, bar as baz} from 'bar'; x", "x;\n");
+      exp("import type foo = require('bar'); x", "x;\n");
+      exp("import type foo = bar.baz; x", "x;\n");
+      exp("import type from = require('bar'); x", "x;\n");
+
+      // "type" is a regular binding name here
+      exp("import type = bar; type", "const type = bar;\n");
+      exp("import type = foo.bar; type", "const type = foo.bar;\n");
+      exp("import type = require('type'); type", 'const type = require("type");\n');
+      exp("import type from 'bar'; type", 'import type from "bar";\ntype;\n');
+      exp("import type, { a } from 'mod'; type, a", 'import type, { a } from "mod";\ntype, a;\n');
+      exp("import { type } from 'mod'; type", 'import { type } from "mod";\ntype;\n');
+
+      errStartsWith("import type", 'Expected "from" but found ""');
+      errStartsWith("import type foo, * as foo from 'bar'", 'Expected "from" but found ","');
+      errStartsWith("import type foo, {foo} from 'bar'", 'Expected "from" but found ","');
+      errStartsWith("import type from, * as foo from 'bar'", 'Expected "from" but found ","');
+      errStartsWith("import type from, {foo} from 'bar'", 'Expected "from" but found ","');
+      errStartsWith("import type * as foo = require('bar')", 'Expected "from" but found "="');
+      errStartsWith("import type {foo} = require('bar')", 'Expected "from" but found "="');
+    });
+
+    it("runs TypeScript that tsc accepts at these parse edges", async () => {
+      using dir = tempDir("ts-parse-edges", {
+        "mod.ts": "export default 'default export';",
+        "index.ts": `
+          import type from from "./mod";
+          import type from = require("./mod");
+          import type { T } from "./mod";
+          type U = number;
+          export type
+          { U };
+          export type
+          * as ns from "./mod";
+          declare const unused: T;
+          const a = true, d = "d";
+          let x: any;
+          x = a ? (d) : c => c;
+          console.log(x);
+          x = a ? (d) : c => d : "e";
+          console.log(x("arg"));
+          const r = a ? (x = 1) : y => y + 1;
+          console.log(r);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("d\narg\n1\n");
+      expect(exitCode).toBe(0);
+    });
+
     it("contextual keywords used as plain identifiers keep their statements", () => {
       const exp = ts.expectPrinted_;
 
@@ -1005,6 +1161,9 @@ function foo() {}
       exp("type x = {0: number, readonly 1: boolean}\na([])", "a([]);\n");
       exp("type x = {'a': number, readonly 'b': boolean}\na([])", "a([]);\n");
       exp("type\nFoo = {}", "type;\nFoo = {};\n");
+      exp("export type\n{ Foo } \n x", "x;\n");
+      exp("export type\n* from 'foo' \n x", "x;\n");
+      exp("export type\n* as ns from 'foo' \n x", "x;\n");
       err("export type\nFoo = {}", 'Unexpected newline after "type"');
       exp("let x: {x: 'a', y: false, z: null}", "let x;\n");
       exp("let x: {foo(): void}", "let x;\n");

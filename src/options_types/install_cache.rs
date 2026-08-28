@@ -1,15 +1,8 @@
-//! Where `bun install` keeps its package cache. `bun_install` passes its bunfig
-//! `cache_directory` as the override; `CompileTarget::exe_path` uses the same
-//! chain to cache the cross-compile base executable.
-
 use bun_core::env_var;
 use bun_dotenv::Loader;
 use bun_paths::resolve_path::{join_abs_string, platform};
 
-/// `$BUN_INSTALL_CACHE_DIR`, then `cache_directory_override`, then
-/// `$BUN_INSTALL/install/cache`, `$XDG_CACHE_HOME/.bun/install/cache`,
-/// `$HOME/.bun/install/cache`, else `node_modules/.bun-cache`. Absolute, joined
-/// against the top-level dir.
+/// The `bun install` package cache directory, absolute.
 pub fn fetch_cache_directory_path(
     env: &Loader,
     cache_directory_override: Option<&[u8]>,

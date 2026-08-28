@@ -4259,7 +4259,10 @@ pub unsafe extern "C" fn Bun__transpileFile(
 
     let _specifier = specifier.to_utf8();
     let referrer_slice = referrer.to_utf8();
-    let type_attribute_str: Option<&[u8]> = type_attribute.and_then(|s| s.as_utf8());
+    // `require.extensions` wrappers pass an empty string for "no attribute".
+    let type_attribute_str: Option<&[u8]> = type_attribute
+        .and_then(|s| s.as_utf8())
+        .filter(|s| !s.is_empty());
 
     let mut virtual_source_to_use: Option<bun_ast::Source> = None;
     let mut blob_to_deinit: Option<crate::webcore::Blob> = None;

@@ -1,29 +1,21 @@
 //! `globalThis.Bun` — top-level host functions and lazy-property getters.
 
-/// Build a public-path string for `to` relative to `dir`, prefixed by `origin`
-/// (and `asset_prefix` when `origin` is absolute). Called by both the bundler
-/// dev-server and `Bun.FileSystemRouter`'s `scriptSrc` getter.
-pub(crate) fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
+/// Append the public path of `to` relative to `dir` to `out`, prefixed by
+/// `origin` (and `asset_prefix` when `origin` is absolute). Called by both the
+/// bundler dev-server and `Bun.FileSystemRouter`'s `scriptSrc` getter.
+///
+/// The output is raw path bytes. POSIX paths are arbitrary byte sequences;
+/// `bun_string_jsc::create_utf8_for_js` replaces invalid UTF-8 with U+FFFD.
+pub(crate) fn get_public_path_with_asset_prefix(
     to: &[u8],
     dir: &[u8],
     origin: &bun_url::URL,
     asset_prefix: &[u8],
-    writer: &mut W,
+    out: &mut Vec<u8>,
     platform: bun_paths::Platform,
 ) {
     use bun_core::strings;
     use bun_paths::{Platform, resolve_path};
-
-    // bun_url::URL::join_write wants a `bun_io::Write`; route all
-    // byte output through a Vec<u8> then forward to the caller's fmt::Write.
-    // POSIX paths are arbitrary byte sequences — so use
-    // a lossy conversion rather than silently dropping the whole component.
-    #[inline]
-    fn write_bytes<W: core::fmt::Write>(w: &mut W, bytes: &[u8]) -> core::fmt::Result {
-        // `bstr::BStr` Display lossily substitutes U+FFFD per invalid sequence
-        // (no allocation on the valid-UTF-8 fast path).
-        write!(w, "{}", bstr::BStr::new(bytes))
-    }
 
     let relative_path: &[u8] = if strings::has_prefix(to, dir) {
         strings::without_trailing_slash(&to[dir.len()..])
@@ -46,28 +38,28 @@ pub(crate) fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
             }
         }
     };
-    if origin.is_absolute() {
-        if strings::has_prefix(relative_path, b"..") || strings::has_prefix(relative_path, b"./") {
-            if write_bytes(writer, origin.origin).is_err() {
-                return;
-            }
-            if write_bytes(writer, b"/abs:").is_err() {
-                return;
-            }
-            if bun_paths::is_absolute(to) {
-                let _ = write_bytes(writer, to);
-            } else {
-                let fs = VirtualMachine::get().fs();
-                let _ = write_bytes(writer, fs.abs(&[to]));
-            }
-        } else {
-            let mut buf: Vec<u8> = Vec::new();
-            let _ = origin.join_write(&mut buf, asset_prefix, b"", relative_path, b"");
-            let _ = write_bytes(writer, &buf);
-        }
-    } else {
-        let _ = write_bytes(writer, strings::trim_left(relative_path, b"/"));
+    if !origin.is_absolute() {
+        out.extend_from_slice(strings::trim_left(relative_path, b"/"));
+        return;
     }
+    if strings::has_prefix(relative_path, b"..") || strings::has_prefix(relative_path, b"./") {
+        let abs_path = if bun_paths::is_absolute(to) {
+            to
+        } else {
+            VirtualMachine::get().fs().abs(&[to])
+        };
+        out.reserve(origin.origin.len() + b"/abs:".len() + abs_path.len());
+        out.extend_from_slice(origin.origin);
+        out.extend_from_slice(b"/abs:");
+        out.extend_from_slice(abs_path);
+        return;
+    }
+    // Upper bound of what `join_write` emits: `origin`, "/", and a normalized
+    // path at most two separators longer than `asset_prefix` + `relative_path`.
+    out.reserve(origin.origin.len() + asset_prefix.len() + relative_path.len() + 3);
+    origin
+        .join_write(out, asset_prefix, b"", relative_path, b"")
+        .expect("infallible: in-memory write");
 }
 
 use bun_jsc::HostReturn as _;

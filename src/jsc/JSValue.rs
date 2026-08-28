@@ -1528,7 +1528,8 @@ impl JSValue {
 
     /// `JSValue.getOptional` — loose, coercing property fetch.
     /// Absent / `undefined` / `null` → `None`; anything else is run through
-    /// [`coerce`](Self::coerce) (ToNumber for integer `T`). Distinct from
+    /// [`coerce`](Self::coerce) (ToNumber for integer `T`, the value itself
+    /// for `JSValue`). Distinct from
     /// [`get_optional_int`], which validates the property is already an
     /// in-range integer and throws otherwise.
     pub fn get_optional<T: CoerceTo>(
@@ -1920,6 +1921,12 @@ impl CoerceTo for i64 {
         // ToNumber here so string inputs above 2^31 round-trip to i64.
         let num = v.to_number(global)?;
         Ok(if num.is_nan() { 0 } else { num as i64 })
+    }
+}
+/// No coercion: `get_optional::<JSValue>` is `get` with `null` filtered out.
+impl CoerceTo for JSValue {
+    fn coerce_from(v: JSValue, _global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(v)
     }
 }
 

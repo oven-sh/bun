@@ -218,8 +218,7 @@ impl<T: RefCounted> RefCount<T> {
         self.raw_count.get()
     }
 
-    /// The count is 0 after the destructor is called. Debug-only: a release
-    /// build must not abort in a destructor over a refcount slip.
+    /// The count is 0 after the destructor is called.
     pub fn assert_no_refs(&self) {
         debug_assert_eq!(
             self.raw_count.get(),
@@ -385,8 +384,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
         self.get() == 1
     }
 
-    /// The count is 0 after the destructor is called. Debug-only: a release
-    /// build must not abort in a destructor over a refcount slip.
+    /// The count is 0 after the destructor is called.
     pub fn assert_no_refs(&self) {
         debug_assert_eq!(
             self.raw_count.load(Ordering::SeqCst),
@@ -932,9 +930,6 @@ mod tests {
     }
 
     // ── assert_no_refs ────────────────────────────────────────────────────
-    //
-    // A destructor that runs with refs outstanding is a debug-build assertion
-    // only. Release builds must not abort over it.
 
     #[test]
     #[cfg_attr(

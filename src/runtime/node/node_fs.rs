@@ -4433,9 +4433,7 @@ impl Default for NodeFS {
 }
 
 impl NodeFS {
-    /// A fresh `NodeFS` on the heap. `sync_error_buf` makes the struct
-    /// `MAX_PATH_BYTES` large (96 KB on Windows), so a stack local of it costs
-    /// that much frame in every caller, taken or not.
+    /// Heap allocated: `sync_error_buf` makes this struct 96 KB on Windows.
     pub(crate) fn new_boxed() -> Box<Self> {
         // SAFETY: all-zero bytes are a valid `NodeFS`: `sync_error_buf` is a
         // `u8` array and a null `Option<NonNull<_>>` is `None`.

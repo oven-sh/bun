@@ -277,7 +277,10 @@ impl Drop for SpawnSyncEventLoop {
         // Destroy the event loop before the uws loop.
         __bun_spawn_sync_destroy_event_loop(self.event_loop);
         // SAFETY: uws_loop was returned by `us_create_loop` in `init` and not yet freed.
-        unsafe { uws::Loop::destroy(self.uws_loop.as_ptr()) };
+        unsafe {
+            bun_io::loop_closing(self.uws_loop.as_ptr());
+            uws::Loop::destroy(self.uws_loop.as_ptr());
+        }
     }
 }
 

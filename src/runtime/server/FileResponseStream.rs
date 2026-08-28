@@ -627,9 +627,16 @@ bun_io::impl_buffered_reader_parent! {
 impl Drop for FileResponseStream {
     fn drop(&mut self) {
         bun_output::scoped_log!(FileResponseStream, "deinit");
-        // `self.reader` (BufferedReader) is torn down by its own `Drop` as a
-        // field — closes the poll handle. `bun.destroy(this)` is owned by
-        // `heap::take` in `deref`, not here.
+        // `CLOSE_HANDLE` is cleared, so the reader's own `Drop` leaves the poll
+        // registered. `bun.destroy(this)` is owned by `heap::take` in `deref`.
+        #[cfg(unix)]
+        self.reader.with_mut(|reader| {
+            if matches!(reader.handle, bun_io::pipes::PollOrFd::Poll(_)) {
+                reader
+                    .handle
+                    .close_impl(None, None::<fn(*mut c_void)>, false);
+            }
+        });
         if self.auto_close.get() {
             #[cfg(windows)]
             Closer::close(self.fd.get(), bun_sys::windows::libuv::Loop::get());

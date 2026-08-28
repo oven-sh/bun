@@ -1182,6 +1182,56 @@ test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not
   }
 });
 
+// The stream owns the FIFO's fd itself, so it clears the reader's CLOSE_HANDLE
+// flag, and the reader's own teardown skips the FilePoll in that mode: the poll
+// stayed registered after the response was gone and its ref kept the event
+// loop, and so the process, alive.
+test.concurrent.skipIf(isWindows)("process exits after a FIFO file response is torn down", async () => {
+  using dir = tempDir("serve-fifo-exit", {
+    "fixture.ts": `
+import { openSync, writeSync, closeSync } from "node:fs";
+
+const fifoPath = process.argv[2];
+const writerFd = openSync(fifoPath, "r+");
+writeSync(writerFd, "fifo-body");
+
+const server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  fetch() {
+    return new Response(Bun.file(fifoPath));
+  },
+});
+
+const res = await fetch("http://127.0.0.1:" + server.port + "/");
+const reader = res.body.getReader();
+// The first chunk proves the server opened the pipe and drained what we wrote,
+// so its read is parked on the poll when the response is closed.
+const first = await reader.read();
+const body = Buffer.from(first.value).toString();
+closeSync(writerFd);
+server.stop(true);
+console.log(body);
+`,
+  });
+
+  const fifoPath = join(String(dir), "body.fifo");
+  mkfifo(fifoPath);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts", fifoPath],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("fifo-body");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 // A request that declares a body arms the request-body (onData) callback on
 // the uWS response before the fetch handler runs. uWS keeps a single shared
 // userdata slot per response, so when the handler returns a file response

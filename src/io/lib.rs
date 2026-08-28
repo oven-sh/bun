@@ -40,6 +40,8 @@ pub mod windows_event_loop;
 mod keep_alive;
 pub mod posix_event_loop;
 pub use keep_alive::KeepAlive;
+#[cfg(target_os = "macos")]
+mod fifo_select;
 
 // ParentDeathWatchdog: POSIX uses `PR_SET_PDEATHSIG` / `EVFILT_PROC` plus an
 // exit-time descendant SIGKILL walk. Windows does both halves via Win32:
@@ -296,6 +298,19 @@ pub fn uws_to_native(uws: *mut bun_uws_sys::Loop) -> *mut Loop {
     {
         unsafe { (*uws).uv_loop }
     }
+}
+
+/// Call before a uws loop is freed: drops the named-pipe waits that would
+/// otherwise deliver into its kqueue after the descriptor is closed (macOS).
+///
+/// # Safety
+/// `uws` is a live loop.
+pub unsafe fn loop_closing(uws: *mut bun_uws_sys::Loop) {
+    #[cfg(target_os = "macos")]
+    // SAFETY: fn contract.
+    fifo_select::forget_kqueue(Fd::from_native(unsafe { (*uws).fd }));
+    #[cfg(not(target_os = "macos"))]
+    let _ = uws;
 }
 
 pub use posix_event_loop::{AllocatorType, Owner, PollTag, get_vm_ctx, js_vm_ctx};
@@ -1127,6 +1142,18 @@ impl IoRequestLoop {
                     request.scheduled = false;
                     match (request.callback)(request) {
                         Action::Readable(readable) => {
+                            #[cfg(target_os = "macos")]
+                            if readable.poll.flags.contains(Flags::NamedFifo) {
+                                let udata =
+                                    Pollable::init(readable.tag, &raw mut *readable.poll).ptr();
+                                match fifo_select::arm(self.pollfd(), readable.fd, udata, 0) {
+                                    Ok(()) => {
+                                        readable.poll.flags.insert(Flags::PollReadable);
+                                    }
+                                    Err(err) => (readable.on_error)(readable.ctx, &err),
+                                }
+                                continue;
+                            }
                             Poll::apply_kqueue(
                                 ApplyAction::Readable,
                                 readable.tag,
@@ -1145,6 +1172,12 @@ impl IoRequestLoop {
                             );
                         }
                         Action::Close(close) => {
+                            #[cfg(target_os = "macos")]
+                            if close.poll.flags.contains(Flags::NamedFifo)
+                                && close.poll.flags.contains(Flags::PollReadable)
+                            {
+                                fifo_select::disarm(self.pollfd(), close.fd);
+                            }
                             if close.poll.flags.contains(Flags::PollReadable)
                                 || close.poll.flags.contains(Flags::PollWritable)
                             {
@@ -1485,6 +1518,9 @@ pub enum Flags {
     WasEverRegistered,
 
     Registered,
+
+    /// macOS: readable waits go through `fifo_select`, not a knote.
+    NamedFifo,
 }
 
 pub type FlagsSet = enumset::EnumSet<Flags>;
@@ -1533,7 +1569,12 @@ impl Poll {
             ApplyAction::Writable => (libc::EVFILT_WRITE, libc::EV_ADD | one_shot_flag, owner),
             ApplyAction::Cancel => {
                 if poll.flags.contains(Flags::PollReadable) {
-                    (libc::EVFILT_READ, libc::EV_DELETE, 0)
+                    let filter = if poll.flags.contains(Flags::NamedFifo) {
+                        libc::EVFILT_USER
+                    } else {
+                        libc::EVFILT_READ
+                    };
+                    (filter, libc::EV_DELETE, 0)
                 } else if poll.flags.contains(Flags::PollWritable) {
                     (libc::EVFILT_WRITE, libc::EV_DELETE, 0)
                 } else {

@@ -604,9 +604,8 @@ impl<'a> Run<'a> {
                 self.log.add_error_fmt(
                     Some(self.source),
                     self.caller.loc,
-                    // `JSType` derives `Debug` (not `IntoStaticStr`).
                     format_args!(
-                        "cannot coerce {} ({:?}) to Bun's AST. Please return a simpler type",
+                        "cannot coerce {} ({}) to Bun's AST. Please return a simpler type",
                         bstr::BStr::new(name),
                         value.js_type(),
                     ),
@@ -878,9 +877,8 @@ impl<'a> Run<'a> {
         self.log.add_error_fmt(
             Some(self.source),
             self.caller.loc,
-            // `JSType` derives `Debug` (not `IntoStaticStr`).
             format_args!(
-                "cannot coerce {:?} to Bun's AST. Please return a simpler type",
+                "cannot coerce {} to Bun's AST. Please return a simpler type",
                 value.js_type(),
             ),
         );

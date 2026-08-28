@@ -97,8 +97,25 @@ use crate::array_buffer::TypedArrayType;
 // be UB for unknown discriminants, so this is a transparent newtype with
 // associated consts instead.
 #[repr(transparent)]
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, core::marker::ConstParamTy)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, core::marker::ConstParamTy)]
 pub struct JSType(pub u8);
+
+/// Prints the tag name (`String`, `FinalObject`, ...), like a derived `Debug`
+/// on a Rust enum would. A tag without a name prints as `JSType(<u8>)`.
+impl core::fmt::Display for JSType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.name() {
+            Some(name) => f.write_str(name),
+            None => write!(f, "JSType({})", self.0),
+        }
+    }
+}
+
+impl core::fmt::Debug for JSType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self, f)
+    }
+}
 
 #[allow(non_upper_case_globals)]
 impl JSType {
@@ -552,6 +569,101 @@ impl JSType {
 impl JSType {
     pub const MIN_TYPED_ARRAY: JSType = JSType::Int8Array;
     pub const MAX_TYPED_ARRAY: JSType = JSType::DataView;
+
+    /// The tag name for diagnostics (`JSType::String` is `"String"`). `None`
+    /// for a tag this file does not name: any `u8` read from `JSCell::m_type`
+    /// is a valid `JSType`, including embedder-defined ones.
+    pub fn name(self) -> Option<&'static str> {
+        Some(match self {
+            JSType::Cell => "Cell",
+            JSType::String => "String",
+            JSType::HeapBigInt => "HeapBigInt",
+            JSType::Symbol => "Symbol",
+            JSType::GetterSetter => "GetterSetter",
+            JSType::CustomGetterSetter => "CustomGetterSetter",
+            JSType::APIValueWrapper => "APIValueWrapper",
+            JSType::NativeExecutable => "NativeExecutable",
+            JSType::ProgramExecutable => "ProgramExecutable",
+            JSType::ModuleProgramExecutable => "ModuleProgramExecutable",
+            JSType::EvalExecutable => "EvalExecutable",
+            JSType::FunctionExecutable => "FunctionExecutable",
+            JSType::UnlinkedFunctionExecutable => "UnlinkedFunctionExecutable",
+            JSType::UnlinkedProgramCodeBlock => "UnlinkedProgramCodeBlock",
+            JSType::UnlinkedModuleProgramCodeBlock => "UnlinkedModuleProgramCodeBlock",
+            JSType::UnlinkedEvalCodeBlock => "UnlinkedEvalCodeBlock",
+            JSType::UnlinkedFunctionCodeBlock => "UnlinkedFunctionCodeBlock",
+            JSType::CodeBlock => "CodeBlock",
+            JSType::JSCellButterfly => "JSCellButterfly",
+            JSType::JSSourceCode => "JSSourceCode",
+            JSType::SlimPromiseReaction => "SlimPromiseReaction",
+            JSType::FullPromiseReaction => "FullPromiseReaction",
+            JSType::PromiseAllContext => "PromiseAllContext",
+            JSType::PromiseAllGlobalContext => "PromiseAllGlobalContext",
+            JSType::Object => "Object",
+            JSType::FinalObject => "FinalObject",
+            JSType::JSCallee => "JSCallee",
+            JSType::JSFunction => "JSFunction",
+            JSType::InternalFunction => "InternalFunction",
+            JSType::BooleanObject => "BooleanObject",
+            JSType::NumberObject => "NumberObject",
+            JSType::ErrorInstance => "ErrorInstance",
+            JSType::GlobalProxy => "GlobalProxy",
+            JSType::DirectArguments => "DirectArguments",
+            JSType::ScopedArguments => "ScopedArguments",
+            JSType::ClonedArguments => "ClonedArguments",
+            JSType::Array => "Array",
+            JSType::DerivedArray => "DerivedArray",
+            JSType::ArrayBuffer => "ArrayBuffer",
+            JSType::Int8Array => "Int8Array",
+            JSType::Uint8Array => "Uint8Array",
+            JSType::Uint8ClampedArray => "Uint8ClampedArray",
+            JSType::Int16Array => "Int16Array",
+            JSType::Uint16Array => "Uint16Array",
+            JSType::Int32Array => "Int32Array",
+            JSType::Uint32Array => "Uint32Array",
+            JSType::Float16Array => "Float16Array",
+            JSType::Float32Array => "Float32Array",
+            JSType::Float64Array => "Float64Array",
+            JSType::BigInt64Array => "BigInt64Array",
+            JSType::BigUint64Array => "BigUint64Array",
+            JSType::DataView => "DataView",
+            JSType::GlobalObject => "GlobalObject",
+            JSType::GlobalLexicalEnvironment => "GlobalLexicalEnvironment",
+            JSType::LexicalEnvironment => "LexicalEnvironment",
+            JSType::ModuleEnvironment => "ModuleEnvironment",
+            JSType::StrictEvalActivation => "StrictEvalActivation",
+            JSType::WithScope => "WithScope",
+            JSType::ModuleNamespaceObject => "ModuleNamespaceObject",
+            JSType::ShadowRealm => "ShadowRealm",
+            JSType::RegExpObject => "RegExpObject",
+            JSType::JSDate => "JSDate",
+            JSType::ProxyObject => "ProxyObject",
+            JSType::Generator => "Generator",
+            JSType::AsyncGenerator => "AsyncGenerator",
+            JSType::JSArrayIterator => "JSArrayIterator",
+            JSType::Iterator => "Iterator",
+            JSType::IteratorHelper => "IteratorHelper",
+            JSType::MapIterator => "MapIterator",
+            JSType::SetIterator => "SetIterator",
+            JSType::StringIterator => "StringIterator",
+            JSType::WrapForValidIterator => "WrapForValidIterator",
+            JSType::RegExpStringIterator => "RegExpStringIterator",
+            JSType::JSPromise => "JSPromise",
+            JSType::Map => "Map",
+            JSType::Set => "Set",
+            JSType::WeakMap => "WeakMap",
+            JSType::WeakSet => "WeakSet",
+            JSType::WebAssemblyModule => "WebAssemblyModule",
+            JSType::WebAssemblyInstance => "WebAssemblyInstance",
+            JSType::WebAssemblyGCObject => "WebAssemblyGCObject",
+            JSType::StringObject => "StringObject",
+            JSType::DerivedStringObject => "DerivedStringObject",
+            JSType::Event => "Event",
+            JSType::DOMWrapper => "DOMWrapper",
+            JSType::JSAsJSONType => "JSAsJSONType",
+            _ => return None,
+        })
+    }
 
     /// `JSType` is a
     /// newtype-const (not a Rust `enum`), so there is no derived stringifier.

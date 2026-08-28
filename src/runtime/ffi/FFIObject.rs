@@ -422,7 +422,11 @@ pub mod reader {
     }
 }
 
-pub(crate) fn ptr(global_this: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JSValue {
+pub(crate) fn ptr(
+    global_this: &JSGlobalObject,
+    _: JSValue,
+    arguments: &[JSValue],
+) -> JsResult<JSValue> {
     match arguments.len() {
         0 => ptr_(global_this, JSValue::ZERO, None),
         1 => ptr_(global_this, arguments[0], None),
@@ -430,30 +434,34 @@ pub(crate) fn ptr(global_this: &JSGlobalObject, _: JSValue, arguments: &[JSValue
     }
 }
 
-fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValue>) -> JSValue {
+fn ptr_(
+    global_this: &JSGlobalObject,
+    value: JSValue,
+    byte_offset: Option<JSValue>,
+) -> JsResult<JSValue> {
     if value.is_empty() {
-        return JSValue::NULL;
+        return Ok(JSValue::NULL);
     }
 
     let Some(array_buffer) = value.as_array_buffer(global_this) else {
-        return global_this.to_invalid_arguments(format_args!(
-            "Expected ArrayBufferView but received {:?}",
+        return Err(global_this.throw_invalid_arguments(format_args!(
+            "Expected ArrayBufferView but received {}",
             value.js_type()
-        ));
+        )));
     };
 
     if array_buffer.len == 0 {
-        return global_this.to_invalid_arguments(format_args!(
+        return Err(global_this.throw_invalid_arguments(format_args!(
             "ArrayBufferView must have a length > 0. A pointer to empty memory doesn't work"
-        ));
+        )));
     }
 
     let mut addr: usize = array_buffer.ptr as usize;
     if let Some(off) = byte_offset {
         if !off.is_empty_or_undefined_or_null() {
             if !off.is_number() {
-                return global_this
-                    .to_invalid_arguments(format_args!("Expected number for byteOffset"));
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("Expected number for byteOffset")));
             }
         }
 
@@ -466,29 +474,31 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
         }
 
         if addr > array_buffer.ptr as usize + array_buffer.byte_len as usize {
-            return global_this.to_invalid_arguments(format_args!("byteOffset out of bounds"));
+            return Err(
+                global_this.throw_invalid_arguments(format_args!("byteOffset out of bounds"))
+            );
         }
     }
 
     if addr > MAX_ADDRESSABLE_MEMORY {
-        return global_this.to_invalid_arguments(format_args!(
+        return Err(global_this.throw_invalid_arguments(format_args!(
             "Pointer is outside max addressible memory, which usually means a bug in your program."
-        ));
+        )));
     }
 
     if addr == 0 {
-        return global_this.to_invalid_arguments(format_args!("Pointer must not be 0"));
+        return Err(global_this.throw_invalid_arguments(format_args!("Pointer must not be 0")));
     }
 
     if addr == 0xDEADBEEF || addr == 0xaaaaaaaa || addr == 0xAAAAAAAA {
-        return global_this.to_invalid_arguments(format_args!(
+        return Err(global_this.throw_invalid_arguments(format_args!(
             "ptr to invalid memory, that would segfault Bun :("
-        ));
+        )));
     }
 
     debug_assert!(JSValue::from_ptr_address(addr).as_ptr_address() == addr);
 
-    JSValue::from_ptr_address(addr)
+    Ok(JSValue::from_ptr_address(addr))
 }
 
 /// Resolves `(ptr, byteOffset, byteLength)` to a raw (ptr, len) over caller-owned FFI

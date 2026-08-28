@@ -438,6 +438,16 @@ describe("Bun.Transpiler", () => {
       ts.expectParseError("a?.b``", "Template literals cannot have an optional chain as a tag");
     });
 
+    it("TypeScript namespace exports", () => {
+      // A bare `f()` inside the namespace becomes `NS.f()` in the output. The
+      // source call had no receiver, so the wrap keeps `this` undefined, as
+      // esbuild does. A call written as `NS.f()` keeps `NS`.
+      both(
+        "namespace NS { export const f = () => 1; export function g() {} export let r = [f(), g(), f``, NS.f()]; }",
+        "var NS;\n((NS) => {\n  NS.f = () => 1;\n  function g() {}\n  NS.g = g;\n  NS.r = [(0, NS.f)(), g(), (0, NS.f)``, NS.f()];\n})(NS ||= {});\n",
+      );
+    });
+
     it("defines", () => {
       // user_nested is defined as "location.origin" (see the transpiler options above)
       both("user_nested();\n", "(0, location.origin)();\n");

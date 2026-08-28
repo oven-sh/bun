@@ -697,6 +697,45 @@ describe("bundler", () => {
     },
   });
 
+  // optimize_props_method_calls turns `props.render(1)` into a CallExpression
+  // whose callee is the `props.render` property load. Babel prints that callee
+  // as written, so the receiver stays `props`. The printer wraps a property
+  // access call target in `(0, ...)` unless the call was originally a property
+  // access, so codegen must set that flag from the callee it emits.
+  itBundled("react-compiler/PropsMethodCallKeepsReceiver", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Comp(props) {
+          const a = props.render(1);
+          const b = props.api.compute(2);
+          return <div>{a}{b}</div>;
+        }
+        const props = {
+          render(n) { return (this === props ? "props" : String(this)) + n; },
+          api: { compute(n) { return (this === props.api ? "api" : String(this)) + n; } },
+        };
+        const el = Comp(props);
+        console.log(el.props.children.join(""));
+      `,
+      "/node_modules/react/index.js": `module.exports = {};`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (t, p) => ({ t, props: p });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, props: p });`,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "props1api2" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // The component must be compiled (a bailout would leave the source as is).
+      expect(out).toContain("react.memo_cache_sentinel");
+      expect(out).toMatch(/\bprops\.render\(1\)/);
+      expect(out).not.toMatch(/\(\s*0\s*,\s*props\./);
+    },
+  });
+
   // `delete (true ? o.a : o.b)` is a no-op per spec (operand is a value, not a
   // Reference). The visitor folds the conditional to a bare EDot with the
   // delete-flag unset; lowering must not turn that into a real PropertyDelete.

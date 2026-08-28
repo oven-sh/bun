@@ -59,6 +59,29 @@ const fixtures: Record<string, Fixture> = {
     `,
     expected: 'decorating k1\ndecorating k2\n2 ["constructor","k1"] ["k2"]\n',
   },
+  "a decorated declare field is dropped but its computed key still runs once": {
+    source: `
+      function dec(t: any, k: any) { console.log("dec", String(k)) }
+      let n = 0; const k = () => "k" + ++n;
+      class A { @dec declare [k()]: number; @dec declare d: number; x = 1 }
+      console.log(n, JSON.stringify(Object.getOwnPropertyNames(new A())));
+    `,
+    expected: 'dec k1\ndec d\n1 ["x"]\n',
+  },
+  "useDefineForClassFields false: decorated fields next to a computed key": {
+    useDefineForClassFields: false,
+    source: `
+      function dec(t: any, k: any) { console.log("dec", String(k)) }
+      const s = Symbol("s");
+      class A { @dec w: number; [s] = 1; @dec [Symbol.iterator]: any; y = 2 }
+      const a: any = new A();
+      console.log(JSON.stringify([a.y, a[s], a.w, a[Symbol.iterator]]));
+    `,
+    // Bun keeps a class with a computed instance key native instead of hoisting
+    // the key like tsc, so "w" is an own property here and not with tsc. The
+    // values and the decorator calls agree.
+    expected: "dec w\ndec Symbol(Symbol.iterator)\n[2,1,null,null]\n",
+  },
   "a parameter decorator is evaluated in the scope around the class": {
     source: `
       function pd(v: any) { console.log("dec arg =", v); return (...a: any[]) => {} }

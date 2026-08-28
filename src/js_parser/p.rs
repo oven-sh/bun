@@ -6395,6 +6395,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let temp_refs_before = self.temp_refs_to_declare.len();
                 let mut accessor_storage_counter: usize = 0;
 
+                // With "useDefineForClassFields: false", `visit_class` moved the
+                // instance field initializers into the constructor and left a
+                // decorated field in the list, without its initializer, only for the
+                // decorator call. It skips that lowering when an instance field has a
+                // computed key it cannot hoist. Mirror the decision here.
+                let instance_fields_lowered = !use_define
+                    && !s_class.class.properties.iter().any(|p| {
+                        p.kind == PropertyKind::Normal
+                            && !p.flags.contains(Flags::Property::IsMethod)
+                            && !p.flags.contains(Flags::Property::IsStatic)
+                            && p.flags.contains(Flags::Property::IsComputed)
+                            && p.value.is_none()
+                            && !matches!(
+                                p.key.map(|k| k.data),
+                                Some(js_ast::ExprData::EString(_) | js_ast::ExprData::ENumber(_))
+                            )
+                    });
+
                 for prop in s_class.class.properties.slice_mut().iter_mut() {
                     if prop.kind == PropertyKind::ClassStaticBlock {
                         class_properties.push(core::mem::take(prop));
@@ -6469,6 +6487,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     //   }
                     //   __legacyDecorateClassTS([dec], Foo.prototype, _a, null);
                     let mut key_for_reuse = key;
+                    let mut captured_key: Option<Expr> = None;
                     if prop.flags.contains(Flags::Property::IsComputed)
                         && !matches!(
                             key.data,
@@ -6479,7 +6498,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         self.record_declared_symbol(temp_ref);
                         self.record_usage(temp_ref);
                         let temp_ident = self.new_expr(E::Identifier::init(temp_ref), key_loc);
-                        prop.key = Some(Expr::assign(temp_ident, key));
+                        let assign = Expr::assign(temp_ident, key);
+                        prop.key = Some(assign);
+                        captured_key = Some(assign);
                         self.record_usage(temp_ref);
                         key_for_reuse = self.new_expr(E::Identifier::init(temp_ref), key_loc);
                     }
@@ -6714,22 +6735,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     // A "declare" or "abstract" member emits nothing. It is only in
-                    // the list because of its decorators, which ran above.
-                    if matches!(prop.kind, PropertyKind::Declare | PropertyKind::Abstract) {
-                        continue;
-                    }
-
-                    // With "useDefineForClassFields: false", `visit_class` moved the
-                    // instance field initializers into the constructor and TypeScript
-                    // omits a field without an initializer entirely. The property
-                    // only stayed in the list for the decorator call above.
-                    if !use_define
-                        && !is_method
-                        && !is_static
-                        && !is_private_key
-                        && prop.kind == PropertyKind::Normal
-                        && prop.initializer.is_none()
+                    // the list because of its decorators, which ran above. A field
+                    // without an initializer is omitted the same way when
+                    // `visit_class` applied "useDefineForClassFields: false".
+                    if matches!(prop.kind, PropertyKind::Declare | PropertyKind::Abstract)
+                        || (instance_fields_lowered
+                            && !is_method
+                            && !is_static
+                            && !is_private_key
+                            && prop.kind == PropertyKind::Normal
+                            && prop.initializer.is_none())
                     {
+                        // The key expression still runs, for its side effects and
+                        // because the decorator call reads the temporary.
+                        if let Some(captured_key) = captured_key {
+                            class_properties.push(self.make_static_block(captured_key, key_loc));
+                        }
                         continue;
                     }
 

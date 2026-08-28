@@ -832,6 +832,10 @@ pub mod kernel32 {
     pub const PAGE_EXECUTE_WRITECOPY: u32 = 0x80;
     pub const PAGE_GUARD: u32 = 0x100;
 
+    // `LockFileEx` dwFlags (`minwinbase.h`).
+    pub const LOCKFILE_FAIL_IMMEDIATELY: DWORD = 0x0000_0001;
+    pub const LOCKFILE_EXCLUSIVE_LOCK: DWORD = 0x0000_0002;
+
     #[cfg_attr(windows, link(name = "kernel32"))]
     unsafe extern "system" {
         /// No preconditions; reads thread-local Win32 error slot.
@@ -882,6 +886,17 @@ pub mod kernel32 {
         pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
         pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
+        /// `LockFileEx` (`fileapi.h`) — mandatory byte-range lock. The
+        /// `lpOverlapped` out-param is required even for synchronous handles
+        /// (its `Offset`/`OffsetHigh` select the range start).
+        pub fn LockFileEx(
+            hFile: HANDLE,
+            dwFlags: DWORD,
+            dwReserved: DWORD,
+            nNumberOfBytesToLockLow: DWORD,
+            nNumberOfBytesToLockHigh: DWORD,
+            lpOverlapped: *mut OVERLAPPED,
+        ) -> BOOL;
         /// `CreateProcessW` (`processthreadsapi.h`).
         pub fn CreateProcessW(
             lpApplicationName: LPCWSTR,

@@ -1052,6 +1052,15 @@ impl error::IntoErrnoInt for bun_windows_sys::NTSTATUS {
     }
 }
 
+/// Mode for [`flock`] — a whole-file lock: advisory `flock(2)` on POSIX,
+/// mandatory `LockFileEx` on Windows (other handles' reads and writes into
+/// the locked range fail there). Released when the fd is closed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum FileLockMode {
+    Shared,
+    Exclusive,
+}
+
 /// `Exchange` and `NoReplace` are mutually exclusive at the kernel level.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum RenameMode {
@@ -1389,6 +1398,7 @@ impl Tag {
     #[cfg(not(windows))]
     pub(crate) const setrlimit: Tag = Tag(106);
     pub const clone3: Tag = Tag(107);
+    pub const flock: Tag = Tag(108);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1396,7 +1406,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 108] = [
+        const NAMES: [&str; 109] = [
             "TODO",
             "dup",
             "access",
@@ -1506,6 +1516,7 @@ impl Tag {
             "getrlimit",
             "setrlimit",
             "clone3",
+            "flock",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -2642,6 +2653,32 @@ mod posix_impl {
         check!(safe_libc::ftruncate(fd.native(), len), Tag::ftruncate);
         Ok(())
     }
+    /// Advisory whole-file lock. Returns `Ok(false)` when `nonblocking` and
+    /// the lock is held elsewhere; retries `EINTR` internally.
+    pub fn flock(fd: Fd, mode: FileLockMode, nonblocking: bool) -> Maybe<bool> {
+        let mut op = match mode {
+            FileLockMode::Shared => libc::LOCK_SH,
+            FileLockMode::Exclusive => libc::LOCK_EX,
+        };
+        if nonblocking {
+            op |= libc::LOCK_NB;
+        }
+        loop {
+            // SAFETY: `fd` is a live descriptor; `op` is a valid flock op.
+            let rc = unsafe { libc::flock(fd.native(), op) };
+            if rc == 0 {
+                return Ok(true);
+            }
+            let e = last_errno();
+            if e == libc::EINTR {
+                continue;
+            }
+            if nonblocking && (e == libc::EWOULDBLOCK || e == libc::EAGAIN) {
+                return Ok(false);
+            }
+            return Err(Error::from_code_int(e, Tag::flock).with_fd(fd));
+        }
+    }
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
         // SAFETY: `buf` is a valid exclusive slice; `getcwd` writes at most
         // `buf.len()` bytes (including the NUL).
@@ -3623,6 +3660,34 @@ mod windows_impl {
         }
         Ok(bytes_written as usize)
     }
+    /// Whole-file lock via `LockFileEx` (mandatory on Windows: other
+    /// handles' reads and writes into the range fail). Returns `Ok(false)` when
+    /// `nonblocking` and the lock is held elsewhere. Unlike POSIX `flock`,
+    /// `LockFileEx` does not upgrade/downgrade an already-held lock, but the
+    /// only caller pattern is acquire-once/close, which behaves identically.
+    pub fn flock(fd: Fd, mode: FileLockMode, nonblocking: bool) -> Maybe<bool> {
+        let mut flags: w::DWORD = 0;
+        if mode == FileLockMode::Exclusive {
+            flags |= w::kernel32::LOCKFILE_EXCLUSIVE_LOCK;
+        }
+        if nonblocking {
+            flags |= w::kernel32::LOCKFILE_FAIL_IMMEDIATELY;
+        }
+        let mut overlapped: w::OVERLAPPED = bun_core::ffi::zeroed();
+        // SAFETY: FFI; `fd.native()` is a valid HANDLE and `overlapped` is a
+        // valid out-param selecting range start 0.
+        let rc = unsafe {
+            w::kernel32::LockFileEx(fd.native(), flags, 0, u32::MAX, u32::MAX, &mut overlapped)
+        };
+        if rc != 0 {
+            return Ok(true);
+        }
+        let er = w::Win32Error::get();
+        if nonblocking && er == w::Win32Error::LOCK_VIOLATION {
+            return Ok(false);
+        }
+        Err(Error::new(er.to_e(), Tag::flock).with_fd(fd))
+    }
     pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize> {
         // Positioned-I/O lowering:
         // libuv path for uv-kind fds, kernel32 ReadFile+OVERLAPPED for system
@@ -3665,7 +3730,7 @@ mod windows_impl {
             return Ok(amount_read as usize);
         }
     }
-    pub(crate) fn pwrite(fd: Fd, buf: &[u8], off: i64) -> Maybe<usize> {
+    pub fn pwrite(fd: Fd, buf: &[u8], off: i64) -> Maybe<usize> {
         // Same lowering as `pread`: kernel32 WriteFile with an
         // `OVERLAPPED.Offset` for HANDLE-kind fds.
         if fd.kind() == FdKind::Uv {

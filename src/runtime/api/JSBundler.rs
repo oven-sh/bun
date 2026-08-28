@@ -1275,8 +1275,6 @@ pub mod js_bundler {
                             return Err(global_this.throw_invalid_arguments(format_args!("cannot use compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for compile.outfile")));
                         }
 
-                        // Only the name. `do_compilation` resolves it against
-                        // `outdir`, or the working directory, like the CLI.
                         compile.outfile.append_slice_exact(outfile)?;
                     }
                 }

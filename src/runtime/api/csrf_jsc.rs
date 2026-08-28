@@ -21,9 +21,7 @@ fn algorithm_from_js_case_insensitive(
     Ok(evp::lookup_ignore_case(slice.slice()))
 }
 
-/// Reads an optional millisecond duration (`expiresIn` / `maxAge`).
-/// `validate_integer_range` maps NaN to the default. `bun_csrf` treats `0` as
-/// "no expiry", so the default here is the 24h one an absent property gets.
+/// `expiresIn` / `maxAge`. NaN maps to the default, and `0` would mean "no expiry".
 fn get_optional_duration_ms(
     target: JSValue,
     global: &JSGlobalObject,

@@ -709,7 +709,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     .resolver
                     .read_dir_info_ignore_error(if home.is_empty() { b"/" } else { home.as_bytes() })
                     .or_else(|| this_transpiler.resolver.read_dir_info_ignore_error(b"/"))
-                    .ok_or(crate::Error::InstallFailed)?;
+                    .ok_or(crate::Error::CouldntReadCurrentDirectory)?;
                 // Say so. A silent substitution makes every downstream
                 // oddity (wrong package name, unexpected $PATH entry) look
                 // like it came from somewhere else.

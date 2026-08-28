@@ -159,9 +159,19 @@ function splitHit(hit: string): { where: string; content: string } {
   return { where: hit.slice(0, second), content: hit.slice(second + 1) };
 }
 
+// Line comments and the conventional `*`-prefixed body of a block comment. A
+// block-comment body line without the `*` is not recognized here; in the
+// caller scan that only makes a mention count, never a failure. The
+// definition scan below tracks block-comment state itself.
 function isComment(line: string): boolean {
   const t = line.trimStart();
   return t.startsWith("//") || t.startsWith("/*") || t.startsWith("*");
+}
+
+// Blank out every `/* ... */` range so a commented-out attribute cannot
+// register an export. Line numbers are preserved.
+function stripBlockComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, block => block.replace(/[^\n]/g, " "));
 }
 
 // symbol -> the "<file>:<line>" locations that define it: the marker or
@@ -185,7 +195,7 @@ const definingFiles = gitGrepOrThrow([
   ...RUST_PATHSPECS,
 ]);
 for (const file of definingFiles) {
-  const lines = (await Bun.file(path.join(root, file)).text()).split("\n");
+  const lines = stripBlockComments(await Bun.file(path.join(root, file)).text()).split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const where = `${file}:${i + 1}`;

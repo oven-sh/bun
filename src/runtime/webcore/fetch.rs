@@ -1614,7 +1614,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let blob_offset = body.any_blob().blob().offset.get();
             let blob_size = body.any_blob().blob().size.get();
             // A fresh `NodeFS` suffices: `read_file` on an `Fd` never touches `sync_error_buf`.
-            let mut node_fs = node::fs::NodeFS::new_boxed();
+            let mut node_fs = node::fs::NodeFS::default();
             // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
             let mut rf_args = node::fs::args::ReadFile::default();
             rf_args.encoding = Encoding::Buffer;

@@ -56,16 +56,23 @@ enum RewriteKind {
         home: SuperHome,
         loc: bun_ast::Loc,
     },
+    /// `new.target` is `undefined` in a field initializer and in a static
+    /// block. Moved into the constructor or after the class, it would not be.
+    ReplaceNewTarget,
 }
 
 /// The home object of `super` in code that left the class body.
 #[derive(Clone, Copy)]
-enum SuperHome {
-    /// Static code moved after the class: home object and receiver are the class.
-    Class(Ref),
-    /// An instance private method moved out of the class: the home object is
-    /// `C.prototype` and the receiver is `this`.
-    Prototype(Ref),
+struct SuperHome {
+    /// The binding that holds the class as written. A class decorator may
+    /// rebind the class name to a subclass, which would put `super` one level
+    /// too low.
+    class: Ref,
+    /// `class.prototype` (an instance method) or `class` itself (static code).
+    prototype: bool,
+    /// The receiver: the class binding for static code moved after the class
+    /// (its `this`), or `this` (`None`) for an extracted private method.
+    receiver: Option<Ref>,
 }
 
 // ── Shallow-copy helpers (Property / Class are not `Clone` because they hold
@@ -356,22 +363,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// `(home object, receiver)` for a `super` access.
     fn super_home_and_receiver(&mut self, home: SuperHome, l: bun_ast::Loc) -> (Expr, Expr) {
-        match home {
-            SuperHome::Class(class_ref) => (self.use_ref(class_ref, l), self.use_ref(class_ref, l)),
-            SuperHome::Prototype(class_ref) => {
-                let class = self.use_ref(class_ref, l);
-                let proto = self.new_expr(
-                    E::Dot {
-                        target: class,
-                        name: b"prototype".into(),
-                        name_loc: l,
-                        ..Default::default()
-                    },
-                    l,
-                );
-                (proto, self.new_expr(E::This {}, l))
-            }
-        }
+        let class = self.use_ref(home.class, l);
+        let home_object = if home.prototype {
+            self.new_expr(
+                E::Dot {
+                    target: class,
+                    name: b"prototype".into(),
+                    name_loc: l,
+                    ..Default::default()
+                },
+                l,
+            )
+        } else {
+            class
+        };
+        let receiver = match home.receiver {
+            Some(r) => self.use_ref(r, l),
+            None => self.new_expr(E::This {}, l),
+        };
+        (home_object, receiver)
     }
 
     /// `super.key` => `__superGet(home, receiver, key)`.
@@ -674,6 +684,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return;
                 }
             }
+            RewriteKind::ReplaceNewTarget => {
+                if matches!(expr.data, js_ast::ExprData::ENewTarget(_)) {
+                    *expr = self.new_expr(E::Undefined {}, expr.loc);
+                    return;
+                }
+            }
             RewriteKind::ReplaceSuper { home, loc } => {
                 if let Some(mut key) = self.super_property_key(expr) {
                     self.rewrite_expr(&mut key, kind);
@@ -693,52 +709,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         new_args.push(*arg);
                     }
                     let method = self.super_get(home, key, loc);
-                    if call.optional_chain.is_some() {
-                        // `super.m?.()` => `(_m = __superGet(...)) == null ? void 0 : _m.call(C, ...)`
-                        let tmp_ref = self.capture_temp(b"_m");
-                        let stored = self.assign_to(tmp_ref, method, loc);
-                        let null = self.new_expr(E::Null {}, loc);
-                        let test = self.new_expr(
-                            E::Binary {
-                                op: js_ast::OpCode::BinLooseEq,
-                                left: stored,
-                                right: null,
-                            },
-                            loc,
-                        );
-                        let yes = self.new_expr(E::Undefined {}, loc);
-                        let tmp = self.use_ref(tmp_ref, loc);
-                        let call_target = self.new_expr(
-                            E::Dot {
-                                target: tmp,
-                                name: b"call".into(),
-                                name_loc: loc,
-                                ..Default::default()
-                            },
-                            loc,
-                        );
-                        let no = self.new_expr(
-                            E::Call {
-                                target: call_target,
-                                args: ExprNodeList::from_bump_vec(new_args),
-                                ..Default::default()
-                            },
-                            loc,
-                        );
-                        *expr = self.new_expr(E::If { test, yes, no }, loc);
-                        return;
-                    }
-                    // `super.m(...)` => `__superGet(home, C, "m").call(C, ...)`
+                    // `super.m(...)` => `__superGet(home, C, "m").call(C, ...)`.
+                    // `super.m?.()` => `__superGet(home, C, "m")?.call(C, ...)`: the
+                    // call stays the start of its optional chain, so a
+                    // continuation such as `super.m?.().x` still short-circuits.
+                    let optional = call.optional_chain.is_some();
                     call.target = self.new_expr(
                         E::Dot {
                             target: method,
                             name: b"call".into(),
                             name_loc: loc,
+                            optional_chain: optional.then_some(js_ast::OptionalChain::Start),
                             ..Default::default()
                         },
                         loc,
                     );
                     call.args = ExprNodeList::from_bump_vec(new_args);
+                    if optional {
+                        call.optional_chain = Some(js_ast::OptionalChain::Continuation);
+                    }
                     return;
                 }
                 if let js_ast::ExprData::ETemplate(t) = &mut expr.data
@@ -933,10 +922,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let stmts = e.body.stmts.slice_mut();
                 self.rewrite_stmts(stmts, kind);
             }
-            // A function and a class body bind their own `this` and `super`;
-            // only a renamed class reference reaches into them.
+            // A function and a class body bind their own `this`, `super` and
+            // `new.target`; only a renamed class reference reaches into them.
             js_ast::ExprData::EFunction(e) => match kind {
-                RewriteKind::ReplaceThis { .. } | RewriteKind::ReplaceSuper { .. } => {}
+                RewriteKind::ReplaceThis { .. }
+                | RewriteKind::ReplaceSuper { .. }
+                | RewriteKind::ReplaceNewTarget => {}
                 RewriteKind::ReplaceRef { .. } => {
                     self.for_each_arg_expr(e.func.args.slice_mut(), &mut |p, a| {
                         p.rewrite_expr(a, kind)
@@ -1881,45 +1872,45 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn rewrite_moved_static_expr(
         &mut self,
         expr: &mut Expr,
-        class_name_ref: Ref,
+        home: SuperHome,
         class_name_loc: bun_ast::Loc,
         name_rewrite: Option<RewriteKind>,
     ) {
         self.rewrite_expr(
             expr,
             RewriteKind::ReplaceThis {
-                ref_: class_name_ref,
+                ref_: home
+                    .receiver
+                    .expect("static code has the class as receiver"),
                 loc: class_name_loc,
             },
         );
         self.rewrite_expr(
             expr,
             RewriteKind::ReplaceSuper {
-                home: SuperHome::Class(class_name_ref),
+                home,
                 loc: class_name_loc,
             },
         );
+        self.rewrite_expr(expr, RewriteKind::ReplaceNewTarget);
         if let Some(rk) = name_rewrite {
             self.rewrite_expr(expr, rk);
         }
     }
 
     /// `super` inside a private method that leaves the class body keeps its
-    /// meaning: the home object is the class (static) or its prototype.
+    /// meaning: the home object is the class (static) or its prototype. The
+    /// inner name of a named class expression is rewritten as in any other
+    /// moved code.
     fn rewrite_extracted_private_method(
         &mut self,
         value: &mut Expr,
-        is_static: bool,
-        class_name_ref: Ref,
+        home: SuperHome,
         class_name_loc: bun_ast::Loc,
+        name_rewrite: Option<RewriteKind>,
     ) {
         let js_ast::ExprData::EFunction(f) = &mut value.data else {
             return;
-        };
-        let home = if is_static {
-            SuperHome::Class(class_name_ref)
-        } else {
-            SuperHome::Prototype(class_name_ref)
         };
         let kind = RewriteKind::ReplaceSuper {
             home,
@@ -1927,6 +1918,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         self.for_each_arg_expr(f.func.args.slice_mut(), &mut |p, a| p.rewrite_expr(a, kind));
         self.rewrite_stmts(f.func.body.stmts.slice_mut(), kind);
+        if let Some(rk) = name_rewrite {
+            self.rewrite_expr(value, rk);
+        }
     }
 
     /// `__runInitializers(_init, flag, target, ...value)`.
@@ -2319,6 +2313,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             None
         };
 
+        // `super` in moved code resolves from the class as written. A class
+        // decorator rebinds the class name, possibly to a subclass, before the
+        // moved code runs, so the original class gets its own binding. It is
+        // declared and assigned only if a `super` rewrite used it.
+        let super_home_ref = if class_decorators_len > 0 {
+            p.new_sym(js_ast::symbol::Kind::Other, b"_home")
+        } else {
+            class_name_ref
+        };
+        let static_super_home = SuperHome {
+            class: super_home_ref,
+            prototype: false,
+            receiver: Some(class_name_ref),
+        };
+
         // `__decorateElement` appends one initializer slot per decorated field
         // or accessor, in call order: static accessors, instance accessors,
         // static fields, instance fields. Number the members the same way.
@@ -2442,10 +2451,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.rewrite_stmts(
                     stmts_slice,
                     RewriteKind::ReplaceSuper {
-                        home: SuperHome::Class(class_name_ref),
+                        home: static_super_home,
                         loc: class_name_loc,
                     },
                 );
+                p.rewrite_stmts(stmts_slice, RewriteKind::ReplaceNewTarget);
                 if let Some(rk) = name_rewrite {
                     p.rewrite_stmts(stmts_slice, rk);
                 }
@@ -2523,18 +2533,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 };
             }
-            // The initializer, rewritten if it leaves the class body.
+            // `super` in a private method moved out of the class body.
+            macro_rules! method_super_home {
+                () => {
+                    SuperHome {
+                        class: super_home_ref,
+                        prototype: !is_static,
+                        receiver: None,
+                    }
+                };
+            }
+            // The initializer, rewritten for where it runs now: the constructor
+            // or the statements after the class.
             macro_rules! moved_initializer {
                 () => {{
                     let mut init_val = prop.initializer;
-                    if is_static {
-                        if let Some(iv) = &mut init_val {
+                    if let Some(iv) = &mut init_val {
+                        if is_static {
                             p.rewrite_moved_static_expr(
                                 iv,
-                                class_name_ref,
+                                static_super_home,
                                 class_name_loc,
                                 name_rewrite,
                             );
+                        } else {
+                            p.rewrite_expr(iv, RewriteKind::ReplaceNewTarget);
                         }
                     }
                     init_val
@@ -2707,9 +2730,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc));
                             p.rewrite_extracted_private_method(
                                 &mut method,
-                                is_static,
-                                class_name_ref,
+                                method_super_home!(),
                                 class_name_loc,
+                                name_rewrite,
                             );
                             dec_args.push(method);
                         } else if k == 4 {
@@ -2883,9 +2906,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc));
                     p.rewrite_extracted_private_method(
                         &mut val,
-                        is_static,
-                        class_name_ref,
+                        method_super_home!(),
                         class_name_loc,
+                        name_rewrite,
                     );
                     let assign = p.assign_to(fn_ref, val, loc);
                     prefix_stmts.push(p.s(
@@ -2997,7 +3020,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let mut brand = prop_full_copy(prop);
                     brand.initializer = None;
                     new_properties.push(brand);
-                    if let Some(init) = prop.initializer {
+                    if let Some(init) = moved_initializer!() {
                         let target = p.new_expr(E::This {}, loc);
                         let member = p.new_expr(
                             E::Index {
@@ -3100,6 +3123,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // ── Phase 6: Emit suffix ─────────────────────────
         let mut suffix_exprs = BumpVec::<Expr>::new_in(bump);
+        if !super_home_ref.eql(class_name_ref)
+            && p.symbols[super_home_ref.inner_index() as usize].use_count_estimate > 0
+        {
+            // `_home = C` before the class decorator can rebind `C`.
+            prefix_stmts.push(p.var_decl(super_home_ref, None, loc));
+            let class_value = p.use_ref(class_name_ref, class_name_loc);
+            suffix_exprs.push(p.assign_to(super_home_ref, class_value, loc));
+        }
         suffix_exprs.extend_from_slice(&static_non_field_elements);
         suffix_exprs.extend_from_slice(&instance_non_field_elements);
         suffix_exprs.extend_from_slice(&static_field_elements);
@@ -3194,9 +3225,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // ── Phase 7: Constructor injection ───────────────
-        let mut constructor_inject_stmts = BumpVec::<Stmt>::new_in(bump);
+        // Right after `super()`: the private method brands, then the extra
+        // initializers of the instance methods. The fields follow. In
+        // TypeScript's [[Set]] mode the parameter property assignments come
+        // between the two groups, as tsc emits them.
+        let mut ctor_prologue_stmts = BumpVec::<Stmt>::new_in(bump);
         for e in instance_private_method_adds.iter() {
-            constructor_inject_stmts.push(p.s(
+            ctor_prologue_stmts.push(p.s(
                 S::SExpr {
                     value: *e,
                     ..Default::default()
@@ -3207,7 +3242,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if call_instance_method_extra_inits {
             let t_e = p.new_expr(E::This {}, loc);
             let call = p.run_initializers_call(init_ref, 5.0, t_e, None, loc);
-            constructor_inject_stmts.push(p.s(
+            ctor_prologue_stmts.push(p.s(
                 S::SExpr {
                     value: call,
                     ..Default::default()
@@ -3215,8 +3250,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 loc,
             ));
         }
+        let mut ctor_field_stmts = BumpVec::<Stmt>::new_in(bump);
         for e in instance_members.iter() {
-            constructor_inject_stmts.push(p.s(
+            ctor_field_stmts.push(p.s(
                 S::SExpr {
                     value: *e,
                     ..Default::default()
@@ -3225,7 +3261,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ));
         }
 
-        if !constructor_inject_stmts.is_empty() {
+        if !ctor_prologue_stmts.is_empty() || !ctor_field_stmts.is_empty() {
             let mut found_constructor = false;
             for nprop in new_properties.iter_mut() {
                 if !nprop.flags.contains(Flags::Property::IsMethod)
@@ -3247,7 +3283,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     _ => unreachable!(),
                 };
                 let body_slice: &[Stmt] = func.func.body.stmts.slice();
-                let mut insert_at: usize = 0;
+                let mut prologue_at: usize = 0;
                 if class.extends.is_some() {
                     for (index, item) in body_slice.iter().enumerate() {
                         let js_ast::StmtData::SExpr(se) = &item.data else {
@@ -3259,28 +3295,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if !matches!(call.target.data, js_ast::ExprData::ESuper(_)) {
                             continue;
                         }
-                        insert_at = index + 1;
+                        prologue_at = index + 1;
                         break;
                     }
                 }
+                let mut fields_at = prologue_at;
                 if !use_define {
-                    // TypeScript assigns parameter properties before field
-                    // initializers when fields use [[Set]] semantics.
                     let args = func.func.args.slice();
-                    while insert_at < body_slice.len()
-                        && is_param_prop_assignment(&body_slice[insert_at], args)
+                    while fields_at < body_slice.len()
+                        && p.is_param_prop_assignment(&body_slice[fields_at], args)
                     {
-                        insert_at += 1;
+                        fields_at += 1;
                     }
                 }
                 // BumpVec has no `splice`; rebuild.
                 let mut spliced = BumpVec::<Stmt>::with_capacity_in(
-                    body_slice.len() + constructor_inject_stmts.len(),
+                    body_slice.len() + ctor_prologue_stmts.len() + ctor_field_stmts.len(),
                     bump,
                 );
-                spliced.extend_from_slice(&body_slice[..insert_at]);
-                spliced.extend_from_slice(&constructor_inject_stmts);
-                spliced.extend_from_slice(&body_slice[insert_at..]);
+                spliced.extend_from_slice(&body_slice[..prologue_at]);
+                spliced.extend_from_slice(&ctor_prologue_stmts);
+                spliced.extend_from_slice(&body_slice[prologue_at..fields_at]);
+                spliced.extend_from_slice(&ctor_field_stmts);
+                spliced.extend_from_slice(&body_slice[fields_at..]);
                 func.func.body.stmts = bun_ast::StoreSlice::new_mut(spliced.into_bump_slice_mut());
                 found_constructor = true;
                 break;
@@ -3319,7 +3356,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         loc,
                     ));
                 }
-                ctor_stmts.extend_from_slice(&constructor_inject_stmts);
+                ctor_stmts.extend_from_slice(&ctor_prologue_stmts);
+                ctor_stmts.extend_from_slice(&ctor_field_stmts);
                 let ctor_body_ptr = bun_ast::StoreSlice::new_mut(ctor_stmts.into_bump_slice_mut());
                 let func = G::Fn {
                     name: None,
@@ -3578,31 +3616,38 @@ fn field_or_accessor_order(prop: &Property) -> Option<usize> {
     }
 }
 
-/// `this.x = x` for a `constructor(public x)` parameter property, as the visit
-/// pass emits it at the top of the constructor body.
-fn is_param_prop_assignment(stmt: &Stmt, args: &[G::Arg]) -> bool {
-    let js_ast::StmtData::SExpr(se) = &stmt.data else {
-        return false;
-    };
-    let js_ast::ExprData::EBinary(bin) = &se.value.data else {
-        return false;
-    };
-    if bin.op != js_ast::OpCode::BinAssign {
-        return false;
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+    /// `this.x = x` for a `constructor(public x)` parameter property, as the
+    /// visit pass emits it at the top of the constructor body. A user statement
+    /// `this.y = x` has a different property name.
+    fn is_param_prop_assignment(&self, stmt: &Stmt, args: &[G::Arg]) -> bool {
+        let js_ast::StmtData::SExpr(se) = &stmt.data else {
+            return false;
+        };
+        let js_ast::ExprData::EBinary(bin) = &se.value.data else {
+            return false;
+        };
+        if bin.op != js_ast::OpCode::BinAssign {
+            return false;
+        }
+        let js_ast::ExprData::EDot(dot) = &bin.left.data else {
+            return false;
+        };
+        if !matches!(dot.target.data, js_ast::ExprData::EThis(_)) {
+            return false;
+        }
+        let js_ast::ExprData::EIdentifier(id) = &bin.right.data else {
+            return false;
+        };
+        args.iter().any(|arg| {
+            arg.is_typescript_ctor_field
+                && matches!(arg.binding.data, js_ast::b::B::BIdentifier(b) if b.r#ref.eql(id.ref_))
+                && self.symbols[id.ref_.inner_index() as usize]
+                    .original_name
+                    .slice()
+                    == dot.name.slice()
+        })
     }
-    let js_ast::ExprData::EDot(dot) = &bin.left.data else {
-        return false;
-    };
-    if !matches!(dot.target.data, js_ast::ExprData::EThis(_)) {
-        return false;
-    }
-    let js_ast::ExprData::EIdentifier(id) = &bin.right.data else {
-        return false;
-    };
-    args.iter().any(|arg| {
-        arg.is_typescript_ctor_field
-            && matches!(arg.binding.data, js_ast::b::B::BIdentifier(b) if b.r#ref.eql(id.ref_))
-    })
 }
 
 #[inline]

@@ -844,6 +844,140 @@ describe("ES decorators lowering", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("new.target stays undefined in moved field initializers and static blocks", async () => {
+    const { stdout, stderr, exitCode } = await runInline(`
+      const dec = (v, ctx) => {};
+      class C {
+        @dec m() {}
+        static a = new.target;
+        b = new.target;
+        c = () => new.target;
+        d = function () { return new.target; };
+        static { C.sb = new.target; }
+      }
+      class D extends C { e = new.target; }
+      const c = new C(), d = new D(), fn = d.d;
+      console.log(C.a, c.b, c.c(), C.sb, d.b, d.e, new fn() === fn);
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("undefined undefined undefined undefined undefined undefined true\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent(
+    "super in moved code resolves from the class as written when a class decorator replaces it",
+    async () => {
+      const { stdout, stderr, exitCode } = await runInline(`
+      const dec = (v, ctx) => {};
+      const wrap = (C) => class extends C { static sg() { return "wrapper" } greet() { return "wrapper" } };
+      class B { greet() { return "B" } static sg() { return "B" } }
+      @wrap class C extends B {
+        @dec x = 1;
+        greet() { return "C" }
+        static sg() { return "C" }
+        #m() { return super.greet() }
+        @dec #dm() { return super.greet() }
+        static #s() { return super.sg() }
+        call() { return [this.#m(), this.#dm(), C.#s()] }
+        static y = super.sg();
+        static { C.blk = super.sg(); }
+      }
+      console.log(new C().call(), C.y, C.blk, Object.getPrototypeOf(C) !== B);
+    `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('[ "B", "B", "B" ] B B true\n');
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent("super.m?.() in moved code keeps short-circuiting the rest of its chain", async () => {
+    const { stdout, stderr, exitCode } = await runInline(`
+      const dec = (v, ctx) => {};
+      class B { static get maybe() { return undefined } static sg() { return "B" } }
+      class C extends B {
+        @dec m() {}
+        static z = super.maybe?.().value;
+        static w = super.sg?.().length;
+        static { C.blk = super.maybe?.()?.x ?? "none"; }
+      }
+      console.log(C.z, C.w, C.blk);
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("undefined 1 none\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("the inner name of a named class expression resolves in extracted private methods", async () => {
+    const { stdout, stderr, exitCode } = await runInline(`
+      const dec = (v, ctx) => {};
+      const A = class Foo {
+        @dec a = 1;
+        #m() { return Foo }
+        static #s() { return [Foo, this] }
+        call() { return this.#m() }
+        static scall() { return Foo.#s() }
+      };
+      console.log(new A().call() === A, A.scall()[0] === A, A.scall()[1] === A);
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("true true true\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent(
+    "TypeScript useDefineForClassFields: false installs private methods before parameter properties",
+    async () => {
+      using dir = tempDir("es-dec-udfcf-param-props", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }),
+        "test.ts": `
+        const dec = (v: any, ctx: any) => {
+          ctx.addInitializer(function (this: any) { console.log("extra", this.data) });
+        };
+        class Base {
+          #d: unknown;
+          get data() { return this.#d }
+          set data(v: unknown) { this.#d = v; (this as any).onData(v) }
+        }
+        class C extends Base {
+          @dec m() {}
+          #store(v: unknown) { console.log("store", v) }
+          onData(v: unknown) { this.#store(v) }
+          x = (console.log("field", this.data), 1);
+          constructor(public data: unknown) { super(); console.log("body", this.x) }
+        }
+        new C(1);
+      `,
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir), ["test.ts"]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("extra undefined\nstore 1\nfield 1\nbody 1\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent(
+    "TypeScript useDefineForClassFields: false runs lowered fields before the constructor body",
+    async () => {
+      using dir = tempDir("es-dec-udfcf-ctor-body", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }),
+        "test.ts": `
+        const dec = (v: any, ctx: any) => {};
+        class C {
+          @dec m() {}
+          a = (this as any).snapshot;
+          constructor(public data: unknown) { (this as any).snapshot = data; }
+        }
+        const c = new C(1);
+        console.log(c.a, c.data, (c as any).snapshot);
+      `,
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir), ["test.ts"]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("undefined 1 1\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test.concurrent("Bun.Transpiler moves every field once one is decorated", () => {
     const transpiler = new Bun.Transpiler({ loader: "js", target: "bun" });
     const out = transpiler.transformSync(`
@@ -1022,15 +1156,14 @@ describe("ES decorators lowering output", () => {
 
   test("`super` in relocated static code goes through the runtime helpers", () => {
     const out = js.transformSync(
-      `const dec = () => {}; class A extends B { @dec m() {} static s = super.x; static t = super.y(1); static u = (super.z = 2); static o = super.q?.(); static g = super.tag\`x\`; static { [super.a, ...super.r] = v; for (super.i of v) {} } }`,
+      `const dec = () => {}; class A extends B { @dec m() {} static s = super.x; static t = super.y(1); static u = (super.z = 2); static o = super.q?.(); static p = super.q?.().n; static g = super.tag\`x\`; static { [super.a, ...super.r] = v; for (super.i of v) {} } }`,
     );
     expect(out).toMatch(/__publicField\w*\(A, "s", __superGet\w*\(A, A, "x"\)\);/);
     expect(out).toMatch(/__publicField\w*\(A, "t", __superGet\w*\(A, A, "y"\)\.call\(A, 1\)\);/);
     expect(out).toMatch(/__publicField\w*\(A, "u", __superSet\w*\(A, A, "z", 2\)\);/);
-    // An optional call checks the looked-up method, not `.call`.
-    expect(out).toMatch(
-      /__publicField\w*\(A, "o", \((_m\$\d+) = __superGet\w*\(A, A, "q"\)\) == null \? void 0 : \1\.call\(A\)\);/,
-    );
+    // An optional call checks the looked-up method and stays the start of its chain.
+    expect(out).toMatch(/__publicField\w*\(A, "o", __superGet\w*\(A, A, "q"\)\?\.call\(A\)\);/);
+    expect(out).toMatch(/__publicField\w*\(A, "p", __superGet\w*\(A, A, "q"\)\?\.call\(A\)\.n\);/);
     // A tagged template keeps the class as the receiver.
     expect(out).toMatch(/__publicField\w*\(A, "g", __superGet\w*\(A, A, "tag"\)\.bind\(A\)`x`\);/);
     // Destructuring and loop targets go through a wrapper.
@@ -1067,8 +1200,27 @@ describe("ES decorators lowering output", () => {
     expect(out).toMatch(
       /_pm_fn\$\d+ = function\(\) \{\n  return __superGet\w*\(A\.prototype, this, "greet"\)\.call\(this\);\n\};/,
     );
-    expect(out).toMatch(/_spm_fn\$\d+ = function\(\) \{\n  return __superGet\w*\(A, A, "sm"\)\.call\(A\);\n\};/);
+    expect(out).toMatch(/_spm_fn\$\d+ = function\(\) \{\n  return __superGet\w*\(A, this, "sm"\)\.call\(this\);\n\};/);
     expect(out).not.toContain("super.");
+    expect(out).not.toContain("_home");
+  });
+
+  test("a class decorator keeps `super` of moved code on the class as written", () => {
+    const out = js.transformSync(
+      `const dec = () => {}; @dec class A extends B { @dec m() {} static s = super.x; #pm() { return super.greet(); } q() { this.#pm() } }`,
+    );
+    // The original class is captured before the class decorator rebinds `A`.
+    expect(out).toMatch(/(?:var |, )_home\$\d+[,;]/);
+    expect(suffix(out)).toEqual([
+      expect.stringMatching(/^_home\$\d+ = A;$/),
+      expect.stringMatching(/^__decorateElement\w*\(_init\$\d+, 1, "m", _dec2\$\d+, A\);$/),
+      expect.stringMatching(/^A = __decorateElement\w*\(_init\$\d+, 0, "A", _dec\$\d+, A\);$/),
+      expect.stringMatching(/^__publicField\w*\(A, "s", __superGet\w*\(_home\$\d+, A, "x"\)\);$/),
+      expect.stringMatching(/^__runInitializers\w*\(_init\$\d+, 1, A\);$/),
+    ]);
+    expect(out).toMatch(
+      /_pm_fn\$\d+ = function\(\) \{\n  return __superGet\w*\((_home\$\d+)\.prototype, this, "greet"\)\.call\(this\);\n\};/,
+    );
   });
 
   test("lowered private members as template tags and destructuring targets", () => {
@@ -1143,16 +1295,42 @@ describe("ES decorators lowering output", () => {
       "this.x = x;",
     ]);
 
+    // Private method brands and the method extra initializers come first, the
+    // parameter properties next, then the fields, then the constructor body
+    // (even when its first statement also assigns a parameter to `this`).
     const assign = ts({ useDefineForClassFields: false }).transformSync(
-      `const dec = () => {}; class A { constructor(public x: number) { log() } @dec y = this.x; z = 2; }`,
+      `const dec = () => {}; class A { constructor(public x: number) { this.w = x; log() } @dec y = this.x; z = 2; #p() {} @dec q() { this.#p() } }`,
     );
     expect(assign).not.toContain("  x;\n");
     expect(ctorBody(assign)).toEqual([
+      expect.stringMatching(/^__privateAdd\w*\(this, _p\$\d+\);$/),
+      expect.stringMatching(/^__runInitializers\w*\(_init\$\d+, 5, this\);$/),
       "this.x = x;",
       expect.stringMatching(/^this\.y = __runInitializers\w*\(_init\$\d+, 8, this, this\.x\);$/),
       expect.stringMatching(/^__runInitializers\w*\(_init\$\d+, 11, this\);$/),
       "this.z = 2;",
+      "this.w = x;",
       "log();",
+    ]);
+  });
+
+  test("new.target in moved initializers and static blocks becomes undefined", () => {
+    const out = js.transformSync(
+      `const dec = () => {}; class A { @dec m() {} static a = new.target; b = new.target; c = () => new.target; d = function() { return new.target }; static { A.s = new.target } }`,
+    );
+    expect(ctorBody(out)).toEqual([
+      expect.stringMatching(/^__runInitializers\w*\(_init\$\d+, 5, this\);$/),
+      expect.stringMatching(/^__publicField\w*\(this, "b", void 0\);$/),
+      expect.stringMatching(/^__publicField\w*\(this, "c", \(\) => void 0\);$/),
+      expect.stringMatching(/^__publicField\w*\(this, "d", function\(\) \{$/),
+      "return new.target;",
+      "});",
+    ]);
+    expect(suffix(out)).toEqual([
+      expect.stringMatching(/^__decorateElement\w*/),
+      expect.stringMatching(/^__publicField\w*\(A, "a", void 0\);$/),
+      "A.s = void 0;",
+      expect.stringMatching(/^__decoratorMetadata\w*/),
     ]);
   });
 

@@ -100,6 +100,8 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
       for (const [k, v] of req.headers) out[k] = v;
       return Response.json({ url: req.url, method: req.method, headers: out });
     }
+    case "/body-null":
+      return new Response(String(req.body === null), { headers: { "x-method": req.method } });
     case "/set-cookies":
       return new Response("ok", {
         headers: [

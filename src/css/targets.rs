@@ -72,7 +72,9 @@ impl Targets {
         Some(lhs << rhs)
     }
 
-    pub fn for_bundler_target(target: bun_ast::Target) -> Targets {
+    /// Private so the bundler cannot bypass a user `cssTarget`: `for_bundler`
+    /// is the only entry point.
+    fn for_bundler_target(target: bun_ast::Target) -> Targets {
         #[cfg(debug_assertions)]
         {
             let mut browsers = Browsers::default();
@@ -105,6 +107,19 @@ impl Targets {
         match target {
             T::Node | T::Bun => Self::runtime_default(),
             T::Browser | T::BunMacro | T::ServerComponentsSsr => Self::browser_default(),
+        }
+    }
+
+    /// Bundler targets with an explicit user override (the `cssTarget` build
+    /// option). An override with no browser entries (for example only
+    /// `"esnext"` or `"node20"`) disables downleveling entirely.
+    pub fn for_bundler(target: bun_ast::Target, user_browsers: Option<&Browsers>) -> Targets {
+        match user_browsers {
+            Some(browsers) => Targets {
+                browsers: (*browsers != Browsers::default()).then_some(*browsers),
+                ..Default::default()
+            },
+            None => Self::for_bundler_target(target),
         }
     }
 
@@ -203,210 +218,222 @@ impl Browsers {
     /// https://github.com/vitejs/vite/blob/ac329685bba229e1ff43e3d96324f817d48abe48/packages/vite/src/node/plugins/css.ts#L3335
     pub(crate) fn convert_from_string(esbuild_target: &[&[u8]]) -> crate::CrateResult<Browsers> {
         let mut browsers = Browsers::default();
-
         for &str in esbuild_target {
-            let mut entries_buf: [&[u8]; 5] = [b""; 5];
-            let entries_without_es: &[&[u8]] = 'entries_without_es: {
-                if str.len() <= 2 || !(str[0] == b'e' && str[1] == b's') {
-                    entries_buf[0] = str;
-                    break 'entries_without_es &entries_buf[0..1];
-                }
+            browsers.merge_esbuild_target(str)?;
+        }
+        Ok(browsers)
+    }
 
-                let number_part = &str[2..];
-                // Propagates InvalidCharacter / Overflow. Preserve the tag for
-                // error-name snapshot compat (do NOT collapse to UnsupportedCSSTarget).
-                let year = strings::parse_int::<u16>(number_part, 10).map_err(|e| match e {
-                    strings::ParseIntError::Overflow => crate::CrateError::Overflow,
-                    strings::ParseIntError::InvalidCharacter => crate::CrateError::InvalidCharacter,
-                })?;
-                match year {
-                    // https://caniuse.com/?search=es2015
-                    2015 => {
-                        entries_buf = [
-                            b"chrome49",
-                            b"edge13",
-                            b"safari10",
-                            b"firefox44",
-                            b"opera36",
-                        ];
-                        break 'entries_without_es &entries_buf[0..5];
-                    }
-                    // https://caniuse.com/?search=es2016
-                    2016 => {
-                        entries_buf = [
-                            b"chrome50",
-                            b"edge13",
-                            b"safari10",
-                            b"firefox43",
-                            b"opera37",
-                        ];
-                        break 'entries_without_es &entries_buf[0..5];
-                    }
-                    // https://caniuse.com/?search=es2017
-                    2017 => {
-                        entries_buf = [
-                            b"chrome58",
-                            b"edge15",
-                            b"safari11",
-                            b"firefox52",
-                            b"opera45",
-                        ];
-                        break 'entries_without_es &entries_buf[0..5];
-                    }
-                    // https://caniuse.com/?search=es2018
-                    2018 => {
-                        entries_buf = [
-                            b"chrome63",
-                            b"edge79",
-                            b"safari12",
-                            b"firefox58",
-                            b"opera50",
-                        ];
-                        break 'entries_without_es &entries_buf[0..5];
-                    }
-                    // https://caniuse.com/?search=es2019
-                    2019 => {
-                        entries_buf = [
-                            b"chrome73",
-                            b"edge79",
-                            b"safari12.1",
-                            b"firefox64",
-                            b"opera60",
-                        ];
-                        break 'entries_without_es &entries_buf[0..5];
-                    }
-                    // https://caniuse.com/?search=es2020
-                    2020 => {
-                        entries_buf = [
-                            b"chrome80",
-                            b"edge80",
-                            b"safari14.1",
-                            b"firefox80",
-                            b"opera67",
-                        ];
-                        break 'entries_without_es &entries_buf[0..5];
-                    }
-                    // https://caniuse.com/?search=es2021
-                    2021 => {
-                        entries_buf = [
-                            b"chrome85",
-                            b"edge85",
-                            b"safari14.1",
-                            b"firefox80",
-                            b"opera71",
-                        ];
-                        break 'entries_without_es &entries_buf[0..5];
-                    }
-                    // https://caniuse.com/?search=es2022
-                    2022 => {
-                        entries_buf = [
-                            b"chrome94",
-                            b"edge94",
-                            b"safari16.4",
-                            b"firefox93",
-                            b"opera80",
-                        ];
-                        break 'entries_without_es &entries_buf[0..5];
-                    }
-                    // https://caniuse.com/?search=es2023
-                    2023 => {
-                        entries_buf[0..4].copy_from_slice(&[
-                            b"chrome110",
-                            b"edge110",
-                            b"safari16.4",
-                            b"opera96",
-                        ]);
-                        break 'entries_without_es &entries_buf[0..4];
-                    }
-                    _ => {
-                        return Err(crate::CrateError::UnsupportedCSSTarget);
+    /// Parse one esbuild-style target string (`"chrome87"`, `"safari16.4"`,
+    /// `"es2020"`, `"esnext"`) and merge it into `self`, keeping the lowest
+    /// version per browser. Targets with no CSS mapping (`"node20"`,
+    /// `"deno1.40"`, `"hermes0.12"`, `"rhino1.7"`) are accepted and ignored.
+    /// Any other string is an error.
+    pub fn merge_esbuild_target(&mut self, str: &[u8]) -> crate::CrateResult<()> {
+        if str == b"esnext" {
+            return Ok(());
+        }
+        let mut entries_buf: [&[u8]; 5] = [b""; 5];
+        let entries_without_es: &[&[u8]] = 'entries_without_es: {
+            if str.len() <= 2 || !(str[0] == b'e' && str[1] == b's') {
+                entries_buf[0] = str;
+                break 'entries_without_es &entries_buf[0..1];
+            }
+
+            let number_part = &str[2..];
+            // Propagates InvalidCharacter / Overflow. Preserve the tag for
+            // error-name snapshot compat (do NOT collapse to UnsupportedCSSTarget).
+            let year = strings::parse_int::<u16>(number_part, 10).map_err(|e| match e {
+                strings::ParseIntError::Overflow => crate::CrateError::Overflow,
+                strings::ParseIntError::InvalidCharacter => crate::CrateError::InvalidCharacter,
+            })?;
+            match year {
+                // https://caniuse.com/?search=es2015
+                2015 => {
+                    entries_buf = [
+                        b"chrome49",
+                        b"edge13",
+                        b"safari10",
+                        b"firefox44",
+                        b"opera36",
+                    ];
+                    break 'entries_without_es &entries_buf[0..5];
+                }
+                // https://caniuse.com/?search=es2016
+                2016 => {
+                    entries_buf = [
+                        b"chrome50",
+                        b"edge13",
+                        b"safari10",
+                        b"firefox43",
+                        b"opera37",
+                    ];
+                    break 'entries_without_es &entries_buf[0..5];
+                }
+                // https://caniuse.com/?search=es2017
+                2017 => {
+                    entries_buf = [
+                        b"chrome58",
+                        b"edge15",
+                        b"safari11",
+                        b"firefox52",
+                        b"opera45",
+                    ];
+                    break 'entries_without_es &entries_buf[0..5];
+                }
+                // https://caniuse.com/?search=es2018
+                2018 => {
+                    entries_buf = [
+                        b"chrome63",
+                        b"edge79",
+                        b"safari12",
+                        b"firefox58",
+                        b"opera50",
+                    ];
+                    break 'entries_without_es &entries_buf[0..5];
+                }
+                // https://caniuse.com/?search=es2019
+                2019 => {
+                    entries_buf = [
+                        b"chrome73",
+                        b"edge79",
+                        b"safari12.1",
+                        b"firefox64",
+                        b"opera60",
+                    ];
+                    break 'entries_without_es &entries_buf[0..5];
+                }
+                // https://caniuse.com/?search=es2020
+                2020 => {
+                    entries_buf = [
+                        b"chrome80",
+                        b"edge80",
+                        b"safari14.1",
+                        b"firefox80",
+                        b"opera67",
+                    ];
+                    break 'entries_without_es &entries_buf[0..5];
+                }
+                // https://caniuse.com/?search=es2021
+                2021 => {
+                    entries_buf = [
+                        b"chrome85",
+                        b"edge85",
+                        b"safari14.1",
+                        b"firefox80",
+                        b"opera71",
+                    ];
+                    break 'entries_without_es &entries_buf[0..5];
+                }
+                // https://caniuse.com/?search=es2022
+                2022 => {
+                    entries_buf = [
+                        b"chrome94",
+                        b"edge94",
+                        b"safari16.4",
+                        b"firefox93",
+                        b"opera80",
+                    ];
+                    break 'entries_without_es &entries_buf[0..5];
+                }
+                // https://caniuse.com/?search=es2023
+                2023 => {
+                    entries_buf[0..4].copy_from_slice(&[
+                        b"chrome110",
+                        b"edge110",
+                        b"safari16.4",
+                        b"opera96",
+                    ]);
+                    break 'entries_without_es &entries_buf[0..4];
+                }
+                _ => {
+                    return Err(crate::CrateError::UnsupportedCSSTarget);
+                }
+            }
+        };
+
+        'for_loop: for &entry in entries_without_es {
+            let maybe_idx: Option<usize> = 'maybe_idx: {
+                for (i, &c) in entry.iter().enumerate() {
+                    if c.is_ascii_digit() {
+                        break 'maybe_idx Some(i);
                     }
                 }
+                break 'maybe_idx None;
             };
 
-            'for_loop: for &entry in entries_without_es {
-                if entry == b"esnext" {
-                    continue;
-                }
-                let maybe_idx: Option<usize> = 'maybe_idx: {
-                    for (i, &c) in entry.iter().enumerate() {
-                        if c.is_ascii_digit() {
-                            break 'maybe_idx Some(i);
-                        }
-                    }
-                    break 'maybe_idx None;
+            let Some(idx) = maybe_idx else {
+                return Err(crate::CrateError::UnsupportedCSSTarget);
+            };
+            #[derive(Clone, Copy, PartialEq, Eq)]
+            enum Browser {
+                Chrome,
+                Edge,
+                Firefox,
+                Ie,
+                IosSaf,
+                Opera,
+                Safari,
+                NoMapping,
+            }
+            bun_core::comptime_string_map! {
+                static MAP: Browser = {
+                    b"chrome" => Browser::Chrome,
+                    b"deno" => Browser::NoMapping,
+                    b"edge" => Browser::Edge,
+                    b"firefox" => Browser::Firefox,
+                    b"hermes" => Browser::NoMapping,
+                    b"ie" => Browser::Ie,
+                    b"ios" => Browser::IosSaf,
+                    b"node" => Browser::NoMapping,
+                    b"opera" => Browser::Opera,
+                    b"rhino" => Browser::NoMapping,
+                    b"safari" => Browser::Safari,
                 };
+            }
+            let browser = MAP.get(&entry[0..idx]).copied();
+            let Some(browser) = browser else {
+                return Err(crate::CrateError::UnsupportedCSSTarget);
+            };
+            if browser == Browser::NoMapping {
+                continue; // No mapping available
+            }
 
-                if let Some(idx) = maybe_idx {
-                    #[derive(Clone, Copy, PartialEq, Eq)]
-                    enum Browser {
-                        Chrome,
-                        Edge,
-                        Firefox,
-                        Ie,
-                        IosSaf,
-                        Opera,
-                        Safari,
-                        NoMapping,
+            // `major[.minor[.patch]]`, one byte per component in the packed
+            // encoding (see the `Browsers` doc comment). esbuild accepts up
+            // to three components.
+            let version: u32 = {
+                let version_str = &entry[idx..];
+                let mut components: [u32; 3] = [0; 3];
+                for (i, part) in strings::split(version_str, b".").enumerate() {
+                    if i == 3 {
+                        return Err(crate::CrateError::UnsupportedCSSTarget);
                     }
-                    bun_core::comptime_string_map! {
-                        static MAP: Browser = {
-                            b"chrome" => Browser::Chrome,
-                            b"edge" => Browser::Edge,
-                            b"firefox" => Browser::Firefox,
-                            b"hermes" => Browser::NoMapping,
-                            b"ie" => Browser::Ie,
-                            b"ios" => Browser::IosSaf,
-                            b"node" => Browser::NoMapping,
-                            b"opera" => Browser::Opera,
-                            b"rhino" => Browser::NoMapping,
-                            b"safari" => Browser::Safari,
-                        };
-                    }
-                    let browser = MAP.get(&entry[0..idx]).copied();
-                    let Some(browser) = browser else { continue };
-                    if browser == Browser::NoMapping {
-                        continue; // No mapping available
-                    }
-
-                    let (major, minor) = 'major_minor: {
-                        let version_str = &entry[idx..];
-                        let dot_index = strings::index_of_char_usize(version_str, b'.')
-                            .unwrap_or(version_str.len());
-                        let Some(major) =
-                            strings::parse_int::<u16>(&version_str[0..dot_index], 10).ok()
-                        else {
-                            continue 'for_loop;
-                        };
-                        let minor = if dot_index < version_str.len() {
-                            strings::parse_int::<u16>(&version_str[dot_index + 1..], 10)
-                                .unwrap_or(0)
-                        } else {
-                            0
-                        };
-                        break 'major_minor (major, minor);
+                    // u8: a component over 255 does not fit its byte and
+                    // would spill into the neighbor.
+                    let Ok(component) = strings::parse_int::<u8>(part, 10) else {
+                        return Err(crate::CrateError::UnsupportedCSSTarget);
                     };
-
-                    let version: u32 = ((major as u32) << 16) | ((minor as u32) << 8);
-                    let slot: &mut Option<u32> = match browser {
-                        Browser::Chrome => &mut browsers.chrome,
-                        Browser::Edge => &mut browsers.edge,
-                        Browser::Firefox => &mut browsers.firefox,
-                        Browser::Ie => &mut browsers.ie,
-                        Browser::IosSaf => &mut browsers.ios_saf,
-                        Browser::Opera => &mut browsers.opera,
-                        Browser::Safari => &mut browsers.safari,
-                        Browser::NoMapping => continue 'for_loop,
-                    };
-                    if slot.is_none() || version < slot.unwrap() {
-                        *slot = Some(version);
-                    }
-                    continue 'for_loop;
+                    components[i] = component as u32;
                 }
+                (components[0] << 16) | (components[1] << 8) | components[2]
+            };
+            let slot: &mut Option<u32> = match browser {
+                Browser::Chrome => &mut self.chrome,
+                Browser::Edge => &mut self.edge,
+                Browser::Firefox => &mut self.firefox,
+                Browser::Ie => &mut self.ie,
+                Browser::IosSaf => &mut self.ios_saf,
+                Browser::Opera => &mut self.opera,
+                Browser::Safari => &mut self.safari,
+                Browser::NoMapping => continue 'for_loop,
+            };
+            if slot.is_none() || version < slot.unwrap() {
+                *slot = Some(version);
             }
         }
 
-        Ok(browsers)
+        Ok(())
     }
 }
 

@@ -2043,3 +2043,102 @@ test.skipIf(isWindows)(
   },
   30_000,
 );
+
+describe.concurrent("cssTarget", () => {
+  // oklch() is supported in Chrome 111+, Safari 15.4+, Firefox 113+. The
+  // default browser targets predate it, so without cssTarget the bundler
+  // replaces it with a hex + display-p3 + lab() fallback chain.
+  async function buildCss(options: Partial<Parameters<typeof Bun.build>[0]> = {}): Promise<string> {
+    const dir = tempDirWithFiles("bun-build-css-target", {
+      "app.css": ".a { color: oklch(92.73% 0.0139 247.98); }\n",
+    });
+    const result = await Bun.build({
+      entrypoints: [join(dir, "app.css")],
+      minify: true,
+      ...options,
+    });
+    return await result.outputs[0].text();
+  }
+
+  test("default browser targets replace oklch() with fallbacks", async () => {
+    const output = await buildCss();
+    expect(output).toContain("lab(");
+    expect(output).not.toContain("oklch(");
+  });
+
+  test("modern targets keep oklch() as written", async () => {
+    const output = await buildCss({ cssTarget: ["chrome130", "safari18", "firefox130"] });
+    expect(output).toContain("oklch(");
+    expect(output).not.toContain("lab(");
+  });
+
+  test("accepts a single string", async () => {
+    const output = await buildCss({ cssTarget: "chrome130" });
+    expect(output).toContain("oklch(");
+    expect(output).not.toContain("lab(");
+  });
+
+  test("esnext disables downleveling", async () => {
+    const output = await buildCss({ cssTarget: "esnext" });
+    expect(output).toContain("oklch(");
+    expect(output).not.toContain("lab(");
+  });
+
+  test("targets that predate oklch() still get fallbacks", async () => {
+    const output = await buildCss({ cssTarget: ["chrome80", "safari14"] });
+    expect(output).toContain("lab(");
+    expect(output).not.toContain("oklch(");
+  });
+
+  test("the lowest version wins when a browser repeats", async () => {
+    const output = await buildCss({ cssTarget: ["chrome130", "chrome80"] });
+    expect(output).toContain("lab(");
+    expect(output).not.toContain("oklch(");
+  });
+
+  test("accepts an ES version year", async () => {
+    const output = await buildCss({ cssTarget: "es2015" });
+    expect(output).toContain("lab(");
+    expect(output).not.toContain("oklch(");
+  });
+
+  test("rejects an unsupported ES version year", async () => {
+    await expect(buildCss({ cssTarget: "es2024" })).rejects.toThrow('Invalid cssTarget "es2024"');
+  });
+
+  test("honors the minor version", async () => {
+    // oklch() needs Safari 15.4.
+    expect(await buildCss({ cssTarget: "safari15.4" })).toContain("oklch(");
+    expect(await buildCss({ cssTarget: "safari15" })).not.toContain("oklch(");
+  });
+
+  test("accepts a three-component version", async () => {
+    const output = await buildCss({ cssTarget: "safari15.4.1" });
+    expect(output).toContain("oklch(");
+  });
+
+  test("rejects a malformed version", async () => {
+    await expect(buildCss({ cssTarget: "safari16.4.x" })).rejects.toThrow('Invalid cssTarget "safari16.4.x"');
+  });
+
+  test("rejects a version component over 255", async () => {
+    // Each component is one byte in the packed version encoding.
+    await expect(buildCss({ cssTarget: "safari15.300" })).rejects.toThrow('Invalid cssTarget "safari15.300"');
+  });
+
+  test("applies to target bun, which does not downlevel by default", async () => {
+    expect(await buildCss({ target: "bun" })).toContain("oklch(");
+    expect(await buildCss({ target: "bun", cssTarget: ["chrome80"] })).toContain("lab(");
+  });
+
+  test("rejects an unknown target string", async () => {
+    await expect(buildCss({ cssTarget: "internet-explorer" })).rejects.toThrow('Invalid cssTarget "internet-explorer"');
+  });
+
+  test("rejects a non-string cssTarget", async () => {
+    // @ts-expect-error testing invalid input
+    await expect(buildCss({ cssTarget: 123 })).rejects.toThrow(
+      "Expected cssTarget to be a string or an array of strings",
+    );
+  });
+});

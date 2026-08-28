@@ -377,6 +377,34 @@ When you use `target: "bun"` and `format: "cjs"` together, the bundler adds the 
   polyfill the `Bun` global or the built-in `bun:*` modules.
 </Card>
 
+### cssTarget
+
+The browser versions to compile CSS for.
+
+With `target: "browser"`, Bun compiles modern CSS syntax (nesting, `oklch()`, `color()`, logical properties) down to widely supported syntax and adds fallbacks. Set `cssTarget` to the oldest browsers you support. Syntax those browsers understand is then emitted as written.
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./app.css'],
+      outdir: './out',
+      minify: true,
+      cssTarget: ['chrome120', 'safari17', 'firefox120'],
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./app.css --outdir ./out --minify --css-target chrome120,safari17,firefox120
+    ```
+  </Tab>
+</Tabs>
+
+Each entry is an esbuild-style target string: a browser name plus version (`chrome100`, `safari16.4`, `firefox115`, `edge110`, `ios16`, `opera100`), an ECMAScript year from `es2015` through `es2023`, or `esnext`. Any other entry fails the build. If no entry names a browser (for example only `esnext`), CSS is not downleveled at all.
+
+This option only affects CSS. Bun does not downlevel JavaScript syntax.
+
 ### format
 
 Specifies the module format of the generated bundles.
@@ -1702,6 +1730,7 @@ interface BuildConfig {
   entrypoints: string[]; // list of file path
   outdir?: string; // output directory
   target?: Target; // default: "browser"
+  cssTarget?: string | string[]; // browser versions to compile CSS for
   /**
    * Output module format. Top-level await is only supported for `"esm"`.
    *

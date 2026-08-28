@@ -1026,6 +1026,7 @@ dependencies = [
  "bun_ast",
  "bun_collections",
  "bun_core",
+ "bun_css",
  "bun_dotenv",
  "bun_errno",
  "bun_install_types",

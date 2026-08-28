@@ -3212,6 +3212,34 @@ declare module "bun" {
     target?: Target; // default: "browser"
 
     /**
+     * Browser versions to compile CSS for, as esbuild-style target strings:
+     * a browser name plus version (`"chrome100"`, `"safari16.4"`,
+     * `"firefox115"`, `"edge110"`, `"ios16"`, `"opera100"`), an ECMAScript
+     * year from `"es2015"` through `"es2023"`, or `"esnext"`. Any other
+     * entry throws.
+     *
+     * By default, `target: "browser"` compiles modern CSS (nesting,
+     * `oklch()`, `color()`, logical properties) down to widely supported
+     * syntax and adds fallbacks. Set `cssTarget` to the oldest browsers you
+     * support so newer syntax they understand is emitted as written.
+     * If no entry names a browser (for example only `"esnext"`), CSS is not
+     * downleveled at all.
+     *
+     * Only affects CSS. JavaScript syntax is not downleveled.
+     *
+     * Equivalent CLI flag: `--css-target`.
+     *
+     * @example
+     * ```ts
+     * await Bun.build({
+     *   entrypoints: ["./app.css"],
+     *   cssTarget: ["chrome120", "safari17", "firefox120"],
+     * });
+     * ```
+     */
+    cssTarget?: string | string[];
+
+    /**
      * Output module format. Top-level await is only supported for `"esm"`.
      *
      * Can be:

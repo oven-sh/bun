@@ -516,6 +516,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!(
             "--css-chunking                   Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS"
         ),
+        parse_param!(
+            "--css-target <STR>...            Browser versions to compile CSS for, e.g. \"chrome100\", \"safari16.4\", \"es2020\". Defaults to widely supported browsers"
+        ),
         parse_param!("--dump-environment-variables"),
         parse_param!("--conditions <STR>...            Pass custom conditions to resolve"),
         parse_param!(
@@ -2089,6 +2092,27 @@ fn parse_build_command_options(
     ctx.bundler_options.keep_names = args.flag(b"--keep-names");
 
     ctx.bundler_options.css_chunking = args.flag(b"--css-chunking");
+
+    let css_target_args = args.options(b"--css-target");
+    if !css_target_args.is_empty() {
+        let mut browsers = bun_css::Browsers::default();
+        for val in css_target_args {
+            for entry in strings::split(val, b",") {
+                let entry = strings::trim(entry, b" \t");
+                if entry.is_empty() {
+                    continue;
+                }
+                if browsers.merge_esbuild_target(entry).is_err() {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r>: Invalid --css-target \"{}\". Expected a browser version like \"chrome100\" or \"safari16.4\", or an ES version like \"es2020\"",
+                        BStr::new(entry)
+                    );
+                    Global::exit(1);
+                }
+            }
+        }
+        ctx.bundler_options.css_target = Some(browsers);
+    }
 
     ctx.bundler_options.emit_dce_annotations =
         args.flag(b"--emit-dce-annotations") || !ctx.bundler_options.minify_whitespace;

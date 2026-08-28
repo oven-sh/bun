@@ -107,6 +107,8 @@ pub mod js_bundler {
 
     pub struct Config {
         pub(crate) target: Target,
+        /// The `cssTarget` option. `None`: derive the CSS targets from `target`.
+        pub(crate) css_target: Option<bun_css::Browsers>,
         pub(crate) entry_points: StringSet,
         pub(crate) react_fast_refresh: bool,
         pub(crate) react_compiler: bun_ast::runtime::ReactCompilerMode,
@@ -166,6 +168,7 @@ pub mod js_bundler {
         fn default() -> Self {
             Self {
                 target: Target::Browser,
+                css_target: None,
                 entry_points: StringSet::default(),
                 react_fast_refresh: false,
                 react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
@@ -839,6 +842,41 @@ pub mod js_bundler {
                         "Expected minify to be a boolean or an object"
                     )));
                 }
+            }
+
+            if let Some(css_target) = config.get_truthy(global_this, "cssTarget")? {
+                fn merge_css_target(
+                    global_this: &JSGlobalObject,
+                    browsers: &mut bun_css::Browsers,
+                    entry: &[u8],
+                ) -> JsResult<()> {
+                    if browsers.merge_esbuild_target(entry).is_err() {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "Invalid cssTarget \"{}\". Expected a browser version like \"chrome100\" or \"safari16.4\", or an ES version like \"es2020\"",
+                            bstr::BStr::new(entry)
+                        )));
+                    }
+                    Ok(())
+                }
+
+                let mut browsers = bun_css::Browsers::default();
+                if css_target.is_string() {
+                    let slice = css_target.to_utf8(global_this)?;
+                    merge_css_target(global_this, &mut browsers, slice.slice())?;
+                    drop(slice);
+                } else if css_target.js_type().is_array() {
+                    let mut iter = css_target.array_iterator(global_this)?;
+                    while let Some(entry) = iter.next()? {
+                        let slice = entry.to_utf8(global_this)?;
+                        merge_css_target(global_this, &mut browsers, slice.slice())?;
+                        drop(slice);
+                    }
+                } else {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected cssTarget to be a string or an array of strings"
+                    )));
+                }
+                this.css_target = Some(browsers);
             }
 
             let entry_points_opt = match config.get_array(global_this, "entrypoints")? {

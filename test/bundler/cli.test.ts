@@ -912,3 +912,58 @@ describe.concurrent("modules that fail to print", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+describe.concurrent("--css-target", () => {
+  test("--css-target keeps modern color syntax the targets support", async () => {
+    using dir = tempDir("build-css-target", {
+      "app.css": ".a { color: oklch(92.73% 0.0139 247.98); }\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "app.css", "--minify", "--css-target", "chrome130, safari18,firefox130"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("oklch(");
+    expect(stdout).not.toContain("lab(");
+    expect(exitCode).toBe(0);
+  });
+
+  test("--css-target can repeat, and the lowest version wins", async () => {
+    using dir = tempDir("build-css-target-repeat", {
+      "app.css": ".a { color: oklch(92.73% 0.0139 247.98); }\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "app.css", "--minify", "--css-target", "chrome130", "--css-target", "chrome80"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("lab(");
+    expect(stdout).not.toContain("oklch(");
+    expect(exitCode).toBe(0);
+  });
+
+  test("--css-target rejects an unknown target string", async () => {
+    using dir = tempDir("build-css-target-invalid", {
+      "app.css": ".a { color: red; }\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "app.css", "--css-target", "netscape4"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('Invalid --css-target "netscape4"');
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+});

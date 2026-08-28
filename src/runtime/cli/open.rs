@@ -11,32 +11,32 @@ use crate::api::bun::process::sync;
 
 // ──────────────────────────────────────────────────────────────────────────
 
-/// argv prefix that hands its next argument (a URL or a file) to the
-/// system's default handler.
+/// Program that hands a URL or a file to the system's default handler.
 #[cfg(target_os = "macos")]
-const OPENER: &[&[u8]] = &[b"/usr/bin/open"];
+const OPENER: &[u8] = b"/usr/bin/open";
 #[cfg(windows)]
-const OPENER: &[&[u8]] = &[b"start"];
-/// Android has no `xdg-open`. `am start` sends a VIEW intent to the default
-/// handler instead.
-#[cfg(target_os = "android")]
-const OPENER: &[&[u8]] = &[
-    b"/system/bin/am",
-    b"start",
-    b"-a",
-    b"android.intent.action.VIEW",
-    b"-d",
-];
-#[cfg(not(any(target_os = "macos", windows, target_os = "android")))]
-const OPENER: &[&[u8]] = &[b"xdg-open"];
+const OPENER: &[u8] = b"start";
+#[cfg(not(any(target_os = "macos", windows)))]
+const OPENER: &[u8] = b"xdg-open";
 
-/// Spawn `OPENER url` with inherited stdio. Returns `false` when the spawn
-/// fails or the opener exits non-zero (e.g. headless/CI environments).
+/// Open `url` with the system's default handler, with inherited stdio.
+/// Returns `false` when the spawn fails or the opener exits non-zero (e.g.
+/// headless/CI environments).
 pub(crate) fn try_open_url(url: &[u8]) -> bool {
-    let mut argv: Vec<&[u8]> = Vec::with_capacity(OPENER.len() + 1);
-    argv.extend_from_slice(OPENER);
-    argv.push(url);
-    matches!(bun_core::spawn_sync_inherit(&argv), Ok(status) if status.is_ok())
+    // Android has no `xdg-open`. `am start` sends a VIEW intent to the
+    // default handler instead.
+    #[cfg(target_os = "android")]
+    let argv: &[&[u8]] = &[
+        b"/system/bin/am",
+        b"start",
+        b"-a",
+        b"android.intent.action.VIEW",
+        b"-d",
+        url,
+    ];
+    #[cfg(not(target_os = "android"))]
+    let argv: &[&[u8]] = &[OPENER, url];
+    matches!(bun_core::spawn_sync_inherit(argv), Ok(status) if status.is_ok())
 }
 
 /// [`try_open_url`], then print the URL when that fails so the user can open
@@ -208,9 +208,7 @@ impl Editor {
         }
 
         if matches!(self, Editor::Vim | Editor::Emacs | Editor::Neovim) {
-            for arg in OPENER {
-                push_arg!(arg);
-            }
+            push_arg!(OPENER);
             push_arg!(binary);
 
             #[cfg(target_os = "macos")]

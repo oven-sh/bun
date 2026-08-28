@@ -265,6 +265,53 @@ impl PostgresSQLQuery {
         js::target_set_cached(this_value, global_object, JSValue::ZERO);
     }
 
+    /// Builds `result.statement`; cached unless simple-protocol, which would pin the query text.
+    fn build_statement_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+        use crate::jsc::{StringJsc as _, bun_string_jsc};
+        let Some(statement) = self.statement_mut() else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        let use_cache = !self.flags.get().simple;
+        if use_cache {
+            if let Some(cached) = statement.cached_statement_js.get() {
+                return Ok(cached);
+            }
+        }
+        let columns = JSValue::create_empty_array(global_object, statement.fields.len())?;
+        for (i, field) in statement.fields.iter().enumerate() {
+            let col = JSValue::create_empty_object(global_object, 4);
+            col.put(
+                global_object,
+                b"name",
+                bun_string_jsc::create_utf8_for_js(global_object, field.name.slice())?,
+            );
+            col.put(
+                global_object,
+                b"type",
+                JSValue::js_number(field.type_oid as f64),
+            );
+            col.put(
+                global_object,
+                b"table",
+                JSValue::js_number(field.table_oid as f64),
+            );
+            // attnum is a signed Int16 on the wire (system columns are negative); `Short` is u16.
+            col.put(
+                global_object,
+                b"number",
+                JSValue::js_number(field.column_index as i16 as f64),
+            );
+            columns.put_index(global_object, i as u32, col)?;
+        }
+        let obj = JSValue::create_empty_object(global_object, 2);
+        obj.put(global_object, b"string", self.query.to_js(global_object)?);
+        obj.put(global_object, b"columns", columns);
+        if use_cache {
+            statement.cached_statement_js.set(global_object, obj);
+        }
+        Ok(obj)
+    }
+
     pub(crate) fn on_result(
         &self,
         command_tag_str: &[u8],
@@ -309,6 +356,17 @@ impl PostgresSQLQuery {
             .unwrap();
         let event_loop = vm.event_loop_mut();
 
+        // is_last carries no result set; a failed build must not reject rows already delivered.
+        let statement_js = if is_last {
+            JSValue::UNDEFINED
+        } else {
+            self.build_statement_js(global_object).unwrap_or_else(|_| {
+                let _ = global_object.try_take_exception();
+                JSValue::UNDEFINED
+            })
+        };
+        statement_js.ensure_still_alive();
+
         event_loop.run_callback(
             function,
             global_object,
@@ -326,6 +384,7 @@ impl PostgresSQLQuery {
                         .unwrap_or(JSValue::UNDEFINED)
                 },
                 JSValue::from(is_last),
+                statement_js,
             ],
         );
     }

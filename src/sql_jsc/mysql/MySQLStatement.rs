@@ -1,6 +1,6 @@
 use core::cell::Cell;
 
-use crate::jsc::{JSGlobalObject, JSValue};
+use crate::jsc::{JSGlobalObject, JSValue, StrongOptional};
 
 use crate::mysql::protocol::Signature;
 use crate::shared::CachedStructure;
@@ -16,6 +16,8 @@ bun_core::declare_scope!(MySQLStatement, hidden);
 #[derive(bun_ptr::CellRefCounted)]
 pub struct MySQLStatement {
     pub(crate) cached_structure: CachedStructure,
+    /// `result.statement` for prepared statements; dropped when a column definition changes.
+    pub(crate) cached_statement_js: StrongOptional,
     ref_count: Cell<u32>,
     pub(crate) statement_id: u32,
     pub(crate) params: Vec<Param>,
@@ -37,6 +39,7 @@ impl MySQLStatement {
     pub(crate) fn new(signature: Signature, status: Status) -> Self {
         Self {
             cached_structure: CachedStructure::default(),
+            cached_statement_js: StrongOptional::empty(),
             ref_count: Cell::new(1),
             statement_id: 0,
             params: Vec::new(),

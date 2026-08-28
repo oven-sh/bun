@@ -577,7 +577,7 @@ pub struct File {
     /// The file path used when generating bytecode (e.g., "B:/~BUN/root/app.js").
     /// Must match exactly at runtime for bytecode cache hits.
     pub bytecode_origin_path: &'static [u8],
-    /// `WTF::StringImpl::hash()` of `contents` as a Latin-1 string, computed at build time (0 = not recorded).
+    /// `WTF::StringImpl::hash()` of `contents`, computed at build time (0 = not recorded).
     pub source_hash: u32,
     pub module_format: ModuleFormat,
     pub side: FileSide,
@@ -652,6 +652,12 @@ impl File {
                                 bytes.len() / 2,
                             )
                         };
+                        if self.source_hash != 0 {
+                            return BunString::create_static_external_utf16_with_hash(
+                                units,
+                                self.source_hash,
+                            );
+                        }
                         BunString::create_static_external_utf16(units)
                     }
                 };
@@ -796,11 +802,16 @@ const TRAILER: &[u8] = b"\n---- Bun! ----\n";
 
 unsafe extern "C" {
     fn Bun__WTFStringHashLatin1(ptr: *const u8, len: usize) -> u32;
+    fn Bun__WTFStringHashUTF16(ptr: *const u16, len: usize) -> u32;
 }
 /// `WTF::StringImpl::hash()` for an 8-bit string with these bytes.
 fn wtf_latin1_string_hash(bytes: &[u8]) -> u32 {
     // SAFETY: reads `len` bytes from `ptr`; pure function.
     unsafe { Bun__WTFStringHashLatin1(bytes.as_ptr(), bytes.len()) }
+}
+fn wtf_utf16_string_hash(units: &[u16]) -> u32 {
+    // SAFETY: reads `len` units from `ptr`; pure function.
+    unsafe { Bun__WTFStringHashUTF16(units.as_ptr(), units.len()) }
 }
 
 impl StandaloneModuleGraph {
@@ -1107,19 +1118,31 @@ fn is_text_module_output(output_file: &OutputFile) -> bool {
     output_file.loader == Loader::Text && output_file.output_kind == options::OutputKind::Asset
 }
 
-/// Writes `utf8` as a `WTF::StringImpl` body: 8-bit when ASCII, else UTF-16
-/// at an even offset so the runtime can alias a `char16_t*` (the same split
-/// as `String::clone_utf8`). `to_bytes` reserves `2 * utf8.len() + 4` bytes.
+/// Stored as a `WTF::StringImpl` body the runtime aliases: a text import or a JS chunk this executable runs.
+fn is_stored_as_string(output_file: &OutputFile) -> bool {
+    is_text_module_output(output_file)
+        || (output_file.loader.is_javascript_like()
+            && output_file.side != Some(options::Side::Client))
+}
+
+/// Writes `utf8` as the `WTF::StringImpl` body `clone_utf8` builds (8-bit if ASCII, else UTF-16 at an even offset), with its hash.
 fn encode_text_module(
     string_builder: &mut bun_core::StringBuilder,
     utf8: &[u8],
-) -> (StringPointer, Encoding) {
-    // Invalid UTF-8 becomes U+FFFD, as with `TextDecoder`.
-    let units = match strings::to_utf16_alloc(utf8, false, false) {
-        Ok(None) => return (string_builder.append_count_z(utf8), Encoding::Latin1),
-        Ok(Some(units)) => units,
-        Err(_) => bun_alloc::out_of_memory(),
-    };
+) -> (StringPointer, Encoding, u32) {
+    let string = BunString::clone_utf8(utf8);
+    if utf8.is_empty() {
+        return (string_builder.append_count_z(utf8), Encoding::Latin1, 0);
+    }
+    if string.is_8bit() {
+        let bytes = string.latin1();
+        return (
+            string_builder.append_count_z(bytes),
+            Encoding::Latin1,
+            wtf_latin1_string_hash(bytes),
+        );
+    }
+    let units = string.utf16();
     if !string_builder.len.is_multiple_of(align_of::<u16>()) {
         string_builder.writable()[0] = 0;
         string_builder.len += 1;
@@ -1139,6 +1162,7 @@ fn encode_text_module(
             length: byte_len as u32,
         },
         Encoding::Utf16,
+        wtf_utf16_string_hash(units),
     )
 }
 
@@ -1206,7 +1230,7 @@ pub(crate) fn to_bytes(
                 has_entry_point |= is_entry_point(output_file);
 
                 string_builder.count_z(bytes);
-                if is_text_module_output(output_file) {
+                if is_stored_as_string(output_file) {
                     // UTF-16 worst case: 2 bytes per byte, padding, 2-byte NUL.
                     string_builder.cap += bytes.len() + 3;
                 }
@@ -1381,19 +1405,7 @@ pub(crate) fn to_bytes(
             name: StringPointer::default(),
             loader: output_file.loader,
             contents: StringPointer::default(),
-            // Latin1 lets the runtime wrap the mmapped section bytes in a
-            // zero-copy ExternalStringImpl. The printer escapes non-ASCII for
-            // server-side JS, but `--banner`/`--footer`/hashbang and
-            // client-side (target=browser) chunks are concatenated verbatim
-            // as UTF-8, so verify the final bytes before committing to Latin1.
-            encoding: match output_file.loader {
-                Loader::Js | Loader::Jsx | Loader::Ts | Loader::Tsx
-                    if strings::first_non_ascii(buf_bytes).is_none() =>
-                {
-                    Encoding::Latin1
-                }
-                _ => Encoding::Binary,
-            },
+            encoding: Encoding::Binary,
             module_format: if output_file.loader.is_javascript_like() {
                 match output_format {
                     Format::Cjs => ModuleFormat::Cjs,
@@ -1442,13 +1454,20 @@ pub(crate) fn to_bytes(
         }
     }
 
+    let mut source_hashes: Vec<u8> = Vec::with_capacity(modules.len() * size_of::<u32>());
     for (module, output_file) in modules.iter_mut().zip(&module_files) {
-        if is_text_module_output(output_file) {
-            (module.contents, module.encoding) =
+        let mut hash = 0u32;
+        if is_stored_as_string(output_file) {
+            (module.contents, module.encoding, hash) =
                 encode_text_module(&mut string_builder, output_file.value.as_slice());
         } else {
             module.contents = string_builder.append_count_z(output_file.value.as_slice());
         }
+        // `Flags::HAS_SOURCE_HASHES`: JSC's SourceCodeKey hash, so a launch from bytecode never reads the source text.
+        if !output_file.loader.is_javascript_like() {
+            hash = 0;
+        }
+        source_hashes.extend_from_slice(&hash.to_le_bytes());
     }
 
     for (module, output_file) in modules.iter_mut().zip(&module_files) {
@@ -1473,18 +1492,6 @@ pub(crate) fn to_bytes(
             modules.len() * size_of::<CompiledModuleGraphFile>(),
         )
     };
-    // `Flags::HAS_SOURCE_HASHES`: the hash JSC's SourceCodeKey wants, so a launch that runs from bytecode never reads the
-    // source text just to hash it. Only for Latin-1 contents, which are handed to JSC as-is.
-    let mut source_hashes: Vec<u8> = Vec::with_capacity(modules.len() * size_of::<u32>());
-    for (module, output_file) in modules.iter().zip(&module_files) {
-        let hash = if module.encoding == Encoding::Latin1 && output_file.loader.is_javascript_like()
-        {
-            wtf_latin1_string_hash(output_file.value.as_slice())
-        } else {
-            0
-        };
-        source_hashes.extend_from_slice(&hash.to_le_bytes());
-    }
     let modules_ptr = string_builder.append_count(modules_as_bytes);
     let hashes_ptr = string_builder.append_count(&source_hashes);
     debug_assert_eq!(hashes_ptr.offset, modules_ptr.offset + modules_ptr.length);

@@ -12,7 +12,6 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/ExceptionScope.h"
 #include "JavaScriptCore/CachedTypes.h"
-#include "JavaScriptCore/SmallStrings.h"
 #include "ZigSourceProvider.h"
 #include "ZigGlobalObject.h"
 #include "headers-handwritten.h"
@@ -53,45 +52,17 @@ extern "C" bool JSC__IdentifierArray__isNull(Identifier* identifierArray, size_t
 {
     return identifierArray[n].isNull();
 }
-// A slot of the executable's module-info table, spelled like the bytecode cache's string slots (CachedPtr in
-// CachedTypes.cpp) so an import's local name and the code block's identifier resolve to one atom by construction.
+// A module-info slot (EncoderStringTable::slotFor) resolves like the bytecode's own string slots: one atom for both.
 extern "C" bool JSC__IdentifierArray__setFromSlot(Identifier* identifierArray, size_t n, VM& vm, uint32_t slot)
 {
-    switch (slot & 3) {
-    case 1: {
-        unsigned length = (slot >> 2) & 3;
-        if (!length)
-            return false;
-        std::array<Latin1Character, 3> characters { static_cast<Latin1Character>(slot >> 8), static_cast<Latin1Character>(slot >> 16), static_cast<Latin1Character>(slot >> 24) };
-        if (length == 1) {
-            identifierArray[n] = Identifier::fromUid(vm, vm.smallStrings.singleCharacterStringRep(characters[0]).ptr());
-            return true;
-        }
-        if (length == 2) {
-            AtomStringImpl*& entry = vm.ensureCachedBytecodeTwoCharacterAtoms()[characters[0] | characters[1] << 8];
-            if (!entry) {
-                Ref<AtomStringImpl> atom = AtomStringImpl::add(std::span<const Latin1Character>(characters).first(2)).releaseNonNull();
-                entry = &atom.leakRef();
-            }
-            identifierArray[n] = Identifier::fromUid(vm, entry);
-            return true;
-        }
-        identifierArray[n] = Identifier::fromUid(vm, AtomStringImpl::add(std::span<const Latin1Character>(characters)).releaseNonNull().ptr());
-        return true;
-    }
-    case 2: {
-        auto* table = WebCore::clientData(vm)->decoderStringTable();
-        if (!table)
-            return false;
-        identifierArray[n] = Identifier::fromUid(vm, table->atomFor(slot >> 2).ptr());
-        return true;
-    }
-    case 3:
-        identifierArray[n] = vm.propertyNames->emptyIdentifier;
-        return true;
-    default:
+    auto* table = WebCore::clientData(vm)->decoderStringTable();
+    if (!table)
         return false;
-    }
+    RefPtr<AtomStringImpl> atom = table->atomForSlot(vm, slot);
+    if (!atom)
+        return false;
+    identifierArray[n] = Identifier::fromUid(vm, atom.get());
+    return true;
 }
 
 // Slots for the executable's shared module-info string table (`count`

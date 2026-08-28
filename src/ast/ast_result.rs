@@ -47,8 +47,7 @@ pub struct Ast<'a> {
     /// they can be manipulated efficiently without a full AST traversal
     pub import_records: ImportRecordList<'a>,
 
-    // `hashbang` is a slice into source text. `StoreStr` records it under the
-    // same lifetime-erased contract as `StoreRef`.
+    // `hashbang` is a slice into source text, held under the lifetime-erased `StoreRef` contract.
     pub hashbang: StoreStr,
     /// Module-level directive prologue (`S::Directive` statements), stripped from `parts` so it prints first.
     pub directives: StoreSlice<Stmt>,

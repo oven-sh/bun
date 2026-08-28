@@ -422,8 +422,7 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
     }
 }
 
-/// The sink behind `Path::append_with`: a cursor over a pooled path buffer
-/// that fails with `NoSpaceLeft` instead of growing.
+/// The sink behind `Path::append_with`: a cursor that fails with `NoSpaceLeft` instead of growing.
 struct ScratchWriter<'a> {
     buf: &'a mut [u8],
     len: usize,
@@ -1020,10 +1019,8 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         self.append_with(|writer| writer.write_fmt(args))
     }
 
-    /// Appends the bytes that `write` produces, trimmed and separated like
-    /// `append`. Use this instead of `append_fmt` for a path component that is
-    /// not text: `core::fmt` only carries `&str`, and a filesystem name can
-    /// hold any bytes.
+    /// Appends the bytes that `write` produces, trimmed and separated like `append`.
+    /// Unlike `append_fmt`, the bytes do not have to be UTF-8.
     pub fn append_with(
         &mut self,
         write: impl FnOnce(&mut dyn bun_core::io::Write) -> bun_core::CrateResult<()>,

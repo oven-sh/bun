@@ -700,17 +700,15 @@ pub mod semver_string {
 
     // ── String.StorePathFormatter ─────────────────────────────────────────
 
-    /// Writes `bytes` as a single path component of the isolated store.
-    /// `/`, `\`, `:` and `#` become `+`, and so does `?` (module resolution
-    /// would parse it as a query-string delimiter, and Windows rejects it in
-    /// a filename). Every other byte is written unchanged: the component is
-    /// a filesystem name, not text, so a non-ASCII or non-UTF-8 path spells
-    /// the same bytes on disk as in the lockfile.
+    /// Writes `bytes` as a single path component of the isolated store:
+    /// `/`, `\`, `:`, `#` and `?` become `+`, every other byte is written unchanged.
     pub fn write_store_path<W: bun_core::io::Write + ?Sized>(
         writer: &mut W,
         bytes: &[u8],
     ) -> bun_core::CrateResult<()> {
         let mut rest = bytes;
+        // `?` would be parsed as a query-string delimiter during module
+        // resolution (and is invalid in Windows filenames).
         while let Some(i) = strings::index_of_any(rest, b"/\\:#?") {
             writer.write_all(&rest[..i])?;
             writer.write_byte(b'+')?;

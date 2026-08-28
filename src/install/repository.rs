@@ -328,9 +328,7 @@ pub trait RepositoryExt: Sized {
         dep: &Install::Dependency,
     ) -> Vec<u8>;
     fn format_as(&self, label: &str, buf: &[u8], writer: &mut impl fmt::Write) -> fmt::Result;
-    /// Writes the repository as the resolution part of a store entry name:
-    /// `<label><owner>+<repo URL>+<commit>`, with the URL spelled by
-    /// [`write_store_url`].
+    /// The resolution part of a store entry name: `<label><owner>+<repo URL>+<commit>`.
     fn write_store_path<W: bun_core::io::Write + ?Sized>(
         &self,
         writer: &mut W,

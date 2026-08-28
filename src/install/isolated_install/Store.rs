@@ -383,11 +383,8 @@ pub mod entry {
         write!(writer, "+{:016x}", sink.hasher.final_())
     }
 
-    /// Writes `name@version` (or `name@file+path` / `name@root`) without the
-    /// `+peerhash` suffix. The resolution part is bounded by
-    /// [`MAX_RESOLUTION_LEN`]. The name is a directory name, so the bytes of
-    /// the lockfile strings are written unchanged (see
-    /// `bun_semver::string::write_store_path`).
+    /// `name@version` (or `name@file+path` / `name@root`) without the `+peerhash` suffix.
+    /// The resolution part is bounded by [`MAX_RESOLUTION_LEN`].
     pub fn write_store_key<W: Write + ?Sized>(
         writer: &mut W,
         name: SemverString,
@@ -422,8 +419,7 @@ pub mod entry {
         }
     }
 
-    /// Writes the directory name of a store entry: its store key, then
-    /// `+<peer hash>` when the entry has peers.
+    /// The entry's directory name: its store key, then `+<peer hash>` when it has peers.
     pub(crate) fn write_store_path<W: Write + ?Sized>(
         writer: &mut W,
         entry_id: Id,

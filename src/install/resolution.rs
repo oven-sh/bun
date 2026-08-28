@@ -463,9 +463,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         }
     }
 
-    /// Writes the resolution part of a store entry name (`<name>@<resolution>`):
-    /// the version of an npm package, or the store spelling of the path, URL
-    /// or repository of every other kind.
+    /// The resolution part of a store entry name (`<name>@<resolution>`).
     pub fn write_store_path<W: bun_core::io::Write + ?Sized>(
         &self,
         writer: &mut W,
@@ -551,12 +549,12 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
 // kept so dependents that named `resolution::StringBuilderLike` still resolve.
 pub use bun_semver::StringBuilder as StringBuilderLike;
 
-/// Writes the store path of a tarball or repository URL. The store path
-/// becomes a directory name (realpaths, stack traces, `bun pm` output), so the
-/// userinfo and the query string, which is where credentials go, are left out
-/// of it; when either was present, the hash of the complete URL takes their
-/// place so that URLs differing only in those parts still get separate
-/// entries: `https://user:token@host/pkg.tgz?token=x` becomes
+/// Store path of a tarball or repository URL. The store path becomes a
+/// directory name (realpaths, stack traces, `bun pm` output), so the userinfo
+/// and the query string, which is where credentials go, are left out of it;
+/// when either was present, the hash of the complete URL takes their place so
+/// that URLs differing only in those parts still get separate entries:
+/// `https://user:token@host/pkg.tgz?token=x` becomes
 /// `https+++host+pkg.tgz+<16 hex>`. A URL without either part is spelled out
 /// unchanged.
 pub(crate) fn write_store_url<W: bun_core::io::Write + ?Sized>(

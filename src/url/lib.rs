@@ -516,10 +516,9 @@ impl<'a> URL<'a> {
     /// Stack scratch for `join_normalize`. Longer joins go to the heap.
     const JOIN_STACK_BUF_LEN: usize = 2048;
 
-    /// Upper bound on the unnormalized path `join_normalize` builds: the
-    /// leading `/`, the four parts, and the `/` between `dirname` and `basename`.
+    /// Length bound of the unnormalized path `join_normalize` builds.
     fn join_needed(prefix: &[u8], dirname: &[u8], basename: &[u8], extname: &[u8]) -> usize {
-        2 + prefix.len() + dirname.len() + basename.len() + extname.len()
+        b"/".len() + prefix.len() + dirname.len() + b"/".len() + basename.len() + extname.len()
     }
 
     pub(crate) fn join_normalize<'b>(
@@ -591,8 +590,6 @@ impl<'a> URL<'a> {
         extname: &[u8],
     ) -> crate::Result<()> {
         let needed = Self::join_needed(prefix, dirname, basename, extname);
-        // The pooled buffer is not re-zeroed: `normalize_string_buf` reads only
-        // the bytes it wrote.
         let mut out_pooled: bun_paths::path_buffer_pool::Guard;
         let mut out_heap: Vec<u8>;
         let out: &mut [u8] = if needed <= bun_paths::MAX_PATH_BYTES {

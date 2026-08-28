@@ -70,9 +70,7 @@ impl Tree {
 // max number of node_modules folders
 pub(crate) const MAX_DEPTH: usize = (MAX_PATH_BYTES / b"node_modules".len()) + 1;
 
-/// Scratch for [`relative_path_and_depth`]: the parent walk writes
-/// `1..=depth` before the path loop reads them back, so the array (~1.4 KB,
-/// 32 KB on Windows) is never zeroed.
+/// Parent-id stack for [`relative_path_and_depth`] (32 KB on Windows, so not zeroed).
 pub(crate) type DepthBuf = [MaybeUninit<Id>; MAX_DEPTH];
 
 #[inline]

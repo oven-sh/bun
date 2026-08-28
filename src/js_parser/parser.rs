@@ -730,8 +730,7 @@ pub(crate) struct JSXTag<'a> {
     pub name: &'a [u8],
 }
 
-/// Parses a JSX tag or attribute name, `name` or `ns : name`, from the current
-/// `TIdentifier`. Returns the range of the whole name and the joined `ns:name`.
+/// Parses `name` or `ns : name` from the current `TIdentifier`. Returns its range and `ns:name`.
 pub(crate) fn parse_jsx_namespaced_name<'a, P>(
     p: &mut P,
 ) -> crate::CrateResult<(bun_ast::Range, &'a [u8])>

@@ -2392,12 +2392,12 @@ impl NetworkSink {
             if !reason.is_empty_or_undefined_or_null() {
                 (*this).upstream_error.set(global, reason);
             }
-            (*this).task
+            (*this).task.as_deref()
         };
-        let Some(task_ref) = task_ref else {
+        let Some(task) = task_ref else {
             return;
         };
-        let _ = task_ref.get().fail(bun_s3_signing::error::S3Error {
+        let _ = task.fail(bun_s3_signing::error::S3Error {
             code: b"UnknownError",
             message: b"ReadableStream ended with an error",
         });

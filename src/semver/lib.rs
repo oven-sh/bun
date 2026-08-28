@@ -300,9 +300,14 @@ pub mod semver_string {
             }
         }
 
+        /// See [`write_store_path`].
         #[inline]
-        pub fn fmt_store_path<'a>(&'a self, buf: &'a [u8]) -> StorePathFormatter<'a> {
-            fmt_store_path(self.slice(buf))
+        pub fn write_store_path<W: bun_core::io::Write + ?Sized>(
+            self,
+            writer: &mut W,
+            buf: &[u8],
+        ) -> bun_core::CrateResult<()> {
+            write_store_path(writer, self.slice(buf))
         }
 
         #[inline]
@@ -694,33 +699,24 @@ pub mod semver_string {
     }
 
     // ── String.StorePathFormatter ─────────────────────────────────────────
-    pub struct StorePathFormatter<'a> {
-        bytes: &'a [u8],
-    }
 
-    /// Spells `bytes` as a single path component of the isolated store.
-    pub fn fmt_store_path(bytes: &[u8]) -> StorePathFormatter<'_> {
-        StorePathFormatter { bytes }
-    }
-
-    impl<'a> fmt::Display for StorePathFormatter<'a> {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            for &c in self.bytes {
-                let n = match c {
-                    b'/' => b'+',
-                    b'\\' => b'+',
-                    b':' => b'+',
-                    b'#' => b'+',
-                    // `?` would be parsed as a query-string delimiter during
-                    // module resolution (and is invalid in Windows filenames).
-                    b'?' => b'+',
-                    _ => c,
-                };
-                use core::fmt::Write;
-                f.write_char(n as char)?;
-            }
-            Ok(())
+    /// Writes `bytes` as a single path component of the isolated store.
+    /// `/`, `\`, `:` and `#` become `+`, and so does `?` (module resolution
+    /// would parse it as a query-string delimiter, and Windows rejects it in
+    /// a filename). Every other byte is written unchanged: the component is
+    /// a filesystem name, not text, so a non-ASCII or non-UTF-8 path spells
+    /// the same bytes on disk as in the lockfile.
+    pub fn write_store_path<W: bun_core::io::Write + ?Sized>(
+        writer: &mut W,
+        bytes: &[u8],
+    ) -> bun_core::CrateResult<()> {
+        let mut rest = bytes;
+        while let Some(i) = strings::index_of_any(rest, b"/\\:#?") {
+            writer.write_all(&rest[..i])?;
+            writer.write_byte(b'+')?;
+            rest = &rest[i + 1..];
         }
+        writer.write_all(rest)
     }
 
     // ── HashContext / ArrayHashContext ────────────────────────────────────

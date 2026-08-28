@@ -13,7 +13,7 @@ use bun_semver::string::Buf as StringBuf;
 use crate::dependency as Dependency;
 use crate::hosted_git_info;
 use crate::install::{self as Install, ExtractData, PackageManager};
-use crate::resolution::fmt_store_url;
+use crate::resolution::write_store_url;
 
 // Thread-local scratch buffers. Callers return slices that outlive the access
 // (`try_ssh`/`try_https` hand a slice straight to `download`). `thread_local!`
@@ -328,8 +328,15 @@ pub trait RepositoryExt: Sized {
         dep: &Install::Dependency,
     ) -> Vec<u8>;
     fn format_as(&self, label: &str, buf: &[u8], writer: &mut impl fmt::Write) -> fmt::Result;
-    fn fmt_store_path<'a>(&'a self, label: &'a str, string_buf: &'a [u8])
-    -> StorePathFormatter<'a>;
+    /// Writes the repository as the resolution part of a store entry name:
+    /// `<label><owner>+<repo URL>+<commit>`, with the URL spelled by
+    /// [`write_store_url`].
+    fn write_store_path<W: bun_core::io::Write + ?Sized>(
+        &self,
+        writer: &mut W,
+        label: &str,
+        string_buf: &[u8],
+    ) -> bun_core::CrateResult<()>;
     fn fmt<'a>(&'a self, label: &'a str, buf: &'a [u8]) -> Formatter<'a>;
     fn try_ssh(url: &[u8]) -> Option<&[u8]>;
     fn try_https(url: &[u8]) -> Option<&[u8]>;
@@ -591,15 +598,36 @@ impl RepositoryExt for Repository {
         write!(writer, "{}", formatter)
     }
 
-    fn fmt_store_path<'a>(
-        &'a self,
-        label: &'a str,
-        string_buf: &'a [u8],
-    ) -> StorePathFormatter<'a> {
-        StorePathFormatter {
-            repo: self,
-            label,
-            string_buf,
+    fn write_store_path<W: bun_core::io::Write + ?Sized>(
+        &self,
+        writer: &mut W,
+        label: &str,
+        string_buf: &[u8],
+    ) -> bun_core::CrateResult<()> {
+        writer.write_all(label.as_bytes())?;
+
+        if !self.owner.is_empty() {
+            self.owner.write_store_path(writer, string_buf)?;
+            writer.write_byte(b'+')?;
+        } else if Dependency::is_scp_like_path(self.repo.slice(string_buf)) {
+            writer.write_all(b"ssh++")?;
+        }
+
+        write_store_url(writer, self.repo.slice(string_buf))?;
+
+        if !self.resolved.is_empty() {
+            // `#` would be the natural separator, but Windows rejects it in a filename.
+            writer.write_byte(b'+')?;
+            let mut resolved = self.resolved.slice(string_buf);
+            if let Some(i) = strings::last_index_of_char(resolved, b'-') {
+                resolved = &resolved[i + 1..];
+            }
+            bun_semver::string::write_store_path(writer, resolved)
+        } else if !self.committish.is_empty() {
+            writer.write_byte(b'+')?;
+            self.committish.write_store_path(writer, string_buf)
+        } else {
+            Ok(())
         }
     }
 
@@ -1136,54 +1164,6 @@ impl RepositoryExt for Repository {
             }),
             ..Default::default()
         })
-    }
-}
-
-pub struct StorePathFormatter<'a> {
-    repo: &'a Repository,
-    label: &'a str,
-    string_buf: &'a [u8],
-}
-
-impl<'a> fmt::Display for StorePathFormatter<'a> {
-    fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(writer, "{}", Install::fmt_store_path(self.label.as_bytes()))?;
-
-        if !self.repo.owner.is_empty() {
-            write!(
-                writer,
-                "{}",
-                self.repo.owner.fmt_store_path(self.string_buf)
-            )?;
-            // try writer.writeByte(if (this.opts.replace_slashes) '+' else '/');
-            writer.write_str("+")?;
-        } else if Dependency::is_scp_like_path(self.repo.repo.slice(self.string_buf)) {
-            // try writer.print("ssh:{s}", .{if (this.opts.replace_slashes) "++" else "//"});
-            writer.write_str("ssh++")?;
-        }
-
-        write!(
-            writer,
-            "{}",
-            fmt_store_url(self.repo.repo.slice(self.string_buf))
-        )?;
-
-        if !self.repo.resolved.is_empty() {
-            writer.write_str("+")?; // this would be '#' but it's not valid on windows
-            let mut resolved = self.repo.resolved.slice(self.string_buf);
-            if let Some(i) = strings::last_index_of_char(resolved, b'-') {
-                resolved = &resolved[i + 1..];
-            }
-            write!(writer, "{}", Install::fmt_store_path(resolved))?;
-        } else if !self.repo.committish.is_empty() {
-            writer.write_str("+")?; // this would be '#' but it's not valid on windows
-            write!(
-                writer,
-                "{}",
-                self.repo.committish.fmt_store_path(self.string_buf)
-            )?;
-        }
-        Ok(())
     }
 }
 

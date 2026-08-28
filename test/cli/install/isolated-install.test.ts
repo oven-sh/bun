@@ -1,8 +1,8 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from "fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, statSync, writeFileSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, isLinux, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
 import { basename, dirname, join } from "path";
 import { pathToFileURL } from "url";
@@ -2439,8 +2439,8 @@ describe("long store entry names", () => {
   test("a cut that would split a multi-byte character backs up to the character boundary", async () => {
     // `file+x` is 6 bytes and every character after it is 2 bytes wide, so
     // byte 63 of the resolution falls inside a character and the cut ends at
-    // byte 62. Only the shape is asserted: how non-ASCII bytes are spelled in
-    // the name is a separate matter (#32304), the boundary handling is not.
+    // byte 62: 28 characters after `file+x`. The hash covers the full
+    // resolution.
     const folder = `x${Buffer.alloc(40 * 2, "\u00e9").toString()}`;
     const { packageJson, packageDir } = await registry.createTestDir({
       bunfigOpts: { linker: "isolated" },
@@ -2453,11 +2453,11 @@ describe("long store entry names", () => {
 
     await runBunInstall(bunEnv, packageDir);
 
-    const entries = await storeEntries(packageDir);
-    expect(entries).toEqual([expect.stringMatching(/^non-ascii@file\+x.*\+[0-9a-f]{16}$/)]);
-    const [entry] = entries;
-    const cutResolution = entry.slice("non-ascii@".length, -"+0123456789abcdef".length);
-    expect(Buffer.byteLength(cutResolution)).toBe(CUT_RESOLUTION_LEN - 1);
+    const entry = `non-ascii@file+x${Buffer.alloc(28 * 2, "\u00e9").toString()}+${urlHash(`file+${folder}`)}`;
+    expect(Buffer.byteLength(entry.slice("non-ascii@".length, -"+0123456789abcdef".length))).toBe(
+      CUT_RESOLUTION_LEN - 1,
+    );
+    expect(await storeEntries(packageDir)).toEqual([entry]);
     expect(readlinkSync(join(packageDir, "node_modules", "non-ascii"))).toBe(
       join(".bun", entry, "node_modules", "non-ascii"),
     );
@@ -2629,6 +2629,85 @@ describe("long store entry names", () => {
     expect(entry).toMatch(/^git-dep@git\+file\+\+\+\+.*\+[0-9a-f]{16}$/);
     expect(await storeEntries(packageDir)).toEqual([entry]);
     expect(await file(join(packageDir, "node_modules", "git-dep", "postinstall-ran.txt")).text()).toBe("ran");
+  });
+});
+
+// A store entry is named after lockfile strings: the package name and, for a
+// folder, tarball, workspace or git dependency, its path or URL. The name is a
+// directory name, so those bytes go into it unchanged (apart from `/`, `\`,
+// `:`, `#` and `?`, which become `+`). Spelling each byte as a character
+// instead turned the UTF-8 `ñ` (c3 b1) of a folder path into `Ã±` (c3 83 c2 b1).
+describe("store entry names with non-ASCII bytes", () => {
+  async function storeEntries(packageDir: string): Promise<string[]> {
+    return (await readdirSorted(join(packageDir, "node_modules", ".bun"))).filter(entry => entry !== "node_modules");
+  }
+
+  test("a folder dependency under a non-ASCII directory keeps its UTF-8 bytes", async () => {
+    const folder = "paquetes/a\u00f1adir";
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        [`${folder}/package.json`]: JSON.stringify({ name: "anadir", version: "1.0.0" }),
+        [`${folder}/index.js`]: "module.exports = 'hola';",
+      },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({ name: "test-non-ascii-folder", dependencies: { anadir: `file:./${folder}` } }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const entry = "anadir@file+paquetes+a\u00f1adir";
+    expect(await storeEntries(packageDir)).toEqual([entry]);
+    expect(readlinkSync(join(packageDir, "node_modules", "anadir"))).toBe(
+      join(".bun", entry, "node_modules", "anadir"),
+    );
+    expect(await file(join(packageDir, "node_modules", "anadir", "package.json")).json()).toEqual({
+      name: "anadir",
+      version: "1.0.0",
+    });
+
+    // The next install derives the same name from the lockfile.
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    expect(await storeEntries(packageDir)).toEqual([entry]);
+  });
+
+  // Only Linux accepts a directory name that is not UTF-8. package.json is
+  // written as raw bytes because it has to spell the directory as the
+  // filesystem does.
+  test.skipIf(!isLinux)("a folder dependency under a directory that is not UTF-8 keeps its bytes", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const latin1 = Buffer.from([0x63, 0x61, 0x66, 0xe9]); // "café" in Latin-1
+    const folder = Buffer.concat([Buffer.from(`${join(packageDir, "vendor")}/`), latin1]);
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(
+      Buffer.concat([folder, Buffer.from("/package.json")]),
+      JSON.stringify({ name: "dep", version: "1.0.0" }),
+    );
+    writeFileSync(
+      packageJson,
+      Buffer.concat([
+        Buffer.from('{"name":"test-latin1-folder","dependencies":{"dep":"file:./vendor/'),
+        latin1,
+        Buffer.from('"}}'),
+      ]),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const entry = Buffer.concat([Buffer.from("dep@file+vendor+"), latin1]);
+    const entries = readdirSync(join(packageDir, "node_modules", ".bun"), { encoding: "buffer" }).filter(
+      name => !name.equals(Buffer.from("node_modules")),
+    );
+    expect(entries).toEqual([entry]);
+    expect(readlinkSync(join(packageDir, "node_modules", "dep"), { encoding: "buffer" })).toEqual(
+      Buffer.concat([Buffer.from(".bun/"), entry, Buffer.from("/node_modules/dep")]),
+    );
+    expect(await file(join(packageDir, "node_modules", "dep", "package.json")).json()).toEqual({
+      name: "dep",
+      version: "1.0.0",
+    });
   });
 });
 

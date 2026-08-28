@@ -369,6 +369,10 @@ pub trait PathLike {
     fn clear(&mut self);
     fn append(&mut self, bytes: &[u8]);
     fn append_fmt(&mut self, args: core::fmt::Arguments<'_>);
+    fn append_with(
+        &mut self,
+        write: impl FnOnce(&mut dyn bun_core::io::Write) -> bun_core::CrateResult<()>,
+    );
 }
 // Bound to `CheckLength::ASSUME` only. This prevents check-mode callers from
 // silently swallowing `MaxPathExceeded` through the duck-typed surface; they
@@ -389,6 +393,14 @@ impl<U: PathUnit, const KIND: u8, const SEP: u8> PathLike
     fn append_fmt(&mut self, args: core::fmt::Arguments<'_>) {
         use path::options::AssumeOk as _;
         path::Path::append_fmt(self, args).assume_ok()
+    }
+    #[inline]
+    fn append_with(
+        &mut self,
+        write: impl FnOnce(&mut dyn bun_core::io::Write) -> bun_core::CrateResult<()>,
+    ) {
+        use path::options::AssumeOk as _;
+        path::Path::append_with(self, write).assume_ok()
     }
 }
 

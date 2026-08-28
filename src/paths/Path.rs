@@ -422,6 +422,30 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
     }
 }
 
+/// The sink behind `Path::append_with`: a cursor over a pooled path buffer
+/// that fails with `NoSpaceLeft` instead of growing.
+struct ScratchWriter<'a> {
+    buf: &'a mut [u8],
+    len: usize,
+}
+
+impl bun_core::io::Write for ScratchWriter<'_> {
+    fn write_all(&mut self, bytes: &[u8]) -> bun_core::CrateResult<()> {
+        let end = self.len + bytes.len();
+        let room = self
+            .buf
+            .get_mut(self.len..end)
+            .ok_or(bun_core::CrateError::NoSpaceLeft)?;
+        room.copy_from_slice(bytes);
+        self.len = end;
+        Ok(())
+    }
+
+    fn written_len(&self) -> usize {
+        self.len
+    }
+}
+
 /// Width-generic `bun.strings.basename`.
 /// Platform-split: POSIX recognizes only `/`; Windows recognizes `/`, `\`, and
 /// the `X:` drive designator at index 1.
@@ -993,30 +1017,30 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     }
 
     pub fn append_fmt(&mut self, args: core::fmt::Arguments<'_>) -> options::Result<()> {
-        // TODO: there's probably a better way to do this. needed for trimming slashes
-        let mut temp: Path<u8, { Kind::ANY }, { PathSeparators::ANY }> = Path::init();
+        self.append_with(|writer| writer.write_fmt(args))
+    }
 
-        // match BufType::Pool
-        let input = {
-            use std::io::Write;
-            let buf = u8::buffer_as_mut_slice(&mut temp._buf.pooled);
-            let mut cursor: &mut [u8] = buf;
-            let total = cursor.len();
-            match cursor.write_fmt(args) {
-                Ok(()) => {
-                    let written = total - cursor.len();
-                    &u8::buffer_as_slice(&temp._buf.pooled)[..written]
-                }
-                Err(_) => {
-                    if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
-                        return Err(PathError::MaxPathExceeded);
-                    }
-                    unreachable!();
-                }
-            }
+    /// Appends the bytes that `write` produces, trimmed and separated like
+    /// `append`. Use this instead of `append_fmt` for a path component that is
+    /// not text: `core::fmt` only carries `&str`, and a filesystem name can
+    /// hold any bytes.
+    pub fn append_with(
+        &mut self,
+        write: impl FnOnce(&mut dyn bun_core::io::Write) -> bun_core::CrateResult<()>,
+    ) -> options::Result<()> {
+        let mut scratch = crate::path_buffer_pool::get();
+        let mut writer = ScratchWriter {
+            buf: &mut scratch[..],
+            len: 0,
         };
-
-        self.append(input)
+        if write(&mut writer).is_err() {
+            if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
+                return Err(PathError::MaxPathExceeded);
+            }
+            unreachable!();
+        }
+        let len = writer.len;
+        self.append(&scratch[..len])
     }
 
     fn assert_joinable(&self) {

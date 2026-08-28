@@ -174,9 +174,7 @@ server_exports = {
               chunks: [],
             };
           }
-          // Object.fromEntries defines own keys, so an export named "__proto__"
-          // does not hit the Object.prototype setter like `client[exportName] = ...`
-          // would. The result is a plain object like the production manifest entry.
+          // Defines own keys, so an export named "__proto__" does not set the prototype.
           ssrManifest[uid] = Object.fromEntries(
             exportNames.map(exportName => [exportName, { specifier: "ssr:" + uid, name: exportName }]),
           );

@@ -40,8 +40,9 @@ export const boringssl: Dependency = {
   // without checking that the key schedule came from aes_hw_set_encrypt_key.
   // With OPENSSL_ia32cap masking AES-NI but not VAES, the VAES bulk assembly
   // ran against a vpaes-format key schedule and silently produced wrong
-  // output. Upstream BoringSSL main has the same bug (its aarch64 branches
-  // gate on is_hwaes; the x86-64 VAES branches don't).
+  // output. Upstream fixed this the same way in google/boringssl
+  // 997bafbf73886ec19ac3eb70b31db64fe42832c3. Delete the patch when the
+  // pinned commit includes that change (patch application fails loudly then).
   // https://github.com/oven-sh/bun/issues/32126
   patches: ["patches/boringssl/gcm-vaes-requires-hwaes-key-schedule.patch"],
 

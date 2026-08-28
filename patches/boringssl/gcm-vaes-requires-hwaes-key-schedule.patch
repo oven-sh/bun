@@ -10,7 +10,12 @@ tag still verifies, since GHASH and EK0 come from the consistent vpaes block
 function). The aarch64 branches directly below already gate on |is_hwaes|;
 this adds the same gate to the two x86-64 VAES branches.
 
-Upstream BoringSSL main has the same bug as of 2026-02.
+Upstream BoringSSL fixed this the same way in
+997bafbf73886ec19ac3eb70b31db64fe42832c3 ("Gate VAES codepaths on is_hwaes
+to fix a theoretical concern",
+https://boringssl-review.googlesource.com/c/boringssl/+/101787). Delete
+this patch when the pinned BoringSSL commit includes that change. The
+patch application fails loudly at dep-fetch time when that happens.
 See https://github.com/oven-sh/bun/issues/32126
 
 --- a/crypto/fipsmodule/aes/gcm.cc.inc

@@ -2261,14 +2261,19 @@ pub(crate) mod __gated_printer {
                         if target_e_dot.optional_chain.is_some() {
                             break 'brk;
                         }
-                        let target_ref = target_id.ref_;
+                        // Compare symbols, not raw refs. A `var` that re-declares
+                        // a parameter or an earlier `var` gets its own ref, linked
+                        // to the existing symbol, so `n` in `var n = n.next` and
+                        // the `n` it reads are two refs for one variable.
+                        let symbols = self.renamer.symbols();
+                        let target_ref = symbols.follow(target_id.ref_);
 
                         // A group evaluates its target once, before any
                         // assignment, but the original declarators execute in
                         // order. A declarator that binds the target itself can
                         // only be the last member of a group: a later member
                         // would read the rebound target.
-                        if first_binding.get().r#ref.eql(target_ref) {
+                        if symbols.follow(first_binding.get().r#ref).eql(target_ref) {
                             break 'brk;
                         }
 
@@ -2281,11 +2286,13 @@ pub(crate) mod __gated_printer {
                         let ExprData::EIdentifier(second_id) = &second_e_dot.target.data else {
                             break 'brk;
                         };
-                        if second_e_dot.optional_chain.is_some() || !second_id.ref_.eql(target_ref)
+                        if second_e_dot.optional_chain.is_some()
+                            || !symbols.follow(second_id.ref_).eql(target_ref)
                         {
                             break 'brk;
                         }
-                        let mut target_rebound = second_binding.get().r#ref.eql(target_ref);
+                        let mut target_rebound =
+                            symbols.follow(second_binding.get().r#ref).eql(target_ref);
 
                         {
                             // Reset the temporary bindings array early on
@@ -2326,10 +2333,13 @@ pub(crate) mod __gated_printer {
                                 let ExprData::EIdentifier(id) = &e_dot.target.data else {
                                     break;
                                 };
-                                if e_dot.optional_chain.is_some() || !id.ref_.eql(target_ref) {
+                                if e_dot.optional_chain.is_some()
+                                    || !symbols.follow(id.ref_).eql(target_ref)
+                                {
                                     break;
                                 }
-                                target_rebound = binding.get().r#ref.eql(target_ref);
+                                target_rebound =
+                                    symbols.follow(binding.get().r#ref).eql(target_ref);
 
                                 temp_bindings.push(B::Property {
                                     flags: Default::default(),

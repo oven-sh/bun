@@ -410,6 +410,40 @@ describe("bundler", () => {
     minifySyntax: true,
     run: { stdout: "1 99\n5" },
   });
+  // A `var` that re-declares a parameter or an earlier `var` gets its own
+  // symbol, linked to the existing one. The rebound-target check must compare
+  // the linked symbols, or `var n = n.next, n = n.next` folds into
+  // `{ next: n, next: n } = n` and both members read the original `n`.
+  const sameTargetRedeclaredFiles = {
+    "/entry.js": /* js */ `
+      const L = { v: 0, next: { v: 1, next: { v: 2, next: null } } };
+      function param(n) { var n = n.next, n = n.next; return n.v; }
+      function redecl() { var n = L; var n = n.next, n = n.next; return n.v; }
+      function later(n) { var n = n.next, v = n.v; var n; return v; }
+      function mixed(n) { var a = n.next, n = n.next, b = n.v; return [a.v, n.v, b].join(""); }
+      console.log(param(L), redecl(), later(L), mixed(L));
+    `,
+  };
+  itBundled("minify/SameTargetDestructuringSkipsRedeclaredTarget", {
+    files: sameTargetRedeclaredFiles,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var n = n.next, n = n.next");
+      api.expectFile("/out.js").toContain("var n = L, n = n.next, n = n.next");
+      api.expectFile("/out.js").toContain("var n = n.next, v = n.v, n;");
+      api.expectFile("/out.js").toContain("var { next: a, next: n } = n, b = n.v");
+    },
+    run: { stdout: "2 2 1 111" },
+  });
+  itBundled("minify/SameTargetDestructuringSkipsRedeclaredTargetWithoutMinify", {
+    files: sameTargetRedeclaredFiles,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var n = n.next, n = n.next");
+      api.expectFile("/out.js").toContain("var n = n.next, v = n.v;");
+      api.expectFile("/out.js").toContain("var { next: a, next: n } = n, b = n.v");
+    },
+    run: { stdout: "2 2 1 111" },
+  });
   // A `using` declaration admits only identifier bindings, so the transform
   // must not rewrite its declarators into an object pattern.
   itBundled("minify/SameTargetDestructuringSkipsUsingDecls", {

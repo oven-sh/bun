@@ -2,7 +2,6 @@
 //! running through the js_parser. It emits a ParseTask.Result and joins
 //! with the same logic that it runs though.
 
-use core::mem::offset_of;
 use std::fmt::Write as _;
 
 use bun_alloc::{AllocError as OOM, Arena}; // bumpalo::Bump re-export
@@ -22,12 +21,12 @@ use crate::Worker;
 use crate::bundle_v2::BundleV2;
 use crate::cache::ExternalFreeFunction;
 use crate::options::{Loader, Target};
-use crate::parse_task::{self, ResultValue, Success, WatcherData, on_complete};
+use crate::parse_task::{self, ParseComplete, ResultValue, Success, WatcherData};
 
 pub(crate) struct ServerComponentParseTask {
     pub task: ThreadPoolTask,
     pub data: Data,
-    // BACKREF (LIFETIMES.tsv) — written through in `on_complete`.
+    // BACKREF (LIFETIMES.tsv) — written through in `ParseComplete::run`.
     // `ParentRef` (write-provenance via `NonNull::from(&mut self)` at construction)
     // so deref sites are safe; `None` only for the FRU `Default` placeholder.
     pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
@@ -61,7 +60,7 @@ pub struct ClientEntryWrapper {
 // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
 // `ServerComponentParseTask` (heap-allocated, scheduled exactly once). Writes:
 // own fields + `Log` (local) + result is posted via
-// `ctx.loop_.enqueue_task_concurrent` (MPSC). Reads `ctx: &BundleV2` shared.
+// `post::<ParseComplete>` (MPSC). Reads `ctx: &BundleV2` shared.
 // `ServerComponentParseTask` is `Send` because `ctx: *mut BundleV2` is a
 // backref to a `Send` type and `Source`/`Data` payloads are bundle-arena
 // slices.
@@ -102,62 +101,10 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     });
     let result = bun_core::heap::into_raw(result);
 
-    // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); the BACKREF deref
-    // of `linker.r#loop` is centralised in `LinkerContext::any_loop_mut`.
-    //
-    // The loop is effectively non-optional — `BundleV2::init`
-    // always sets `linker.r#loop` before scheduling any ServerComponentParseTask.
-    // Running `on_complete` inline on the worker thread would violate
-    // `BundleV2::on_parse_task_complete`'s threading contract (it mutates the
-    // bundler graph, which is owned by the main/bundler thread).
-    match worker
-        .ctx
-        .linker
-        .any_loop_mut()
-        .expect("BundleV2.linker.loop must be set before scheduling ServerComponentParseTask")
-    {
-        bun_event_loop::AnyEventLoop::Js { .. } => {
-            let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
-                // SAFETY: `p` is the `result` Box leaked above; ownership
-                // transfers to `on_complete`, which deallocates it.
-                unsafe { on_complete(p) };
-                Ok(())
-            });
-            let poster = worker
-                .ctx
-                .js_poster
-                .as_ref()
-                .expect("JS-owned bundle has a poster");
-            if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
-                // Owning JS VM torn down mid-bundle: free the hop and the result.
-                // SAFETY: refused ⇒ we own the task box and the leaked result.
-                unsafe {
-                    bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
-                    drop(bun_core::heap::take(result));
-                }
-            }
-        }
-        bun_event_loop::AnyEventLoop::Mini(mini) => {
-            // SAFETY: `result` is a freshly Box-leaked `parse_task::Result` (above) and
-            // `offset_of!(parse_task::Result, task)` is the intrusive task field within it.
-            unsafe {
-                mini.enqueue_task_concurrent_with_extra_ctx::<parse_task::Result, BundleV2<'static>>(
-                    result,
-                    on_complete_mini,
-                    offset_of!(parse_task::Result, task),
-                );
-            }
-        }
-    }
-    // Runs at function exit, i.e. after enqueue.
+    // SAFETY: `result` is a fresh heap allocation that `ParseComplete::run`
+    // (or `refused`) frees; `result.ctx` is the bundle this task belongs to.
+    unsafe { crate::post::post::<ParseComplete>(result) };
     worker.unget();
-}
-
-fn on_complete_mini(result: *mut parse_task::Result, _ctx: *mut BundleV2<'static>) {
-    // `on_complete` already recovers `ctx` from `result.ctx`.
-    // SAFETY: callback contract — `result` is the uniquely-owned Box leaked in
-    // `run_from_thread_pool`; ownership transfers to `on_complete`.
-    unsafe { on_complete(result) };
 }
 
 fn task_callback(

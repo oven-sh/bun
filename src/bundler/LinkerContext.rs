@@ -239,24 +239,14 @@ impl<'a> LinkerContext<'a> {
             .get()
     }
 
-    /// Mutable projection of the `r#loop` BACKREF for `AnyEventLoop` dispatch
-    /// (`enqueue_task_concurrent*`, `tick`). Centralises the raw `NonNull`
-    /// deref so the three callers (`BundleV2::any_loop_mut`, `ParseTask` /
-    /// `ServerComponentParseTask` completion) are safe.
-    ///
-    /// `&self` receiver (not `&mut self`): the loop storage is **disjoint**
-    /// from `LinkerContext` (it lives in the `BundleThread` / runtime arena —
-    /// see [`EventLoop`]), and worker-thread completions reach this through a
-    /// `BackRef<BundleV2>` (`&` only).
+    /// Mutable projection of the `r#loop` BACKREF, for the bundle thread's own
+    /// use of its loop (`BundleV2::any_loop_mut`). Other threads post to the
+    /// loop through `crate::post`, which reads the field raw.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn any_loop_mut(&self) -> Option<&mut bun_event_loop::AnyEventLoop> {
+    pub(crate) fn any_loop_mut(&mut self) -> Option<&mut bun_event_loop::AnyEventLoop> {
         // SAFETY: BACKREF — set once in `BundleV2::init` from a loop that
-        // outlives the bundle pass; the pointee is disjoint from `*self`.
-        // Exclusivity: `Js { owner }.enqueue_task_concurrent` is `&self`
-        // (MPSC), and `Mini.enqueue_task_concurrent_with_extra_ctx` only
-        // pushes to an MPSC queue + writes the caller-owned intrusive task
-        // node, so concurrent worker completions do not alias loop state.
+        // outlives the bundle pass; the pointee is disjoint from `*self`
+        // (see [`EventLoop`]).
         self.r#loop.map(|p| unsafe { &mut *p.as_ptr() })
     }
 

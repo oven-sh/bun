@@ -984,17 +984,20 @@ var require_wasi = __commonJS({
                 this.sendStderr(iov);
                 written += iov.byteLength;
               } else {
+                const IS_REGULAR = stats.filetype === constants_1.WASI_FILETYPE_REGULAR_FILE;
                 let w = 0;
                 while (w < iov.byteLength) {
-                  const i = fs.writeSync(
-                    stats.real,
-                    iov,
-                    w,
-                    iov.byteLength - w,
-                    stats.offset ? Number(stats.offset) : null,
-                  );
-                  if (stats.offset) stats.offset += BigInt(i);
+                  // An append fd writes at EOF: pass null so the O_APPEND
+                  // open flag positions the write.
+                  const position = stats.append || stats.offset === void 0 ? null : Number(stats.offset);
+                  const i = fs.writeSync(stats.real, iov, w, iov.byteLength - w, position);
+                  if (IS_REGULAR && !stats.append) {
+                    stats.offset = (stats.offset === void 0 ? BigInt(0) : stats.offset) + BigInt(i);
+                  }
                   w += i;
+                }
+                if (IS_REGULAR && stats.append && w > 0) {
+                  stats.offset = BigInt(fs.fstatSync(stats.real).size);
                 }
                 written += w;
               }
@@ -1416,6 +1419,7 @@ var require_wasi = __commonJS({
                 this.FD_MAP.set(newfd, {
                   real: realfd,
                   filetype: void 0,
+                  append: (fsFlags & constants_1.WASI_FDFLAG_APPEND) !== 0,
                   rights: {
                     base: neededBase,
                     inheriting: neededInheriting,

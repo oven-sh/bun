@@ -275,8 +275,7 @@ pub fn e_from_negated(errno: core::ffi::c_int) -> E {
 }
 
 impl SystemErrno {
-    /// A code the enum does not declare (the kernel is not bound to the
-    /// table: FUSE, `ENOTSUPP` 524) maps to `EUNKNOWN`.
+    /// The kernel is not bound to this table (FUSE, `ENOTSUPP` 524): an undeclared code is `EUNKNOWN`.
     #[inline]
     pub const fn from_raw(n: u16) -> SystemErrno {
         match Self::from_repr(n) {

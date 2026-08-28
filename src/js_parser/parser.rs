@@ -730,6 +730,59 @@ pub(crate) struct JSXTag<'a> {
     pub name: &'a [u8],
 }
 
+/// Parses a JSX element name or attribute name: `name` or `ns:name`. The
+/// current token must be `TIdentifier`. Inside a JSX element the lexer emits
+/// `:` as its own token, so `<rdf : Description rdf : ID="x"/>` is accepted.
+///
+/// JSX namespaces are not supported by React or TypeScript, but someone using
+/// JSX syntax in more obscure ways may find a use for them. A namespaced name
+/// is always turned into a string, so it cannot reference a JavaScript
+/// identifier. Returns the range of the whole name and the joined name.
+pub(crate) fn parse_jsx_namespaced_name<'a, P>(
+    p: &mut P,
+) -> crate::CrateResult<(bun_ast::Range, &'a [u8])>
+where
+    P: crate::p::ParserLike<'a>,
+{
+    let mut range = p.lexer().range();
+    let name: &'a [u8] = p.lexer().identifier;
+    p.lexer().expect_inside_jsx_element(T::TIdentifier)?;
+
+    if p.lexer().token != T::TColon {
+        return Ok((range, name));
+    }
+
+    // Parse the colon
+    range.len = p.lexer().range().end().start - range.loc.start;
+    p.lexer().next_inside_jsx_element()?;
+
+    // Parse the second identifier
+    if p.lexer().token != T::TIdentifier {
+        bun_ast::LexerLog::add_syntax_error(
+            p.lexer(),
+            range.end_i(),
+            format_args!(
+                "Expected identifier after \"{}:\" in namespaced JSX name",
+                bstr::BStr::new(name)
+            ),
+        )?;
+        return Err(crate::Error::SyntaxError);
+    }
+    let member_range = p.lexer().range();
+    let member: &'a [u8] = p.lexer().identifier;
+    range.len = member_range.end().start - range.loc.start;
+
+    let joined: &'a mut [u8] = p
+        .bump()
+        .alloc_slice_fill_default::<u8>(name.len() + 1 + member.len());
+    joined[..name.len()].copy_from_slice(name);
+    joined[name.len()] = b':';
+    joined[name.len() + 1..].copy_from_slice(member);
+
+    p.lexer().next_inside_jsx_element()?;
+    Ok((range, joined))
+}
+
 impl<'a> JSXTag<'a> {
     pub(crate) fn parse<P>(p: &mut P) -> crate::CrateResult<JSXTag<'a>>
     where
@@ -749,10 +802,11 @@ impl<'a> JSXTag<'a> {
         }
 
         // The tag is an identifier
-        let mut name: &'a [u8] = p.lexer().identifier;
-        let mut tag_range = p.lexer().range();
-        p.lexer()
-            .expect_inside_jsx_element_with_name(T::TIdentifier, b"JSX element name")?;
+        if p.lexer().token != T::TIdentifier {
+            p.lexer().expected_string(b"JSX element name")?;
+            return Err(crate::Error::SyntaxError);
+        }
+        let (mut tag_range, mut name) = parse_jsx_namespaced_name(p)?;
 
         // Certain identifiers are strings
         // <div

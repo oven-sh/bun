@@ -15,11 +15,14 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // exceeded" instead of crashing. The transpile runs in a child process so a
 // regression fails these assertions rather than taking down the test runner.
 test("deeply nested arrow/JSX does not overflow the stack", async () => {
-  // Each `() => <div>` adds one arrow frame and one JSX-element frame. This is
-  // far deeper than the fuzzer's ~23k repetitions so the guard fires well
-  // before the real stack end on both release and the larger debug frames.
+  // Each `() => <div>{` adds one arrow frame, one JSX-element frame and one
+  // expression-container frame. The fuzzer's `() => <div>` left `() =>` as JSX
+  // text, whose `>` is a TSX error that fills the log before the guard fires,
+  // so the arrow is nested through `{...}` instead. This is far deeper than
+  // the fuzzer's ~23k repetitions so the guard fires well before the real
+  // stack end on both release and the larger debug frames.
   // (`Buffer.alloc` fill over `.repeat` — the latter is very slow in debug JSC.)
-  const unit = "() => <div>";
+  const unit = "() => <div>{";
   const source = Buffer.alloc(unit.length * 50_000, unit).toString();
 
   using dir = tempDir("jsx-deep-nesting-stack-overflow", {

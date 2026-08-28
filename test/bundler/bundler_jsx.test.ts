@@ -337,6 +337,141 @@ describe("bundler", () => {
       `,
     },
   });
+
+  // JSXAttributeValue: JSXElement | JSXFragment. An element or fragment is a
+  // valid attribute value without braces: <div icon=<Icon/> />
+  const elementAsAttributeValue = /* jsx */ `
+    import { print } from 'bun-test-helpers'
+    const Icon = 'icon'
+    print(<div icon=<Icon/> label="x" />)
+    print(<div a=<b>{1}</b> />)
+    print(<div data-ab=<><a/><b/></> />)
+  `;
+  const elementAsAttributeValueDevStdout = `
+    {"$$typeof":"Symbol(jsxdev)","type":"div","props":{"icon":{"$$typeof":"Symbol(jsxdev)","type":"icon","props":{},"key":"undefined","source":false,"self":"undefined"},"label":"x"},"key":"undefined","source":false,"self":"undefined"}
+    {"$$typeof":"Symbol(jsxdev)","type":"div","props":{"a":{"$$typeof":"Symbol(jsxdev)","type":"b","props":{"children":1},"key":"undefined","source":false,"self":"undefined"}},"key":"undefined","source":false,"self":"undefined"}
+    {"$$typeof":"Symbol(jsxdev)","type":"div","props":{"data-ab":{"$$typeof":"Symbol(jsxdev)","type":"Symbol(jsxdev.fragment)","props":{"children":[{"$$typeof":"Symbol(jsxdev)","type":"a","props":{},"key":"undefined","source":false,"self":"undefined"},{"$$typeof":"Symbol(jsxdev)","type":"b","props":{},"key":"undefined","source":false,"self":"undefined"}]},"key":"undefined","source":true,"self":"undefined"}},"key":"undefined","source":false,"self":"undefined"}
+  `;
+  const elementAsAttributeValueProdStdout = `
+    {"$$typeof":"Symbol(jsx)","type":"div","props":{"icon":{"$$typeof":"Symbol(jsx)","type":"icon","props":{},"key":"undefined"},"label":"x"},"key":"undefined"}
+    {"$$typeof":"Symbol(jsx)","type":"div","props":{"a":{"$$typeof":"Symbol(jsx)","type":"b","props":{"children":1},"key":"undefined"}},"key":"undefined"}
+    {"$$typeof":"Symbol(jsx)","type":"div","props":{"data-ab":{"$$typeof":"Symbol(jsx)","type":"Symbol(jsx.fragment)","props":{"children":[{"$$typeof":"Symbol(jsx)","type":"a","props":{},"key":"undefined"},{"$$typeof":"Symbol(jsx)","type":"b","props":{},"key":"undefined"}]},"key":"undefined"}},"key":"undefined"}
+  `;
+  // The shared jsx-runtime helper has no jsxs, which the multi-child fragment needs.
+  const jsxRuntimeWithJsxs = {
+    "/node_modules/react/jsx-runtime.js": /* js */ `
+      const $$typeof = Symbol.for("jsx");
+      export function jsx(type, props, key) {
+        return {
+          $$typeof, type, props, key
+        }
+      }
+      export const jsxs = jsx;
+      export const Fragment = Symbol.for("jsx.fragment");
+    `,
+  };
+  for (const ext of ["jsx", "tsx"]) {
+    itBundledDevAndProd(`jsx/ElementAsAttributeValue_${ext}`, {
+      files: {
+        [`/index.${ext}`]: elementAsAttributeValue,
+        ...helpers,
+        ...jsxRuntimeWithJsxs,
+      },
+      target: "bun",
+      devStdout: elementAsAttributeValueDevStdout,
+      prodStdout: elementAsAttributeValueProdStdout,
+    });
+    itBundledDevAndProd(`jsx/ElementAsAttributeValueClassic_${ext}`, {
+      files: {
+        [`/index.${ext}`]: `
+          // not react to catch if bun auto imports or uses the global
+          import * as React from 'custom-classic'
+          ${elementAsAttributeValue}
+        `,
+        ...helpers,
+      },
+      target: "bun",
+      jsx: {
+        runtime: "classic",
+        importSource: "ignore-me",
+      },
+      run: {
+        stdout: `
+          ["custom-classic","div",{"icon":["custom-classic","icon","null",[]],"label":"x"},[]]
+          ["custom-classic","div",{"a":["custom-classic","b","null",[1]]},[]]
+          ["custom-classic","div",{"data-ab":["custom-classic","CustomFragment","null",[["custom-classic","a","null",[]],["custom-classic","b","null",[]]]]},[]]
+        `,
+      },
+    });
+
+    // Inside a JSX element the colon is its own token, so whitespace around it
+    // is allowed in namespaced tag and attribute names.
+    itBundledDevAndProd(`jsx/NamespacedNameWhitespace_${ext}`, {
+      files: {
+        [`/index.${ext}`]: /* jsx */ `
+          import { print } from 'bun-test-helpers'
+          print(<rdf : Description rdf : ID="foo" xml : lang="en">text</rdf : Description>)
+          print(<svg : path d="M0" />)
+        `,
+        ...helpers,
+      },
+      target: "bun",
+      devStdout: `
+        {"$$typeof":"Symbol(jsxdev)","type":"rdf:Description","props":{"rdf:ID":"foo","xml:lang":"en","children":"text"},"key":"undefined","source":false,"self":"undefined"}
+        {"$$typeof":"Symbol(jsxdev)","type":"svg:path","props":{"d":"M0"},"key":"undefined","source":false,"self":"undefined"}
+      `,
+      prodStdout: `
+        {"$$typeof":"Symbol(jsx)","type":"rdf:Description","props":{"rdf:ID":"foo","xml:lang":"en","children":"text"},"key":"undefined"}
+        {"$$typeof":"Symbol(jsx)","type":"svg:path","props":{"d":"M0"},"key":"undefined"}
+      `,
+    });
+  }
+
+  // JSXTextCharacter excludes ">" and "}". TypeScript rejects them (TS1382 /
+  // TS1381). Babel still accepts them, so .jsx only warns and keeps the text.
+  const invalidTextCharacter = /* jsx */ `
+    import { print } from 'bun-test-helpers'
+    print(<div>></div>)
+    print(<div>{1}}</div>)
+    print(<div>a > b</div>)
+    print(<div>{">"}{"}"}</div>)
+  `;
+  const invalidTextCharacterMessages = [
+    'The character ">" is not valid inside a JSX element',
+    'The character "}" is not valid inside a JSX element',
+    'The character ">" is not valid inside a JSX element',
+  ];
+  itBundled("jsx/InvalidTextCharacterTSX", {
+    files: {
+      "/index.tsx": invalidTextCharacter,
+      ...helpers,
+    },
+    target: "bun",
+    bundleErrors: {
+      "/index.tsx": invalidTextCharacterMessages,
+    },
+  });
+  itBundled("jsx/InvalidTextCharacterJSX", {
+    files: {
+      "/index.jsx": invalidTextCharacter,
+      ...helpers,
+    },
+    target: "bun",
+    env: {
+      NODE_ENV: "development",
+    },
+    bundleWarnings: {
+      "/index.jsx": invalidTextCharacterMessages,
+    },
+    run: {
+      stdout: `
+        {"$$typeof":"Symbol(jsxdev)","type":"div","props":{"children":">"},"key":"undefined","source":false,"self":"undefined"}
+        {"$$typeof":"Symbol(jsxdev)","type":"div","props":{"children":[1,"}"]},"key":"undefined","source":true,"self":"undefined"}
+        {"$$typeof":"Symbol(jsxdev)","type":"div","props":{"children":"a > b"},"key":"undefined","source":false,"self":"undefined"}
+        {"$$typeof":"Symbol(jsxdev)","type":"div","props":{"children":[">","}"]},"key":"undefined","source":true,"self":"undefined"}
+      `,
+    },
+  });
   itBundledDevAndProd("jsx/ClassicPragma", {
     files: {
       "/index.jsx": /* js*/ `

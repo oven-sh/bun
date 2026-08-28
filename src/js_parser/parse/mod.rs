@@ -381,24 +381,41 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         // Use NextInsideJSXElement() not Next() so we can parse a JSX-style string literal
         p.lexer.next_inside_jsx_element()?;
-        if p.lexer.token == T::TStringLiteral {
-            previous_string_with_backslash_loc.start = p
-                .lexer
-                .loc()
-                .start
-                .max(p.lexer.previous_backslash_quote_in_jsx.loc.start);
-            let estr = p.lexer.to_e_string()?;
-            let expr = p.new_expr(estr, *previous_string_with_backslash_loc);
+        match p.lexer.token {
+            T::TStringLiteral => {
+                previous_string_with_backslash_loc.start = p
+                    .lexer
+                    .loc()
+                    .start
+                    .max(p.lexer.previous_backslash_quote_in_jsx.loc.start);
+                let estr = p.lexer.to_e_string()?;
+                let expr = p.new_expr(estr, *previous_string_with_backslash_loc);
 
-            p.lexer.next_inside_jsx_element()?;
-            Ok(expr)
-        } else {
-            // Use Expect() not ExpectInsideJSXElement() so we can parse expression tokens
-            p.lexer.expect(T::TOpenBrace)?;
-            let value = p.parse_expr(Level::Lowest)?;
+                p.lexer.next_inside_jsx_element()?;
+                Ok(expr)
+            }
+            T::TLessThan => {
+                // An element or fragment without braces: <div a=<b/> c=<>d</> />
+                // This may be removed in the future: https://github.com/facebook/jsx/issues/53
+                let loc = p.lexer.loc();
+                p.lexer.next_inside_jsx_element()?;
+                let value = p.parse_jsx_element(loc)?;
 
-            p.lexer.expect_inside_jsx_element(T::TCloseBrace)?;
-            Ok(value)
+                // The call to parse_jsx_element() above doesn't consume the last
+                // TGreaterThan because the caller knows what next() function to call.
+                // Use next_inside_jsx_element() here since the next token is inside
+                // the enclosing element's attribute list.
+                p.lexer.next_inside_jsx_element()?;
+                Ok(value)
+            }
+            _ => {
+                // Use Expect() not ExpectInsideJSXElement() so we can parse expression tokens
+                p.lexer.expect(T::TOpenBrace)?;
+                let value = p.parse_expr(Level::Lowest)?;
+
+                p.lexer.expect_inside_jsx_element(T::TCloseBrace)?;
+                Ok(value)
+            }
         }
     }
 

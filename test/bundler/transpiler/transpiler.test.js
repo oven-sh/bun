@@ -5687,3 +5687,202 @@ describe("same-target destructuring with a re-declared target", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("JSX grammar edge cases", () => {
+  const loaders = ["jsx", "tsx"];
+  const runtimes = {
+    automatic: {},
+    classic: { tsconfig: JSON.stringify({ compilerOptions: { jsx: "react" } }) },
+  };
+  const transpilers = {};
+  for (const loader of loaders) {
+    for (const [runtime, extra] of Object.entries(runtimes)) {
+      transpilers[`${loader}/${runtime}`] = new Bun.Transpiler({
+        loader,
+        define: { "process.env.NODE_ENV": JSON.stringify("development") },
+        ...extra,
+      });
+    }
+  }
+  const combos = Object.keys(transpilers);
+  const factory = { automatic: "jsxDEV_7x81h0kn(", classic: "React.createElement(" };
+  const fragment = { automatic: "jsxDEV_7x81h0kn(Fragment_8vg9x3sq", classic: "React.createElement(React.Fragment" };
+
+  const parseError = (transpiler, src) => {
+    try {
+      transpiler.transformSync(src);
+    } catch (e) {
+      return e;
+    }
+    throw new Error("expected a parse error for " + JSON.stringify(src));
+  };
+
+  describe("JSX element or fragment as an attribute value", () => {
+    // JSXAttributeValue: JSXElement | JSXFragment (no braces).
+    const cases = [
+      ["self-closing", '<div icon=<Icon/> label="x" />', '<div icon={<Icon/>} label="x" />', "Icon"],
+      ["with children", "<div a=<b>{1}</b> />", "<div a={<b>{1}</b>} />", '"b"'],
+      ["fragment", "<div data-ab=<><a/><b/></> />", "<div data-ab={<><a/><b/></>} />", "fragment"],
+      ["nested", "<div a=<b c=<d/> /> />", "<div a={<b c={<d/>} />} />", '"d"'],
+      ["followed by a spread", "<div a=<b/> {...rest} />", "<div a={<b/>} {...rest} />", "...rest"],
+      ["with element children", "<div a=<b/>><c/></div>", "<div a={<b/>}><c/></div>", '"c"'],
+    ];
+    for (const combo of combos) {
+      const runtime = combo.split("/")[1];
+      it.each(cases)(`${combo}: %s`, (_, unbraced, braced, marker) => {
+        const out = transpilers[combo].transformSync(`export const el = ${unbraced};`);
+        expect(out).toBe(transpilers[combo].transformSync(`export const el = ${braced};`));
+        expect(out).toContain(factory[runtime]);
+        expect(out).toContain(marker === "fragment" ? fragment[runtime] : marker);
+      });
+    }
+
+    it.each(combos)("%s: the nested element is checked like any other element", combo => {
+      expect(parseError(transpilers[combo], "x = <div a=<b></c> />").message).toBe(
+        'Expected closing JSX tag to match opening tag "<b>"',
+      );
+      expect(parseError(transpilers[combo], "x = <div a=< /> />").message).toBe(
+        'Expected JSX element name but found "/"',
+      );
+    });
+  });
+
+  describe("namespaced names with whitespace around the colon", () => {
+    // `:` is its own token inside a JSX element, so `ns : name` is `ns:name`.
+    const cases = [
+      ["self-closing tag", "<rdf : Description />", "<rdf:Description />"],
+      ["tag with children and closing tag", "<x : y>text</x : y>", "<x:y>text</x:y>"],
+      ["closing tag only", "<x:y></x : y>", "<x:y></x:y>"],
+      ["attribute with a value", '<a rdf : ID="foo" />', '<a rdf:ID="foo" />'],
+      ["boolean attribute", "<a b : c />", "<a b:c />"],
+      [
+        "everything at once",
+        '<rdf : Description rdf : ID="foo" xml : lang="en">\n</rdf : Description>',
+        '<rdf:Description rdf:ID="foo" xml:lang="en"></rdf:Description>',
+      ],
+      ["newlines around the colon", "<svg\n:\npath\n/>", "<svg:path/>"],
+      ["uppercase namespace is still a string tag", "<Foo : Bar />", "<Foo:Bar />"],
+    ];
+    for (const combo of combos) {
+      const runtime = combo.split("/")[1];
+      it.each(cases)(`${combo}: %s`, (_, spaced, compact) => {
+        const out = transpilers[combo].transformSync(`export const el = ${spaced};`);
+        expect(out).toBe(transpilers[combo].transformSync(`export const el = ${compact};`));
+        expect(out).toContain(factory[runtime]);
+      });
+    }
+
+    it("joins the name into a string tag and a string key", () => {
+      expect(transpilers["jsx/classic"].transformSync('x = <rdf : Description rdf : ID="foo" b : c />')).toBe(
+        'x = React.createElement("rdf:Description", {\n  "rdf:ID": "foo",\n  "b:c": true\n});\n',
+      );
+    });
+
+    it.each(combos)("%s: rejects a namespace without a name", combo => {
+      for (const src of ["x = <a:0/>", "x = <a: />", "x = <a::b/>", "x = <a : />"]) {
+        const err = parseError(transpilers[combo], src);
+        expect(err.message).toBe('Expected identifier after "a:" in namespaced JSX name');
+        expect(err.position.column).toBe(src.indexOf(":") + 2);
+      }
+      expect(parseError(transpilers[combo], 'x = <div a:="1" />').message).toBe(
+        'Expected identifier after "a:" in namespaced JSX name',
+      );
+    });
+
+    it.each(combos)("%s: the closing tag must match the joined name", combo => {
+      for (const src of ["x = <a:b></a>", "x = <a:b></a:c>", "x = <a : b></b : a>"]) {
+        expect(parseError(transpilers[combo], src).message).toBe(
+          'Expected closing JSX tag to match opening tag "<a:b>"',
+        );
+      }
+    });
+
+    it.each(combos)("%s: a namespace cannot be combined with a member chain", combo => {
+      const errorsOf = src => {
+        const err = parseError(transpilers[combo], src);
+        return err.errors ? err.errors.map(e => e.message) : [err.message];
+      };
+      expect(errorsOf("x = <a:b.c/>")).toContain('Expected ">" but found "."');
+      expect(errorsOf("x = <a.b:c/>")).toContain('Expected ">" but found ":"');
+    });
+  });
+
+  describe("'>' and '}' in JSX text", () => {
+    // JSXTextCharacter: SourceCharacter but not one of {, <, > or }.
+    // TypeScript rejects these (TS1382 / TS1381); Babel still accepts them,
+    // so the .jsx loader only warns.
+    const cases = [
+      [">", "x = <div>></div>", 10],
+      ["}", "x = <div>}</div>", 10],
+      ["> after an expression", "x = <div>{1}></div>", 13],
+      ["} after an expression", "x = <div>{1}}</div>", 13],
+      ["> inside text", "x = <div>a > b</div>", 12],
+      ["} inside text", "x = <div>a } b</div>", 12],
+      ["> in a fragment", "x = <>></>", 7],
+      ["} in a fragment", "x = <>}</>", 7],
+    ];
+    const message = c => `The character "${c}" is not valid inside a JSX element`;
+    const note = c => `Did you mean to escape it as "{'${c}'}" instead?`;
+
+    for (const runtime of Object.keys(runtimes)) {
+      it.each(cases)(`tsx/${runtime}: %s is an error`, (name, src, column) => {
+        const c = name[0];
+        const err = parseError(transpilers[`tsx/${runtime}`], src);
+        expect(err.level).toBe("error");
+        expect(err.message).toBe(message(c));
+        expect(err.position.column).toBe(column);
+        expect(err.notes.map(n => n.message)).toEqual([note(c)]);
+      });
+
+      it.each(cases)(`jsx/${runtime}: %s is a warning`, (name, src, column) => {
+        const c = name[0];
+        const err = parseError(transpilers[`jsx/${runtime}`], src);
+        expect(err.level).toBe("warn");
+        expect(err.message).toBe(message(c));
+        expect(err.position.column).toBe(column);
+        expect(err.notes.map(n => n.message)).toEqual([note(c)]);
+      });
+    }
+
+    it("jsx keeps the character as text when warnings are not logged", () => {
+      const quiet = new Bun.Transpiler({
+        loader: "jsx",
+        logLevel: "error",
+        define: { "process.env.NODE_ENV": JSON.stringify("development") },
+      });
+      expect(quiet.transformSync("x = <div>></div>")).toBe(
+        'x = jsxDEV_7x81h0kn("div", {\n  children: ">"\n}, undefined, false, undefined, this);\n',
+      );
+      expect(quiet.transformSync("x = <div>{1}}</div>")).toBe(
+        'x = jsxDEV_7x81h0kn("div", {\n  children: [\n    1,\n    "}"\n  ]\n}, undefined, true, undefined, this);\n',
+      );
+      expect(quiet.transformSync("x = <div>a > b</div>")).toBe(
+        'x = jsxDEV_7x81h0kn("div", {\n  children: "a > b"\n}, undefined, false, undefined, this);\n',
+      );
+    });
+
+    it.each(loaders)("%s: every occurrence is reported", loader => {
+      const err = parseError(transpilers[`${loader}/automatic`], "x = <div>>}</div>");
+      expect(err.errors.map(e => [e.level, e.message, e.position.column])).toEqual([
+        [loader === "tsx" ? "error" : "warn", message(">"), 10],
+        [loader === "tsx" ? "error" : "warn", message("}"), 11],
+      ]);
+    });
+
+    it.each(combos)("%s: the escaped forms stay valid", combo => {
+      const runtime = combo.split("/")[1];
+      for (const [src, expected] of [
+        ['x = <div>{">"}</div>', ">"],
+        ['x = <div>{"}"}</div>', "}"],
+        ["x = <div>{'>'}</div>", ">"],
+        ["x = <div>&gt;</div>", ">"],
+        ["x = <div>&#125;</div>", "}"],
+        ['x = <div title=">}">{"a"}</div>', ">}"],
+      ]) {
+        const out = transpilers[combo].transformSync(src);
+        expect(out).toContain(factory[runtime]);
+        expect(out).toContain(JSON.stringify(expected));
+      }
+    });
+  });
+});

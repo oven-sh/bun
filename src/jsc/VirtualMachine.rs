@@ -1001,7 +1001,10 @@ impl VirtualMachine {
     /// while it loads is live, so collections before it finishes only re-mark it. The budget is the size of the embedded
     /// payload (capped); after the first collection JSC's usual sizing applies. Workers load a fraction of the graph and
     /// keep the default.
-    fn let_heap_take_initial_module_graph(&self, graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
+    fn let_heap_take_initial_module_graph(
+        &self,
+        graph: &'static dyn bun_resolver::StandaloneModuleGraph,
+    ) {
         unsafe extern "C" {
             safe fn JSC__Heap__setInitialAllocationBudget(vm: &VM, bytes: usize);
         }

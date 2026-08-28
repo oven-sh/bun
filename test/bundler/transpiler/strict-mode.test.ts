@@ -356,6 +356,16 @@ describe("strict mode early errors", () => {
         "import { x as protected } from 'x'",
         '"protected" is a reserved word and cannot be used in an ECMAScript module',
       ],
+      ["import eval from 'x'", 'Declarations with the name "eval" cannot be used in an ECMAScript module'],
+      [
+        "import * as arguments from 'x'",
+        'Declarations with the name "arguments" cannot be used in an ECMAScript module',
+      ],
+      ["import { eval } from 'x'", 'Declarations with the name "eval" cannot be used in an ECMAScript module'],
+      [
+        "import { x as arguments } from 'x'",
+        'Declarations with the name "arguments" cannot be used in an ECMAScript module',
+      ],
       ["import 'x\\1'", "Legacy octal escape sequences cannot be used in an ECMAScript module"],
       ["export * from 'x\\1'", "Legacy octal escape sequences cannot be used in an ECMAScript module"],
       ["export { x } from 'x\\1'", "Legacy octal escape sequences cannot be used in an ECMAScript module"],

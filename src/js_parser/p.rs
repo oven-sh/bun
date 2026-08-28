@@ -5342,7 +5342,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn is_valid_assignment_target(&self, expr: &Expr) -> bool {
         match &expr.data {
             js_ast::ExprData::EIdentifier(ident) => {
-                !(self.is_strict_mode()
+                // The renamer keeps `eval` and `arguments`, so ESM output is strict here too.
+                !((self.is_strict_mode() || self.is_strict_mode_output_format())
                     && is_eval_or_arguments(self.load_name_from_ref(ident.ref_)))
             }
             js_ast::ExprData::EDot(e) => e.optional_chain.is_none(),

@@ -169,16 +169,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// An import makes the file a module, so a reserved word cannot be an imported binding.
+    /// An import makes the file a module, so its bindings are strict mode declarations.
     fn validate_import_name(&mut self, loc: bun_ast::Loc, ref_: Ref) -> Result<(), Error> {
         let name = self.load_name_from_ref(ref_);
-        if js_lexer::is_strict_mode_reserved_word(name) {
-            self.mark_strict_mode_feature(
-                StrictModeFeature::ReservedWord,
-                js_lexer::range_of_identifier(self.source, loc),
-                name,
-            )?;
-        }
+        self.validate_declared_symbol_name(loc, name);
         Ok(())
     }
 

@@ -1,7 +1,7 @@
 use crate::Error;
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
-use crate::parser::{ExportClauseResult, ImportClause, is_eval_or_arguments};
+use crate::parser::{ExportClauseResult, ImportClause};
 use bun_alloc::ArenaVecExt as _;
 use bun_ast::LexerLog as _;
 use bun_ast::expr::Data as ExprData;
@@ -181,18 +181,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         };
                         p.lexer.expect(T::TIdentifier)?;
 
-                        if is_eval_or_arguments(original_name) {
-                            let r = p.source.range_of_string(name.loc);
-                            p.log().add_range_error_fmt(
-                                Some(p.source),
-                                r,
-                                format_args!(
-                                    "Cannot use {} as an identifier here",
-                                    bstr::BStr::new(original_name)
-                                ),
-                            );
-                        }
-
                         items.push(ClauseItem {
                             alias: alias.into(),
                             alias_loc,
@@ -232,19 +220,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 } else if !is_identifier {
                     // An import where the name is a keyword must have an alias
                     p.lexer.expected_string(b"\"as\"")?;
-                }
-
-                // Reject forbidden names
-                if is_eval_or_arguments(original_name) {
-                    let r = js_lexer::range_of_identifier(p.source, name.loc);
-                    p.log().add_range_error_fmt(
-                        Some(p.source),
-                        r,
-                        format_args!(
-                            "Cannot use \"{}\" as an identifier here",
-                            bstr::BStr::new(original_name)
-                        ),
-                    );
                 }
 
                 items.push(ClauseItem {

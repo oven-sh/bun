@@ -729,7 +729,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut e_ = expr.data.e_template().expect("infallible: variant checked");
         if e_.tag.is_some() {
             p.visit_expr(e_.tag.as_mut().unwrap());
-        } else {
+        } else if !p.is_revisit_for_substitution {
             // Untagged templates never allow legacy octal escapes, in any mode.
             let legacy_octal_loc = core::iter::once(&e_.head)
                 .chain(e_.parts().iter().map(|part| &part.tail))

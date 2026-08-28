@@ -3465,7 +3465,8 @@ describe("bundler", () => {
         function f() { let n = 010; return n + 1; }
         function g() { let s = "\\1"; return s + "a"; }
         function h() { let d = delete x; return d + 1; }
-        console.log(f(), g(), h());
+        function t(a) { let y = 5; return \`\\1\${a}\` + y; }
+        console.log(f(), g(), h(), t(1));
       `,
     },
     minifySyntax: true,
@@ -3474,7 +3475,41 @@ describe("bundler", () => {
         "Legacy octal literals cannot be used in strict mode",
         "Legacy octal escape sequences cannot be used in strict mode",
         "Delete of a bare identifier cannot be used in strict mode",
+        "Legacy octal escape sequences cannot be used in template literals",
       ],
+    },
+  });
+  // `eval` and `arguments` are not renamed, so an assignment to them in a
+  // sloppy file cannot go into ESM output.
+  itBundled("edgecase/SloppyEvalAssignmentESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs"));
+      `,
+      "/dep.cjs": /* js */ `
+        eval = 0;
+        arguments++;
+        module.exports = typeof eval;
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/dep.cjs": ["Invalid assignment target", "Invalid assignment target"],
+    },
+  });
+  itBundled("edgecase/SloppyEvalAssignmentCJSOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./dep.cjs"));
+      `,
+      "/dep.cjs": /* js */ `
+        eval = 0;
+        module.exports = typeof eval;
+      `,
+    },
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("eval = 0;");
     },
   });
 });

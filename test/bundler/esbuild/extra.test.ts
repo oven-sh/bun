@@ -353,6 +353,27 @@ describe("bundler", () => {
     },
     run: { stdout: "object {}" },
   });
+  // A package whose "module" entry is disabled: `import` gets the empty module
+  // and `require` falls back to "main", as in esbuild.
+  const disabledModuleEntry = {
+    "node_modules/pkg/package.json": `{ "main": "./main.js", "module": "./module.js", "browser": { "./module.js": false } }`,
+    "node_modules/pkg/main.js": `module.exports = 'main'`,
+    "node_modules/pkg/module.js": `throw 'fail'`,
+  };
+  itBundled("extra/BrowserFieldDisabledModuleEntryImport", {
+    files: {
+      "entry.js": `import v from 'pkg'; console.log(JSON.stringify([typeof v, v]))`,
+      ...disabledModuleEntry,
+    },
+    run: { stdout: `["object",{}]` },
+  });
+  itBundled("extra/BrowserFieldDisabledModuleEntryRequire", {
+    files: {
+      "entry.js": `console.log(require('pkg'))`,
+      ...disabledModuleEntry,
+    },
+    run: { stdout: "main" },
+  });
 
   // Test arbitrary module namespace identifier names
   // See https://github.com/tc39/ecma262/pull/2154

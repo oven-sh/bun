@@ -1134,7 +1134,9 @@ impl Subprocess<'_> {
                         Status::Signaled(signaled) => {
                             let _ = promise.as_any_promise().unwrap().resolve(
                                 global_this,
-                                JSValue::js_number(128u8.wrapping_add(*signaled) as f64),
+                                JSValue::js_number(
+                                    bun_sys::SignalCode(*signaled).to_exit_code() as f64
+                                ),
                             );
                             // TODO: properly propagate exception upwards
                         }
@@ -1355,9 +1357,7 @@ impl Subprocess<'_> {
             }
             Status::Signaled(signal) => JSPromise::resolved_promise_value(
                 global_this,
-                JSValue::js_number(
-                    bun_sys::SignalCode(*signal).to_exit_code().unwrap_or(254) as f64
-                ),
+                JSValue::js_number(bun_sys::SignalCode(*signal).to_exit_code() as f64),
             ),
             Status::Err(err) => {
                 let js_err = err.to_js(global_this);
@@ -1384,20 +1384,16 @@ impl Subprocess<'_> {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_signal_code(&self, global: &JSGlobalObject) -> JSValue {
-        if let Some(signal) = self.process().signal_code() {
-            // `process.signal_code()` returns the tier-0 `bun_core::SignalCode`
-            // (bare `#[repr(u8)]` discriminant); name/exit-code helpers live on
-            // `bun_sys::SignalCode`.
-            let sys_sig = bun_sys::SignalCode(signal as u8);
-            if let Some(name) = sys_sig.name() {
+        let Some(signal) = self.process().status.signal() else {
+            return JSValue::NULL;
+        };
+        match signal.name() {
+            Some(name) => {
                 use bun_jsc::EncodedSliceJsc as _;
-                return bun_core::EncodedSlice::latin1(name.as_bytes()).to_js(global);
-            } else {
-                return JSValue::js_number(signal as u32 as f64);
+                bun_core::EncodedSlice::latin1(name.as_bytes()).to_js(global)
             }
+            None => JSValue::js_number(f64::from(signal.0)),
         }
-
-        JSValue::NULL
     }
 
     pub(crate) fn handle_ipc_message(

@@ -2,78 +2,43 @@ use core::fmt;
 
 use bun_core::output;
 
-// Any u8 is a valid
-// inhabitant. A Rust `#[repr(u8)] enum` with only the named variants would be
-// UB for the `from()` path (which accepts arbitrary bytes), so this is modeled
-// as a transparent newtype with associated consts.
+/// A platform signal number; any `u8` is valid (RT signals). Names live in `bun_core::SignalCode`.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct SignalCode(pub u8);
 
-// Associated-const generator fed by the canonical X-macro in `bun_core`.
-macro_rules! __sys_signal_consts {
-    ($($name:ident = $n:literal),* $(,)?) => { $(pub const $name: Self = Self($n);)* };
-}
-
 impl SignalCode {
-    bun_core::for_each_signal!(__sys_signal_consts);
+    pub const SIGINT: Self = Self::of(bun_core::SignalCode::SIGINT);
 
     // The `subprocess.kill()` method sends a signal to the child process. If no
     // argument is given, the process will be sent the 'SIGTERM' signal.
-    pub const DEFAULT: Self = Self::SIGTERM;
+    pub const DEFAULT: Self = Self::of(bun_core::SignalCode::DEFAULT);
+
+    /// For signals every platform has; anything else fails to compile.
+    const fn of(code: bun_core::SignalCode) -> Self {
+        match code.platform_number() {
+            Some(number) => Self(number as u8),
+            None => panic!("signal is not defined on this platform"),
+        }
+    }
+
+    /// `None` when this platform has no such signal (SIGPWR on macOS, most signals on Windows).
+    pub fn from_canonical(code: bun_core::SignalCode) -> Option<Self> {
+        code.platform_number().map(|number| Self(number as u8))
+    }
+
+    /// `None` when the table has no entry for this number (RT signals, macOS SIGEMT, 0).
+    pub fn canonical(self) -> Option<bun_core::SignalCode> {
+        bun_core::SignalCode::from_platform_number(i32::from(self.0))
+    }
 
     pub fn name(self) -> Option<&'static str> {
-        match self.0 {
-            1..=31 => Some(bun_core::SIGNAL_NAMES[self.0 as usize]),
-            _ => None,
-        }
+        self.canonical().map(bun_core::SignalCode::name)
     }
 
-    /// Shell scripts use exit codes 128 + signal number
-    /// https://tldp.org/LDP/abs/html/exitcodes.html
-    pub fn to_exit_code(self) -> Option<u8> {
-        match self.0 {
-            1..=31 => Some(128u8.wrapping_add(self.0)),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn description(self) -> Option<&'static str> {
-        // Description names copied from fish
-        // https://github.com/fish-shell/fish-shell/blob/00ffc397b493f67e28f18640d3de808af29b1434/fish-rust/src/signal.rs#L420
-        match self {
-            Self::SIGHUP => Some("Terminal hung up"),
-            Self::SIGINT => Some("Quit request"),
-            Self::SIGQUIT => Some("Quit request"),
-            Self::SIGILL => Some("Illegal instruction"),
-            Self::SIGTRAP => Some("Trace or breakpoint trap"),
-            Self::SIGABRT => Some("Abort"),
-            Self::SIGBUS => Some("Misaligned address error"),
-            Self::SIGFPE => Some("Floating point exception"),
-            Self::SIGKILL => Some("Forced quit"),
-            Self::SIGUSR1 => Some("User defined signal 1"),
-            Self::SIGUSR2 => Some("User defined signal 2"),
-            Self::SIGSEGV => Some("Address boundary error"),
-            Self::SIGPIPE => Some("Broken pipe"),
-            Self::SIGALRM => Some("Timer expired"),
-            Self::SIGTERM => Some("Polite quit request"),
-            Self::SIGCHLD => Some("Child process status changed"),
-            Self::SIGCONT => Some("Continue previously stopped process"),
-            Self::SIGSTOP => Some("Forced stop"),
-            Self::SIGTSTP => Some("Stop request from job control (^Z)"),
-            Self::SIGTTIN => Some("Stop from terminal input"),
-            Self::SIGTTOU => Some("Stop from terminal output"),
-            Self::SIGURG => Some("Urgent socket condition"),
-            Self::SIGXCPU => Some("CPU time limit exceeded"),
-            Self::SIGXFSZ => Some("File size limit exceeded"),
-            Self::SIGVTALRM => Some("Virtual timefr expired"),
-            Self::SIGPROF => Some("Profiling timer expired"),
-            Self::SIGWINCH => Some("Window size change"),
-            Self::SIGIO => Some("I/O on asynchronous file descriptor is possible"),
-            Self::SIGSYS => Some("Bad system call"),
-            Self::SIGPWR => Some("Power failure"),
-            _ => None,
-        }
+    /// The shell convention for a signal death: https://tldp.org/LDP/abs/html/exitcodes.html
+    pub fn to_exit_code(self) -> u8 {
+        128u8.wrapping_add(self.0)
     }
 
     pub fn from<T: bytemuck::NoUninit>(value: T) -> SignalCode {
@@ -93,10 +58,42 @@ impl SignalCode {
     }
 }
 
-/// `bun.ComptimeEnumMap(SignalCode)` — name-bytes → open newtype.
-#[inline]
-pub fn from_name(s: &[u8]) -> Option<SignalCode> {
-    bun_core::SignalCode::from_name(s).map(|c| SignalCode(c as u8))
+fn description(code: bun_core::SignalCode) -> &'static str {
+    use bun_core::SignalCode as S;
+    // Copied from https://github.com/fish-shell/fish-shell/blob/00ffc397b493f67e28f18640d3de808af29b1434/fish-rust/src/signal.rs#L420
+    match code {
+        S::SIGHUP => "Terminal hung up",
+        S::SIGINT => "Quit request",
+        S::SIGQUIT => "Quit request",
+        S::SIGILL => "Illegal instruction",
+        S::SIGTRAP => "Trace or breakpoint trap",
+        S::SIGABRT => "Abort",
+        S::SIGBUS => "Misaligned address error",
+        S::SIGFPE => "Floating point exception",
+        S::SIGKILL => "Forced quit",
+        S::SIGUSR1 => "User defined signal 1",
+        S::SIGUSR2 => "User defined signal 2",
+        S::SIGSEGV => "Address boundary error",
+        S::SIGPIPE => "Broken pipe",
+        S::SIGALRM => "Timer expired",
+        S::SIGTERM => "Polite quit request",
+        S::SIGSTKFLT => "Stack fault",
+        S::SIGCHLD => "Child process status changed",
+        S::SIGCONT => "Continue previously stopped process",
+        S::SIGSTOP => "Forced stop",
+        S::SIGTSTP => "Stop request from job control (^Z)",
+        S::SIGTTIN => "Stop from terminal input",
+        S::SIGTTOU => "Stop from terminal output",
+        S::SIGURG => "Urgent socket condition",
+        S::SIGXCPU => "CPU time limit exceeded",
+        S::SIGXFSZ => "File size limit exceeded",
+        S::SIGVTALRM => "Virtual timer expired",
+        S::SIGPROF => "Profiling timer expired",
+        S::SIGWINCH => "Window size change",
+        S::SIGIO => "I/O on asynchronous file descriptor is possible",
+        S::SIGPWR => "Power failure",
+        S::SIGSYS => "Bad system call",
+    }
 }
 
 // This wrapper struct is lame, what if bun's color formatter was more versatile
@@ -108,16 +105,15 @@ pub struct Fmt {
 impl fmt::Display for Fmt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let signal = self.signal;
-        if let Some(str_) = signal.name() {
-            if let Some(desc) = signal.description() {
-                if self.enable_ansi_colors {
-                    return write!(f, "{} {}({}){}", str_, output::DIM, desc, output::RESET);
-                } else {
-                    return write!(f, "{} ({})", str_, desc);
-                }
-            }
+        let Some(code) = signal.canonical() else {
+            return write!(f, "code {}", signal.0);
+        };
+        let (name, desc) = (code.name(), description(code));
+        if self.enable_ansi_colors {
+            write!(f, "{} {}({}){}", name, output::DIM, desc, output::RESET)
+        } else {
+            write!(f, "{} ({})", name, desc)
         }
-        write!(f, "code {}", signal.0)
     }
 }
 

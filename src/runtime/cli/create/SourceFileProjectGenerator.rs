@@ -1,5 +1,4 @@
 use crate::api::bun::process as bun_process;
-use crate::api::bun::process::SignalCodeExt as _;
 use crate::api::bun::process::sync as spawn_sync;
 use crate::cli::Command;
 use crate::cli::create_command::ExampleTag;
@@ -213,10 +212,8 @@ fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), crate::Error> {
         }
         bun_sys::Result::Ok(spawn_result) => {
             if !spawn_result.status.is_ok() {
-                if let Some(signal) = spawn_result.status.signal_code() {
-                    if let Some(exit_code) = signal.to_exit_code() {
-                        Global::exit(exit_code as u32);
-                    }
+                if let Some(exit_code) = spawn_result.status.signal().map(|s| s.to_exit_code()) {
+                    Global::exit(exit_code as u32);
                 }
 
                 if let bun_process::Status::Exited(exited) = spawn_result.status {
@@ -389,10 +386,10 @@ pub(crate) fn generate_files(
                     }
                     bun_sys::Result::Ok(spawn_result) => {
                         if !spawn_result.status.is_ok() {
-                            if let Some(signal) = spawn_result.status.signal_code() {
-                                if let Some(exit_code) = signal.to_exit_code() {
-                                    Global::exit(exit_code as u32);
-                                }
+                            if let Some(exit_code) =
+                                spawn_result.status.signal().map(|s| s.to_exit_code())
+                            {
+                                Global::exit(exit_code as u32);
                             }
 
                             if let bun_process::Status::Exited(exited) = spawn_result.status {
@@ -451,10 +448,8 @@ pub(crate) fn generate_files(
         }
         bun_sys::Result::Ok(spawn_result) => {
             if !spawn_result.status.is_ok() {
-                if let Some(signal) = spawn_result.status.signal_code() {
-                    if let Some(exit_code) = signal.to_exit_code() {
-                        Global::exit(exit_code as u32);
-                    }
+                if let Some(exit_code) = spawn_result.status.signal().map(|s| s.to_exit_code()) {
+                    Global::exit(exit_code as u32);
                 }
 
                 if let bun_process::Status::Exited(exited) = spawn_result.status {

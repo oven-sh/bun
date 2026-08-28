@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
 
 test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID", async () => {
   // Sleep so worker 0 is busy when workers 1/2 come online and pick up the
@@ -124,6 +124,35 @@ test("--parallel marks a file whose worker exits mid-run as failed (no retry)", 
   expect(stderr).toContain("(worker crashed: exit code 7)");
   // summary counts the crash as one failure
   expect(stderr).toContain("Ran 3 tests across 3 files.");
+  expect(exitCode).toBe(1);
+});
+
+// The label must use the OS's name for the number the worker died from. Signal
+// 16 on Linux is SIGSTKFLT (it used to be labeled "SIG16"). SIGUSR2 is 31 on
+// macOS, where 31 used to be read with Linux numbering as SIGSYS, a crash
+// signal that aborted the whole run. Neither signal is a crash.
+const deathSignal = isLinux ? "SIGSTKFLT" : "SIGUSR2";
+test.skipIf(isWindows)(`--parallel labels a worker killed by ${deathSignal} with that name`, async () => {
+  using dir = tempDir("parallel-signal-name", {
+    "a.test.js": `import {test,expect} from "bun:test"; test("a",()=>expect(1).toBe(1));`,
+    "die.test.js": `
+      import {test} from "bun:test";
+      import {constants} from "os";
+      test("die", () => process.kill(process.pid, constants.signals.${deathSignal}));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(`(worker crashed: ${deathSignal})`);
+  expect(stderr).toContain("Ran 2 tests across 2 files.");
   expect(exitCode).toBe(1);
 });
 

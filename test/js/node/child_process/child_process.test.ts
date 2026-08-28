@@ -15,6 +15,7 @@ import {
 } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
 import { getEventListeners, once, setMaxListeners } from "node:events";
+import { constants as osConstants } from "node:os";
 import { promisify } from "node:util";
 import path from "path";
 const debug = process.env.DEBUG ? console.log : () => {};
@@ -847,6 +848,51 @@ it.if(!isWindows)("spawnSync correctly reports signal codes", () => {
   });
 
   expect(signal).toBe("SIGTRAP");
+});
+
+// Signal numbers differ between Linux and macOS (SIGUSR1 is 10 on Linux and 30
+// on macOS), and SIGSTKFLT exists only on Linux. The reported name must be the
+// OS's name for the number the child died from, as in node.
+const platformSignals = (["SIGUSR1", "SIGUSR2", "SIGSTKFLT"] as const).filter(name => name in osConstants.signals);
+
+describe.skipIf(!isPosix)("exit signals are named with the OS's own numbering", () => {
+  it.concurrent.each(platformSignals)("child.kill(%s) exits with that signal", async name => {
+    const child = spawn("sleep", ["1000"], { stdio: "ignore" });
+    try {
+      await once(child, "spawn");
+      const exit = once(child, "exit");
+      expect(child.kill(name)).toBe(true);
+      expect(await exit).toEqual([null, name]);
+      expect(child.signalCode).toBe(name);
+    } finally {
+      child.kill("SIGKILL");
+    }
+  });
+
+  it.concurrent.each(platformSignals)("spawnSync({ killSignal: %s }) reports that signal", name => {
+    const { status, signal } = spawnSync("sleep", ["1000"], { stdio: "ignore", timeout: 1, killSignal: name });
+    expect({ status, signal }).toEqual({ status: null, signal: name });
+  });
+});
+
+// A Linux real-time signal has no name in Bun's table. It is reported as its
+// number rather than as a death with neither a code nor a signal.
+describe.skipIf(!isLinux)("exit signals with no name are reported as numbers", () => {
+  it.concurrent.each([40, 64])("spawn: 'exit' and 'close' carry signal %d", async signal => {
+    const child = spawn("sh", ["-c", `kill -${signal} $$`], { stdio: "ignore" });
+    const [exit, close] = await Promise.all([once(child, "exit"), once(child, "close")]);
+    expect({ exit, close, exitCode: child.exitCode, signalCode: child.signalCode }).toEqual({
+      exit: [null, signal],
+      close: [null, signal],
+      exitCode: null,
+      signalCode: signal,
+    });
+  });
+
+  it.concurrent.each([40, 64])("spawnSync: signal is %d", signal => {
+    const { status, signal: reported } = spawnSync("sh", ["-c", `kill -${signal} $$`], { stdio: "ignore" });
+    expect({ status, signal: reported }).toEqual({ status: null, signal });
+  });
 });
 
 it("spawnSync(does-not-exist)", () => {

@@ -672,7 +672,7 @@ impl<'a> State<'a> {
                         }
                     }
                     Status::Signaled(signal) => {
-                        return bun_sys::SignalCode(*signal).to_exit_code().unwrap_or(1);
+                        return bun_sys::SignalCode(*signal).to_exit_code();
                     }
                     _ => return 1,
                 }

@@ -202,8 +202,12 @@ it("fd_prestat_get and fd_prestat_dir_name fail for fds that are not preopens", 
     WASI_ESUCCESS,
   );
   const fileFd = view.getUint32(fdPtr, true);
-  expect(wasi.wasiImport.fd_prestat_get(fileFd, prestatPtr)).toBe(WASI_EINVAL);
-  expect(wasi.wasiImport.fd_prestat_dir_name(fileFd, namePtr, 64)).toBe(WASI_EINVAL);
+  try {
+    expect(wasi.wasiImport.fd_prestat_get(fileFd, prestatPtr)).toBe(WASI_EINVAL);
+    expect(wasi.wasiImport.fd_prestat_dir_name(fileFd, namePtr, 64)).toBe(WASI_EINVAL);
+  } finally {
+    expect(wasi.wasiImport.fd_close(fileFd)).toBe(WASI_ESUCCESS);
+  }
 
   // An fd that is not open at all stays EBADF.
   expect(wasi.wasiImport.fd_prestat_get(99, prestatPtr)).toBe(WASI_EBADF);

@@ -3773,12 +3773,15 @@ impl VirtualMachine {
 
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
             self.unhandled_error_counter += 1;
+            // The test runner may run the next (unwrapped) user callback from here.
+            let _scope = jsc::ClearedAsyncContextScope::new(global_object);
             (self.on_unhandled_rejection)(self, global_object, reason);
             return;
         }
 
-        // Each arm drains microtasks on exit — hoisted into a closure.
+        // Each arm drains microtasks on exit; the caller has the promise's context installed.
         let drain = |this: &mut Self| {
+            let _scope = jsc::ClearedAsyncContextScope::new(global_object);
             let _ = this.event_loop_mut().drain_microtasks();
         };
         // Wrapper over the `Bun__handleUnhandledRejection` FFI call (returns
@@ -3850,7 +3853,11 @@ impl VirtualMachine {
                 // continue to default handler — but RETURN if this drain
                 // errors (the VM is dead; don't bump the counter or invoke the
                 // handler).
-                if self.event_loop_mut().drain_microtasks().is_err() {
+                let drained = {
+                    let _scope = jsc::ClearedAsyncContextScope::new(global_object);
+                    self.event_loop_mut().drain_microtasks()
+                };
+                if drained.is_err() {
                     return;
                 }
             }

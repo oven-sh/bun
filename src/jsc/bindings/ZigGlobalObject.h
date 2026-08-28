@@ -815,7 +815,8 @@ private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
-    Bun::WriteBarrierList<JSC::JSPromise> m_aboutToBeNotifiedRejectedPromises;
+    // Each entry is a JSPromise, or an AsyncContextFrame holding one (as `callback`) plus its rejection-time context.
+    Bun::WriteBarrierList<JSC::JSCell> m_aboutToBeNotifiedRejectedPromises;
 
 public:
     // While handleRejectedPromises() is iterating its drained snapshot, this

@@ -6,7 +6,13 @@ import { basename, join } from "path";
 describe.concurrent("AsyncLocalStorage passes context to callbacks", () => {
   let files = [...new Glob(join(import.meta.dir, "async-context", "async-context-*.js")).scanSync()];
 
-  let todos = ["async-context-worker_threads-message.js"];
+  let todos = [
+    "async-context-worker_threads-message.js",
+    // These two settle a promise from a JSC internal microtask that does not carry the
+    // async context yet (oven-sh/WebKit#268). Drop them once WEBKIT_VERSION includes it.
+    "async-context-unhandled-rejection-finally-thenable.js",
+    "async-context-unhandled-rejection-then-passthrough.js",
+  ];
   if (isASAN && isBroken && isLinux) {
     todos.push("async-context-dns-resolveTxt.js");
   }

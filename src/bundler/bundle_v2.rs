@@ -7726,10 +7726,8 @@ pub mod bv2_impl {
         pub source_map_chunk: bun_sourcemap::Chunk,
         pub generated_offset: bun_sourcemap::LineColumnOffset,
         pub source_index: u32,
-        /// A file that contributes code but no mappings. The source map gets
-        /// a 1-field segment at the end of the previous mapped file so that
-        /// file's last mapping does not cover this code. `source_map_chunk`
-        /// is empty and `generated_offset` is zero for this entry.
+        /// A file with code but no mappings: the map gets a 1-field segment where
+        /// its code starts. `source_map_chunk` is empty and `generated_offset` is zero.
         pub is_null_entry: bool,
     }
 

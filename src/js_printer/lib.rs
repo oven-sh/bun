@@ -2403,9 +2403,8 @@ pub(crate) mod __gated_printer {
                 .add_source_mapping(location, self.writer.slice());
         }
 
-        /// Like `add_source_mapping`, but records the symbol's original name
-        /// in the source map `names` table when the printed `name` differs
-        /// from it (a minified or deconflicted symbol).
+        /// `add_source_mapping` plus a `names` entry when the printed `name`
+        /// differs from the symbol's original name.
         #[inline]
         pub(crate) fn add_source_mapping_for_name(
             &mut self,
@@ -2430,8 +2429,6 @@ pub(crate) mod __gated_printer {
             );
         }
 
-        /// The name a symbol had in the source. `None` for a ref with no
-        /// symbol (generated refs, source-contents-slice refs).
         #[inline]
         fn original_name_for_symbol(&self, ref_: Ref) -> Option<&'a [u8]> {
             if ref_.is_source_contents_slice() {
@@ -5823,8 +5820,7 @@ pub(crate) mod __gated_printer {
                         self.print_indent();
                     }
                     self.print_space_before_identifier();
-                    // The statement starts at the label, so this is also the
-                    // statement's mapping.
+                    // The statement starts at the label, so this maps the statement too.
                     self.print_symbol_with_mapping(s.name.loc, s.name.ref_);
                     self.print(b":");
                     self.print_body(s.stmt);
@@ -7565,9 +7561,7 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
         cover_lines_without_mappings: true,
         approximate_input_line_count: tree.approximate_newline_count,
         prepend_count: IS_BUN_PLATFORM && generate_source_map == GenerateSourceMap::Lazy,
-        // Only the bundler's output source maps carry a `names` table. The
-        // dev server joins chunk buffers under a fixed `"names":[]`, and the
-        // runtime (Lazy) path stores positions only.
+        // The dev server and the runtime (Lazy) path emit no `names` table.
         record_names: generate_source_map == GenerateSourceMap::Eager
             && opts.module_type != bundle_opts::Format::InternalBakeDev,
         line_offset_tables: match opts.line_offset_tables.take() {

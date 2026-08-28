@@ -802,10 +802,7 @@ impl ByteRangeMapping {
 
                 // only mark the lines as executable if the function has not executed
                 // functions that have executed have non-executable lines in them and thats fine.
-                //
-                // A function over several lines owns them through the last one. A
-                // function on one line shares it with the statement that created
-                // it, which did run, so that line keeps the statement's hits.
+                // A one-line function shares its line with the statement that created it, which ran.
                 if !did_fn_execute && min_line < max_line {
                     line_hits_slice[min_line as usize..=max_line as usize].fill(0);
                     for line in min_line..=max_line {
@@ -979,10 +976,7 @@ impl ByteRangeMapping {
 
                 // only mark the lines as executable if the function has not executed
                 // functions that have executed have non-executable lines in them and thats fine.
-                //
-                // A function over several lines owns them through the last one. A
-                // function on one line shares it with the statement that created
-                // it, which did run, so that line keeps the statement's hits.
+                // A one-line function shares its line with the statement that created it, which ran.
                 if !did_fn_execute && min_line < max_line {
                     for line in min_line..=max_line {
                         executable_lines.set(line as usize);

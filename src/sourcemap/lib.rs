@@ -64,8 +64,7 @@ pub struct SourceMapState {
     pub source_index: i32,
     pub original_line: i32,
     pub original_column: i32,
-    /// Index into the `names` array. Only written when `has_original_name` is
-    /// set; the optional fifth VLQ field of a mapping.
+    /// The optional fifth field, an index into `names`; written only when `has_original_name` is set.
     pub original_name: i32,
     pub has_original_name: bool,
 }
@@ -263,9 +262,7 @@ pub struct SourceMapPieces {
 
 /// This function is extremely hot.
 ///
-/// Returns the byte offset in `buffer` of the name field when
-/// `current_state.has_original_name` is set. The bundler needs the offset of
-/// the first name in a chunk to rebase it when it joins chunks.
+/// Returns the offset in `buffer` of the name field, when one is written.
 pub(crate) fn append_mapping_to_buffer(
     buffer: &mut bun_core::MutableString,
     last_byte: u8,
@@ -337,10 +334,7 @@ pub(crate) fn append_mapping_to_buffer(
     Some(name_offset)
 }
 
-/// Appends a 1-field ("null") segment: a generated position with no original
-/// location. The bundler emits one at the start of a file that contributes
-/// code but no mappings, so that the previous file's last mapping does not
-/// extend over that code.
+/// Appends a 1-field segment: a generated position with no original location.
 pub fn append_null_source_map_segment<'a>(
     j: &mut bun_core::string_joiner::StringJoiner<'a>,
     prev_end_state: SourceMapState,
@@ -371,12 +365,8 @@ pub fn append_null_source_map_segment<'a>(
     Ok(())
 }
 
-/// Percent-encodes `path` as the path component of a URL, the way esbuild
-/// does for `sourceMappingURL` comments and `sources` entries (Go's
-/// `url.URL{Path: path}.EscapedPath()`): ASCII alphanumerics, `-_.~` and
-/// `$&+,/:;=@` pass through, every other byte (including each byte of a
-/// non-ASCII code point) becomes `%XX`. With `escape_spaces == false` a space
-/// stays a literal space, which esbuild does in `sources` for readability.
+/// Percent-encodes a URL path the way Go's `url.URL{Path}.EscapedPath()` (esbuild)
+/// does: `A-Za-z0-9`, `-_.~` and `$&+,/:;=@` pass through, every other byte is `%XX`.
 pub fn append_url_escaped_path(out: &mut Vec<u8>, path: &[u8], escape_spaces: bool) {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     out.reserve(path.len());
@@ -840,8 +830,7 @@ impl SourceMapPieces {
 
             let potential_start_of_run = current;
 
-            // A segment has 1 field (generated position only), 4 fields, or
-            // 5 fields (with a name).
+            // A segment has 1, 4, or 5 fields.
             let at_segment_end = |current: usize| {
                 current >= mappings.len() || matches!(mappings[current], b',' | b';')
             };
@@ -1148,12 +1137,8 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
 // This rewrites the first mapping in each chunk to be relative to the end
 // state of the previous chunk.
 ///
-/// `first_name_offset` is `Chunk::first_name_offset`: the byte offset in
-/// `source_map` of the first mapping's name field, if any mapping in the chunk
-/// has one. Name indices inside a chunk start at 0. `start_state.original_name`
-/// is this chunk's base index into the joined `names` array and
-/// `prev_end_state.original_name` is the last name index the previous chunks
-/// emitted, so the first name field is rewritten to the right delta.
+/// The first name field (at `first_name_offset`, chunk-local index) is rebased
+/// from `prev_end_state.original_name` to `start_state.original_name` the same way.
 pub fn append_source_map_chunk<'a>(
     j: &mut bun_core::string_joiner::StringJoiner<'a>,
     prev_end_state_: SourceMapState,
@@ -1183,11 +1168,7 @@ pub fn append_source_map_chunk<'a>(
 
     // Strip off the first mapping from the buffer. The first mapping should be
     // for the start of the original file (the printer always generates one for
-    // the start of the file).
-    //
-    // The first mapping's name field, if it has one, is not stripped here. It
-    // is rewritten below through `first_name_offset`, which handles the name
-    // the same way whether it belongs to the first mapping or a later one.
+    // the start of the file). Its name field, if any, is rewritten below.
     let mut i: usize = semicolons;
     let generated_column = decode_vlq_assume_valid(source_map, i);
     i = generated_column.start;
@@ -1211,8 +1192,7 @@ pub fn append_source_map_chunk<'a>(
     let _ = append_mapping_to_buffer(&mut str, j.last_byte(), prev_end_state, start_state);
     j.push_owned(str.to_owned_slice());
 
-    // Next, if there's an original name, rewrite it to be relative to the
-    // last name of the previous chunk.
+    // Rewrite the first name field relative to the previous chunk's last name.
     if let Some(before) = first_name_offset {
         let before = before as usize;
         debug_assert!(before >= i);

@@ -1058,12 +1058,8 @@ impl<'a> LinkerContext<'a> {
             .expect("TODO: handle error");
     }
 
-    /// The relative path from the chunk directory to a file source, as written
-    /// into the source map's `sources` array. `sources` entries are URLs, so the
-    /// host separator is normalized to `/` and the path is percent-encoded.
-    /// Like esbuild, a space stays a literal space for readability (every URL
-    /// parser accepts it in a path), while `#`, `?`, `%` and non-ASCII bytes
-    /// are encoded because they change how the URL is parsed.
+    /// The `sources` entry for a file: the path relative to the chunk directory
+    /// as a URL, percent-encoded like esbuild does (a space stays literal).
     fn source_map_relative_path(
         chunk_abs_dir: &[u8],
         source_abs_path: &[u8],
@@ -1071,8 +1067,7 @@ impl<'a> LinkerContext<'a> {
         let mut rel = bun_paths::resolve_path::relative_alloc(chunk_abs_dir, source_abs_path)?;
         bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut rel);
         let mut url = Vec::with_capacity(rel.len() + 2);
-        // A relative URL whose first segment contains ":" would parse as a
-        // scheme, so it needs a "./" prefix (RFC 3986 4.2).
+        // "a:b.js" would parse as a URL scheme without the "./" (RFC 3986 4.2).
         let first_segment = match strings::index_of_char_usize(&rel, b'/') {
             Some(i) => &rel[..i],
             None => &rel[..],
@@ -1116,8 +1111,7 @@ impl<'a> LinkerContext<'a> {
         j.push_static(b"{\n  \"version\": 3,\n  \"sources\": [");
         let mut next_mapping_source_index: i32 = 0;
         for (&index, &is_null_entry) in source_indices.iter().zip(null_entries) {
-            // A null entry has no original position, so its file gets a
-            // `sources` entry only through a chunk that has mappings.
+            // A null entry has no original position, so no `sources` entry.
             if is_null_entry {
                 continue;
             }
@@ -1131,8 +1125,6 @@ impl<'a> LinkerContext<'a> {
 
             let path = &sources[index as usize].path;
 
-            // Note: the relative path lives in a local owned buffer
-            // (drops at scope exit).
             let rel_path_storage;
             let pretty: &[u8] = if path.is_file() {
                 rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text)?;
@@ -1146,8 +1138,6 @@ impl<'a> LinkerContext<'a> {
                 quote_buf.append_assume_capacity(b", ");
             }
             js_printer::quote_for_json(pretty, &mut quote_buf, false)?;
-            // `to_default_owned` moves the buffer into the joiner
-            // (joiner owns it until `done`).
             j.push_owned(quote_buf.to_default_owned());
         }
 
@@ -1176,8 +1166,7 @@ impl<'a> LinkerContext<'a> {
         let mapping_start = j.len;
         let mut prev_end_state = SourceMapState::default();
         let mut prev_column_offset: i32 = 0;
-        // Name indices in each chunk start at 0; this is the count of names the
-        // previous chunks contributed, the base for this chunk's indices.
+        // Each chunk's name indices start at 0; this is the base for the next chunk.
         let mut total_names: i32 = 0;
         let source_map_chunks = results.items_source_map_chunk();
         let offsets = results.items_generated_offset();
@@ -1189,9 +1178,7 @@ impl<'a> LinkerContext<'a> {
             .zip(source_indices.iter())
             .zip(null_entries.iter())
         {
-            // The pass above during printing of "sources" adds every index that
-            // has mappings. A null entry has no original position, so its
-            // source index does not matter.
+            // Only a null entry can lack a `sources` index; its source does not matter.
             let mapping_source_index = match source_id_map.get(&current_source_index) {
                 Some(&index) => index,
                 None => {
@@ -1213,8 +1200,7 @@ impl<'a> LinkerContext<'a> {
             }
 
             if is_null_entry {
-                // `generated_offset` is zero for a null entry, so this lands
-                // where the previous mapped file's code ends. Only the
+                // Lands where the previous mapped file's code ends; only the
                 // generated position advances.
                 SourceMap::append_null_source_map_segment(&mut j, prev_end_state, start_state)?;
                 prev_end_state.generated_line = start_state.generated_line;
@@ -1237,8 +1223,7 @@ impl<'a> LinkerContext<'a> {
             if chunk.first_name_offset.is_some() {
                 prev_end_state.original_name += total_names;
             } else {
-                // No mapping in this chunk has a name, so the name delta base
-                // is still the last name of the chunks before it.
+                // No names in this chunk: the delta base is still the last name before it.
                 prev_end_state.original_name = prev_original_name;
             }
             prev_column_offset = chunk.final_generated_column;

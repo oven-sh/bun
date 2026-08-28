@@ -603,10 +603,8 @@ pub(crate) fn post_process_js_chunk(
             } else {
                 line_offset.advance(compile_result.code());
 
-                // With source maps on, a printed file has no chunk only when
-                // it produced no mappings (a file loader shim, generated
-                // code). Include a null entry so the previous file's last
-                // mapping ends where this file's code starts.
+                // No chunk means no mappings (a loader shim). The null entry
+                // ends the previous file's last mapping where this code starts.
                 if c.options.source_maps != options::SourceMapOption::None
                     && !compile_result.code().is_empty()
                 {

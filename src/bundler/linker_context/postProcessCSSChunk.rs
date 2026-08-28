@@ -125,8 +125,7 @@ pub(crate) fn post_process_css_chunk(
         } else {
             line_offset.advance(compile_result.code());
 
-            // See `postProcessJSChunk.rs`: a null entry ends the previous
-            // file's last mapping where this unmapped code starts.
+            // The null entry ends the previous file's last mapping where this code starts.
             if c.options.source_maps != options::SourceMapOption::None
                 && !compile_result.code().is_empty()
             {

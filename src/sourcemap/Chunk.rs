@@ -13,16 +13,12 @@ use crate::{
 pub struct Chunk {
     pub buffer: MutableString,
 
-    /// The `names` entries this chunk's mappings refer to, JSON-quoted and
-    /// joined with `, ` in index order. Name indices in `buffer` are relative
-    /// to this chunk (the first name is 0). The bundler rebases them when it
-    /// joins chunks.
+    /// JSON-quoted `names` entries joined with `, `. Name indices in `buffer`
+    /// are chunk-local; the bundler rebases them when it joins chunks.
     pub quoted_names: Box<[u8]>,
     pub names_count: u32,
 
-    /// Byte offset in `buffer` of the first mapping name field, if any mapping
-    /// has one. `append_source_map_chunk` rewrites that field when it joins
-    /// chunks.
+    /// Offset in `buffer` of the first name field, which `append_source_map_chunk` rebases.
     pub first_name_offset: Option<u32>,
 
     /// This end state will be used to rewrite the start of the following source
@@ -148,8 +144,7 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
 pub trait SourceMapFormatCtx: Sized {
     fn init(prepend_count: bool) -> Self;
     fn append_line_separator(&mut self) -> Result<(), crate::Error>;
-    /// Returns the byte offset of the name field when one was written (see
-    /// `append_mapping_to_buffer`).
+    /// Returns the offset of the name field when one was written.
     fn append(
         &mut self,
         current_state: SourceMapState,
@@ -264,8 +259,7 @@ impl SourceMapFormatCtx for VLQSourceMap {
         prev_state: SourceMapState,
     ) -> Result<Option<u32>, crate::Error> {
         if let Some(b) = &mut self.internal {
-            // The internal format has no names column; the runtime only remaps
-            // positions.
+            // The internal format has no names column.
             b.append_mapping(&current_state);
             self.count += 1;
             return Ok(None);
@@ -406,18 +400,15 @@ pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
     /// When generating sourcemappings for bun, we store a count of how many mappings there were
     pub prepend_count: bool,
 
-    /// Record the original name of renamed symbols in the mappings (the fifth
-    /// VLQ field) and collect the `names` table. Only the bundler's output
-    /// path consumes them; the dev server and the runtime join chunk buffers
-    /// with no `names` array, so they leave this off.
+    /// Record renamed symbols' original names (the fifth VLQ field) and the
+    /// `names` table. Only the bundler's output path reads them.
     pub record_names: bool,
-    /// `names` entries so far, JSON-quoted and joined with `, `.
+    /// JSON-quoted `names` entries joined with `, `.
     pub quoted_names: MutableString,
     pub names_count: u32,
     pub names_map: StringHashMap<u32>,
     pub first_name_offset: Option<u32>,
-    /// The previous mapping's original name and generated length, for the
-    /// duplicate-mapping check in `add_source_mapping_for_name`.
+    /// For the duplicate-mapping check in `add_source_mapping_for_name`.
     pub prev_original_name: &'a [u8],
     pub prev_generated_len: u32,
 }
@@ -667,8 +658,6 @@ impl<'a> NewBuilder<'a, VLQSourceMap> {
         self.append_mapping_without_remapping(current_state);
     }
 
-    /// The index of `original_name` in this chunk's `names` table, adding it
-    /// when it is new.
     #[inline(never)]
     fn name_index(&mut self, original_name: &[u8]) -> u32 {
         let gop = bun_core::handle_oom(self.names_map.get_or_put(original_name));
@@ -706,9 +695,7 @@ impl<'a> NewBuilder<'a, VLQSourceMap> {
         self.add_source_mapping_for_name(loc, &[], output);
     }
 
-    /// `original_name` is the name the symbol had in the source when the
-    /// printed name differs from it (empty otherwise). It is recorded in the
-    /// `names` table when `record_names` is on.
+    /// `original_name` is the source name of a renamed symbol, or empty.
     #[inline(never)]
     pub fn add_source_mapping_for_name(
         &mut self,
@@ -721,8 +708,7 @@ impl<'a> NewBuilder<'a, VLQSourceMap> {
             return;
         }
 
-        // don't insert mappings for same location twice, unless the generated
-        // position moved and this one carries a different original name
+        // don't insert mappings for same location twice (a new name at a new generated position is not a duplicate)
         if self.prev_loc.eql(loc)
             && (self.prev_generated_len as usize == output.len()
                 || self.prev_original_name == original_name)

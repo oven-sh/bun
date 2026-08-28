@@ -279,9 +279,7 @@ impl Entry {
                     };
                     lines_between = 0;
 
-                    // Dev server chunks never carry names (`record_names` is
-                    // off for `InternalBakeDev`), so there is no name field
-                    // to rebase.
+                    // Dev server chunks carry no names (`record_names` is off for InternalBakeDev).
                     source_map::append_source_map_chunk(
                         j,
                         prev_end_state,

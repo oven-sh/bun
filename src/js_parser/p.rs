@@ -1930,9 +1930,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// `var { __a: __a_ref, ... } = require("bun:wrap")`: the runtime helpers
-    /// for a module whose body is wrapped in a CommonJS function at runtime,
-    /// where an `import` statement cannot appear.
+    /// `var { __a: __a_ref, ... } = require("bun:wrap")` for a CommonJS-wrapped module.
     pub(crate) fn generate_runtime_require_stmt(
         &mut self,
         imports: &[u8],

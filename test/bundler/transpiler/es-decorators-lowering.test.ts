@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // Lowering of TC39 standard decorators. Once any member of a class is
@@ -8,9 +8,10 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // member is lowered so the moved code can still reach it. This mirrors
 // esbuild's `lowerClass`.
 //
-// One fixture holds the whole matrix and prints one JSON object. It runs as
-// .js / .ts / .cjs / .cts, with `useDefineForClassFields` on and off, and both
-// directly and through `bun build`.
+// One fixture per mode holds the whole matrix and prints one JSON object; each
+// matrix cell is then its own test. The fixture runs as .js / .ts / .cjs /
+// .cts, with `useDefineForClassFields` on and off, directly and through
+// `bun build`.
 
 function filterStderr(stderr: string) {
   return stderr
@@ -38,13 +39,39 @@ type Kind = (typeof kinds)[number];
 type Placement = (typeof placements)[number];
 type Visibility = (typeof visibilities)[number];
 
-function matrixName(kind: Kind, placement: Placement, visibility: Visibility) {
-  return `${kind}/${placement}/${visibility}`;
+type Cell = {
+  kind: Kind;
+  placement: Placement;
+  visibility: Visibility;
+  classDecorated: boolean;
+  derived: boolean;
+};
+
+const cells: Cell[] = [];
+for (const kind of kinds) {
+  for (const placement of placements) {
+    for (const visibility of visibilities) {
+      for (const classDecorated of [false, true]) {
+        for (const derived of [false, true]) {
+          cells.push({ kind, placement, visibility, classDecorated, derived });
+        }
+      }
+    }
+  }
+}
+
+function cellName(cell: Cell) {
+  const flags = [cell.classDecorated ? "class decorator" : "", cell.derived ? "derived" : ""].filter(Boolean);
+  return `${cell.kind}/${cell.placement}/${cell.visibility}${flags.length ? ` (${flags.join(", ")})` : ""}`;
 }
 
 // One class per cell: the decorated member `x` sits between undecorated
-// instance fields, private fields, static fields and a static block.
-function matrixClass(kind: Kind, placement: Placement, visibility: Visibility) {
+// instance fields, private fields, static fields and a static block. `dec`
+// replaces every kind of member with one that appends "!" to its value, so
+// the result also shows the decorator's return value was applied to the right
+// member and nothing else.
+function matrixClass(cell: Cell) {
+  const { kind, placement, visibility, classDecorated, derived } = cell;
   const s = placement === "static" ? "static " : "";
   const name = visibility === "private" ? "#x" : "x";
   const self = placement === "static" ? "C" : "this";
@@ -52,32 +79,34 @@ function matrixClass(kind: Kind, placement: Placement, visibility: Visibility) {
   let reader: string;
   switch (kind) {
     case "field":
-      member = `@dec ${s}${name} = L("x");`;
+      member = `@decApply ${s}${name} = L("x");`;
       reader = `${s}read() { return ${self}.${name}; }`;
       break;
     case "accessor":
-      member = `@dec ${s}accessor ${name} = L("x");`;
+      member = `@decApply ${s}accessor ${name} = L("x");`;
       reader = `${s}read() { return ${self}.${name}; }`;
       break;
     case "method":
-      member = `@dec ${s}${name}() { return "x"; }`;
+      member = `@decApply ${s}${name}() { return "x"; }`;
       reader = `${s}read() { return ${self}.${name}(); }`;
       break;
     case "getter":
-      member = `@dec ${s}get ${name}() { return "x"; }`;
+      member = `@decApply ${s}get ${name}() { return "x"; }`;
       reader = `${s}read() { return ${self}.${name}; }`;
       break;
     case "setter":
-      member = `@dec ${s}set ${name}(v) { side = v; }`;
+      member = `@decApply ${s}set ${name}(v) { side = v; }`;
       reader = `${s}read() { ${self}.${name} = "x"; return side; }`;
       break;
   }
-  const id = JSON.stringify(matrixName(kind, placement, visibility));
+  const id = JSON.stringify(cellName(cell));
   return `
 {
   let side;
+  class B { constructor() { L("base"); } }
   log.length = 0;
-  class C {
+  ctxs = {};
+  ${classDecorated ? "@decApply " : ""}class C ${derived ? "extends B " : ""}{
     static sBefore = L("sBefore");
     static { L("sBlock"); }
     iBefore = L("iBefore");
@@ -96,48 +125,68 @@ function matrixClass(kind: Kind, placement: Placement, visibility: Visibility) {
   const defLog = log.slice();
   log.length = 0;
   const inst = new C();
-  const ctorLog = log.slice();
   out[${id}] = {
     defLog,
-    ctorLog,
+    ctorLog: log.slice(),
     value: ${placement === "static" ? "C.read()" : "inst.read()"},
     iPriv: inst.iPriv,
     sPriv: C.sPriv,
     callM: inst.callM(),
     has: inst.has(),
-    ctx: decCtx,
+    ctx: ctxs[${JSON.stringify(name)}],
+    classCtx: ctxs["C"] ?? null,
+    isInstance: inst instanceof C${derived ? " && inst instanceof B" : ""},
   };
 }`;
 }
 
-function matrixExpected(kind: Kind, placement: Placement, visibility: Visibility) {
+function matrixExpected(cell: Cell) {
+  const { kind, placement, visibility, classDecorated, derived } = cell;
   const name = visibility === "private" ? "#x" : "x";
   const isFieldLike = kind === "field" || kind === "accessor";
-  const defLog = [`dec:${name}`, "sBefore", "sBlock"];
+  // Decorators are called before any static member is initialized; the class
+  // decorator last. Static fields and blocks then run in source order.
+  const defLog = [`dec:${name}`];
+  if (classDecorated) defLog.push("dec:C");
+  defLog.push("sBefore", "sBlock");
   if (isFieldLike && placement === "static") defLog.push("x");
   defLog.push("sAfter", "#sp", "sPriv");
-  const ctorLog = ["iBefore", "#p", "iPriv"];
+  // Instance fields run after super() returns, in source order.
+  const ctorLog = derived ? ["base"] : [];
+  ctorLog.push("iBefore", "#p", "iPriv");
   if (isFieldLike && placement === "instance") ctorLog.push("x");
   ctorLog.push("iAfter");
   return {
     defLog,
     ctorLog,
-    value: "x",
+    value: "x!",
     iPriv: "#p",
     sPriv: "#sp",
     callM: "m",
     has: true,
     ctx: { kind, name, static: placement === "static", private: visibility === "private" },
+    classCtx: classDecorated ? { kind: "class", name: "C", static: null, private: null } : null,
+    isInstance: true,
   };
 }
 
 const fixturePrelude = `
 const log = [];
 const L = (name) => (log.push(name), name);
-let decCtx;
+let ctxs = {};
 const dec = (value, ctx) => {
   log.push("dec:" + String(ctx.name));
-  decCtx = { kind: ctx.kind, name: ctx.name, static: ctx.static, private: ctx.private };
+  ctxs[String(ctx.name)] = { kind: ctx.kind, name: ctx.name, static: ctx.static ?? null, private: ctx.private ?? null };
+};
+const decApply = (value, ctx) => {
+  dec(value, ctx);
+  switch (ctx.kind) {
+    case "field": return (v) => v + "!";
+    case "accessor": return { init: (v) => v + "!" };
+    case "method": return function (...args) { return value.call(this, ...args) + "!"; };
+    case "getter": return function () { return value.call(this) + "!"; };
+    case "setter": return function (v) { value.call(this, v + "!"); };
+  }
 };
 const out = {};
 const pending = [];
@@ -466,12 +515,8 @@ const extraExpected = {
 
 function buildFixture(cjs: boolean) {
   let src = fixturePrelude;
-  for (const kind of kinds) {
-    for (const placement of placements) {
-      for (const visibility of visibilities) {
-        src += matrixClass(kind, placement, visibility);
-      }
-    }
+  for (const cell of cells) {
+    src += matrixClass(cell);
   }
   src += installSection;
   src += extraSections;
@@ -482,12 +527,8 @@ function buildFixture(cjs: boolean) {
 
 function buildExpected(assign: boolean) {
   const expected: Record<string, unknown> = {};
-  for (const kind of kinds) {
-    for (const placement of placements) {
-      for (const visibility of visibilities) {
-        expected[matrixName(kind, placement, visibility)] = matrixExpected(kind, placement, visibility);
-      }
-    }
+  for (const cell of cells) {
+    expected[cellName(cell)] = matrixExpected(cell);
   }
   expected.install = assign ? installExpectedAssign : installExpectedDefine;
   Object.assign(expected, extraExpected);
@@ -516,26 +557,58 @@ const modes: Mode[] = [
   { name: ".ts useDefineForClassFields: false bundled", file: "main.ts", cjs: false, useDefine: false, bundle: true },
 ];
 
+// Runs the fixture once per mode and returns its JSON output.
+async function runMode(mode: Mode): Promise<Record<string, unknown>> {
+  using dir = tempDir("es-dec-matrix", {
+    [mode.file]: buildFixture(mode.cjs),
+    "tsconfig.json": JSON.stringify({ compilerOptions: mode.useDefine ? {} : { useDefineForClassFields: false } }),
+  });
+  const cwd = String(dir);
+  let entry = mode.file;
+  if (mode.bundle) {
+    const build = await run(cwd, ["build", mode.file, "--target=bun", "--outfile=bundled.js"]);
+    if (build.stderr !== "" || build.exitCode !== 0) {
+      throw new Error(`bun build failed (${build.exitCode}): ${build.stderr}`);
+    }
+    entry = "bundled.js";
+  }
+  const { stdout, stderr, exitCode } = await run(cwd, [entry]);
+  if (stderr !== "" || exitCode !== 0) {
+    throw new Error(`fixture failed (${exitCode}): ${stderr}\n${stdout}`);
+  }
+  return JSON.parse(stdout);
+}
+
 describe("ES decorators lowering matrix", () => {
+  // Every mode's fixture is started up front so the spawns overlap. A failure
+  // is reported by the mode's own `beforeAll`, not as an unhandled rejection.
+  const runs = new Map<string, Promise<Record<string, unknown>>>();
+  beforeAll(() => {
+    for (const mode of modes) {
+      const result = runMode(mode);
+      result.catch(() => {});
+      runs.set(mode.name, result);
+    }
+  });
+
   for (const mode of modes) {
-    test.concurrent(mode.name, async () => {
-      using dir = tempDir("es-dec-matrix", {
-        [mode.file]: buildFixture(mode.cjs),
-        "tsconfig.json": JSON.stringify({ compilerOptions: mode.useDefine ? {} : { useDefineForClassFields: false } }),
+    describe(mode.name, () => {
+      let results: Record<string, unknown>;
+      beforeAll(async () => {
+        results = await runs.get(mode.name)!;
       });
-      const cwd = String(dir);
-      let entry = mode.file;
-      if (mode.bundle) {
-        const build = await run(cwd, ["build", mode.file, "--target=bun", "--outfile=bundled.js"]);
-        expect(build.stderr).toBe("");
-        expect(build.exitCode).toBe(0);
-        entry = "bundled.js";
+
+      const expected = buildExpected(!mode.useDefine);
+      for (const key of Object.keys(expected)) {
+        test(key, () => {
+          // JSON turns `undefined` into `null`.
+          expect(results[key]).toEqual(expected[key]);
+        });
       }
-      const { stdout, stderr, exitCode } = await run(cwd, [entry]);
-      expect(stderr).toBe("");
-      // JSON turns `undefined` into `null` inside arrays.
-      expect(JSON.parse(stdout)).toEqual(buildExpected(!mode.useDefine));
-      expect(exitCode).toBe(0);
+
+      test("no other output", () => {
+        expect(Object.keys(results).sort()).toEqual(Object.keys(expected).sort());
+      });
     });
   }
 });
@@ -648,6 +721,289 @@ describe("ES decorators lowering", () => {
     expect(assign).not.toContain("bar");
     expect(assign).toContain("A.d = 3");
     expect(assign).not.toContain("__publicField");
+  });
+});
+
+// The shape of the transpiled output. Helper names carry a hash suffix and
+// generated bindings a `$N` counter, so the checks match on prefixes.
+describe("ES decorators lowering output", () => {
+  const js = new Bun.Transpiler({ loader: "js", target: "bun" });
+  const ts = (compilerOptions: Record<string, unknown> = {}) =>
+    new Bun.Transpiler({ loader: "ts", target: "bun", tsconfig: { compilerOptions } });
+  // The statements of the first constructor, trimmed, one per entry.
+  const ctorBody = (out: string) =>
+    /constructor\([^)]*\) \{\n([\s\S]*?)\n  \}/
+      .exec(out)![1]
+      .split("\n")
+      .map(l => l.trim())
+      .filter(Boolean);
+  // Everything after the class body, trimmed, one statement per entry.
+  const suffix = (out: string) =>
+    out
+      .slice(out.lastIndexOf("\n}\n") + 3)
+      .split("\n")
+      .map(l => l.trim())
+      .filter(Boolean);
+
+  test("a class without decorators or accessors is untouched", () => {
+    const code = `class A {\n  x = 1;\n  static y = 2;\n  #p = 3;\n  static {\n    z();\n  }\n}\n`;
+    expect(js.transformSync(code)).toBe(code);
+  });
+
+  test("every field moves once one is decorated, with [[Define]] semantics", () => {
+    const out = js.transformSync(
+      `const dec = () => {}; class A { @dec a = 1; b = 2; static c = 3; @dec static d = 4; }`,
+    );
+    expect(ctorBody(out)).toEqual([
+      expect.stringMatching(/^__publicField\w*\(this, "a", __runInitializers\w*\(_init\$\d+, 12, this, 1\)\);$/),
+      expect.stringMatching(/^__runInitializers\w*\(_init\$\d+, 15, this\);$/),
+      expect.stringMatching(/^__publicField\w*\(this, "b", 2\);$/),
+    ]);
+    // Decorate calls: static fields before instance fields. Then the static
+    // fields in source order, then the metadata.
+    expect(suffix(out)).toEqual([
+      expect.stringMatching(/^__decorateElement\w*\(_init\$\d+, 13, "d", _dec2\$\d+, A\);$/),
+      expect.stringMatching(/^__decorateElement\w*\(_init\$\d+, 5, "a", _dec\$\d+, A\);$/),
+      expect.stringMatching(/^__publicField\w*\(A, "c", 3\);$/),
+      expect.stringMatching(/^__publicField\w*\(A, "d", __runInitializers\w*\(_init\$\d+, 8, A, 4\)\);$/),
+      expect.stringMatching(/^__runInitializers\w*\(_init\$\d+, 11, A\);$/),
+      expect.stringMatching(/^__decoratorMetadata\w*\(_init\$\d+, A\);$/),
+    ]);
+    expect(out).not.toContain("static c");
+  });
+
+  test("useDefineForClassFields: false assigns and drops fields without an initializer", () => {
+    const out = ts({ useDefineForClassFields: false }).transformSync(
+      `const dec = () => {}; class A { @dec a = 1; b = 2; bar; static c = 3; static t; }`,
+    );
+    expect(ctorBody(out)).toEqual([
+      expect.stringMatching(/^this\.a = __runInitializers\w*\(_init\$\d+, 8, this, 1\);$/),
+      expect.stringMatching(/^__runInitializers\w*\(_init\$\d+, 11, this\);$/),
+      "this.b = 2;",
+    ]);
+    expect(suffix(out)).toEqual([
+      expect.stringMatching(/^__decorateElement\w*/),
+      "A.c = 3;",
+      expect.stringMatching(/^__decoratorMetadata\w*/),
+    ]);
+    expect(out).not.toContain("bar");
+    expect(out).not.toMatch(/\bt\b/);
+  });
+
+  test("computed keys are hoisted once, in source order, literals are copied", () => {
+    const out = js.transformSync(
+      `const dec = () => {}; class A { [k1()]() {} @dec [k2()] = 1; static [k3()] = 2; [k4()] = 3; ["lit"] = 4; [0] = 5; }`,
+    );
+    expect(out).toMatch(
+      /var _computedKey\$\d+ = k1\(\), _dec\$\d+ = \[\n  dec\n\], _computedKey2\$\d+ = k2\(\), _computedKey3\$\d+ = k3\(\), _computedKey4\$\d+ = k4\(\), _init\$\d+ = /,
+    );
+    expect(ctorBody(out)).toEqual([
+      expect.stringMatching(
+        /^__publicField\w*\(this, _computedKey2\$\d+, __runInitializers\w*\(_init\$\d+, 8, this, 1\)\);$/,
+      ),
+      expect.stringMatching(/^__runInitializers\w*\(_init\$\d+, 11, this\);$/),
+      expect.stringMatching(/^__publicField\w*\(this, _computedKey4\$\d+, 3\);$/),
+      expect.stringMatching(/^__publicField\w*\(this, "lit", 4\);$/),
+      expect.stringMatching(/^__publicField\w*\(this, 0, 5\);$/),
+    ]);
+    expect(out).toMatch(/\[_computedKey\$\d+\]\(\) \{\}/);
+    expect(out).toMatch(/__publicField\w*\(A, _computedKey3\$\d+, 2\);/);
+    expect(out.match(/k[1-4]\(\)/g)).toEqual(["k1()", "k2()", "k3()", "k4()"]);
+  });
+
+  test("a class with only a class decorator keeps its members in the body", () => {
+    const out = js.transformSync(`const dec = () => {}; @dec class A { a = 1; static b = 2; static { c() } #p = 3; }`);
+    expect(out).toContain("  a = 1;\n  static b = 2;\n  static {\n    c();\n  }\n  #p = 3;\n}");
+    expect(suffix(out)).toEqual([
+      expect.stringMatching(/^A = __decorateElement\w*\(_init\$\d+, 0, "A", _dec\$\d+, A\);$/),
+      expect.stringMatching(/^__runInitializers\w*\(_init\$\d+, 1, A\);$/),
+    ]);
+    expect(out).not.toContain("__decoratorMetadata");
+    expect(out).not.toContain("__publicField");
+    expect(out).not.toContain("WeakMap");
+  });
+
+  test("a class with only accessors gets storage but no decorator context", () => {
+    const out = js.transformSync(`class A { accessor a = 1; b = 2; static accessor c = 3; }`);
+    expect(out).not.toContain("__decoratorStart");
+    expect(out).not.toContain("__decoratorMetadata");
+    expect(ctorBody(out)).toEqual([
+      expect.stringMatching(/^__privateAdd\w*\(this, _a\$\d+, 1\);$/),
+      expect.stringMatching(/^__publicField\w*\(this, "b", 2\);$/),
+    ]);
+    expect(suffix(out)).toEqual([expect.stringMatching(/^__privateAdd\w*\(A, _c\$\d+, 3\);$/)]);
+    expect(out).toMatch(/get a\(\) \{\n    return __privateGet\w*\(this, _a\$\d+\);/);
+    expect(out).toMatch(/static set c\(v\) \{\n    __privateSet\w*\(this, _c\$\d+, v\);/);
+  });
+
+  test("two decorated classes get distinct temporaries", () => {
+    const out = js.transformSync(`const dec = () => {}; class A { @dec m() {} } class B { @dec m() {} }`);
+    const inits = [...new Set(out.match(/_init\$\d+/g))];
+    const decs = [...new Set(out.match(/_dec\$\d+/g))];
+    expect(inits).toHaveLength(2);
+    expect(decs).toHaveLength(2);
+    expect(out).toMatch(
+      new RegExp(
+        `class A \\{\\n  constructor\\(\\) \\{\\n    __runInitializers\\w*\\(${inits[0].replace("$", "\\$")}, 5, this\\);`,
+      ),
+    );
+    expect(out).toMatch(
+      new RegExp(
+        `class B \\{\\n  constructor\\(\\) \\{\\n    __runInitializers\\w*\\(${inits[1].replace("$", "\\$")}, 5, this\\);`,
+      ),
+    );
+  });
+
+  test("`this` in relocated static code is the class", () => {
+    const out = js.transformSync(
+      `const dec = () => {}; class A { @dec static a = this; static b = () => this; static { this.c = 1 } }`,
+    );
+    expect(suffix(out)).toEqual([
+      expect.stringMatching(/^__decorateElement\w*\(_init\$\d+, 13, "a", _dec\$\d+, A\);$/),
+      expect.stringMatching(/^__publicField\w*\(A, "a", __runInitializers\w*\(_init\$\d+, 8, A, A\)\);$/),
+      expect.stringMatching(/^__runInitializers\w*\(_init\$\d+, 11, A\);$/),
+      expect.stringMatching(/^__publicField\w*\(A, "b", \(\) => A\);$/),
+      "A.c = 1;",
+      expect.stringMatching(/^__decoratorMetadata\w*\(_init\$\d+, A\);$/),
+    ]);
+    expect(out).not.toContain("this");
+  });
+
+  test("`super` in relocated static code goes through the class's prototype", () => {
+    const out = js.transformSync(
+      `const dec = () => {}; class A extends B { @dec m() {} static s = super.x; static t = super.y(1); static u = (super.z = 2); }`,
+    );
+    expect(out).toMatch(/__publicField\w*\(A, "s", Reflect\.get\(Object\.getPrototypeOf\(A\), "x", A\)\);/);
+    expect(out).toMatch(
+      /__publicField\w*\(A, "t", Reflect\.get\(Object\.getPrototypeOf\(A\), "y", A\)\.call\(A, 1\)\);/,
+    );
+    expect(out).toMatch(
+      /__publicField\w*\(A, "u", \(Reflect\.set\(Object\.getPrototypeOf\(A\), "z", (__bun_temp_ref_\w+\$) = 2, A\), \1\)\);/,
+    );
+    expect(out).not.toContain("super.");
+    // The base class is captured once and the class extends the capture.
+    expect(out).toMatch(/var _base\$\d+ = B,/);
+    expect(out).toMatch(/class A extends _base\$\d+ \{/);
+    expect(out).toMatch(/__decoratorStart\w*\(_base\$\d+\)/);
+  });
+
+  test("updates and compound assignments on lowered private members", () => {
+    const out = js.transformSync(
+      `const dec = () => {}; class A { @dec m() {} #x = 1; inc() { return this.#x++ } pre() { return ++this.#x } add(v) { this.#x += v } nul(v) { this.#x ??= v } }`,
+    );
+    expect(out).toMatch(
+      /return __privateSet\w*\(this, _x\$\d+, \((__bun_temp_ref_\w+\$) = __privateGet\w*\(this, _x\$\d+\), (__bun_temp_ref_\w+\$) = \1\+\+, \1\)\), \2;/,
+    );
+    expect(out).toMatch(
+      /return __privateSet\w*\(this, _x\$\d+, \((__bun_temp_ref_\w+\$) = __privateGet\w*\(this, _x\$\d+\), \+\+\1\)\);/,
+    );
+    expect(out).toMatch(/__privateSet\w*\(this, _x\$\d+, __privateGet\w*\(this, _x\$\d+\) \+ v\);/);
+    expect(out).toMatch(/__privateGet\w*\(this, _x\$\d+\) \?\? __privateSet\w*\(this, _x\$\d+, v\);/);
+    // Temporaries are declared in the method that uses them.
+    expect(out).toMatch(/inc\(\) \{\n    var __bun_temp_ref_\w+\$, __bun_temp_ref_\w+\$;/);
+  });
+
+  test("private methods: brands are added before the method extra initializers", () => {
+    const out = js.transformSync(
+      `const dec = () => {}; class A { @dec m() {} #a() {} get #b() { return 1 } static #c() {} call() { return [this.#a(), this.#b, A.#c()] } }`,
+    );
+    expect(ctorBody(out)).toEqual([
+      expect.stringMatching(/^__privateAdd\w*\(this, _a\$\d+\);$/),
+      expect.stringMatching(/^__privateAdd\w*\(this, _b\$\d+\);$/),
+      expect.stringMatching(/^__runInitializers\w*\(_init\$\d+, 5, this\);$/),
+    ]);
+    expect(out).toMatch(/_a\$\d+ = new WeakSet, _a_fn\$\d+;\n_a_fn\$\d+ = function\(\) \{\};/);
+    expect(out).toMatch(/__privateMethod\w*\(this, _a\$\d+, _a_fn\$\d+\)\.call\(this\)/);
+    expect(out).toMatch(/__privateGet\w*\(this, _b\$\d+, _b_get\$\d+\)/);
+    expect(out).toMatch(/__privateMethod\w*\(A, _c\$\d+, _c_fn\$\d+\)\.call\(A\)/);
+    // The static brand is added after the decorate calls, before the metadata.
+    expect(suffix(out)).toEqual([
+      expect.stringMatching(/^__decorateElement\w*/),
+      expect.stringMatching(/^__privateAdd\w*\(A, _c\$\d+\);$/),
+      expect.stringMatching(/^__decoratorMetadata\w*/),
+    ]);
+  });
+
+  test("decorated private members use their storage as the decorate target", () => {
+    const out = js.transformSync(
+      `const dec = () => {}; class A { @dec #a = 1; @dec #m() {} @dec accessor #acc = 2; @dec static #s = 3; get() { return [this.#a, this.#m(), this.#acc, A.#s] } }`,
+    );
+    expect(suffix(out)).toEqual([
+      expect.stringMatching(
+        /^_m_fn\$\d+ = __decorateElement\w*\(_init\$\d+, 17, "#m", _dec2\$\d+, _m\$\d+, function\(\) \{\}\);$/,
+      ),
+      expect.stringMatching(
+        /^_acc_acc\$\d+ = __decorateElement\w*\(_init\$\d+, 20, "#acc", _dec3\$\d+, _acc\$\d+, _acc\$\d+\);$/,
+      ),
+      expect.stringMatching(/^__decorateElement\w*\(_init\$\d+, 29, "#s", _dec4\$\d+, _s\$\d+\);$/),
+      expect.stringMatching(/^__decorateElement\w*\(_init\$\d+, 21, "#a", _dec\$\d+, _a\$\d+\);$/),
+      expect.stringMatching(/^__privateAdd\w*\(A, _s\$\d+, __runInitializers\w*\(_init\$\d+, 12, A, 3\)\);$/),
+      expect.stringMatching(/^__runInitializers\w*\(_init\$\d+, 15, A\);$/),
+      expect.stringMatching(/^__decoratorMetadata\w*\(_init\$\d+, A\);$/),
+    ]);
+    expect(out).toMatch(/__privateGet\w*\(this, _acc\$\d+, _acc_acc\$\d+\.get\)/);
+    expect(ctorBody(out)).toEqual([
+      expect.stringMatching(/^__privateAdd\w*\(this, _m\$\d+\);$/),
+      expect.stringMatching(/^__runInitializers\w*\(_init\$\d+, 5, this\);$/),
+      expect.stringMatching(/^__privateAdd\w*\(this, _a\$\d+, __runInitializers\w*\(_init\$\d+, 16, this, 1\)\);$/),
+      expect.stringMatching(/^__runInitializers\w*\(_init\$\d+, 19, this\);$/),
+      expect.stringMatching(/^__privateAdd\w*\(this, _acc\$\d+, __runInitializers\w*\(_init\$\d+, 8, this, 2\)\);$/),
+      expect.stringMatching(/^__runInitializers\w*\(_init\$\d+, 11, this\);$/),
+    ]);
+  });
+
+  test("TypeScript parameter properties keep their declaration and run before lowered fields assign", () => {
+    const define = ts().transformSync(
+      `const dec = () => {}; class A { constructor(public x: number) {} @dec y = 1; z = 2; }`,
+    );
+    expect(define).toContain("class A {\n  x;\n  constructor(x) {");
+    expect(ctorBody(define)).toEqual([
+      expect.stringMatching(/^__publicField\w*\(this, "y", __runInitializers\w*\(_init\$\d+, 8, this, 1\)\);$/),
+      expect.stringMatching(/^__runInitializers\w*\(_init\$\d+, 11, this\);$/),
+      expect.stringMatching(/^__publicField\w*\(this, "z", 2\);$/),
+      "this.x = x;",
+    ]);
+
+    const assign = ts({ useDefineForClassFields: false }).transformSync(
+      `const dec = () => {}; class A { constructor(public x: number) { log() } @dec y = this.x; z = 2; }`,
+    );
+    expect(assign).not.toContain("  x;\n");
+    expect(ctorBody(assign)).toEqual([
+      "this.x = x;",
+      expect.stringMatching(/^this\.y = __runInitializers\w*\(_init\$\d+, 8, this, this\.x\);$/),
+      expect.stringMatching(/^__runInitializers\w*\(_init\$\d+, 11, this\);$/),
+      "this.z = 2;",
+      "log();",
+    ]);
+  });
+
+  test("a named class expression references its temporary from relocated code", () => {
+    const out = js.transformSync(
+      `const dec = () => {}; const E = class Named { @dec m() {} static s = Named; y = Named; static { Named.t = this } };`,
+    );
+    expect(out).toMatch(/^var _class\$\d+, _init\$\d+, _dec\$\d+;\n/m);
+    expect(out).toMatch(
+      /_class\$\d+ = class Named \{\n  constructor\(\) \{\n    __runInitializers\w*\(_init\$\d+, 5, this\);\n    __publicField\w*\(this, "y", Named\);\n  \}/,
+    );
+    expect(out).toMatch(
+      /__publicField\w*\(_class\$\d+, "s", _class\$\d+\), _class\$\d+\.t = _class\$\d+, __decoratorMetadata\w*\(_init\$\d+, _class\$\d+\), _class\$\d+\);/,
+    );
+  });
+
+  test("static blocks with declarations become an arrow IIFE", () => {
+    const out = js.transformSync(
+      `const dec = () => {}; class A { @dec m() {} static { const v = 1; A.v = v; } static { f(); g(); } }`,
+    );
+    expect(suffix(out)).toEqual([
+      expect.stringMatching(/^__decorateElement\w*/),
+      "(() => {",
+      "const v = 1;",
+      "A.v = v;",
+      "})();",
+      "f();",
+      "g();",
+      expect.stringMatching(/^__decoratorMetadata\w*/),
+    ]);
   });
 });
 

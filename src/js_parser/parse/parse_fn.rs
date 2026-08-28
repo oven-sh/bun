@@ -231,8 +231,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let decorator_range = p.lexer.range();
                 ts_decorators = p.parse_type_script_decorators()?;
                 if ts_decorators.len_u32() > 0 {
-                    // Only TypeScript's experimental decorators have parameter
-                    // decorators. The standard grammar has no such position.
+                    // Parameter decorators exist only in TypeScript's experimental decorators.
                     if p.options.features.standard_decorators {
                         if Self::IS_TYPESCRIPT_ENABLED {
                             p.log().add_range_error_fmt_with_note(

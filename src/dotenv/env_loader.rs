@@ -798,33 +798,33 @@ impl Loader {
 
         // `bun_sys` is errno-based; the match arms below group the recoverable
         // errnos. Any errno not listed propagates.
-        let file =
-            match bun_sys::File::openat(dir, base, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0) {
-                Ok(file) => file,
-                Err(err) => {
-                    use bun_sys::E;
-                    match err.get_errno() {
-                        E::EISDIR | E::ENOENT => {
-                            // prevent retrying
-                            self.default_files_loaded.insert(env_file);
-                            return Ok(());
-                        }
-                        E::EBUSY | E::EACCES => {
-                            if !self.quiet {
-                                bun_core::pretty_errorln!(
-                                    "<r><red>{}<r> error loading {} file",
-                                    bstr::BStr::new(err.name()),
-                                    bstr::BStr::new(base)
-                                );
-                            }
-                            // prevent retrying
-                            self.default_files_loaded.insert(env_file);
-                            return Ok(());
-                        }
-                        _ => return Err(err.into()),
+        let file = match bun_sys::File::openat(dir, base, ENV_FILE_OPEN_FLAGS, 0) {
+            Ok(file) => file,
+            Err(err) => {
+                use bun_sys::E;
+                match err.get_errno() {
+                    // ENXIO: a unix socket.
+                    E::EISDIR | E::ENOENT | E::ENXIO => {
+                        // prevent retrying
+                        self.default_files_loaded.insert(env_file);
+                        return Ok(());
                     }
+                    E::EBUSY | E::EACCES => {
+                        if !self.quiet {
+                            bun_core::pretty_errorln!(
+                                "<r><red>{}<r> error loading {} file",
+                                bstr::BStr::new(err.name()),
+                                bstr::BStr::new(base)
+                            );
+                        }
+                        // prevent retrying
+                        self.default_files_loaded.insert(env_file);
+                        return Ok(());
+                    }
+                    _ => return Err(err.into()),
                 }
-            };
+            }
+        };
 
         match read_env_file_contents(&file)? {
             ReadEnvFile::Empty => {}
@@ -855,14 +855,15 @@ impl Loader {
             return Ok(());
         }
 
-        let file = match bun_sys::open_file(file_path, bun_sys::OpenFlags::READ_ONLY) {
-            Ok(f) => f,
-            Err(_) => {
-                // prevent retrying
-                self.custom_files_loaded.insert(file_path)?;
-                return Ok(());
-            }
-        };
+        let file =
+            match bun_sys::File::openat(bun_sys::Fd::cwd(), file_path, ENV_FILE_OPEN_FLAGS, 0) {
+                Ok(f) => f,
+                Err(_) => {
+                    // prevent retrying
+                    self.custom_files_loaded.insert(file_path)?;
+                    return Ok(());
+                }
+            };
 
         match read_env_file_contents(&file)? {
             ReadEnvFile::Empty => {}
@@ -885,13 +886,25 @@ impl Loader {
     }
 }
 
+/// `O_NONBLOCK` so the open itself cannot block on a FIFO: a blocking
+/// `open(O_RDONLY)` of a FIFO waits for a writer. It has no effect on regular
+/// files. POSIX-only: on Windows it omits `FILE_SYNCHRONOUS_IO_NONALERT`
+/// (overlapped handle) and the subsequent sync read fails. Windows has no
+/// open-blocking FIFOs in a directory; the `fstat` kind check in
+/// `read_env_file_contents` still skips pipes and devices there.
+#[cfg(unix)]
+const ENV_FILE_OPEN_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
+#[cfg(not(unix))]
+const ENV_FILE_OPEN_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
+
 /// Shared post-open tail of `load_env_file` / `load_env_file_dynamic`:
-/// `File::read_to_end` (fstat-presized) with the recoverable-errno filter.
-/// The two callers differ in their open path, open-error handling, and the
-/// memo slot they write — those stay in the callers. Only the shared read
-/// tail is factored here.
+/// `fstat` kind check, then `File::read_to_end` (fstat-presized) with the
+/// recoverable-errno filter. The two callers differ in their open-error
+/// handling and the memo slot they write — those stay in the callers. Only
+/// the shared read tail is factored here.
 enum ReadEnvFile {
-    /// Zero-length — caller marks the slot and returns.
+    /// Zero-length, or not a regular file (a directory, FIFO, socket, or
+    /// device) — caller marks the slot and returns.
     Empty,
     /// Recoverable read errno (ENOMEM/EPIPE/EACCES/EISDIR) — caller prints
     /// (unless `quiet`), marks the slot, and returns.
@@ -901,6 +914,10 @@ enum ReadEnvFile {
 }
 
 fn read_env_file_contents(file: &bun_sys::File) -> crate::Result<ReadEnvFile> {
+    let stat = file.stat()?;
+    if stat.st_size == 0 || !bun_sys::is_regular_file(stat.st_mode as _) {
+        return Ok(ReadEnvFile::Empty);
+    }
     match file.read_to_end() {
         Ok(buf) if buf.is_empty() => Ok(ReadEnvFile::Empty),
         Ok(buf) => Ok(ReadEnvFile::Bytes(buf)),

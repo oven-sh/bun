@@ -929,15 +929,17 @@ test("decorator and declare", () => {
 });
 
 test("lowering many decorated instance fields into a large constructor body stays linear", async () => {
-  // Hold N fixed; compare M=25000 vs M=50000 after a warm-up. If the splice-after-super()
-  // were O(M*N) instead of O(M+N), tLarge/tMid would be ~4x here, not ~1.2x to 2x.
+  // Hold N fixed; compare M=100 vs M=20000 after a warm-up. Parsing the N-sized body
+  // dominates both runs when the lowering is O(M+N), so tLarge/tSmall stays under ~2x.
+  // If the splice-after-super() were O(M*N), every field would copy the body again
+  // and the ratio would be far above 3x in both debug and release builds.
   // Only useDefineForClassFields: false moves field initializers into the constructor.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
-        const N = 200000;
+        const N = 500000;
         function gen(M) {
           let src = "function d(t,k){}\\nclass Base {}\\nclass Foo extends Base {\\n";
           for (let i = 0; i < M; i++) src += "@d f" + i + " = " + i + ";\\n";
@@ -960,9 +962,9 @@ test("lowering many decorated instance fields into a large constructor body stay
           return ms;
         }
         time(100);
-        const tMid = time(25000);
-        const tLarge = time(50000);
-        console.log(JSON.stringify({ tMid, tLarge, ratio: tLarge / tMid }));
+        const tSmall = time(100);
+        const tLarge = time(20000);
+        console.log(JSON.stringify({ tSmall, tLarge, ratio: tLarge / tSmall }));
       `,
     ],
     env: bunEnv,
@@ -973,9 +975,9 @@ test("lowering many decorated instance fields into a large constructor body stay
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toMatchObject({
-    stdout: expect.stringMatching(/^\{"tMid":[\d.]+,"tLarge":[\d.]+,"ratio":[\d.]+\}\n$/),
+    stdout: expect.stringMatching(/^\{"tSmall":[\d.]+,"tLarge":[\d.]+,"ratio":[\d.]+\}\n$/),
     exitCode: 0,
   });
-  const { tMid, tLarge } = JSON.parse(stdout);
-  expect(tLarge).toBeLessThan(tMid * 3);
+  const { tSmall, tLarge } = JSON.parse(stdout);
+  expect(tLarge).toBeLessThan(tSmall * 3);
 }, 90_000);

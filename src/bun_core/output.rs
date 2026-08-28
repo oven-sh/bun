@@ -2400,8 +2400,6 @@ pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
 fn err_with_body(error_name: &dyn ErrName, body: &dyn fmt::Display) {
     if let Some(e) = error_name.as_sys_err_info() {
         let Some(tag_name) = e.tag_name else {
-            // An errno outside the `SystemErrno` table (FUSE, odd drivers) has
-            // no code to print. Keep the number so the user can look it up.
             pretty_errorln!(
                 "<r><red>error<r><d>:<r> {} <d>({}, errno {})<r>",
                 body,
@@ -2461,8 +2459,7 @@ pub fn err_generic(fmt: &str, args: impl FmtTuple) {
 /// Populated by bun_sys's `ErrName` impl (move-in pass).
 #[derive(Clone, Copy)]
 pub struct SysErrInfo {
-    /// The `SystemErrno` variant name (`"ENOENT"`). `None` when `errno` is
-    /// not in the table.
+    /// `None` when `errno` is not in the `SystemErrno` table.
     pub tag_name: Option<&'static str>,
     pub errno: i32,
     pub syscall: &'static str,

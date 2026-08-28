@@ -49,10 +49,8 @@ static bool h2IsSingleValueHeader(WTF::StringView name)
         || name == "x-content-type-options"_s;
 }
 
-// Header values are byte strings. Node hands nghttp2's value bytes to JS as a
-// one-byte string (node_http2.cc, ExternOneByteString), so each wire byte is
-// one latin-1 code unit and obs-text (0x80-0xFF) survives. Decoding as UTF-8
-// would turn those bytes into U+FFFD.
+// One latin-1 code unit per wire byte, as node does (node_http2.cc builds
+// header values as one-byte strings). UTF-8 decoding would lose obs-text.
 static JSString* h2ValueToJS(VM& vm, const uint8_t* ptr, size_t length)
 {
     if (length == 0)

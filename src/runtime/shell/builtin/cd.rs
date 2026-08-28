@@ -83,6 +83,7 @@ impl Cd {
                 cmd,
                 format_args!("{}: No such file or directory\n", bstr::BStr::new(new_cwd)),
             ),
+            // The path itself is the oversized thing; do not echo it back.
             E::ENAMETOOLONG => {
                 Self::write_stderr_non_blocking(interp, cmd, format_args!("file name too long\n"))
             }
@@ -93,8 +94,8 @@ impl Cd {
                     cmd,
                     format_args!(
                         "{}: {}\n",
-                        bstr::BStr::new(errmsg),
                         bstr::BStr::new(new_cwd),
+                        bstr::BStr::new(errmsg),
                     ),
                 )
             }

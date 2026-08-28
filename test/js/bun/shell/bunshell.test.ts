@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync } from "fs";
+import { chmodSync, mkdirSync, readdirSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import {
   bunExe,
@@ -111,6 +111,14 @@ describe("bunshell", () => {
         rm: (await $`rm 2> /dev/full`.nothrow()).exitCode,
       };
       expect(exitCodes).toEqual({ echo: 1, which: 1, export: 1, cd: 1, rm: 1 });
+    });
+
+    // `rm -v` removes the file, then its verbose listing fails to write: the
+    // removal is real but the command must still report the lost output.
+    test.skipIf(!isLinux)("rm -v exits 1 when the verbose write fails", async () => {
+      using dir = tempDir("rm-verbose-dead-stdout", { "a.txt": "", "b.txt": "" });
+      const { exitCode } = await $`rm -v a.txt b.txt > /dev/full`.cwd(String(dir)).nothrow();
+      expect({ exitCode, remaining: readdirSync(String(dir)) }).toEqual({ exitCode: 1, remaining: [] });
     });
 
     // `[[ ]]` takes no redirect and `cat` reads stdin, so their failing write
@@ -1373,7 +1381,7 @@ booga"
       chmodSync(noaccess, 0o000);
       try {
         const { stderr, exitCode } = await $`cd ${noaccess}`.quiet().nothrow();
-        expect(stderr.toString()).toBe(`cd: Permission denied: ${noaccess}\n`);
+        expect(stderr.toString()).toBe(`cd: ${noaccess}: Permission denied\n`);
         expect(exitCode).toBe(1);
       } finally {
         chmodSync(noaccess, 0o755);

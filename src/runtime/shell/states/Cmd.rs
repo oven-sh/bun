@@ -989,10 +989,8 @@ impl Cmd {
     fn buffered_output_close_stdout(&mut self, err: Option<bun_sys::SystemError>) {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stdout");
-        if let Some(_e) = err {
-            if self.exit_code.is_none() {
-                self.exit_code = Some(1);
-            }
+        if err.is_some() {
+            self.fail_output_relay();
         }
         let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else {
@@ -1027,10 +1025,8 @@ impl Cmd {
     fn buffered_output_close_stderr(&mut self, err: Option<bun_sys::SystemError>) {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stderr");
-        if let Some(_e) = err {
-            if self.exit_code.is_none() {
-                self.exit_code = Some(1);
-            }
+        if err.is_some() {
+            self.fail_output_relay();
         }
         let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else {
@@ -1060,9 +1056,22 @@ impl Cmd {
         child.close_io(StdioKind::Stderr);
     }
 
+    /// A stdout/stderr relay read failed: the command's output was lost, so it
+    /// cannot report success. The child's own nonzero status still wins.
+    fn fail_output_relay(&mut self) {
+        if matches!(self.exit_code, None | Some(0)) {
+            self.exit_code = Some(1);
+        }
+    }
+
     /// Called by `ShellSubprocess::on_process_exit`.
     pub(crate) fn on_exit(&mut self, exit_code: ExitCode) {
-        self.exit_code = Some(exit_code);
+        // A zero exit does not erase a relay failure recorded before it.
+        self.exit_code = Some(if exit_code == 0 {
+            self.exit_code.unwrap_or(0)
+        } else {
+            exit_code
+        });
         let has_finished = self.has_finished();
         log!("cmd exit code={} has_finished={}", exit_code, has_finished);
         if has_finished {

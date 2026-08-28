@@ -737,6 +737,12 @@ export const sysErrorNameFromLibuv: (errno: number) => string | undefined = $new
   1,
 );
 
+export const sysErrorOutputErr: (errno: number, fromLibuv: boolean) => undefined = $newRustFunction(
+  "sys/Error.rs",
+  "TestingAPIs.sysErrorOutputErr",
+  2,
+);
+
 export const sigactionLayout: () =>
   | undefined
   | {

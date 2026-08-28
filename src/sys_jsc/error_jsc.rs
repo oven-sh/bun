@@ -77,6 +77,35 @@ pub mod TestingAPIs {
         }
     }
 
+    /// `Output.err` on a `bun.sys.Error` built from `errno`, for tests. `fromLibuv` is Windows-only.
+    #[bun_jsc::host_fn]
+    pub fn sys_error_output_err(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let arguments = frame.arguments();
+        if arguments.len() < 2 || !arguments[0].is_number() || !arguments[1].is_boolean() {
+            return Err(global.throw(format_args!(
+                "sysErrorOutputErr: expected (number, boolean) arguments"
+            )));
+        }
+        let Ok(errno) = u16::try_from(arguments[0].to_int32()) else {
+            return Err(global.throw(format_args!("sysErrorOutputErr: errno must fit in a u16")));
+        };
+        let from_libuv = arguments[1].as_boolean();
+        #[cfg(not(windows))]
+        if from_libuv {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let err = Error {
+            errno,
+            syscall: bun_sys::Tag::open,
+            #[cfg(windows)]
+            from_libuv,
+            ..Default::default()
+        };
+        bun_core::output::err(err, "sysErrorOutputErr", ());
+        bun_core::output::flush();
+        Ok(JSValue::UNDEFINED)
+    }
+
     /// Exposes NTSTATUS -> `bun.sys.E` translation so tests can feed NTSTATUS
     /// values that filter drivers and cloud-sync placeholders return in the
     /// wild (STATUS_CANNOT_DELETE etc.) and verify they map to a sensible

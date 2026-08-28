@@ -70,22 +70,26 @@ static void load_certs_from_directory(const char* dir_path, STACK_OF(X509)* cert
 }
 
 // Helper function to load certificates from a bundle file
-static void load_certs_from_bundle(const char* bundle_path, STACK_OF(X509)* cert_stack) {
+// Returns how many certificates the bundle contributed.
+static size_t load_certs_from_bundle(const char* bundle_path, STACK_OF(X509)* cert_stack) {
   FILE* file = fopen(bundle_path, "r");
   if (!file) {
-    return;
+    return 0;
   }
   
+  size_t loaded = 0;
   X509* cert;
   while ((cert = PEM_read_X509(file, NULL, NULL, NULL)) != NULL) {
     if (!sk_X509_push(cert_stack, cert)) {
       X509_free(cert);
       break;
     }
+    loaded++;
   }
   ERR_clear_error();
   
   fclose(file);
+  return loaded;
 }
 
 // Main function to load system certificates on Linux and other Unix-like systems
@@ -166,19 +170,23 @@ extern "C" void us_load_system_certificates_linux(STACK_OF(X509) **system_certs)
   };
 #endif
   
-  // Try loading from bundle files first
-  for (const char** path = bundle_paths; *path != NULL; path++) {
-    load_certs_from_bundle(*path, *system_certs);
+  // The distro's bundle is one file that several of these paths usually alias (Fedora/Amazon Linux symlink four of them
+  // to the same tls-ca-bundle.pem, whose contents the hashed directory repeats again), so take the first bundle that
+  // yields certificates — as OpenSSL's default verify paths and Node's --use-system-ca do — and only walk the
+  // directories when no bundle did.
+  size_t loaded = 0;
+  for (const char** path = bundle_paths; *path != NULL && !loaded; path++) {
+    loaded = load_certs_from_bundle(*path, *system_certs);
   }
   
-  // Then try loading from directories
 #ifdef __ANDROID__
   const bool accept_hashed = true;
 #else
   const bool accept_hashed = false;
 #endif
-  for (const char** path = dir_paths; *path != NULL; path++) {
+  for (const char** path = dir_paths; *path != NULL && !loaded; path++) {
     load_certs_from_directory(*path, *system_certs, accept_hashed);
+    loaded = sk_X509_num(*system_certs);
   }
 }
 

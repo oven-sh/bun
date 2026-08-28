@@ -239,6 +239,14 @@ describe("transpiler cache", () => {
       chmodSync(private_tmp, 0o755);
       expect(await bunRun(join(temp_dir, "a.js"), noHomeEnv(private_tmp))).toSpawn("tmpdir-cache");
       expect(readdirSync(join(private_tmp, `bun-${process.geteuid!()}`, "@t@"))).toHaveLength(1);
+
+      // A temp dir reached through a symlink is used by its real path, so the
+      // entry lands in the directory that was checked.
+      const linked_tmp = join(temp_dir, "linked-tmp");
+      symlinkSync(private_tmp, linked_tmp);
+      writeFileSync(join(temp_dir, "b.js"), dummyFile((50 * 1024 * 1.5) | 0, "2", "linked-tmpdir-cache"));
+      expect(await bunRun(join(temp_dir, "b.js"), noHomeEnv(linked_tmp))).toSpawn("linked-tmpdir-cache");
+      expect(readdirSync(join(private_tmp, `bun-${process.geteuid!()}`, "@t@"))).toHaveLength(2);
     },
   );
 
@@ -254,6 +262,16 @@ describe("transpiler cache", () => {
     expect(await bunRun(join(temp_dir, "a.js"), noHomeEnv(shared_tmp))).toSpawn("untrusted-root");
     expect(readdirSync(shared_tmp)).toEqual([]);
     chmodSync(shared_tmp, 0o1777);
+
+    // The same for a directory above the temp dir: another user could rename
+    // the whole temp dir away.
+    const outer = join(temp_dir, "outer");
+    const inner_tmp = join(outer, "tmp");
+    mkdirSync(inner_tmp, { recursive: true });
+    chmodSync(outer, 0o777);
+    chmodSync(inner_tmp, 0o755);
+    expect(await bunRun(join(temp_dir, "a.js"), noHomeEnv(inner_tmp))).toSpawn("untrusted-root");
+    expect(readdirSync(inner_tmp)).toEqual([]);
 
     // Another local user pre-created the root as a world-writable directory.
     mkdirSync(user_root, { recursive: true });

@@ -680,14 +680,17 @@ impl RuntimeTranspilerCache {
     }
 
     /// `<tmpdir>/bun-<euid>/@t@`, or 0 (disabled) when another user could
-    /// replace the root or its parent: a planted entry would run as code.
+    /// replace the root or any directory above it: a planted entry would run
+    /// as code.
     #[cfg(unix)]
     fn tmpdir_cache_dir(top: &[u8], buf: &mut PathBuffer) -> usize {
         let euid = sys::c::geteuid();
-        let tmpdir = bun_resolver::fs::RealFS::tmpdir_path();
 
-        let parent =
-            path_handler::join_abs_string_buf_z::<platform::Loose>(top, &mut buf[..], &[tmpdir]);
+        let parent = path_handler::join_abs_string_buf_z::<platform::Loose>(
+            top,
+            &mut buf[..],
+            &[bun_resolver::fs::RealFS::tmpdir_path()],
+        );
         let Ok(parent_fd) = sys::open(
             parent,
             sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC,
@@ -696,10 +699,7 @@ impl RuntimeTranspilerCache {
             return 0;
         };
         let _close_parent = sys::CloseOnDrop::new(parent_fd);
-        let Ok(parent_st) = sys::fstat(parent_fd) else {
-            return 0;
-        };
-        if Self::entries_replaceable_by_others(&parent_st, euid) {
+        if !Self::dir_chain_is_stable(parent_fd, euid) {
             return 0;
         }
 
@@ -728,8 +728,63 @@ impl RuntimeTranspilerCache {
             return 0;
         }
 
-        let parts: &[&[u8]] = &[tmpdir, name.as_bytes(), b"@t@"];
-        path_handler::join_abs_string_buf_z::<platform::Loose>(top, &mut buf[..], parts).len()
+        // Later opens resolve the path again, so use the real path of the
+        // directory that was checked: a symlink on the way there could live
+        // in a directory the check never saw.
+        let Ok(real_parent) = sys::get_fd_path(parent_fd, buf) else {
+            return 0;
+        };
+        let mut len = real_parent.len();
+        let tail_len = 1 + name.len() + b"/@t@".len();
+        if len + tail_len >= MAX_PATH_BYTES {
+            return 0;
+        }
+        buf[len] = SEP;
+        len += 1;
+        buf[len..len + name.len()].copy_from_slice(name.as_bytes());
+        len += name.len();
+        buf[len..len + 4].copy_from_slice(b"/@t@");
+        len += 4;
+        buf[len] = 0;
+        len
+    }
+
+    /// Whether `dir_fd` and every directory above it can only be modified by
+    /// us or root, so a path through them keeps resolving to the same inodes.
+    #[cfg(unix)]
+    fn dir_chain_is_stable(dir_fd: Fd, euid: libc::uid_t) -> bool {
+        let Ok(mut st) = sys::fstat(dir_fd) else {
+            return false;
+        };
+        if Self::entries_replaceable_by_others(&st, euid) {
+            return false;
+        }
+        // "..", "../..", ... relative to `dir_fd`: needs only search
+        // permission, and follows the directory if it was moved.
+        let mut dots = paths::path_buffer_pool::get();
+        let mut len = 0;
+        loop {
+            if len + b"/..".len() >= MAX_PATH_BYTES {
+                return false;
+            }
+            if len > 0 {
+                dots[len] = SEP;
+                len += 1;
+            }
+            dots[len..len + 2].copy_from_slice(b"..");
+            len += 2;
+            dots[len] = 0;
+            let Ok(up) = sys::fstatat(dir_fd, ZStr::from_buf(&dots[..], len)) else {
+                return false;
+            };
+            if up.st_dev == st.st_dev && up.st_ino == st.st_ino {
+                return true;
+            }
+            if Self::entries_replaceable_by_others(&up, euid) {
+                return false;
+            }
+            st = up;
+        }
     }
 
     /// Owned by a third user, or group/other writable without the sticky bit.

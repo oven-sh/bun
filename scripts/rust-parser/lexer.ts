@@ -20,6 +20,8 @@ export interface Token {
   joint: boolean;
   /** literal only. */
   lit: LiteralKind | null;
+  /** int and float literals only: the type suffix (`u8`, `f32`), or null. */
+  suffix: string | null;
 }
 
 export interface Comment {
@@ -144,8 +146,9 @@ function makeToken(
   end: number,
   joint: boolean,
   lit: LiteralKind | null,
+  suffix: string | null = null,
 ): Token {
-  return { kind, text, start, end, joint, lit };
+  return { kind, text, start, end, joint, lit, suffix };
 }
 
 export function lex(src: string): LexResult {
@@ -235,13 +238,16 @@ export function lex(src: string): LexResult {
       }
     }
     // Suffix (`u8`, `f32`, `usize`, ...): any identifier glued to the digits.
+    // In a hex literal the digits `f32` are digits, not a suffix, so `0x1f32`
+    // has none; the suffix is whatever the digit scan above did not consume.
+    let suffix: string | null = null;
     if (j < n && isIdentStart(src, j)) {
       const sufStart = j;
       j = scanIdentEnd(src, j);
-      const suffix = src.slice(sufStart, j);
+      suffix = src.slice(sufStart, j);
       if (suffix === "f32" || suffix === "f64") isFloat = true;
     }
-    tokens.push(makeToken("literal", src.slice(from, j), from, j, false, isFloat ? "float" : "int"));
+    tokens.push(makeToken("literal", src.slice(from, j), from, j, false, isFloat ? "float" : "int", suffix));
     return j;
   };
 
@@ -427,10 +433,13 @@ export function lex(src: string): LexResult {
       continue;
     }
 
-    // Punctuation.
+    // Punctuation. `joint` means the next token is punctuation too; a `/`
+    // that opens a comment is not a token, so `a &/**/& b` is `&`, `&`, not `&&`.
     if (c < 128 && PUNCT_TABLE[c] === 1) {
       const c1 = i + 1 < n ? src.charCodeAt(i + 1) : 0;
-      const joint = c1 < 128 && PUNCT_TABLE[c1] === 1;
+      const c2 = i + 2 < n ? src.charCodeAt(i + 2) : 0;
+      const opensComment = c1 === C_SLASH && (c2 === C_SLASH || c2 === C_STAR);
+      const joint = c1 < 128 && PUNCT_TABLE[c1] === 1 && !opensComment;
       tokens.push(makeToken("punct", src[i], i, i + 1, joint, null));
       i++;
       continue;
@@ -460,6 +469,7 @@ export interface TokenLeaf {
   end: number;
   joint: boolean;
   lit: LiteralKind | null;
+  suffix: string | null;
 }
 
 export interface TokenGroup {
@@ -511,6 +521,7 @@ export function buildTokenTrees(tokens: Token[], from: number, to: number): Toke
       end: t.end,
       joint: t.joint,
       lit: t.lit,
+      suffix: t.suffix,
     });
     i++;
   }
@@ -527,7 +538,7 @@ export function flattenTokenTrees(trees: TokenTree[], end: number): Token[] {
         visit(t.trees);
         out.push(makeToken("close", CLOSE_OF[t.delim], t.end - 1, t.end, false, null));
       } else {
-        out.push(makeToken(t.kind, t.text, t.start, t.end, t.joint, t.lit));
+        out.push(makeToken(t.kind, t.text, t.start, t.end, t.joint, t.lit, t.suffix));
       }
     }
   };

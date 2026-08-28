@@ -7,7 +7,7 @@
 // describe real platform/feature `#[cfg(...)]` attributes.
 
 import { expect, test } from "bun:test";
-import { parseRustFragment, type RustFile } from "../../../scripts/rust-parser/index.ts";
+import { parseRustFragment } from "../../../scripts/rust-parser/index.ts";
 import { rustSources } from "./rust-sources.ts";
 
 // Patterns that indicate stale port-era comments. Each was driven to zero
@@ -44,30 +44,19 @@ const banned: { pattern: RegExp; reason: string }[] = [
   },
 ];
 
-// Source offsets of the first match of `pattern` in each comment of the file.
-// Every comment style counts: `//`, `///`, `//!` and block comments (which a
-// "does the line contain `//`" heuristic missed). Only comment text is
-// searched, so an identifier or string literal that happens to match (or a
-// `//` inside a string literal such as a URL) never trips the lint.
-function findInComments(file: RustFile, pattern: RegExp): number[] {
-  const out: number[] = [];
-  for (const comment of file.comments) {
-    const m = pattern.exec(comment.text);
-    if (m !== null) out.push(comment.start + m.index);
-  }
-  return out;
-}
-
 const hits: Record<string, string[]> = {};
 for (const { pattern } of banned) {
   hits[pattern.source] = [];
 }
 
-// Tracked files only (the corpus filters on `git ls-tree`), so a stray `.rs`
-// left in the working tree is not linted.
+// Only comment text is searched, every style included (`//`, `///`, `//!` and
+// block comments, which a "does the line contain `//`" heuristic missed), so an
+// identifier or a string literal that happens to match (or a `//` inside a URL
+// string) never trips the lint. Tracked files only (the corpus filters on
+// `git ls-tree`), so a stray `.rs` left in the working tree is not linted.
 for (const src of rustSources()) {
   for (const { pattern } of banned) {
-    for (const offset of findInComments(src.file, pattern)) {
+    for (const offset of src.file.commentsMatching(pattern).map(m => m.offset)) {
       hits[pattern.source].push(src.file.location(offset));
     }
   }
@@ -75,7 +64,7 @@ for (const src of rustSources()) {
 
 test("the patterns recognize the comment jargon they claim to", () => {
   const matches = (snippet: string) =>
-    banned.some(({ pattern }) => findInComments(parseRustFragment(snippet), pattern).length > 0);
+    banned.some(({ pattern }) => parseRustFragment(snippet).commentsMatching(pattern).length > 0);
   const stale = [
     "// blocked_on: the Zig side still owns the handle",
     "/* this un-gates the fast path */",

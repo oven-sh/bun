@@ -12,7 +12,7 @@
 // deliberately not listed.
 
 import { expect, test } from "bun:test";
-import { parseRustFragment, type RustFile } from "../../../scripts/rust-parser/index.ts";
+import { parseRustFragment } from "../../../scripts/rust-parser/index.ts";
 import { rustSources } from "./rust-sources.ts";
 
 const renamed: { zig: string; rust: string }[] = [
@@ -42,31 +42,20 @@ const banned = renamed.map(({ zig, rust }) => ({
   pattern: new RegExp(`\\b${zig}\\b`),
 }));
 
-// Source offsets of the first match of `pattern` in each comment of the file.
-// Every comment style counts: `//`, `///`, `//!` and block comments (which a
-// "does the line contain `//`" heuristic missed). Only comment text is
-// searched: a string literal such as a log message that still carries the old
-// spelling is not a stale cross-reference, and a `//` inside a string literal
-// (a URL) no longer turns its line into a comment.
-function findInComments(file: RustFile, pattern: RegExp): number[] {
-  const out: number[] = [];
-  for (const comment of file.comments) {
-    const m = pattern.exec(comment.text);
-    if (m !== null) out.push(comment.start + m.index);
-  }
-  return out;
-}
-
 const hits: Record<string, string[]> = {};
 for (const { zig } of banned) {
   hits[zig] = [];
 }
 
-// Tracked files only (the corpus filters on `git ls-tree`), so a stray `.rs`
-// left in the working tree is not linted.
+// Only comment text is searched, every style included (`//`, `///`, `//!` and
+// block comments, which a "does the line contain `//`" heuristic missed). A
+// string literal such as a log message that still carries the old spelling is
+// not a stale cross-reference, and a `//` inside a URL string no longer turns
+// its line into a comment. Tracked files only (the corpus filters on
+// `git ls-tree`), so a stray `.rs` left in the working tree is not linted.
 for (const src of rustSources()) {
   for (const { zig, pattern } of banned) {
-    for (const offset of findInComments(src.file, pattern)) {
+    for (const offset of src.file.commentsMatching(pattern).map(m => m.offset)) {
       hits[zig].push(src.file.location(offset));
     }
   }
@@ -74,7 +63,7 @@ for (const src of rustSources()) {
 
 test("the patterns recognize the stale names they claim to", () => {
   const matches = (snippet: string) =>
-    banned.some(({ pattern }) => findInComments(parseRustFragment(snippet), pattern).length > 0);
+    banned.some(({ pattern }) => parseRustFragment(snippet).commentsMatching(pattern).length > 0);
   const stale = [
     "// SAFETY: markInactive was called by the owner",
     "/* see toJSUnchecked */",

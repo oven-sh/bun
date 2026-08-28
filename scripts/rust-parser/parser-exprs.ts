@@ -714,14 +714,14 @@ export abstract class ExprParser extends PatParser {
   parseMacroAfterPath(path: ast.Path, attrs: ast.Attribute[]): ast.Macro {
     this.expectChar("!");
     const { delim, tokens, end } = this.parseDelimited();
-    const args = this.parseMacroArgs(tokens, end);
+    const args = this.parseMacroArgs(tokens);
     const mac: ast.Macro = { kind: "Macro", path, delim, tokens, args, start: path.start, end };
     if (attrs.length > 0) mac.attrs = attrs;
     return mac;
   }
 
   /** Best-effort parse of macro input as comma-separated expressions. */
-  private parseMacroArgs(tokens: TokenTree[], end: number): (ast.Expr | null)[] {
+  private parseMacroArgs(tokens: TokenTree[]): (ast.Expr | null)[] {
     if (tokens.length === 0) return [];
     const chunks = splitTokenTrees(tokens);
     const out: (ast.Expr | null)[] = [];

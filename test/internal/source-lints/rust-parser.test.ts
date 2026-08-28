@@ -30,7 +30,7 @@ import {
   type Fn,
   type Node,
 } from "../../../scripts/rust-parser/index.ts";
-import { rustSources } from "./rust-sources.ts";
+import { ratchet, rustSources } from "./rust-sources.ts";
 
 function table(name: string, parse: (src: string) => unknown, cases: [string, string][]) {
   describe(name, () => {
@@ -58,6 +58,10 @@ table("expressions", parseRustExpr, [
   ["!a && !b", "(&& (! a) (! b))"],
   ["a == b && c || d", "(|| (&& (== a b) c) d)"],
   ["a | b & c ^ d", "(| a (^ (& b c) d))"],
+  // A comment between two operator characters keeps them apart.
+  ["a &/* and */& b", "(& a (&b))"],
+  ["a &// and\n& b", "(& a (&b))"],
+  ["x <//\n-1", "(< x (- 1))"],
   ["a << 1 + 2", "(<< a (+ 1 2))"],
   ["a..b", "(range a b)"],
   ["a..=b", "(range= a b)"],
@@ -396,6 +400,11 @@ test("literals", () => {
   expect(litNumber(lit("1.5e3") as never)).toBe(1500);
   expect(lit("1u8")).toMatchObject({ kind: "Lit", litKind: "int", suffix: "u8" });
   expect(lit("2.0")).toMatchObject({ kind: "Lit", litKind: "float", suffix: null });
+  // Hex digits that spell a suffix are digits.
+  expect(lit("0x1f32")).toMatchObject({ kind: "Lit", litKind: "int", suffix: null });
+  expect(litNumber(lit("0x1f32") as never)).toBe(0x1f32);
+  expect(lit("0x1fu32")).toMatchObject({ kind: "Lit", litKind: "int", suffix: "u32" });
+  expect(lit("1e3f32")).toMatchObject({ kind: "Lit", litKind: "float", suffix: "f32" });
 });
 
 test("macro input is kept as token trees and parsed as expressions where possible", () => {
@@ -433,6 +442,59 @@ test("queries", () => {
     "unsafe { bun_core::heap::take(ptr::from_mut(self)) }",
     "unsafe { heap::take(this) }",
   ]);
+});
+
+test("ancestors on items with a where clause", () => {
+  const file = parseRust(`
+    fn f<T>(x: T) -> u8 where T: Copy { 0 }
+    impl<T> Tr for S<T> where T: Send { fn g(&self) {} }
+    pub(in crate::a) struct P<T>(T) where T: Copy;
+  `);
+  const [f, g] = file.find("Fn");
+  expect(file.enclosingFn(f.params[0])?.name).toBe("f");
+  expect(file.parent(f.ret!)).toBe(f);
+  expect(file.enclosing(f.generics.where[0], "Fn")?.name).toBe("f");
+  expect(file.enclosingFn(file.find("Lit")[0])?.name).toBe("f");
+  const impl = file.find("Impl")[0];
+  expect(file.parent(impl.selfTy)).toBe(impl);
+  expect(file.parent(impl.trait!)).toBe(impl);
+  expect(file.enclosing(g, "Impl")).toBe(impl);
+  const p = file.find("Struct")[0];
+  expect(p.vis).toBe("pub(in crate::a)");
+  expect(file.parent(p.fields![0])).toBe(p);
+  expect(file.parent(p.attrs[0] ?? p)).toBe(p.attrs[0] ? p : file.ast);
+});
+
+test("visibility spellings", () => {
+  const file = parseRust(`
+    pub struct A;
+    pub(crate) struct B;
+    pub(super) struct C;
+    pub(self) struct D;
+    pub(in ::x::y) struct E;
+    struct F;
+    struct G(pub (u8, u8));
+  `);
+  expect(file.find("Struct").map(s => s.vis)).toEqual([
+    "pub",
+    "pub(crate)",
+    "pub(super)",
+    "pub(self)",
+    "pub(in ::x::y)",
+    null,
+    null,
+  ]);
+  expect(file.find("StructField")[0].vis).toBe("pub");
+});
+
+test("ratchet reports an overrun once and an unused budget as stale", () => {
+  const finding = (path: string, n: number) => ({ path, message: `${path}:${n}` });
+  const { offenders, stale } = ratchet(
+    [finding("a.rs", 1), finding("a.rs", 2), finding("b.rs", 1), finding("c.rs", 1)],
+    { "a.rs": 1, "b.rs": 1, "d.rs": 1 },
+  );
+  expect(offenders).toEqual(["a.rs:2", "c.rs:1"]);
+  expect(stale).toEqual(["d.rs: allowlisted for 1, found 0"]);
 });
 
 test("fragments keep their offsets", () => {

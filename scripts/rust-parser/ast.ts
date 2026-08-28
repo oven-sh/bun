@@ -136,6 +136,12 @@ export interface AssocConstraint extends Span {
 // ---------------------------------------------------------------------------
 // Generics and bounds
 
+/**
+ * Generic parameters and the where clause of an item. The span runs from `<`
+ * to the end of the where clause, so on an item with both it also covers what
+ * is written between them (a function's parameters and return type). An item
+ * without either has an empty span at the position the `<` would take.
+ */
 export interface Generics extends Span {
   kind: "Generics";
   params: GenericParam[];

@@ -112,7 +112,7 @@ export function rustSources(filter: RustSourceFilter = {}): RustSource[] {
  * Per-file counts against an allowlist of documented exceptions. Returns the
  * findings that exceed a file's budget, and the files whose budget is no
  * longer fully used (the ratchet: lower the entry so the shape cannot creep
- * back in).
+ * back in). A file over its budget is reported through `offenders` only.
  */
 export function ratchet(
   findings: readonly { path: string; message: string }[],
@@ -127,7 +127,7 @@ export function ratchet(
   const stale: string[] = [];
   for (const [file, budget] of Object.entries(allow)) {
     const count = counts[file] ?? 0;
-    if (count !== budget) stale.push(`${file}: allowlisted for ${budget}, found ${count}`);
+    if (count < budget) stale.push(`${file}: allowlisted for ${budget}, found ${count}`);
   }
   return { offenders, stale };
 }

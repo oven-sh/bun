@@ -446,27 +446,29 @@ export abstract class ParserBase {
 
   // -- visibility -----------------------------------------------------------
 
+  /** Normalized spelling: `pub`, `pub(crate)`, `pub(super)`, `pub(self)`, `pub(in a::b)`. */
   parseVisibility(): ast.Visibility {
     if (!this.isKw("pub")) return null;
-    const start = this.tok.start;
     this.pos++;
-    if (this.isOpen("(")) {
-      // `pub(crate)`, `pub(super)`, `pub(self)`, `pub(in path)`. Anything else
-      // after `pub (` is a tuple struct field type: `pub (u8, u8)`.
-      const t1 = this.peek(1);
-      const restricted =
-        (t1.kind === "ident" &&
-          (t1.text === "crate" || t1.text === "super" || t1.text === "self") &&
-          this.isClose(")", 2)) ||
-        (t1.kind === "ident" && t1.text === "in");
-      if (restricted) {
-        this.pos++;
-        if (this.eatKw("in")) this.parsePath("mod");
-        else this.pos++;
-        this.expectClose(")");
-      }
+    if (!this.isOpen("(")) return "pub";
+    // `pub(crate)`, `pub(super)`, `pub(self)`, `pub(in path)`. Anything else
+    // after `pub (` is a tuple struct field type: `pub (u8, u8)`.
+    const t1 = this.peek(1);
+    if (
+      t1.kind === "ident" &&
+      (t1.text === "crate" || t1.text === "super" || t1.text === "self") &&
+      this.isClose(")", 2)
+    ) {
+      this.pos += 3;
+      return `pub(${t1.text})`;
     }
-    return this.src.slice(start, this.prevEnd()).replace(/\s+/g, "");
+    if (t1.kind === "ident" && t1.text === "in") {
+      this.pos += 2;
+      const path = this.parsePath("mod");
+      this.expectClose(")");
+      return `pub(in ${(path.global ? "::" : "") + path.segments.map(s => s.name).join("::")})`;
+    }
+    return "pub";
   }
 
   // -- literals -------------------------------------------------------------
@@ -480,12 +482,7 @@ export abstract class ParserBase {
     }
     if (t.kind !== "literal") this.error("expected literal");
     this.pos++;
-    let suffix: string | null = null;
-    if (t.lit === "int" || t.lit === "float") {
-      const m = /(?:[ui](?:8|16|32|64|128|size)|f(?:16|32|64|128))$/.exec(t.text);
-      if (m && m.index > 0) suffix = m[0];
-    }
-    return { kind: "Lit", litKind: t.lit!, text: t.text, suffix, start: t.start, end: t.end };
+    return { kind: "Lit", litKind: t.lit!, text: t.text, suffix: t.suffix, start: t.start, end: t.end };
   }
 
   // -- lifetimes ------------------------------------------------------------

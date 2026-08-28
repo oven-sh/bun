@@ -749,22 +749,24 @@ export class RustFile {
   ancestors(node: Node): Node[] {
     const chain: Node[] = [];
     let cur: Node = this.ast;
-    outer: while (cur !== node) {
+    while (cur !== node) {
+      // The tightest child whose span holds the node. Siblings rarely overlap,
+      // but an item's `Generics` span runs to the end of its where clause and
+      // so covers the parameters and return type written between them.
+      // Attributes sit before the node they decorate, outside its span.
+      let next: Node | null = null;
       for (const kid of children(cur)) {
         if (kid === node) {
           chain.push(cur);
-          break outer;
+          return chain.reverse();
         }
-        // Attributes sit before the node they decorate, outside its span;
-        // every other child lies inside its parent's span.
         const contains = kid.start <= node.start && node.end <= kid.end && kid.start < kid.end;
-        if (contains || holdsAttr(kid, node)) {
-          chain.push(cur);
-          cur = kid;
-          continue outer;
-        }
+        if (!contains && !holdsAttr(kid, node)) continue;
+        if (next === null || kid.end - kid.start < next.end - next.start) next = kid;
       }
-      return [];
+      if (next === null) return [];
+      chain.push(cur);
+      cur = next;
     }
     return chain.reverse();
   }
@@ -808,6 +810,20 @@ export class RustFile {
       if (node.kind === "Macro" || node.kind === "MacroRules") fromTokens(node.tokens);
     });
     return attrs.sort((a, b) => a.start - b.start);
+  }
+
+  /**
+   * Comments whose text matches `pattern`, every style included (`//`, `///`,
+   * `//!`, block). `offset` is the position of the first match in the file,
+   * for `lineOf`/`location`.
+   */
+  commentsMatching(pattern: RegExp): { comment: ast.Comment; offset: number; match: RegExpExecArray }[] {
+    const out: { comment: ast.Comment; offset: number; match: RegExpExecArray }[] = [];
+    for (const comment of this.comments) {
+      const match = pattern.exec(comment.text);
+      if (match !== null) out.push({ comment, offset: comment.start + match.index, match });
+    }
+    return out;
   }
 
   /** Comments whose span lies inside `node`. */

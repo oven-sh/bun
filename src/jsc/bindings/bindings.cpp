@@ -38,6 +38,8 @@
 #include "JavaScriptCore/BytecodeIndex.h"
 #include "JavaScriptCore/CodeBlock.h"
 #include "JavaScriptCore/Completion.h"
+#include "JavaScriptCore/DirectArguments.h"
+#include "JavaScriptCore/ScopedArguments.h"
 #include "JavaScriptCore/ErrorInstance.h"
 #include "JavaScriptCore/ExceptionHelpers.h"
 #include "JavaScriptCore/ExceptionScope.h"
@@ -7243,6 +7245,71 @@ extern "C" uint64_t Bun__JSArray__nextPresentIndex(
     default:
         ASSERT_NOT_REACHED();
         return start;
+    }
+}
+
+// Whether `value` holds storage for `length` indexed slots. A dense array's
+// butterfly backs every slot of its length (holes included), so whatever is
+// built from its elements is proportional to the JS heap it already occupies.
+// A sparse array is not: `[,,1]` with `length = 1e9` keeps one element in a
+// vector of three and `a[2**32 - 2] = 1` keeps one in the sparse map, yet
+// iterating `length` indices yields a billion `undefined`s. Arguments objects
+// keep their elements off the butterfly and their `length` property can be
+// written past them. When the storage falls short, `*outStoredCount` is the
+// number of elements it does hold.
+extern "C" bool Bun__JSObject__indexedStorageCovers(
+    JSC::EncodedJSValue encodedValue,
+    uint32_t length,
+    uint32_t* outStoredCount)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (!value.isObject())
+        return false;
+    JSC::JSObject* object = value.getObject();
+
+    switch (object->type()) {
+    case JSC::DirectArgumentsType:
+        *outStoredCount = uncheckedDowncast<JSC::DirectArguments>(object)->internalLength();
+        return length <= *outStoredCount;
+    case JSC::ScopedArgumentsType:
+        *outStoredCount = uncheckedDowncast<JSC::ScopedArguments>(object)->internalLength();
+        return length <= *outStoredCount;
+    default:
+        break;
+    }
+
+    switch (object->indexingType() & JSC::IndexingShapeMask) {
+    case JSC::UndecidedShape:
+    case JSC::Int32Shape:
+    case JSC::DoubleShape:
+    case JSC::ContiguousShape:
+        *outStoredCount = object->butterfly()->publicLength();
+        return length <= *outStoredCount;
+
+    case JSC::ArrayStorageShape:
+    case JSC::SlowPutArrayStorageShape: {
+        JSC::ArrayStorage* storage = object->butterfly()->arrayStorage();
+        unsigned usedVectorLength = std::min(storage->length(), storage->vectorLength());
+        // The vector backs its slots whether or not they are filled; only
+        // what lies past it (or lives in the map) is unbacked.
+        uint64_t backed = usedVectorLength;
+        uint64_t stored = 0;
+        for (unsigned i = 0; i < usedVectorLength; ++i) {
+            if (storage->m_vector[i])
+                stored++;
+        }
+        if (JSC::SparseArrayValueMap* map = storage->m_sparseMap.get()) {
+            backed += map->size();
+            stored += map->size();
+        }
+        *outStoredCount = static_cast<uint32_t>(std::min<uint64_t>(stored, std::numeric_limits<uint32_t>::max()));
+        return length <= backed;
+    }
+
+    default:
+        // No indexed storage at all.
+        *outStoredCount = 0;
+        return length == 0;
     }
 }
 

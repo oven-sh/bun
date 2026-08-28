@@ -1295,20 +1295,33 @@ impl VirtualMachine {
         }
     }
 
-    pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
+    /// Something keeps the current loop alive: an active platform handle (a
+    /// socket, a ref'd timer, a keep-alive ref), a task in flight or queued, a
+    /// posting from another thread, or deferred work JSC holds for this VM. The
+    /// same question as [`Self::is_event_loop_alive`] minus whether the program
+    /// already failed, plus JSC's tickets that do not hold the loop open (an
+    /// `Atomics.waitAsync` timeout): what a wait on a pending promise asks
+    /// before it concludes that nothing will settle it.
+    pub fn has_pending_work(&self) -> bool {
         let el = self.event_loop_shared();
-        let active = self
-            .platform_loop_opt()
-            .map(|h| h.is_active())
-            .unwrap_or(false);
-        self.unhandled_error_counter == 0
-            && ((active as usize)
-                + self.active_tasks
-                + el.tasks.readable_length()
-                + el.yield_tasks.len()
-                + (el.has_concurrent_tasks() as usize)
-                + (el.has_pending_refs() as usize)
-                > 0)
+        self.has_pending_work_excluding_immediates()
+            || !el.immediate_tasks.is_empty()
+            || !el.next_immediate_tasks.is_empty()
+            || self.jsc_vm().has_pending_deferred_work()
+    }
+
+    fn has_pending_work_excluding_immediates(&self) -> bool {
+        let el = self.event_loop_shared();
+        self.platform_loop_opt().is_some_and(|h| h.is_active())
+            || self.active_tasks > 0
+            || el.tasks.readable_length() > 0
+            || !el.yield_tasks.is_empty()
+            || el.has_concurrent_tasks()
+            || el.has_pending_refs()
+    }
+
+    pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
+        self.unhandled_error_counter == 0 && self.has_pending_work_excluding_immediates()
     }
 
     pub fn is_event_loop_alive(&self) -> bool {
@@ -2774,6 +2787,15 @@ impl VirtualMachine {
     #[inline]
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
         self.event_loop_mut().wait_for_promise(promise)
+    }
+
+    /// Forwarder for [`crate::event_loop::EventLoop::wait_for_promise_until_idle`].
+    #[inline]
+    pub fn wait_for_promise_until_idle(
+        &mut self,
+        promise: jsc::AnyPromise,
+    ) -> Result<(), jsc::Unsettled> {
+        self.event_loop_mut().wait_for_promise_until_idle(promise)
     }
 
     /// `eventLoop().autoTick()` — dispatched through the runtime hook
@@ -5202,7 +5224,9 @@ impl VirtualMachine {
         }
     }
 
-    /// Loads and evaluates a macro entry module, waiting for its promise.
+    /// Loads and evaluates a macro entry module, waiting for its promise. The
+    /// promise is still pending on return when the module's top-level `await`
+    /// can never settle (nothing left on the loop) or the VM was stopped.
     #[inline]
     pub(crate) fn _load_macro_entry_point(
         &mut self,
@@ -5212,7 +5236,7 @@ impl VirtualMachine {
         let promise =
             jsc::JSModuleLoader::load_and_evaluate_module_ptr(self.global, Some(&path_str))?
                 .as_ptr();
-        let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+        let _ = self.wait_for_promise_until_idle(jsc::AnyPromise::Internal(promise));
         Some(promise)
     }
 

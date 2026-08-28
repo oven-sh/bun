@@ -157,4 +157,14 @@ extern "C" void Bun__deleteDeferredWorkTask(Bun::JSCDeferredWorkTask* job)
     delete job;
 }
 
+// JSC still holds a ticket whose completion it will post to this VM later,
+// whether or not that ticket keeps the event loop alive (an Atomics.waitAsync
+// timeout does not). A wait that gives up on an idle loop asks this first.
+extern "C" bool Bun__JSCTaskScheduler__hasPendingWork(JSC::VM* vm)
+{
+    auto& scheduler = WebCore::clientData(*vm)->deferredWorkTimer;
+    Locker<Lock> holder { scheduler.m_lock };
+    return !scheduler.m_pendingTicketsKeepingEventLoopAlive.isEmpty() || !scheduler.m_pendingTicketsOther.isEmpty();
+}
+
 }

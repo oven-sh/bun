@@ -37,6 +37,7 @@ unsafe extern "C" {
     safe fn JSC__VM__releaseWeakRefs(vm: &VM);
     safe fn JSC__VM__drainMicrotasks(vm: &VM);
     safe fn JSC__VM__blockBytesAllocated(vm: &VM) -> usize;
+    safe fn Bun__JSCTaskScheduler__hasPendingWork(vm: &VM) -> bool;
 }
 
 bun_opaque::opaque_ffi! {
@@ -100,6 +101,14 @@ impl VM {
 
     pub fn execution_forbidden(&self) -> bool {
         JSC__VM__executionForbidden(self)
+    }
+
+    /// JSC still holds deferred work it will post to this VM's loop later: an
+    /// `Atomics.waitAsync` timeout, a `FinalizationRegistry` callback, a wasm
+    /// compile. Only some of those keep the loop alive, so a promise waiting
+    /// on one can still settle with nothing else pending.
+    pub fn has_pending_deferred_work(&self) -> bool {
+        Bun__JSCTaskScheduler__hasPendingWork(self)
     }
 
     // These four functions fire VM traps. To understand what that means, see VMTraps.h for a giant explainer.

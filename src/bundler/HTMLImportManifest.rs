@@ -42,7 +42,7 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_io::{FmtAdapter, Write};
 use bun_js_printer::Encoding;
-use bun_paths::resolve_path::{relative_normalized, slashes_to_posix_in_place};
+use bun_paths::resolve_path::{platform_to_posix_in_place, relative_normalized};
 use bun_resolver::fs::FileSystem;
 
 use crate::Graph::Graph;
@@ -389,6 +389,6 @@ fn source_path_relative_to_root(root_dir: &[u8], path: &[u8]) -> Vec<u8> {
         false,
     >(root_dir, path))
     .to_vec();
-    slashes_to_posix_in_place(&mut relative[..]);
+    platform_to_posix_in_place(&mut relative[..]);
     relative
 }

@@ -33,7 +33,7 @@ for (let backend of ["api", "cli"] as const) {
     const [systemKey, systemValue] = Object.entries(process.env).find(
       ([key, value]) =>
         /^[A-Z][A-Z0-9_]*$/.test(key) && value && /^[\x20-\x7e]+$/.test(value) && !/["`$\\]/.test(value),
-    )!;
+    ) ?? ["PATH", process.env.PATH!];
     itBundled("env/inline system", {
       env: {
         [systemKey]: systemValue,

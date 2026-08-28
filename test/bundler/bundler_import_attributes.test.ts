@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { dirname, join } from "path";
 import { itBundled } from "./expectBundled";
 
 // Import attributes (`with { ... }`) travel with the import record: an import
@@ -148,6 +149,58 @@ describe("bundler", () => {
       "/data.json": `{"a":1}`,
     },
     run: { stdout: "string object object 1" },
+  });
+
+  // The same holds when an onResolve plugin answers the resolution ...
+  itBundled("import-attributes/same-path-different-type-onresolve-plugin", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        import first from "data:data.json" with { type: "text" };
+        import second from "data:data.json" with { type: "json" };
+        console.log(typeof first, typeof second);
+      `,
+      "/data.json": `{"a":1}`,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /^data:/ }, args => ({
+        path: join(dirname(args.importer), args.path.slice("data:".length)),
+      }));
+    },
+    run: { stdout: "string object" },
+  });
+
+  // ... and when a plugin's onResolve declines and the bundler resolves the file itself.
+  itBundled("import-attributes/same-path-different-type-onresolve-no-match", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        import first from "./data.json" with { type: "text" };
+        import second from "./data.json" with { type: "json" };
+        console.log(typeof first, typeof second);
+      `,
+      "/data.json": `{"a":1}`,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /\.json$/ }, () => undefined);
+    },
+    run: { stdout: "string object" },
+  });
+
+  itBundled("import-attributes/unknown-type-with-onresolve-no-match", {
+    files: {
+      "/entry.js": /* js */ `
+        import x from "./data.json" with { type: "nope" };
+        console.log(x);
+      `,
+      "/data.json": `{"a":1}`,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /\.json$/ }, () => undefined);
+    },
+    bundleErrors: {
+      "/entry.js": ['Importing with a type attribute of "nope" is not supported'],
+    },
   });
 
   // Re-exports carry the attribute to the bundled module too.

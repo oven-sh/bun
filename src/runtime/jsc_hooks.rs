@@ -4113,8 +4113,8 @@ unsafe fn get_loader_and_virtual_source<'a>(
     if query == b"?raw" {
         loader = Some(Loader::Text);
     }
-    if let Some(attr_str) = type_attribute_str {
-        // A `type` that names no loader is an error, as in Node.
+    // A `type` that names no loader is an error, as in Node. `macro` is not a loader.
+    if let Some(attr_str) = type_attribute_str.filter(|s| *s != b"macro") {
         let Some(attr_loader) = Loader::from_string(attr_str) else {
             return Err(crate::Error::UnsupportedImportAttributeType);
         };

@@ -2350,9 +2350,20 @@ pub mod bv2_impl {
             let source_dir =
                 Fs::PathName::init(&import_record.source_file).dir_with_trailing_slash();
             let key_attributes: &'static [bun_ast::ImportAttribute] = {
-                let record: &ImportRecord = &self.graph.ast.items_import_records()
-                    [import_record.importer_source_index as usize]
-                    .as_slice()[import_record.import_record_index as usize];
+                // SAFETY: `source` and the record are columns of `self.graph`, which
+                // `has_unsupported_type_attribute` does not touch.
+                let source: &bun_ast::Source = unsafe {
+                    bun_ptr::detach_lifetime_ref(
+                        &self.graph.input_files.items_source()
+                            [import_record.importer_source_index as usize],
+                    )
+                };
+                let record: &ImportRecord = unsafe {
+                    bun_ptr::detach_lifetime_ref(self.plugin_import_record(import_record))
+                };
+                if self.has_unsupported_type_attribute(source, record, target.bake_graph()) {
+                    return;
+                }
                 self.module_graph_key_attributes(record)
             };
             let mut module_key_buf: Vec<u8> = Vec::new();
@@ -4922,10 +4933,28 @@ pub mod bv2_impl {
                         // Capture `value_ptr` as a raw ptr + `found_existing` and drop
                         // the borrow; the map entry is not rehashed before we write
                         // through `value_ptr` (no intervening map mutation).
+                        // The importer's `with { type }` loader, and the attributes that key
+                        // the module, travel with the plugin's answer as they do for a
+                        // resolution the bundler did itself.
+                        let (key_attributes, attribute_loader): (
+                            &'static [bun_ast::ImportAttribute],
+                            Option<Loader>,
+                        ) = if resolve.import_record.kind == ImportKind::EntryPointBuild {
+                            (&[], None)
+                        } else {
+                            let record = this.plugin_import_record(&resolve.import_record);
+                            (this.module_graph_key_attributes(record), record.loader)
+                        };
+                        let mut module_key_buf: Vec<u8> = Vec::new();
+                        let module_key = ImportRecord::module_graph_key(
+                            path.text,
+                            key_attributes,
+                            &mut module_key_buf,
+                        );
                         let (value_ptr, found_existing) = {
                             let existing = this
                                 .path_to_source_index_map(resolve.import_record.original_target)
-                                .get_or_put(path.text)
+                                .get_or_put(module_key)
                                 .expect("oom");
                             (
                                 std::ptr::from_mut(existing.value_ptr),
@@ -4957,10 +4986,10 @@ pub mod bv2_impl {
                             // A file that a plugin resolved the record to instead keeps its own loader.
                             let loader = this.requested_file_loader(
                                 &path,
-                                resolve
-                                    .import_record
-                                    .loader
-                                    .filter(|_| path.text == &*resolve.import_record.specifier),
+                                attribute_loader
+                                    .or(resolve.import_record.loader.filter(|_| {
+                                        path.text == &*resolve.import_record.specifier
+                                    })),
                             );
 
                             this.graph
@@ -6150,6 +6179,16 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
+        /// The importer's record that a plugin `onResolve` is resolving. Not for entry points.
+        fn plugin_import_record(
+            &self,
+            import_record: &jsc_api::JSBundler::MiniImportRecord,
+        ) -> &ImportRecord {
+            debug_assert!(import_record.kind != ImportKind::EntryPointBuild);
+            &self.graph.ast.items_import_records()[import_record.importer_source_index as usize]
+                .as_slice()[import_record.import_record_index as usize]
+        }
+
         /// The dev server's incremental graph is keyed by path alone, so it ignores attributes.
         pub(crate) fn module_graph_key_attributes(
             &self,

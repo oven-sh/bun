@@ -398,18 +398,14 @@ impl<'a> Installer<'a> {
 
         // Clean up the staging directory so a half-built global-store entry
         // doesn't leak in the cache (it would never be reused — the suffix is
-        // random — but it's wasted disk). The published entry was never
-        // touched, so there is nothing else to remove.
+        // random — but it's wasted disk).
         if self.entry_uses_global_store(entry_id) {
             let mut staging = AutoAbsPath::init();
             self.append_global_store_entry_path(&mut staging, entry_id, Which::Staging);
             let _ = Fd::cwd().delete_tree(staging.slice());
         } else {
-            // Remove the project-local package directory
-            // (`node_modules/.bun/<storepath>/node_modules/<pkg>`), whatever
-            // state the failed steps left it in. Its absence is what makes the
-            // next install build this entry again, from scratch, instead of
-            // skipping it as installed.
+            // Remove the package directory so the next install builds this
+            // entry again instead of skipping it as installed.
             match pkg_res.tag {
                 ResolutionTag::Uninitialized
                 | ResolutionTag::SingleFileModule

@@ -522,9 +522,7 @@ impl bun_core::output::ErrName for Error {
         Error::name(self)
     }
     fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo> {
-        // Resolve once and hand over the `SystemErrno` discriminant: with
-        // `from_libuv` the stored `errno` is a raw `UV_E*` magnitude, which the
-        // coreutils label table does not know.
+        // Not `self.errno`: with `from_libuv` that is a raw `UV_E*` magnitude.
         let (tag_name, errno) = match self.get_error_code_tag_name() {
             Some((name, e)) => (name.as_bytes(), e as i32),
             None => (UNKNOWN_TAG_NAME, i32::from(self.errno)),

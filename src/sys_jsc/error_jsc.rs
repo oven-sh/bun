@@ -77,10 +77,8 @@ pub mod TestingAPIs {
         }
     }
 
-    /// Prints a `bun.sys.Error` through `Output.err` so tests can read the
-    /// `ENOENT: No such file or directory: ... (open)` line from stderr. With
-    /// `fromLibuv` the errno is the negated UV code as node_fs stores it
-    /// (Windows-only; prints nothing and returns `undefined` elsewhere).
+    /// Runs `Output.err` on a `bun.sys.Error` built from `(errno, fromLibuv)`;
+    /// tests read the line from stderr. `fromLibuv` is Windows-only (no-op elsewhere).
     #[bun_jsc::host_fn]
     pub fn sys_error_output_err(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let arguments = frame.arguments();

@@ -1208,23 +1208,33 @@ impl EventLoop {
     }
 
     /// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
+    /// `deadline_seconds` is [`JSValue::call_with_deadline`]'s limit; `Ok(None)` means it cut the callback short.
     pub fn run_callback_with_result_and_forcefully_drain_microtasks(
         &mut self,
         callback: JSValue,
         global_object: &JSGlobalObject,
         this_value: JSValue,
         arguments: &[JSValue],
-    ) -> JsResult<JSValue> {
+        deadline_seconds: Option<f64>,
+    ) -> JsResult<Option<JSValue>> {
         // Same gate as `run_callback`.
         if global_object.has_exception() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(Some(JSValue::UNDEFINED));
         }
-        let result = callback.call(global_object, this_value, arguments)?;
+        let result = match deadline_seconds {
+            Some(seconds) => {
+                match callback.call_with_deadline(global_object, this_value, arguments, seconds)? {
+                    Some(result) => result,
+                    None => return Ok(None),
+                }
+            }
+            None => callback.call(global_object, this_value, arguments)?,
+        };
         result.ensure_still_alive();
         let jsc_vm = global_object.bun_vm().jsc_vm();
         self.drain_microtasks_with_global(global_object, jsc_vm)
             .map_err(|stopped| stopped.throw(global_object))?;
-        Ok(result)
+        Ok(Some(result))
     }
 
     /// Keep one poll registered with the loop so `us_loop_run_bun_tick` parks

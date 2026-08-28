@@ -95,6 +95,7 @@
 #include "JavaScriptCore/ScriptExecutable.h"
 #include "JavaScriptCore/StackFrame.h"
 #include "JavaScriptCore/StackVisitor.h"
+#include "JavaScriptCore/TerminationDeadline.h"
 #include "JavaScriptCore/VM.h"
 #include "JavaScriptCore/WasmFaultSignalHandler.h"
 #include "ZigGlobalObject.h"
@@ -3311,6 +3312,46 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
 
     RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(result);
+}
+
+// Bun__JSValue__call plus the microtask checkpoint after it, under a wall-clock limit: bun:test's per-test
+// timeout for a callback that never yields to the event loop. Past the limit the VM's termination is requested
+// from a timer thread and the callback unwinds with the TerminationException. As in node:vm's runs
+// (NodeVMRunTermination) that termination is withdrawn here, beneath the FFI boundary, which takes a
+// termination that reaches it as the VM's stop; `*timedOut` reports it instead, with nothing pending.
+extern "C" JSC::EncodedJSValue Bun__JSValue__callWithDeadline(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue object,
+    JSC::EncodedJSValue thisObject, size_t argumentCount, const JSC::EncodedJSValue* arguments, double seconds, bool* timedOut)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    *timedOut = false;
+
+    Ref<JSC::TerminationDeadline> deadline = vm.addTerminationDeadline(MonotonicTime::now() + Seconds(seconds));
+    JSC::EncodedJSValue result = Bun__JSValue__call(globalObject, object, thisObject, argumentCount, arguments);
+    if (!scope.exception() && !WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[likely]] {
+        uncheckedDowncast<Zig::GlobalObject>(globalObject)->performMicrotaskCheckpoint();
+        if (scope.exception()) [[unlikely]]
+            result = {};
+    }
+    deadline->cancel(vm);
+    if (!deadline->didFire()) [[likely]]
+        return result;
+
+    // The stop's request is indistinguishable from the deadline's; the stop wins and stays pending.
+    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]
+        return result;
+    vm.cancelTermination();
+    // A stop requested between the check above and the withdrawal went with it: request it again.
+    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]
+        vm.notifyNeedTermination();
+    // The TerminationException, or an error a finally block threw over it, is not the callback's result.
+    {
+        auto top = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        if (top.exception())
+            top.clearException();
+    }
+    *timedOut = true;
+    return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
 // CPP_DECL size_t JSC__PropertyNameArray__length(JSC__PropertyNameArray* arg0);

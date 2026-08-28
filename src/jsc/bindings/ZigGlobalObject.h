@@ -326,6 +326,9 @@ public:
     JSC::JSObject* bunObject() const { return m_bunObject.getInitializedOnMainThread(this); }
 
     uint8_t drainMicrotasks();
+    // drainMicrotasks()'s checkpoint for a caller that classifies a termination itself: an ordinary
+    // uncaught exception is reported here, a termination is left pending.
+    void performMicrotaskCheckpoint();
 
     void handleRejectedPromises();
     ALWAYS_INLINE void initGeneratedLazyClasses();

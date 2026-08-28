@@ -3,18 +3,19 @@ use std::io::Write as _;
 
 use crate::cli::command::TestOptions;
 use crate::cli::test_command::CommandLineReporter;
+use crate::timer::ElTimespec;
 use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_core::Output;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, RegularExpression,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, Local,
+    RegularExpression, Scope,
 };
-use crate::timer::ElTimespec;
 
 pub use super::bun_test;
 use super::expect::{Expect, ExpectTypeOf};
-use super::scope_functions::{create_bound, Mode as ScopeKind};
+use super::scope_functions::{Mode as ScopeKind, create_bound};
 use super::snapshot::Snapshots;
 use super::timers::fake_timers;
 use bun_test::js_fns::generic_hook;
@@ -84,11 +85,7 @@ impl CurrentFile {
                 );
             }
         } else {
-            bun_core::pretty_errorln!(
-                "{}{}:\n",
-                bstr::BStr::new(prefix),
-                bstr::BStr::new(title)
-            );
+            bun_core::pretty_errorln!("{}{}:\n", bstr::BStr::new(prefix), bstr::BStr::new(title));
         }
 
         Output::flush();
@@ -167,7 +164,9 @@ impl<'a> TestRunner<'a> {
             if let Some(group) = active_file.execution.active_group_ref() {
                 let mut latest: Option<bun_core::Timespec> = None;
                 for seq in group.sequences_const(&active_file.execution) {
-                    let Some(entry) = seq.active_entry else { continue };
+                    let Some(entry) = seq.active_entry else {
+                        continue;
+                    };
                     // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
                     let ts = unsafe { entry.as_ref() }.timespec;
                     if latest.is_none_or(|l| ts.order(&l) == core::cmp::Ordering::Greater) {
@@ -188,7 +187,10 @@ impl<'a> TestRunner<'a> {
         // same `{sec, nsec}` shape as bun_core::Timespec; convert by field
         // until the lower tier unifies on bun_core::Timespec (see
         // src/runtime/timer/mod.rs ElTimespec alias).
-        bun_core::Timespec { sec: active_file.timer.next.sec, nsec: active_file.timer.next.nsec }
+        bun_core::Timespec {
+            sec: active_file.timer.next.sec,
+            nsec: active_file.timer.next.nsec,
+        }
     }
 
     pub(crate) fn remove_active_timeout(&mut self, vm: &mut VirtualMachine) {
@@ -347,7 +349,10 @@ pub mod Jest {
             global_object,
             ScopeKind::Test,
             JSValue::ZERO,
-            BaseScopeCfg { self_mode: ScopeMode::Skip, ..Default::default() },
+            BaseScopeCfg {
+                self_mode: ScopeMode::Skip,
+                ..Default::default()
+            },
             "xtest",
         )?;
         module.put(global_object, b"xtest", xtest_scope_functions);
@@ -366,7 +371,10 @@ pub mod Jest {
             global_object,
             ScopeKind::Describe,
             JSValue::ZERO,
-            BaseScopeCfg { self_mode: ScopeMode::Skip, ..Default::default() },
+            BaseScopeCfg {
+                self_mode: ScopeMode::Skip,
+                ..Default::default()
+            },
             "xdescribe",
         )?;
         module.put(global_object, b"xdescribe", xdescribe_scope_functions);
@@ -376,35 +384,79 @@ pub mod Jest {
         module.put(
             global_object,
             b"beforeEach",
-            jsc::JSFunction::create(global_object, "beforeEach", generic_hook::__jsc_host_before_each, 1, Default::default()),
+            jsc::JSFunction::create(
+                global_object,
+                "beforeEach",
+                generic_hook::__jsc_host_before_each,
+                1,
+                Default::default(),
+            ),
         );
         module.put(
             global_object,
             b"beforeAll",
-            jsc::JSFunction::create(global_object, "beforeAll", generic_hook::__jsc_host_before_all, 1, Default::default()),
+            jsc::JSFunction::create(
+                global_object,
+                "beforeAll",
+                generic_hook::__jsc_host_before_all,
+                1,
+                Default::default(),
+            ),
         );
         module.put(
             global_object,
             b"afterAll",
-            jsc::JSFunction::create(global_object, "afterAll", generic_hook::__jsc_host_after_all, 1, Default::default()),
+            jsc::JSFunction::create(
+                global_object,
+                "afterAll",
+                generic_hook::__jsc_host_after_all,
+                1,
+                Default::default(),
+            ),
         );
         module.put(
             global_object,
             b"afterEach",
-            jsc::JSFunction::create(global_object, "afterEach", generic_hook::__jsc_host_after_each, 1, Default::default()),
+            jsc::JSFunction::create(
+                global_object,
+                "afterEach",
+                generic_hook::__jsc_host_after_each,
+                1,
+                Default::default(),
+            ),
         );
         module.put(
             global_object,
             b"onTestFinished",
-            jsc::JSFunction::create(global_object, "onTestFinished", generic_hook::__jsc_host_on_test_finished, 1, Default::default()),
+            jsc::JSFunction::create(
+                global_object,
+                "onTestFinished",
+                generic_hook::__jsc_host_on_test_finished,
+                1,
+                Default::default(),
+            ),
         );
         module.put(
             global_object,
             b"setDefaultTimeout",
-            jsc::JSFunction::create(global_object, "setDefaultTimeout", __jsc_host_js_set_default_timeout, 1, Default::default()),
+            jsc::JSFunction::create(
+                global_object,
+                "setDefaultTimeout",
+                __jsc_host_js_set_default_timeout,
+                1,
+                Default::default(),
+            ),
         );
-        module.put(global_object, b"expect", jsc::codegen::js::get_constructor::<Expect>(global_object));
-        module.put(global_object, b"expectTypeOf", jsc::codegen::js::get_constructor::<ExpectTypeOf>(global_object));
+        module.put(
+            global_object,
+            b"expect",
+            jsc::codegen::js::get_constructor::<Expect>(global_object),
+        );
+        module.put(
+            global_object,
+            b"expectTypeOf",
+            jsc::codegen::js::get_constructor::<ExpectTypeOf>(global_object),
+        );
 
         // will add more 9 properties in the module here so we need to allocate 23 properties
         create_mock_objects(global_object, module);
@@ -413,15 +465,52 @@ pub mod Jest {
     }
 
     fn create_mock_objects(global_object: &JSGlobalObject, module: JSValue) {
-        let set_system_time = jsc::JSFunction::create(global_object, "setSystemTime", JSMock__jsSetSystemTime, 0, Default::default());
+        let set_system_time = jsc::JSFunction::create(
+            global_object,
+            "setSystemTime",
+            JSMock__jsSetSystemTime,
+            0,
+            Default::default(),
+        );
         module.put(global_object, b"setSystemTime", set_system_time);
 
-        let mock_fn = jsc::JSFunction::create(global_object, "fn", JSMock__jsMockFn, 1, Default::default());
-        let spy_on = jsc::JSFunction::create(global_object, "spyOn", JSMock__jsSpyOn, 2, Default::default());
-        let restore_all_mocks = jsc::JSFunction::create(global_object, "restoreAllMocks", JSMock__jsRestoreAllMocks, 2, Default::default());
-        let clear_all_mocks = jsc::JSFunction::create(global_object, "clearAllMocks", JSMock__jsClearAllMocks, 2, Default::default());
-        let reset_all_mocks = jsc::JSFunction::create(global_object, "resetAllMocks", JSMock__jsResetAllMocks, 2, Default::default());
-        let mock_module_fn = jsc::JSFunction::create(global_object, "module", JSMock__jsModuleMock, 2, Default::default());
+        let mock_fn =
+            jsc::JSFunction::create(global_object, "fn", JSMock__jsMockFn, 1, Default::default());
+        let spy_on = jsc::JSFunction::create(
+            global_object,
+            "spyOn",
+            JSMock__jsSpyOn,
+            2,
+            Default::default(),
+        );
+        let restore_all_mocks = jsc::JSFunction::create(
+            global_object,
+            "restoreAllMocks",
+            JSMock__jsRestoreAllMocks,
+            2,
+            Default::default(),
+        );
+        let clear_all_mocks = jsc::JSFunction::create(
+            global_object,
+            "clearAllMocks",
+            JSMock__jsClearAllMocks,
+            2,
+            Default::default(),
+        );
+        let reset_all_mocks = jsc::JSFunction::create(
+            global_object,
+            "resetAllMocks",
+            JSMock__jsResetAllMocks,
+            2,
+            Default::default(),
+        );
+        let mock_module_fn = jsc::JSFunction::create(
+            global_object,
+            "module",
+            JSMock__jsModuleMock,
+            2,
+            Default::default(),
+        );
         module.put(global_object, b"mock", mock_fn);
         mock_fn.put(global_object, b"module", mock_module_fn);
         mock_fn.put(global_object, b"restore", restore_all_mocks);
@@ -435,12 +524,30 @@ pub mod Jest {
         jest.put(global_object, b"clearAllMocks", clear_all_mocks);
         jest.put(global_object, b"resetAllMocks", reset_all_mocks);
         jest.put(global_object, b"setSystemTime", set_system_time);
-        jest.put(global_object, b"now", jsc::JSFunction::create(global_object, "now", JSMock__jsNow, 0, Default::default()));
-        jest.put(global_object, b"setTimeout", jsc::JSFunction::create(global_object, "setTimeout", __jsc_host_js_set_default_timeout, 1, Default::default()));
+        jest.put(
+            global_object,
+            b"now",
+            jsc::JSFunction::create(global_object, "now", JSMock__jsNow, 0, Default::default()),
+        );
+        jest.put(
+            global_object,
+            b"setTimeout",
+            jsc::JSFunction::create(
+                global_object,
+                "setTimeout",
+                __jsc_host_js_set_default_timeout,
+                1,
+                Default::default(),
+            ),
+        );
 
         module.put(global_object, b"jest", jest);
         module.put(global_object, b"spyOn", spy_on);
-        module.put(global_object, b"expect", jsc::codegen::js::get_constructor::<Expect>(global_object));
+        module.put(
+            global_object,
+            b"expect",
+            jsc::codegen::js::get_constructor::<Expect>(global_object),
+        );
 
         let vi = JSValue::create_empty_object(global_object, 6 + fake_timers::TIMER_FNS_COUNT);
         vi.put(global_object, b"fn", mock_fn);
@@ -468,50 +575,53 @@ pub mod Jest {
         pub(crate) fn JSMock__jsSpyOn(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
     }
 
-    #[bun_jsc::host_fn]
-    pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let vm = global_object.bun_vm();
+    #[bun_jsc::host_fn(scoped)]
+    pub(crate) fn call<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+        let global_object = scope.unscoped_global();
+        let vm = scope.unscoped_bun_vm();
 
         if vm.is_in_preload || runner().is_none() {
             // in preload, no arguments needed
         } else {
-            let arguments = callframe.arguments();
+            let arguments = callframe.scoped_arguments::<2>(scope);
 
-            if arguments.len() < 1 || !arguments[0].is_string() {
-                return Err(global_object.throw(format_args!("Bun.jest() expects a string filename")));
+            let filename = arguments.get(0);
+            if !filename.is_some_and(|f| f.is_string()) {
+                return Err(scope.throw(format_args!("Bun.jest() expects a string filename")));
             }
-            let str = arguments[0].to_utf8(global_object)?;
+            let str = filename.unwrap().to_utf8(scope)?;
             let slice = str.slice();
 
             if !bun_paths::is_absolute(slice) {
-                return Err(global_object.throw(format_args!(
+                return Err(scope.throw(format_args!(
                     "Bun.jest() expects an absolute file path, got '{}'",
                     bstr::BStr::new(slice)
                 )));
             }
         }
 
-        jsc::from_js_host_call(global_object, || Bun__Jest__testModuleObject(global_object))
+        let v =
+            jsc::from_js_host_call(global_object, || Bun__Jest__testModuleObject(global_object))?;
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn]
-    fn js_set_default_timeout(
-        global_object: &JSGlobalObject,
+    #[bun_jsc::host_fn(scoped)]
+    fn js_set_default_timeout<'s>(
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments();
-        if arguments.len() < 1 || !arguments[0].is_number() {
-            return Err(global_object.throw(format_args!("setTimeout() expects a number (milliseconds)")));
-        }
+    ) -> JsResult<Local<'s>> {
+        let arguments = callframe.scoped_arguments::<1>(scope);
+        let Some(ms) = arguments.get(0).filter(|a| a.is_number()) else {
+            return Err(scope.throw(format_args!("setTimeout() expects a number (milliseconds)")));
+        };
 
-        let timeout_ms: u32 =
-            u32::try_from(arguments[0].coerce::<i32>(global_object)?.max(0)).unwrap();
+        let timeout_ms: u32 = u32::try_from(ms.coerce::<i32>(scope)?.max(0)).unwrap();
 
         if let Some(test_runner) = runner() {
             test_runner.default_timeout_override = timeout_ms;
         }
 
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 }
 
@@ -575,15 +685,20 @@ pub(crate) fn js_node_test_mark_result(
         // done() already ran and reported — nothing left to mark.
         None => return Ok(JSValue::UNDEFINED),
     };
-    let Some((sequence_ptr, _)) =
-        buntest.execution.get_current_and_valid_execution_sequence(&bound)
+    let Some((sequence_ptr, _)) = buntest
+        .execution
+        .get_current_and_valid_execution_sequence(&bound)
     else {
         return Ok(JSValue::UNDEFINED);
     };
     // SAFETY: NonNull into `execution.sequences`; deref at point-of-use only.
     let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
     if sequence.result == ExecResult::Pending {
-        sequence.result = if mode.to_boolean() { ExecResult::Todo } else { ExecResult::Skip };
+        sequence.result = if mode.to_boolean() {
+            ExecResult::Todo
+        } else {
+            ExecResult::Skip
+        };
     }
     Ok(JSValue::UNDEFINED)
 }
@@ -702,7 +817,9 @@ pub(crate) fn format_label(
                     let c = label[var_end];
                     if c == b'.' {
                         if var_end + 1 < label.len()
-                            && bun_js_parser::js_lexer::is_identifier_continue(label[var_end + 1] as i32)
+                            && bun_js_parser::js_lexer::is_identifier_continue(
+                                label[var_end + 1] as i32,
+                            )
                         {
                             var_end += 1;
                         } else {

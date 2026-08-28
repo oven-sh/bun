@@ -694,7 +694,7 @@ impl SharedConnection {
     }
 }
 
-fn event_loop_scope() -> Option<bun_jsc::event_loop::EventLoopEnterGuard> {
+fn event_loop_scope() -> Option<bun_jsc::event_loop::EventLoopEnterGuard<'static>> {
     // SAFETY: the current thread's VM, if any, is live for the callback.
     VirtualMachine::get_or_null().map(|vm| unsafe { (*vm).enter_event_loop_scope() })
 }

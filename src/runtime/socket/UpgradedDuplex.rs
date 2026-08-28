@@ -16,7 +16,9 @@ use core::cell::Cell;
 use core::ffi::{CStr, c_uint, c_void};
 
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, host_fn};
+use bun_jsc::{
+    CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, Local, Scope, host_fn,
+};
 use bun_uws::{us_bun_verify_error_t, uws_callback};
 
 use super::ssl_wrapper::SSLWrapper;
@@ -679,12 +681,12 @@ impl Drop for UpgradedDuplex {
 // installed by `get_js_handlers`; `teardown` clears it before the storage is
 // freed, so a non-null data pointer is live for the call.
 
-#[bun_jsc::host_fn]
-fn on_received_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+fn on_received_data<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
     bun_output::scoped_log!(UpgradedDuplex, "onReceivedData");
 
     let function = frame.callee();
-    let [data_arg] = frame.arguments_as_array::<1>();
+    let data_arg = frame.scoped_argument(scope, 0);
 
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: see host-fn note above.
@@ -692,15 +694,14 @@ fn on_received_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         if frame.arguments_count() >= 1 {
             if !this.origin.get().is_empty() {
                 if data_arg.is_empty_or_undefined_or_null() {
-                    return Ok(JSValue::UNDEFINED);
+                    return Ok(scope.undefined());
                 }
-                if let Some(array_buffer) = data_arg.as_array_buffer(global) {
+                if let Some(array_buffer) = data_arg.array_buffer_bytes(scope) {
                     // yay we can read the data
-                    let payload = array_buffer.slice();
-                    this.on_internal_receive_data(payload);
+                    this.on_internal_receive_data(&array_buffer);
                 } else {
                     // node.js errors in this case with the same error, lets keep it consistent
-                    let error_value = global
+                    let error_value = scope
                         .err(
                             bun_jsc::ErrorCode::STREAM_WRAP,
                             format_args!("Stream has StringDecoder set or is in objectMode"),
@@ -712,11 +713,11 @@ fn on_received_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
             }
         }
     }
-    Ok(JSValue::UNDEFINED)
+    Ok(scope.undefined())
 }
 
-#[bun_jsc::host_fn]
-fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+fn on_end<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
     bun_output::scoped_log!(UpgradedDuplex, "onEnd");
     let function = frame.callee();
 
@@ -732,11 +733,11 @@ fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             this.pending_end.set(true);
         }
     }
-    Ok(JSValue::UNDEFINED)
+    Ok(scope.undefined())
 }
 
-#[bun_jsc::host_fn]
-fn on_writable(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+fn on_writable<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
     bun_output::scoped_log!(UpgradedDuplex, "onWritable");
 
     let function = frame.callee();
@@ -750,11 +751,11 @@ fn on_writable(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
         (this.handlers.on_writable)(this.handlers.ctx);
     }
 
-    Ok(JSValue::UNDEFINED)
+    Ok(scope.undefined())
 }
 
-#[bun_jsc::host_fn]
-fn on_close_js(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+fn on_close_js<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
     bun_output::scoped_log!(UpgradedDuplex, "onCloseJS");
 
     let function = frame.callee();
@@ -766,7 +767,7 @@ fn on_close_js(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
         this.close();
     }
 
-    Ok(JSValue::UNDEFINED)
+    Ok(scope.undefined())
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -13,8 +13,7 @@ use bun_core::MutableString;
 use bun_core::Output;
 use bun_core::String as BunString;
 use bun_jsc::ConcurrentTask::ConcurrentTask;
-use bun_jsc::bun_string_jsc;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc as _};
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, Local, Scope};
 use bun_options_types::compile_target::CompileTarget;
 use bun_options_types::schema::api; // bun.schema.api
 use bun_standalone_graph::StandaloneModuleGraph;
@@ -1389,12 +1388,15 @@ pub mod js_bundler {
     }
 
     /// `Bun.build(config)`
-    #[bun_jsc::host_fn]
-    pub(crate) fn build_fn(
-        global_this: &JSGlobalObject,
+    #[bun_jsc::host_fn(scoped)]
+    pub(crate) fn build_fn<'s>(
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        build(global_this, callframe.arguments())
+    ) -> JsResult<Local<'s>> {
+        // `build` is an unmigrated helper taking `&[JSValue]`; keep the raw
+        // argument view (escape hatch).
+        let v = build(scope.unscoped_global(), callframe.arguments())?;
+        Ok(scope.local(v))
     }
 
     // NOTE: `Resolve`/`Load`/`MiniImportRecord`/etc. are owned by
@@ -1918,105 +1920,109 @@ fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
 }
 
 impl BuildArtifact {
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn get_text(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn get_text<'s>(
         this: &Self,
-        global_this: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.blob.get_text(global_this, callframe)
+    ) -> JsResult<Local<'s>> {
+        let v = this.blob.get_text(scope.unscoped_global(), callframe)?;
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn get_json(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn get_json<'s>(
         this: &Self,
-        global_this: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.blob.get_json(global_this, callframe)
+    ) -> JsResult<Local<'s>> {
+        let v = this.blob.get_json(scope.unscoped_global(), callframe)?;
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn get_array_buffer(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn get_array_buffer<'s>(
         this: &Self,
-        global_this: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.blob.get_array_buffer(global_this, callframe)
+    ) -> JsResult<Local<'s>> {
+        let v = this
+            .blob
+            .get_array_buffer(scope.unscoped_global(), callframe)?;
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn get_slice(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn get_slice<'s>(
         this: &Self,
-        global_this: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.blob.get_slice(global_this, callframe)
+    ) -> JsResult<Local<'s>> {
+        let v = this.blob.get_slice(scope.unscoped_global(), callframe)?;
+        Ok(scope.local(v))
     }
 
     /// `callframe.this()` is a `JSBuildArtifact`, not a `JSBlob`, so the
     /// cached-stream slot must be BuildArtifact's own (`values: ["stream"]` in
     /// JSBundler.classes.ts); `Blob::get_stream` would poke `JSBlob::m_stream`.
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn get_stream(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn get_stream<'s>(
         this: &Self,
-        global_this: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.blob.get_stream_with_cache(
-            global_this,
+    ) -> JsResult<Local<'s>> {
+        let v = this.blob.get_stream_with_cache(
+            scope.unscoped_global(),
             callframe,
             crate::generated_classes::js_BuildArtifact::stream_get_cached,
             crate::generated_classes::js_BuildArtifact::stream_set_cached,
-        )
+        )?;
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_path(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::create_utf8_for_js(global_this, &this.path)
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub(crate) fn get_path<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        scope.string_utf8(&this.path)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_loader(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        BunString::static_(<&'static str>::from(this.loader)).to_js(global_this)
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub(crate) fn get_loader<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        scope.string(&BunString::static_(<&'static str>::from(this.loader)))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_hash(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub(crate) fn get_hash<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         use std::io::Write;
         let mut buf = [0u8; 512];
         let mut cursor = &mut buf[..];
         write!(cursor, "{}", bun_core::fmt::truncated_hash32(this.hash)).expect("Unexpected");
         let written = 512 - cursor.len();
-        bun_string_jsc::create_utf8_for_js(global_this, &buf[..written])
+        scope.string_utf8(&buf[..written])
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_size(this: &Self, global_object: &JSGlobalObject) -> JSValue {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub(crate) fn get_size<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         // `Blob::get_size` is `&self` post-R-2 (lazy size caches are
         // Cell-backed inside `Blob`), so a shared borrow is sound here.
-        this.blob.get_size(global_object)
+        Ok(scope.local(this.blob.get_size(scope.unscoped_global())))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_mime_type(this: &Self, global_object: &JSGlobalObject) -> JSValue {
-        BlobExt::get_type(&this.blob, global_object)
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub(crate) fn get_mime_type<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        Ok(scope.local(BlobExt::get_type(&this.blob, scope.unscoped_global())))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_output_kind(
-        this: &Self,
-        global_object: &JSGlobalObject,
-    ) -> JsResult<JSValue> {
-        BunString::static_(<&'static str>::from(this.output_kind)).to_js(global_object)
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub(crate) fn get_output_kind<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        scope.string(&BunString::static_(<&'static str>::from(this.output_kind)))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_source_map(_this: &Self, _global: &JSGlobalObject) -> JSValue {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub(crate) fn get_source_map<'s>(_this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         // The value lives in the wrapper's `m_sourcemap` WriteBarrier (seeded
         // by `on_complete`); the C++ getter returns that slot before calling
         // here, so reaching this means no sourcemap was assigned.
-        JSValue::NULL
+        Ok(scope.local(JSValue::NULL))
     }
 
     pub(crate) fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(

@@ -25,7 +25,7 @@ use bun_jsc::Debugger::DebuggerId;
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError,
-    JsResult, Node, StringJsc as _, VirtualMachine, host_fn,
+    JsResult, Local, Node, Scope, StringJsc as _, VirtualMachine, host_fn,
 };
 use bun_paths as paths;
 use bun_ptr::RefPtr;
@@ -1168,12 +1168,12 @@ impl Drop for ServePlugins {
     }
 }
 
-#[bun_jsc::host_fn(export = "BunServe__onResolvePlugins")]
-fn on_resolve_impl(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(export = "BunServe__onResolvePlugins", scoped)]
+fn on_resolve_impl<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
     ctx_log!("onResolve");
 
-    let [plugins_result, plugins_js] = callframe.arguments_as_array::<2>();
-    let plugins = plugins_js.as_promise_ptr::<ServePlugins>();
+    let [plugins_result, plugins_js] = callframe.scoped_arguments::<2>(scope).ptr;
+    let plugins = plugins_js.unscoped().as_promise_ptr::<ServePlugins>();
     // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); this adopts that ref.
     let _guard = unsafe { RefPtr::from_raw(plugins) };
     plugins_result.ensure_still_alive();
@@ -1181,21 +1181,21 @@ fn on_resolve_impl(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
     // SAFETY: pointer was passed via .then() above
     unsafe { &mut *plugins }.handle_on_resolve();
 
-    Ok(JSValue::UNDEFINED)
+    Ok(scope.undefined())
 }
 
-#[bun_jsc::host_fn(export = "BunServe__onRejectPlugins")]
-fn on_reject_impl(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(export = "BunServe__onRejectPlugins", scoped)]
+fn on_reject_impl<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
     ctx_log!("onReject");
 
-    let [error_js, plugin_js] = callframe.arguments_as_array::<2>();
-    let plugins = plugin_js.as_promise_ptr::<ServePlugins>();
+    let [error_js, plugin_js] = callframe.scoped_arguments::<2>(scope).ptr;
+    let plugins = plugin_js.unscoped().as_promise_ptr::<ServePlugins>();
     // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); this adopts that ref.
     let _guard = unsafe { RefPtr::from_raw(plugins) };
     // SAFETY: pointer was passed via .then() above
-    unsafe { &mut *plugins }.handle_on_reject(global, error_js);
+    unsafe { &mut *plugins }.handle_on_reject(scope.unscoped_global(), error_js.unscoped());
 
-    Ok(JSValue::UNDEFINED)
+    Ok(scope.undefined())
 }
 
 #[inline]
@@ -1376,33 +1376,31 @@ where
         GetOrStartLoadResult::Ready(None)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_subscriber_count(
-        &mut self,
-        global: &JSGlobalObject,
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn do_subscriber_count<'s>(
+        this: &mut Self,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let [topic_value] = callframe.arguments_as_array::<1>();
+    ) -> JsResult<Local<'s>> {
+        let [topic_value] = callframe.scoped_arguments::<1>(scope).ptr;
         if callframe.arguments_count() < 1 {
-            return Err(global.throw_not_enough_arguments("subscriberCount", 1, 0));
+            return Err(scope.throw_not_enough_arguments("subscriberCount", 1, 0));
         }
 
         if topic_value.is_empty_or_undefined_or_null() {
-            return Err(global.throw_invalid_arguments(format_args!(
+            return Err(scope.throw_invalid_arguments(format_args!(
                 "subscriberCount requires a topic name as a string"
             )));
         }
 
-        let topic_view = topic_value.to_js_string_view(global)?;
+        let topic_view = topic_value.to_js_string_view(scope)?;
         let topic = topic_view.to_utf8();
 
         if topic.slice().is_empty() {
-            return Ok(JSValue::js_number(0.0));
+            return Ok(scope.number(0.0));
         }
 
-        Ok(JSValue::js_number(f64::from(
-            self.app_mut().num_subscribers(topic.slice()),
-        )))
+        Ok(scope.number(f64::from(this.app_mut().num_subscribers(topic.slice()))))
     }
 
     // ── host_fn.wrapInstanceMethod hand-expansions ───────────────────────
@@ -1413,87 +1411,99 @@ where
     // are open-coded here.
 
     /// `pub const doStop = host_fn.wrapInstanceMethod(ThisServer, "stopFromJS", false)`
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_stop(
-        &mut self,
-        global: &JSGlobalObject,
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn do_stop<'s>(
+        this: &mut Self,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
+    ) -> JsResult<Local<'s>> {
+        let args = callframe.scoped_arguments::<2>(scope);
         // ?jsc.JSValue
-        let abruptly = iter.next_eat();
-        Ok(self.stop_from_js(abruptly))
+        let abruptly = args.get(0);
+        Ok(scope.local(this.stop_from_js(abruptly.map(Local::unscoped))))
     }
 
     /// `pub const dispose = host_fn.wrapInstanceMethod(ThisServer, "disposeFromJS", false)`
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn dispose(
-        &mut self,
-        _global: &JSGlobalObject,
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn dispose<'s>(
+        this: &mut Self,
+        scope: &mut Scope<'s>,
         _callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Ok(self.dispose_from_js())
+    ) -> JsResult<Local<'s>> {
+        Ok(scope.local(this.dispose_from_js()))
     }
 
     /// `pub const doUpgrade = host_fn.wrapInstanceMethod(ThisServer, "onUpgrade", false)`
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_upgrade(
-        &mut self,
-        global: &JSGlobalObject,
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn do_upgrade<'s>(
+        this: &mut Self,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
+    ) -> JsResult<Local<'s>> {
+        let args = callframe.scoped_arguments::<4>(scope);
         // jsc.JSValue
-        let object = iter
-            .next_eat()
-            .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
+        let object = args
+            .get(0)
+            .ok_or_else(|| scope.throw_invalid_arguments(format_args!("Missing argument")))?;
         // ?jsc.JSValue
-        let optional = iter.next_eat();
-        self.on_upgrade(global, object, optional)
+        let optional = args.get(1);
+        this.on_upgrade(
+            scope.unscoped_global(),
+            object.unscoped(),
+            optional.map(Local::unscoped),
+        )
+        .map(|v| scope.local(v))
     }
 
     /// `pub const doPublish = host_fn.wrapInstanceMethod(ThisServer, "publish", false)`
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_publish(
-        &mut self,
-        global: &JSGlobalObject,
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn do_publish<'s>(
+        this: &mut Self,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
-        let topic_value = iter
-            .next_eat()
-            .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
+    ) -> JsResult<Local<'s>> {
+        let args = callframe.scoped_arguments::<5>(scope);
+        let topic_value = args
+            .get(0)
+            .ok_or_else(|| scope.throw_invalid_arguments(format_args!("Missing argument")))?;
         if topic_value.is_undefined_or_null() {
-            return Err(global.throw_invalid_arguments(format_args!("Expected string")));
+            return Err(scope.throw_invalid_arguments(format_args!("Expected string")));
         }
         // Converting `message_value` can run user JS / GC; `topic_view` keeps
         // the topic bytes alive across it.
-        let topic_view = topic_value.to_js_string_view(global)?;
+        let topic_view = topic_value.to_js_string_view(scope)?;
         let topic = topic_view.to_utf8();
         // jsc.JSValue
-        let message_value = iter
-            .next_eat()
-            .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
+        let message_value = args
+            .get(1)
+            .ok_or_else(|| scope.throw_invalid_arguments(format_args!("Missing argument")))?;
         // ?jsc.JSValue
-        let compress_value = iter.next_eat();
-        self.publish(global, topic.slice(), message_value, compress_value)
+        let compress_value = args.get(2);
+        this.publish(
+            scope.unscoped_global(),
+            topic.slice(),
+            message_value.unscoped(),
+            compress_value.map(Local::unscoped),
+        )
+        .map(|v| scope.local(v))
     }
 
     /// `pub const doRequestIP = host_fn.wrapInstanceMethod(ThisServer, "requestIP", false)`
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_request_ip(
-        &mut self,
-        global: &JSGlobalObject,
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn do_request_ip<'s>(
+        this: &mut Self,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
-        let arg = iter.next_eat().ok_or_else(|| {
-            global.throw_invalid_arguments(format_args!("Missing Request object"))
-        })?;
+    ) -> JsResult<Local<'s>> {
+        let args = callframe.scoped_arguments::<2>(scope);
+        // *jsc.WebCore.Request
+        let arg = args
+            .get(0)
+            .ok_or_else(|| scope.throw_invalid_arguments(format_args!("Missing Request object")))?;
         let request = arg.as_class_ref::<Request>().ok_or_else(|| {
-            global.throw_invalid_arguments(format_args!("Expected Request object"))
+            scope.throw_invalid_arguments(format_args!("Expected Request object"))
         })?;
-        self.request_ip(request)
+        this.request_ip(request).map(|v| scope.local(v))
     }
 
     /// `pub const doReload = onReload`
@@ -1503,7 +1513,7 @@ where
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        self.on_reload(global, callframe)
+        Self::on_reload(self, global, callframe)
     }
 
     /// `pub const doFetch = onFetch`
@@ -1513,7 +1523,7 @@ where
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        self.on_fetch(global, callframe)
+        Self::on_fetch(self, global, callframe)
     }
 
     /// `pub const doTimeout = timeout`
@@ -1523,7 +1533,7 @@ where
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        self.timeout(global, callframe)
+        Self::timeout(self, global, callframe)
     }
 
     pub(crate) fn request_ip(&self, request: &Request) -> JsResult<JSValue> {
@@ -1541,44 +1551,49 @@ where
         )
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn timeout(
-        &mut self,
-        global: &JSGlobalObject,
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn timeout<'s>(
+        this: &mut Self,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments();
-        if arguments.len() < 2 || arguments[0].is_empty_or_undefined_or_null() {
-            return Err(global.throw_not_enough_arguments("timeout", 2, arguments.len()));
+    ) -> JsResult<Local<'s>> {
+        let arguments = callframe.scoped_arguments::<2>(scope);
+        if arguments.len < 2 || arguments.ptr[0].is_empty_or_undefined_or_null() {
+            return Err(scope.throw_not_enough_arguments(
+                "timeout",
+                2,
+                callframe.arguments_count() as usize,
+            ));
         }
 
-        let seconds = arguments[1];
+        let seconds = arguments.ptr[1];
 
-        if matches!(self.config.address, server_config::Address::Unix(_)) {
-            return Ok(JSValue::NULL);
+        if matches!(this.config.address, server_config::Address::Unix(_)) {
+            return Ok(scope.null());
         }
 
         if !seconds.is_number() {
-            return Err(self
+            return Err(this
                 .global()
                 .throw(format_args!("timeout() requires a number")));
         }
-        let value = seconds.to_u32();
+        let value = seconds.to_u32(scope);
 
-        if let Some(request) = <Request as bun_jsc::JsClass>::from_js(arguments[0]) {
+        if let Some(request) = <Request as bun_jsc::JsClass>::from_js(arguments.ptr[0].unscoped()) {
             // SAFETY: from_js returns a live *mut Request; shared access only.
             let _ = unsafe { (*request).request_context.set_timeout(value) };
-        } else if let Some(response) = <NodeHTTPResponse as bun_jsc::JsClass>::from_js(arguments[0])
+        } else if let Some(response) =
+            <NodeHTTPResponse as bun_jsc::JsClass>::from_js(arguments.ptr[0].unscoped())
         {
             // SAFETY: from_js returns a live *mut NodeHTTPResponse
             unsafe { (*response).set_timeout((value % 255) as u8) };
         } else {
-            return Err(self
+            return Err(this
                 .global()
                 .throw_invalid_arguments(format_args!("timeout() requires a Request object")));
         }
 
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
     pub(crate) fn publish(
@@ -2196,19 +2211,20 @@ where
         Ok(true)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn on_reload(
-        &mut self,
-        global: &JSGlobalObject,
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn on_reload<'s>(
+        this: &mut Self,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         let arguments = callframe.arguments();
         if arguments.len() < 1 {
-            return Err(global.throw_not_enough_arguments("reload", 1, 0));
+            return Err(scope.throw_not_enough_arguments("reload", 1, 0));
         }
 
         // SAFETY: bun_vm() returns the live per-thread VM singleton.
-        let mut args_slice = jsc::ArgumentsSlice::init(global.bun_vm(), arguments);
+        let mut args_slice = jsc::ArgumentsSlice::init(scope.unscoped_bun_vm(), arguments);
 
         let mut new_config = ServerConfig::from_js(
             global,
@@ -2216,8 +2232,8 @@ where
             server_config::FromJSOptions {
                 allow_bake_config: false,
                 is_fetch_required: true,
-                previous_fetch: !self.config.on_request.is_empty_or_undefined_or_null(),
-                previous_routes: !self.user_routes.is_empty(),
+                previous_fetch: !this.config.on_request.is_empty_or_undefined_or_null(),
+                previous_routes: !this.user_routes.is_empty(),
             },
         )?;
 
@@ -2226,46 +2242,48 @@ where
         // ws shadows, and each `wrap_handler_slot` call allocates via
         // `with_async_context_if_needed`. Same window as `serve()`; same fix.
         let _handler_pins = super::protect_handler_shadows(&new_config);
-        self.on_reload_from_zig(&mut new_config, global);
+        this.on_reload_from_zig(&mut new_config, global);
 
-        Ok(self.js_value.try_get().unwrap_or(JSValue::UNDEFINED))
+        Ok(scope.local(this.js_value.try_get().unwrap_or(JSValue::UNDEFINED)))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn on_fetch(
-        &mut self,
-        ctx: &JSGlobalObject,
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn on_fetch<'s>(
+        this: &mut Self,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         jsc::mark_binding!();
 
-        if self.config.on_request.is_empty() {
-            return Ok(
+        let ctx = scope.unscoped_global();
+
+        if this.config.on_request.is_empty() {
+            return Ok(scope.local(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     ctx,
                     ctx.create_error_instance(format_args!(
                         "fetch() requires the server to have a fetch handler"
                     )),
                 ),
-            );
+            ));
         }
 
         let arguments = callframe.arguments();
         if arguments.is_empty() {
-            return Ok(
+            return Ok(scope.local(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     ctx,
                     ctx.create_error_instance(format_args!(
                         "fetch() expects a string but received no arguments."
                     )),
                 ),
-            );
+            ));
         }
 
         let mut headers: Option<HeadersRef> = None;
         let mut method = Method::GET;
         // SAFETY: bun_vm() returns the live per-thread VM singleton.
-        let mut args = jsc::ArgumentsSlice::init(ctx.bun_vm(), arguments);
+        let mut args = jsc::ArgumentsSlice::init(scope.unscoped_bun_vm(), arguments);
 
         let first_arg = args.next_eat().unwrap();
         let mut body = BodyValue::Null;
@@ -2277,14 +2295,14 @@ where
             let temp_url_str = url_utf8.slice();
 
             if temp_url_str.is_empty() {
-                return Ok(
+                return Ok(scope.local(
                     JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                         ctx,
                         ctx.create_error_instance(format_args!(
                             "fetch() URL must not be a blank string."
                         )),
                     ),
-                );
+                ));
             }
 
             let mut url = URL::parse(temp_url_str);
@@ -2295,7 +2313,7 @@ where
             // duping it.
             let owned_url_buf: std::borrow::Cow<'_, [u8]> = if url.hostname.is_empty() {
                 std::borrow::Cow::Owned(
-                    strings::append(&self.base_url_string_for_joining, url.pathname).into_vec(),
+                    strings::append(&this.base_url_string_for_joining, url.pathname).into_vec(),
                 )
             } else {
                 std::borrow::Cow::Borrowed(temp_url_str)
@@ -2334,10 +2352,10 @@ where
                     match Blob::get::<true, false>(ctx, body__) {
                         Ok(new_blob) => body = BodyValue::Blob(new_blob),
                         Err(_) => {
-                            return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                            return Ok(scope.local(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                                 ctx,
                                 ctx.create_error_instance(format_args!("fetch() received invalid body")),
-                            ));
+                            )));
                         }
                     }
                 }
@@ -2362,9 +2380,9 @@ where
         } else {
             let fetch_error = Fetch::fetch_type_error_string(first_arg);
             let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(ctx, format_args!("{}", fetch_error));
-            return Ok(
+            return Ok(scope.local(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(ctx, err),
-            );
+            ));
         };
 
         // `Request::to_js` stores `self as *mut
@@ -2373,38 +2391,38 @@ where
         // local going out of scope does not also drop it (double-free / UAF).
         let request: *mut Request = bun_core::heap::into_raw(existing_request);
 
-        debug_assert!(!self.config.on_request.is_empty()); // confirmed above
-        let global_this = self.global();
-        let on_request = self.config.on_request;
+        debug_assert!(!this.config.on_request.is_empty()); // confirmed above
+        let global_this = this.global();
+        let on_request = this.config.on_request;
         // SAFETY: `request` was just allocated via `heap::alloc`; ownership
         // transfers to the JS wrapper inside `to_js`.
         let request_value = unsafe { (*request).to_js(&global_this) };
         let response_value =
-            match on_request.call(&global_this, self.js_value_assert_alive(), &[request_value]) {
+            match on_request.call(&global_this, this.js_value_assert_alive(), &[request_value]) {
                 Ok(v) => v,
                 Err(err) => global_this.take_exception(err),
             };
 
         if response_value.is_any_error() {
-            return Ok(
+            return Ok(scope.local(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     ctx,
                     response_value,
                 ),
-            );
+            ));
         }
 
         if response_value.is_empty_or_undefined_or_null() {
-            return Ok(
+            return Ok(scope.local(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     ctx,
                     ctx.create_error_instance(format_args!("fetch() returned an empty value")),
                 ),
-            );
+            ));
         }
 
         if response_value.as_any_promise().is_some() {
-            return Ok(response_value);
+            return Ok(scope.local(response_value));
         }
 
         if let Some(resp) = <Response as bun_jsc::JsClass>::from_js(response_value) {
@@ -2414,27 +2432,27 @@ where
             // of this synchronous frame.
             unsafe { (*resp).set_url((*request).url.get().clone()) };
         }
-        Ok(JSPromise::resolved_promise_value(ctx, response_value))
+        Ok(scope.local(JSPromise::resolved_promise_value(ctx, response_value)))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn close_idle_connections(
-        &mut self,
-        _global: &JSGlobalObject,
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn close_idle_connections<'s>(
+        this: &mut Self,
+        scope: &mut Scope<'s>,
         _callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        if self.app.is_none() || self.deinit_running.get() {
-            return Ok(JSValue::js_number(0.0));
+    ) -> JsResult<Local<'s>> {
+        if this.app.is_none() || this.deinit_running.get() {
+            return Ok(scope.number(0.0));
         }
         // Each close reaches `on_connection_filter(-2)` synchronously; hold
         // the guard so it cannot re-derive `&mut self` while this frame owns
         // it. One-shot sweep (Node semantics): busy connections are spared
         // and are NOT marked to close later.
-        self.deinit_running.set(true);
-        let closed = self.app_mut().close_idle_connections(false);
-        self.deinit_running.set(false);
-        self.deinit_if_we_can();
-        Ok(JSValue::js_number(closed as f64))
+        this.deinit_running.set(true);
+        let closed = this.app_mut().close_idle_connections(false);
+        this.deinit_running.set(false);
+        this.deinit_if_we_can();
+        Ok(scope.number(closed as f64))
     }
 
     pub(crate) fn stop_from_js(&mut self, abruptly: Option<JSValue>) -> JSValue {
@@ -2464,113 +2482,118 @@ where
         JSValue::UNDEFINED
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_port(&self, _: &JSGlobalObject) -> JSValue {
-        let config_port = match &self.config.address {
-            server_config::Address::Unix(_) => return JSValue::UNDEFINED,
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub(crate) fn get_port<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        let config_port = match &this.config.address {
+            server_config::Address::Unix(_) => return Ok(scope.undefined()),
             server_config::Address::Tcp { port, .. } => *port,
         };
 
-        if let Some(listener) = self.listener {
+        if let Some(listener) = this.listener {
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             if let Some(p) = bun_opaque::opaque_deref_mut(listener).get_local_port() {
-                return JSValue::js_number(p as f64);
+                return Ok(scope.number(p as f64));
             }
         }
         if Self::HAS_H3 {
-            if let Some(h3l) = self.h3_listener {
+            if let Some(h3l) = this.h3_listener {
                 // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 if let Some(p) = bun_opaque::opaque_deref_mut(h3l).get_local_port() {
-                    return JSValue::js_number(p as f64);
+                    return Ok(scope.number(p as f64));
                 }
             }
         }
-        JSValue::js_number(config_port as f64)
+        Ok(scope.number(config_port as f64))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_id(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::create_utf8_for_js(global, &self.config.id)
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub(crate) fn get_id<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        scope.string_utf8(&this.config.id)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_pending_requests(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_number((self.pending_requests.get() as u32 & 0x7FFF_FFFF) as i32 as f64)
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub(crate) fn get_pending_requests<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+    ) -> JsResult<Local<'s>> {
+        Ok(scope.number((this.pending_requests.get() as u32 & 0x7FFF_FFFF) as i32 as f64))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_pending_web_sockets(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_number((self.active_sockets_count() as u32 & 0x7FFF_FFFF) as i32 as f64)
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub(crate) fn get_pending_web_sockets<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+    ) -> JsResult<Local<'s>> {
+        Ok(scope.number((this.active_sockets_count() as u32 & 0x7FFF_FFFF) as i32 as f64))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_address(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        match &self.config.address {
-            server_config::Address::Unix(unix) => {
-                bun_string_jsc::create_utf8_for_js(global, unix.as_bytes())
-            }
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub(crate) fn get_address<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        match &this.config.address {
+            server_config::Address::Unix(unix) => scope.string_utf8(unix.as_bytes()),
             server_config::Address::Tcp { port: tcp_port, .. } => {
                 let mut port: u16 = *tcp_port;
 
-                if let Some(listener) = self.listener {
+                if let Some(listener) = this.listener {
                     // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
                     let listener = bun_opaque::opaque_deref_mut(listener);
                     port = listener.get_local_port().unwrap_or(port);
 
                     let mut buf = [0u8; 64];
                     let Some(address_bytes) = listener.socket().local_address(&mut buf) else {
-                        return Ok(JSValue::NULL);
+                        return Ok(scope.null());
                     };
                     let addr = match SocketAddress::init(address_bytes, port) {
                         Ok(a) => a,
                         Err(_) => {
                             bun_core::hint::cold();
-                            return Ok(JSValue::NULL);
+                            return Ok(scope.null());
                         }
                     };
-                    return addr.into_dto(&self.global());
+                    return addr.into_dto(&this.global()).map(|v| scope.local(v));
                 }
                 if Self::HAS_H3 {
-                    if let Some(h3l) = self.h3_listener {
+                    if let Some(h3l) = this.h3_listener {
                         // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                         let h3l = bun_opaque::opaque_deref_mut(h3l);
                         port = h3l.get_local_port().unwrap_or(port);
                         let mut buf = [0u8; 64];
                         let Some(address_bytes) = h3l.get_local_address(&mut buf) else {
-                            return Ok(JSValue::NULL);
+                            return Ok(scope.null());
                         };
                         let addr = match SocketAddress::init(address_bytes, port) {
                             Ok(a) => a,
                             Err(_) => {
                                 bun_core::hint::cold();
-                                return Ok(JSValue::NULL);
+                                return Ok(scope.null());
                             }
                         };
-                        return addr.into_dto(&self.global());
+                        return addr.into_dto(&this.global()).map(|v| scope.local(v));
                     }
                 }
                 let _ = port;
-                Ok(JSValue::NULL)
+                Ok(scope.null())
             }
         }
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_url(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let url = self
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub(crate) fn get_url<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        let url = this
             .get_url_as_string()
-            .map_err(|_| global.throw_out_of_memory())?;
-        bun_string_jsc::to_jsdomurl(&url, global)
+            .map_err(|_| scope.throw_out_of_memory())?;
+        let v = bun_string_jsc::to_jsdomurl(&url, scope.unscoped_global())?;
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_hostname(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        match &self.config.address {
-            server_config::Address::Unix(_) => return Ok(JSValue::UNDEFINED),
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub(crate) fn get_hostname<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        match &this.config.address {
+            server_config::Address::Unix(_) => return Ok(scope.undefined()),
             server_config::Address::Tcp { .. } => {}
         }
         {
-            if let Some(listener) = self.listener {
+            if let Some(listener) = this.listener {
                 let mut buf = [0u8; 1024];
                 // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
                 if let Some(addr) = bun_opaque::opaque_deref_mut(listener)
@@ -2578,17 +2601,17 @@ where
                     .remote_address(&mut buf[..1024])
                 {
                     if !addr.is_empty() {
-                        return bun_string_jsc::create_utf8_for_js(global, addr);
+                        return scope.string_utf8(addr);
                     }
                 }
             }
             {
-                match &self.config.address {
+                match &this.config.address {
                     server_config::Address::Tcp { hostname, .. } => {
                         if let Some(hostname) = hostname {
-                            return bun_string_jsc::create_utf8_for_js(global, hostname.as_bytes());
+                            return scope.string_utf8(hostname.as_bytes());
                         } else {
-                            return BunString::static_("localhost").to_js(global);
+                            return scope.string(&BunString::static_("localhost"));
                         }
                     }
                     server_config::Address::Unix(_) => unreachable!(),
@@ -2597,19 +2620,19 @@ where
         }
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_protocol(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let _ = self;
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub(crate) fn get_protocol<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        let _ = this;
         if SSL {
-            BunString::static_("https").to_js(global)
+            scope.string(&BunString::static_("https"))
         } else {
-            BunString::static_("http").to_js(global)
+            scope.string(&BunString::static_("http"))
         }
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_development(_this: &Self, _: &JSGlobalObject) -> JSValue {
-        JSValue::from(DEBUG)
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub(crate) fn get_development<'s>(_this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        Ok(scope.local(JSValue::from(DEBUG)))
     }
 
     pub fn finalize(self: Box<Self>) {
@@ -2677,25 +2700,25 @@ where
         resp.end_without_body(false);
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_ref(
-        &mut self,
-        _: &JSGlobalObject,
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn do_ref<'s>(
+        this: &mut Self,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let this_value = callframe.this();
-        self.ref_();
+    ) -> JsResult<Local<'s>> {
+        let this_value = callframe.scoped_this(scope);
+        this.ref_();
         Ok(this_value)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_unref(
-        &mut self,
-        _: &JSGlobalObject,
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn do_unref<'s>(
+        this: &mut Self,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let this_value = callframe.this();
-        self.unref();
+    ) -> JsResult<Local<'s>> {
+        let this_value = callframe.scoped_this(scope);
+        this.unref();
         Ok(this_value)
     }
 
@@ -3486,9 +3509,7 @@ where
 
             let error_code_value = JSValue::js_number(error_code as f64);
             let raw_packet_value = ArrayBuffer::create_buffer(&global, raw_packet)?;
-            // SAFETY: event_loop() returns a live raw pointer tied to the global.
-            let _scope =
-                unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+            let _scope = global.bun_vm().enter_event_loop_scope();
             callback.call(
                 &global,
                 JSValue::UNDEFINED,
@@ -3522,9 +3543,7 @@ where
         if node_socket.is_undefined_or_null() {
             return Ok(());
         }
-        // SAFETY: event_loop() returns a live raw pointer tied to the global.
-        let _scope =
-            unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+        let _scope = global.bun_vm().enter_event_loop_scope();
         callback.call(&global, JSValue::UNDEFINED, &[node_socket])?;
         Ok(())
     }

@@ -2,7 +2,7 @@ use crate::node::{BlobOrStringOrBuffer as JSArgument, FileBlobs};
 use bun_collections::VecExt as _;
 use bun_jsc::{
     self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue,
-    JsRef, JsResult,
+    JsRef, JsResult, Local, Scope,
 };
 
 use super::js_valkey::{JSValkeyClient, SubscriptionCtx};
@@ -438,24 +438,25 @@ macro_rules! cmd_key_value_varargs {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl JSValkeyClient {
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn js_send(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn js_send<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let command = frame.argument(0).to_bun_string(global)?;
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
+        let command = frame.scoped_argument(scope, 0).to_bun_string(scope)?;
 
         let args_array = frame.argument(1);
         if !args_array.is_object() || !args_array.is_array() {
-            return Err(global.throw(format_args!("Arguments must be an array")));
+            return Err(scope.throw(format_args!("Arguments must be an array")));
         }
         let mut iter = args_array.array_iterator(global)?;
         let mut args: Vec<JSArgument> = Vec::with_capacity(iter.len as usize);
 
         while let Some(arg_js) = iter.next()? {
             let Some(v) = from_js(global, arg_js)? else {
-                return Err(global.throw_invalid_argument_type(
+                return Err(scope.throw_invalid_argument_type(
                     "sendCommand",
                     "argument",
                     "string or buffer",
@@ -477,18 +478,20 @@ impl JSValkeyClient {
         let promise = match this.send(global, frame.this(), &cmd) {
             Ok(p) => p,
             Err(err) => {
-                return send_err_to_js(global, "Failed to send command", &err);
+                return send_err_to_js(global, "Failed to send command", &err)
+                    .map(|v| scope.local(v));
             }
         };
-        Ok(promise_to_js(promise))
+        Ok(scope.local(promise_to_js(promise)))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn get(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn get<'s>(this: &Self, scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         require_not_subscriber(this, b"get")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("get", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("get", "key", "string or buffer"));
         };
         send_cmd(
             this,
@@ -499,18 +502,20 @@ impl JSValkeyClient {
             CommandMeta::default(),
             "Failed to send GET command",
         )
+        .map(|v| scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn get_buffer(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn get_buffer<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         require_not_subscriber(this, b"getBuffer")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("getBuffer", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("getBuffer", "key", "string or buffer"));
         };
         send_cmd(
             this,
@@ -521,26 +526,28 @@ impl JSValkeyClient {
             CommandMeta::RETURN_AS_BUFFER | CommandMeta::SUPPORTS_AUTO_PIPELINING,
             "Failed to send GET command",
         )
+        .map(|v| scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn set(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn set<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         require_not_subscriber(this, b"set")?;
 
         let args_view = frame.arguments();
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("set", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("set", "key", "string or buffer"));
         };
         args.push(key);
 
         let Some(value) = from_js(global, frame.argument(1))? else {
-            return Err(global.throw_invalid_argument_type(
+            return Err(scope.throw_invalid_argument_type(
                 "set",
                 "value",
                 "string or buffer or number",
@@ -554,7 +561,7 @@ impl JSValkeyClient {
                     break;
                 }
                 let Some(v) = from_js(global, *arg)? else {
-                    return Err(global.throw_invalid_argument_type(
+                    return Err(scope.throw_invalid_argument_type(
                         "set",
                         "arguments",
                         "string or buffer",
@@ -573,18 +580,20 @@ impl JSValkeyClient {
             CommandMeta::default(),
             "Failed to send SET command",
         )
+        .map(|v| scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn incr(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn incr<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         require_not_subscriber(this, b"incr")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("incr", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("incr", "key", "string or buffer"));
         };
         send_cmd(
             this,
@@ -595,18 +604,20 @@ impl JSValkeyClient {
             CommandMeta::default(),
             "Failed to send INCR command",
         )
+        .map(|v| scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn decr(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn decr<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         require_not_subscriber(this, b"decr")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("decr", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("decr", "key", "string or buffer"));
         };
         send_cmd(
             this,
@@ -617,18 +628,20 @@ impl JSValkeyClient {
             CommandMeta::default(),
             "Failed to send DECR command",
         )
+        .map(|v| scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn exists(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn exists<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         require_not_subscriber(this, b"exists")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("exists", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("exists", "key", "string or buffer"));
         };
         // Send EXISTS command with special Exists type for boolean conversion
         send_cmd(
@@ -640,18 +653,20 @@ impl JSValkeyClient {
             CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
             "Failed to send EXISTS command",
         )
+        .map(|v| scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn expire(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn expire<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         require_not_subscriber(this, b"expire")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("expire", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("expire", "key", "string or buffer"));
         };
 
         let seconds_value = frame.argument(1);
@@ -693,18 +708,20 @@ impl JSValkeyClient {
             CommandMeta::default(),
             "Failed to send EXPIRE command",
         )
+        .map(|v| scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn ttl(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn ttl<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         require_not_subscriber(this, b"ttl")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("ttl", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("ttl", "key", "string or buffer"));
         };
         send_cmd(
             this,
@@ -715,26 +732,28 @@ impl JSValkeyClient {
             CommandMeta::default(),
             "Failed to send TTL command",
         )
+        .map(|v| scope.local(v))
     }
 
     // Implement srem (remove value from a set)
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn srem(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn srem<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         require_not_subscriber(this, b"srem")?;
 
         let args_view = frame.arguments();
         if args_view.len() < 2 {
-            return Err(global.throw(format_args!("SREM requires at least a key and one member")));
+            return Err(scope.throw(format_args!("SREM requires at least a key and one member")));
         }
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("srem", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("srem", "key", "string or buffer"));
         };
         args.push(key);
 
@@ -743,7 +762,7 @@ impl JSValkeyClient {
                 break;
             }
             let Some(value) = from_js(global, *arg)? else {
-                return Err(global.throw_invalid_argument_type(
+                return Err(scope.throw_invalid_argument_type(
                     "srem",
                     "member",
                     "string or buffer",
@@ -760,22 +779,24 @@ impl JSValkeyClient {
             CommandMeta::default(),
             "Failed to send SREM command",
         )
+        .map(|v| scope.local(v))
     }
 
     // Implement srandmember (get random member from set)
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn srandmember(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn srandmember<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         require_not_subscriber(this, b"srandmember")?;
 
         let args_view = frame.arguments();
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type(
+            return Err(scope.throw_invalid_argument_type(
                 "srandmember",
                 "key",
                 "string or buffer",
@@ -786,7 +807,7 @@ impl JSValkeyClient {
         // Optional count argument
         if args_view.len() > 1 && !frame.argument(1).is_undefined_or_null() {
             let Some(count_arg) = from_js(global, frame.argument(1))? else {
-                return Err(global.throw_invalid_argument_type(
+                return Err(scope.throw_invalid_argument_type(
                     "srandmember",
                     "count",
                     "number or string",
@@ -803,19 +824,21 @@ impl JSValkeyClient {
             CommandMeta::default(),
             "Failed to send SRANDMEMBER command",
         )
+        .map(|v| scope.local(v))
     }
 
     // Implement smembers (get all members of a set)
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn smembers(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn smembers<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         require_not_subscriber(this, b"smembers")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("smembers", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("smembers", "key", "string or buffer"));
         };
         send_cmd(
             this,
@@ -826,33 +849,31 @@ impl JSValkeyClient {
             CommandMeta::default(),
             "Failed to send SMEMBERS command",
         )
+        .map(|v| scope.local(v))
     }
 
     // Implement spop (pop a random member from a set)
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn spop(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn spop<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         require_not_subscriber(this, b"spop")?;
 
         let args_view = frame.arguments();
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("spop", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("spop", "key", "string or buffer"));
         };
         args.push(key);
 
         // Optional count argument
         if args_view.len() > 1 && !frame.argument(1).is_undefined_or_null() {
             let Some(count_arg) = from_js(global, frame.argument(1))? else {
-                return Err(global.throw_invalid_argument_type(
-                    "spop",
-                    "count",
-                    "number or string",
-                ));
+                return Err(scope.throw_invalid_argument_type("spop", "count", "number or string"));
             };
             args.push(count_arg);
         }
@@ -865,26 +886,28 @@ impl JSValkeyClient {
             CommandMeta::default(),
             "Failed to send SPOP command",
         )
+        .map(|v| scope.local(v))
     }
 
     // Implement sadd (add member to a set)
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn sadd(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn sadd<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         require_not_subscriber(this, b"sadd")?;
 
         let args_view = frame.arguments();
         if args_view.len() < 2 {
-            return Err(global.throw(format_args!("SADD requires at least a key and one member")));
+            return Err(scope.throw(format_args!("SADD requires at least a key and one member")));
         }
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("sadd", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("sadd", "key", "string or buffer"));
         };
         args.push(key);
 
@@ -893,7 +916,7 @@ impl JSValkeyClient {
                 break;
             }
             let Some(value) = from_js(global, *arg)? else {
-                return Err(global.throw_invalid_argument_type(
+                return Err(scope.throw_invalid_argument_type(
                     "sadd",
                     "member",
                     "string or buffer",
@@ -910,22 +933,24 @@ impl JSValkeyClient {
             CommandMeta::default(),
             "Failed to send SADD command",
         )
+        .map(|v| scope.local(v))
     }
 
     // Implement sismember (check if value is member of a set)
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn sismember(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn sismember<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         require_not_subscriber(this, b"sismember")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("sismember", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("sismember", "key", "string or buffer"));
         };
         let Some(value) = from_js(global, frame.argument(1))? else {
-            return Err(global.throw_invalid_argument_type(
+            return Err(scope.throw_invalid_argument_type(
                 "sismember",
                 "value",
                 "string or buffer",
@@ -940,26 +965,28 @@ impl JSValkeyClient {
             CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
             "Failed to send SISMEMBER command",
         )
+        .map(|v| scope.local(v))
     }
 
     // Implement hmget (get multiple values from hash)
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn hmget(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn hmget<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         require_not_subscriber(this, b"hmget")?;
 
         let args_view = frame.arguments();
         if args_view.len() < 2 {
-            return Err(global.throw(format_args!("HMGET requires at least a key and one field")));
+            return Err(scope.throw(format_args!("HMGET requires at least a key and one field")));
         }
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("hmget", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("hmget", "key", "string or buffer"));
         };
         args.push(key);
 
@@ -967,13 +994,13 @@ impl JSValkeyClient {
         if second_arg.is_array() {
             let array_len = second_arg.get_length(global)?;
             if array_len == 0 {
-                return Err(global.throw(format_args!("HMGET requires at least one field")));
+                return Err(scope.throw(format_args!("HMGET requires at least one field")));
             }
 
             let mut array_iter = second_arg.array_iterator(global)?;
             while let Some(element) = array_iter.next()? {
                 let Some(field) = from_js(global, element)? else {
-                    return Err(global.throw_invalid_argument_type(
+                    return Err(scope.throw_invalid_argument_type(
                         "hmget",
                         "field",
                         "string or buffer",
@@ -987,7 +1014,7 @@ impl JSValkeyClient {
                     break;
                 }
                 let Some(field) = from_js(global, *arg)? else {
-                    return Err(global.throw_invalid_argument_type(
+                    return Err(scope.throw_invalid_argument_type(
                         "hmget",
                         "field",
                         "string or buffer",
@@ -1006,20 +1033,22 @@ impl JSValkeyClient {
             CommandMeta::default(),
             "Failed to send HMGET command",
         )
+        .map(|v| scope.local(v))
     }
 
     // Implement hincrby (increment hash field by integer value)
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn hincrby(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn hincrby<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         require_not_subscriber(this, b"hincrby")?;
 
-        let key = frame.argument(0).to_bun_string(global)?;
-        let field = frame.argument(1).to_bun_string(global)?;
-        let value = frame.argument(2).to_bun_string(global)?;
+        let key = frame.scoped_argument(scope, 0).to_bun_string(scope)?;
+        let field = frame.scoped_argument(scope, 1).to_bun_string(scope)?;
+        let value = frame.scoped_argument(scope, 2).to_bun_string(scope)?;
 
         let key_slice = key.to_utf8();
         let field_slice = field.to_utf8();
@@ -1034,20 +1063,22 @@ impl JSValkeyClient {
             CommandMeta::default(),
             "Failed to send HINCRBY command",
         )
+        .map(|v| scope.local(v))
     }
 
     // Implement hincrbyfloat (increment hash field by float value)
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn hincrbyfloat(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn hincrbyfloat<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         require_not_subscriber(this, b"hincrbyfloat")?;
 
-        let key = frame.argument(0).to_bun_string(global)?;
-        let field = frame.argument(1).to_bun_string(global)?;
-        let value = frame.argument(2).to_bun_string(global)?;
+        let key = frame.scoped_argument(scope, 0).to_bun_string(scope)?;
+        let field = frame.scoped_argument(scope, 1).to_bun_string(scope)?;
+        let value = frame.scoped_argument(scope, 2).to_bun_string(scope)?;
 
         let key_slice = key.to_utf8();
         let field_slice = field.to_utf8();
@@ -1062,6 +1093,7 @@ impl JSValkeyClient {
             CommandMeta::default(),
             "Failed to send HINCRBYFLOAT command",
         )
+        .map(|v| scope.local(v))
     }
 
     fn hset_impl(
@@ -1169,22 +1201,22 @@ impl JSValkeyClient {
         )
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn hset(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn hset<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Self::hset_impl(this, global, frame, b"HSET")
+    ) -> JsResult<Local<'s>> {
+        Self::hset_impl(this, scope.unscoped_global(), frame, b"HSET").map(|v| scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn hmset(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn hmset<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Self::hset_impl(this, global, frame, b"HMSET")
+    ) -> JsResult<Local<'s>> {
+        Self::hset_impl(this, scope.unscoped_global(), frame, b"HMSET").map(|v| scope.local(v))
     }
 
     cmd_key_varargs!(hdel, b"hdel", "HDEL", "key", NotSubscriber);
@@ -1209,22 +1241,23 @@ impl JSValkeyClient {
     cmd_strings_varargs!(hpttl, b"hpttl", "HPTTL", NotSubscriber);
     cmd_strings_varargs!(httl, b"httl", "HTTL", NotSubscriber);
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn hsetnx(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn hsetnx<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         require_not_subscriber(this, b"hsetnx")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("hsetnx", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("hsetnx", "key", "string or buffer"));
         };
         let Some(field) = from_js(global, frame.argument(1))? else {
-            return Err(global.throw_invalid_argument_type("hsetnx", "field", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("hsetnx", "field", "string or buffer"));
         };
         let Some(value) = from_js(global, frame.argument(2))? else {
-            return Err(global.throw_invalid_argument_type("hsetnx", "value", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("hsetnx", "value", "string or buffer"));
         };
         send_cmd(
             this,
@@ -1235,22 +1268,24 @@ impl JSValkeyClient {
             CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
             "Failed to send HSETNX command",
         )
+        .map(|v| scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn hexists(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn hexists<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         require_not_subscriber(this, b"hexists")?;
 
         let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("hexists", "key", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("hexists", "key", "string or buffer"));
         };
 
         let Some(field) = from_js(global, frame.argument(1))? else {
-            return Err(global.throw_invalid_argument_type("hexists", "field", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("hexists", "field", "string or buffer"));
         };
         send_cmd(
             this,
@@ -1261,19 +1296,22 @@ impl JSValkeyClient {
             CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
             "Failed to send HEXISTS command",
         )
+        .map(|v| scope.local(v))
     }
 
     // Implement ping (send a PING command with an optional message)
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn ping(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn ping<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let message: Option<JSArgument> = if !frame.argument(0).is_undefined_or_null() {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
+        let arg0 = frame.scoped_argument(scope, 0);
+        let message: Option<JSArgument> = if !arg0.is_undefined_or_null() {
             // Only use the first argument if provided, ignore any additional arguments
-            let Some(m) = from_js(global, frame.argument(0))? else {
-                return Err(global.throw_invalid_argument_type(
+            let Some(m) = from_js(global, arg0.unscoped())? else {
+                return Err(scope.throw_invalid_argument_type(
                     "ping",
                     "message",
                     "string or buffer",
@@ -1296,6 +1334,7 @@ impl JSValkeyClient {
             CommandMeta::default(),
             "Failed to send PING command",
         )
+        .map(|v| scope.local(v))
     }
 
     cmd_key!(bitcount, b"bitcount", "BITCOUNT", "key", NotSubscriber);
@@ -1600,26 +1639,27 @@ impl JSValkeyClient {
         NotSubscriber
     );
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn smove(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn smove<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         require_not_subscriber(this, b"smove")?;
 
         let Some(source) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("smove", "source", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("smove", "source", "string or buffer"));
         };
         let Some(destination) = from_js(global, frame.argument(1))? else {
-            return Err(global.throw_invalid_argument_type(
+            return Err(scope.throw_invalid_argument_type(
                 "smove",
                 "destination",
                 "string or buffer",
             ));
         };
         let Some(member) = from_js(global, frame.argument(2))? else {
-            return Err(global.throw_invalid_argument_type("smove", "member", "string or buffer"));
+            return Err(scope.throw_invalid_argument_type("smove", "member", "string or buffer"));
         };
         send_cmd(
             this,
@@ -1630,6 +1670,7 @@ impl JSValkeyClient {
             CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
             "Failed to send SMOVE command",
         )
+        .map(|v| scope.local(v))
     }
 
     cmd_key_value_value2!(
@@ -1779,30 +1820,31 @@ impl JSValkeyClient {
     cmd_strings_varargs!(xgroup, b"xgroup", "XGROUP", NotSubscriber);
     cmd_strings_varargs!(xsetid, b"xsetid", "XSETID", NotSubscriber);
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn publish(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn publish<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         require_not_subscriber(this, b"publish")?;
 
         let args_view = frame.arguments();
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
 
-        let arg0 = frame.argument(0);
+        let arg0 = frame.scoped_argument(scope, 0);
         if !arg0.is_string() {
-            return Err(global.throw_invalid_argument_type("publish", "channel", "string"));
+            return Err(scope.throw_invalid_argument_type("publish", "channel", "string"));
         }
-        let channel = from_js(global, arg0)?.expect("unreachable");
+        let channel = from_js(global, arg0.unscoped())?.expect("unreachable");
 
         args.push(channel);
 
-        let arg1 = frame.argument(1);
+        let arg1 = frame.scoped_argument(scope, 1);
         if !arg1.is_string() {
-            return Err(global.throw_invalid_argument_type("publish", "message", "string"));
+            return Err(scope.throw_invalid_argument_type("publish", "message", "string"));
         }
-        let message = from_js(global, arg1)?.expect("unreachable");
+        let message = from_js(global, arg1.unscoped())?.expect("unreachable");
         args.push(message);
         send_cmd(
             this,
@@ -1813,27 +1855,30 @@ impl JSValkeyClient {
             CommandMeta::default(),
             "Failed to send PUBLISH command",
         )
+        .map(|v| scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn subscribe(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn subscribe<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         // `upsert_receive_handler`'s exit guard re-enters `on_writable` /
         // `update_poll_ref` before `send()` is reached; hold a ref so `*this`
         // stays live across those calls.
         let _guard = this.ref_guard();
 
-        let [channel_or_many, handler_callback] = frame.arguments_as_array::<2>();
+        let global = scope.unscoped_global();
+        let arguments = frame.scoped_arguments::<2>(scope);
+        let (channel_or_many, handler_callback) = (arguments.ptr[0], arguments.ptr[1]);
         let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
 
         if !handler_callback.is_callable() {
-            return Err(global.throw_invalid_argument_type("subscribe", "listener", "function"));
+            return Err(scope.throw_invalid_argument_type("subscribe", "listener", "function"));
         }
         if !channel_or_many.is_string() && !channel_or_many.is_array() {
-            return Err(global.throw_invalid_argument_type(
+            return Err(scope.throw_invalid_argument_type(
                 "subscribe",
                 "channel",
                 "string or array",
@@ -1851,22 +1896,23 @@ impl JSValkeyClient {
         this.ensure_dialing();
         if let Some(message) = this.client.get().send_rejection() {
             let error = valkey::ValkeyClient::send_rejection_error(global, message);
-            return Ok(JSPromise::rejected_promise(global, error).to_js());
+            return Ok(scope.local(JSPromise::rejected_promise(global, error).to_js()));
         }
 
         // The first argument given is the channel or may be an array of channels.
         if channel_or_many.is_array() {
-            if channel_or_many.get_length(global)? == 0 {
-                return Err(global.throw_invalid_arguments(format_args!(
+            if channel_or_many.unscoped().get_length(global)? == 0 {
+                return Err(scope.throw_invalid_arguments(format_args!(
                     "subscribe requires at least one channel"
                 )));
             }
-            redis_channels.ensure_total_capacity(channel_or_many.get_length(global)? as usize);
+            redis_channels
+                .ensure_total_capacity(channel_or_many.unscoped().get_length(global)? as usize);
 
-            let mut array_iter = channel_or_many.array_iterator(global)?;
+            let mut array_iter = channel_or_many.unscoped().array_iterator(global)?;
             while let Some(channel_arg) = array_iter.next()? {
                 let Some(channel) = from_js(global, channel_arg)? else {
-                    return Err(global.throw_invalid_argument_type(
+                    return Err(scope.throw_invalid_argument_type(
                         "subscribe",
                         "channel",
                         "string",
@@ -1880,16 +1926,20 @@ impl JSValkeyClient {
                 // This is less-than-ideal, still, because this assumes a happy path. What happens if
                 // the SUBSCRIBE command fails? We have no way to roll back the addition of the
                 // handler.
-                this.upsert_receive_handler(global, channel_arg, handler_callback)?;
+                this.upsert_receive_handler(global, channel_arg, handler_callback.unscoped())?;
             }
         } else {
             // It is a single string channel
-            let Some(channel) = from_js(global, channel_or_many)? else {
-                return Err(global.throw_invalid_argument_type("subscribe", "channel", "string"));
+            let Some(channel) = from_js(global, channel_or_many.unscoped())? else {
+                return Err(scope.throw_invalid_argument_type("subscribe", "channel", "string"));
             };
             redis_channels.push(channel);
 
-            this.upsert_receive_handler(global, channel_or_many, handler_callback)?;
+            this.upsert_receive_handler(
+                global,
+                channel_or_many.unscoped(),
+                handler_callback.unscoped(),
+            )?;
         }
 
         let command = Command {
@@ -1902,11 +1952,12 @@ impl JSValkeyClient {
             Err(err) => {
                 // If we catch an error, we need to clean up any handlers we may have added and fall out of subscription mode
                 this.clear_all_receive_handlers(global)?;
-                return send_err_to_js(global, "Failed to send SUBSCRIBE command", &err);
+                return send_err_to_js(global, "Failed to send SUBSCRIBE command", &err)
+                    .map(|v| scope.local(v));
             }
         };
 
-        Ok(promise_to_js(promise))
+        Ok(scope.local(promise_to_js(promise)))
     }
 
     /// Send redis the UNSUBSCRIBE RESP command and clean up anything necessary after the unsubscribe commoand.
@@ -1929,16 +1980,17 @@ impl JSValkeyClient {
         )
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn unsubscribe(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn unsubscribe<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         // Hold a ref so `*this` stays live across the handler-map updates and
         // the `send()` below.
         let _guard = this.ref_guard();
 
+        let global = scope.unscoped_global();
         // Check if we're in subscription mode
         require_subscriber(this, b"unsubscribe")?;
 
@@ -1954,7 +2006,8 @@ impl JSValkeyClient {
                 frame.this(),
                 global,
                 &redis_channels,
-            );
+            )
+            .map(|v| scope.local(v));
         }
 
         // The first argument can be a channel or an array of channels
@@ -1962,10 +2015,10 @@ impl JSValkeyClient {
 
         // Get the subscription context
         if !this._subscription_ctx.get().is_subscriber {
-            return Ok(JSPromise::resolved_promise_value(
+            return Ok(scope.local(JSPromise::resolved_promise_value(
                 global,
                 JSValue::UNDEFINED,
-            ));
+            )));
         }
 
         // Two arguments means .unsubscribe(channel, listener) is invoked.
@@ -1973,14 +2026,14 @@ impl JSValkeyClient {
             // In this case, the first argument is a channel string and the second
             // argument is the handler to remove.
             if !channel_or_many.is_string() {
-                return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
+                return Err(scope.throw_invalid_argument_type("unsubscribe", "channel", "string"));
             }
 
             let channel = channel_or_many;
             let listener_cb = frame.argument(1);
 
             if !listener_cb.is_callable() {
-                return Err(global.throw_invalid_argument_type(
+                return Err(scope.throw_invalid_argument_type(
                     "unsubscribe",
                     "listener",
                     "function",
@@ -1992,7 +2045,7 @@ impl JSValkeyClient {
             // the UNSUBSCRIBE command to redis. Without this, we would end up
             // unsubscribing from all channels.
             let Some(ch) = from_js(global, channel)? else {
-                return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
+                return Err(scope.throw_invalid_argument_type("unsubscribe", "channel", "string"));
             };
             redis_channels.push(ch);
 
@@ -2002,10 +2055,10 @@ impl JSValkeyClient {
                     Ok(None) => {
                         // Listeners weren't present in the first place, so we can return a
                         // resolved promise.
-                        return Ok(JSPromise::resolved_promise_value(
+                        return Ok(scope.local(JSPromise::resolved_promise_value(
                             global,
                             JSValue::UNDEFINED,
-                        ));
+                        )));
                     }
                     Err(e) => return Err(e),
                 };
@@ -2018,19 +2071,20 @@ impl JSValkeyClient {
                     frame.this(),
                     global,
                     &redis_channels,
-                );
+                )
+                .map(|v| scope.local(v));
             }
 
             // Otherwise, in order to keep the API consistent, we need to return a resolved promise.
-            return Ok(JSPromise::resolved_promise_value(
+            return Ok(scope.local(JSPromise::resolved_promise_value(
                 global,
                 JSValue::UNDEFINED,
-            ));
+            )));
         }
 
         if channel_or_many.is_array() {
             if channel_or_many.get_length(global)? == 0 {
-                return Err(global.throw_invalid_arguments(format_args!(
+                return Err(scope.throw_invalid_arguments(format_args!(
                     "unsubscribe requires at least one channel"
                 )));
             }
@@ -2042,7 +2096,7 @@ impl JSValkeyClient {
             let mut array_iter = channel_or_many.array_iterator(global)?;
             while let Some(channel_arg) = array_iter.next()? {
                 let Some(channel) = from_js(global, channel_arg)? else {
-                    return Err(global.throw_invalid_argument_type(
+                    return Err(scope.throw_invalid_argument_type(
                         "unsubscribe",
                         "channel",
                         "string",
@@ -2055,13 +2109,13 @@ impl JSValkeyClient {
         } else if channel_or_many.is_string() {
             // It is a single string channel
             let Some(channel) = from_js(global, channel_or_many)? else {
-                return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
+                return Err(scope.throw_invalid_argument_type("unsubscribe", "channel", "string"));
             };
             redis_channels.push(channel);
             // Clear the handlers for this channel
             this.clear_receive_handlers(global, channel_or_many)?;
         } else {
-            return Err(global.throw_invalid_argument_type(
+            return Err(scope.throw_invalid_argument_type(
                 "unsubscribe",
                 "channel",
                 "string or array",
@@ -2070,14 +2124,16 @@ impl JSValkeyClient {
 
         // Now send the unsubscribe command and clean up if necessary
         Self::send_unsubscribe_request_and_cleanup(this, frame.this(), global, &redis_channels)
+            .map(|v| scope.local(v))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn duplicate(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn duplicate<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         let _ = frame;
 
         let new_client_ptr = this.clone_without_connecting(global)?;
@@ -2099,10 +2155,12 @@ impl JSValkeyClient {
                 .client_mut()
                 .flags
                 .connection_promise_returns_client = true;
-            return new_client.do_connect(global, new_client_js);
+            return new_client
+                .do_connect(global, new_client_js)
+                .map(|v| scope.local(v));
         }
 
-        Ok(JSPromise::resolved_promise_value(global, new_client_js))
+        Ok(scope.local(JSPromise::resolved_promise_value(global, new_client_js)))
     }
 
     // script(subcommand: "LOAD", script: RedisValue)

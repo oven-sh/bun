@@ -7,7 +7,7 @@ use crate::webcore::s3_client::S3CredentialsExt as _;
 use bun_core::strings;
 use bun_http::Method;
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsError, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsError, JsResult, Local, Scope};
 use bun_ptr::RefPtr;
 
 // Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-
@@ -151,42 +151,49 @@ fn resolve_s3_blob(
     }
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn presign(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn presign<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let mut args =
-        bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), callframe.arguments());
+        bun_jsc::call_frame::ArgumentsSlice::init(scope.unscoped_bun_vm(), callframe.arguments());
 
     let error_message = "Expected a S3 or path to presign";
     let path_or_blob = parse_s3_path_or_blob(global, &mut args, error_message)?;
     let (mut blob, options) = resolve_s3_blob(global, &mut args, path_or_blob, error_message)?;
-    get_presign_url_from(&mut blob, global, options)
+    get_presign_url_from(&mut blob, global, options).map(|v| scope.local(v))
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn unlink<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let mut args =
-        bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), callframe.arguments());
+        bun_jsc::call_frame::ArgumentsSlice::init(scope.unscoped_bun_vm(), callframe.arguments());
 
     let error_message = "Expected a S3 or path to delete";
     let path_or_blob = parse_s3_path_or_blob(global, &mut args, error_message)?;
     let (blob, options) = resolve_s3_blob(global, &mut args, path_or_blob, error_message)?;
     let store = blob.store.get().as_ref().unwrap();
-    store.data.as_s3().unlink(store, global, options)
+    store
+        .data
+        .as_s3()
+        .unlink(store, global, options)
+        .map(|v| scope.local(v))
 }
 
-#[bun_jsc::host_fn]
-pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub fn write<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let mut args =
-        bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), callframe.arguments());
+        bun_jsc::call_frame::ArgumentsSlice::init(scope.unscoped_bun_vm(), callframe.arguments());
 
     let error_message = "Expected a S3 or path to upload";
     let path_or_blob = parse_s3_path_or_blob(global, &mut args, error_message)?;
 
     let Some(data) = args.next_eat() else {
-        return Err(global
+        return Err(scope
             .err(
                 bun_jsc::ErrorCode::MISSING_ARGS,
                 format_args!("Expected a Blob-y thing to upload"),
@@ -207,34 +214,39 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
             ..Default::default()
         },
     )
+    .map(|v| scope.local(v))
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn size<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let mut args =
-        bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), callframe.arguments());
+        bun_jsc::call_frame::ArgumentsSlice::init(scope.unscoped_bun_vm(), callframe.arguments());
 
     let error_message = "Expected a S3 or path to get size";
     let mut blob = match parse_s3_path_or_blob(global, &mut args, error_message)? {
-        PathOrBlob::Blob(blob) => return Ok(blob.get_size(global)),
+        PathOrBlob::Blob(blob) => return Ok(scope.local(blob.get_size(global))),
         path => resolve_s3_blob(global, &mut args, path, error_message)?.0,
     };
-    S3BlobStatTask::size(global, &mut blob)
+    S3BlobStatTask::size(global, &mut blob).map(|v| scope.local(v))
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn exists<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let mut args =
-        bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), callframe.arguments());
+        bun_jsc::call_frame::ArgumentsSlice::init(scope.unscoped_bun_vm(), callframe.arguments());
 
     let error_message = "Expected a S3 or path to check if it exists";
     let blob = match parse_s3_path_or_blob(global, &mut args, error_message)? {
-        PathOrBlob::Blob(blob) => return blob.get_exists(global, callframe),
+        PathOrBlob::Blob(blob) => {
+            return blob.get_exists(global, callframe).map(|v| scope.local(v));
+        }
         path => resolve_s3_blob(global, &mut args, path, error_message)?.0,
     };
-    S3BlobStatTask::exists(global, &blob)
+    S3BlobStatTask::exists(global, &blob).map(|v| scope.local(v))
 }
 
 fn construct_s3_file_internal_store(
@@ -679,16 +691,17 @@ pub(crate) fn get_stat(
     S3BlobStatTask::stat(global, this)
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn stat<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let mut args =
-        bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), callframe.arguments());
+        bun_jsc::call_frame::ArgumentsSlice::init(scope.unscoped_bun_vm(), callframe.arguments());
 
     let error_message = "Expected a S3 or path to get size";
     let path_or_blob = parse_s3_path_or_blob(global, &mut args, error_message)?;
     let (blob, _options) = resolve_s3_blob(global, &mut args, path_or_blob, error_message)?;
-    S3BlobStatTask::stat(global, &blob)
+    S3BlobStatTask::stat(global, &blob).map(|v| scope.local(v))
 }
 
 pub(crate) fn construct_internal_js(

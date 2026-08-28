@@ -3233,7 +3233,7 @@ extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* g
     }
 }
 
-extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__performTask(Zig::GlobalObject* globalObject, WebCore::EventLoopTask* task)
+extern "C" [[ZIG_EXPORT(check_slow, reenters_js)]] void Bun__performTask(Zig::GlobalObject* globalObject, WebCore::EventLoopTask* task)
 {
     task->performTask(*globalObject->scriptExecutionContext());
 }
@@ -3385,7 +3385,7 @@ void GlobalObject::reload()
     }
 }
 
-extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSGlobalObject__reload(JSC::JSGlobalObject* arg0)
+extern "C" [[ZIG_EXPORT(check_slow, no_user_js)]] void JSC__JSGlobalObject__reload(JSC::JSGlobalObject* arg0)
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(arg0);
     globalObject->reload();

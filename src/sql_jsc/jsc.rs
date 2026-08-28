@@ -6,7 +6,7 @@
 //! `bun_io`** so the `#[bun_jsc::JsClass]` / `#[bun_jsc::host_fn]` proc-macros
 //! see identical types. SQL-specific helpers that `bun_jsc` doesn't expose at
 //! this tier are provided as extension traits ([`JSGlobalObjectSqlExt`],
-//! [`VirtualMachineSqlExt`], [`EventLoopSqlExt`]).
+//! [`VirtualMachineSqlExt`]).
 //!
 //! [`RareData`] here is the **per-VM SQL state** (`mysql_context` /
 //! `postgresql_context`) that `bun_runtime::jsc_hooks::RuntimeState` owns by
@@ -331,20 +331,6 @@ impl VirtualMachineSqlExt for VirtualMachine {
     fn mysql_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup {
         let loop_ = self.uws_loop();
         self.rare_data().mysql_group::<SSL>(loop_)
-    }
-}
-
-/// RAII enter()/exit() for [EventLoop] — wraps the inherent (unsafe,
-/// raw-pointer) bun_jsc::event_loop::EventLoop::enter_scope.
-pub(crate) trait EventLoopSqlExt {
-    fn entered(&mut self) -> EventLoopGuard;
-}
-impl EventLoopSqlExt for EventLoop {
-    #[inline]
-    fn entered(&mut self) -> EventLoopGuard {
-        // SAFETY: self is the live VM-owned event loop; the guard holds the
-        // raw pointer so no &mut is held across re-entrant JS.
-        unsafe { EventLoop::enter_scope(self) }
     }
 }
 

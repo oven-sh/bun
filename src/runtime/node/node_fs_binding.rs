@@ -2,7 +2,9 @@ use core::ptr::NonNull;
 
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, Local, Scope, SysErrorJsc as _,
+};
 use bun_sys_jsc::SystemErrorJsc as _;
 
 use crate::node::ThreadIsolated;
@@ -143,14 +145,16 @@ impl Binding {
         drop(self);
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_dirent(_this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(crate::node::Dirent::get_constructor(global))
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub(crate) fn get_dirent<'s>(_this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        let v = crate::node::Dirent::get_constructor(scope.unscoped_global());
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_stats(_this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(crate::node::StatsSmall::get_constructor(global))
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub(crate) fn get_stats<'s>(_this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        let v = crate::node::StatsSmall::get_constructor(scope.unscoped_global());
+        Ok(scope.local(v))
     }
 
     // ── Hand-written bindings for ops outside `NodeFSFunctionEnum` ────────
@@ -389,34 +393,37 @@ pub(crate) fn string_to_flags_for_testing(
     Ok(JSValue::js_number_from_int32(bits))
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn create_memfd_for_testing(
-    global: &JSGlobalObject,
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn create_memfd_for_testing<'s>(
+    scope: &mut Scope<'s>,
     frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let [size_arg] = frame.arguments_as_array::<1>();
+) -> JsResult<Local<'s>> {
+    let size_arg = frame.scoped_argument(scope, 0);
 
     if frame.arguments_count() < 1 {
-        return Ok(JSValue::UNDEFINED);
+        return Ok(scope.undefined());
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         let _ = size_arg;
-        return Err(global.throw(format_args!(
+        return Err(scope.throw(format_args!(
             "memfd_create is not implemented on this platform"
         )));
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        let size = size_arg.to_int64();
+        let size = size_arg.to_int64(scope);
         match bun_sys::memfd_create(c"my_memfd", bun_sys::MemfdFlags::NonExecutable) {
             Ok(fd) => {
                 let _ = bun_sys::ftruncate(fd, size);
-                Ok(JSValue::js_number_from_int32(fd.native() as i32))
+                Ok(scope.number_from_int32(fd.native() as i32))
             }
-            Err(err) => Err(global.throw_value(err.to_js(global))),
+            Err(err) => {
+                let global = scope.unscoped_global();
+                Err(global.throw_value(err.to_js(global)))
+            }
         }
     }
 }

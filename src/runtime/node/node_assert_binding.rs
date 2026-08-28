@@ -1,5 +1,5 @@
 use bun_core as bstring;
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, Local, Scope};
 
 use super::node_assert;
 
@@ -18,38 +18,41 @@ use super::node_assert;
 ///     lines?: boolean,
 /// ): Diff[];
 /// ```
-#[bun_jsc::host_fn]
-fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+fn myers_diff<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
     let output = node_assert::Output::List {
-        check_comma_disparity: frame.argument(2).is_truthy(),
-        lines: frame.argument(3).is_truthy(),
+        check_comma_disparity: frame.scoped_argument(scope, 2).to_boolean(),
+        lines: frame.scoped_argument(scope, 3).to_boolean(),
     };
-    run(global, frame, "myersDiff", &output)
+    run(scope.unscoped_global(), frame, "myersDiff", &output).map(|v| scope.local(v))
 }
 
 /// `printSimpleMyersDiff(actual, expected, colors)`: char diff rendered to a string.
-#[bun_jsc::host_fn]
-fn print_simple_myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let colors = colors_from_js(global, frame.argument(2))?;
+#[bun_jsc::host_fn(scoped)]
+fn print_simple_myers_diff<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
+    let colors = colors_from_js(global, frame.scoped_argument(scope, 2).unscoped())?;
     run(
         global,
         frame,
         "printSimpleMyersDiff",
         &node_assert::Output::Simple(&colors),
     )
+    .map(|v| scope.local(v))
 }
 
 /// `printMyersDiff(actual, expected, checkCommaDisparity, colors)`: line diff rendered to
 /// `{ message, skipped }`.
-#[bun_jsc::host_fn]
-fn print_myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let check_comma_disparity = frame.argument(2).is_truthy();
-    let colors = colors_from_js(global, frame.argument(3))?;
+#[bun_jsc::host_fn(scoped)]
+fn print_myers_diff<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
+    let check_comma_disparity = frame.scoped_argument(scope, 2).to_boolean();
+    let colors = colors_from_js(global, frame.scoped_argument(scope, 3).unscoped())?;
     let output = node_assert::Output::Lines {
         colors: &colors,
         check_comma_disparity,
     };
-    run(global, frame, "printMyersDiff", &output)
+    run(global, frame, "printMyersDiff", &output).map(|v| scope.local(v))
 }
 
 /// Reads `{ green, red, white, blue }` (internal/util/colors) as ASCII escape sequences.

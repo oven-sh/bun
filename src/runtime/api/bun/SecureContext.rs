@@ -20,7 +20,7 @@ use bun_boringssl_sys as boringssl;
 use bun_core::EncodedSlice;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsClass as _;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Local, Scope};
 use bun_uws as uws;
 
 /// Re-export the codegen-emitted module so
@@ -49,11 +49,14 @@ pub struct SecureContext {
 
 /// Exposed via `bun:internal-for-testing` so churn tests can assert
 /// `SSL_CTX_new` was called O(1) times, not O(connections).
-#[bun_jsc::host_fn]
-pub(crate) fn js_live_count(_global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn js_live_count<'s>(
+    scope: &mut Scope<'s>,
+    _callframe: &CallFrame,
+) -> JsResult<Local<'s>> {
     // `us_ssl_ctx_live_count` is declared `safe fn` (reads a global atomic
     // counter, no preconditions).
-    Ok(JSValue::js_number(c::us_ssl_ctx_live_count() as f64))
+    Ok(scope.number(c::us_ssl_ctx_live_count() as f64))
 }
 
 impl SecureContext {
@@ -374,28 +377,28 @@ impl SecureContext {
     /// `secureContext.context.addCACert(pem)` — appends the certificates in
     /// the given PEM string or buffer to this context's trust store, the way
     /// Node's SecureContext exposes it.
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn add_ca_cert(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn add_ca_cert<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         if this.shared {
-            return Err(global.throw(format_args!(
+            return Err(scope.throw(format_args!(
                 "cannot mutate a shared SecureContext; use tls.createSecureContext()"
             )));
         }
-        let args = frame.arguments();
-        if args.is_empty() {
+        let args = frame.scoped_arguments::<1>(scope);
+        let Some(pem_arg) = args.get(0) else {
             return Err(
-                global.throw_invalid_arguments(format_args!("addCACert requires a certificate"))
+                scope.throw_invalid_arguments(format_args!("addCACert requires a certificate"))
             );
-        }
-        let pem = args[0].to_utf8(global)?;
+        };
+        let pem = pem_arg.to_utf8(scope)?;
         let bytes = pem.slice();
         if bytes.is_empty() {
             return Err(
-                global.throw_invalid_arguments(format_args!("addCACert requires a certificate"))
+                scope.throw_invalid_arguments(format_args!("addCACert requires a certificate"))
             );
         }
         // The C side wants a NUL-terminated PEM document.
@@ -410,9 +413,9 @@ impl SecureContext {
             )
         };
         if ok == 0 {
-            return Err(global.throw(format_args!("Invalid CA certificate")));
+            return Err(scope.throw(format_args!("Invalid CA certificate")));
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
     pub(crate) fn memory_cost(&self) -> usize {

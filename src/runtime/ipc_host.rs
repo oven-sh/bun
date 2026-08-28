@@ -9,7 +9,9 @@ use crate::ipc::{
 use bun_core::String as BunString;
 #[cfg(windows)]
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, Local, Scope, StringJsc as _,
+};
 use bun_ptr::RefPtr;
 
 use crate::api::bun::subprocess::Subprocess;
@@ -50,14 +52,14 @@ pub(crate) fn attach_windows_socket_payload(
     Ok(Some(hex))
 }
 
-#[bun_jsc::host_fn]
-fn emit_process_error_event(
-    global_this: &JSGlobalObject,
+#[bun_jsc::host_fn(scoped)]
+fn emit_process_error_event<'s>(
+    scope: &mut Scope<'s>,
     callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let [ex] = callframe.arguments_as_array::<1>();
-    Process__emitErrorEvent(global_this, ex);
-    Ok(JSValue::UNDEFINED)
+) -> JsResult<Local<'s>> {
+    let [ex] = callframe.scoped_arguments::<1>(scope).ptr;
+    Process__emitErrorEvent(scope.unscoped_global(), ex.unscoped());
+    Ok(scope.undefined())
 }
 
 fn do_send_err(
@@ -302,52 +304,66 @@ pub(crate) fn do_send(
     })
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn emit_handle_ipc_message(
-    global_this: &JSGlobalObject,
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn emit_handle_ipc_message<'s>(
+    scope: &mut Scope<'s>,
     callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let [target, message, handle] = callframe.arguments_as_array::<3>();
+) -> JsResult<Local<'s>> {
+    let [target, message, handle] = callframe.scoped_arguments::<3>(scope).ptr;
     if target.is_null() {
         // Cluster-internal replies that carried a descriptor (shared dgram
         // sockets) are marked with cmd: "NODE_CLUSTER"; hand them straight to
         // the cluster's internal-message dispatcher instead of emitting a
         // process 'message' event, mirroring Node's NODE_-prefix routing.
         if message.is_object() {
-            if let Some(cmd) = message.get(global_this, "cmd")? {
+            if let Some(cmd) = message.get(scope, "cmd")? {
                 if cmd.is_string() {
-                    let cmd_str = cmd.to_bun_string(global_this)?;
+                    let cmd_str = cmd.to_bun_string(scope)?;
                     if cmd_str.eq_ascii(b"NODE_CLUSTER") {
                         crate::node::node_cluster_binding::handle_internal_message_child(
-                            global_this,
-                            message,
-                            handle,
+                            scope.unscoped_global(),
+                            message.unscoped(),
+                            handle.unscoped(),
                         )?;
-                        return Ok(JSValue::UNDEFINED);
+                        return Ok(scope.undefined());
                     }
                 }
             }
         }
-        let vm = global_this.bun_vm().as_mut();
+        let vm = scope.unscoped_bun_vm().as_mut();
         let Some(ipc) = get_ipc_instance(vm) else {
             // Channel already gone: a handle that finished adopting after EOF is still delivered, as in node.
-            Process__emitMessageEvent(global_this, message, handle);
-            return Ok(JSValue::UNDEFINED);
+            Process__emitMessageEvent(
+                scope.unscoped_global(),
+                message.unscoped(),
+                handle.unscoped(),
+            );
+            return Ok(scope.undefined());
         };
         // SAFETY: `get_ipc_instance` returns the live boxed IPCInstance.
-        unsafe { (*ipc).handle_ipc_message(&DecodedIPCMessage::Data(message), handle) }?;
+        unsafe {
+            (*ipc).handle_ipc_message(
+                &DecodedIPCMessage::Data(message.unscoped()),
+                handle.unscoped(),
+            )
+        }?;
     } else {
         if !target.is_cell() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         }
-        let Some(subprocess) = Subprocess::from_js_direct(target) else {
-            return Ok(JSValue::UNDEFINED);
+        let Some(subprocess) = Subprocess::from_js_direct(target.unscoped()) else {
+            return Ok(scope.undefined());
         };
         // SAFETY: `from_js_direct` returned a non-null `*mut Subprocess`; the JS
         // wrapper holds it alive for the call.
-        unsafe { (*subprocess).handle_ipc_message(&DecodedIPCMessage::Data(message), handle) }?;
+        unsafe {
+            (*subprocess).handle_ipc_message(
+                &DecodedIPCMessage::Data(message.unscoped()),
+                handle.unscoped(),
+            )
+        }?;
     }
-    Ok(JSValue::UNDEFINED)
+    Ok(scope.undefined())
 }
 
 // The #[bun_jsc::host_fn] attribute emits the jsc-callconv shim and the
@@ -357,10 +373,11 @@ pub(crate) fn emit_handle_ipc_message(
 // body — via `do_send` — names `Listener` (`bun_runtime`). The export is a
 // link-time `#[no_mangle]` symbol, so the defining crate does not matter to
 // the C++ caller.
-#[bun_jsc::host_fn(export = "Bun__Process__send")]
-fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(export = "Bun__Process__send", scoped)]
+fn Bun__Process__send<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
     bun_jsc::mark_binding!();
-    let vm = global.bun_vm().as_mut();
+    let global = scope.unscoped_global();
+    let vm = scope.unscoped_bun_vm().as_mut();
     // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance` (or
     // `None`); the instance is heap-allocated, not embedded in `vm`.
     let ipc = get_ipc_instance(vm).map(|i| unsafe { (*i).data() });
@@ -376,7 +393,8 @@ fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     };
     #[cfg(not(windows))]
     let peer_pid = 0;
-    do_send(ipc, global, frame, FromEnum::Process, peer_pid)
+    let v = do_send(ipc, global, frame, FromEnum::Process, peer_pid)?;
+    Ok(scope.local(v))
 }
 
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle, so

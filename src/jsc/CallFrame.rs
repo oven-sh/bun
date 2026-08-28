@@ -203,7 +203,12 @@ impl<const MAX: usize> Arguments<MAX> {
     #[inline]
     pub(crate) fn init_undef(i: usize, src: &[JSValue]) -> Self {
         let mut args: [JSValue; MAX] = [JSValue::UNDEFINED; MAX];
-        args[0..i].copy_from_slice(&src[0..i]);
+        // `zip` stops at min(MAX, src.len()) == `i`; the fixed `MAX` bound
+        // unrolls this instead of calling memcpy with a runtime length.
+        debug_assert_eq!(i, src.len().min(MAX));
+        for (dst, s) in args.iter_mut().zip(src) {
+            *dst = *s;
+        }
         Self { ptr: args, len: i }
     }
 

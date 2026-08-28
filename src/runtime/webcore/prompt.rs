@@ -1,21 +1,22 @@
 //! Implements prompt, alert, and confirm Web API
 
-use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::webcore::jsc::{CallFrame, JsResult};
 use bun_collections::VecExt as _;
 use bun_core::EncodedSlice;
 use bun_core::Output;
 use bun_jsc::EncodedSliceJsc as _;
+use bun_jsc::{Local, Scope};
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
-#[bun_jsc::host_fn(export = "WebCore__alert")]
-fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments();
+#[bun_jsc::host_fn(export = "WebCore__alert", scoped)]
+fn alert<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    let arguments = frame.scoped_arguments::<1>(scope);
     let output = Output::writer();
-    let has_message = !arguments.is_empty();
+    let has_message = arguments.len != 0;
 
     // 2. If the method was invoked with no arguments, then let message be the empty string; otherwise, let message be the method's first argument.
     if has_message {
-        let message = arguments[0].to_utf8(global)?;
+        let message = arguments.ptr[0].to_utf8(scope)?;
 
         if !message.slice().is_empty() {
             // 3. Set message to the result of normalizing newlines given message.
@@ -27,7 +28,7 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             // 5. Show message to the user, treating U+000A LF as a line break.
             if output.write_all(message.slice()).is_err() {
                 // 1. If we cannot show simple dialogs for this, then return.
-                return Ok(JSValue::UNDEFINED);
+                return Ok(scope.undefined());
             }
         }
     }
@@ -41,7 +42,7 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         .is_err()
     {
         // 1. If we cannot show simple dialogs for this, then return.
-        return Ok(JSValue::UNDEFINED);
+        return Ok(scope.undefined());
     }
 
     // 6. Invoke WebDriver BiDi user prompt opened with this, "alert", and message.
@@ -60,14 +61,14 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // 8. Invoke WebDriver BiDi user prompt closed with this and true.
     // *  Again, not necessary in a server context.
 
-    Ok(JSValue::UNDEFINED)
+    Ok(scope.undefined())
 }
 
-#[bun_jsc::host_fn(export = "WebCore__confirm")]
-fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments();
+#[bun_jsc::host_fn(export = "WebCore__confirm", scoped)]
+fn confirm<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    let arguments = frame.scoped_arguments::<1>(scope);
     let output = Output::writer();
-    let has_message = !arguments.is_empty();
+    let has_message = arguments.len != 0;
 
     if has_message {
         // 2. Set message to the result of normalizing newlines given message.
@@ -75,11 +76,11 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
         // 3. Set message to the result of optionally truncating message.
         // *  Not necessary so we won't do it.
-        let message = arguments[0].to_utf8(global)?;
+        let message = arguments.ptr[0].to_utf8(scope)?;
 
         if output.write_all(message.slice()).is_err() {
             // 1. If we cannot show simple dialogs for this, then return false.
-            return Ok(JSValue::FALSE);
+            return Ok(scope.boolean(false));
         }
     }
 
@@ -95,7 +96,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         .is_err()
     {
         // 1. If we cannot show simple dialogs for this, then return false.
-        return Ok(JSValue::FALSE);
+        return Ok(scope.boolean(false));
     }
 
     // 5. Invoke WebDriver BiDi user prompt opened with this, "confirm", and message.
@@ -106,7 +107,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let mut reader = Output::stdin_reader();
 
     let Ok(first_byte) = reader.take_byte() else {
-        return Ok(JSValue::FALSE);
+        return Ok(scope.boolean(false));
     };
 
     // 7. Invoke WebDriver BiDi user prompt closed with this, and true if
@@ -114,34 +115,34 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // *  Not relevant in a server context.
 
     match first_byte {
-        b'\n' => return Ok(JSValue::FALSE),
+        b'\n' => return Ok(scope.boolean(false)),
         b'\r' => {
             let Ok(next_byte) = reader.take_byte() else {
                 // They may have said yes, but the stdin is invalid.
-                return Ok(JSValue::FALSE);
+                return Ok(scope.boolean(false));
             };
             if next_byte == b'\n' {
-                return Ok(JSValue::FALSE);
+                return Ok(scope.boolean(false));
             }
         }
         b'y' | b'Y' => {
             let Ok(next_byte) = reader.take_byte() else {
                 // They may have said yes, but the stdin is invalid.
 
-                return Ok(JSValue::FALSE);
+                return Ok(scope.boolean(false));
             };
 
             if next_byte == b'\n' {
                 // 8. If the user responded positively, return true;
                 //    otherwise, the user responded negatively: return false.
-                return Ok(JSValue::TRUE);
+                return Ok(scope.boolean(true));
             } else if next_byte == b'\r' {
                 // Check Windows style
                 let Ok(second_byte) = reader.take_byte() else {
-                    return Ok(JSValue::FALSE);
+                    return Ok(scope.boolean(false));
                 };
                 if second_byte == b'\n' {
-                    return Ok(JSValue::TRUE);
+                    return Ok(scope.boolean(true));
                 }
             }
         }
@@ -156,7 +157,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
     // 8. If the user responded positively, return true; otherwise, the user
     //    responded negatively: return false.
-    Ok(JSValue::FALSE)
+    Ok(scope.boolean(false))
 }
 
 pub mod prompt {
@@ -228,18 +229,18 @@ pub mod prompt {
     }
 
     /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-prompt
-    #[bun_jsc::host_fn(export = "WebCore__prompt")]
-    fn call(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let arguments = frame.arguments();
+    #[bun_jsc::host_fn(export = "WebCore__prompt", scoped)]
+    fn call<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+        let arguments = frame.scoped_arguments::<3>(scope);
         let output = Output::writer();
-        let has_message = !arguments.is_empty();
-        let has_default = arguments.len() >= 2;
+        let has_message = arguments.len != 0;
+        let has_default = arguments.len >= 2;
         // 4. Set default to the result of optionally truncating default.
         // *  We don't really need to do this.
         let default = if has_default {
-            arguments[1]
+            arguments.ptr[1]
         } else {
-            JSValue::NULL
+            scope.null()
         };
 
         if has_message {
@@ -248,11 +249,11 @@ pub mod prompt {
 
             // 3. Set message to the result of optionally truncating message.
             // *  Not necessary so we won't do it.
-            let message = arguments[0].to_utf8(global)?;
+            let message = arguments.ptr[0].to_utf8(scope)?;
 
             if output.write_all(message.slice()).is_err() {
                 // 1. If we cannot show simple dialogs for this, then return null.
-                return Ok(JSValue::NULL);
+                return Ok(scope.null());
             }
         }
 
@@ -271,11 +272,11 @@ pub mod prompt {
             .is_err()
         {
             // 1. If we cannot show simple dialogs for this, then return false.
-            return Ok(JSValue::FALSE);
+            return Ok(scope.boolean(false));
         }
 
         if has_default {
-            let default_string = arguments[1].to_utf8(global)?;
+            let default_string = arguments.ptr[1].to_utf8(scope)?;
 
             if output
                 .print(format_args!(
@@ -285,7 +286,7 @@ pub mod prompt {
                 .is_err()
             {
                 // 1. If we cannot show simple dialogs for this, then return false.
-                return Ok(JSValue::FALSE);
+                return Ok(scope.boolean(false));
             }
         }
 
@@ -312,7 +313,7 @@ pub mod prompt {
         let Ok(first_byte) = reader.read_byte() else {
             // 8. Let result be null if the user aborts, or otherwise the string
             //    that the user responded with.
-            return Ok(JSValue::NULL);
+            return Ok(scope.null());
         };
 
         if first_byte == b'\n' {
@@ -321,7 +322,7 @@ pub mod prompt {
             return Ok(default);
         } else if first_byte == b'\r' {
             let Ok(second) = reader.read_byte() else {
-                return Ok(JSValue::NULL);
+                return Ok(scope.null());
             };
             second_byte = Some(second);
             if second == b'\n' {
@@ -349,7 +350,7 @@ pub mod prompt {
             if !matches!(e, ReadError::StreamTooLong) {
                 // 8. Let result be null if the user aborts, or otherwise the string
                 //    that the user responded with.
-                return Ok(JSValue::NULL);
+                return Ok(scope.null());
             }
 
             input.ensure_total_capacity(4096);
@@ -363,7 +364,7 @@ pub mod prompt {
                 if !matches!(e2, ReadError::StreamTooLong) {
                     // 8. Let result be null if the user aborts, or otherwise the string
                     //    that the user responded with.
-                    return Ok(JSValue::NULL);
+                    return Ok(scope.null());
                 }
 
                 if read_until_delimiter_array_list_infinity(&mut *reader, &mut input, b'\n')
@@ -371,7 +372,7 @@ pub mod prompt {
                 {
                     // 8. Let result be null if the user aborts, or otherwise the string
                     //    that the user responded with.
-                    return Ok(JSValue::NULL);
+                    return Ok(scope.null());
                 }
             }
         }
@@ -392,6 +393,6 @@ pub mod prompt {
         // *  Too complex for server context.
 
         // 9. Return result.
-        Ok(result.to_js(global))
+        Ok(scope.local(result.to_js(scope.unscoped_global())))
     }
 }

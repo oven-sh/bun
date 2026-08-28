@@ -250,14 +250,17 @@ fn tick_queue_with_count(
 ///
 /// Holds the raw `*mut EventLoop` (not `&mut`) so re-entrant JS callbacks that
 /// touch the same loop while the guard is live don't alias a long-lived mutable
-/// borrow — the `&mut` is formed only at the enter/exit call sites. Construct
-/// via [`EventLoop::enter_scope`].
+/// borrow — the `&mut` is formed only at the enter/exit call sites. The
+/// lifetime brands the guard with the loop borrow it was created from (safe
+/// constructor [`EventLoop::scope`]); the unsafe raw-pointer constructor
+/// [`EventLoop::enter_scope`] returns it unbounded.
 #[must_use = "dropping immediately exits the event loop scope"]
-pub struct EventLoopEnterGuard {
+pub struct EventLoopEnterGuard<'a> {
     loop_: *mut EventLoop,
+    _borrow: core::marker::PhantomData<&'a EventLoop>,
 }
 
-impl Drop for EventLoopEnterGuard {
+impl Drop for EventLoopEnterGuard<'_> {
     #[inline]
     fn drop(&mut self) {
         // SAFETY: `loop_` was live at `enter_scope` and the VM owns it for the
@@ -319,15 +322,33 @@ impl EventLoop {
 
     /// `enter()` now, `exit()` on drop. Takes the raw VM-owned pointer so the
     /// guard doesn't hold a long-lived `&mut EventLoop` across re-entrant JS.
+    /// Prefer the safe [`Self::scope`] (or
+    /// [`VirtualMachine::enter_event_loop_scope`]) when a reference is at hand.
     ///
     /// # Safety
     /// `loop_` must be the live `vm.event_loop()` pointer and remain valid for
     /// the guard's lifetime (the VM owns it for the process lifetime).
     #[inline]
-    pub unsafe fn enter_scope(loop_: *mut EventLoop) -> EventLoopEnterGuard {
+    pub unsafe fn enter_scope(loop_: *mut EventLoop) -> EventLoopEnterGuard<'static> {
         // SAFETY: caller contract — `loop_` is live; short-lived `&mut` only.
         unsafe { (*loop_).enter() };
-        EventLoopEnterGuard { loop_ }
+        EventLoopEnterGuard {
+            loop_,
+            _borrow: core::marker::PhantomData,
+        }
+    }
+
+    /// Safe [`Self::enter_scope`]: `enter()` now, `exit()` on drop, with the
+    /// guard branded by the loop borrow. The guard decays `self` to a raw
+    /// pointer immediately, so re-entrant JS inside the scope only ever sees
+    /// short-lived `&mut`s formed at the enter/exit call sites.
+    #[inline]
+    pub fn scope(&mut self) -> EventLoopEnterGuard<'_> {
+        self.enter();
+        EventLoopEnterGuard {
+            loop_: self,
+            _borrow: core::marker::PhantomData,
+        }
     }
 
     /// Balance an [`enter`](Self::enter) without the checkpoint [`exit`](Self::exit)

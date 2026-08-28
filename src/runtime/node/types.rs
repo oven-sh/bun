@@ -151,6 +151,23 @@ impl BlobOrStringOrBuffer {
         Self::from_js_maybe_file(global, value, FileBlobs::Reject)
     }
 
+    /// [`Self::from_js`] with the user-JS re-entry effect explicit and the
+    /// ArrayBuffer view deferred to [`ScopedBlobOrStringOrBuffer::materialize`].
+    /// Coercions (string/blob arms) still run here, in argument order.
+    pub fn from_js_scoped<'s>(
+        scope: &mut jsc::scope::Scope<'s>,
+        value: jsc::scope::Local<'s>,
+    ) -> JsResult<Option<ScopedBlobOrStringOrBuffer<'s>>> {
+        let raw = value.unscoped();
+        if raw.is_cell() && raw.js_type().is_array_buffer_like() {
+            return Ok(Some(ScopedBlobOrStringOrBuffer::Deferred {
+                value,
+                materialized: None,
+            }));
+        }
+        Ok(Self::from_js(scope.unscoped_global(), raw)?.map(ScopedBlobOrStringOrBuffer::Ready))
+    }
+
     /// Like [`from_js_with_encoding_value_allow_request_response`] but takes an
     /// already-parsed [`Encoding`], so callers that must inspect the encoding
     /// first (e.g. to validate odd-length hex) don't coerce `encoding_value`
@@ -228,6 +245,72 @@ impl BlobOrStringOrBuffer {
         )? {
             Some(s) => Ok(Some(Self::StringOrBuffer(s))),
             None => Ok(None),
+        }
+    }
+}
+
+/// [`BlobOrStringOrBuffer`] parsed under a [`jsc::scope::Scope`]: coercions
+/// run at parse time, but ArrayBuffer-backed views are captured only in
+/// [`Self::materialize`], whose shared scope borrow keeps user JS (which
+/// could detach or resize the buffer) out until the bytes are consumed.
+pub enum ScopedBlobOrStringOrBuffer<'s> {
+    /// ArrayBuffer-backed input; the view is captured in [`Self::materialize`].
+    Deferred {
+        value: jsc::scope::Local<'s>,
+        materialized: Option<BlobOrStringOrBuffer>,
+    },
+    /// String (copied) or Blob (duped) — already detach-proof.
+    Ready(BlobOrStringOrBuffer),
+}
+
+impl<'s> ScopedBlobOrStringOrBuffer<'s> {
+    pub fn materialize<'a>(
+        &'a mut self,
+        scope: &'a jsc::scope::Scope<'s>,
+    ) -> &'a BlobOrStringOrBuffer {
+        match self {
+            Self::Deferred {
+                value,
+                materialized,
+            } => materialized.insert(BlobOrStringOrBuffer::StringOrBuffer(
+                StringOrBuffer::Buffer(Buffer::from_array_buffer(
+                    scope.unscoped_global(),
+                    value.unscoped(),
+                )),
+            )),
+            Self::Ready(b) => b,
+        }
+    }
+}
+
+/// [`StringOrBuffer`] with buffer-view capture deferred past every
+/// coercion, same shape as [`ScopedBlobOrStringOrBuffer`]: string arguments
+/// are copied out eagerly (coercion happens in `from_js_deferred`, under
+/// `&mut Scope`); ArrayBuffer-backed arguments only record the `Local` and
+/// materialize their view under `&Scope`, so a sibling argument's coercion
+/// cannot detach the buffer between capture and use.
+pub enum ScopedStringOrBuffer<'s> {
+    Deferred {
+        value: jsc::scope::Local<'s>,
+        materialized: Option<StringOrBuffer<'static>>,
+    },
+    Ready(StringOrBuffer<'static>),
+}
+
+impl<'s> ScopedStringOrBuffer<'s> {
+    pub fn materialize<'a>(
+        &'a mut self,
+        scope: &'a jsc::scope::Scope<'s>,
+    ) -> &'a StringOrBuffer<'static> {
+        match self {
+            Self::Deferred {
+                value,
+                materialized,
+            } => materialized.insert(StringOrBuffer::Buffer(Buffer::from_array_buffer(
+                scope.unscoped_global(),
+                value.unscoped(),
+            ))),
+            Self::Ready(b) => b,
         }
     }
 }
@@ -469,6 +552,32 @@ impl StringOrBuffer<'static> {
         }
         // SAFETY: parsed with `Flavor::Async`.
         Ok(parsed.map(|v| unsafe { ThreadIsolated::new(v) }))
+    }
+
+    /// [`Self::from_js`] with its user-JS re-entry effect made explicit.
+    pub fn from_js_scoped<'s>(
+        scope: &mut jsc::scope::Scope<'s>,
+        value: jsc::scope::Local<'s>,
+    ) -> JsResult<Option<StringOrBuffer<'static>>> {
+        Self::from_js(scope.unscoped_global(), value.unscoped())
+    }
+
+    /// [`Self::from_js_scoped`], but ArrayBuffer-backed views are captured
+    /// lazily via [`ScopedStringOrBuffer::materialize`] — use when another
+    /// argument is coerced between this call and the view's use.
+    pub fn from_js_deferred<'s>(
+        scope: &mut jsc::scope::Scope<'s>,
+        value: jsc::scope::Local<'s>,
+    ) -> JsResult<Option<ScopedStringOrBuffer<'s>>> {
+        let raw = value.unscoped();
+        // Same gate as `from_js_maybe_async_into`'s buffer arm.
+        if raw.is_cell() && raw.js_type().is_array_buffer_like() {
+            return Ok(Some(ScopedStringOrBuffer::Deferred {
+                value,
+                materialized: None,
+            }));
+        }
+        Ok(Self::from_js(scope.unscoped_global(), raw)?.map(ScopedStringOrBuffer::Ready))
     }
 
     #[inline]

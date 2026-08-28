@@ -3464,7 +3464,7 @@ fn transpile_source_code_inner(
                 // Rewrite `specifier` against `vm.origin` so
                 // importing an asset via the file loader yields the public URL,
                 // not the absolute filesystem path.
-                let mut buf = std::string::String::new();
+                let mut public_path: Vec<u8> = Vec::new();
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                 // `URL<'static>` is a view struct; borrow it in place — no
                 // `&mut *jsc_vm` aliases through the call below, so there is no
@@ -3477,10 +3477,10 @@ fn transpile_source_code_inner(
                     top_level_dir,
                     origin,
                     b"",
-                    &mut buf,
+                    &mut public_path,
                     bun_paths::Platform::Loose,
                 );
-                bun_string_jsc::create_utf8_for_js(global_object, buf.as_bytes())
+                bun_string_jsc::create_utf8_for_js(global_object, &public_path)
                     .map_err(|_| crate::Error::JSError)?
             } else {
                 bun_string_jsc::create_utf8_for_js(global_object, path.text)

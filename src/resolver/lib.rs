@@ -73,8 +73,11 @@ pub mod fs {
 
     // `BSSStringList(2048, 128)` → `<{2048*2}, {128+1}>`
     bun_alloc::bss_string_list! { pub dirname_store_backing : 4096, 129 }
-    // `BSSStringList(4096, 64)` → `<{4096*2}, {64+1}>`
-    bun_alloc::bss_string_list! { pub filename_store_backing : 8192, 65 }
+    // `bss_singleton!` emits one private `STORAGE` per declare site, so the
+    // filename store is declared once, in `fs_full`, and shared with the
+    // `readdir` appender (`FilenameStoreAppender`). A second declaration here
+    // would be a separate store that `exists`/`as_interned` cannot see into.
+    pub use crate::fs_full::filename_store_backing;
 
     /// Port of `FileSystem.DirnameStore` (`BSSStringList<2048,128>`).
     pub struct DirnameStore(());

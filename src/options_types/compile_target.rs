@@ -212,7 +212,7 @@ impl CompileTarget {
             return version_str;
         }
 
-        let cache_dir = fetch_cache_directory_path(env);
+        let cache_dir = crate::install_cache::fetch_cache_directory_path(env, None);
         let dest = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
             path::fs::FileSystem::instance().top_level_dir(),
             &mut buf[..],
@@ -228,37 +228,7 @@ impl CompileTarget {
 
     // `download_to_path` moved up to `bun_standalone_graph` so it can name
     // `bun_http::AsyncHTTP` directly; this struct stays data-only.
-}
 
-/// Resolve the bun install cache directory for the cross-compile base binary.
-/// Mirrors `bun_install::PackageManager::fetch_cache_directory_path(env, None)`,
-/// which this crate cannot name directly (`bun_install` depends on us).
-fn fetch_cache_directory_path(env: &bun_dotenv::Loader) -> Vec<u8> {
-    use path::resolve_path::{join_abs_string, platform};
-    let top = path::fs::FileSystem::instance().top_level_dir();
-
-    if let Some(dir) = env.get(b"BUN_INSTALL_CACHE_DIR") {
-        return join_abs_string::<platform::Loose>(top, &[dir]).to_vec();
-    }
-
-    if let Some(dir) = env.get(b"BUN_INSTALL") {
-        return join_abs_string::<platform::Loose>(top, &[dir, b"install/", b"cache/"]).to_vec();
-    }
-
-    if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
-        return join_abs_string::<platform::Loose>(top, &[dir, b".bun/", b"install/", b"cache/"])
-            .to_vec();
-    }
-
-    if let Some(dir) = env_var::HOME.get() {
-        return join_abs_string::<platform::Loose>(top, &[dir, b".bun/", b"install/", b"cache/"])
-            .to_vec();
-    }
-
-    join_abs_string::<platform::Loose>(top, &[b"node_modules/.bun-cache"]).to_vec()
-}
-
-impl CompileTarget {
     pub fn is_supported(&self) -> bool {
         match self.os {
             OperatingSystem::Windows => {

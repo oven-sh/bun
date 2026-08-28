@@ -11,6 +11,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, libcPathForDlopen } from "harness";
+import { totalmem } from "node:os";
 
 // Snapshots are CLDR-version-specific. Only check them where Bun bundles the
 // ICU they were generated against; macOS uses Apple's libicucore, so snapshot
@@ -186,6 +187,48 @@ describe("Intl.Collator", () => {
     expect(c.compare("a", "á")).toBe(0);
     expect(c.compare("a", "b")).toBeLessThan(0);
   });
+
+  // A Latin-1 string of 2^30 or more characters cannot be upconverted to UTF-16:
+  // the Vector<char16_t> behind it is past its maximum capacity. When the other
+  // operand is 16-bit, none of the 8-bit fast paths apply and ICU needs the
+  // UTF-16 form. A NUL operand does the same with two 8-bit strings: NUL has no
+  // UCA DUCET weight, so the ASCII fast path gives up and the fallback runs.
+  // JSC used to CRASH() there instead of throwing. The child peaks near 1.4 GB RSS.
+  test.skipIf(totalmem() < 4 * 1024 ** 3)(
+    "comparing a huge Latin-1 string through the ICU fallback throws instead of crashing",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const huge = "a".repeat(2 ** 30);
+         const out = [];
+         for (const compare of [
+           () => huge.localeCompare("\\u3042"),
+           () => "\\u3042".localeCompare(huge),
+           () => new Intl.Collator().compare(huge, "\\u3042"),
+           () => new Intl.Collator("en", { sensitivity: "base" }).compare("\\u3042", huge),
+           () => new Intl.Collator("en").compare(huge, "\\0"),
+           () => new Intl.Collator("en").compare("\\0", huge),
+         ]) {
+           try {
+             out.push(compare());
+           } catch (e) {
+             out.push(String(e));
+           }
+         }
+         console.log(JSON.stringify(out));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(Array(6).fill("RangeError: Out of memory"));
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 // ICU reads its own default locale from LC_ALL, then LC_MESSAGES, then LANG the

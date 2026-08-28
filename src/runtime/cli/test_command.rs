@@ -1527,7 +1527,6 @@ fn print_coverage_reports_<const COLORS: bool>(
     opts: &mut CodeCoverageOptions,
     reports: &[CodeCoverageReport<'_>],
 ) -> bun_sys::Result<()> {
-    use coverage::text;
     let relative_dir = FileSystem::get().top_level_dir;
     let thresholds = opts.fractions;
 
@@ -1535,13 +1534,24 @@ fn print_coverage_reports_<const COLORS: bool>(
     let failing = fractions.iter().any(|f| f.failing);
     opts.fractions.failing = failing;
 
+    if opts.reporters.text {
+        print_coverage_table::<COLORS>(relative_dir, &thresholds, reports, &fractions, failing);
+    }
     if opts.reporters.lcov {
         write_lcov_report(opts, relative_dir, reports)?;
     }
-    if !opts.reporters.text {
-        return Ok(());
-    }
+    Ok(())
+}
 
+fn print_coverage_table<const COLORS: bool>(
+    relative_dir: &[u8],
+    thresholds: &Fraction,
+    reports: &[CodeCoverageReport<'_>],
+    fractions: &[Fraction],
+    failing: bool,
+) {
+    use coverage::text;
+    let thresholds = *thresholds;
     let max_filepath_length = reports
         .iter()
         .map(|r| resolve_path::relative(relative_dir, &r.source_url).len())
@@ -1554,7 +1564,7 @@ fn print_coverage_reports_<const COLORS: bool>(
         failing: false,
     };
     let mut avg = zero;
-    for f in &fractions {
+    for f in fractions {
         avg.functions += f.functions;
         avg.lines += f.lines;
         avg.stmts += f.stmts;
@@ -1596,7 +1606,7 @@ fn print_coverage_reports_<const COLORS: bool>(
         false,
     );
     let _ = bun_core::write_pretty!(out, COLORS, "<r><d> |<r>\n");
-    for (report, fraction) in reports.iter().zip(&fractions) {
+    for (report, fraction) in reports.iter().zip(fractions) {
         let _ = text::write_format::<COLORS>(
             report,
             max_filepath_length,
@@ -1612,7 +1622,6 @@ fn print_coverage_reports_<const COLORS: bool>(
     // A closed stderr is not a reason to fail the run.
     let _ = Output::error_writer().write_all(&out);
     Output::flush();
-    Ok(())
 }
 
 /// Render to `<reports_directory>/.lcov.info.<hex>.tmp` and rename it over

@@ -2446,8 +2446,7 @@ pub fn err_generic(fmt: &str, args: impl FmtTuple) {
     );
 }
 
-/// What `err()` needs from a failed syscall without naming `bun_sys::Error`:
-/// the `SystemErrno` tag (`"ENOENT"`, or `"UNKNOWN"`) and the syscall name.
+/// What `err()` needs from a failed syscall without naming `bun_sys::Error`.
 #[derive(Clone, Copy)]
 pub struct SysErrInfo {
     pub tag_name: &'static str,

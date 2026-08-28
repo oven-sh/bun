@@ -254,6 +254,8 @@ export interface BundlerTestInput {
   minifyIdentifiers?: boolean;
   minifySyntax?: boolean;
   targetFromAPI?: "TargetWasConfigured";
+  /** esbuild's transform-only mode ("passthrough"); not implemented in this harness */
+  mode?: "passthrough";
   minifyWhitespace?: boolean;
   splitting?: boolean;
   /** `splitRequire` (`--no-split-require` when false); on by default for target bun. */
@@ -459,6 +461,9 @@ function testRef(id: string, options: BundlerTestInput): BundlerTestRef {
   return { id, options };
 }
 
+/** A test that uses an option the selected backend does not implement: registered as a todo, not run. */
+class UnsupportedOptionError extends Error {}
+
 function expectBundled(
   id: string,
   opts: BundlerTestInput,
@@ -553,6 +558,17 @@ function expectBundled(
     onAfterApiBundle,
     throw: _throw = false,
     timeoutScale: _timeoutScale, // consumed by itBundled when registering the test
+    // esbuild test-suite options with no bun build equivalent (yet)
+    alias,
+    entryPointsAdvanced,
+    extensionOrder,
+    mangleProps,
+    mangleQuoted,
+    nodePaths,
+    skipIfWeDidNotImplementWildcardSideEffects,
+    stdin,
+    targetFromAPI,
+    mode,
     ...unknownProps
   } = opts;
 
@@ -597,52 +613,68 @@ function expectBundled(
           : entryPoints.length === 1;
 
   if (bundling === false && entryPoints.length > 1) {
-    throw new Error("bundling:false only supports a single entry point");
+    throw new UnsupportedOptionError("bundling:false with more than one entry point is not implemented in this harness");
   }
 
   if (!ESBUILD && legalComments) {
-    throw new Error("legalComments not implemented in bun build");
+    throw new UnsupportedOptionError("legalComments not implemented in bun build");
+  }
+  for (const [name, value] of Object.entries({
+    alias,
+    entryPointsAdvanced,
+    extensionOrder,
+    mangleProps,
+    mangleQuoted,
+    nodePaths,
+    skipIfWeDidNotImplementWildcardSideEffects,
+    stdin,
+    targetFromAPI,
+    mode,
+  })) {
+    if (!ESBUILD && value !== undefined) {
+      throw new UnsupportedOptionError(`${name} not implemented in bun build`);
+    }
   }
   if (!ESBUILD && unsupportedJSFeatures && unsupportedJSFeatures.length) {
-    throw new Error("unsupportedJSFeatures not implemented in bun build");
+    throw new UnsupportedOptionError("unsupportedJSFeatures not implemented in bun build");
   }
   if (!ESBUILD && unsupportedCSSFeatures && unsupportedCSSFeatures.length) {
-    throw new Error("unsupportedCSSFeatures not implemented in bun build");
+    throw new UnsupportedOptionError("unsupportedCSSFeatures not implemented in bun build");
   }
   if (!ESBUILD && mainFields) {
-    throw new Error("mainFields not implemented in bun build");
+    throw new UnsupportedOptionError("mainFields not implemented in bun build");
   }
   if (!ESBUILD && inject) {
-    throw new Error("inject not implemented in bun build");
+    throw new UnsupportedOptionError("inject not implemented in bun build");
   }
   if (!ESBUILD && loader) {
     const loaderValues = [...new Set(Object.values(loader))];
     const supportedLoaderTypes = ["js", "jsx", "ts", "tsx", "css", "json", "text", "file", "wtf", "toml"];
     const unsupportedLoaderTypes = loaderValues.filter(x => !supportedLoaderTypes.includes(x));
     if (unsupportedLoaderTypes.length > 0) {
-      throw new Error(`loader '${unsupportedLoaderTypes.join("', '")}' not implemented in bun build`);
+      throw new UnsupportedOptionError(`loader '${unsupportedLoaderTypes.join("', '")}' not implemented in bun build`);
     }
   }
   if (ESBUILD && bytecode) {
-    throw new Error("bytecode not implemented in esbuild");
+    throw new UnsupportedOptionError("bytecode not implemented in esbuild");
   }
   if (ESBUILD && skipOnEsbuild) {
     return testRef(id, opts);
   }
   if (ESBUILD && dotenv) {
-    throw new Error("dotenv not implemented in esbuild");
+    throw new UnsupportedOptionError("dotenv not implemented in esbuild");
   }
   if (ESBUILD && _throw) {
-    throw new Error("throw not implemented in esbuild");
+    throw new UnsupportedOptionError("throw not implemented in esbuild");
   }
   if (ESBUILD && minChunkSize !== undefined) {
-    throw new Error("minChunkSize not possible in esbuild backend");
+    throw new UnsupportedOptionError("minChunkSize not possible in esbuild backend");
   }
   if (ESBUILD && splitRequire !== undefined) {
-    throw new Error("splitRequire not possible in esbuild backend");
+    throw new UnsupportedOptionError("splitRequire not possible in esbuild backend");
   }
   if (ESBUILD && allowUnresolved !== undefined) {
-    throw new Error("allowUnresolved not possible in esbuild backend");
+    throw new UnsupportedOptionError("allowUnresolved not possible in esbuild backend");
   }
   if (dryRun) {
     return testRef(id, opts);
@@ -1913,6 +1945,9 @@ export function itBundled(
     try {
       expectBundled(id, opts, true);
     } catch (error) {
+      // Anything else is a broken test definition: let it fail the file instead of silently dropping the test.
+      if (!(error instanceof UnsupportedOptionError)) throw error;
+      if (!HIDE_SKIP) it.todo(id, () => expectBundled(id, opts as any));
       return ref;
     }
   }

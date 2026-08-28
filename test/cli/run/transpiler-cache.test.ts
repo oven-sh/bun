@@ -338,7 +338,7 @@ test("rejects cached module records containing out-of-range string indices", () 
   //   esm_record_byte_length @ 86, esm_record_hash @ 94. Payload follows @ 102.
   // Serialized module record layout (ModuleInfoStringTable + body, see
   // `ModuleInfoDeserialized::serialize` in src/js_printer/lib.rs):
-  //   table: [offset_width u8][0;3][count u32][(count+1) offsets][bytes]
+  //   table: [offset_width u8][0;3][count u32][(count+1) offsets][pad to even][bytes]
   //   body:  [flags u8][id_width u8][0;2][n_requested u32][n_records u32]
   //          [n_records tag bytes][n_requested tag bytes][string ids @ id_width ...]
   const ESM_RECORD_BYTE_OFFSET_AT = 78;
@@ -359,7 +359,8 @@ test("rejects cached module records containing out-of-range string indices", () 
     const count = data.readUInt32LE(esmOff + 4);
     const offsetsAt = esmOff + 8;
     const total = readUint(offsetsAt + count * offsetWidth, offsetWidth);
-    const bodyAt = offsetsAt + (count + 1) * offsetWidth + total;
+    const offsetsLen = (count + 1) * offsetWidth;
+    const bodyAt = offsetsAt + offsetsLen + (offsetsLen % 2) + total;
     const nRequested = data.readUInt32LE(bodyAt + 4);
     const nRecords = data.readUInt32LE(bodyAt + 8);
     const idsAt = bodyAt + 12 + nRecords + nRequested;

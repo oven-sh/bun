@@ -73,6 +73,49 @@ describe("bundler", () => {
       });
     }
 
+    // Every name a chunk's module record carries — one, two, three and more characters, Latin-1 and UTF-16 — must
+    // resolve to the same atom as the code block that reads it (the record's slots are spelled like the bytecode's),
+    // and a chunk with non-ASCII text must still run from its embedded bytecode rather than miss the cache.
+    itBundled("compile/splitting/ModuleRecordNamesMatchBytecode", {
+      compile: true,
+      splitting: true,
+      bytecode: true,
+      format: "esm",
+      banner: "// ✓ non-ascii banner",
+      files: {
+        "/entry.ts": /* js */ `
+          import { a, ab, abc, abcd, café, слово, "" as empty } from "./names";
+          import { report } from "./report";
+          const { lazy } = await import("./lazy");
+          console.log(report(a, ab, abc, abcd, café, слово, empty), lazy());
+        `,
+        "/names.ts": /* js */ `
+          export const a = 1, ab = 2, abc = 3, abcd = 4, café = 5, слово = 6;
+          const empty = 7;
+          export { empty as "" };
+        `,
+        "/report.ts": /* js */ `
+          export function report(...values: number[]) { return values.join(","); }
+        `,
+        "/lazy.ts": /* js */ `
+          import { a, ab, abc, abcd, café, слово } from "./names";
+          var x = [a], xy = [ab], xyz = [abc], xyzw = [abcd], é = [café], ф = [слово], all = { x, xy, xyz, xyzw, é, ф };
+          export function lazy() { return Object.values(all).flat().join("+") + "\u00e9\u0444"; }
+        `,
+      },
+      minifyIdentifiers: false,
+      run: {
+        env: { BUN_JSC_verboseDiskCache: "1" },
+        stdout: "1,2,3,4,5,6,7 1+2+3+4+5+6éф",
+        validate({ stderr }) {
+          const count = (text: string) => stderr.split("\n").filter(l => l.includes(text)).length;
+          // bun:main carries no bytecode; the entry and its two chunks must hit.
+          expect(count("[Disk Cache] Cache miss")).toBe(1);
+          expect(count("[Disk Cache] Cache hit")).toBe(3);
+        },
+      },
+    });
+
     // The embedded module graph is laid out in load order: the entry point's
     // static imports (dependencies first), then each dynamic import's closure,
     // breadth-first. Chunk index order would be entry, lazy1, lazy2, shared,

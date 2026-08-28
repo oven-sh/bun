@@ -624,13 +624,7 @@ impl TextDecoder {
             }
 
             if let Some(ignore_bom) = options_value.get(global_this, b"ignoreBOM")? {
-                if ignore_bom.is_boolean() {
-                    decoder.ignore_bom = ignore_bom.as_boolean();
-                } else {
-                    return Err(global_this.throw_invalid_arguments(format_args!(
-                        "TextDecoder(options) ignoreBOM is invalid. Expected boolean value",
-                    )));
-                }
+                decoder.ignore_bom = ignore_bom.to_boolean();
             }
         }
 

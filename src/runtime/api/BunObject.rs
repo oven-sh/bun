@@ -162,30 +162,10 @@ mod static_adapters {
         crate::shell::interpreter::create_shell_interpreter(g, cf)
     }
 
-    /// `Bun.sha(input, output?)` — wrapStaticMethod(Crypto.SHA512_256, "hash_", true).
-    /// Hand-roll the (BlobOrStringOrBuffer, ?StringOrBuffer) decode that
-    /// `wrapStaticMethod` would emit, with auto-protect on each argument.
+    /// `Bun.sha(input, output?)` is `Bun.SHA512_256.hash` under another name,
+    /// so it shares that method's argument decode and errors.
     pub(super) fn sha(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        use crate::node::types::{BlobOrStringOrBuffer, StringOrBuffer};
-        let [a0, a1] = cf.arguments_as_array::<2>();
-        // Protect each arg across the call (Blob materialization
-        // re-enters the VM).
-        let _a0_guard = a0.protected();
-        let _a1_guard = a1.protected();
-        let mut output = if a1.is_undefined_or_null() {
-            None
-        } else {
-            StringOrBuffer::from_js(g, a1)?
-        };
-        let Some(input) = BlobOrStringOrBuffer::from_js(g, a0)? else {
-            return Err(g.throw_invalid_arguments(format_args!(
-                "expected string, buffer, TypedArray, or Blob",
-            )));
-        };
-        if let Some(StringOrBuffer::Buffer(buffer)) = &mut output {
-            buffer.buffer = ArrayBuffer::from_typed_array(g, buffer.buffer.value);
-        }
-        Crypto::SHA512_256::hash_(g, &input, output)
+        Crypto::SHA512_256::hash(g, cf)
     }
 }
 

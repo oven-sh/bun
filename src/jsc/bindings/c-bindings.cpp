@@ -1113,7 +1113,17 @@ extern "C" void Bun__signpost_emit(os_log_t log, os_signpost_type_t type, os_sig
 
 #if OS(DARWIN) || defined(__linux__) || defined(__FreeBSD__)
 
-#define BLOB_HEADER_ALIGNMENT 16 * 1024
+#if OS(DARWIN)
+// exe_format/macho.rs expands the __BUN segment in place at this alignment
+// (the page size on Apple Silicon).
+#define BLOB_HEADER_ALIGNMENT (16 * 1024)
+#else
+// ELF: the section holds only this 8-byte header; exe_format/elf.rs places the
+// --compile payload at a page-aligned vaddr itself. A larger alignment raises
+// the RW PT_LOAD's p_align past the page size, which makes it overlap the
+// previous segment under strict-p_align loaders like UPX's stub (#40752).
+#define BLOB_HEADER_ALIGNMENT 8
+#endif
 
 extern "C" {
 struct BlobHeader {

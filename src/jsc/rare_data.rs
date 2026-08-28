@@ -12,6 +12,7 @@ use bun_core::strings;
 use bun_core::{Mutex, Output};
 use bun_event_loop::MiniEventLoop::__bun_stdio_blob_store_new;
 use bun_io::{self as Async};
+use bun_libdeflate_sys::libdeflate;
 use bun_paths::MAX_PATH_BYTES;
 use bun_sys::{self as syscall, Fd, Mode};
 use bun_uws::{self as uws, SocketGroup};
@@ -268,6 +269,10 @@ pub struct RareData {
     h2_padded_frame_buffer: Option<Box<H2PaddedFrameBuffer>>,
     /// Output scratch for one JS-thread `CompressionStream` step; see [`Self::take_compression_scratch`].
     compression_scratch: Option<Vec<u8>>,
+    /// Inflated payload of one `new WebSocket()` client message; see [`Self::take_websocket_inflate_scratch`].
+    websocket_inflate_scratch: Option<Vec<u8>>,
+    /// One libdeflate handle for every JS-thread one-shot inflate; see [`Self::libdeflate_decompressor`].
+    libdeflate_decompressor: Option<libdeflate::OwnedDecompressor>,
 
     // There is intentionally no `aws_signature_cache` field — storage lives in
     // `bun_s3_signing::credentials::AWS_SIGNATURE_CACHE` (process static; it
@@ -327,6 +332,8 @@ impl Default for RareData {
             pipe_read_scratch: Box::new(bun_event_loop::PipeReadScratch::new()),
             h2_padded_frame_buffer: None,
             compression_scratch: None,
+            websocket_inflate_scratch: None,
+            libdeflate_decompressor: None,
             s3_default_client: Strong::empty(),
             node_quic_callbacks: Strong::empty(),
             default_csrf_secret: Box::default(),
@@ -678,6 +685,31 @@ impl RareData {
             buffer.clear();
             self.compression_scratch = Some(buffer);
         }
+    }
+
+    /// Empty `Vec` with whatever capacity the last WebSocket client inflate left behind. By value,
+    /// like [`Self::take_h2_padded_frame_buffer`]: delivering the payload runs JS, which can reach
+    /// this path again before the buffer comes back.
+    pub fn take_websocket_inflate_scratch(&mut self) -> Vec<u8> {
+        self.websocket_inflate_scratch.take().unwrap_or_default()
+    }
+
+    /// Hand a taken buffer back; the slot keeps the first one returned and lets an oversized one go.
+    pub fn put_back_websocket_inflate_scratch(&mut self, mut buffer: Vec<u8>) {
+        const KEEP: usize = 256 * 1024;
+        if self.websocket_inflate_scratch.is_none() && buffer.capacity() <= KEEP {
+            buffer.clear();
+            self.websocket_inflate_scratch = Some(buffer);
+        }
+    }
+
+    /// libdeflate keeps no state between calls, so one handle serves every one-shot inflate on
+    /// this thread. `None` when libdeflate cannot allocate it; callers fall back to zlib.
+    pub fn libdeflate_decompressor(&mut self) -> Option<&mut libdeflate::Decompressor> {
+        if self.libdeflate_decompressor.is_none() {
+            self.libdeflate_decompressor = libdeflate::OwnedDecompressor::new();
+        }
+        self.libdeflate_decompressor.as_deref_mut()
     }
 
     pub fn boring_engine(&mut self) -> *mut boring::ENGINE {

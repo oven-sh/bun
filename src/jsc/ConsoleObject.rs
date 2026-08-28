@@ -5895,8 +5895,6 @@ pub(crate) extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
     }
 }
 
-/// `console.timeStamp()` is a no-op: JSC's `ConsoleClient` requires the hook,
-/// Bun leaves it unimplemented.
 #[unsafe(no_mangle)]
 #[crate::host_call]
 pub(crate) extern "C" fn Bun__ConsoleObject__timeStamp(

@@ -1594,16 +1594,20 @@ test("a standalone executable does not run a synchronous full GC after loading i
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(await build.exited).toBe(0);
+  const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect(buildStderr).not.toContain("error");
+  expect(buildExit).toBe(0);
   await using proc = Bun.spawn({
     cmd: [join(cwd, isWindows ? "app.exe" : "app")],
-    env: { ...bunEnv, BUN_JSC_logGC: "1" },
+    // BUN_DESTRUCT_VM_ON_EXIT would add an exit-time full collection to the log.
+    env: { ...bunEnv, BUN_JSC_logGC: "1", BUN_DESTRUCT_VM_ON_EXIT: undefined },
     cwd,
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toBe("done\n");
+  expect(stderr).toContain("[GC<"); // logGC is live
   expect(stderr).not.toContain("FullCollection");
   expect(exitCode).toBe(0);
 });

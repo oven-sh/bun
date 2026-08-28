@@ -335,6 +335,7 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
             .files
             .values()
             .iter()
+            .filter(|f| f.loader.is_javascript_like() || !f.bytecode.is_empty())
             .map(|f| if f.bytecode.is_empty() { f.contents.len() } else { f.bytecode.len() } + f.module_info.len())
             .sum();
         let builtins: usize = self

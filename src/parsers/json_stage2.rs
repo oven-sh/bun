@@ -867,9 +867,11 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
     #[cold]
     fn too_deeply_nested(&mut self, loc: Loc) -> crate::Error {
-        let _ = self.add_range_error(
+        crate::json::add_too_deeply_nested_error(
+            self.log,
+            self.source,
             Range { loc, len: 1 },
-            format_args!("JSON document is too deeply nested"),
+            "JSON document",
         );
         crate::Error::StackOverflow
     }

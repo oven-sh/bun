@@ -11,8 +11,7 @@ use crate::api::bun::process::sync;
 
 // ──────────────────────────────────────────────────────────────────────────
 
-/// argv prefix that hands its next argument (a URL or a file) to the system's
-/// default handler.
+/// argv prefix that opens its next argument with the system's default handler.
 #[cfg(target_os = "macos")]
 const OPENER: &[&[u8]] = &[b"/usr/bin/open"];
 #[cfg(windows)]

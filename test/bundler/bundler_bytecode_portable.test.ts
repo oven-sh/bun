@@ -380,7 +380,10 @@ function fingerprint(name: string, bytecode: Uint8Array, isPayload = true) {
 // vm entries pin the serialized bytecode alone, like the bundler outputs.
 function vmPayload(cachedData: Uint8Array) {
   const headerSize = 24;
-  const payloadLength = new DataView(cachedData.buffer, cachedData.byteOffset, cachedData.byteLength).getUint32(4, true);
+  const payloadLength = new DataView(cachedData.buffer, cachedData.byteOffset, cachedData.byteLength).getUint32(
+    4,
+    true,
+  );
   expect(cachedData.byteLength).toBe(headerSize + payloadLength);
   return cachedData.subarray(headerSize);
 }
@@ -429,23 +432,32 @@ describe("bytecode cache portability", () => {
     );
     outputs["vm.Script source-forms.js"] = fingerprint(
       "vm.Script source-forms.js",
-      vmPayload(new vm.Script(sourceFormsSource(), { filename: "source-forms.js", produceCachedData: true }).cachedData!),
+      vmPayload(
+        new vm.Script(sourceFormsSource(), { filename: "source-forms.js", produceCachedData: true }).cachedData!,
+      ),
     );
     const librarySource = (lib: string) => readFileSync(join(corpusDir, "../../node_modules", lib), "utf8");
     outputs["vm.Script lodash.js"] = fingerprint(
       "vm.Script lodash.js",
-      vmPayload(new vm.Script(librarySource("lodash/lodash.js"), { filename: "lodash.js", produceCachedData: true }).cachedData!),
+      vmPayload(
+        new vm.Script(librarySource("lodash/lodash.js"), { filename: "lodash.js", produceCachedData: true })
+          .cachedData!,
+      ),
     );
     outputs["vm.Script typescript.js"] = fingerprint(
       "vm.Script typescript.js",
-      vmPayload(new vm.Script(librarySource("typescript/lib/typescript.js"), {
-        filename: "typescript.js",
-        produceCachedData: true,
-      }).cachedData!),
+      vmPayload(
+        new vm.Script(librarySource("typescript/lib/typescript.js"), {
+          filename: "typescript.js",
+          produceCachedData: true,
+        }).cachedData!,
+      ),
     );
     outputs["vm.SourceTextModule acorn.mjs"] = fingerprint(
       "vm.SourceTextModule acorn.mjs",
-      vmPayload(new vm.SourceTextModule(librarySource("acorn/dist/acorn.mjs"), { identifier: "acorn.mjs" }).createCachedData()),
+      vmPayload(
+        new vm.SourceTextModule(librarySource("acorn/dist/acorn.mjs"), { identifier: "acorn.mjs" }).createCachedData(),
+      ),
     );
     try {
       expectOutputs(outputs);

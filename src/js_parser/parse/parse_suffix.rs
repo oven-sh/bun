@@ -464,8 +464,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // condition ? yes : no
         //                   ^
-        // When this conditional is itself the "yes" branch of an outer one, its
-        // "no" branch is still between the outer "?" and ":".
+        // Still between the "?" and ":" of an outer conditional when nested in its "yes"
         let no_flags = if flags == EFlags::AfterQuestionAndBeforeColon {
             flags
         } else {

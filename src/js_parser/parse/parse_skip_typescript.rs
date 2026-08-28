@@ -1566,30 +1566,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    /// Decides whether the ":" after the ")" of a parenthesized expression is
-    /// an arrow function return type when that expression is the middle
-    /// operand of a conditional, i.e. between its "?" and ":". Separate from
-    /// `try_skip_type_script_arrow_return_type_with_backtracking` because it
-    /// is much more expensive: it has to parse the arrow body.
+    /// Whether the ":" after a parenthesized expression that sits between the
+    /// "?" and ":" of a conditional starts an arrow function return type. The
+    /// TypeScript compiler parses the whole arrow function and keeps it only
+    /// when another ":" follows its body:
     ///
-    /// The TypeScript compiler parses the whole arrow function and then
-    /// backtracks to the colon unless another colon follows the body:
+    ///   x = a ? (b) : c => d;      // "(b)" is an expression, ":" pairs with "?"
+    ///   y = a ? (b) : c => d : e;  // "(b) : c => d" is an arrow function
     ///
-    ///   x = a ? (b) : c => d;
-    ///   y = a ? (b) : c => d : e;
-    ///
-    /// In "x" the first colon pairs with the "?" because the arrow function
-    /// "(b) : c => d" is not followed by a colon. In "y" the first colon starts
-    /// a return type because the arrow function is followed by a colon. So the
-    /// colon before the arrow body must pair with the "?" unless there is
-    /// another colon to pair with it after the body.
-    ///
-    /// The body is parsed once here and thrown away, then parsed again by the
-    /// caller when this returns true. Unlike the lexer-only backtracking above,
-    /// parsing an expression mutates parser state, so the whole parser is
-    /// restored from a snapshot. The current scope is the arrow's
-    /// `FunctionArgs` scope; the body is parsed with no arguments declared so
-    /// that scope's members stay untouched.
+    /// The body is parsed here and thrown away, then parsed again by the
+    /// caller when this returns true. Parsing an expression mutates parser
+    /// state, so the whole parser is restored from a snapshot. The current
+    /// scope is the arrow's `FunctionArgs` scope; no arguments are declared so
+    /// that its members stay untouched.
     pub(crate) fn is_type_script_arrow_return_type_after_question_and_before_colon(
         &mut self,
         arrow_data: &FnOrArrowDataParse,
@@ -1603,8 +1592,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.lexer.expect(T::TColon)?;
             self.skip_typescript_return_type()?;
             self.parse_arrow_body(&mut [], &mut data)?;
-            // There must be a colon following the arrow function body to pair
-            // with the leading "?"
+            // The ":" that pairs with the "?"
             self.lexer.expect(T::TColon)?;
             Ok(())
         })();
@@ -1612,8 +1600,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.restore_parser_snapshot(snapshot);
         match result {
             Ok(()) => Ok(true),
-            // A syntax error in the attempt means the colon pairs with the "?".
-            // Running out of stack or memory is not a property of the attempt.
+            // Stack and memory exhaustion are not properties of the attempt
             Err(err @ (Error::StackOverflow | Error::Alloc(_))) => Err(err),
             Err(_) => Ok(false),
         }

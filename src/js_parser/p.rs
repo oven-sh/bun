@@ -7345,17 +7345,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Capture everything the parse pass mutates, so that a speculative parse
-    /// of a whole expression (not just a type) can be undone with
-    /// [`Self::restore_parser_snapshot`]. The lexer-only backtracking in
-    /// `parse_skip_typescript.rs` is not enough for that: parsing an
-    /// expression declares symbols, pushes scopes, records dynamic imports
-    /// and logs errors through `P::log()`, which ignores
-    /// `lexer.is_log_disabled`.
-    ///
-    /// Growable lists are captured as lengths and truncated on restore. The
-    /// attempt's arena allocations (AST nodes, `Scope`s) are left in the arena
-    /// and become unreachable.
+    /// Everything the parse pass mutates, so that a speculative parse of an
+    /// expression can be undone with [`Self::restore_parser_snapshot`]. The
+    /// lexer-only backtracking in `parse_skip_typescript.rs` only covers
+    /// types: an expression also declares symbols, pushes scopes, records
+    /// dynamic imports and logs through `P::log()`, which ignores
+    /// `lexer.is_log_disabled`. Lists are captured as lengths and truncated
+    /// on restore; the attempt's arena allocations just become unreachable.
     pub(crate) fn parser_snapshot(&self) -> ParserSnapshot<'a> {
         let log = self.log();
         ParserSnapshot {
@@ -7411,10 +7407,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.esm_export_keyword = snapshot.esm_export_keyword;
         self.enclosing_class_keyword = snapshot.enclosing_class_keyword;
 
-        // Every scope pushed since the snapshot is a descendant of the scope
-        // that was current, appended to its `children` (`pop_and_flatten_scope`
-        // re-appends flattened grandchildren there too) and to
-        // `scopes_in_order`, so truncating both drops the whole subtree.
+        // Every scope pushed since is a descendant of the then-current scope, appended
+        // to its `children` (also by `pop_and_flatten_scope`) and to `scopes_in_order`.
         let mut scope = snapshot.current_scope;
         scope.children.truncate(snapshot.current_scope_children_len);
         self.current_scope = scope;
@@ -7423,10 +7417,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.scopes_in_order_for_enum.pop();
         }
 
-        // Symbols declared since the snapshot are only reachable from the
-        // discarded scopes and AST, except for enum and namespace refs, which
-        // also key `ref_to_ts_namespace_member`. Drop those keys too, so a
-        // symbol that later reuses the index does not inherit namespace data.
+        // Enum and namespace symbols also key `ref_to_ts_namespace_member`; a symbol
+        // that later reuses the index must not inherit their namespace data.
         if self.symbols.len() > snapshot.symbols_len {
             self.symbols.truncate(snapshot.symbols_len);
             if TYPESCRIPT {

@@ -923,8 +923,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // "export type foo = ..."
                                 let type_range = p.lexer.range();
                                 p.lexer.next()?;
-                                // "export type\n{ foo }" and "export type\n* from 'bar'" are
-                                // fine: only a type alias name must be on the same line.
+                                // "export type\n{ foo }" and "export type\n* from 'bar'" are fine
                                 if p.lexer.has_newline_before
                                     && p.lexer.token != T::TOpenBrace
                                     && p.lexer.token != T::TAsterisk
@@ -1553,22 +1552,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 p.lexer.next()?;
 
                                 if p.lexer.token == T::TEquals {
-                                    // "import type foo = require('bar');"
-                                    // "import type from = require('bar');"
-                                    // "import type foo = bar.baz;"
+                                    // "import type foo = require('bar');" (foo may be "from")
                                     opts.is_typescript_declare = true;
                                     return p.parse_type_script_import_equals_stmt(
                                         loc, opts, name_loc, name,
                                     );
                                 } else if p.lexer.token == T::TStringLiteral && name == b"from" {
-                                    // "import type from 'bar';"
-                                    // A value import of the default export, named "type".
+                                    // "import type from 'bar';" imports the default export as "type"
                                     let path = p.parse_path()?;
                                     p.lexer.expect_or_insert_semicolon()?;
                                     return p.process_import_statement(stmt, path, loc, false);
                                 } else {
-                                    // "import type foo from 'bar';"
-                                    // "import type from from 'bar';"
+                                    // "import type foo from 'bar';" (foo may be "from")
                                     p.lexer.expect_contextual_keyword(b"from")?;
                                     let _ = p.parse_path()?;
                                     p.lexer.expect_or_insert_semicolon()?;

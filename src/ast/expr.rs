@@ -722,9 +722,7 @@ impl Expr {
 pub enum EFlags {
     None,
     TsDecorator,
-    /// The expression is the middle operand of a conditional: between its
-    /// `?` and its `:`. A TypeScript arrow return type there is ambiguous
-    /// with the conditional's own `:`.
+    /// Between the `?` and `:` of a conditional, where an arrow return type is ambiguous.
     AfterQuestionAndBeforeColon,
 }
 

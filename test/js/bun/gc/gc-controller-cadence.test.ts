@@ -184,19 +184,17 @@ describe("GarbageCollectionController idle Full GC", () => {
     const initial = heapSize();
     process.stdout.write(\`INITIAL=\${initial}\\n\`);
 
-    // Keep the event loop alive without allocating. With BUN_GC_TIMER_INTERVAL=20
-    // the controller ticks every 20ms; once it sees 30 non-growing ticks (~600ms)
-    // it requests an async Full GC and converges to the slow interval. 5s of
-    // pure idle gives ~8x headroom for loaded darwin-x64 hosts where timer
-    // deadlines can land late under CPU pressure.
-    await Bun.sleep(5000);
-
-    // The Full GC is async — poll until its result is visible in heapSize().
-    // Without the idle Full GC the loop runs to completion with heap unchanged.
+    // With BUN_GC_TIMER_INTERVAL=20 the controller ticks every 20ms; once it
+    // sees 30 non-growing ticks (~600ms) it requests an async Full GC. Poll
+    // heapSize() until that collection lands or the deadline passes. The poll
+    // loop allocates almost nothing, so it does not disturb the stable-tick
+    // count. Without the idle Full GC the heap never drops and the loop runs
+    // to the deadline.
     const threshold = initial / 4;
+    const deadline = Date.now() + 3000;
     let final = heapSize();
-    for (let i = 0; i < 30 && final >= threshold; i++) {
-      await Bun.sleep(100);
+    while (final >= threshold && Date.now() < deadline) {
+      await Bun.sleep(50);
       final = heapSize();
     }
     process.stdout.write(\`FINAL=\${final}\\n\`);
@@ -235,5 +233,5 @@ describe("GarbageCollectionController idle Full GC", () => {
     // stdout/stderr in full. ASAN/debug builds may emit benign stderr noise,
     // so stderr is surfaced for context but not asserted empty.
     expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
-  }, 30_000);
+  });
 });

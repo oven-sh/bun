@@ -139,13 +139,19 @@ describe("empty brace variants are argv words in every position", () => {
     ["{,b}", ["", "b"]],
     ["{b,}", ["b", ""]],
     ["{,}", ["", ""]],
+    ["{,,,}", ["", "", "", ""]],
     ["{,,b}", ["", "", "b"]],
+    ["{,a,b}", ["", "a", "b"]],
     ["{a,,b}", ["a", "", "b"]],
+    ["{a,b,}", ["a", "b", ""]],
+    ["x{,,}", ["x", "x", "x"]],
+    ["{,}y", ["y", "y"]],
     ["{,b}{,c}", ["", "c", "b", "bc"]],
     ["{{,a},b}", ["", "a", "b"]],
     ["x {,b} y", ["x", "", "b", "y"]],
     // A quoted empty prefix belongs to the same word, it is not a word of its own.
     ['""{,b}', ["", "b"]],
+    ['""{,,}', ["", "", ""]],
   ];
 
   test.concurrent.each(cases)("%s", async (words, expected) => {

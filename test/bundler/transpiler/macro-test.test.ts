@@ -402,6 +402,44 @@ test("a macro in a module transpiled off the main thread sees --define", async (
   expect(exitCode).toBe(0);
 });
 
+// `Bun.build()` parses on the process-wide worker pool. The macro VM a worker creates takes the
+// options of the build that creates it and lives on after that build, so this runs in its own
+// process: an earlier build in the same process would otherwise decide what the macro sees.
+test("Bun.build() passes define and loader to the macro VM", async () => {
+  using dir = tempDir("macro-build-api-options", {
+    "entry.ts": `import { mode, banner } from "./macro.ts" with { type: "macro" };\nconsole.log(mode(), banner());\n`,
+    "macro.ts": [
+      `import banner_ from "./banner.dat";`,
+      `export function mode() {\n  return process.env.MODE ?? "none";\n}`,
+      `export function banner() {\n  return banner_;\n}`,
+      ``,
+    ].join("\n"),
+    "banner.dat": "hello from a text loader",
+    "build.ts": `
+      const result = await Bun.build({
+        entrypoints: ["./entry.ts"],
+        target: "bun",
+        define: { "process.env.MODE": '"prod"' },
+        loader: { ".dat": "text" },
+      });
+      console.log(await result.outputs[0].text());
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "build.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({
+    lastLine: `console.log("prod", "hello from a text loader");`,
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 describe("--no-macros", () => {
   const files = {
     "macro.ts": `

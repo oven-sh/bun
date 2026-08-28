@@ -2655,34 +2655,27 @@ describe("bundler", () => {
   });
   // The macro module is transpiled by the macro VM, not by the bundler. That
   // VM has to be created from the build's transform options, or the macro
-  // module does not see `--define` and `--loader`.
-  const macroSeesBuildOptionsFiles = {
-    "/entry.ts": /* js */ `
-      import { mode, banner } from "./macro.ts" with { type: "macro" };
-      console.log(mode(), banner());
-    `,
-    "/macro.ts": /* js */ `
-      import banner_ from "./banner.dat";
-      export function mode() {
-        return process.env.MODE ?? "none";
-      }
-      export function banner() {
-        return banner_;
-      }
-    `,
-    "/banner.dat": "hello from a text loader",
-  };
-  itBundled("edgecase/MacroSeesBuildDefinesAndLoadersCLI", {
-    files: macroSeesBuildOptionsFiles,
+  // module does not see `--define` and `--loader`. The `Bun.build()` variant
+  // lives in transpiler/macro-test.test.ts: the macro VM of a worker thread
+  // outlives the build that created it, so that test needs its own process.
+  itBundled("edgecase/MacroSeesBuildDefinesAndLoaders", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { mode, banner } from "./macro.ts" with { type: "macro" };
+        console.log(mode(), banner());
+      `,
+      "/macro.ts": /* js */ `
+        import banner_ from "./banner.dat";
+        export function mode() {
+          return process.env.MODE ?? "none";
+        }
+        export function banner() {
+          return banner_;
+        }
+      `,
+      "/banner.dat": "hello from a text loader",
+    },
     backend: "cli",
-    define: { "process.env.MODE": '"prod"' },
-    loader: { ".dat": "text" },
-    target: "bun",
-    run: { stdout: "prod hello from a text loader" },
-  });
-  itBundled("edgecase/MacroSeesBuildDefinesAndLoadersAPI", {
-    files: macroSeesBuildOptionsFiles,
-    backend: "api",
     define: { "process.env.MODE": '"prod"' },
     loader: { ".dat": "text" },
     target: "bun",

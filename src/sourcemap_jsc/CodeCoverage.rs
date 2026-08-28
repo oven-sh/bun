@@ -251,11 +251,11 @@ pub mod wire {
 /// `bun test --parallel` where each worker that loaded the file reports it.
 ///
 /// Hits and executed lines/functions/blocks union across reports. Executable
-/// lines do not: a process that never ran a function marks the function's
-/// whole line span (blank lines included) executable, while one that ran it
-/// knows the real lines. So a line counts as executable only if it executed
+/// lines do not: a process that never ran a function marks every line of the
+/// function's range executable, while one that ran it knows the lines its
+/// blocks reached. So a line counts as executable only if it executed
 /// somewhere or every report agrees it is executable; otherwise the coarse
-/// span from an import-only worker would show a fully executed function as
+/// range from an import-only worker would show a fully executed function as
 /// partially covered (#39930).
 #[derive(Default)]
 pub struct MergedReport {

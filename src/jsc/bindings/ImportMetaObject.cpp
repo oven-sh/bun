@@ -159,7 +159,6 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
     } else {
         JSC::JSObject* thisObject = dynamicDowncast<JSC::JSObject>(thisValue);
         if (!thisObject) [[unlikely]] {
-            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
             JSC::throwTypeError(globalObject, scope, "import.meta.resolveSync must be bound to an import.meta object"_s);
             return {};
         }
@@ -175,7 +174,10 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         if (moduleName.isString()) {
             auto moduleString = moduleName.toWTFString(globalObject);
-            if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, JSValue::decode(from).toWTFString(globalObject))) {
+            RETURN_IF_EXCEPTION(scope, {});
+            auto fromString = JSValue::decode(from).toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, fromString)) {
                 if (moduleString == resolvedString.value())
                     return JSC::JSValue::encode(moduleName);
                 return JSC::JSValue::encode(jsString(vm, resolvedString.value()));
@@ -195,8 +197,6 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
     return result;
 }
 
-extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const BunString*);
-
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -208,13 +208,16 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     bool isESM = callFrame->argument(2).asBoolean();
     bool isRequireDotResolve = callFrame->argument(3).isTrue();
     JSValue userPathList = callFrame->argument(4);
-
-    RETURN_IF_EXCEPTION(scope, {});
+    JSValue parentModule = callFrame->argument(5);
+    JSValue resolveFilenameOptions = callFrame->argument(6);
 
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         if (moduleName.isString()) {
             auto moduleString = moduleName.toWTFString(globalObject);
-            if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, from.toWTFString(globalObject))) {
+            RETURN_IF_EXCEPTION(scope, {});
+            auto fromString = from.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, fromString)) {
                 if (moduleString == resolvedString.value())
                     return JSC::JSValue::encode(moduleName);
                 return JSC::JSValue::encode(jsString(vm, resolvedString.value()));
@@ -228,30 +231,15 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 auto overrideHandler = uncheckedDowncast<JSObject>(globalObject->m_moduleResolveFilenameFunction.getInitializedOnMainThread(globalObject));
                 if (overrideHandler) [[likely]] {
                     ASSERT(overrideHandler->isCallable());
-                    JSValue parentModuleObject = globalObject->requireMap()->get(globalObject, from);
-
-                    JSValue parentID = jsUndefined();
-                    if (auto* parent = dynamicDowncast<Bun::JSCommonJSModule>(parentModuleObject)) {
-                        parentID = parent->filename();
-                    } else {
-                        parentID = from;
-                    }
 
                     MarkedArgumentBuffer args;
                     args.append(moduleName);
-                    args.append(parentModuleObject);
-                    auto parentIdStr = parentID.toWTFString(globalObject);
-                    auto bunStr = Bun::toString(parentIdStr);
-                    args.append(jsBoolean(Bun__isBunMain(lexicalGlobalObject, &bunStr)));
+                    args.append(parentModule);
+                    args.append(jsBoolean(false));
+                    args.append(resolveFilenameOptions);
 
-                    // Pass options object with paths if provided
-                    if (!userPathList.isUndefinedOrNull()) {
-                        JSObject* options = JSC::constructEmptyObject(globalObject);
-                        options->putDirect(vm, JSC::Identifier::fromString(vm, "paths"_s), userPathList);
-                        args.append(options);
-                    }
-
-                    JSValue result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, overrideHandler, JSC::getCallData(overrideHandler), parentModuleObject, args);
+                    JSValue thisValue = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
+                    JSValue result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, overrideHandler, JSC::getCallData(overrideHandler), thisValue, args);
                     RETURN_IF_EXCEPTION(scope, {});
                     if (!isRequireDotResolve) {
                         JSString* string = result.toString(globalObject);
@@ -441,6 +429,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     }
 
     auto resultString = result.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     if (isAbsolutePath(resultString)) {
         // file path -> url
         RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, WTF::URL::fileURLWithFileSystemPath(resultString).string())));
@@ -733,10 +722,6 @@ DEFINE_VISIT_CHILDREN(ImportMetaObject);
 
 void ImportMetaObject::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    // if (void* wrapped = thisObject->wrapped()) {
-    // if (thisObject->scriptExecutionContext())
-    //     analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
-    // }
     Base::analyzeHeap(cell, analyzer);
 }
 

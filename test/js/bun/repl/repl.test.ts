@@ -1,45 +1,60 @@
 // Tests for Bun REPL
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { chmodSync, statSync } from "node:fs";
 import path from "path";
 
-// Helper to run REPL with piped stdin (non-TTY mode) and capture output
+const stripAnsi = Bun.stripANSI;
+
+/**
+ * Runs `bun repl` with piped stdin (non-TTY mode) and captures its output.
+ *
+ * In this mode the REPL writes "> " and a newline for every prompt, then what
+ * the line evaluated to. `outputs` holds the text that followed each prompt:
+ * one entry per evaluated input, none for the final `.exit` (or EOF). Stack
+ * frames are dropped from it, since their positions depend on every line
+ * evaluated before.
+ */
 async function runRepl(
   input: string | string[],
   options: {
     env?: Record<string, string>;
+    cwd?: string;
+    /** Where the REPL keeps .bun_repl_history. Defaults to an empty directory. */
+    home?: string;
   } = {},
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+): Promise<{ stdout: string; stderr: string; exitCode: number; outputs: string[] }> {
   const inputStr = Array.isArray(input) ? input.join("\n") + "\n" : input;
-  const { env = {} } = options;
+  const { env = {}, cwd } = options;
 
   // The REPL loads and saves $HOME/.bun_repl_history (USERPROFILE on Windows).
-  using home = tempDir("repl-home", {});
+  using tempHome = tempDir("repl-home", {});
+  const home = options.home ?? String(tempHome);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "repl"],
     stdin: Buffer.from(inputStr),
     stdout: "pipe",
     stderr: "pipe",
+    cwd,
     env: {
       ...bunEnv,
       TERM: "dumb",
       NO_COLOR: "1",
       ...env,
-      HOME: String(home),
-      USERPROFILE: String(home),
+      HOME: home,
+      USERPROFILE: home,
     },
   });
 
-  const exitCode = await proc.exited;
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
+  const outputs = stripAnsi(stdout)
+    .split("> \n")
+    .slice(1, -1)
+    .map(chunk => chunk.replace(/^ +at .*\n?/gm, "").trim());
 
-  return { stdout, stderr, exitCode };
+  return { stdout, stderr, exitCode, outputs };
 }
-
-const stripAnsi = Bun.stripANSI;
 
 interface Screen {
   /** One string per row, holding exactly the cells that were written to it. */
@@ -191,7 +206,7 @@ function formatScreen({ rows, cursor }: Screen): string {
 async function withTerminalRepl(
   fn: (helpers: {
     terminal: Bun.Terminal;
-    proc: Bun.ChildProcess;
+    proc: Bun.Subprocess;
     send: (text: string) => void;
     waitFor: (pattern: string | RegExp, timeoutMs?: number) => Promise<string>;
     /** Resolves with the rendered screen once `ready` accepts it. */
@@ -309,91 +324,99 @@ async function withTerminalRepl(
 
   // Clean exit. Ctrl+A then Ctrl+K first discards whatever the test left on
   // the line, wherever the cursor is, so `.exit` is not appended to it (which
-  // would leave the REPL running until the kill below).
-  send("\x01\x0b.exit\n");
-  await Promise.race([proc.exited, Bun.sleep(2000)]);
-  if (!proc.killed) proc.kill();
+  // would leave the REPL running until the test times out).
+  if (proc.exitCode === null) {
+    send("\x01\x0b.exit\n");
+    await proc.exited;
+  }
 }
 
 describe.concurrent("Bun REPL", () => {
   describe("basic evaluation", () => {
-    test("evaluates simple expression", async () => {
-      const { stdout, exitCode } = await runRepl(["1 + 1", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("2");
-      expect(exitCode).toBe(0);
-    });
-
-    test("evaluates multiple expressions", async () => {
-      const { stdout, exitCode } = await runRepl(["1 + 1", "2 * 3", "Math.sqrt(16)", ".exit"]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain("2");
-      expect(output).toContain("6");
-      expect(output).toContain("4");
-      expect(exitCode).toBe(0);
-    });
-
-    test("evaluates string expressions", async () => {
-      const { stdout, exitCode } = await runRepl(["'hello'.toUpperCase()", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("HELLO");
-      expect(exitCode).toBe(0);
-    });
-
-    test("evaluates object literals", async () => {
-      const { stdout, exitCode } = await runRepl(["({ a: 1, b: 2 })", ".exit"]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain("a");
-      expect(output).toContain("b");
-      expect(exitCode).toBe(0);
-    });
-
-    test("evaluates array expressions", async () => {
-      const { stdout, exitCode } = await runRepl(["[1, 2, 3].map(x => x * 2)", ".exit"]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain("2");
-      expect(output).toContain("4");
-      expect(output).toContain("6");
+    test("prints the value of each evaluated line", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "1 + 1",
+        "2 * 3",
+        "Math.sqrt(16)",
+        "'hello'.toUpperCase()",
+        "({ a: 1, b: 2 })",
+        "[1, 2, 3].map(x => x * 2)",
+        // A directive (a lone string literal statement) is an expression here.
+        `"use strict"`,
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["2", "6", "4", '"HELLO"', "{\n  a: 1,\n  b: 2,\n}", "[ 2, 4, 6 ]", '"use strict"']);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
   });
 
   describe("special variables", () => {
-    test("_ contains last result", async () => {
-      const { stdout, exitCode } = await runRepl(["42", "_", ".exit"]);
-      const output = stripAnsi(stdout);
-      // 42 should appear at least twice: once for the eval, once for _
-      expect(output.split("42").length - 1).toBeGreaterThanOrEqual(2);
-      expect(exitCode).toBe(0);
-    });
-
-    test("_ updates with each result", async () => {
-      const { stdout, exitCode } = await runRepl(["10", "_ * 2", "_ + 5", ".exit"]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain("10");
-      expect(output).toContain("20");
-      expect(output).toContain("25");
-      expect(exitCode).toBe(0);
-    });
-
-    test("_error contains last error", async () => {
-      const { stdout, exitCode } = await runRepl(["throw new Error('test error')", "_error.message", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("test error");
+    test("_ holds the last result and _error the last error", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "42",
+        "_",
+        "10",
+        "_ * 2",
+        "_ + 5",
+        "throw new Error('test error')",
+        "_error.message",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["42", "42", "10", "20", "25", "error: test error", '"test error"']);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
   });
 
   describe("REPL commands", () => {
-    test(".exit exits the REPL", async () => {
-      const { exitCode } = await runRepl([".exit"]);
+    test(".exit exits the REPL after the welcome message", async () => {
+      const { stdout, stderr, exitCode } = await runRepl([".exit"]);
+      expect(normalizeBunSnapshot(stripAnsi(stdout))).toMatchInlineSnapshot(`
+        "Welcome to Bun v<bun-version>
+        Type .copy [code] to copy to clipboard. .help for more info.
+
+        >"
+      `);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
     test(".help shows help message", async () => {
-      const { stdout, exitCode } = await runRepl([".help", ".exit"]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain(".help");
-      expect(output).toContain(".exit");
-      expect(output).toContain(".load");
-      expect(output).toContain(".save");
+      const { outputs, stderr, exitCode } = await runRepl([".help", ".exit"]);
+      expect(outputs).toHaveLength(1);
+      expect(outputs[0]).toMatchInlineSnapshot(`
+        "REPL Commands:
+          .help        Print this help message
+          .exit        Exit the REPL
+          .clear       Clear the screen
+          .copy        Copy result to clipboard (.copy [expr])
+          .load        Load a file into the REPL session
+          .save        Save REPL history to a file
+          .editor      Enter multi-line editor mode
+          .break       Cancel current input
+          .history     Show command history
+
+        Keybindings:
+          Ctrl+A       Move to start of line
+          Ctrl+E       Move to end of line
+          Ctrl+B/F     Move backward/forward one character
+          Alt+B/F      Move backward/forward one word
+          Ctrl+U       Delete to start of line
+          Ctrl+K       Delete to end of line
+          Ctrl+W       Delete word backward
+          Ctrl+D       Delete character / Exit if line empty
+          Ctrl+L       Clear screen
+          Ctrl+T       Swap characters
+          Up/Down      Navigate history
+          Tab          Auto-complete / accept suggestion
+          Right/End    Accept inline suggestion
+
+        Special Variables:
+          _            Last expression result
+          _error       Last error"
+      `);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
@@ -402,317 +425,251 @@ describe.concurrent("Bun REPL", () => {
         "test.js": "var loadedVar = 42;\n",
       });
       const filePath = path.join(String(dir), "test.js");
-      const { stdout, exitCode } = await runRepl([`.load ${filePath}`, "loadedVar", ".exit"]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain("42");
+      const { outputs, stderr, exitCode } = await runRepl([`.load ${filePath}`, "loadedVar", ".exit"]);
+      expect(outputs).toEqual([`Loading ${filePath}...\n42`, "42"]);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
-    test(".load with nonexistent file shows error", async () => {
-      // Use a relative path so Windows doesn't choke on forward-slash absolute paths (EINVAL).
-      const { stdout, stderr, exitCode } = await runRepl([
+    test(".load with a nonexistent file shows the error and keeps running", async () => {
+      // A relative path: Windows rejects a forward-slash absolute path with EINVAL.
+      const { outputs, stderr, exitCode } = await runRepl([
         ".load definitely-does-not-exist-repl-test.js",
         "1 + 1",
         ".exit",
       ]);
-      const allOutput = stripAnsi(stdout + stderr);
-      expect(allOutput.toLowerCase()).toMatch(/error|not found|no such file|enoent|invalid argument/i);
-      // REPL should continue after failed load
-      expect(allOutput).toContain("2");
+      expect(outputs).toEqual([
+        // The error carries the path on POSIX only.
+        expect.stringMatching(
+          /^ENOENT: (definitely-does-not-exist-repl-test\.js: )?No such file or directory \(open\(\)\)$/,
+        ),
+        "2",
+      ]);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
-    test(".load without filename shows usage", async () => {
-      const { stdout, exitCode } = await runRepl([".load", ".exit"]);
-      const output = stripAnsi(stdout);
-      expect(output.toLowerCase()).toMatch(/usage|filename/i);
+    test(".load and .save without a filename show their usage", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([".load", ".save", ".exit"]);
+      expect(outputs).toEqual(["Usage: .load <filename>", "Usage: .save <filename>"]);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
-    test(".save saves history to file", async () => {
+    test(".save saves the session to a file", async () => {
       using dir = tempDir("repl-save-test", {});
       const filePath = path.join(String(dir), "saved.js");
-      const { exitCode } = await runRepl(["const x = 1", "const y = 2", `.save ${filePath}`, ".exit"]);
+      const { outputs, stderr, exitCode } = await runRepl(["const x = 1", "const y = 2", `.save ${filePath}`, ".exit"]);
+      expect(outputs).toEqual(["1", "2", `Session saved to ${filePath}`]);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
-      const content = await Bun.file(filePath).text();
-      expect(content).toContain("const x = 1");
-      expect(content).toContain("const y = 2");
+      expect(await Bun.file(filePath).text()).toBe("const x = 1\nconst y = 2\n");
     });
 
-    test(".save without filename shows usage", async () => {
-      const { stdout, exitCode } = await runRepl([".save", ".exit"]);
-      const output = stripAnsi(stdout);
-      expect(output.toLowerCase()).toMatch(/usage|filename/i);
-      expect(exitCode).toBe(0);
-    });
-
-    test("unknown command shows error", async () => {
-      const { stdout, exitCode } = await runRepl([".nonexistent", "1 + 1", ".exit"]);
-      const output = stripAnsi(stdout);
-      expect(output.toLowerCase()).toContain("unknown");
-      // REPL should continue
-      expect(output).toContain("2");
+    test("unknown command shows an error and keeps running", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([".nonexistent", "1 + 1", ".exit"]);
+      expect(outputs).toEqual(["Unknown command: .nonexistent\nType .help for available commands", "2"]);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
     test(".history shows command history", async () => {
-      const { stdout, exitCode } = await runRepl(["1 + 1", "2 + 2", ".history", ".exit"]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain("1 + 1");
-      expect(output).toContain("2 + 2");
+      const { outputs, stderr, exitCode } = await runRepl(["1 + 1", "2 + 2", ".history", ".exit"]);
+      expect(outputs).toEqual(["2", "4", "Command History:\n     1  1 + 1\n     2  2 + 2"]);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
     test(".break cancels multiline input", async () => {
-      const { stdout, exitCode } = await runRepl([
+      const { outputs, stderr, exitCode } = await runRepl([
         "function foo() {", // opens multiline
-        ".break", // cancels it
-        "1 + 1", // should eval normally
+        ".break", // cancels it, so foo is never defined
+        "typeof foo",
+        "{",
+        ".break",
+        "99",
         ".exit",
       ]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain("2");
-      // foo should NOT be defined since we broke out
+      expect(outputs).toEqual(["", '"undefined"', "", "99"]);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
-    test(".break on empty multiline recovers prompt", async () => {
-      const { stdout, exitCode } = await runRepl(["{", ".break", "99", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("99");
-      expect(exitCode).toBe(0);
-    });
-
-    test("command prefix matching (.e -> .exit)", async () => {
+    test("command prefix matching (.ex -> .exit)", async () => {
       // ReplCommand.find allows prefix matching when name.len > 1
-      const { exitCode } = await runRepl([".ex"]);
+      const { outputs, stderr, exitCode } = await runRepl([".ex"]);
+      expect(outputs).toEqual([]);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
   });
 
   describe(".copy command", () => {
-    test(".copy with no args copies last result", async () => {
-      const { stdout, exitCode } = await runRepl(["42", ".copy", ".exit"]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain("Copied");
-      expect(output).toContain("clipboard");
-      expect(exitCode).toBe(0);
-    });
-
-    test(".copy with expression evaluates and copies", async () => {
-      const { stdout, exitCode } = await runRepl([".copy 1 + 1", ".exit"]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain("Copied");
-      expect(output).toContain("clipboard");
-      expect(exitCode).toBe(0);
-    });
-
-    test(".copy still sets _ variable", async () => {
-      const { stdout, exitCode } = await runRepl([".copy 'hello'", "_", ".exit"]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain("hello");
+    test(".copy copies the last result or the value of an expression", async () => {
+      const { stdout, outputs, stderr, exitCode } = await runRepl([
+        "42",
+        ".copy",
+        ".copy 1 + 1",
+        ".copy 'hello'",
+        "_",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        "42",
+        "Copied 2 characters to clipboard",
+        "Copied 1 characters to clipboard",
+        "Copied 5 characters to clipboard",
+        // .copy <expr> still sets _
+        '"hello"',
+      ]);
+      // The clipboard is written with an OSC 52 sequence carrying the base64 text.
+      const osc52 = (text: string) => `\x1b]52;c;${btoa(text)}\x07`;
+      expect(stdout).toContain(osc52("42"));
+      expect(stdout).toContain(osc52("2"));
+      expect(stdout).toContain(osc52("hello"));
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
   });
 
   describe("error handling", () => {
-    test("handles syntax errors gracefully", async () => {
-      const { stdout, stderr, exitCode } = await runRepl(["(1 + ))", "1 + 1", ".exit"]);
-      const allOutput = stripAnsi(stdout + stderr);
-      expect(allOutput.toLowerCase()).toContain("error");
-      // REPL should continue working after syntax error
-      expect(allOutput).toContain("2");
-      expect(exitCode).toBe(0);
-    });
-
-    test("handles runtime errors gracefully", async () => {
-      const { stdout, stderr, exitCode } = await runRepl(["undefinedVariable", "1 + 1", ".exit"]);
-      const allOutput = stripAnsi(stdout + stderr);
-      expect(allOutput).toMatch(/not defined|ReferenceError/);
-      expect(exitCode).toBe(0);
-    });
-
-    test("handles thrown string errors", async () => {
-      const { stdout, stderr, exitCode } = await runRepl(["throw 'custom error'", "1 + 1", ".exit"]);
-      const allOutput = stripAnsi(stdout + stderr);
-      expect(allOutput).toContain("custom error");
-      // REPL should continue after thrown error
-      expect(allOutput).toContain("2");
-      expect(exitCode).toBe(0);
-    });
-
-    test("handles thrown Error objects", async () => {
-      const { stdout, stderr, exitCode } = await runRepl(["throw new Error('boom')", ".exit"]);
-      const allOutput = stripAnsi(stdout + stderr);
-      expect(allOutput).toContain("boom");
-      expect(exitCode).toBe(0);
-    });
-
-    test("shows system error properties", async () => {
-      const { stdout, stderr, exitCode } = await runRepl(["fs.readFileSync('/nonexistent/path/file.txt')", ".exit"]);
-      const allOutput = stripAnsi(stdout + stderr);
-      expect(allOutput).toMatch(/ENOENT|no such file/);
-      expect(exitCode).toBe(0);
-    });
-
-    test("throwing custom inspect doesn't crash the loop", async () => {
-      // format2 catches custom-inspect throws internally, but we verify no exception
-      // leaks (BUN_JSC_validateExceptionChecks in CI) and the loop continues.
-      const { stdout, stderr, exitCode } = await runRepl([
-        `globalThis.__bad = { [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("boom"); } }; __bad`,
-        "7 * 6",
+    test("reports errors and keeps running", async () => {
+      const { stdout, outputs, stderr, exitCode } = await runRepl([
+        "(1 + ))",
+        "undefinedVariable",
+        "throw 'custom error'",
+        "throw new Error('boom')",
+        "fs.readFileSync('/nonexistent/path/file.txt')",
+        "1 + 1",
         ".exit",
       ]);
-      const allOutput = stripAnsi(stdout + stderr);
-      // REPL must keep working after the inspection failure.
-      // Use a product that won't appear in echoed input (7*6=42).
-      expect(allOutput).toContain("42");
+      expect(outputs).toEqual([
+        "SyntaxError: Unexpected token ')'",
+        "ReferenceError: undefinedVariable is not defined",
+        '"custom error"',
+        "error: boom",
+        expect.stringMatching(/^ENOENT: no such file or directory, open '.*file\.txt'\n[\s\S]* code: "ENOENT"$/),
+        "2",
+      ]);
+      // A thrown error is followed by its stack frames.
+      expect(stripAnsi(stdout)).toMatch(/^error: boom\n +at /m);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
-    test("throwing Proxy ownKeys trap doesn't crash the loop", async () => {
-      const { stdout, stderr, exitCode } = await runRepl([
+    test("a throwing inspect hook does not crash the loop", async () => {
+      // format2 catches custom-inspect throws internally, but we verify no exception
+      // leaks (BUN_JSC_validateExceptionChecks in CI) and the loop continues.
+      const { outputs, stderr, exitCode } = await runRepl([
+        `globalThis.__bad = { [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("boom"); } }; __bad`,
+        // Products that do not appear in the echoed input (7*6=42, 100+23=123).
+        "7 * 6",
         `new Proxy({}, { ownKeys() { throw new Error("boom"); } })`,
         "100 + 23",
         ".exit",
       ]);
-      const allOutput = stripAnsi(stdout + stderr);
-      expect(allOutput).toContain("123");
+      expect(outputs).toEqual(["[native code: Exception]", "42", "{}", "123"]);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
   });
 
   describe("import statements", () => {
-    test("import default from builtin module", async () => {
-      const { stdout, exitCode } = await runRepl(["import path from 'path'", "typeof path.join", ".exit"]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain("function");
-      expect(exitCode).toBe(0);
-    });
-
-    test("import named exports from builtin module", async () => {
-      const { stdout, exitCode } = await runRepl(["import { join, resolve } from 'path'", "typeof join", ".exit"]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain("function");
-      expect(exitCode).toBe(0);
-    });
-
-    test("import namespace from builtin module", async () => {
-      const { stdout, exitCode } = await runRepl(["import * as os from 'os'", "typeof os.cpus", ".exit"]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain("function");
-      expect(exitCode).toBe(0);
-    });
-
-    test("import used across lines", async () => {
+    test("binds default, named and namespace imports from builtin modules", async () => {
       // Use path.posix.join so the output is identical on Windows (otherwise: "\\tmp\\test").
-      const { stdout, exitCode } = await runRepl([
+      const { outputs, stderr, exitCode } = await runRepl([
         "import path from 'path'",
+        "typeof path.join",
+        "import { join, resolve } from 'path'",
+        "typeof join",
+        "typeof resolve",
+        "import * as os from 'os'",
+        "typeof os.cpus",
+        // A binding imported on an earlier line is still there.
         "path.posix.join('/tmp', 'test')",
         ".exit",
       ]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain("/tmp/test");
+      // An import statement prints the module or binding it evaluated to.
+      expect(outputs).toEqual([
+        expect.stringContaining("join: [Function: join]"),
+        '"function"',
+        "[Function: resolve]",
+        '"function"',
+        '"function"',
+        expect.stringMatching(/^Module \{\n/),
+        '"function"',
+        '"/tmp/test"',
+      ]);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
-    test("import nonexistent module shows error", async () => {
-      const { stdout, stderr, exitCode } = await runRepl(["import _ from 'nonexistent-module-xyz'", "1 + 1", ".exit"]);
-      const allOutput = stripAnsi(stdout + stderr);
-      // Should show an error about the module not being found
-      expect(allOutput.toLowerCase()).toMatch(/error|not found|cannot find|resolve/);
-      // REPL should continue after failed import
-      expect(allOutput).toContain("2");
+    test("import of a nonexistent module shows an error and keeps running", async () => {
+      const { outputs, stderr, exitCode } = await runRepl(["import _ from 'nonexistent-module-xyz'", "1 + 1", ".exit"]);
+      expect(outputs).toEqual([
+        expect.stringMatching(/^error: Cannot find package 'nonexistent-module-xyz' from /),
+        "2",
+      ]);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
-    test("import default and named together", async () => {
-      // Combined form: import X, { a, b } from 'mod'
-      // Verifies both default and named bindings are set correctly.
-      using dir = tempDir("repl-import-combined", {
-        "mod.mjs": `
+    test("binds every form of import from a local module", async () => {
+      using dir = tempDir("repl-import-forms", {
+        "combined.mjs": `
           export const named1 = "first";
           export const named2 = "second";
           export default "the-default";
         `,
-      });
-      const filePath = Bun.pathToFileURL(path.join(String(dir), "mod.mjs")).href;
-      const { stdout, stderr, exitCode } = await runRepl([
-        `import def, { named1, named2 } from ${JSON.stringify(filePath)}`,
-        "JSON.stringify([def, named1, named2])",
-        ".exit",
-      ]);
-      const output = stripAnsi(stdout + stderr);
-      expect(output).toContain(`the-default`);
-      expect(output).toContain(`first`);
-      expect(output).toContain(`second`);
-      // Ensure the array is fully populated (no undefineds).
-      expect(output).not.toMatch(/\bnull\b|\bundefined\b/);
-      expect(exitCode).toBe(0);
-    });
-
-    test("import with alias uses source export name", async () => {
-      // Regression: `import { foo as bar }` was reading __ns.bar instead of __ns.foo.
-      using dir = tempDir("repl-import-alias", {
-        "mod.mjs": `export const foo = "correct"; export const bar = "wrong";`,
-      });
-      const filePath = Bun.pathToFileURL(path.join(String(dir), "mod.mjs")).href;
-      const { stdout, exitCode } = await runRepl([
-        `import { foo as bar } from ${JSON.stringify(filePath)}`,
-        "bar",
-        ".exit",
-      ]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain("correct");
-      expect(output).not.toContain("wrong");
-      expect(exitCode).toBe(0);
-    });
-
-    test("import with multiple aliases", async () => {
-      using dir = tempDir("repl-import-multi-alias", {
-        "mod.mjs": `export const a = 1; export const b = 2; export const c = 3;`,
-      });
-      const filePath = Bun.pathToFileURL(path.join(String(dir), "mod.mjs")).href;
-      const { stdout, exitCode } = await runRepl([
-        `import { a as x, b as y, c } from ${JSON.stringify(filePath)}`,
-        "JSON.stringify([x, y, c])",
-        ".exit",
-      ]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain("[1,2,3]");
-      expect(exitCode).toBe(0);
-    });
-
-    test("side-effect-only import", async () => {
-      using dir = tempDir("repl-import-side-effect", {
+        "alias.mjs": `export const foo = "correct"; export const bar = "wrong";`,
+        "multi.mjs": `export const a = 1; export const b = 2; export const c = 3;`,
         "side.mjs": `globalThis.__sideEffectRan = true;`,
       });
-      const filePath = Bun.pathToFileURL(path.join(String(dir), "side.mjs")).href;
-      const { stdout, exitCode } = await runRepl([
-        `import ${JSON.stringify(filePath)}`,
+      const url = (name: string) => JSON.stringify(Bun.pathToFileURL(path.join(String(dir), name)).href);
+      const { outputs, stderr, exitCode } = await runRepl([
+        // Combined form: import X, { a, b } from 'mod' sets both the default and the named bindings.
+        `import def, { named1, named2 } from ${url("combined.mjs")}`,
+        "[def, named1, named2]",
+        // Regression: `import { foo as bar }` was reading __ns.bar instead of __ns.foo.
+        `import { foo as bar } from ${url("alias.mjs")}`,
+        "bar",
+        `import { a as x, b as y, c } from ${url("multi.mjs")}`,
+        "[x, y, c]",
+        `import ${url("side.mjs")}`,
         "globalThis.__sideEffectRan",
         ".exit",
       ]);
-      expect(stripAnsi(stdout)).toContain("true");
+      expect(outputs).toEqual([
+        '"the-default"',
+        '[ "the-default", "first", "second" ]',
+        '"correct"',
+        '"correct"',
+        "3",
+        "[ 1, 2, 3 ]",
+        "Module {}",
+        "true",
+      ]);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
   });
 
   describe("require", () => {
-    test("require is defined", async () => {
-      const { stdout, exitCode } = await runRepl(["typeof require", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("function");
-      expect(exitCode).toBe(0);
-    });
-
-    test("require builtin module", async () => {
-      const { stdout, exitCode } = await runRepl(["const path = require('path')", "typeof path.join", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("function");
-      expect(exitCode).toBe(0);
-    });
-
-    test("require.resolve works", async () => {
-      const { stdout, exitCode } = await runRepl(["typeof require.resolve", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("function");
+    test("require and require.resolve are functions and load builtin modules", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "typeof require",
+        "const path = require('path')",
+        "typeof path.join",
+        "typeof require.resolve",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        '"function"',
+        expect.stringContaining("join: [Function: join]"),
+        '"function"',
+        '"function"',
+      ]);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
@@ -721,247 +678,155 @@ describe.concurrent("Bun REPL", () => {
       using dir = tempDir("repl-require-local", {
         "local.js": `module.exports = { value: "from-local-file" };`,
       });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "repl"],
-        stdin: Buffer.from(`require("./local").value\n.exit\n`),
-        stdout: "pipe",
-        stderr: "pipe",
+      const { outputs, stderr, exitCode } = await runRepl([`require("./local").value`, "module.filename", ".exit"], {
         cwd: String(dir),
-        env: { ...bunEnv, TERM: "dumb", NO_COLOR: "1" },
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stripAnsi(stdout)).toContain("from-local-file");
-      expect(exitCode).toBe(0);
-    });
-
-    test("module.filename has correct path separator", async () => {
-      // Regression: was producing `/cwd[repl]` instead of `/cwd/[repl]`.
-      const { stdout, exitCode } = await runRepl(["module.filename", ".exit"]);
-      const output = stripAnsi(stdout);
-      // Must contain a separator before [repl] — matches / or \ followed by [repl]
-      expect(output).toMatch(/[\/\\]\[repl\]/);
-      // Must NOT have the cwd smashed against [repl] without a separator
-      expect(output).not.toMatch(/[a-zA-Z0-9]\[repl\]/);
+      expect(outputs).toEqual([
+        '"from-local-file"',
+        // Regression: was producing `/cwd[repl]` instead of `/cwd/[repl]`.
+        expect.stringMatching(/^".+[\/\\]\[repl\]"$/),
+      ]);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
   });
 
   describe("global objects", () => {
-    test("has access to Bun globals", async () => {
-      const { stdout, exitCode } = await runRepl(["typeof Bun.version", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("string");
-      expect(exitCode).toBe(0);
-    });
-
-    test("has access to console", async () => {
-      const { stdout, exitCode } = await runRepl(["console.log('hello from repl')", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("hello from repl");
-      expect(exitCode).toBe(0);
-    });
-
-    test("has access to Buffer", async () => {
-      const { stdout, exitCode } = await runRepl(["Buffer.from('hello').length", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("5");
-      expect(exitCode).toBe(0);
-    });
-
-    test("has access to process", async () => {
-      const { stdout, exitCode } = await runRepl(["typeof process.version", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("string");
-      expect(exitCode).toBe(0);
-    });
-
-    test("has __dirname and __filename", async () => {
-      const { stdout, exitCode } = await runRepl(["typeof __dirname", "typeof __filename", ".exit"]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain("string");
-      expect(exitCode).toBe(0);
-    });
-
-    test("has module object", async () => {
-      const { stdout, exitCode } = await runRepl(["typeof module", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("object");
+    test("has Bun, console, Buffer, process and the CommonJS module globals", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "typeof Bun.version",
+        "console.log('hello from repl')",
+        "Buffer.from('hello').length",
+        "typeof process.version",
+        "typeof __dirname",
+        "typeof __filename",
+        "typeof module",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        '"string"',
+        "hello from repl\nundefined",
+        "5",
+        '"string"',
+        '"string"',
+        '"string"',
+        '"object"',
+      ]);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
   });
 
   describe("variable persistence", () => {
-    test("variables persist across evaluations", async () => {
-      const { stdout, exitCode } = await runRepl(["const x = 10", "const y = 20", "x + y", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("30");
-      expect(exitCode).toBe(0);
-    });
-
-    test("let variables can be reassigned", async () => {
-      const { stdout, exitCode } = await runRepl(["let counter = 0", "counter++", "counter++", "counter", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("2");
-      expect(exitCode).toBe(0);
-    });
-
-    test("functions persist", async () => {
-      const { stdout, exitCode } = await runRepl(["function add(a, b) { return a + b; }", "add(5, 3)", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("8");
-      expect(exitCode).toBe(0);
-    });
-
-    test("classes persist across evaluations", async () => {
-      const { stdout, exitCode } = await runRepl([
+    test("declarations persist across evaluations", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "const x = 10",
+        "const y = 20",
+        "x + y",
+        "let counter = 0",
+        "counter++",
+        "counter++",
+        "counter",
+        "function add(a, b) { return a + b; }",
+        "add(5, 3)",
         "class Point { constructor(x, y) { this.x = x; this.y = y; } sum() { return this.x + this.y; } }",
         "new Point(3, 4).sum()",
+        // The REPL hoists const -> var, so a redeclaration works like in Node's REPL.
+        "const x = 2",
+        "x",
         ".exit",
       ]);
-      expect(stripAnsi(stdout)).toContain("7");
+      expect(outputs).toEqual(["10", "20", "30", "0", "0", "1", "2", "undefined", "8", "[class Point]", "7", "2", "2"]);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
-    test("const can be redeclared across lines", async () => {
-      // REPL hoists const -> var so redeclaration works like Node's REPL.
-      const { stdout, stderr, exitCode } = await runRepl(["const x = 1", "const x = 2", "x", ".exit"]);
-      const output = stripAnsi(stdout + stderr);
-      expect(output).not.toMatch(/already.*declared|redeclar/i);
-      expect(output).toContain("2");
-      expect(exitCode).toBe(0);
-    });
-
-    test("array destructuring persists", async () => {
-      const { stdout, exitCode } = await runRepl(["const [a, b, c] = [10, 20, 30]", "a + b + c", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("60");
-      expect(exitCode).toBe(0);
-    });
-
-    test("object destructuring persists", async () => {
-      const { stdout, exitCode } = await runRepl(["const { px, py } = { px: 5, py: 7 }", "px * py", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("35");
-      expect(exitCode).toBe(0);
-    });
-
-    test("object destructuring with rename persists", async () => {
-      const { stdout, exitCode } = await runRepl(["const { a: renamed } = { a: 99 }", "renamed", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("99");
-      expect(exitCode).toBe(0);
-    });
-
-    test("destructuring with defaults persists", async () => {
-      const { stdout, exitCode } = await runRepl(["const { missing = 42 } = {}", "missing", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("42");
-      expect(exitCode).toBe(0);
-    });
-
-    test("array rest destructuring persists", async () => {
-      const { stdout, exitCode } = await runRepl(["const [first, ...rest] = [1, 2, 3, 4]", "rest", ".exit"]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain("2");
-      expect(output).toContain("3");
-      expect(output).toContain("4");
-      expect(exitCode).toBe(0);
-    });
-
-    test("object rest destructuring persists", async () => {
-      const { stdout, exitCode } = await runRepl([
+    test("destructured declarations persist across evaluations", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "const [a, b, c] = [10, 20, 30]",
+        "a + b + c",
+        "const { px, py } = { px: 5, py: 7 }",
+        "px * py",
+        "const { a: renamed } = { a: 99 }",
+        "renamed",
+        "const { missing = 42 } = {}",
+        "missing",
+        "const [first, ...rest] = [1, 2, 3, 4]",
+        "rest",
         "const { keep, ...others } = { keep: 1, x: 2, y: 3 }",
         "Object.keys(others).sort().join(',')",
-        ".exit",
-      ]);
-      expect(stripAnsi(stdout)).toContain("x,y");
-      expect(exitCode).toBe(0);
-    });
-
-    test("nested destructuring persists", async () => {
-      const { stdout, exitCode } = await runRepl([
         "const { outer: { inner } } = { outer: { inner: 'deep' } }",
         "inner",
         ".exit",
       ]);
-      expect(stripAnsi(stdout)).toContain("deep");
+      expect(outputs).toEqual([
+        "[ 10, 20, 30 ]",
+        "60",
+        "{\n  px: 5,\n  py: 7,\n}",
+        "35",
+        "{\n  a: 99,\n}",
+        "99",
+        "{}",
+        "42",
+        "[ 1, 2, 3, 4 ]",
+        "[ 2, 3, 4 ]",
+        "{\n  keep: 1,\n  x: 2,\n  y: 3,\n}",
+        '"x,y"',
+        '{\n  outer: {\n    inner: "deep",\n  },\n}',
+        '"deep"',
+      ]);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
   });
 
   describe("multiline input", () => {
-    test("handles multiline function definition", async () => {
-      const { stdout, exitCode } = await runRepl([
+    test("keeps reading lines until the input is complete", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
         "function greet(name) {",
         "  return 'hi ' + name",
         "}",
         "greet('world')",
+        "({",
+        "  x: 1,",
+        "  y: 2",
+        "})",
         ".exit",
       ]);
-      expect(stripAnsi(stdout)).toContain("hi world");
-      expect(exitCode).toBe(0);
-    });
-
-    test("handles multiline object", async () => {
-      const { stdout, exitCode } = await runRepl(["({", "  x: 1,", "  y: 2", "})", ".exit"]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain("x");
-      expect(output).toContain("y");
-      expect(exitCode).toBe(0);
-    });
-
-    test("lone string directive returns the string", async () => {
-      // REPL treats directives (string literal statements) as expressions.
-      const { stdout, exitCode } = await runRepl([`"use strict"`, ".exit"]);
-      expect(stripAnsi(stdout)).toContain("use strict");
+      expect(outputs).toEqual(["undefined", '"hi world"', "{\n  x: 1,\n  y: 2,\n}"]);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
   });
 
   describe("async evaluation", () => {
-    test("await expressions", async () => {
-      const { stdout, exitCode } = await runRepl(["await Promise.resolve(42)", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("42");
-      expect(exitCode).toBe(0);
-    });
-
-    test("await rejected promise shows error", async () => {
-      const { stdout, stderr, exitCode } = await runRepl([
+    test("awaits promises at the top level and in async functions", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "await Promise.resolve(42)",
         "await Promise.reject(new Error('async fail'))",
         "1 + 1",
-        ".exit",
-      ]);
-      const allOutput = stripAnsi(stdout + stderr);
-      expect(allOutput).toContain("async fail");
-      // REPL should continue after rejected promise
-      expect(allOutput).toContain("2");
-      expect(exitCode).toBe(0);
-    });
-
-    test("async functions", async () => {
-      const { stdout, exitCode } = await runRepl([
         "async function getValue() { return 123; }",
         "await getValue()",
         ".exit",
       ]);
-      expect(stripAnsi(stdout)).toContain("123");
+      expect(outputs).toEqual(["42", "error: async fail", "2", "undefined", "123"]);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
   });
 
   describe("TypeScript support", () => {
-    test("type annotations are stripped", async () => {
-      const { stdout, exitCode } = await runRepl(["const x: number = 42", "x", ".exit"]);
-      expect(stripAnsi(stdout)).toContain("42");
-      expect(exitCode).toBe(0);
-    });
-
-    test("interface declarations work", async () => {
-      const { stdout, exitCode } = await runRepl([
+    test("strips type annotations and interface declarations", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "const x: number = 42",
+        "x",
         "interface User { name: string }",
         "const u: User = { name: 'test' }",
         "u.name",
         ".exit",
       ]);
-      expect(stripAnsi(stdout)).toContain("test");
-      expect(exitCode).toBe(0);
-    });
-  });
-
-  describe("welcome message", () => {
-    test("shows welcome message with version", async () => {
-      const { stdout, exitCode } = await runRepl([".exit"]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain("Welcome to Bun");
-      expect(output).toMatch(/Bun v\d+\.\d+\.\d+/);
+      expect(outputs).toEqual(["42", "42", "undefined", '{\n  name: "test",\n}', '"test"']);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
   });
@@ -978,139 +843,158 @@ describe.concurrent("Bun REPL", () => {
       return { stdout: stripAnsi(stdout), stderr: stripAnsi(stderr), exitCode };
     }
 
-    test("-e evaluates and exits without printing result", async () => {
-      const { stdout, exitCode } = await runReplWith(["-e", "1 + 1"]);
+    test("-e evaluates and exits without a welcome message or the result", async () => {
+      const { stdout, stderr, exitCode } = await runReplWith(["-e", "1 + 1"]);
       expect(stdout).toBe("");
-      expect(exitCode).toBe(0);
-    });
-
-    test("-e does not show welcome message", async () => {
-      const { stdout, exitCode } = await runReplWith(["-e", "1 + 1"]);
-      expect(stdout).not.toContain("Welcome to Bun");
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
     test("-e console.log output is shown", async () => {
-      const { stdout, exitCode } = await runReplWith(["-e", "console.log('hello from eval')"]);
+      const { stdout, stderr, exitCode } = await runReplWith(["-e", "console.log('hello from eval')"]);
       expect(stdout).toBe("hello from eval\n");
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
     test("--eval works like -e", async () => {
-      const { stdout, exitCode } = await runReplWith(["--eval", "console.log(2 + 2)"]);
+      const { stdout, stderr, exitCode } = await runReplWith(["--eval", "console.log(2 + 2)"]);
       expect(stdout).toBe("4\n");
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
     test("-p prints the result and exits", async () => {
-      const { stdout, exitCode } = await runReplWith(["-p", "1 + 1"]);
+      const { stdout, stderr, exitCode } = await runReplWith(["-p", "1 + 1"]);
       expect(stdout).toBe("2\n");
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
     test("--print works like -p", async () => {
-      const { stdout, exitCode } = await runReplWith(["--print", "2 * 3"]);
+      const { stdout, stderr, exitCode } = await runReplWith(["--print", "2 * 3"]);
       expect(stdout).toBe("6\n");
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
     test("-p prints undefined for void expressions", async () => {
-      const { stdout, exitCode } = await runReplWith(["-p", "void 0"]);
+      const { stdout, stderr, exitCode } = await runReplWith(["-p", "void 0"]);
       expect(stdout).toBe("undefined\n");
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
     test("-p with empty script prints undefined and exits", async () => {
-      const { stdout, exitCode } = await runReplWith(["-p", ""]);
+      const { stdout, stderr, exitCode } = await runReplWith(["-p", ""]);
       expect(stdout).toBe("undefined\n");
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
     test("-e supports TypeScript", async () => {
-      const { stdout, exitCode } = await runReplWith(["-p", "const x: number = 42; x * 2"]);
+      const { stdout, stderr, exitCode } = await runReplWith(["-p", "const x: number = 42; x * 2"]);
       expect(stdout).toBe("84\n");
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
     test("-e supports top-level await", async () => {
-      const { stdout, exitCode } = await runReplWith(["-p", "await Promise.resolve(123)"]);
+      const { stdout, stderr, exitCode } = await runReplWith(["-p", "await Promise.resolve(123)"]);
       expect(stdout).toBe("123\n");
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
     test("-p wraps object literals", async () => {
-      const { stdout, exitCode } = await runReplWith(["-p", "{ a: 1, b: 2 }"]);
-      expect(stdout).toContain("a");
-      expect(stdout).toContain("1");
-      expect(stdout).toContain("b");
-      expect(stdout).toContain("2");
+      const { stdout, stderr, exitCode } = await runReplWith(["-p", "{ a: 1, b: 2 }"]);
+      expect(stdout).toBe("{\n  a: 1,\n  b: 2,\n}\n");
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
     test("-e with thrown error writes to stderr and exits with code 1", async () => {
       const { stdout, stderr, exitCode } = await runReplWith(["-e", "throw new Error('boom')"]);
       expect(stdout).toBe("");
-      expect(stderr).toContain("boom");
+      // A source preview precedes the message and its stack frames.
+      expect(stderr).toMatch(/^error: boom\n +at /m);
       expect(exitCode).toBe(1);
     });
 
     test("-e with syntax error writes to stderr and exits with code 1", async () => {
       const { stdout, stderr, exitCode } = await runReplWith(["-e", "const ="]);
       expect(stdout).toBe("");
-      expect(stderr.toLowerCase()).toContain("syntaxerror");
+      expect(stderr).toMatch(/^SyntaxError: Unexpected token '='/);
       expect(exitCode).toBe(1);
     });
 
     test("-e with rejected top-level await writes to stderr and exits with code 1", async () => {
       const { stdout, stderr, exitCode } = await runReplWith(["-e", "await Promise.reject(new Error('async fail'))"]);
       expect(stdout).toBe("");
-      expect(stderr).toContain("async fail");
+      expect(stderr).toMatch(/^error: async fail\n +at /m);
       expect(exitCode).toBe(1);
     });
 
     test("-e preserves process.exitCode set by the script", async () => {
-      const { exitCode } = await runReplWith(["-e", "process.exitCode = 42"]);
+      const { stdout, stderr, exitCode } = await runReplWith(["-e", "process.exitCode = 42"]);
+      expect(stdout).toBe("");
+      expect(stderr).toBe("");
       expect(exitCode).toBe(42);
     });
 
     test("-e fires process.on('beforeExit')", async () => {
-      const { stdout, exitCode } = await runReplWith([
+      const { stdout, stderr, exitCode } = await runReplWith([
         "-e",
         "process.on('beforeExit', () => console.log('beforeExit fired'))",
       ]);
       expect(stdout).toBe("beforeExit fired\n");
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
     test("-e drains event loop (timers fire before exit)", async () => {
-      const { stdout, exitCode } = await runReplWith(["-e", "setTimeout(() => console.log('from timer'), 50)"]);
+      const { stdout, stderr, exitCode } = await runReplWith(["-e", "setTimeout(() => console.log('from timer'), 50)"]);
       expect(stdout).toBe("from timer\n");
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
     test("-p drains event loop before printing", async () => {
       // Result should be printed after the timer output, since we drain
       // the event loop before printing the final result.
-      const { stdout, exitCode } = await runReplWith(["-p", "setTimeout(() => console.log('timer'), 50); 'result'"]);
+      const { stdout, stderr, exitCode } = await runReplWith([
+        "-p",
+        "setTimeout(() => console.log('timer'), 50); 'result'",
+      ]);
       expect(stdout).toBe('timer\n"result"\n');
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
     test("-e supports require()", async () => {
-      const { stdout, exitCode } = await runReplWith(["-p", "require('path').posix.join('/a', 'b')"]);
+      const { stdout, stderr, exitCode } = await runReplWith(["-p", "require('path').posix.join('/a', 'b')"]);
       expect(stdout).toBe('"/a/b"\n');
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
     test("-e supports import statements", async () => {
-      const { stdout, exitCode } = await runReplWith(["-e", "import path from 'path'; console.log(typeof path.join)"]);
+      const { stdout, stderr, exitCode } = await runReplWith([
+        "-e",
+        "import path from 'path'; console.log(typeof path.join)",
+      ]);
       expect(stdout).toBe("function\n");
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
     test("-e has access to __dirname and __filename", async () => {
-      const { stdout, exitCode } = await runReplWith(["-e", "console.log(typeof __dirname, typeof __filename)"]);
+      const { stdout, stderr, exitCode } = await runReplWith([
+        "-e",
+        "console.log(typeof __dirname, typeof __filename)",
+      ]);
       expect(stdout).toBe("string string\n");
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
 
@@ -1142,8 +1026,8 @@ describe.concurrent("Bun REPL", () => {
   });
 });
 
-// Interactive terminal-based REPL tests
-describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
+// Interactive terminal-based REPL tests. Each test drives its own pty, so they run concurrently.
+describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
   test("shows welcome message and prompt", async () => {
     await withTerminalRepl(async ({ allOutput }) => {
       const output = allOutput();
@@ -1189,10 +1073,9 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
   });
 
   test("Ctrl+D exits on empty line", async () => {
-    await withTerminalRepl(async ({ terminal, proc }) => {
-      terminal.write("\x04"); // Ctrl+D
-      const exitCode = await Promise.race([proc.exited, Bun.sleep(3000).then(() => -1)]);
-      expect(exitCode).toBe(0);
+    await withTerminalRepl(async ({ send, proc }) => {
+      send("\x04"); // Ctrl+D
+      expect(await proc.exited).toBe(0);
     });
   });
 
@@ -1218,9 +1101,9 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
     await withTerminalRepl(async ({ send, waitFor }) => {
       send("111 + 222\n");
       await waitFor("333");
-      // Press up arrow to recall previous command
-      send("\x1b[A"); // Up arrow escape sequence
-      await Bun.sleep(100);
+      // Up arrow redraws the line with the previous command.
+      send("\x1b[A");
+      await waitFor("111 + 222");
       send("\n");
       // Should evaluate the same expression again
       await waitFor("333");
@@ -1529,6 +1412,25 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
           send("__flip.\x03");
           send('"still" + "Alive"\n');
           await waitFor("stillAlive");
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("completion on a large Buffer does not enumerate index properties", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          // Every element of a typed array is an own property name, so a
+          // completer that collects index names builds 2^26 identifiers here
+          // and blocks the REPL for minutes (issue #40281 used 1 << 30).
+          send('globalThis.__big = Buffer.allocUnsafe(1 << 26); "big" + "Ready"\n');
+          await waitFor("bigReady");
+          // Typing the `.` computes completions for `__big` with an empty
+          // prefix; the named properties must still complete afterwards.
+          send("__big.byteLen");
+          await waitFor(`${DIM}gth`);
+          send("\t\n");
+          await waitFor("67108864");
         },
         { env: colorEnv },
       );
@@ -1922,40 +1824,26 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
 
 // History file written on REPL exit must be owner-only (0600), since it can
 // contain pasted credentials. See src/runtime/cli/repl.rs History::save.
-describe.skipIf(isWindows)("REPL history file permissions", () => {
+describe.skipIf(isWindows).concurrent("REPL history file permissions", () => {
+  const secret = 'const dbUrl = "postgres://user:hunter2@db.internal/prod"';
+
   test("persists history readable only by the owner", async () => {
     using dir = tempDir("repl-history-perms", {});
     const home = String(dir);
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "repl"],
-      stdin: Buffer.from(['const dbUrl = "postgres://user:hunter2@db.internal/prod"', ".exit", ""].join("\n")),
-      stdout: "pipe",
-      stderr: "pipe",
-      env: {
-        ...bunEnv,
-        TERM: "dumb",
-        NO_COLOR: "1",
-        HOME: home,
-      },
-    });
-
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const { outputs, stderr, exitCode } = await runRepl([secret, ".exit"], { home });
+    expect(outputs).toEqual(['"postgres://user:hunter2@db.internal/prod"']);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
 
     // Legitimate behavior still works: the typed line is persisted to
     // $HOME/.bun_repl_history on exit.
     const historyPath = path.join(home, ".bun_repl_history");
-    const content = await Bun.file(historyPath).text();
-    expect(content).toContain("const dbUrl");
+    expect(await Bun.file(historyPath).text()).toBe(`${secret}\n`);
 
     // The file must not be readable or writable by group/other, while the
     // owner keeps read/write access.
-    const mode = statSync(historyPath).mode & 0o777;
-    expect(mode & 0o077).toBe(0);
-    expect(mode & 0o600).toBe(0o600);
-
-    expect(stripAnsi(stdout)).toContain("Welcome to Bun");
-    expect(exitCode).toBe(0);
+    expect(statSync(historyPath).mode & 0o777).toBe(0o600);
   });
 
   test("tightens permissions on a pre-existing history file", async () => {
@@ -1966,30 +1854,13 @@ describe.skipIf(isWindows)("REPL history file permissions", () => {
     const historyPath = path.join(home, ".bun_repl_history");
     chmodSync(historyPath, 0o644);
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "repl"],
-      stdin: Buffer.from(['const dbUrl = "postgres://user:hunter2@db.internal/prod"', ".exit", ""].join("\n")),
-      stdout: "pipe",
-      stderr: "pipe",
-      env: {
-        ...bunEnv,
-        TERM: "dumb",
-        NO_COLOR: "1",
-        HOME: home,
-      },
-    });
-
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-
-    const content = await Bun.file(historyPath).text();
-    expect(content).toContain("const dbUrl");
-
-    const mode = statSync(historyPath).mode & 0o777;
-    expect(mode & 0o077).toBe(0);
-    expect(mode & 0o600).toBe(0o600);
-
-    expect(stripAnsi(stdout)).toContain("Welcome to Bun");
+    const { outputs, stderr, exitCode } = await runRepl([secret, ".exit"], { home });
+    expect(outputs).toEqual(['"postgres://user:hunter2@db.internal/prod"']);
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+
+    expect(await Bun.file(historyPath).text()).toBe(`1 + 1\n${secret}\n`);
+    expect(statSync(historyPath).mode & 0o777).toBe(0o600);
   });
 });
 
@@ -2015,29 +1886,33 @@ describe.concurrent("--interactive", () => {
   }
 
   test(
-    "prints a Bun-branded banner, not 'Welcome to Node.js'",
+    "prints a Bun-branded banner, not 'Welcome to Node.js', and process._eval is undefined without -e",
     async () => {
-      const { stdout, stderr, exitCode } = await runInteractive([], "");
+      const { stdout, stderr, exitCode } = await runInteractive([], 'console.log("EVAL=" + process._eval)\n');
       expect({ stdout, stderr }).toEqual({
         stdout: expect.stringMatching(/^Welcome to Bun v\d+\.\d+\.\d+.*\(Node\.js-compatible REPL/),
         stderr: expect.not.stringContaining("error"),
       });
       expect(stdout).not.toContain("Welcome to Node.js");
+      expect(stdout).toContain("> EVAL=undefined\n");
       expect(exitCode).toBe(0);
     },
     interactiveTimeout,
   );
 
   // `node -i -e 'code'`: -e runs as its own Script against globalThis, so
-  // `var`/`function` declarations are visible from the REPL prompt.
+  // `var`/`function` declarations are visible from the REPL prompt. Publishing
+  // the CJS bindings must not move them off the global: node runs the body in
+  // global scope, it does not CJS-wrap it.
   test(
-    "-e var/function declarations are visible in the REPL",
+    "-e var/function declarations land on the REPL's global",
     async () => {
       const { stdout, stderr, exitCode } = await runInteractive(
         ["-e", "var fromVar = 1; function f() { return 42 }"],
-        "fromVar + f()\n",
+        "fromVar + f()\ntypeof fromVar + typeof f\n",
       );
-      expect(stdout).toContain("43");
+      expect(stdout).toContain("> 43\n");
+      expect(stdout).toContain("> 'numberfunction'\n");
       expect(stderr).not.toContain("error");
       expect(exitCode).toBe(0);
     },
@@ -2053,9 +1928,9 @@ describe.concurrent("--interactive", () => {
       const source = `console.log("한글-🎉-café")`;
       const { stdout, stderr, exitCode } = await runInteractive(["-e", source], "process._eval\n");
       // The -e script itself ran with its literal intact...
-      expect(stdout).toContain("한글-🎉-café");
+      expect(stdout).toContain("한글-🎉-café\n");
       // ...and process._eval reports the source verbatim, not re-encoded.
-      expect(stdout).toContain(source);
+      expect(stdout).toContain(`'${source}'\n`);
       expect(stderr).not.toContain("error");
       expect(exitCode).toBe(0);
     },
@@ -2109,10 +1984,8 @@ describe.concurrent("--interactive", () => {
     async () => {
       using dir = tempDir("interactive-script", { "foo.js": `console.log("script-ran")` });
       const { stdout, stderr, exitCode } = await runInteractive(["foo.js"], "1+1\n", { cwd: String(dir) });
-      expect(stdout).toContain("script-ran");
-      expect(stdout).not.toContain("Welcome");
-      expect(stdout).not.toContain("> ");
-      expect(stderr).not.toContain("error");
+      expect(stdout).toBe("script-ran\n");
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     },
     interactiveTimeout,
@@ -2123,9 +1996,8 @@ describe.concurrent("--interactive", () => {
     "-p wins over --interactive (prints, no REPL)",
     async () => {
       const { stdout, stderr, exitCode } = await runInteractive(["-p", "1+1"], "999\n");
-      expect(stdout.trim()).toBe("2");
-      expect(stdout).not.toContain("Welcome");
-      expect(stderr).not.toContain("error");
+      expect(stdout).toBe("2\n");
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     },
     interactiveTimeout,
@@ -2139,18 +2011,8 @@ describe.concurrent("--interactive", () => {
     async () => {
       const eScript = 'console.log("EVAL=" + JSON.stringify(process._eval)); process.exit(0)';
       const { stdout, stderr, exitCode } = await runInteractive(["-e", eScript], "");
-      expect(stdout).toContain(`EVAL=${JSON.stringify(eScript)}`);
+      expect(stdout).toContain(`EVAL=${JSON.stringify(eScript)}\n`);
       expect(stdout + stderr).not.toMatch(/__BUN_EVAL_SCRIPT__|createInternalRepl/);
-      expect(exitCode).toBe(0);
-    },
-    interactiveTimeout,
-  );
-
-  test(
-    "process._eval is undefined without -e",
-    async () => {
-      const { stdout, exitCode } = await runInteractive([], 'console.log("EVAL=" + process._eval)\n');
-      expect(stdout).toContain("EVAL=undefined");
       expect(exitCode).toBe(0);
     },
     interactiveTimeout,
@@ -2183,7 +2045,7 @@ describe.concurrent("--interactive", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stdout).toContain("Welcome to Bun");
-      expect(stdout).toContain("2");
+      expect(stdout).toContain("> 2\n");
       expect(stderr).not.toContain("does not support a repl");
       expect(exitCode).toBe(0);
     },
@@ -2191,59 +2053,28 @@ describe.concurrent("--interactive", () => {
   );
 
   // node evaluates `-e` after createInternalRepl, via runScriptInContext, which
-  // publishes the CJS bindings onto the global before running the body.
+  // publishes the CJS bindings onto the global before running the body. node's
+  // wrapper compiles as `[eval]-wrapper`, so __dirname is "." — NOT the cwd —
+  // while module.filename stays the cwd-joined path.
   test(
     "-e sees require/module/__filename/__dirname like `node -i -e`",
     async () => {
-      const { stdout, exitCode } = await runInteractive(
-        ["-e", "console.log(typeof require, typeof module, typeof __filename, typeof __dirname)"],
-        "",
-      );
-      expect(stdout).toContain("function object string string");
-      expect(exitCode).toBe(0);
-    },
-    interactiveTimeout,
-  );
-
-  // node's wrapper compiles as `[eval]-wrapper`, so __dirname is "." — NOT the
-  // cwd — while module.filename stays the cwd-joined path.
-  test(
-    "-e exposes node's exact __dirname/__filename/module.filename",
-    async () => {
       using dir = tempDir("repl-eval-dirname", {});
       const { stdout, exitCode } = await runInteractive(
-        ["-e", "console.log(JSON.stringify({d: __dirname, f: __filename, m: module.filename}))"],
+        [
+          "-e",
+          [
+            "console.log(typeof require, typeof module, typeof __filename, typeof __dirname)",
+            "console.log(JSON.stringify({d: __dirname, f: __filename, m: module.filename}))",
+            'console.log("plat:" + typeof require("os").platform)',
+          ].join(";"),
+        ],
         "",
         { cwd: String(dir) },
       );
-      const parsed = JSON.parse(stdout.slice(stdout.indexOf("{"), stdout.indexOf("}") + 1));
-      expect({ d: parsed.d, f: parsed.f }).toEqual({ d: ".", f: "[eval]" });
-      expect(parsed.m).toBe(path.join(String(dir), "[eval]"));
-      expect(exitCode).toBe(0);
-    },
-    interactiveTimeout,
-  );
-
-  test(
-    "-e can require() a builtin",
-    async () => {
-      const { stdout, exitCode } = await runInteractive(
-        ["-e", 'console.log("plat:" + typeof require("os").platform)'],
-        "",
-      );
-      expect(stdout).toContain("plat:function");
-      expect(exitCode).toBe(0);
-    },
-    interactiveTimeout,
-  );
-
-  // Publishing those bindings must not move `var`/`function` off the global —
-  // node runs the body in global scope, it does not CJS-wrap it.
-  test(
-    "-e declarations still land on the REPL's global",
-    async () => {
-      const { stdout, exitCode } = await runInteractive(["-e", "var x = 5; function f(){}"], "typeof x + typeof f\n");
-      expect(stdout).toContain("numberfunction");
+      expect(stdout).toContain("function object string string\n");
+      expect(stdout).toContain(`${JSON.stringify({ d: ".", f: "[eval]", m: path.join(String(dir), "[eval]") })}\n`);
+      expect(stdout).toContain("plat:function\n");
       expect(exitCode).toBe(0);
     },
     interactiveTimeout,
@@ -2265,27 +2096,8 @@ describe.concurrent("--interactive", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stdout).toContain("Welcome to Bun");
-      expect(stdout).toContain("2");
+      expect(stdout).toContain("> 2\n");
       expect(stderr).not.toContain("Missing script to execute");
-      expect(exitCode).toBe(0);
-    },
-    interactiveTimeout,
-  );
-
-  test(
-    "bun run --interactive is not a silent no-op",
-    async () => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "run", "--interactive"],
-        env,
-        stdin: Buffer.from("1+1\n"),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout).toContain("Welcome to Bun");
-      expect(stdout).toContain("2");
-      expect(stderr).not.toContain("error");
       expect(exitCode).toBe(0);
     },
     interactiveTimeout,
@@ -2294,20 +2106,21 @@ describe.concurrent("--interactive", () => {
   // The "run" subcommand word is a dispatch artifact, not user input: it must
   // not survive into the REPL's process.argv the way a script name would.
   test(
-    "bun run --interactive keeps 'run' out of process.argv",
+    "bun run --interactive enters the REPL and keeps 'run' out of process.argv",
     async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "run", "--interactive"],
         env,
         // Tagged so the match can't be confused with the REPL's own echo.
-        stdin: Buffer.from(`console.log("ARGV:" + JSON.stringify(process.argv.slice(1)))\n`),
+        stdin: Buffer.from(`1+1\nconsole.log("ARGV:" + JSON.stringify(process.argv.slice(1)))\n`),
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const match = stdout.match(/ARGV:(\[.*\])/);
-      expect(match).not.toBeNull();
-      expect(JSON.parse(match![1])).toEqual([]);
+      expect(stdout).toContain("Welcome to Bun");
+      expect(stdout).toContain("> 2\n");
+      expect(stdout).toContain("ARGV:[]\n");
+      expect(stderr).not.toContain("error");
       expect(exitCode).toBe(0);
     },
     interactiveTimeout,
@@ -2321,9 +2134,8 @@ describe.concurrent("--interactive", () => {
         cwd: String(dir),
         env: { NODE_REPL_EXTERNAL_MODULE: "./ext.js" },
       });
-      expect(stdout).toContain("external-repl-42");
-      expect(stdout).not.toContain("Welcome");
-      expect(stderr).not.toContain("error");
+      expect(stdout).toBe("external-repl-42\n");
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     },
     interactiveTimeout,
@@ -2334,7 +2146,7 @@ describe.concurrent("--interactive", () => {
 // repl.start/repl.Recoverable inside createRepl(); those (plus the REPL_MODE
 // symbols and isValidSyntax) are data properties so the destructure is free,
 // and only calling start() or reading REPLServer/writer loads the body.
-test("require('node:repl') is hollow until start() or REPLServer is used", async () => {
+test.concurrent("require('node:repl') is hollow until start() or REPLServer is used", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -2403,10 +2215,12 @@ test("require('node:repl') is hollow until start() or REPLServer is used", async
     REPL_MODE_SLOPPY: "symbol",
     isValidSyntax: "function",
   });
-  expect(lines[2]).toBe("recoverable-is-error=true");
-  expect(lines[3]).toBe("REPLServer=function");
-  expect(lines[4]).toBe("same-Recoverable=true");
-  expect(lines[5]).toBe("repl.repl=x");
+  expect(lines.slice(2)).toEqual([
+    "recoverable-is-error=true",
+    "REPLServer=function",
+    "same-Recoverable=true",
+    "repl.repl=x",
+  ]);
   expect(exitCode).toBe(0);
 });
 
@@ -2470,10 +2284,15 @@ describe.concurrent("node:repl process-global side effects", () => {
   );
 
   // decorateErrorStack runs after user code, so a tampered String.prototype.split
-  // must not stop the REPL from rendering the next error.
-  test(
-    "error rendering survives a tampered String.prototype.split",
-    async () => {
+  // (or the RegExp symbol methods it falls back on) must not stop the REPL from
+  // rendering the next error.
+  test.each([
+    "String.prototype.split = () => { throw 0 }",
+    "RegExp.prototype[Symbol.split] = () => { throw 0 }",
+    "RegExp.prototype[Symbol.replace] = () => { throw 0 }",
+  ])(
+    "error rendering survives a tampered %s",
+    async tamper => {
       const script = `
       const repl = require("node:repl");
       const { PassThrough } = require("node:stream");
@@ -2481,63 +2300,15 @@ describe.concurrent("node:repl process-global side effects", () => {
       let buf = ""; out.on("data", d => buf += d);
       const r = repl.start({ input: inp, output: out, terminal: false, prompt: "> " });
       r.on("exit", () => { console.log(buf); process.exit(0); });
-      inp.write("String.prototype.split = () => { throw 0 }\\n");
+      inp.write(${JSON.stringify(tamper + "\n")});
       inp.write("oops\\n");
       inp.write("1+1\\n");
       inp.end();
     `;
       await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
-      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout).toContain("Uncaught ReferenceError");
-      expect(stdout).toContain("> 2");
-      expect(exitCode).toBe(0);
-    },
-    interactiveTimeout,
-  );
-
-  test(
-    "REPL survives a tampered RegExp.prototype[Symbol.split]",
-    async () => {
-      const script = `
-      const repl = require("node:repl");
-      const { PassThrough } = require("node:stream");
-      const inp = new PassThrough(), out = new PassThrough();
-      let buf = ""; out.on("data", d => buf += d);
-      const r = repl.start({ input: inp, output: out, terminal: false, prompt: "> " });
-      r.on("exit", () => { console.log(buf); process.exit(0); });
-      inp.write("RegExp.prototype[Symbol.split] = () => { throw 0 }\\n");
-      inp.write("oops\\n");
-      inp.write("1+1\\n");
-      inp.end();
-    `;
-      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
-      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout).toContain("Uncaught ReferenceError");
-      expect(stdout).toContain("> 2");
-      expect(exitCode).toBe(0);
-    },
-    interactiveTimeout,
-  );
-
-  test(
-    "REPL survives a tampered RegExp.prototype[Symbol.replace]",
-    async () => {
-      const script = `
-      const repl = require("node:repl");
-      const { PassThrough } = require("node:stream");
-      const inp = new PassThrough(), out = new PassThrough();
-      let buf = ""; out.on("data", d => buf += d);
-      const r = repl.start({ input: inp, output: out, terminal: false, prompt: "> " });
-      r.on("exit", () => { console.log(buf); process.exit(0); });
-      inp.write("RegExp.prototype[Symbol.replace] = () => { throw 0 }\\n");
-      inp.write("oops\\n");
-      inp.write("1+1\\n");
-      inp.end();
-    `;
-      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
-      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout).toContain("Uncaught ReferenceError");
-      expect(stdout).toContain("> 2");
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("> [Function (anonymous)]\n> Uncaught ReferenceError: oops is not defined\n> 2\n> \n");
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     },
     interactiveTimeout,

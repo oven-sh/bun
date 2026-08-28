@@ -7,7 +7,6 @@
 #include "helpers.h"
 #include "ZigGlobalObject.h"
 
-#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSMap.h>
@@ -89,7 +88,6 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject*
     }
 
     auto func = callframe->uncheckedArgument(1);
-    RETURN_IF_EXCEPTION(scope, {});
 
     if (!func.isCell() || !func.isCallable()) {
         throwException(globalObject, scope, createError(globalObject, "onLoad() expects second argument to be a function"_s));
@@ -98,6 +96,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject*
 
     plugin.append(vm, filter->regExp(), func.getObject(), namespaceString);
     callback(ctx, globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(callframe->thisValue());
 }
@@ -186,7 +185,6 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
     auto filterValue = filterObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "filter"_s));
     RETURN_IF_EXCEPTION(scope, {});
     if (filterValue) {
-        RETURN_IF_EXCEPTION(scope, {});
         if (filterValue.isCell() && filterValue.asCell()->inherits<JSC::RegExpObject>())
             filter = uncheckedDowncast<JSC::RegExpObject>(filterValue);
     }
@@ -208,20 +206,18 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
                 return {};
             }
         }
-        RETURN_IF_EXCEPTION(scope, {});
     }
 
     auto func = callframe->uncheckedArgument(1);
-    RETURN_IF_EXCEPTION(scope, {});
 
     if (!func.isCell() || !func.isCallable()) {
         throwException(globalObject, scope, createError(globalObject, "onResolve() expects second argument to be a function"_s));
         return {};
     }
 
-    RETURN_IF_EXCEPTION(scope, {});
     plugin.append(vm, filter->regExp(), uncheckedDowncast<JSObject>(func), namespaceString);
     callback(ctx, globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(callframe->thisValue());
 }
@@ -294,7 +290,6 @@ static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObje
         JSC::throwTypeError(globalObject, throwScope, "plugin needs an object as first argument"_s);
         return {};
     }
-    RETURN_IF_EXCEPTION(throwScope, {});
 
     JSC::JSValue setupFunctionValue = obj->getIfPropertyExists(globalObject, Identifier::fromString(vm, "setup"_s));
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -386,9 +381,13 @@ void BunPlugin::Base::append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSObject* fu
 
 JSC::JSObject* BunPlugin::Group::find(JSC::JSGlobalObject* globalObject, String& path)
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     size_t count = filters.size();
     for (size_t i = 0; i < count; i++) {
-        if (filters[i].get()->match(globalObject, path, 0)) {
+        auto matchResult = filters[i].get()->match(globalObject, path, 0);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (matchResult) {
             return callbacks[i].get();
         }
     }
@@ -557,14 +556,13 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
         if (url.isValid() && url.protocolIsFile()) {
             auto fromString = url.fileSystemPath();
             BunString from = Bun::toString(fromString);
-            auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            auto result = JSValue::decode(Bun__resolveSyncWithSource(globalObject, JSValue::encode(specifierString), &from, true, false));
-            if (topExceptionScope.exception()) {
-                (void)topExceptionScope.tryClearException();
-            }
+            // Not resolving is fine (mocking a module that does not exist yet); anything else thrown
+            // while resolving (e.g. by an onResolve plugin) propagates.
+            auto result = JSValue::decode(Bun__resolveSyncWithSourceIfExists(globalObject, JSValue::encode(specifierString), &from, true));
+            RETURN_IF_EXCEPTION(scope, );
 
-            if (result && result.isString()) {
-                auto* specifierStr = result.toString(globalObject);
+            if (result.isString()) {
+                auto* specifierStr = asString(result);
                 if (specifierStr->length() > 0) {
                     specifierString = specifierStr;
                     specifier = specifierString->value(globalObject);
@@ -729,7 +727,7 @@ void JSModuleMock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(JSModuleMock);
 
-EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path)
+EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path)
 {
     Group* groupPtr = this->group(namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : String());
     if (groupPtr == nullptr) {
@@ -739,15 +737,15 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunStri
 
     auto pathString = path->toWTFString(BunString::ZeroCopy);
 
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* function = group.find(globalObject, pathString);
+    RETURN_IF_EXCEPTION(scope, {});
     if (!function) {
         return JSValue::encode(JSC::jsUndefined());
     }
 
     JSC::MarkedArgumentBuffer arguments;
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    scope.assertNoExceptionExceptTermination();
 
     JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
     const auto& builtinNames = WebCore::builtinNames(vm);
@@ -799,7 +797,7 @@ std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path
     return virtualModules->contains(path) ? std::optional<String> { path } : std::nullopt;
 }
 
-EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* importer)
+EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path, const BunString* importer)
 {
     Group* groupPtr = this->group(namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : String());
     if (groupPtr == nullptr) {
@@ -824,7 +822,9 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
         return {};
     }
     for (size_t i = 0; i < filters.size(); i++) {
-        if (!filters[i].get()->match(globalObject, pathString, 0)) {
+        auto matchResult = filters[i].get()->match(globalObject, pathString, 0);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!matchResult) {
             continue;
         }
         auto* function = callbacks[i].get();
@@ -900,12 +900,12 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
 
 } // namespace Zig
 
-extern "C" JSC::EncodedJSValue Bun__runOnResolvePlugins(Zig::GlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* from, BunPluginTarget target)
+extern "C" JSC::EncodedJSValue Bun__runOnResolvePlugins(Zig::GlobalObject* globalObject, const BunString* namespaceString, const BunString* path, const BunString* from, BunPluginTarget target)
 {
     return globalObject->onResolvePlugins.run(globalObject, namespaceString, path, from);
 }
 
-extern "C" JSC::EncodedJSValue Bun__runOnLoadPlugins(Zig::GlobalObject* globalObject, BunString* namespaceString, BunString* path, BunPluginTarget target)
+extern "C" JSC::EncodedJSValue Bun__runOnLoadPlugins(Zig::GlobalObject* globalObject, const BunString* namespaceString, const BunString* path, BunPluginTarget target)
 {
     return globalObject->onLoadPlugins.run(globalObject, namespaceString, path);
 }

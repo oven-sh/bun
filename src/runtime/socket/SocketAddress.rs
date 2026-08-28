@@ -5,19 +5,20 @@
 //! TODO: add a inspect method (under `Symbol.for("nodejs.util.inspect.custom")`).
 //! Requires updating bindgen.
 
-use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::mem;
 
 use bun_cares_sys::c_ares as ares;
-use bun_core::{OwnedString, String as BunString, ZStr, strings};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, StringJsc, URL};
+use bun_core::{String as BunString, ZStr, strings};
+use bun_jsc::bun_string_jsc;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, StringJsc};
+use bun_ptr::JsCell;
 
 // The JsClass derive / codegen wires toJS/fromJS/fromJSDirect.
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; the one
 // field written from a host_fn-reachable path (`_presentation`, lazily filled
-// by `address()`) is `Cell`-wrapped (`BunString` is `Copy`). `_addr` is
-// read-only after construction and stays bare.
+// by `address()`) is `JsCell`-wrapped. `_addr` is read-only after
+// construction and stays bare.
 #[bun_jsc::JsClass]
 pub struct SocketAddress {
     // NOTE: not C.sockaddr_storage b/c it's _huge_. we need >= 28 bytes for sockaddr_in6,
@@ -31,7 +32,7 @@ pub struct SocketAddress {
     /// - `.Empty` is used for default ipv4 and ipv6 addresses (`127.0.0.1` and `::`, respectively).
     ///
     /// @internal
-    _presentation: Cell<BunString>,
+    _presentation: JsCell<BunString>,
 }
 
 impl SocketAddress {
@@ -40,7 +41,6 @@ impl SocketAddress {
     }
 }
 
-#[derive(Copy, Clone)]
 pub struct Options {
     pub(crate) family: AF,
     /// When `None`, default is determined by address family.
@@ -138,7 +138,6 @@ impl Options {
     }
 
     fn throw_bad_port(global: &JSGlobalObject, port_: JSValue) -> JsError {
-        // OwnedString (returned by determine_specific_type) releases the +1.
         let Ok(ty) = JSGlobalObject::determine_specific_type(global, port_) else {
             return global
                 .err(
@@ -170,26 +169,24 @@ impl SocketAddress {
     // bare `parse(__g, __f)` call which doesn't resolve inside an `impl` block.
     // The C-ABI shim is wired by the `.classes.ts` codegen / `JsClass` derive.
     pub(crate) fn parse(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        // OwnedString releases the +1 from BunString::from_js
-        let input: OwnedString = {
+        let input: BunString = {
             let input_arg = callframe.argument(0);
             if !input_arg.is_string() {
                 return Err(
                     global.throw_invalid_argument_type_value(b"input", b"string", input_arg)
                 );
             }
-            OwnedString::new(BunString::from_js(input_arg, global)?)
+            BunString::from_js(input_arg, global)?
         };
 
         const PREFIX: &str = "http://";
-        // OwnedString releases the +1 from create_uninitialized_*
-        let url_str: OwnedString = if input.is_8bit() {
+        let url_str: BunString = if input.is_8bit() {
             let from_chars = input.latin1();
             let (str, to_chars) =
                 BunString::create_uninitialized_latin1(from_chars.len() + PREFIX.len());
             to_chars[..PREFIX.len()].copy_from_slice(PREFIX.as_bytes());
             to_chars[PREFIX.len()..].copy_from_slice(from_chars);
-            OwnedString::new(str)
+            str
         } else {
             let from_chars = input.utf16();
             let (str, to_chars) =
@@ -197,18 +194,12 @@ impl SocketAddress {
             // bun.strings.literal(u16, "http://")
             to_chars[..PREFIX.len()].copy_from_slice(bun_core::w!("http://"));
             to_chars[PREFIX.len()..].copy_from_slice(from_chars);
-            OwnedString::new(str)
+            str
         };
 
-        let Some(url_ptr) = URL::from_string(url_str.get()) else {
+        let Some(url) = bun_jsc::url::Parsed::from_string(&url_str) else {
             return Ok(JSValue::UNDEFINED);
         };
-        // SAFETY: URL::from_string returns an owned C++ heap pointer; freed exactly once via destroy().
-        let _url_guard = scopeguard::guard(url_ptr, |p| unsafe { URL::destroy(p.as_ptr()) });
-        // `_url_guard` keeps the C++ allocation live for this scope, so the
-        // `BackRef` liveness invariant holds; `Deref` encapsulates the single
-        // `NonNull::as_ref` site.
-        let url = bun_ptr::BackRef::from(url_ptr);
         let host: BunString = url.host();
         let port_: u16 = {
             let port32 = url.port();
@@ -256,7 +247,7 @@ impl SocketAddress {
             }
             SocketAddress {
                 _addr: sockaddr { sin6 },
-                _presentation: Cell::new(BunString::dead()),
+                _presentation: JsCell::new(BunString::DEAD),
             }
         } else {
             let mut sin = inet::sockaddr_in {
@@ -270,7 +261,7 @@ impl SocketAddress {
             }
             SocketAddress {
                 _addr: sockaddr { sin },
-                _presentation: Cell::new(BunString::dead()),
+                _presentation: JsCell::new(BunString::DEAD),
             }
         };
 
@@ -314,7 +305,7 @@ impl SocketAddress {
         if options_obj.is_undefined() {
             return Ok(SocketAddress::new(SocketAddress {
                 _addr: sockaddr::LOOPBACK_V4,
-                _presentation: Cell::new(BunString::empty()),
+                _presentation: JsCell::new(BunString::EMPTY),
                 // ._presentation = WellKnownAddress::loopback_v4(),
             }));
         }
@@ -330,7 +321,7 @@ impl SocketAddress {
         {
             return Ok(SocketAddress::new(SocketAddress {
                 _addr: sockaddr::ANY_V6,
-                _presentation: Cell::new(BunString::empty()),
+                _presentation: JsCell::new(BunString::EMPTY),
                 // ._presentation = WellKnownAddress::any_v6(),
             }));
         }
@@ -376,7 +367,7 @@ impl SocketAddress {
     }
 
     pub(crate) fn init_js(global: &JSGlobalObject, options: Options) -> JsResult<SocketAddress> {
-        let mut presentation: BunString = BunString::empty();
+        let mut presentation: BunString = BunString::EMPTY;
 
         // We need a zero-terminated cstring for `ares_inet_pton`, which forces us to
         // copy the string.
@@ -432,7 +423,7 @@ impl SocketAddress {
 
         Ok(SocketAddress {
             _addr: addr,
-            _presentation: Cell::new(presentation),
+            _presentation: JsCell::new(presentation),
         })
     }
 }
@@ -471,7 +462,7 @@ impl SocketAddress {
         // TODO: make sure casting doesn't swap byte order on us.
         SocketAddress {
             _addr: sockaddr::v4(port_.to_be(), u32::from_ne_bytes(addr)),
-            _presentation: Cell::new(BunString::dead()),
+            _presentation: JsCell::new(BunString::DEAD),
         }
     }
 
@@ -488,7 +479,7 @@ impl SocketAddress {
     ) -> SocketAddress {
         SocketAddress {
             _addr: sockaddr::v6(port_.to_be(), addr, flowinfo, scope_id),
-            _presentation: Cell::new(BunString::dead()),
+            _presentation: JsCell::new(BunString::DEAD),
         }
     }
 }
@@ -497,27 +488,8 @@ impl SocketAddress {
 // ================================ DESTRUCTORS ================================
 // =============================================================================
 
-impl Drop for SocketAddress {
-    fn drop(&mut self) {
-        // `bun_core::String` is `Copy` (no Drop), so the +1 on the cached
-        // presentation must be released explicitly here. `deref()` on a `.Dead`
-        // string is a no-op.
-        self._presentation.get().deref();
-    }
-}
-
 impl SocketAddress {
-    pub fn finalize(self: Box<Self>) {
-        bun_jsc::mark_binding!();
-        // Box drop runs `<SocketAddress as Drop>::drop` (releases `_presentation`).
-        drop(self);
-    }
-}
-
-// =============================================================================
-
-impl SocketAddress {
-    /// Turn this address into a DTO. `this` is consumed and undefined after this call.
+    /// Turn this address into a DTO.
     ///
     /// This is similar to `.toJS`, but differs in the following ways:
     /// - `this` is consumed
@@ -529,16 +501,16 @@ impl SocketAddress {
     /// This method is slightly faster if you are creating a lot of socket addresses
     /// that will not be around for very long. `createDTO` is even faster, but
     /// requires callers to already have a presentation-formatted address.
-    pub(crate) fn into_dto(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let mut addr_str = self.address();
-        let port = self.port();
-        let is_v6 = self.family() == AF::INET6;
-        let _guard = scopeguard::guard(&self._presentation, |p| p.set(BunString::dead()));
+    pub(crate) fn into_dto(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        let address = match self._presentation.take() {
+            cached if cached.tag() != bun_core::Tag::Dead => cached,
+            _ => self.fmt_presentation(),
+        };
         Ok(JSSocketAddressDTO__create(
             global,
-            addr_str.transfer_to_js(global)?,
-            port,
-            is_v6,
+            address.into_js(global)?,
+            self.port(),
+            self.family() == AF::INET6,
         ))
     }
 
@@ -558,7 +530,7 @@ impl SocketAddress {
 
         Ok(JSSocketAddressDTO__create(
             global_object,
-            bun_jsc::bun_string_jsc::create_utf8_for_js(global_object, addr_)?,
+            bun_string_jsc::create_utf8_for_js(global_object, addr_)?,
             port_,
             is_ipv6,
         ))
@@ -599,11 +571,14 @@ impl SocketAddress {
     /// ### TODO
     /// - replace `addressToString` in the dns module with this
     /// - use this impl in the server module
-    pub(crate) fn address(&self) -> BunString {
-        let cached = self._presentation.get();
-        if cached.tag() != bun_core::Tag::Dead {
-            return cached;
+    pub(crate) fn address(&self) -> &BunString {
+        if self._presentation.get().tag() == bun_core::Tag::Dead {
+            self._presentation.set(self.fmt_presentation());
         }
+        self._presentation.get()
+    }
+
+    fn fmt_presentation(&self) -> BunString {
         let mut buf = [0u8; inet::INET6_ADDRSTRLEN as usize];
         let formatted = self._addr.fmt(&mut buf);
         let presentation = crate::webcore::encoding::to_bun_string(
@@ -611,7 +586,6 @@ impl SocketAddress {
             crate::node::types::Encoding::Latin1,
         );
         debug_assert!(presentation.tag() != bun_core::Tag::Dead);
-        self._presentation.set(presentation);
         presentation
     }
 
@@ -783,8 +757,7 @@ impl AF {
 
     fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<AF> {
         if value.is_string() {
-            // OwnedString releases the +1 from BunString::from_js
-            let fam_str = OwnedString::new(BunString::from_js(value, global)?);
+            let fam_str = BunString::from_js(value, global)?;
             if fam_str.length() != 4 {
                 return Err(global.throw_invalid_argument_property_value(
                     b"options.family",
@@ -809,10 +782,10 @@ impl AF {
             } else {
                 // not full ignore-case since that would require converting
                 // utf16 -> latin1 and the allocation isn't worth it.
-                if fam_str.eql_comptime("ipv4") || fam_str.eql_comptime("IPv4") {
+                if fam_str.eq_ascii(b"ipv4") || fam_str.eq_ascii(b"IPv4") {
                     return Ok(AF::INET);
                 }
-                if fam_str.eql_comptime("ipv6") || fam_str.eql_comptime("IPv6") {
+                if fam_str.eq_ascii(b"ipv6") || fam_str.eq_ascii(b"IPv6") {
                     return Ok(AF::INET6);
                 }
                 Err(global.throw_invalid_argument_property_value(

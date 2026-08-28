@@ -114,7 +114,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventEmitterDOMConstru
     JSValue maxListeners = castedThis->getIfPropertyExists(lexicalGlobalObject, JSC::Identifier::fromString(vm, "defaultMaxListeners"_s));
     RETURN_IF_EXCEPTION(throwScope, {});
     if (maxListeners && maxListeners.isUInt32()) {
-        object->setMaxListeners(maxListeners.toUInt32(lexicalGlobalObject));
+        object->setMaxListeners(maxListeners.asUInt32());
     }
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
     auto jsValue = toJSNewlyCreated<IDLInterface<EventEmitter>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
@@ -143,7 +143,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventEmitterDOMConstru
     JSValue maxListeners = castedThis->getIfPropertyExists(lexicalGlobalObject, JSC::Identifier::fromString(vm, "defaultMaxListeners"_s));
     RETURN_IF_EXCEPTION(throwScope, {});
     if (maxListeners && maxListeners.isUInt32()) {
-        object->setMaxListeners(maxListeners.toUInt32(lexicalGlobalObject));
+        object->setMaxListeners(maxListeners.asUInt32());
     }
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
     auto jsValue = toJSNewlyCreated<IDLInterface<EventEmitter>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, object.copyRef());
@@ -307,7 +307,7 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_setMaxListener
         throwTypeError(lexicalGlobalObject, throwScope, "The maxListeners argument must be a number"_s);
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
-    unsigned maxListeners = argument0.value().toUInt32(lexicalGlobalObject);
+    unsigned maxListeners = JSC::toUInt32(argument0.value().asNumber());
 
     impl.setMaxListeners(maxListeners);
     return JSC::JSValue::encode(JSC::jsUndefined());

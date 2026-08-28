@@ -93,6 +93,10 @@ pub struct PackageInstaller<'a> {
     pub(crate) successfully_installed: Bitset,
     pub(crate) command_ctx: Command::Context<'a>,
     pub(crate) current_tree_id: lockfile::tree::Id,
+    /// Trees that live under a self-contained workspace: packages there are copied
+    /// (real files) rather than hardlinked/cloned/symlinked from the cache, so tools
+    /// that walk, prune or rewrite that node_modules cannot reach the shared cache.
+    pub(crate) copy_trees: Bitset,
 
     // fields used for running lifecycle scripts when it's safe
     //
@@ -730,7 +734,7 @@ impl<'a> PackageInstaller<'a> {
     }
 
     pub(crate) fn link_remaining_bins(&mut self, log_level: Options::LogLevel) {
-        let mut depth_buf: lockfile::tree::DepthBuf = [0u32; lockfile::tree::MAX_DEPTH];
+        let mut depth_buf = lockfile::tree::depth_buf_uninit();
         let mut node_modules_rel_path_buf = PathBuffer::uninit();
         node_modules_rel_path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
 
@@ -1582,6 +1586,23 @@ impl<'a> PackageInstaller<'a> {
             {
                 debug_assert!(resolution.can_enqueue_install_task());
 
+                // Re-enqueueing would dedupe against the finished download and never call back.
+                if !needs_verify {
+                    if log_level != Options::LogLevel::Silent {
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r>: failed to install <b>{}<r>: the downloaded package was not found in the cache",
+                            bstr::BStr::new(alias.slice(string_buf!())),
+                        );
+                    }
+                    self.summary.fail += 1;
+                    self.increment_tree_install_count(
+                        !is_pending_package_install,
+                        self.current_tree_id,
+                        log_level,
+                    );
+                    return;
+                }
+
                 let context =
                     TaskCallbackContext::DependencyInstallContext(DependencyInstallContext {
                         tree_id: self.current_tree_id,
@@ -1599,14 +1620,21 @@ impl<'a> PackageInstaller<'a> {
                 };
                 match resolution.tag {
                     resolution::Tag::Git => {
-                        package_manager::enqueue_git_for_checkout(
+                        if package_manager::enqueue_git_for_checkout(
                             self.manager_mut(),
                             dependency_id,
                             alias.slice(string_buf!()),
                             resolution,
                             context,
                             download_patch_hash,
-                        );
+                        ) == package_manager::GitEnqueueResult::OfflineMiss
+                        {
+                            self.increment_tree_install_count(
+                                !is_pending_package_install,
+                                self.current_tree_id,
+                                log_level,
+                            );
+                        }
                     }
                     resolution::Tag::Github => {
                         let url = self.manager_mut().alloc_github_url(resolution.github());
@@ -1624,7 +1652,7 @@ impl<'a> PackageInstaller<'a> {
                             Err(ForTarballError::InvalidURL) => {
                                 self.fail_with_invalid_url(log_level, is_pending_package_install)
                             }
-                            Err(ForTarballError::AlreadyFailed) => self
+                            Err(ForTarballError::AlreadyFailed | ForTarballError::Offline) => self
                                 .increment_tree_install_count(
                                     !is_pending_package_install,
                                     self.current_tree_id,
@@ -1656,7 +1684,7 @@ impl<'a> PackageInstaller<'a> {
                             Err(ForTarballError::InvalidURL) => {
                                 self.fail_with_invalid_url(log_level, is_pending_package_install)
                             }
-                            Err(ForTarballError::AlreadyFailed) => self
+                            Err(ForTarballError::AlreadyFailed | ForTarballError::Offline) => self
                                 .increment_tree_install_count(
                                     !is_pending_package_install,
                                     self.current_tree_id,
@@ -1694,7 +1722,7 @@ impl<'a> PackageInstaller<'a> {
                             Err(ForTarballError::InvalidURL) => {
                                 self.fail_with_invalid_url(log_level, is_pending_package_install)
                             }
-                            Err(ForTarballError::AlreadyFailed) => self
+                            Err(ForTarballError::AlreadyFailed | ForTarballError::Offline) => self
                                 .increment_tree_install_count(
                                     !is_pending_package_install,
                                     self.current_tree_id,
@@ -1869,10 +1897,17 @@ impl<'a> PackageInstaller<'a> {
                         break 'result result;
                     }
 
+                    let method = if (self.current_tree_id as usize) < self.copy_trees.bit_length()
+                        && self.copy_trees.is_set(self.current_tree_id as usize)
+                    {
+                        package_install::Method::Copyfile
+                    } else {
+                        installer.get_install_method()
+                    };
                     break 'result installer.install(
                         self.skip_delete,
                         &destination_dir,
-                        installer.get_install_method(),
+                        method,
                         resolution.tag,
                     );
                 }

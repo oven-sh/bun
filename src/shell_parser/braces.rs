@@ -1128,9 +1128,6 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
                 }
             }
 
-            // if (char_stack.push(char) == char_stack.Error.StackFull) {
-            //     try self.app
-            // }
             self.append_char(char)?;
         }
 

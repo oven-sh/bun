@@ -128,6 +128,5 @@ impl Subshell {
             ShellExecEnv::deinit_impl(me.base.shell);
             me.base.shell = core::ptr::null_mut();
         }
-        me.base.end_scope();
     }
 }

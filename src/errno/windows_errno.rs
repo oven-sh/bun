@@ -25,7 +25,7 @@ use bun_libuv_sys as uv;
 //   [UV_X]         — no counterpart (EAI_* resolver codes, UNKNOWN, ERRNO_MAX)
 //
 // ORDER IS LOAD-BEARING: `enum_map::Enum` derives ordinals from declaration
-// order, and `SystemErrno::to_e` transmutes by discriminant, so the two enums
+// order, and `SystemErrno::to_e` maps by discriminant, so the two enums
 // MUST stay in lockstep. Editing this list updates both atomically.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -85,18 +85,7 @@ macro_rules! __errno_enum_with_uv_tail {
 
 for_each_uv_errno! { __errno_enum_with_uv_tail {
 #[repr(u16)]
-#[derive(
-    Copy,
-    Clone,
-    Eq,
-    PartialEq,
-    Hash,
-    Debug,
-    strum::IntoStaticStr,
-    strum::EnumString,
-    strum::FromRepr,
-    enum_map::Enum,
-)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::FromRepr, enum_map::Enum)]
 pub enum E {
     SUCCESS = 0,
     PERM = 1,
@@ -106,7 +95,6 @@ pub enum E {
     IO = 5,
     NXIO = 6,
     // Rust identifiers cannot start with a digit.
-    #[strum(serialize = "2BIG")]
     _2BIG = 7,
     NOEXEC = 8,
     BADF = 9,
@@ -242,16 +230,13 @@ pub enum E {
 }} // ← UV_* tail appended by `for_each_uv_errno!`
 
 impl E {
+    /// An undeclared discriminant maps to `UNKNOWN`.
     #[inline]
     pub(crate) const fn from_raw(n: u16) -> Self {
-        // `E` is sparse (dense 0..=137 plus isolated UV_* tags ~3000–4095), so
-        // `n < MAX` is NOT a sufficient validity check. `strum::FromRepr`
-        // generates a `const fn from_repr` matching every declared variant.
-        debug_assert!(Self::from_repr(n).is_some(), "invalid E discriminant");
-        // SAFETY: caller guarantees `n` is a declared `#[repr(u16)]` discriminant
-        // of `E`. Debug-asserted above; for
-        // untrusted input use `try_from_raw` instead.
-        unsafe { core::mem::transmute::<u16, E>(n) }
+        match Self::from_repr(n) {
+            Some(e) => e,
+            None => Self::UNKNOWN,
+        }
     }
 
     /// Checked discriminant lookup —
@@ -330,6 +315,22 @@ impl E {
     pub const EUNKNOWN: E = E::UNKNOWN;
     pub const ECHARSET: E = E::CHARSET;
     pub const EFTYPE: E = E::FTYPE;
+}
+
+/// `ENOENT`, as the POSIX alias `E = SystemErrno` spells it, not the variant name `NOENT`.
+impl From<E> for &'static str {
+    #[inline]
+    fn from(e: E) -> &'static str {
+        // Same discriminant set; `SystemErrno::to_e` is the reverse cast.
+        <&'static str>::from(SystemErrno::from_raw(e as u16))
+    }
+}
+
+impl From<&E> for &'static str {
+    #[inline]
+    fn from(e: &E) -> &'static str {
+        <&'static str>::from(*e)
+    }
 }
 
 /// Mirrors `bun_errno::posix` on POSIX targets so callers can `use

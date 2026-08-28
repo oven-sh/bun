@@ -160,6 +160,12 @@ enum {
      * unconnected socket it also makes the next send fail for a datagram
      * bound to a different, live peer. */
     LIBUS_UDP_LINUX_RECVERR = 128,
+    /* A socket adopted by us_socket_from_fd, or accepted by a listener created with this option,
+     * is registered as if us_socket_pause had been called on it, so no extra poll change is needed
+     * per connection (node:net's pauseOnConnect; cluster adopts every connection this way). Not
+     * for connects, and ignored for TLS sockets: the handshake needs the reads, the owner pauses
+     * those sockets itself. */
+    LIBUS_SOCKET_OPEN_PAUSED = 256,
 };
 
 /* Library types publicly available */
@@ -550,6 +556,11 @@ struct ssl_ctx_st *us_ssl_ctx_from_options(
  * (uWS App.h) that don't pull in BoringSSL headers. */
 void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
+/* Install an ALPN selector that prefers "h2", then "http/1.1" (when
+ * allow_http1). Used by uWS when an App has an HTTP/2 context attached. */
+void us_ssl_ctx_enable_http2_alpn(struct ssl_ctx_st *ssl_ctx, int allow_http1);
+/* 1 iff the completed handshake on `s` negotiated ALPN "h2". */
+int us_socket_alpn_is_h2(us_socket_r s);
 long us_ssl_ctx_live_count(void);
 /* Appends the certificates in the PEM `content` to `ctx`'s trust store;
  * returns 0 when nothing could be added. */

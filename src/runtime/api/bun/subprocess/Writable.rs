@@ -1,5 +1,4 @@
 use core::ffi::c_void;
-use core::ptr::NonNull;
 
 use bun_jsc::{JSGlobalObject, JSValue, event_loop::EventLoop};
 use bun_ptr::RefPtr;
@@ -16,9 +15,7 @@ use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use super::{Flags, StaticPipeWriter, StdioResult, Subprocess, js};
 
 pub enum Writable<'a> {
-    // `FileSink` is intrusive-refcounted (manual ref/deref): keep a raw
-    // NonNull and call `FileSink::deref` explicitly.
-    Pipe(NonNull<FileSink>),
+    Pipe(RefPtr<FileSink>),
     Fd(Fd),
     Buffer(RefPtr<StaticPipeWriter<'a>>),
     Memfd(Fd),
@@ -27,71 +24,33 @@ pub enum Writable<'a> {
 }
 
 impl<'a> Writable<'a> {
-    /// Shared borrow of the `Pipe` payload's `FileSink`.
+    /// Mutable borrow of the `Pipe` payload's `FileSink`.
     ///
-    /// `Writable::Pipe` holds a +1 intrusive ref on the `FileSink` for the
-    /// variant's entire lifetime — released only by an explicit
-    /// `FileSink::deref` *after* the variant has been overwritten (see
-    /// `on_close` / `Subprocess::on_close_io`). The pointee is therefore live
-    /// and pinned for any caller still holding the `Writable::Pipe` payload —
-    /// i.e. the owner-outlives-holder `BackRef` invariant holds (single JS
-    /// thread).
-    #[inline]
-    pub(super) fn pipe_sink(pipe: NonNull<FileSink>) -> bun_ptr::BackRef<FileSink> {
-        bun_ptr::BackRef::from(pipe)
-    }
-
-    /// Mutable counterpart to [`pipe_sink`](Self::pipe_sink).
-    ///
-    /// Same invariant: `Writable::Pipe` holds a +1 intrusive ref on the
-    /// `FileSink` for the variant's lifetime, and the sink lives in its own
-    /// allocation (disjoint from both the `Writable` value and the parent
-    /// `Subprocess`), so projecting `&mut` here cannot alias any other live
-    /// borrow. Single JS-mutator thread — no concurrent `&mut FileSink`.
+    /// `RefPtr` deliberately has no `DerefMut`; what makes `&mut` sound here
+    /// is that `Writable::Pipe` holds a ref for the variant's lifetime, the
+    /// sink lives in its own heap allocation disjoint from
+    /// `Writable`/`Subprocess`, and access is single-JS-mutator-thread.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    fn pipe_sink_mut(pipe: &NonNull<FileSink>) -> &mut FileSink {
-        // SAFETY: see fn doc — +1-intrusive-ref'd, heap-disjoint, single-thread.
+    fn pipe_sink_mut(pipe: &RefPtr<FileSink>) -> &mut FileSink {
+        // SAFETY: see fn doc.
         unsafe { &mut *pipe.as_ptr() }
     }
 
-    /// Release one intrusive ref on a `FileSink` held by `Writable::Pipe`
-    /// (or freshly returned from `FileSink::create*`). Centralises the
-    /// `unsafe { FileSink::deref(ptr) }` so callers stay safe — same
-    /// invariant as [`pipe_sink`](Self::pipe_sink): the `NonNull` was
-    /// produced by `FileSink::create*` (heap-boxed, dealloc provenance) and
-    /// carries a +1 intrusive ref the caller is now discharging. Single
-    /// JS-mutator thread; the sink may be freed on return.
-    #[inline]
-    pub(in crate::api) fn pipe_release(pipe: NonNull<FileSink>) {
-        // SAFETY: see fn doc — +1-intrusive-ref'd heap allocation with
-        // dealloc provenance; `deref` decrements and may free.
-        unsafe { FileSink::deref(pipe.as_ptr()) };
-    }
-
-    /// Mutable borrow of the `Buffer` payload's `StaticPipeWriter`.
-    ///
-    /// Centralises the `RefPtr → &mut T` deref so the per-match-arm `unsafe`
-    /// blocks (`ref`/`unref`/`close`/`finalize` and `Subprocess::on_close_io`/
-    /// `on_process_exit`) collapse to this one site. `RefPtr` deliberately has
-    /// no `DerefMut` (shared ownership); the invariant that makes `&mut` sound
-    /// here is that `Writable::Buffer` holds the *only* strong ref for the
-    /// variant's lifetime (created by `StaticPipeWriter::create`, released by
-    /// `buffer.deref()` only after the variant is overwritten), the writer
-    /// lives in its own heap allocation disjoint from `Writable`/`Subprocess`,
-    /// and access is single-JS-mutator-thread.
+    /// Mutable borrow of the `Buffer` payload's `StaticPipeWriter`; same
+    /// invariant as [`pipe_sink_mut`](Self::pipe_sink_mut).
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(in crate::api) fn buffer_writer_mut<'b>(
         buffer: &'b RefPtr<StaticPipeWriter<'a>>,
     ) -> &'b mut StaticPipeWriter<'a> {
-        // SAFETY: see fn doc — sole-owning RefPtr, heap-disjoint, single-thread.
+        // SAFETY: see fn doc.
         unsafe { &mut *buffer.as_ptr() }
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
         match self {
-            Writable::Pipe(pipe) => Self::pipe_sink(*pipe).memory_cost(),
+            Writable::Pipe(pipe) => pipe.memory_cost(),
             Writable::Buffer(buffer) => buffer.memory_cost(),
             // TODO: memfd
             _ => 0,
@@ -111,7 +70,7 @@ impl<'a> Writable<'a> {
     pub(crate) fn r#ref(&mut self) {
         match self {
             Writable::Pipe(pipe) => {
-                Self::pipe_sink(*pipe).update_ref(true);
+                pipe.update_ref(true);
             }
             Writable::Buffer(buffer) => {
                 Self::buffer_writer_mut(buffer).update_ref(true);
@@ -123,7 +82,7 @@ impl<'a> Writable<'a> {
     pub(crate) fn unref(&mut self) {
         match self {
             Writable::Pipe(pipe) => {
-                Self::pipe_sink(*pipe).update_ref(false);
+                pipe.update_ref(false);
             }
             Writable::Buffer(buffer) => {
                 Self::buffer_writer_mut(buffer).update_ref(false);
@@ -151,15 +110,7 @@ impl<'a> Writable<'a> {
         // (== false) instead of a just-deref'd `Buffer` (== true) inside
         // `update_has_pending_activity`, which is the state it converges to
         // immediately after anyway.
-        match process.stdin.replace(Writable::Ignore) {
-            Writable::Buffer(buffer) => {
-                buffer.deref();
-            }
-            Writable::Pipe(pipe) => {
-                Self::pipe_release(pipe);
-            }
-            _ => {}
-        }
+        process.stdin.set(Writable::Ignore);
 
         // `on_stdin_destroyed` may `deref()` and free `process` as its last
         // act, so this must be the final access.
@@ -197,24 +148,22 @@ impl<'a> Writable<'a> {
                         // FileSink's writer (the sink takes over the heap
                         // pointer).
                         let uv_pipe: *mut _ = bun_core::heap::into_raw(buffer);
-                        // `create_with_pipe` returns a freshly-boxed non-null pointer.
-                        let pipe_nn = NonNull::new(FileSink::create_with_pipe(evtloop, uv_pipe))
-                            .expect("FileSink::create_with_pipe returns non-null");
-                        let pipe_ptr = pipe_nn.as_ptr();
-                        let pipe = Self::pipe_sink_mut(&pipe_nn);
+                        let pipe_ref = FileSink::create_with_pipe(evtloop, uv_pipe);
+                        let pipe = Self::pipe_sink_mut(&pipe_ref);
 
                         match pipe.writer.with_mut(|w| w.start_with_current_pipe()) {
                             bun_sys::Result::Ok(()) => {}
                             bun_sys::Result::Err(_err) => {
-                                Self::pipe_release(pipe_nn);
                                 if let Stdio::ReadableStream(rs) = stdio {
                                     rs.cancel(global)?;
                                 }
                                 return Err(crate::Error::UnexpectedCreatingStdin);
                             }
                         }
-                        pipe.writer.with_mut(|w| w.set_parent(pipe_ptr));
-                        subprocess.weak_file_sink_stdin_ptr.set(Some(pipe_nn));
+                        pipe.writer.with_mut(|w| w.set_parent(pipe_ref.as_ptr()));
+                        subprocess
+                            .weak_file_sink_stdin_ptr
+                            .set(Some(pipe_ref.as_non_null()));
                         subprocess.ref_();
                         subprocess.update_flags(|f| {
                             f.set(Flags::DEREF_ON_STDIN_DESTROYED, true);
@@ -228,7 +177,6 @@ impl<'a> Writable<'a> {
                                 subprocess.update_flags(|f| {
                                     f.set(Flags::DEREF_ON_STDIN_DESTROYED, false)
                                 });
-                                Self::pipe_release(pipe_nn);
                                 subprocess.deref();
                                 let _ = global.throw_value(err_val);
                                 return Err(crate::Error::JSError);
@@ -236,7 +184,7 @@ impl<'a> Writable<'a> {
                             *promise_for_stream = assign_result;
                         }
 
-                        return Ok(Writable::Pipe(pipe_nn));
+                        return Ok(Writable::Pipe(pipe_ref));
                     }
                     return Ok(Writable::Inherit);
                 }
@@ -256,14 +204,6 @@ impl<'a> Writable<'a> {
                         subprocess as *mut Subprocess<'a>,
                         result,
                         super::source_from_blob(blob),
-                    )));
-                }
-                Stdio::ArrayBuffer(array_buffer) => {
-                    return Ok(Writable::Buffer(StaticPipeWriter::create(
-                        evtloop,
-                        subprocess as *mut Subprocess<'a>,
-                        result,
-                        super::source_from_array_buffer(core::mem::take(array_buffer)),
                     )));
                 }
                 Stdio::Fd(fd) => {
@@ -297,19 +237,15 @@ impl<'a> Writable<'a> {
         match stdio {
             Stdio::Dup2(_) => panic!("TODO dup2 stdio"),
             Stdio::Pipe | Stdio::ReadableStream(_) => {
-                // `create` returns a freshly-boxed non-null pointer.
-                let pipe_nn = NonNull::new(FileSink::create(evtloop, result.unwrap()))
-                    .expect("FileSink::create returns non-null");
-                let pipe = Self::pipe_sink_mut(&pipe_nn);
+                let pipe_ref = FileSink::create(evtloop, result.unwrap());
+                let pipe = Self::pipe_sink_mut(&pipe_ref);
 
                 match pipe.writer.with_mut(|w| w.start(pipe.fd.get(), true)) {
                     bun_sys::Result::Ok(()) => {}
                     bun_sys::Result::Err(_err) => {
-                        Self::pipe_release(pipe_nn);
                         if let Stdio::ReadableStream(rs) = stdio {
                             rs.cancel(global)?;
                         }
-
                         return Err(crate::Error::UnexpectedCreatingStdin);
                     }
                 }
@@ -322,7 +258,9 @@ impl<'a> Writable<'a> {
                     }
                 });
 
-                subprocess.weak_file_sink_stdin_ptr.set(Some(pipe_nn));
+                subprocess
+                    .weak_file_sink_stdin_ptr
+                    .set(Some(pipe_ref.as_non_null()));
                 subprocess.ref_();
                 subprocess.update_flags(|f| {
                     f.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false);
@@ -334,7 +272,6 @@ impl<'a> Writable<'a> {
                     if let Some(err_val) = assign_result.to_error() {
                         subprocess.weak_file_sink_stdin_ptr.set(None);
                         subprocess.update_flags(|f| f.set(Flags::DEREF_ON_STDIN_DESTROYED, false));
-                        Self::pipe_release(pipe_nn);
                         subprocess.deref();
                         let _ = global.throw_value(err_val);
                         return Err(crate::Error::JSError);
@@ -342,7 +279,7 @@ impl<'a> Writable<'a> {
                     *promise_for_stream = assign_result;
                 }
 
-                Ok(Writable::Pipe(pipe_nn))
+                Ok(Writable::Pipe(pipe_ref))
             }
 
             Stdio::Blob(_) => {
@@ -363,12 +300,6 @@ impl<'a> Writable<'a> {
                     super::source_from_blob(blob),
                 )))
             }
-            Stdio::ArrayBuffer(array_buffer) => Ok(Writable::Buffer(StaticPipeWriter::create(
-                evtloop,
-                std::ptr::from_mut::<Subprocess<'a>>(subprocess),
-                result,
-                super::source_from_array_buffer(core::mem::take(array_buffer)),
-            ))),
             Stdio::Memfd(_) => {
                 // Transfer ownership: `Stdio`'s Drop would close the memfd, so
                 // take it out via ManuallyDrop (same pattern as the Blob arm)
@@ -411,10 +342,7 @@ impl<'a> Writable<'a> {
                 subprocess.stdin.set(Writable::Inherit);
                 JSValue::UNDEFINED
             }
-            Writable::Pipe(pipe_nn) => {
-                // stdin already replaced with Ignore above;
-                // pipe is live (held a +1 in this enum); separate allocation
-                // from `*subprocess` so the borrows are disjoint.
+            Writable::Pipe(pipe_ref) => {
                 if subprocess.has_exited()
                     && !subprocess
                         .flags
@@ -430,29 +358,23 @@ impl<'a> Writable<'a> {
                     // in spawn_maybe_sync and this path asserted no ref change;
                     // see https://github.com/oven-sh/bun/pull/14092).
                     //
-                    // Pass the canonical `*mut FileSink` straight through — the
-                    // call re-enters via the writer backref and may free `this`,
-                    // so no `&mut FileSink` is materialized across it.
-                    // SAFETY: `pipe_nn` is the canonical heap pointer from
-                    // `FileSink::create*` with write+dealloc provenance, held
-                    // live by the `Writable::Pipe` +1.
+                    // The call re-enters via the writer backref, so no `&mut
+                    // FileSink` is materialized across it.
+                    // SAFETY: `pipe_ref` keeps the sink live.
                     unsafe {
                         FileSink::on_attached_process_exit(
-                            pipe_nn.as_ptr(),
+                            pipe_ref.as_ptr(),
                             &subprocess.process().status,
                         )
                     };
-                    // `FileSink::to_js` takes its own per-wrapper +1. Release the
-                    // enum's create-time +1 now that the wrapper holds its own
-                    // — mirrors Blob.rs:1899-1902. `stdin` was already swapped
-                    // to `Ignore` above so `on_close` won't double-release.
-                    let js = Self::pipe_sink_mut(&pipe_nn).to_js(global_this);
-                    Self::pipe_release(pipe_nn);
-                    js
+                    // The wrapper takes its own ref; `pipe_ref` drops after.
+                    Self::pipe_sink_mut(&pipe_ref).to_js(global_this)
                 } else {
-                    let pipe = Self::pipe_sink_mut(&pipe_nn);
+                    let pipe = Self::pipe_sink_mut(&pipe_ref);
                     subprocess.update_flags(|f| f.set(Flags::HAS_STDIN_DESTRUCTOR_CALLED, false));
-                    subprocess.weak_file_sink_stdin_ptr.set(Some(pipe_nn));
+                    subprocess
+                        .weak_file_sink_stdin_ptr
+                        .set(Some(pipe_ref.as_non_null()));
                     if !subprocess
                         .flags
                         .get()
@@ -469,17 +391,13 @@ impl<'a> Writable<'a> {
                     {
                         pipe.source.with_mut(|s| s.clear());
                     }
-                    // Rust `FileSink::to_js_with_destructor` takes its own
-                    // per-wrapper +1; release the enum's create-time +1 (see
-                    // the has-exited arm above and Blob.rs:1899-1902).
-                    let js = pipe.to_js_with_destructor(
+                    // The wrapper takes its own ref; `pipe_ref` drops after.
+                    pipe.to_js_with_destructor(
                         global_this,
                         Some(sink::destructor_ptr_subprocess(
                             subprocess.as_ctx_ptr().cast::<c_void>(),
                         )),
-                    );
-                    Self::pipe_release(pipe_nn);
-                    js
+                    )
                 }
             }
         }
@@ -497,19 +415,14 @@ impl<'a> Writable<'a> {
         // Source back-pointer is the `*mut Subprocess`, not the `stdin` address.
         let parent_ptr = subprocess.as_ctx_ptr().cast::<Subprocess<'static>>();
         match subprocess.stdin.replace(Writable::Ignore) {
-            Writable::Pipe(pipe_nn) => {
-                let pipe = Self::pipe_sink_mut(&pipe_nn);
+            Writable::Pipe(pipe) => {
                 if matches!(*pipe.source.get(), SourceHandle::Subprocess(p) if p.as_const_ptr() == parent_ptr.cast_const())
                 {
                     pipe.source.with_mut(|s| s.clear());
                 }
-
-                Self::pipe_release(pipe_nn);
             }
             Writable::Buffer(buffer) => {
                 Self::buffer_writer_mut(&buffer).update_ref(false);
-                // RefPtr::deref drops the held ref.
-                buffer.deref();
             }
             Writable::Memfd(fd) => {
                 fd.close();
@@ -527,7 +440,7 @@ impl<'a> Writable<'a> {
     pub fn close(&mut self) {
         match self {
             Writable::Pipe(pipe) => {
-                let _ = Self::pipe_sink(*pipe).end(None);
+                let _ = pipe.end(None);
             }
             Writable::Memfd(fd) => {
                 fd.close();

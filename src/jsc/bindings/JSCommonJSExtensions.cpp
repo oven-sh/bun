@@ -193,8 +193,11 @@ bool JSCommonJSExtensions::put(JSC::JSCell* cell, JSC::JSGlobalObject* globalObj
 
 bool JSCommonJSExtensions::deleteProperty(JSC::JSCell* cell, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName, JSC::DeletePropertySlot& slot)
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!isAllowedToMutateExtensions(globalObject)) return true;
     bool deleted = Base::deleteProperty(cell, globalObject, propertyName, slot);
+    RETURN_IF_EXCEPTION(scope, false);
     if (deleted) {
         onAssign(defaultGlobalObject(globalObject), propertyName, JSC::jsUndefined());
     }
@@ -261,8 +264,6 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     BunString empty = BunStringEmpty;
     JSC::VM& vm = globalObject->vm();
     ErrorableResolvedSource res;
-    res.success = false;
-    memset(&res.result, 0, sizeof res.result);
 
     JSValue result = fetchCommonJSModuleNonBuiltin<true>(
         global->bunVM(),

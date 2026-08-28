@@ -17,6 +17,8 @@ use crate::crypto::boringssl_jsc::err_to_js;
 use crate::socket::uws_jsc::create_bun_socket_error_to_js;
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl_sys as boringssl;
+use bun_core::EncodedSlice;
+use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsClass as _;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_uws as uws;
@@ -33,7 +35,7 @@ pub use crate::generated_classes::js_SecureContext as js;
 #[bun_jsc::JsClass]
 #[repr(C)]
 pub struct SecureContext {
-    pub ctx: *mut boringssl::SSL_CTX,
+    pub ctx: boringssl::OwnedSslCtx,
     /// `BunSocketContextOptions.digest()` — exactly the fields that reach
     /// `us_ssl_ctx_from_options`. Stored so an `intern()` WeakGCMap hit (keyed by
     /// the low 64 bits) can do a full content-equality check before reusing.
@@ -103,7 +105,7 @@ impl SecureContext {
         // before borrowing the pfx ArrayBuffer so a user toString() cannot
         // detach the buffer behind the borrowed slice.
         let pass_owned: Option<Vec<u8>> = if args.len() > 1 && !args[1].is_undefined_or_null() {
-            let p = args[1].to_slice(global)?;
+            let p = args[1].to_utf8(global)?;
             let mut v = p.slice().to_vec();
             v.push(0);
             Some(v)
@@ -121,7 +123,7 @@ impl SecureContext {
                 pfx_view.byte_slice()
             }
             None => {
-                pfx_string = args[0].to_slice(global)?;
+                pfx_string = args[0].to_utf8(global)?;
                 pfx_string.slice()
             }
         };
@@ -173,23 +175,39 @@ impl SecureContext {
             };
             return Err(global.throw(format_args!("{message}")));
         }
+        let _free = scopeguard::guard((out_key, out_cert, out_ca), |(key, cert, ca)| {
+            // SAFETY: allocated by the helper with malloc; `ca` may be null.
+            unsafe {
+                free(key.cast());
+                free(cert.cast());
+                if !ca.is_null() {
+                    free(ca.cast());
+                }
+            }
+        });
         let result = JSValue::create_empty_object(global, 0);
-        // SAFETY: the helper returned NUL-terminated PEM strings of the given
-        // lengths; ZigString::to_js copies into the JS heap before `free`.
-        unsafe {
-            let key_slice = core::slice::from_raw_parts(out_key.cast::<u8>(), key_len);
-            result.put(global, b"key", ZigString::init(key_slice).to_js(global));
-            let cert_slice = core::slice::from_raw_parts(out_cert.cast::<u8>(), cert_len);
-            result.put(global, b"cert", ZigString::init(cert_slice).to_js(global));
-            if !out_ca.is_null() && ca_len > 0 {
-                let ca_slice = core::slice::from_raw_parts(out_ca.cast::<u8>(), ca_len);
-                result.put(global, b"ca", ZigString::init(ca_slice).to_js(global));
-            }
-            free(out_key.cast());
-            free(out_cert.cast());
-            if !out_ca.is_null() {
-                free(out_ca.cast());
-            }
+        // SAFETY: the helper returned NUL-terminated PEM (ASCII) strings of the
+        // given lengths; `to_js` copies into the JS heap.
+        let (key_slice, cert_slice, ca_slice) = unsafe {
+            (
+                core::slice::from_raw_parts(out_key.cast::<u8>(), key_len),
+                core::slice::from_raw_parts(out_cert.cast::<u8>(), cert_len),
+                (!out_ca.is_null() && ca_len > 0)
+                    .then(|| core::slice::from_raw_parts(out_ca.cast::<u8>(), ca_len)),
+            )
+        };
+        result.put(
+            global,
+            b"key",
+            EncodedSlice::latin1(key_slice).to_js(global),
+        );
+        result.put(
+            global,
+            b"cert",
+            EncodedSlice::latin1(cert_slice).to_js(global),
+        );
+        if let Some(ca_slice) = ca_slice {
+            result.put(global, b"ca", EncodedSlice::latin1(ca_slice).to_js(global));
         }
         Ok(result)
     }
@@ -344,17 +362,6 @@ impl SecureContext {
         }))
     }
 
-    /// `SSL_CTX_up_ref` and return — for callers that want to outlive this
-    /// wrapper's GC. Most paths just pass `this.ctx` directly and let `SSL_new`
-    /// take its own ref.
-    pub(crate) fn borrow(&self) -> *mut boringssl::SSL_CTX {
-        unsafe {
-            // SAFETY: self.ctx is a valid SSL_CTX* held for the lifetime of this wrapper.
-            let _ = boringssl::SSL_CTX_up_ref(self.ctx);
-        }
-        self.ctx
-    }
-
     /// `secureContext.context._external` — Node exposes the SSL_CTX here as an
     /// opaque V8 External. Bun has nothing meaningful to hand out, so the
     /// getter exists only so the property behaves like an accessor (a foreign
@@ -384,7 +391,7 @@ impl SecureContext {
                 global.throw_invalid_arguments(format_args!("addCACert requires a certificate"))
             );
         }
-        let pem = args[0].to_slice(global)?;
+        let pem = args[0].to_utf8(global)?;
         let bytes = pem.slice();
         if bytes.is_empty() {
             return Err(
@@ -397,21 +404,15 @@ impl SecureContext {
         // SAFETY: `this.ctx` is the live SSL_CTX this object owns a reference
         // to, and `owned` is a NUL-terminated buffer valid for the call.
         let ok = unsafe {
-            c::us_ssl_ctx_add_ca_cert(this.ctx, owned.as_ptr().cast::<core::ffi::c_char>())
+            c::us_ssl_ctx_add_ca_cert(
+                this.ctx.as_ptr(),
+                owned.as_ptr().cast::<core::ffi::c_char>(),
+            )
         };
         if ok == 0 {
             return Err(global.throw(format_args!("Invalid CA certificate")));
         }
         Ok(JSValue::UNDEFINED)
-    }
-
-    // Codegen's `host_fn_finalize` calls this via `|b| SecureContext::finalize(b)`
-    // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
-    // false positive on that contract.
-    #[allow(clippy::boxed_local)]
-    pub fn finalize(self: Box<Self>) {
-        // SAFETY: `ctx` was created by `SSL_CTX_new`; freed exactly once here.
-        unsafe { boringssl::SSL_CTX_free(self.ctx) };
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
@@ -421,8 +422,6 @@ impl SecureContext {
 
 const SSL_CTX_BASE_COST: usize = 50 * 1024;
 
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::zig_string::ZigString;
 use bun_uws_sys::socket_context::c;
 
 mod cpp {

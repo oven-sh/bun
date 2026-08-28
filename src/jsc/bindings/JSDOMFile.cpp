@@ -67,12 +67,11 @@ public:
     {
         auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
         auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         JSObject* newTarget = asObject(callFrame->newTarget());
         auto* constructor = globalObject->JSDOMFileConstructor();
         Structure* structure = globalObject->JSBlobStructure();
         if (constructor != newTarget) {
-            auto scope = DECLARE_THROW_SCOPE(vm);
-
             auto* functionGlobalObject = static_cast<Zig::GlobalObject*>(
                 // ShadowRealm functions belong to a different global object.
                 getFunctionRealm(lexicalGlobalObject, newTarget));
@@ -82,6 +81,7 @@ public:
         }
 
         void* ptr = JSDOMFile__construct(lexicalGlobalObject, callFrame);
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (!ptr) [[unlikely]] {
             return JSValue::encode(JSC::jsUndefined());

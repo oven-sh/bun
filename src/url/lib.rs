@@ -4,10 +4,11 @@ pub mod error;
 pub use error::{Error, Result};
 
 use core::cell::RefCell;
+use core::mem::MaybeUninit;
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 use bun_core::{self, fmt as bun_fmt};
-use bun_core::{OwnedString, String as BunString, Tag as BunStringTag, strings};
+use bun_core::{String as BunString, Tag as BunStringTag, strings};
 use bun_paths::resolve_path::{self, platform};
 use bun_wyhash::hash as wyhash;
 
@@ -42,59 +43,54 @@ use route_param::List as ParamsList;
 // stay in tier-6 `bun_jsc` as extension methods — they need JSValue/JSGlobalObject.
 // Everything else is a thin extern-"C" wrapper around WTF::URL and is JSC-agnostic.
 pub mod whatwg {
+    use core::ptr::NonNull;
+
     use super::BunString as String;
     use super::strings;
 
-    /// Opaque handle to a heap-allocated WTF::URL (C++). Always behind `*mut URL`.
-    /// Construct via `from_string`/`from_utf8`; free via `deinit`.
-    #[repr(C)]
-    pub struct URL {
-        _opaque: [u8; 0],
+    bun_opaque::opaque_ffi! {
+        /// Opaque handle to a heap-allocated `WTF::URL` (C++); owned via
+        /// [`Parsed`].
+        pub struct URL;
     }
 
-    // Getters take `*const URL` — the C++ side (BunString.cpp) never mutates the
-    // WTF::URL on read. `URL__deinit` keeps `*mut` (it `delete`s). `BunString*` inputs stay
-    // `*mut` to match the C ABI; callers pass a mutable local copy (see below).
-    // SAFETY (safe fn): `URL` is an opaque ZST handle (never null when behind `&`);
-    // `String` is a `#[repr(C)]` Copy POD that C++ reads (`BunString::toWTFString() const`).
-    // Getters take `&URL` (C++ never mutates on read); `deinit` takes `&mut URL` (consumes).
-    // `URL__originLength` keeps a raw `(*const u8, usize)` slice pair → stays `unsafe fn`.
+    // Getters take `&URL` (C++ never mutates on read). String inputs are
+    // `const BunString*`; string returns are +1 (`Bun::toStringRef`), declared
+    // as owning `String`. `URL__deinit` frees the allocation, so it stays
+    // `unsafe fn`. `URL__fromJS` / `URL__getHrefFromJS` live in
+    // `bun_jsc::URLJsc`.
     unsafe extern "C" {
-        // `URL__fromJS` / `URL__getHrefFromJS` intentionally omitted — tier-6 (bun_jsc).
-        safe fn URL__fromString(str: &mut String) -> Option<core::ptr::NonNull<URL>>;
+        safe fn URL__fromString(str: &String) -> Option<NonNull<URL>>;
         safe fn URL__protocol(url: &URL) -> String;
         safe fn URL__href(url: &URL) -> String;
+        safe fn URL__username(url: &URL) -> String;
+        safe fn URL__password(url: &URL) -> String;
+        safe fn URL__host(url: &URL) -> String;
         safe fn URL__hostname(url: &URL) -> String;
-        safe fn URL__deinit(url: &mut URL);
+        safe fn URL__port(url: &URL) -> u32;
         safe fn URL__pathname(url: &URL) -> String;
-        safe fn URL__getHref(input: &mut String) -> String;
-        safe fn URL__getFileURLString(input: &mut String) -> String;
-        safe fn URL__getHrefJoin(base: &mut String, relative: &mut String) -> String;
         safe fn URL__fragmentIdentifier(url: &URL) -> String;
+        fn URL__deinit(url: *mut URL);
+        safe fn URL__getHref(input: &String) -> String;
+        safe fn URL__getFileURLString(input: &String) -> String;
+        safe fn URL__pathFromFileURL(input: &String) -> String;
+        safe fn URL__getHrefJoin(base: &String, relative: &String) -> String;
         fn URL__originLength(latin1_slice: *const u8, len: usize) -> usize;
     }
-
-    // The C ABI wants a mutable address. We take `&String` (matching existing call sites
-    // in this crate) and — since `bun_core::String: Copy` — bit-copy into a mutable
-    // local and pass `&mut local`. This avoids casting
-    // a shared-ref-derived pointer to `*mut` (read-only provenance). The C++ side
-    // (`BunString::toWTFString() const`) does not mutate, but the local-copy form is
-    // sound regardless.
 
     /// Percent-encodes the URL, punycode-encodes the hostname, and returns the normalized
     /// href. If parsing fails, the returned String's tag is `Dead`.
     pub fn href_from_string(str: &String) -> String {
-        let mut input = *str;
-        URL__getHref(&mut input)
+        URL__getHref(str)
     }
     pub fn join(base: &String, relative: &String) -> String {
-        let mut base_str = *base;
-        let mut relative_str = *relative;
-        URL__getHrefJoin(&mut base_str, &mut relative_str)
+        URL__getHrefJoin(base, relative)
     }
     pub fn file_url_from_string(str: &String) -> String {
-        let mut input = *str;
-        URL__getFileURLString(&mut input)
+        URL__getFileURLString(str)
+    }
+    pub fn path_from_file_url(str: &String) -> String {
+        URL__pathFromFileURL(str)
     }
     /// Returns the origin (`scheme://host[:port]`) prefix of `slice` as a borrowed
     /// subslice, or `None` if `slice` does not parse as a valid WHATWG URL.
@@ -114,13 +110,6 @@ pub mod whatwg {
     }
 
     impl URL {
-        pub(crate) fn from_string(str: &String) -> Option<core::ptr::NonNull<URL>> {
-            let mut input = *str;
-            URL__fromString(&mut input)
-        }
-        pub fn from_utf8(input: &[u8]) -> Option<core::ptr::NonNull<URL>> {
-            Self::from_string(&String::borrow_utf8(input))
-        }
         /// The URL fragment (the part after `#`), excluding the leading '#'.
         pub fn fragment_identifier(&self) -> String {
             URL__fragmentIdentifier(self)
@@ -131,10 +120,21 @@ pub mod whatwg {
         pub fn href(&self) -> String {
             URL__href(self)
         }
-        /// Returns the host WITH the port.
+        pub fn username(&self) -> String {
+            URL__username(self)
+        }
+        pub fn password(&self) -> String {
+            URL__password(self)
+        }
+        /// The host WITHOUT the port (JS `hostname`).
         ///
-        /// Note that this does NOT match JS `hostname`, which excludes the port (that
-        /// port-less form is `bun_jsc::URL::host`).
+        /// ```text
+        /// URL("http://example.com:8080").host() => "example.com"
+        /// ```
+        pub fn host(&self) -> String {
+            URL__host(self)
+        }
+        /// The host WITH the port (JS `host`).
         ///
         /// ```text
         /// URL("http://example.com:8080").hostname() => "example.com:8080"
@@ -142,27 +142,36 @@ pub mod whatwg {
         pub fn hostname(&self) -> String {
             URL__hostname(self)
         }
+        /// `u32::MAX` if the port is not set; otherwise within `u16` range.
+        pub fn port(&self) -> u32 {
+            URL__port(self)
+        }
         pub fn pathname(&self) -> String {
             URL__pathname(self)
-        }
-        pub fn deinit(&mut self) {
-            URL__deinit(self)
         }
     }
 
     /// A `URL` this handle owns; `Drop` frees it.
-    pub struct Parsed(core::ptr::NonNull<URL>);
+    pub struct Parsed(NonNull<URL>);
 
     impl Parsed {
+        pub fn from_string(str: &String) -> Option<Self> {
+            URL__fromString(str).map(Self)
+        }
         pub fn from_utf8(input: &[u8]) -> Option<Self> {
-            URL::from_utf8(input).map(Self)
+            Self::from_string(&String::borrow_utf8(input))
+        }
+        /// # Safety
+        /// `url` is a heap `WTF::URL` nothing else frees.
+        pub unsafe fn from_raw(url: NonNull<URL>) -> Self {
+            Self(url)
         }
     }
 
     impl core::ops::Deref for Parsed {
         type Target = URL;
         fn deref(&self) -> &URL {
-            // SAFETY: `from_utf8` returned a live heap `WTF::URL` that only `Drop` frees.
+            // SAFETY: `self.0` is a live heap `WTF::URL` that only `Drop` frees.
             unsafe { self.0.as_ref() }
         }
     }
@@ -170,13 +179,15 @@ pub mod whatwg {
     impl Drop for Parsed {
         fn drop(&mut self) {
             // SAFETY: this handle is the only owner of the `WTF::URL`, so it is deleted once.
-            unsafe { self.0.as_mut() }.deinit();
+            unsafe { URL__deinit(self.0.as_ptr()) }
         }
     }
 }
 // Re-export the free helpers at crate root so lower-tier callers can write
 // `bun_url::join(...)` / `bun_url::href_from_string(...)` (install, http, bake, js_parser).
-pub use whatwg::{file_url_from_string, href_from_string, join, origin_from_slice};
+pub use whatwg::{
+    file_url_from_string, href_from_string, join, origin_from_slice, path_from_file_url,
+};
 
 // URL is a pure view struct — every field is a slice into `href` (or a
 // literal default).
@@ -353,11 +364,9 @@ impl<'a> URL<'a> {
         if href.tag() == BunStringTag::Dead {
             return Err(crate::Error::InvalidURL);
         }
-        // `to_owned_slice` is infallible so explicit
-        // ordering suffices (no error path between alloc and deref).
-        let owned = href.to_owned_slice().into_boxed_slice();
-        href.deref();
-        Ok(OwnedURL { href: owned })
+        Ok(OwnedURL {
+            href: href.to_owned_slice().into_boxed_slice(),
+        })
     }
 
     /// `input` is `[scheme://]host[:port][/prefix]`, `https` by default. `None` when it has no host.
@@ -377,10 +386,10 @@ impl<'a> URL<'a> {
                 is_http: as_written.is_http(),
             });
         };
-        let is_http = OwnedString::new(url.protocol()).eql_comptime(b"http");
+        let is_http = url.protocol().eq_ascii(b"http");
         // `whatwg::URL::hostname` is the host with its port.
-        let mut host_with_path = OwnedString::new(url.hostname()).to_utf8_bytes();
-        let pathname = OwnedString::new(url.pathname());
+        let mut host_with_path = url.hostname().to_owned_slice();
+        let pathname = url.pathname();
         let path = pathname.to_utf8();
         host_with_path.extend_from_slice(strings::without_suffix_comptime(path.slice(), b"/"));
         Some(S3Endpoint {
@@ -504,14 +513,12 @@ impl<'a> URL<'a> {
         !self.hostname.is_empty() && !self.pathname.is_empty()
     }
 
-    #[inline]
-    #[allow(
-        invalid_value,
-        clippy::uninit_assumed_init,
-        clippy::undocumented_unsafe_blocks
-    )]
-    fn join_buf_uninit() -> [u8; 2048] {
-        unsafe { core::mem::MaybeUninit::uninit().assume_init() }
+    /// Stack scratch for `join_normalize`. Longer joins go to the heap.
+    const JOIN_STACK_BUF_LEN: usize = 2048;
+
+    /// Length bound of the unnormalized path `join_normalize` builds.
+    fn join_needed(prefix: &[u8], dirname: &[u8], basename: &[u8], extname: &[u8]) -> usize {
+        b"/".len() + prefix.len() + dirname.len() + b"/".len() + basename.len() + extname.len()
     }
 
     pub(crate) fn join_normalize<'b>(
@@ -556,20 +563,22 @@ impl<'a> URL<'a> {
         for part in &path_parts[0..path_end] {
             total += part.len();
         }
-        let mut buf_stack = Self::join_buf_uninit();
-        let mut buf_heap: Vec<u8>;
-        let buf: &mut [u8] = if total <= buf_stack.len() {
+        let mut buf_stack = [const { MaybeUninit::<u8>::uninit() }; Self::JOIN_STACK_BUF_LEN];
+        let mut buf_heap: Vec<u8> = Vec::new();
+        let buf: &mut [MaybeUninit<u8>] = if total <= Self::JOIN_STACK_BUF_LEN {
             &mut buf_stack
         } else {
-            buf_heap = vec![0u8; total];
-            &mut buf_heap
+            buf_heap.reserve_exact(total);
+            buf_heap.spare_capacity_mut()
         };
         let mut buf_i: usize = 0;
         for part in &path_parts[0..path_end] {
-            buf[buf_i..buf_i + part.len()].copy_from_slice(part);
+            buf[buf_i..buf_i + part.len()].write_copy_of_slice(part);
             buf_i += part.len();
         }
-        resolve_path::normalize_string_buf::<false, platform::Loose, false>(&buf[0..buf_i], out)
+        // SAFETY: the loop above wrote every byte of `buf[..buf_i]`.
+        let joined = unsafe { buf[..buf_i].assume_init_ref() };
+        resolve_path::normalize_string_buf::<false, platform::Loose, false>(joined, out)
     }
 
     pub fn join_write(
@@ -580,11 +589,12 @@ impl<'a> URL<'a> {
         basename: &[u8],
         extname: &[u8],
     ) -> crate::Result<()> {
-        let needed = 2 + prefix.len() + dirname.len() + basename.len() + extname.len();
-        let mut out_stack = Self::join_buf_uninit();
+        let needed = Self::join_needed(prefix, dirname, basename, extname);
+        let mut out_pooled: bun_paths::path_buffer_pool::Guard;
         let mut out_heap: Vec<u8>;
-        let out: &mut [u8] = if needed <= out_stack.len() {
-            &mut out_stack
+        let out: &mut [u8] = if needed <= bun_paths::MAX_PATH_BYTES {
+            out_pooled = bun_paths::path_buffer_pool::get();
+            &mut out_pooled[..]
         } else {
             out_heap = vec![0u8; needed];
             &mut out_heap
@@ -614,20 +624,9 @@ impl<'a> URL<'a> {
             v.extend_from_slice(absolute_path);
             Ok(v.into_boxed_slice())
         } else {
-            let needed = 2 + prefix.len() + dirname.len() + basename.len() + extname.len();
-            let mut out_stack = Self::join_buf_uninit();
-            let mut out_heap: Vec<u8>;
-            let out: &mut [u8] = if needed <= out_stack.len() {
-                &mut out_stack
-            } else {
-                out_heap = vec![0u8; needed];
-                &mut out_heap
-            };
-            let normalized_path = Self::join_normalize(out, prefix, dirname, basename, extname);
-            let mut v = Vec::with_capacity(self.origin.len() + 1 + normalized_path.len());
-            v.extend_from_slice(self.origin);
-            v.extend_from_slice(b"/");
-            v.extend_from_slice(normalized_path);
+            let needed = Self::join_needed(prefix, dirname, basename, extname);
+            let mut v = Vec::with_capacity(self.origin.len() + 1 + needed);
+            self.join_write(&mut v, prefix, dirname, basename, extname)?;
             Ok(v.into_boxed_slice())
         }
     }
@@ -1754,5 +1753,68 @@ impl<'a> Scanner<'a> {
                 value_needs_decoding: false,
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::URL;
+
+    const ORIGIN: &[u8] = b"http://localhost:3000";
+
+    fn join(prefix: &[u8], dirname: &[u8], basename: &[u8], extname: &[u8]) -> Vec<u8> {
+        let url = URL::parse(b"http://localhost:3000/");
+        assert_eq!(url.origin, ORIGIN);
+        let mut out = Vec::new();
+        url.join_write(&mut out, prefix, dirname, basename, extname)
+            .expect("Vec<u8> writes cannot fail");
+        let boxed = url
+            .join_alloc(prefix, dirname, basename, extname, b"/abs/unused")
+            .expect("Vec<u8> writes cannot fail");
+        assert_eq!(&*boxed, &*out, "join_alloc and join_write must agree");
+        out
+    }
+
+    #[test]
+    fn join_normalizes_the_path() {
+        assert_eq!(
+            join(b"_next/", b"/pages//", b"index", b".js"),
+            b"http://localhost:3000/_next/pages/index.js"
+        );
+        assert_eq!(
+            join(b"", b"a/./b/..", b"d", b""),
+            b"http://localhost:3000/a/d"
+        );
+        assert_eq!(join(b"", b"", b"", b""), b"http://localhost:3000/");
+    }
+
+    #[test]
+    fn join_alloc_uplevel_dirname_uses_the_absolute_path() {
+        let url = URL::parse(b"http://localhost:3000/");
+        let boxed = url
+            .join_alloc(b"", b"../pages", b"index", b".js", b"/srv/pages/index.js")
+            .expect("Vec<u8> writes cannot fail");
+        assert_eq!(&*boxed, b"http://localhost:3000/abs:/srv/pages/index.js");
+    }
+
+    #[test]
+    fn join_at_the_stack_buffer_limit() {
+        // `/` plus the basename fills the scratch buffer exactly.
+        let basename = vec![b'a'; URL::JOIN_STACK_BUF_LEN - 1];
+        let mut expected = ORIGIN.to_vec();
+        expected.push(b'/');
+        expected.extend_from_slice(&basename);
+        assert_eq!(join(b"", b"", &basename, b""), expected);
+    }
+
+    #[test]
+    fn join_longer_than_every_stack_buffer() {
+        let len = URL::JOIN_STACK_BUF_LEN.max(bun_paths::MAX_PATH_BYTES) + 1;
+        let basename = vec![b'a'; len];
+        let mut expected = ORIGIN.to_vec();
+        expected.extend_from_slice(b"/dir/");
+        expected.extend_from_slice(&basename);
+        expected.extend_from_slice(b".js");
+        assert_eq!(join(b"", b"dir", &basename, b".js"), expected);
     }
 }

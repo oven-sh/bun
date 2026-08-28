@@ -2,11 +2,13 @@
 
 use core::ffi::c_char;
 
+use bun_core::EncodedSlice;
 use bun_core::env_var;
 use bun_core::{self, Environment, Global};
-use bun_jsc::zig_string::ZigString;
-use bun_jsc::{JSGlobalObject, JSValue, ZigStringJsc as _};
+use bun_jsc::{EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult};
 
+// Both materialize the array on first access through `Bun__Process__createArgv`
+// / `createExecArgv` below, which return zero with the exception pending.
 unsafe extern "C" {
     safe fn Bun__Process__getArgv(global: &JSGlobalObject) -> JSValue;
     safe fn Bun__Process__getExecArgv(global: &JSGlobalObject) -> JSValue;
@@ -23,7 +25,7 @@ extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
         .get(0)
         .map(|z| z.as_bytes())
         .unwrap_or(b"bun");
-    ZigString::from_utf8(argv0).to_js(global_object)
+    EncodedSlice::from_bytes(argv0).to_js(global_object)
 }
 
 #[unsafe(export_name = "Bun__Process__getExecPath")]
@@ -32,32 +34,32 @@ extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
         // if for any reason we are unable to get the executable path, we just return argv[0]
         return create_argv0(global_object);
     };
-    ZigString::from_utf8(out.as_bytes()).to_js(global_object)
+    EncodedSlice::from_bytes(out.as_bytes()).to_js(global_object)
 }
 
 /// A worker's `argv`/`execArgv` strings live in its parent-thread
-/// `WorkerOptions`; the worker thread gets its own copy (thread-affine
-/// refcounts), and an empty one is spelled as `BunString::empty()`.
-pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::OwnedString {
+/// `WorkerOptions`; the worker thread gets its own copy (the parent may
+/// atomize its impls), and an empty one is spelled as `BunString::EMPTY`.
+pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::String {
     // SAFETY: non-null impl borrowed from the live `WorkerOptions`.
     let imp = unsafe { &*wtf };
-    bun_core::OwnedString::new(if imp.length() == 0 {
-        bun_core::String::empty()
+    if imp.length() == 0 {
+        bun_core::String::EMPTY
     } else if imp.is_8bit() {
         bun_core::String::clone_latin1(imp.latin1_slice())
     } else {
         bun_core::String::clone_utf16(imp.utf16_slice())
-    })
+    }
 }
 
 // ───────────────────────────── argv (C++ accessor wrappers) ─────────────────
 
-pub(crate) extern "C" fn get_argv(global: &JSGlobalObject) -> JSValue {
-    Bun__Process__getArgv(global)
+pub(crate) fn get_argv(global: &JSGlobalObject) -> JsResult<JSValue> {
+    bun_jsc::call_zero_is_throw(global, || Bun__Process__getArgv(global))
 }
 
-pub(crate) extern "C" fn get_exec_argv(global: &JSGlobalObject) -> JSValue {
-    Bun__Process__getExecArgv(global)
+pub(crate) fn get_exec_argv(global: &JSGlobalObject) -> JsResult<JSValue> {
+    bun_jsc::call_zero_is_throw(global, || Bun__Process__getExecArgv(global))
 }
 
 // ───────────────────────────── exit ─────────────────────────────
@@ -84,6 +86,7 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
             bun_core::Output::flush();
             bun_core::reload_process(should_clear_terminal, false);
         }
+        vm.exit_handler.requested = true;
         vm.on_exit();
         vm.global_exit();
     }
@@ -96,15 +99,13 @@ extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
     env_var::NODE_NO_WARNINGS.get() == Some(b"1")
 }
 
-/// `--redirect-warnings=<path>` value, if set. Returns false when unset.
+/// `--redirect-warnings=<path>` value; `Dead` when unset.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__Node__getRedirectWarnings(out: *mut bun_core::String) -> bool {
-    let Some(path) = crate::cli::Bun__Node__RedirectWarnings.get() else {
-        return false;
-    };
-    // SAFETY: out is a valid out-param provided by the C++ caller.
-    unsafe { *out = bun_core::String::clone_utf8(path) };
-    true
+pub(crate) extern "C" fn Bun__Node__getRedirectWarnings() -> bun_core::String {
+    match crate::cli::Bun__Node__RedirectWarnings.get() {
+        Some(path) => bun_core::String::clone_utf8(path),
+        None => bun_core::String::DEAD,
+    }
 }
 
 /// `--disable-warning` entries as `[ptr, len]` pairs into caller-provided buffers; returns
@@ -161,11 +162,10 @@ static Bun__version_sha: CStrPtr = CStrPtr(
 
 mod _impl {
     use bun_core::env_var;
-    use bun_core::{String as BunString, strings};
+    use bun_core::{EncodedSlice, String as BunString, strings};
     use bun_jsc::bun_string_jsc;
-    use bun_jsc::zig_string::ZigString;
     use bun_jsc::{
-        JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker, ZigStringJsc as _,
+        EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker,
     };
     use bun_paths::PathBuffer;
 
@@ -189,29 +189,22 @@ mod _impl {
     }
 
     #[unsafe(export_name = "Bun__Process__getTitle")]
-    extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {
+    extern "C" fn get_title(_global: *const JSGlobalObject) -> BunString {
         let guard = crate::cli::Bun__Node__ProcessTitle.lock();
         // Node's default process.title is argv[0] as invoked
         // (uv_setup_args/uv_get_process_title semantics), not a fixed name.
         let argv = bun_core::argv();
-        let str_ = guard
-            .as_deref()
-            .or_else(|| argv.get(0).map(|z| z.as_bytes()))
-            .unwrap_or(b"bun");
-        // SAFETY: title is a valid out-param provided by C++ caller
-        unsafe {
-            *title = BunString::clone_utf8(str_);
-        }
+        BunString::clone_utf8(
+            guard
+                .as_deref()
+                .or_else(|| argv.get(0).map(|z| z.as_bytes()))
+                .unwrap_or(b"bun"),
+        )
     }
 
     // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
     #[unsafe(export_name = "Bun__Process__setTitle")]
-    extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: *mut BunString) {
-        // SAFETY: newvalue is a valid pointer from C++; we consume one ref before
-        // returning. `String` is `Copy`, so read it out by value and let
-        // `OwnedString`'s Drop release the ref.
-        let newvalue = bun_core::OwnedString::new(unsafe { *newvalue });
-
+    extern "C" fn set_title(_global_object: *const JSGlobalObject, newvalue: &BunString) {
         // `to_owned_slice` is infallible (Vec<u8>).
         let new_title: Box<[u8]> = newvalue.to_owned_slice().into_boxed_slice();
 
@@ -237,7 +230,7 @@ mod _impl {
             // was explicitly overridden for the worker?
             if let Some(exec_argv) = worker.exec_argv() {
                 return JSValue::create_array_from_iter(global_object, exec_argv.iter(), |&wtf| {
-                    super::worker_option_string(wtf).to_js(global_object)
+                    super::worker_option_string(wtf).into_js(global_object)
                 });
             }
         }
@@ -251,18 +244,13 @@ mod _impl {
             let compile_exec_argv = graph.compile_exec_argv();
             let bun_options_argc = bun_core::bun_options_argc();
             if !compile_exec_argv.is_empty() || bun_options_argc > 0 {
-                // `defer args.deinit()` + `defer for args |*a| a.deref()`
-                let mut args = scopeguard::guard(Vec::<BunString>::new(), |v| {
-                    for a in &v {
-                        a.deref();
-                    }
-                });
+                let mut args = Vec::<BunString>::new();
 
                 // Process BUN_OPTIONS first using append_options_env for proper quote handling.
                 // append_options_env inserts starting at index 1, so we need a placeholder.
                 if bun_options_argc > 0 {
                     if let Some(opts) = env_var::BUN_OPTIONS.get() {
-                        args.push(BunString::empty()); // placeholder for insert-at-1
+                        args.push(BunString::EMPTY); // placeholder for insert-at-1
                         bun_core::append_options_env::<BunString>(opts, &mut args);
                         let _ = args.remove(0); // remove placeholder
                     }
@@ -280,15 +268,7 @@ mod _impl {
         }
 
         let argv = bun_core::argv();
-        // `defer args.deinit()` + `defer for args |*a| a.deref()`
-        let mut args = scopeguard::guard(
-            Vec::<BunString>::with_capacity(argv.len().saturating_sub(1)),
-            |v| {
-                for a in &v {
-                    a.deref();
-                }
-            },
-        );
+        let mut args = Vec::<BunString>::with_capacity(argv.len().saturating_sub(1));
 
         let mut seen_run = false;
         let mut prev: Option<&[u8]> = None;
@@ -379,12 +359,12 @@ mod _impl {
         if vm.standalone_module_graph.is_some() {
             // Don't break user's code because they did process.argv.slice(2)
             // Even if they didn't type "bun", we still want to add it as argv[0]
-            args_list.push(BunString::static_(b"bun"));
+            args_list.push(BunString::static_("bun"));
         } else {
             let exe_path = bun_core::self_exe_path().ok();
             args_list.push(match exe_path {
                 Some(str_) => BunString::borrow_utf8(str_.as_bytes()),
-                None => BunString::static_(b"bun"),
+                None => BunString::static_("bun"),
             });
         }
 
@@ -404,20 +384,19 @@ mod _impl {
             && !strings::ends_with(vm.main(), STDIN_SUFFIX)
         {
             if worker.is_some_and(|w| w.eval_mode()) {
-                args_list.push(BunString::static_(b"[worker eval]"));
+                args_list.push(BunString::static_("[worker eval]"));
             } else {
                 args_list.push(BunString::borrow_utf8(vm.main()));
             }
         }
 
-        let mut worker_args: Vec<bun_core::OwnedString> = Vec::new();
         if let Some(worker) = worker {
-            worker_args = worker
-                .argv()
-                .iter()
-                .map(|&arg| super::worker_option_string(arg))
-                .collect();
-            args_list.extend(worker_args.iter().map(|s| **s));
+            args_list.extend(
+                worker
+                    .argv()
+                    .iter()
+                    .map(|&arg| super::worker_option_string(arg)),
+            );
         } else {
             for arg in &vm.argv {
                 let str_ = BunString::borrow_utf8(arg);
@@ -427,7 +406,6 @@ mod _impl {
         }
 
         let array = bun_string_jsc::to_js_array(global_object, &args_list);
-        drop(worker_args);
         bun_jsc::HostReturn::or_pending_exception(array)
     }
 
@@ -444,12 +422,10 @@ mod _impl {
             if script.is_empty() {
                 return JSValue::UNDEFINED;
             }
-            return ZigString::init(script).with_encoding().to_js(global_object);
+            return EncodedSlice::from_bytes(script).to_js(global_object);
         }
         if let Some(source) = vm.module_loader.eval_source.as_deref() {
-            return ZigString::init(source.contents())
-                .with_encoding()
-                .to_js(global_object);
+            return EncodedSlice::from_bytes(source.contents()).to_js(global_object);
         }
         JSValue::UNDEFINED
     }
@@ -469,9 +445,9 @@ mod _impl {
         // process.cwd() calls uv_cwd() so a deleted cwd must surface here.
         let mut buf = PathBuffer::uninit();
         match bun_sys::getcwd(&mut buf[..]) {
-            bun_sys::Result::Ok(len) => Ok(ZigString::init(&buf[..len])
-                .with_encoding()
-                .to_js(global_object)),
+            bun_sys::Result::Ok(len) => {
+                bun_string_jsc::create_utf8_for_js(global_object, &buf[..len])
+            }
             bun_sys::Result::Err(e) => {
                 // Node's UVException from `Cwd` (node_process_methods.cc):
                 // "CODE: process.cwd failed with error <uv_strerror>[, hint], uv_cwd"
@@ -486,9 +462,9 @@ mod _impl {
                     format!("{code}: process.cwd failed with error {label}{hint}, uv_cwd");
                 let err = bun_jsc::SystemError {
                     errno: core::ffi::c_int::from(e.errno).wrapping_neg(),
-                    code: BunString::static_(code).into(),
-                    message: BunString::clone_utf8(message.as_bytes()).into(),
-                    syscall: BunString::static_("uv_cwd").into(),
+                    code: BunString::static_(code),
+                    message: BunString::clone_utf8(message.as_bytes()),
+                    syscall: BunString::static_("uv_cwd"),
                     ..Default::default()
                 };
                 Err(global_object.throw_value(err.to_error_instance(global_object)))
@@ -497,15 +473,18 @@ mod _impl {
     }
 
     // C++ (headers.h) declares
-    // `EncodedJSValue Bun__Process__setCwd(JSGlobalObject*, ZigString*)`. Hand-roll
-    // the shim; the second arg is the raw `*mut ZigString`, not a CallFrame.
+    // `EncodedJSValue Bun__Process__setCwd(JSGlobalObject*, const EncodedSlice*)`. Hand-roll
+    // the shim; the second arg is a `const EncodedSlice*`, not a CallFrame.
     #[unsafe(no_mangle)]
-    extern "C" fn Bun__Process__setCwd(global_object: &JSGlobalObject, to: &ZigString) -> JSValue {
+    extern "C" fn Bun__Process__setCwd(
+        global_object: &JSGlobalObject,
+        to: &EncodedSlice,
+    ) -> JSValue {
         bun_jsc::to_js_host_fn_result(global_object, set_cwd(global_object, to))
     }
 
-    fn set_cwd(global_object: &JSGlobalObject, to: &ZigString) -> JsResult<JSValue> {
-        if to.length() == 0 {
+    fn set_cwd(global_object: &JSGlobalObject, to: &EncodedSlice) -> JsResult<JSValue> {
+        if to.is_empty() {
             return Err(global_object
                 .throw_invalid_arguments(format_args!("Expected path to be a non-empty string")));
         }
@@ -535,8 +514,10 @@ mod _impl {
                     bun_paths::string_paths::without_trailing_slash_windows_path;
                 #[cfg(not(windows))]
                 let without_trailing_slash = strings::without_trailing_slash;
-                let mut str_ = BunString::clone_utf8(without_trailing_slash(fs.top_level_dir));
-                str_.transfer_to_js(global_object)
+                bun_string_jsc::create_utf8_for_js(
+                    global_object,
+                    without_trailing_slash(fs.top_level_dir),
+                )
             }
             bun_sys::Result::Err(e) => {
                 let e = e.with_path_dest(&prev_cwd, slice.as_bytes());
@@ -550,7 +531,7 @@ mod _impl {
     // TODO: switch this to a WTF::String-backed type when one is added
     #[cfg(windows)]
     #[unsafe(export_name = "Bun__Process__editWindowsEnvVar")]
-    extern "C" fn bun_process_edit_windows_env_var(k: BunString, v: BunString) {
+    extern "C" fn bun_process_edit_windows_env_var(k: &BunString, v: &BunString) {
         const _: () = assert!(cfg!(windows));
         if k.tag() == bun_core::Tag::Empty {
             return;

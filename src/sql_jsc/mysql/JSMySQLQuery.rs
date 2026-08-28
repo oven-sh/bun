@@ -8,7 +8,7 @@ use crate::jsc::{
 };
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_jsc::JsCell;
-use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
+use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
 use bun_sql::postgres::command_tag::CommandTag;
@@ -37,7 +37,6 @@ bun_core::define_scoped_log!(debug, MySQLQuery);
 // shim still emits `this: &mut JSMySQLQuery` — `&mut T` auto-derefs to `&T`
 // so the impls below compile against either.
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = Self::deinit)]
 pub struct JSMySQLQuery {
     this_value: JsCell<JsRef>,
     // unfortunately we cannot use #ref_count here
@@ -48,20 +47,12 @@ pub struct JSMySQLQuery {
     query: JsCell<MySQLQuery>,
 }
 
-// Intrusive refcount (bun.ptr.RefCount): `ref_()`/`deref()` provided by
-// `#[derive(CellRefCounted)]`; `destroy` routes to `Self::deinit` via the
-// struct-level `#[ref_count(destroy = …)]` attribute.
-
 impl JSMySQLQuery {
-    /// RAII `ref()`/`deref()` bracket around `self`. One audited
-    /// `ScopedRef::new` here replaces N per-site
-    /// `unsafe { ScopedRef::new(self.as_ctx_ptr()) }` — `&self` is the live
-    /// m_ctx payload by construction, so the [`ScopedRef::new`] precondition
-    /// (live, non-null) is always satisfied.
+    /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
     #[inline]
-    pub(crate) fn ref_guard(&self) -> bun_ptr::ScopedRef<Self> {
-        // SAFETY: `&self` ⇒ the allocation is live and non-null.
-        unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) }
+    pub(crate) fn ref_guard(&self) -> RefPtr<Self> {
+        // SAFETY: `self` is the live heap allocation.
+        unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
     }
 
     pub fn estimated_size(&self) -> usize {
@@ -77,18 +68,9 @@ impl JSMySQLQuery {
             .throw_invalid_arguments(format_args!("MySQLQuery cannot be constructed directly")))
     }
 
-    fn deinit(this: *mut Self) {
-        // SAFETY: routed only through `CellRefCounted::destroy` (refcount==0);
-        // `this` is the sole live owner of its `heap::alloc` allocation.
-        unsafe {
-            (*this).query.with_mut(|q| q.cleanup());
-            drop(bun_core::heap::take(this));
-        }
-    }
-
-    pub fn finalize(self: Box<Self>) {
+    pub fn finalize(&self) {
         debug!("MySQLQuery finalize");
-        bun_ptr::finalize_js_box(self, |this| this.this_value.with_mut(|v| v.finalize()));
+        self.this_value.with_mut(|v| v.finalize());
     }
 
     // Reached from JS via `put_host_functions!` in `mysql.rs`.
@@ -174,7 +156,7 @@ impl JSMySQLQuery {
             }
             return Err(jsc::JsError::Thrown);
         }
-        connection.enqueue_request(this.as_ctx_ptr());
+        connection.enqueue_request(this.ref_guard());
         Ok(JSValue::UNDEFINED)
     }
 

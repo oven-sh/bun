@@ -225,6 +225,10 @@ impl ArrayBuffer {
         Ok(buffer_value)
     }
 
+    /// `Ok(JSValue::ZERO)` means the C++ side declined (length above the
+    /// ArrayBuffer limit, `mmap` failed, or Windows) and the caller falls back
+    /// to copying; the typed-array allocation can also throw, so empty alone
+    /// does not mean "declined".
     #[inline]
     pub fn to_array_buffer_from_shared_memfd(
         fd: i64,
@@ -233,8 +237,10 @@ impl ArrayBuffer {
         byte_length: usize,
         total_size: usize,
         ty: JSType,
-    ) -> JSValue {
-        ArrayBuffer__fromSharedMemfd(fd, global, byte_offset, byte_length, total_size, ty)
+    ) -> JsResult<JSValue> {
+        crate::call_check_slow(global, || {
+            ArrayBuffer__fromSharedMemfd(fd, global, byte_offset, byte_length, total_size, ty)
+        })
     }
 
     pub fn to_js_buffer_from_memfd(fd: Fd, global: &JSGlobalObject) -> JsResult<JSValue> {
@@ -362,13 +368,13 @@ impl ArrayBuffer {
         global: &JSGlobalObject,
         typed_array_type: JSType,
         bytes: &mut [u8],
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         match typed_array_type {
             // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); `bytes` is
             // a mimalloc-backed buffer whose ownership transfers to JSC.
-            JSType::ArrayBuffer => unsafe {
+            JSType::ArrayBuffer => Ok(unsafe {
                 JSArrayBuffer__fromDefaultAllocator(global, bytes.as_mut_ptr(), bytes.len())
-            },
+            }),
             // `JSUint8Array::from_bytes` takes `Box<[u8]>`; reconstruct
             // ownership from the mimalloc-backed slice the caller hands us.
             JSType::Uint8Array => {
@@ -634,35 +640,111 @@ impl ArrayBuffer {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// ArrayBuffer.Strong
+// PinnedArrayBuffer
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct ArrayBufferStrong {
-    pub array_buffer: ArrayBuffer,
-    pub held: crate::StrongOptional, // jsc.Strong.Optional
+/// A JS ArrayBuffer/view whose backing store is pinned (cannot be detached or
+/// moved) for as long as this value lives; [`root`](Self::root) additionally
+/// GC-roots the cell. `Drop` releases what was taken. Constructed on the JS
+/// thread; a `root()`ed value is dropped there too, while a `pin()`-only value
+/// held by a `Blob` store drops wherever the store's last ref goes.
+pub struct PinnedArrayBuffer {
+    buffer: ArrayBuffer,
+    rooted: bool,
+    /// The bytes `buffer.ptr` points at when [`copy_if_resizable`](Self::copy_if_resizable) took a copy.
+    copy: Option<Vec<u8>>,
 }
 
-impl Default for ArrayBufferStrong {
-    fn default() -> Self {
-        Self {
-            array_buffer: ArrayBuffer::default(),
-            held: crate::StrongOptional::empty(),
+impl PinnedArrayBuffer {
+    /// Pin only — for a borrow the caller's own argument/stack keeps alive.
+    /// `None` if `value` is not an ArrayBuffer/view or its buffer could not be
+    /// materialized (see [`JSValue::as_pinned_arraybuffer`]); an already
+    /// detached view yields an empty buffer.
+    pub fn pin(global: &JSGlobalObject, value: JSValue) -> Option<Self> {
+        let buffer = match value.as_pinned_arraybuffer(global) {
+            Some(buffer) => buffer,
+            // A detached view has nothing to pin and reads as empty.
+            None => value
+                .as_array_buffer(global)
+                .filter(ArrayBuffer::is_detached)?,
+        };
+        Some(Self {
+            buffer,
+            rooted: false,
+            copy: None,
+        })
+    }
+
+    /// [`pin`](Self::pin) and GC-root — for a borrow that outlives the call (a work-pool job).
+    pub fn root(global: &JSGlobalObject, value: JSValue) -> Option<Self> {
+        let mut this = Self::pin(global, value)?;
+        this.buffer.value.protect();
+        this.rooted = true;
+        Some(this)
+    }
+
+    /// [`root`](Self::root) for a job that reads the bytes itself: see [`copy_if_resizable`](Self::copy_if_resizable).
+    pub fn root_read_only(global: &JSGlobalObject, value: JSValue) -> Option<Self> {
+        let mut this = Self::root(global, value)?;
+        this.copy_if_resizable(global).then_some(this)
+    }
+
+    /// A pin stops a detach but not a shrink, which unmaps pages: a resizable non-shared buffer is copied so a later read of the bytes in user space cannot fault (a syscall reader gets `EFAULT` and needs no copy). `false` if the copy cannot be allocated.
+    pub fn copy_if_resizable(&mut self, global: &JSGlobalObject) -> bool {
+        if !self.buffer.resizable
+            || self.buffer.shared
+            || self.buffer.byte_len == 0
+            || self.copy.is_some()
+        {
+            return true;
+        }
+        let bytes = self.buffer.byte_slice();
+        let mut copy = Vec::new();
+        if copy.try_reserve_exact(bytes.len()).is_err() {
+            return false;
+        }
+        copy.extend_from_slice(bytes);
+        global.vm().report_extra_memory(copy.len());
+        self.buffer.ptr = copy.as_mut_ptr();
+        self.copy = Some(copy);
+        true
+    }
+
+    #[inline]
+    pub fn slice_mut(&mut self) -> &mut [u8] {
+        debug_assert!(self.copy.is_none(), "a read-only root is not writable");
+        self.buffer.byte_slice_mut()
+    }
+
+    /// VM-shutdown finalizer only: the heap sweep already deleted what `Drop`
+    /// would unpin and unprotect, so release nothing.
+    pub fn defuse(&mut self) {
+        self.buffer = ArrayBuffer::default();
+        self.rooted = false;
+        self.copy = None;
+    }
+}
+
+impl core::ops::Deref for PinnedArrayBuffer {
+    type Target = ArrayBuffer;
+    #[inline]
+    fn deref(&self) -> &ArrayBuffer {
+        &self.buffer
+    }
+}
+
+impl Drop for PinnedArrayBuffer {
+    fn drop(&mut self) {
+        self.buffer.unpin();
+        if self.rooted {
+            self.buffer.value.unprotect();
         }
     }
 }
 
-impl ArrayBufferStrong {
-    pub fn slice(&self) -> &[u8] {
-        self.array_buffer.slice()
-    }
-
-    pub fn slice_mut(&mut self) -> &mut [u8] {
-        self.array_buffer.slice_mut()
-    }
-}
-
-// `crate::Strong` already impls `Drop`, so no explicit
-// `impl Drop for ArrayBufferStrong` is needed.
+// SAFETY: a pin and GC protection on a heap cell; constructed on the JS thread,
+// and a rooted value is dropped there (a pin-only one may drop with its `Blob` store).
+unsafe impl crate::job::JsAffine for PinnedArrayBuffer {}
 
 // ──────────────────────────────────────────────────────────────────────────
 // BinaryType
@@ -823,7 +905,6 @@ impl TypedArrayType {
 pub struct MarkedArrayBuffer {
     pub buffer: ArrayBuffer,
     pub owns_buffer: bool,
-    pub pinned: bool,
 }
 
 /// Bytes produced off-thread (`from_bytes`/`from_string`) are owned until they
@@ -839,7 +920,6 @@ impl MarkedArrayBuffer {
     pub fn from_typed_array(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
             owns_buffer: false,
-            pinned: false,
             buffer: ArrayBuffer::from_typed_array(ctx, value),
         }
     }
@@ -847,7 +927,6 @@ impl MarkedArrayBuffer {
     pub fn from_array_buffer(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
         MarkedArrayBuffer {
             owns_buffer: false,
-            pinned: false,
             buffer: ArrayBuffer::from_array_buffer(ctx, value),
         }
     }
@@ -869,16 +948,6 @@ impl MarkedArrayBuffer {
         Some(MarkedArrayBuffer {
             buffer: array_buffer,
             owns_buffer: false,
-            pinned: false,
-        })
-    }
-
-    pub fn from_js_pinned(global: &JSGlobalObject, value: JSValue) -> Option<MarkedArrayBuffer> {
-        let buffer = value.as_pinned_arraybuffer(global)?;
-        Some(MarkedArrayBuffer {
-            buffer,
-            owns_buffer: false,
-            pinned: true,
         })
     }
 
@@ -888,13 +957,11 @@ impl MarkedArrayBuffer {
             // An empty boxed slice has no backing allocation (dangling ptr):
             // nothing to own, so `destroy()` must not free it.
             owns_buffer: !bytes.is_empty(),
-            pinned: false,
         }
     }
 
     pub const EMPTY: MarkedArrayBuffer = MarkedArrayBuffer {
         owns_buffer: false,
-        pinned: false,
         buffer: ArrayBuffer::EMPTY,
     };
 

@@ -5,7 +5,7 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_ptr::RefCount;
+use bun_ptr::{RefCount, RefPtr};
 
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult,
@@ -118,14 +118,8 @@ pub use bun_spawn::process::StdioKind;
 #[derive(bun_ptr::RefCounted)]
 pub struct Subprocess<'a> {
     pub(crate) ref_count: RefCount<Subprocess<'a>>,
-    /// Intrusively-refcounted `Process`. Allocated via
-    /// `heap::alloc` in `Process::init_posix`/`init_windows`; the +1 ref
-    /// from construction is released in [`Subprocess::finalize`] via
-    /// `Process::deref()`. Not `Arc` — `Process` carries its own
-    /// `ThreadSafeRefCount` and crosses the `ProcessAutoKiller`/waiter-thread
-    /// boundary by raw identity, so wrapping in `Arc` would double-count and
-    /// (worse) `Arc::from_raw` on a `Box` allocation is UB.
-    pub(crate) process: bun_ptr::BackRef<Process, bun_ptr::Mut>,
+    /// The construction ref on the `Process` (detached in [`Subprocess::finalize`]).
+    pub(crate) process: RefPtr<Process>,
     pub(crate) stdin: JsCell<Writable<'a>>,
     pub(crate) stdout: JsCell<Readable>,
     pub(crate) stderr: JsCell<Readable>,
@@ -141,16 +135,14 @@ pub struct Subprocess<'a> {
     pub closed: Cell<EnumSet<StdioKind>>,
     pub this_value: JsCell<JsRef>,
 
-    pub(crate) ipc_data: Cell<Option<core::ptr::NonNull<IPC::SendQueue>>>,
+    pub(crate) ipc_data: JsCell<Option<RefPtr<IPC::SendQueue>>>,
     pub(crate) flags: Cell<Flags>,
 
     /// Weak observer of the stdin `FileSink` — holds no ownership/ref. `onStdinDestroyed`
     /// nulls this before the sink is freed, so it is never dereferenced after the sink dies.
     pub(crate) weak_file_sink_stdin_ptr: Cell<Option<NonNull<FileSink>>>,
-    /// +1 C++-intrusive ref held; released in `clear_abort_signal` via
-    /// `AbortSignal::unref()`. Not `Arc` — `AbortSignal` is an opaque FFI
-    /// handle whose refcount lives on the C++ side.
-    pub(crate) abort_signal: Cell<Option<NonNull<AbortSignal>>>,
+    /// Our ref on the `signal` option; released in `clear_abort_signal`.
+    pub(crate) abort_signal: JsCell<Option<bun_jsc::AbortSignalRef>>,
 
     pub(crate) event_loop_timer_refd: Cell<bool>,
     /// Intrusive timer node. `JsCell` so `&self` can hand `*mut EventLoopTimer`
@@ -225,27 +217,18 @@ impl<'a> Subprocess<'a> {
         }
     }
 
-    /// Borrow the intrusively-refcounted `Process`. Every access site is
-    /// single-threaded on the JS mutator, so projecting `&`/`&mut` through
-    /// the raw pointer is sound.
     #[inline]
     pub(crate) fn process(&self) -> &Process {
-        self.process.get()
+        &self.process
     }
 
-    /// Mutably borrow the owned [`Process`].
-    ///
-    /// Centralises the `BackRef<Process> → &mut Process` projection so callers
-    /// (including `js_bun_spawn_bindings`) stay safe. Caller must be on the
-    /// owning JS thread with no other live `&mut Process`.
+    /// Mutably borrow the [`Process`]. Caller must be on the owning JS thread
+    /// with no other live `&mut Process`.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(super) fn process_mut(&self) -> &mut Process {
-        // SAFETY: see `process()` — all access is on the single JS-mutator
-        // thread. R-2: `&self`
-        // (interior-mutability) so callers don't need `&mut Subprocess`;
-        // `Process` lives in a separate allocation (BackRef) so the returned
-        // `&mut` never aliases `*self`. Single JS-mutator thread.
+        // SAFETY: single JS-mutator thread; `Process` lives in a separate
+        // allocation so the returned `&mut` never aliases `*self`.
         unsafe { &mut *self.process.as_ptr() }
     }
 
@@ -349,7 +332,7 @@ pub(crate) unsafe extern "C" fn on_abort_signal(ctx: *mut c_void, reason: JSValu
 }
 
 bun_spawn::link_impl_ProcessExit! {
-    Subprocess for Subprocess => |this| {
+    Subprocess for Subprocess<'static> => |this| {
         // `process` forwarded raw (not reborrowed) so `on_process_exit` can
         // hand it to `VirtualMachine::on_subprocess_exit` without a const→mut
         // provenance cast.
@@ -360,15 +343,9 @@ bun_spawn::link_impl_ProcessExit! {
 
 impl Subprocess<'_> {
     /// Shared borrow of the attached `AbortSignal`, if any.
-    ///
-    /// `abort_signal` holds a +1 C++-intrusive ref taken in
-    /// `spawn_maybe_sync`; the pointee is therefore live for as long as the
-    /// cell is `Some` (it is `take`n *before* `unref()` in
-    /// [`clear_abort_signal`](Self::clear_abort_signal)) — i.e. the
-    /// owner-outlives-holder `BackRef` invariant holds.
     #[inline]
-    pub(crate) fn abort_signal_ref(&self) -> Option<bun_ptr::BackRef<AbortSignal>> {
-        self.abort_signal.get().map(bun_ptr::BackRef::from)
+    pub(crate) fn abort_signal_ref(&self) -> Option<&AbortSignal> {
+        self.abort_signal.get().as_deref()
     }
 
     #[bun_jsc::host_fn(method)]
@@ -479,17 +456,11 @@ impl Subprocess<'_> {
     pub(crate) fn on_close_io(&self, kind: StdioKind) {
         match kind {
             StdioKind::Stdin => self.stdin.with_mut(|stdin| match stdin {
-                Writable::Pipe(pipe) => {
-                    let pipe = *pipe;
-                    // `source` is a `JsCell`, so the shared `&FileSink` from the
-                    // centralised `pipe_sink` accessor suffices for `with_mut`.
-                    Writable::pipe_sink(pipe).source.with_mut(|s| s.clear());
-                    *stdin = Writable::Ignore;
-                    // `Writable::Pipe` owns one intrusive ref; release it now
-                    // that the variant has been overwritten. Ordered after the
-                    // assignment so any re-entrant `on_stdin_destroyed` from
-                    // `deinit` observes `.Ignore`.
-                    Writable::pipe_release(pipe);
+                Writable::Pipe(_) => {
+                    let Writable::Pipe(pipe) = core::mem::replace(stdin, Writable::Ignore) else {
+                        unreachable!()
+                    };
+                    pipe.source.with_mut(|s| s.clear());
                 }
                 Writable::Buffer(_) => {
                     let Writable::Buffer(buffer) = core::mem::replace(stdin, Writable::Ignore)
@@ -497,7 +468,6 @@ impl Subprocess<'_> {
                         unreachable!()
                     };
                     Writable::buffer_writer_mut(&buffer).source.detach();
-                    buffer.deref();
                 }
                 _ => {}
             }),
@@ -522,8 +492,6 @@ impl Subprocess<'_> {
                         // pipe.state was emptied via take()
                     }
                     // else: *out stays Readable::Ignore (set by replace above).
-                    // RefPtr has no Drop — release the ref this Readable held.
-                    pipe.deref();
                 }
             }
         }
@@ -741,10 +709,6 @@ impl Subprocess<'_> {
         // If signal is 0, then no actual signal is sent, but error checking
         // is still performed.
         let sig: SignalCode = bun_sys_jsc::signal_code_jsc::from_js(signal_arg, global_this)?;
-
-        if global_this.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
 
         match this.try_kill(sig) {
             bun_sys::Result::Ok(()) => {}
@@ -1019,8 +983,7 @@ impl Subprocess<'_> {
             && self.flags.get().contains(Flags::IS_STDIN_A_READABLE_STREAM)
         {
             if let Writable::Pipe(pipe) = self.stdin.get() {
-                // Writable::Pipe already stores `NonNull<FileSink>`; just copy it.
-                Some(*pipe)
+                Some(pipe.as_non_null())
             } else {
                 unreachable!()
             }
@@ -1310,34 +1273,27 @@ impl Subprocess<'_> {
     }
 
     fn clear_abort_signal(&self) {
-        if let Some(signal) = self.abort_signal.replace(None).map(bun_ptr::BackRef::from) {
-            // `signal` was stored with a +1 C++ intrusive ref (taken in
-            // `spawn_maybe_sync`); it stays live until `unref()` below, so the
-            // `BackRef` invariant (pointee outlives holder) holds for this scope.
+        if let Some(signal) = self.abort_signal.take() {
             signal.pending_activity_unref();
             signal.clean_native_bindings(self.as_ctx_ptr().cast::<c_void>());
-            signal.unref();
+            // Dropping `signal` unrefs it.
         }
     }
 
-    pub fn finalize(self: Box<Self>) {
+    pub fn finalize(&self) {
         bun_output::scoped_log!(Subprocess, "finalize");
-        // Refcounted: the trailing `this.deref()` releases the JS wrapper's +1;
-        // allocation may outlive this call if other refs remain, so hand
-        // ownership back to the raw refcount.
-        let this = bun_core::heap::release(self);
         // Ensure any code which references the "this" value doesn't attempt to
         // access it after it's been freed We cannot call any methods which
         // access GC'd values during the finalizer
-        this.this_value.with_mut(|v| v.finalize());
+        self.this_value.with_mut(|v| v.finalize());
 
-        this.clear_abort_signal();
+        self.clear_abort_signal();
 
         debug_assert!(
-            !this.compute_has_pending_activity()
+            !self.compute_has_pending_activity()
                 || VirtualMachine::VirtualMachine::get().is_shutting_down()
         );
-        this.finalize_streams();
+        self.finalize_streams();
 
         // `Writable::init()` took a +1 (`subprocess.ref_()`, guarded by
         // `DEREF_ON_STDIN_DESTROYED`) for the stdin pipe back-pointer. The
@@ -1352,52 +1308,40 @@ impl Subprocess<'_> {
         // the JSFileSink may be swept after us in the same
         // `lastChanceToFinalize` pass and would otherwise call
         // `on_stdin_destroyed()` against a freed Box.
-        if this.flags.get().contains(Flags::DEREF_ON_STDIN_DESTROYED)
-            && !this.has_called_getter(ObservableGetter::Stdin)
+        if self.flags.get().contains(Flags::DEREF_ON_STDIN_DESTROYED)
+            && !self.has_called_getter(ObservableGetter::Stdin)
         {
-            this.update_flags(|f| f.remove(Flags::DEREF_ON_STDIN_DESTROYED));
-            this.deref();
+            self.update_flags(|f| f.remove(Flags::DEREF_ON_STDIN_DESTROYED));
+            self.deref();
         }
 
-        let exit_handler_pending = this.process().exit_handler.is_some();
-        this.process_mut().detach();
+        let exit_handler_pending = self.process().exit_handler.is_some();
+        self.process_mut().detach();
         if exit_handler_pending {
-            this.deref();
+            self.deref();
         }
-        // Release the intrusive ref now,
-        // not when `ref_count` → 0. The raw `*mut Process` is left dangling but
-        // no code path reads `this.process` after this (finalize runs once).
-        // SAFETY: `process` is the live Box-backed Process; deref() frees it
-        // when its own ThreadSafeRefCount reaches zero.
-        unsafe { Process::deref(this.process.as_ptr()) };
-
-        if this.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            Self::timer_all().remove(this.event_loop_timer.as_ptr());
+        if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
+            Self::timer_all().remove(self.event_loop_timer.as_ptr());
         }
-        this.set_event_loop_timer_refd(false);
+        self.set_event_loop_timer_refd(false);
 
-        let mut mb = this.stdout_maxbuf.get();
+        let mut mb = self.stdout_maxbuf.get();
         MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);
-        this.stdout_maxbuf.set(mb);
-        let mut mb = this.stderr_maxbuf.get();
+        self.stdout_maxbuf.set(mb);
+        let mut mb = self.stderr_maxbuf.get();
         MaxBuf::MaxBuf::remove_from_subprocess(&mut mb);
-        this.stderr_maxbuf.set(mb);
+        self.stderr_maxbuf.set(mb);
 
-        if let Some(ipc_data) = this.ipc_data.take() {
+        if let Some(ipc_data) = self.ipc_data.take() {
             // In normal operation the socket is already `.closed` by the time we
             // get here (that is what allowed `compute_has_pending_activity` to drop
             // to false and let GC collect us). Detach and release our ref; any
             // still-queued close task holds its own ref and frees the SendQueue
             // when it runs.
-            // SAFETY: `ipc_data` is the owned ref stored at spawn time.
-            unsafe {
-                (*ipc_data.as_ptr()).detach();
-                <IPC::SendQueue as bun_ptr::CellRefCounted>::deref(ipc_data.as_ptr());
-            }
+            ipc_data.detach();
         }
 
-        this.update_flags(|f| f.insert(Flags::FINALIZED));
-        this.deref();
+        self.update_flags(|f| f.insert(Flags::FINALIZED));
     }
 
     pub(crate) fn get_exited(&self, this_value: JSValue, global_this: &JSGlobalObject) -> JSValue {
@@ -1446,8 +1390,8 @@ impl Subprocess<'_> {
             // `bun_sys::SignalCode`.
             let sys_sig = bun_sys::SignalCode(signal as u8);
             if let Some(name) = sys_sig.name() {
-                use bun_jsc::ZigStringJsc as _;
-                return bun_jsc::zig_string::ZigString::init(name.as_bytes()).to_js(global);
+                use bun_jsc::EncodedSliceJsc as _;
+                return bun_core::EncodedSlice::latin1(name.as_bytes()).to_js(global);
             } else {
                 return JSValue::js_number(signal as u32 as f64);
             }
@@ -1456,7 +1400,11 @@ impl Subprocess<'_> {
         JSValue::NULL
     }
 
-    pub(crate) fn handle_ipc_message(&self, message: &IPC::DecodedIPCMessage, handle: JSValue) {
+    pub(crate) fn handle_ipc_message(
+        &self,
+        message: &IPC::DecodedIPCMessage,
+        handle: JSValue,
+    ) -> JsResult<()> {
         bun_output::scoped_log!(IPC, "Subprocess#handleIPCMessage");
         match message {
             // In future versions we can read this in order to detect version mismatches,
@@ -1488,13 +1436,14 @@ impl Subprocess<'_> {
             IPC::DecodedIPCMessage::Internal(data) => {
                 bun_output::scoped_log!(IPC, "Received IPC internal message from child");
                 let global_this = self.global_this;
-                let _ = node_cluster_binding::handle_internal_message_primary(
+                node_cluster_binding::handle_internal_message_primary(
                     global_this.get(),
                     self,
                     *data,
-                );
+                )?;
             }
         }
+        Ok(())
     }
 
     pub(crate) fn handle_ipc_close(&self) {
@@ -1527,8 +1476,7 @@ impl Subprocess<'_> {
     }
 
     pub(crate) fn ipc(&self) -> Option<&IPC::SendQueue> {
-        // SAFETY: `ipc_data` is our owned ref; live until `finalize`.
-        self.ipc_data.get().map(|p| unsafe { &*p.as_ptr() })
+        self.ipc_data.get().as_deref()
     }
 }
 
@@ -1548,27 +1496,9 @@ impl SourceData for webcore::AnyBlob {
         webcore::AnyBlob::memory_cost(self)
     }
 }
-/// Local newtype so the [`SourceData`] impl satisfies coherence —
-/// `ArrayBufferStrong` lives in `bun_jsc` and the trait in `bun_spawn`, so
-/// implementing it directly would be an orphan.
-struct ArrayBufferSource(jsc::array_buffer::ArrayBufferStrong);
-impl SourceData for ArrayBufferSource {
-    fn slice(&self) -> &[u8] {
-        self.0.slice()
-    }
-    fn detach(&mut self) { /* GC-owned; Drop releases the Strong handle */
-    }
-    fn memory_cost(&self) -> usize {
-        0
-    }
-}
 #[inline]
 pub(crate) fn source_from_blob(b: webcore::AnyBlob) -> Source {
     Source::Any(Box::new(b))
-}
-#[inline]
-pub(crate) fn source_from_array_buffer(ab: jsc::array_buffer::ArrayBufferStrong) -> Source {
-    Source::Any(Box::new(ArrayBufferSource(ab)))
 }
 
 /// Windows: the extra stdio pipes (`stdio_pipes`) are uv handles this
@@ -1638,11 +1568,11 @@ pub mod testing_apis {
         // SAFETY: `from_js` returned a live `*mut Subprocess` owned by the JS wrapper.
         // R-2: deref as shared (`&*const`) — fields are interior-mutable.
         let subprocess = unsafe { &*subprocess_ptr };
-        let kind_str = bun_core::OwnedString::new(kind_value.to_bun_string(global_this)?);
+        let kind_str = kind_value.to_bun_string(global_this)?;
 
-        let out: &JsCell<Readable> = if kind_str.eql_comptime(b"stdout") {
+        let out: &JsCell<Readable> = if kind_str.eq_ascii(b"stdout") {
             &subprocess.stdout
-        } else if kind_str.eql_comptime(b"stderr") {
+        } else if kind_str.eq_ascii(b"stderr") {
             &subprocess.stderr
         } else {
             return Err(

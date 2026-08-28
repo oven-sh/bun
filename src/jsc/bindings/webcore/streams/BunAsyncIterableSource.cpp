@@ -12,6 +12,7 @@
 #include "JSDOMWrapperCache.h"
 #include "JSReadableStream.h"
 #include "JSStreamsRuntime.h"
+#include "ObjectBindings.h"
 #include "WebCoreJSClientData.h"
 #include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
@@ -118,49 +119,40 @@ static void settlePullPromiseRejected(JSGlobalObject* globalObject, JSAsyncItera
     }
 }
 
-// The pump met an abrupt completion. An ordinary one is delivered through the error tail; the VM's
-// termination (takeAbruptCompletion leaves it pending and returns nothing) has no error to deliver and no
-// script may run over it: drop the iterator and the pull promise unsettled and let it propagate.
-static void asyncIterFinishAbrupt(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op, TopExceptionScope& scope)
+// The boundaries' last resort: delivering an error ran a hook (iterator.throw()/return()) that
+// threw as well; drop the iterator and reject the pull with that. Runs no user JS.
+static void asyncIterAbandon(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op, JSValue error)
 {
-    if (JSValue error = takeAbruptCompletion(globalObject, scope)) [[likely]] {
-        asyncIterFinishWithError(globalObject, op, error);
-        return;
-    }
-    op->m_done = true;
-    op->m_running = false;
     op->m_iterator.clear();
-    op->m_pullPromise.clear();
+    settlePullPromiseRejected(globalObject, op, error);
 }
 
 // The success tail: controller.end(), then iterator.return(), then resolve the pull promise.
 static void asyncIterFinishSuccess(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op)
 {
     auto& vm = getVM(globalObject);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* runtime = JSStreamsRuntime::from(globalObject);
 
     JSValue endResult;
     if (JSObject* controller = op->m_controller.get()) {
         MarkedArgumentBuffer noArgs;
         endResult = invokeOptionalMethod(globalObject, controller, WebCore::builtinNames(vm).endPublicName(), noArgs);
-        if (scope.exception()) [[unlikely]] {
-            asyncIterFinishAbrupt(globalObject, op, scope);
-            return;
-        }
+        RETURN_IF_EXCEPTION(scope, );
     }
     if (auto* endPromise = asPromise(endResult)) {
         endPromise->performPromiseThenWithContext(vm, globalObject, runtime->onAsyncIterableSourceEndFulfilled(), runtime->onAsyncIterableSourceErrored(), jsUndefined(), op);
         return;
     }
-    asyncIterReturnIteratorAndSettle(globalObject, op);
+    RELEASE_AND_RETURN(scope, asyncIterReturnIteratorAndSettle(globalObject, op));
 }
 
-// iterator.return() (so a generator's `finally` runs), then resolve the pull promise.
+// iterator.return() (so a generator's `finally` runs), then resolve the pull promise; a throw or
+// rejection from return() rejects it instead (the original awaited it).
 static void asyncIterReturnIteratorAndSettle(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op)
 {
     auto& vm = getVM(globalObject);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* runtime = JSStreamsRuntime::from(globalObject);
     JSObject* iterator = op->m_iterator.get();
     op->m_iterator.clear();
@@ -170,34 +162,26 @@ static void asyncIterReturnIteratorAndSettle(JSGlobalObject* globalObject, JSAsy
     }
     MarkedArgumentBuffer noArgs;
     JSValue returned = invokeOptionalMethod(globalObject, iterator, vm.propertyNames->returnKeyword, noArgs);
-    if (scope.exception()) [[unlikely]] {
-        // The iterator's own cleanup failure is subsumed: the stream already ended.
-        scope.clearExceptionExceptTermination();
-        settlePullPromiseResolved(globalObject, op);
-        return;
-    }
+    RETURN_IF_EXCEPTION(scope, );
     if (auto* returnPromise = asPromise(returned)) {
-        markPromiseAsHandled(vm, returnPromise);
-        returnPromise->performPromiseThenWithContext(vm, globalObject, runtime->onAsyncIterableSourceCleanupSettled(), runtime->onAsyncIterableSourceCleanupSettled(), jsUndefined(), op);
+        returnPromise->performPromiseThenWithContext(vm, globalObject, runtime->onAsyncIterableSourceCleanupSettled(), runtime->onAsyncIterableSourceErrored(), jsUndefined(), op);
         return;
     }
     settlePullPromiseResolved(globalObject, op);
 }
 
-// Error tail: an already-gone consumer (ERR_INVALID_THIS) returns the iterator quietly;
-// otherwise notify it via iterator.throw(error) and settle once that settles.
+// Error tail (the original `finally` with a closingError): an already-gone consumer
+// (ERR_INVALID_THIS) returns the iterator quietly; otherwise notify it via iterator.throw(error)
+// and settle once that settles.
 static void asyncIterFinishWithError(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op, JSValue error)
 {
     auto& vm = getVM(globalObject);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* runtime = JSStreamsRuntime::from(globalObject);
 
-    if (errorCodeIs(globalObject, error, "ERR_INVALID_THIS"_s)) {
-        asyncIterReturnIteratorAndSettle(globalObject, op);
-        return;
-    }
-
-    bool swallowByCode = errorCodeIs(globalObject, error, "ERR_INVALID_STATE"_s);
+    if (errorCodeIs(vm, error, "ERR_INVALID_THIS"_s))
+        RELEASE_AND_RETURN(scope, asyncIterReturnIteratorAndSettle(globalObject, op));
+    bool swallowByCode = errorCodeIs(vm, error, "ERR_INVALID_STATE"_s);
 
     JSObject* iterator = op->m_iterator.get();
     op->m_iterator.clear();
@@ -206,11 +190,7 @@ static void asyncIterFinishWithError(JSGlobalObject* globalObject, JSAsyncIterat
         MarkedArgumentBuffer args;
         args.append(error);
         thrown = invokeOptionalMethod(globalObject, iterator, vm.propertyNames->throwKeyword, args);
-        if (scope.exception()) [[unlikely]] {
-            // The iterator's own cleanup failure is subsumed by the original error.
-            scope.clearExceptionExceptTermination();
-            thrown = {};
-        }
+        RETURN_IF_EXCEPTION(scope, );
     }
     // The cancelled check happens when the settle runs: a cancellation arriving while
     // iterator.throw() is pending must still suppress the rejection.
@@ -234,63 +214,54 @@ enum class NextStep : uint8_t {
     Finished,
 };
 
-// One iteration result: write the value (a final `return v` is still written), honor the
-// sink's backpressure protocol (`wrote < 0` -> await flush(true)), then finish when done.
+// One iteration result: write the value, honor the sink's backpressure protocol (`wrote < 0`
+// -> await flush(true)), then finish when done. IteratorStepValue semantics, like `for await`
+// and ReadableStream.from(): a done result's value (a generator's `return v`) is not a chunk.
 static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op, JSValue result)
 {
     auto& vm = getVM(globalObject);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* runtime = JSStreamsRuntime::from(globalObject);
 
-    JSValue doneValue = jsUndefined();
-    JSValue value = jsUndefined();
     if (!result.isObject()) {
         // Matches awaiting a malformed iterator: iteration results must be objects.
-        JSObject* error = createTypeError(globalObject, "Async iterator result is not an object"_s);
-        asyncIterFinishWithError(globalObject, op, error);
+        throwTypeError(globalObject, scope, "Async iterator result is not an object"_s);
         return NextStep::Finished;
     }
-    {
-        doneValue = result.get(globalObject, vm.propertyNames->done);
-        if (scope.exception()) [[unlikely]]
-            goto abrupt;
-        value = result.get(globalObject, vm.propertyNames->value);
-        if (scope.exception()) [[unlikely]]
-            goto abrupt;
-    }
-
-    if (doneValue.toBoolean(globalObject))
-        op->m_iteratorDone = true;
+    auto [doneValue, value] = Bun::getIteratorResult(globalObject, asObject(result), Bun::IteratorDoneValue::Skip);
+    RETURN_IF_EXCEPTION(scope, NextStep::Finished);
 
     // The done/value getters run user JS that can cancel the stream.
     if (op->m_cancelled) {
         asyncIterReturnIteratorAndSettle(globalObject, op);
-        return NextStep::Finished;
+        RELEASE_AND_RETURN(scope, NextStep::Finished);
+    }
+
+    if (doneValue.toBoolean(globalObject)) {
+        asyncIterFinishSuccess(globalObject, op);
+        RELEASE_AND_RETURN(scope, NextStep::Finished);
     }
 
     if (!value.isUndefinedOrNull()) {
         JSObject* controller = op->m_controller.get();
         if (!controller) {
             asyncIterFinishSuccess(globalObject, op);
-            return NextStep::Finished;
+            RELEASE_AND_RETURN(scope, NextStep::Finished);
         }
         MarkedArgumentBuffer writeArgs;
         writeArgs.append(value);
         JSValue wrote = invokeOptionalMethod(globalObject, controller, WebCore::builtinNames(vm).writePublicName(), writeArgs);
-        if (scope.exception()) [[unlikely]]
-            goto abrupt;
+        RETURN_IF_EXCEPTION(scope, NextStep::Finished);
         if (wrote && wrote.isNumber() && wrote.asNumber() < 0) {
             // The HTTP sink reports backpressure with a negative return: wait for the drain.
             MarkedArgumentBuffer flushArgs;
             flushArgs.append(jsBoolean(true));
             JSValue flushed = invokeOptionalMethod(globalObject, controller, builtinNames(vm).flushPublicName(), flushArgs);
-            if (scope.exception()) [[unlikely]]
-                goto abrupt;
+            RETURN_IF_EXCEPTION(scope, NextStep::Finished);
             JSPromise* flushPromise = asPromise(flushed);
             if (!flushPromise) {
                 flushPromise = promiseResolvedWith(globalObject, flushed ? flushed : jsUndefined());
-                if (scope.exception()) [[unlikely]]
-                    goto abrupt;
+                RETURN_IF_EXCEPTION(scope, NextStep::Finished);
             }
             flushPromise->performPromiseThenWithContext(vm, globalObject, runtime->onAsyncIterableSourceFlushFulfilled(), runtime->onAsyncIterableSourceErrored(), jsUndefined(), op);
             return NextStep::Suspended;
@@ -303,16 +274,7 @@ static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncI
             }
         }
     }
-
-    if (op->m_iteratorDone) {
-        asyncIterFinishSuccess(globalObject, op);
-        return NextStep::Finished;
-    }
     return NextStep::ContinueLoop;
-
-abrupt:
-    asyncIterFinishAbrupt(globalObject, op, scope);
-    return NextStep::Finished;
 }
 
 // The pump loop. Synchronously-fulfilled next() results are consumed in place (writes batch
@@ -321,18 +283,16 @@ abrupt:
 static void driveAsyncIterator(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op)
 {
     auto& vm = getVM(globalObject);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* runtime = JSStreamsRuntime::from(globalObject);
 
     while (true) {
-        if (op->m_done || op->m_iteratorDone) {
+        if (op->m_done) {
             op->m_running = false;
             return;
         }
-        if (op->m_cancelled) {
-            asyncIterReturnIteratorAndSettle(globalObject, op);
-            return;
-        }
+        if (op->m_cancelled)
+            RELEASE_AND_RETURN(scope, asyncIterReturnIteratorAndSettle(globalObject, op));
         JSObject* iterator = op->m_iterator.get();
         if (!iterator) {
             settlePullPromiseResolved(globalObject, op);
@@ -340,104 +300,89 @@ static void driveAsyncIterator(JSGlobalObject* globalObject, JSAsyncIteratorSour
         }
         MarkedArgumentBuffer nextArgs;
         nextArgs.append(op->m_controller ? JSValue(op->m_controller.get()) : jsUndefined());
-        JSValue nextResult;
-        {
-            JSValue nextFunction = iterator->get(globalObject, vm.propertyNames->next);
-            if (!scope.exception()) [[likely]] {
-                if (op->m_cancelled) {
-                    // A `next` getter cancelled the stream; do not resume the iterator.
-                    asyncIterReturnIteratorAndSettle(globalObject, op);
-                    return;
-                }
-                nextResult = JSC::call(globalObject, nextFunction, iterator, nextArgs, "iterator.next is not a function"_s);
-            }
-            if (scope.exception()) [[unlikely]] {
-                asyncIterFinishAbrupt(globalObject, op, scope);
-                return;
-            }
-        }
+        JSValue nextFunction = iterator->get(globalObject, vm.propertyNames->next);
+        RETURN_IF_EXCEPTION(scope, );
         if (op->m_cancelled) {
-            asyncIterReturnIteratorAndSettle(globalObject, op);
-            return;
+            // A `next` getter cancelled the stream; do not resume the iterator.
+            RELEASE_AND_RETURN(scope, asyncIterReturnIteratorAndSettle(globalObject, op));
         }
+        JSValue nextResult = JSC::call(globalObject, nextFunction, iterator, nextArgs, "iterator.next is not a function"_s);
+        RETURN_IF_EXCEPTION(scope, );
+        if (op->m_cancelled)
+            RELEASE_AND_RETURN(scope, asyncIterReturnIteratorAndSettle(globalObject, op));
         JSPromise* nextPromise = asPromise(nextResult);
         if (!nextPromise) {
             // `await` semantics: adopt thenables; plain results become fulfilled promises.
             nextPromise = promiseResolvedWith(globalObject, nextResult);
-            if (scope.exception()) [[unlikely]] {
-                asyncIterFinishAbrupt(globalObject, op, scope);
-                return;
-            }
+            RETURN_IF_EXCEPTION(scope, );
         }
         auto status = nextPromise->status();
         if (status == JSPromise::Status::Fulfilled) {
-            if (asyncIterHandleNextResult(globalObject, op, nextPromise->result()) != NextStep::ContinueLoop)
+            auto step = asyncIterHandleNextResult(globalObject, op, nextPromise->result());
+            RETURN_IF_EXCEPTION(scope, );
+            if (step != NextStep::ContinueLoop)
                 return;
             continue;
         }
         if (status == JSPromise::Status::Rejected) {
             markPromiseAsHandled(vm, nextPromise);
-            asyncIterFinishWithError(globalObject, op, nextPromise->result());
-            return;
+            RELEASE_AND_RETURN(scope, asyncIterFinishWithError(globalObject, op, nextPromise->result()));
         }
         nextPromise->performPromiseThenWithContext(vm, globalObject, runtime->onAsyncIterableSourceNextFulfilled(), runtime->onAsyncIterableSourceErrored(), jsUndefined(), op);
         return;
     }
 }
 
-// -- [reaction-convention] handlers: (value, contextCell) --
+// -- [reaction-convention] handlers: (value, contextCell). Entered from a promise reaction, so
+// these are boundaries (enterStreams): whatever the pump throws is the stream's error — the
+// original `catch (e) { closingError = e }`. --
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceNextFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto* op = uncheckedDowncast<JSAsyncIteratorSourceOperation>(callFrame->uncheckedArgument(1));
-    if (op->m_done) {
-        op->m_running = false;
-        return JSValue::encode(jsUndefined());
-    }
-    if (op->m_cancelled) {
-        asyncIterReturnIteratorAndSettle(globalObject, op);
-        return JSValue::encode(jsUndefined());
-    }
-    if (asyncIterHandleNextResult(globalObject, op, callFrame->argument(0)) == NextStep::ContinueLoop)
-        driveAsyncIterator(globalObject, op);
-    return JSValue::encode(jsUndefined());
+    JSValue result = callFrame->argument(0);
+    return enterStreams(globalObject, [&] {
+        auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+        if (op->m_done) {
+            op->m_running = false;
+            return;
+        }
+        if (op->m_cancelled)
+            RELEASE_AND_RETURN(scope, asyncIterReturnIteratorAndSettle(globalObject, op));
+        auto step = asyncIterHandleNextResult(globalObject, op, result);
+        RETURN_IF_EXCEPTION(scope, );
+        if (step == NextStep::ContinueLoop)
+            RELEASE_AND_RETURN(scope, driveAsyncIterator(globalObject, op)); }, [&](JSValue error) { asyncIterFinishWithError(globalObject, op, error); }, [&](JSValue error) { asyncIterAbandon(globalObject, op, error); });
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceFlushFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto* op = uncheckedDowncast<JSAsyncIteratorSourceOperation>(callFrame->uncheckedArgument(1));
-    if (op->m_done)
-        return JSValue::encode(jsUndefined());
-    if (op->m_cancelled) {
-        asyncIterReturnIteratorAndSettle(globalObject, op);
-        return JSValue::encode(jsUndefined());
-    }
-    // The drained write may have been the iterator's final value.
-    if (op->m_iteratorDone)
-        asyncIterFinishSuccess(globalObject, op);
-    else
-        driveAsyncIterator(globalObject, op);
-    return JSValue::encode(jsUndefined());
+    return enterStreams(globalObject, [&] {
+        if (op->m_done)
+            return;
+        if (op->m_cancelled)
+            return asyncIterReturnIteratorAndSettle(globalObject, op);
+        driveAsyncIterator(globalObject, op); }, [&](JSValue error) { asyncIterFinishWithError(globalObject, op, error); }, [&](JSValue error) { asyncIterAbandon(globalObject, op, error); });
 }
 
-// Any rejection feeding the loop (next(), flush(true), end()) takes the error path.
+// Any rejection feeding the loop (next(), flush(true), end(), return()) takes the error path.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceErrored, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto* op = uncheckedDowncast<JSAsyncIteratorSourceOperation>(callFrame->uncheckedArgument(1));
-    if (op->m_done)
-        return JSValue::encode(jsUndefined());
-    asyncIterFinishWithError(globalObject, op, callFrame->argument(0));
-    return JSValue::encode(jsUndefined());
+    JSValue rejection = callFrame->argument(0);
+    return enterStreams(globalObject, [&] {
+        if (!op->m_done)
+            asyncIterFinishWithError(globalObject, op, rejection); }, [&](JSValue error) { asyncIterAbandon(globalObject, op, error); });
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceEndFulfilled, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto* op = uncheckedDowncast<JSAsyncIteratorSourceOperation>(callFrame->uncheckedArgument(1));
-    asyncIterReturnIteratorAndSettle(globalObject, op);
-    return JSValue::encode(jsUndefined());
+    return enterStreams(globalObject, [&] { asyncIterReturnIteratorAndSettle(globalObject, op); }, [&](JSValue error) { asyncIterFinishWithError(globalObject, op, error); }, [&](JSValue error) { asyncIterAbandon(globalObject, op, error); });
 }
 
-// Registered as both reactions of iterator.return()'s promise: the stream already ended.
+// iterator.return() fulfilled after the stream already ended.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceCleanupSettled, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto* op = uncheckedDowncast<JSAsyncIteratorSourceOperation>(callFrame->uncheckedArgument(1));
@@ -469,7 +414,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onAsyncIterableSourceErrorSwallowed
 // -- [bound-convention] direct-source methods: (opCell, ...callArgs) --
 
 // pull(controller): one drive of the iterator runs at a time; every pull while it runs gets
-// the same promise.
+// the same promise. pull() answers with that promise, so a throw from the drive is the stream's
+// error (enterStreams) rather than a synchronous throw into the direct controller.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundAsyncIterableSourcePull, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);
@@ -487,13 +433,13 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundAsyncIterableSourcePull, (JSGl
     auto* pullPromise = JSPromise::create(vm, globalObject->promiseStructure());
     op->m_pullPromise.set(vm, op, pullPromise);
     op->m_running = true;
-    driveAsyncIterator(globalObject, op);
+    enterStreams(globalObject, [&] { driveAsyncIterator(globalObject, op); }, [&](JSValue error) { asyncIterFinishWithError(globalObject, op, error); }, [&](JSValue error) { asyncIterAbandon(globalObject, op, error); });
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(pullPromise);
 }
 
 // cancel(reason): reason ? iterator.throw(reason) : iterator.return(); the result is
-// returned so the stream's cancel promise chains onto it.
+// returned so the stream's cancel promise chains onto it, and a throw propagates to the caller.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundAsyncIterableSourceCancel, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = getVM(globalObject);
@@ -520,12 +466,15 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundAsyncIterableSourceCancel, (JS
     return JSValue::encode(result ? result : jsUndefined());
 }
 
-// close(): the consumer is gone; the iterator's finally still runs via return().
+// close(): the consumer is gone; the iterator's finally still runs via return(), and a throw from
+// it propagates to whoever closed the source.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundAsyncIterableSourceClose, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     auto* op = uncheckedDowncast<JSAsyncIteratorSourceOperation>(callFrame->uncheckedArgument(0));
     op->m_cancelled = true;
     asyncIterReturnIteratorAndSettle(globalObject, op);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 

@@ -98,11 +98,11 @@ void JSStreamsRuntime::initialize(Zig::GlobalObject* globalObject)
         auto* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), 3);
         JSC::PropertyOffset offset;
         structure = Structure::addPropertyTransition(vm, structure, vm.propertyNames->value, 0, offset);
-        RELEASE_ASSERT(offset == 0);
+        RELEASE_ASSERT(offset == readManyResultValueOffset);
         structure = Structure::addPropertyTransition(vm, structure, WebCore::builtinNames(vm).sizePublicName(), 0, offset);
-        RELEASE_ASSERT(offset == 1);
+        RELEASE_ASSERT(offset == readManyResultSizeOffset);
         structure = Structure::addPropertyTransition(vm, structure, vm.propertyNames->done, 0, offset);
-        RELEASE_ASSERT(offset == 2);
+        RELEASE_ASSERT(offset == readManyResultDoneOffset);
         init.set(structure);
     });
 }

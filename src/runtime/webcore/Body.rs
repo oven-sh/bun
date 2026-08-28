@@ -17,10 +17,11 @@ use bun_http_types::MimeType::MimeType;
 use crate::jsc::HTTPHeaderName;
 pub use crate::webcore::InternalBlob;
 use crate::webcore::form_data::AsyncFormDataExt as _;
-use bun_core::{String as BunString, ZigString};
-use bun_core::{WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::{JsCell, StringJsc as _};
+use bun_core::String as BunString;
+use bun_core::{Utf8Bytes, WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
+use bun_jsc::JsCell;
+use bun_jsc::StringJsc as _;
+use bun_jsc::bun_string_jsc;
 
 /// Deref the `Value::WTFStringImpl` / `AnyBlob::WTFStringImpl` payload.
 /// Centralises the per-site `(**s)` raw deref at the dozen `match` arms below
@@ -40,9 +41,9 @@ pub(super) fn wtf_impl(s: &WTFStringImpl) -> &WTFStringImplStruct {
 }
 
 /// Mutable view of a [`Blob`]'s backing `Store` through its
-/// `JsCell<Option<StoreRef>>` field. Centralises the per-site raw
+/// `JsCell<Option<RefPtr<Store>>>` field. Centralises the per-site raw
 /// `(*blob.store.get()…as_ptr()).mime_type = …` deref under the same
-/// invariant `StoreRef::data_mut` already documents:
+/// invariant `Store::data_mut` already documents:
 /// shared-mutable interior, single-threaded JS event-loop, no concurrent
 /// `&Store` outstanding for the borrow's duration.
 #[inline]
@@ -51,8 +52,8 @@ fn blob_store_mut(blob: &Blob) -> Option<&mut blob::Store> {
     blob.store
         .get()
         .as_ref()
-        // SAFETY: `StoreRef` invariant — pointee is a live heap `Store` while
-        // any `StoreRef` exists; single-threaded JS event-loop discipline
+        // SAFETY: `RefPtr<Store>` invariant — pointee is a live heap `Store` while
+        // any `RefPtr<Store>` exists; single-threaded JS event-loop discipline
         // guarantees no other `&`/`&mut Store` is live for this borrow.
         .map(|s| unsafe { &mut *s.as_ptr() })
 }
@@ -394,10 +395,9 @@ impl PendingValue {
                         Action::GetBlob => global_this.readable_stream_to_blob(readable.value),
                         Action::GetFormData(form_data) => 'brk: {
                             let fd = form_data.take().unwrap();
-                            // defer: form_data already taken; action.getFormData = None handled by take()
                             let encoding_js = match &fd.encoding {
                                 bun_core::form_data::Encoding::Multipart(multipart) => {
-                                    BunString::init(&multipart[..]).to_js(global_this)?
+                                    bun_string_jsc::create_utf8_for_js(global_this, multipart)?
                                 }
                                 bun_core::form_data::Encoding::URLEncoded => JSValue::UNDEFINED,
                             };
@@ -411,7 +411,7 @@ impl PendingValue {
                     // The ReadableStream within is expected to keep this Promise alive.
                     // If you try to protect() this, it will leak memory because the other end of the ReadableStream won't call it.
                     // See https://github.com/oven-sh/bun/issues/13678
-                    return Ok(promise);
+                    return promise;
                 }
                 Action::None => {}
             }
@@ -583,15 +583,6 @@ impl ValueError {
     // Not a clean Drop — resets self to safe-empty in place. Renamed from `deinit`
     // per PORTING.md (never expose `pub fn deinit(&mut self)`).
     pub fn reset(&mut self) {
-        match self {
-            // The bun.String fields are dropped by the assignment below.
-            ValueError::SystemError(_) | ValueError::SystemTypeError(_) => {}
-            ValueError::Message(message) => message.deref(),
-            ValueError::TypeError(message) => message.deref(),
-            ValueError::JSValue(v) => v.deinit(),
-            ValueError::AbortReason(_) => {}
-        }
-        // safe empty value after deinit
         *self = ValueError::JSValue(jsc::strong::Optional::empty());
     }
 }
@@ -635,8 +626,6 @@ impl ValueError {
 
     pub(crate) fn dupe(&self, global_object: &JSGlobalObject) -> Self {
         match self {
-            // `.clone()` on BunString/SystemError already bumps the refcount (paired
-            // with their Drop deref); an extra `.ref_()` here would leak +1 per dupe.
             ValueError::SystemError(e) => ValueError::SystemError(e.clone()),
             ValueError::SystemTypeError(e) => ValueError::SystemTypeError(e.clone()),
             ValueError::Message(m) => ValueError::Message(m.clone()),
@@ -703,12 +692,12 @@ impl Value {
 impl Value {
     pub(crate) fn to_blob_if_possible(&mut self) {
         if let Value::WTFStringImpl(str) = *self {
-            if let Some(bytes) = wtf_impl(&str).to_utf8_if_needed() {
+            if let Utf8Bytes::Owned(bytes) = wtf_impl(&str).to_utf8() {
                 // The UTF-8 buffer is already heap-owned by the slice wrapper;
                 // transfer it (no copy). The deref is handled by `Value::drop` on the
                 // overwritten `WTFStringImpl` variant — do NOT deref explicitly here.
                 *self = Value::InternalBlob(InternalBlob {
-                    bytes: bytes.into_vec(),
+                    bytes,
                     was_string: true,
                 });
             }
@@ -785,10 +774,16 @@ impl Value {
                 self.locked_to_native_stream(global_this, false)
             }
             Value::Error(err) => {
-                // Leave `self` as `Error` so the promise-returning readers
-                // (`handle_body_error`) still reject too.
                 let reason = err.to_js(global_this);
-                ReadableStream::errored(global_this, reason)
+                let value = ReadableStream::errored(global_this, reason)?;
+                // As for a blob above: this stream is the body from here on, so `.body` hands it
+                // out again, `bodyUsed` follows it, and the promise readers reject through it.
+                let stream = ReadableStream::from_js_direct(value).unwrap();
+                *self = Value::Locked(PendingValue {
+                    readable: webcore::readable_stream::Strong::init(stream, global_this),
+                    ..PendingValue::new(global_this)
+                });
+                Ok(value)
             }
         }
     }
@@ -836,7 +831,9 @@ impl Value {
             Value::Locked(_) => self.locked_to_native_stream(global_this, true),
             Value::Error(err) => {
                 let reason = err.to_js(global_this);
-                ReadableStream::errored(global_this, reason)
+                let stream = ReadableStream::errored(global_this, reason)?;
+                *self = Value::Used;
+                Ok(stream)
             }
         }
     }
@@ -1027,22 +1024,7 @@ impl Value {
             ));
         }
 
-        let blob = match Blob::get::<true, false>(global_this, value) {
-            Ok(b) => b,
-            Err(_err) => {
-                if !global_this.has_exception() {
-                    // With `REQUIRE_ARRAY = false` an "Expected an Array" branch is
-                    // unreachable (the only `error.InvalidArguments` producer is gated
-                    // on `require_array`), and every other failure path throws first
-                    // (sets the exception).
-                    return Err(
-                        global_this.throw_invalid_arguments(format_args!("Invalid Body object"))
-                    );
-                }
-                return Err(bun_jsc::JsError::Thrown);
-            }
-        };
-        Ok(Value::Blob(blob))
+        Ok(Value::Blob(Blob::get::<true, false>(global_this, value)?))
     }
 
     pub(crate) fn from_readable_stream_without_lock_check(
@@ -1137,10 +1119,9 @@ impl Value {
                             // `blob.detach()` below covers the reject error path too.
                             let r = promise.reject(
                                 global,
-                                ZigString::init(
-                                    b"Internal error: task for FormData must not be null",
-                                )
-                                .to_error_instance(global),
+                                global.create_error_instance(format_args!(
+                                    "Internal error: task for FormData must not be null"
+                                )),
                             );
                             blob.detach();
                             r?;
@@ -1165,10 +1146,9 @@ impl Value {
                             if let Some(content_type) =
                                 fetch_headers.fast_get(HTTPHeaderName::ContentType)
                             {
-                                let content_slice = content_type.to_slice();
+                                let content_slice = content_type.to_utf8();
                                 let mime_type = MimeType::init(content_slice.slice(), true, None);
                                 set_blob_content_type(blob, mime_type);
-                                // content_slice dropped (replaces defer content_slice.deinit())
                             }
                         }
                         if !blob.content_type_was_set.get() && blob.store.get().is_some() {
@@ -1212,18 +1192,13 @@ impl Value {
             Value::WTFStringImpl(wtf) => {
                 let wtf = *wtf;
                 // Transfer the body's +1 to local `wtf`; suppress `Value::drop` (which
-                // would deref) so the StringImpl stays alive across
-                // `to_utf8_if_needed`/`latin1_slice` and is released exactly once below.
+                // would deref) so the StringImpl stays alive across `to_utf8` and is
+                // released exactly once below.
                 let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Value::Used));
                 let wtf_ref = wtf_impl(&wtf);
                 // SAFETY: VirtualMachine::get() returns the live per-thread VM.
                 let global = VirtualMachine::get().global();
-                let new_blob = if let Some(allocated_slice) = wtf_ref.to_utf8_if_needed() {
-                    // Transfer ownership of the heap-allocated UTF-8 buffer (no copy).
-                    Blob::init(allocated_slice.into_vec(), global)
-                } else {
-                    Blob::init(wtf_ref.latin1_slice().to_vec(), global)
-                };
+                let new_blob = Blob::init(wtf_ref.to_utf8().into_vec(), global);
                 // Release the +1 the body held.
                 wtf_ref.deref();
                 new_blob
@@ -1272,12 +1247,12 @@ impl Value {
             Value::WTFStringImpl(str) => 'brk: {
                 let str = *str;
                 let wtf_ref = wtf_impl(&str);
-                if let Some(utf8) = wtf_ref.to_utf8_if_needed() {
+                if let Utf8Bytes::Owned(utf8) = wtf_ref.to_utf8() {
                     // The deref is handled by `Value::drop` on the
                     // assignment below (the variant is still `WTFStringImpl(str)`).
                     break 'brk AnyBlob::InternalBlob(InternalBlob {
                         // Transfer ownership of the heap-allocated UTF-8 buffer (no copy).
-                        bytes: utf8.into_vec(),
+                        bytes: utf8,
                         was_string: true,
                     });
                 } else {
@@ -2167,10 +2142,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
                 let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
                 if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
-                    let content_slice = content_type.to_slice();
+                    let content_slice = content_type.to_utf8();
                     let mime_type = MimeType::init(content_slice.slice(), true, None);
                     set_blob_content_type(blob, mime_type);
-                    // content_slice dropped (replaces defer content_slice.deinit())
                 }
             }
             if !blob.content_type_was_set.get() && blob.store.get().is_some() {

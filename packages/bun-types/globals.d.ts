@@ -252,8 +252,9 @@ declare var TextEncoder: Bun.__internal.UseLibDomIfAvailable<
 >;
 
 /**
- * An implementation of the [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/) `TextDecoder` API. All
- * instances of `TextDecoder` only support UTF-8 decoding.
+ * An implementation of the [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/) `TextDecoder` API.
+ * Supports every encoding label the standard defines, except the labels of the
+ * `replacement` encoding.
  *
  * ```js
  * const decoder = new TextDecoder();

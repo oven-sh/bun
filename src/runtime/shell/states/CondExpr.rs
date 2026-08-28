@@ -324,7 +324,6 @@ impl CondExpr {
         log!("CondExpr {} deinit", this);
         let me = interp.as_condexpr_mut(this);
         me.args.clear();
-        me.base.end_scope();
     }
 }
 

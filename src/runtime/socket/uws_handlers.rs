@@ -9,7 +9,7 @@
 //! the same trampolines at runtime per `us_socket_context_t`.
 
 use bun_jsc::JsResult;
-use bun_ptr::ThisPtr;
+use bun_ptr::{RefPtr, ThisPtr};
 use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
@@ -189,7 +189,10 @@ where
     }
 }
 
-impl<const SSL: bool> RawSocketEvents<SSL> for websocket_upgrade_client::NewHttpUpgradeClient<SSL> {
+impl<const SSL: bool> RawSocketEvents<SSL> for websocket_upgrade_client::NewHttpUpgradeClient<SSL>
+where
+    Self: bun_http_jsc::websocket_client::websocket_proxy_tunnel::IntoUpgradeClientRef,
+{
     const HAS_ON_OPEN: bool = true;
 
     fn on_open(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
@@ -248,7 +251,7 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
         Ok(())
     }
     fn on_writable(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
         this.handle_writable(s);
         Ok(())
     }
@@ -258,27 +261,27 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
         code: i32,
         reason: *mut c_void,
     ) -> JsResult<()> {
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
         this.handle_close(s, code, reason);
         Ok(())
     }
     fn on_timeout(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
         this.handle_timeout(s);
         Ok(())
     }
     fn on_long_timeout(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
         this.handle_timeout(s);
         Ok(())
     }
     fn on_end(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
         this.handle_end(s);
         Ok(())
     }
     fn on_connect_error(this: ThisPtr<Self>, s: NewSocketHandler<SSL>, code: i32) -> JsResult<()> {
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
         this.handle_connect_error(s, code);
         Ok(())
     }
@@ -288,7 +291,7 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
         ok: i32,
         err: bun_uws::us_bun_verify_error_t,
     ) -> JsResult<()> {
-        let _guard = this.ref_guard();
+        let _guard = RefPtr::from_this(this);
         this.handle_handshake(s, ok, err);
         Ok(())
     }

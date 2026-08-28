@@ -147,6 +147,13 @@ impl FdExt for Fd {
             {
                 use sys::windows::{NTSTATUS, Win32Error, Win32ErrorExt as _, libuv as uv};
                 match self.decode_windows() {
+                    // It decodes to ntdll's handle; `close(AT_FDCWD)` is EBADF too.
+                    _ if self == Fd::cwd() => Some(sys::Error {
+                        errno: sys::E::EBADF as _,
+                        syscall: sys::Tag::CloseHandle,
+                        fd: self,
+                        ..Default::default()
+                    }),
                     DecodeWindows::Uv(file_number) => {
                         let mut req = uv::fs_t::uninitialized();
                         // SAFETY: synchronous libuv fs call (cb = None); req lives on the

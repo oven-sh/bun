@@ -110,12 +110,6 @@ public:
         int64_t highest,
         int figures);
 
-    static JSNodePerformanceHooksHistogram* create(
-        JSC::VM& vm,
-        JSC::Structure* structure,
-        JSC::JSGlobalObject* globalObject,
-        HistogramData&& existingHistogramData);
-
     void finishCreation(JSC::VM& vm);
     static void destroy(JSC::JSCell*);
 

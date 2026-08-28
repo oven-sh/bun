@@ -224,6 +224,9 @@ JSC::JSValue toJS(JSC::JSGlobalObject*, WebCore::JSDOMGlobalObject*, WebViewEven
 
 void setupJSWebViewClassStructure(JSC::LazyClassStructure::Initializer&);
 
+// `bun test --isolate` retires `global`: the transports bound to it close their views and let their browser go.
+void retireWebViewsForTestIsolation(Zig::GlobalObject* global);
+
 // Shared weak owner for HostClient.viewsById and Transport.m_pending/
 // .m_sessions. Roots a view while m_pendingActivityCount > 0.
 JSC::WeakHandleOwner& webViewWeakOwner();

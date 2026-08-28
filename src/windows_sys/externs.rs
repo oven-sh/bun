@@ -1596,8 +1596,8 @@ pub struct RTL_USER_PROCESS_PARAMETERS {
     pub hStdOutput: HANDLE,
     pub hStdError: HANDLE,
     /// `CURDIR` — `{ UNICODE_STRING DosPath; HANDLE Handle; }`. `Fd::cwd()`
-    /// reads the handle so `openat(Fd::cwd(), …)` resolves relative paths
-    /// against the live process cwd via `NtCreateFile`'s `RootDirectory`.
+    /// decodes to this handle so `openat(Fd::cwd(), …)` resolves relative
+    /// paths against the live process cwd via `NtCreateFile`'s `RootDirectory`.
     pub CurrentDirectory: CURDIR,
     pub DllPath: UNICODE_STRING,
     pub ImagePathName: UNICODE_STRING,

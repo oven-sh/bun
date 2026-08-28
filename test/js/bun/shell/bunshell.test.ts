@@ -574,6 +574,81 @@ describe("bunshell", () => {
     expect(exitCode).toBe(0);
   });
 
+  // `ulimit -n` caps the fd table of the child so the pipeline cannot create
+  // its pipes (EMFILE). The pipeline must print the error on its stderr and
+  // finish with exit code 1 so the `$` promise settles and the script goes on,
+  // instead of throwing from inside the interpreter and never completing.
+  describe.skipIf(isWindows)("pipeline that fails to create its pipes", () => {
+    const runWithFdLimit = (limit: number, script: string, env = bunEnv) =>
+      Bun.spawn({
+        cmd: ["/bin/sh", "-c", `ulimit -n ${limit} && exec "$1" -e "$2"`, "sh", bunExe(), script],
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+    test("reports EMFILE on stderr and finishes with exit code 1", async () => {
+      // 24 pipes need 48 fds; the whole process gets 32.
+      const pipeline = ["echo hi", ...Array(24).fill("cat")].join(" | ");
+      const script = /* ts */ `
+        import { $ } from "bun";
+        const results = {};
+        const record = (name, r) => {
+          results[name] = { stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode };
+        };
+        record("stderr captured", await $\`${pipeline}\`.nothrow().quiet());
+        record("stderr on a fd", await $\`${pipeline}\`.nothrow());
+        record("script continues", await $\`${pipeline}; echo after\`.nothrow().quiet());
+        try {
+          await $\`${pipeline}\`.quiet();
+          results["throws"] = "did not throw";
+        } catch (e) {
+          record("throws", e);
+        }
+        console.log(JSON.stringify(results));
+      `;
+      await using proc = runWithFdLimit(32, script);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("bun: Too many open files\n");
+      expect(JSON.parse(stdout)).toEqual({
+        "stderr captured": { stdout: "", stderr: "bun: Too many open files\n", exitCode: 1 },
+        "stderr on a fd": { stdout: "", stderr: "bun: Too many open files\n", exitCode: 1 },
+        "script continues": { stdout: "after\n", stderr: "bun: Too many open files\n", exitCode: 0 },
+        "throws": { stdout: "", stderr: "bun: Too many open files\n", exitCode: 1 },
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // Pipelines of growing length against a fixed fd budget. The short ones
+    // fit. Past some length the pipes still fit but the per-command `dup` of
+    // the cwd fd fails. Past that the pipes themselves fail. Every pipeline
+    // must finish, either with its output or with the EMFILE message.
+    test("reports EMFILE from the per-command env dup and finishes", async () => {
+      const script = /* ts */ `
+        import { $ } from "bun";
+        const results = [];
+        for (let n = 2; n <= 16; n++) {
+          const pipeline = ["echo hi", ...Array(n - 1).fill("cat")].join(" | ");
+          const r = await $\`\${{ raw: pipeline }}\`.nothrow().quiet();
+          results.push({ stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode });
+        }
+        console.log(JSON.stringify(results));
+      `;
+      // The builtin cat keeps this to pipes and dups: no subprocess, so no
+      // spawn-time fds change the accounting.
+      await using proc = runWithFdLimit(32, script, { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const results = JSON.parse(stdout);
+      const ok = { stdout: "hi\n", stderr: "", exitCode: 0 };
+      const emfile = { stdout: "", stderr: "bun: Too many open files\n", exitCode: 1 };
+      const firstFailure = results.findIndex(r => r.exitCode !== 0);
+      expect(firstFailure).toBeGreaterThan(0);
+      expect(results).toEqual([...Array(firstFailure).fill(ok), ...Array(results.length - firstFailure).fill(emfile)]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("operators no spaces", async () => {
     TestBuilder.command`echo LMAO|cat`.stdout("LMAO\n").runAsTest("pipeline");
     TestBuilder.command`echo foo&&echo hi`.stdout("foo\nhi\n").runAsTest("&&");

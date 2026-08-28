@@ -1294,7 +1294,7 @@ impl BunTest {
             return; // the exception should not be visible (eg m_terminationException)
         };
 
-        let junit_ctx: *mut core::ffi::c_void = 'ctx: {
+        let failure_ctx: *mut core::ffi::c_void = 'ctx: {
             if handle_status != HandleUncaughtExceptionResult::ShowHandledError {
                 break 'ctx core::ptr::null_mut();
             }
@@ -1303,9 +1303,11 @@ impl BunTest {
             };
             // SAFETY: `BunTest.reporter` carries write provenance from `enter_file`'s
             // `&mut`; single-threaded test runner, no other borrow live here.
-            match unsafe { (*reporter.as_ptr()).reporters.junit.as_deref_mut() } {
-                Some(junit) => core::ptr::from_mut(junit).cast(),
-                None => core::ptr::null_mut(),
+            let reporter = unsafe { &mut *reporter.as_ptr() };
+            if reporter.jest.test_options.reporters.junit {
+                core::ptr::from_mut(&mut reporter.test_failure).cast()
+            } else {
+                core::ptr::null_mut()
             }
         };
 
@@ -1328,13 +1330,13 @@ impl BunTest {
         }
 
         let vm = global_this.bun_vm().as_mut();
-        if !junit_ctx.is_null() {
+        if !failure_ctx.is_null() {
             vm.on_print_error_zig_exception =
-                Some(crate::cli::test_command::JunitReporter::record_failure_cb);
-            vm.on_print_error_zig_exception_ctx = junit_ctx;
+                Some(crate::cli::test_command::TestFailure::record_cb);
+            vm.on_print_error_zig_exception_ctx = failure_ctx;
         }
         vm.run_error_handler(exception, None);
-        if !junit_ctx.is_null() {
+        if !failure_ctx.is_null() {
             vm.on_print_error_zig_exception = None;
             vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();
         }
@@ -1489,26 +1491,18 @@ impl fmt::Display for RefDataValue {
 
 // Intrusive single-thread refcount.
 #[derive(bun_ptr::RefCounted)]
-#[ref_count(destroy = Self::destroy)]
 pub struct RefData {
     pub(crate) buntest_weak: BunTestPtrWeak,
     pub(crate) phase: RefDataValue,
     pub(crate) ref_count: bun_ptr::RefCount<RefData>,
 }
-impl RefData {
-    /// `RefCounted` destructor — last ref dropped.
-    ///
-    /// # Safety
-    /// `this` must be the sole owner of a `RefPtr::new`-boxed allocation.
-    unsafe fn destroy(this: *mut RefData) {
+impl Drop for RefData {
+    fn drop(&mut self) {
         let _g = group_begin!();
-        // SAFETY: caller contract — refcount hit zero.
-        unsafe {
-            bun_core::scoped_log!(bun_test_group, "refData: {}", (*this).phase);
-            // buntest_weak.deinit() → Weak::drop
-            drop(bun_core::heap::take(this));
-        }
+        bun_core::scoped_log!(bun_test_group, "refData: {}", self.phase);
     }
+}
+impl RefData {
     pub(crate) fn has_one_ref(&self) -> bool {
         self.ref_count.has_one_ref()
     }

@@ -734,7 +734,7 @@ impl<'a> PackageInstaller<'a> {
     }
 
     pub(crate) fn link_remaining_bins(&mut self, log_level: Options::LogLevel) {
-        let mut depth_buf: lockfile::tree::DepthBuf = [0u32; lockfile::tree::MAX_DEPTH];
+        let mut depth_buf = lockfile::tree::depth_buf_uninit();
         let mut node_modules_rel_path_buf = PathBuffer::uninit();
         node_modules_rel_path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
 

@@ -163,9 +163,7 @@ impl Error {
 
     #[inline]
     pub fn get_errno(&self) -> E {
-        // Transmuting an out-of-range discriminant
-        // (e.g. TODO_ERRNO = u16::MAX-1) into a #[repr(u16)] enum is immediate UB. Use the checked
-        // discriminant constructor and fall back to SUCCESS for unmapped values.
+        // An errno the enum does not declare is still a failure: `EUNKNOWN`, not `SUCCESS`.
         #[cfg(windows)]
         {
             // `self.errno` already stores an E/SystemErrno *discriminant* (set via `E as Int`),
@@ -173,11 +171,11 @@ impl Error {
             // route through `SystemErrno::init`: on Windows its u16/i32 entry points are the
             // Win32/WSA/uv-error→errno *mapper*, not a discriminant validator, and would
             // corrupt the value (e.g. EPERM=1 → Win32 INVALID_FUNCTION → EISDIR).
-            E::try_from_raw(self.errno).unwrap_or(E::SUCCESS)
+            E::try_from_raw(self.errno).unwrap_or(E::EUNKNOWN)
         }
         #[cfg(not(windows))]
         {
-            SystemErrno::init(self.errno as i64).unwrap_or(SystemErrno::SUCCESS)
+            SystemErrno::init(i64::from(self.errno)).unwrap_or(SystemErrno::EUNKNOWN)
         }
     }
 

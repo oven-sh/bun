@@ -2811,9 +2811,6 @@ mod draft {
                 hStdInput: core::ptr::null_mut(),
                 hStdOutput: core::ptr::null_mut(),
                 hStdError: core::ptr::null_mut(),
-                // .hStdInput = bun.FD.stdin().native(),
-                // .hStdOutput = bun.FD.stdout().native(),
-                // .hStdError = bun.FD.stderr().native(),
             };
             let mut sysdir = [0u16; 300];
             // SAFETY: `sysdir` is valid for `sysdir.len()` u16 writes.
@@ -3391,7 +3388,7 @@ mod draft {
     ) -> crate::Result<Option<SourceAtAddress>> {
         let module = match debug_info.get_module_for_address(address) {
             Ok(m) => m,
-            Err(crate::Error::MissingDebugInfo | crate::Error::InvalidDebugInfo) => {
+            Err(crate::Error::MissingDebugInfo) => {
                 return Ok(None);
             }
             Err(e) => return Err(e),
@@ -3399,7 +3396,7 @@ mod draft {
 
         let symbol_info = match module.get_symbol_at_address(address) {
             Ok(s) => s,
-            Err(crate::Error::MissingDebugInfo | crate::Error::InvalidDebugInfo) => {
+            Err(crate::Error::MissingDebugInfo) => {
                 return Ok(None);
             }
             Err(e) => return Err(e),

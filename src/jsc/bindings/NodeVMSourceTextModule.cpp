@@ -124,8 +124,8 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
     }
 
     ptr->m_cachedExecutable.set(vm, ptr, executable);
-    LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
-    SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ProgramType, lexicallyScopedFeatures, JSParserScriptMode::Classic, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
+    LexicallyScopedFeatures lexicallyScopedFeatures = StrictModeLexicallyScopedFeature;
+    SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ModuleType, lexicallyScopedFeatures, JSParserScriptMode::Module, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
     Ref<CachedBytecode> cachedBytecode = CachedBytecode::create(std::span(cachedData), nullptr, {});
     UnlinkedModuleProgramCodeBlock* unlinkedBlock = decodeCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, key, WTF::move(cachedBytecode));
 
@@ -493,17 +493,11 @@ RefPtr<CachedBytecode> NodeVMSourceTextModule::bytecode(JSGlobalObject* globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!m_bytecode) {
-        if (!m_cachedExecutable) {
-            ModuleProgramExecutable* executable = ModuleProgramExecutable::tryCreate(globalObject, m_sourceCode);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-            if (!executable) {
-                throwSyntaxError(globalObject, scope, "Failed to create cached executable"_s);
-                return nullptr;
-            }
-            m_cachedExecutable.set(vm, this, executable);
+        m_bytecode = getBytecode(globalObject, SourceCodeType::ModuleType, m_sourceCode);
+        if (!m_bytecode) {
+            throwSyntaxError(globalObject, scope, "Failed to create cached data"_s);
+            return nullptr;
         }
-        m_bytecode = getBytecode(globalObject, m_cachedExecutable.get(), m_sourceCode);
-        RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
     return m_bytecode;

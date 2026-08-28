@@ -753,6 +753,68 @@ describe("bundler", () => {
     },
   });
 
+  // A compiled component that needs zero memo slots must not import the
+  // runtime. The import is registered from codegen next to the `_c(N)` call,
+  // so a body with nothing to memoize leaves `react/compiler-runtime` out.
+  // `.jsx`, not `.tsx`: the TypeScript path elides unused imports and would
+  // hide a spurious one.
+  itBundled("react-compiler/ZeroMemoSlotsNoRuntimeImport", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useState } from "react";
+        export function Counter() {
+          const [count] = useState(0);
+          const step = 1;
+          const twice = step + step;
+          return count + twice;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatchSnapshot();
+      // Constant propagation folded `twice` into the return, so the compiler
+      // did run on this component.
+      expect(out).toContain("return count + 2;");
+      // It found nothing to memoize: no cache, and so no runtime import.
+      expect(out).not.toMatch(/\b_c\(\d+\)/);
+      expect(out).not.toContain("react/compiler-runtime");
+    },
+  });
+
+  itBundled("react-compiler/ZeroMemoSlotsBeforeMemoizedComponent", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useState } from "react";
+        export function Counter() {
+          const [count] = useState(0);
+          const step = 1;
+          const twice = step + step;
+          return count + twice;
+        }
+        export function Hello({ name }) {
+          return <div>Hello {name}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatchSnapshot();
+      expect(out).toContain("return count + 2;");
+      // `Counter` compiled first with no slots. `Hello` memoizes its JSX, so
+      // its codegen registers the runtime import: present exactly once, and
+      // `_c` resolves to it.
+      expect(out).toMatch(/\b_c\(\d+\)/);
+      expect(out.match(/from "react\/compiler-runtime"/g)).toHaveLength(1);
+    },
+  });
+
   itBundled("react-compiler/SuppressionInsideTSNamespaceDoesNotLeak", {
     files: {
       "/entry.tsx": /* tsx */ `

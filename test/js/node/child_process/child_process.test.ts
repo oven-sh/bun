@@ -736,6 +736,34 @@ describe("execFileSync()", () => {
     });
     expect(result.trim()).toBe("data: hello world!");
   });
+
+  // chcp.com is a PE executable with a .com extension and no .exe sibling.
+  // child_process always passes an env object, so the lookup runs in Bun's
+  // which, not libuv's, and it has to accept the extension as spelled. A PE
+  // named by path runs whatever its extension, as CreateProcessW only reads
+  // the file header.
+  it.if(isWindows)("runs a .com executable by absolute path or bare name", () => {
+    const chcp = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "chcp.com");
+    expect(chcp).toContain("\\");
+    using dir = tempDir("child-process-com", {});
+    const custom = path.join(String(dir), "chcp-copy.bin");
+    fs.copyFileSync(chcp, custom);
+    const run = (file: string) => execFileSync(file, [], { encoding: "utf8" }).trim();
+    // The label is localized ("Active code page", "Aktive Codepage", ...).
+    // Only the number is stable.
+    const codePage = expect.stringMatching(/\d+$/);
+    expect({
+      absolute: run(chcp),
+      bare: run("chcp"),
+      spelled: run("chcp.com"),
+      custom_extension: run(custom),
+    }).toEqual({
+      absolute: codePage,
+      bare: codePage,
+      spelled: codePage,
+      custom_extension: codePage,
+    });
+  });
 });
 
 describe("execSync()", () => {

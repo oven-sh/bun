@@ -223,18 +223,6 @@ function windowsShimDestPath(cfg: Config): string {
   return resolve(cfg.cwd, "src", "install", "windows-shim", "bun_shim_impl.exe");
 }
 
-/**
- * Path to the `rustup` binary that owns `cfg.cargo`, or `undefined` if
- * `cfg.cargo` isn't a rustup proxy (a distro/Homebrew cargo, say).
- * `rustup target add` is only meaningful when rustup is the toolchain
- * manager — `rust_build_cross` requires it; everyone else gets `rust_build`.
- */
-function findRustup(cfg: Config): string | undefined {
-  if (cfg.cargo === undefined) return undefined;
-  const rustup = join(dirname(cfg.cargo), `rustup${cfg.host.exeSuffix}`);
-  return existsSync(rustup) ? rustup : undefined;
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // Paths
 // ───────────────────────────────────────────────────────────────────────────
@@ -291,47 +279,6 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
     restat: true,
   });
 
-  // Variant that ensures the pinned toolchain (and `rust-std` for
-  // `$rust_target` when it has a prebuilt one) is fully installed before
-  // building. CI agents pin the toolchain via `RUSTUP_TOOLCHAIN`, which
-  // bypasses `rust-toolchain.toml`'s `targets`/`components` install list, and
-  // rustup-proxy auto-install can leave a *partial* toolchain dir (rustc/cargo
-  // present, no `rust-std`, no `lib/rustlib/multirust-channel-manifest.toml`).
-  // That surfaces as either `error[E0463]: can't find crate for core` (cargo
-  // ran, no std) or `error: Missing manifest in toolchain '<channel>-<host>'`
-  // (rustup-proxy refused to even resolve cargo). `rustup toolchain install`
-  // repairs both, and is an offline ~70ms no-op when the toolchain is already
-  // complete. No `--force`: that means "update even if the manifest lacks a
-  // component", which re-fetches the channel manifest on every build.
-  //
-  // `$rust_target_arg` is `--target <triple>` for Tier 1/2 (also installs the
-  // prebuilt `rust-std-<triple>`), and empty for Tier 3 (no prebuilt; cargo
-  // gets `-Zbuild-std` instead — see emitRust). Both still get `rust-src`
-  // (needed for `-Zbuild-std`).
-  //
-  // Only registered when `cfg.rustToolchain` is pinned and `cfg.cargo` is a
-  // rustup proxy — otherwise there's no channel to install / no `rustup` to
-  // call, and toolchain management is the user's problem.
-  // `--console` on the rustup step too: it's sequential with cargo (both
-  // sides of `&&`) and the rule already takes the console pool, so there's
-  // no interleaving risk — and `--console` inherits stdio directly, which
-  // matters because stream.ts's pipe path can drop a fast-failing child's
-  // output (it `process.exit()`s on `close` before the async stdout writes
-  // drain). Without it, a failed `toolchain install` shows no error at all.
-  //
-  // No `--profile minimal`: the agent already has the default profile, and
-  // rustup applies `--profile` to the install spec, not just first-install —
-  // requesting a *narrower* profile on a reinstall is asking for
-  // trouble. We only care that `rust-src` and `rust-std-<triple>` exist on
-  // top of whatever profile is there.
-  //
-  // Windows: ninja spawns commands via CreateProcess directly (no shell), so
-  // `&&` would be passed as a literal argument to the first node.exe — rustup
-  // then sees the second half of the chain as extra argv and rejects
-  // `--experimental-strip-types`. Wrap in `cmd /c "..."` so cmd.exe handles
-  // the chain (cmd's quote-stripping rule removes only the outermost pair,
-  // preserving the embedded `"..."` around paths/env values). Same pattern as
-  // codegen.ts / bun.ts.
   // Windows .bin/ shim PE: cargo build → copy into the source tree for
   // `include_bytes!`. One rule does both; cargo's own output path and the
   // source-tree copy are undeclared side effects (see below for what $out is).
@@ -369,39 +316,6 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
     });
   }
 
-  const rustup = findRustup(cfg);
-  if (rustup !== undefined && cfg.rustToolchain !== undefined) {
-    const install =
-      `${stream} --console $env ${q(rustup)} -q toolchain install ${cfg.rustToolchain} --no-self-update --component rust-src $rust_target_arg`;
-    let chain: string;
-    if (hostWin) {
-      // Windows keeps the unconditional install (rare cross path; the
-      // toolchain is MSVC-hosted and the channel manifest is usually warm).
-      chain = `${install} && ${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} build $args`;
-    } else {
-      // Skip the reinstall when the needed component is already on disk:
-      // rustup re-resolves `nightly-<date>` against the network channel
-      // manifest on every install, so a flaky network turns an installed
-      // toolchain into "error: no release found". Tier 1/2 check the std dir
-      // (installed via --target); Tier 3 has no prebuilt std, so check the
-      // rust-src component it builds std from with -Zbuild-std.
-      const checkDir = rustTargetIsTier3(rustTarget(cfg)) ? "src/rust" : rustTarget(cfg);
-      // `\$\$` in the TS string = `$$` in build.ninja = a literal `$` to the
-      // shell (ninja requires `$$` for a literal `$`).
-      const check =
-        `[ -d "\$\${RUSTUP_HOME:-\$\$HOME/.rustup}/toolchains/${cfg.rustToolchain}-"*/lib/rustlib/${checkDir} ]`;
-      chain =
-        `if ! ${check}; then ${install}; fi && ` +
-        `${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} build $args`;
-    }
-
-    n.rule("rust_build_cross", {
-      command: hostWin ? `cmd /c "${chain}"` : chain,
-      description: "cargo bun_runtime → $label ($rust_target_arg)",
-      pool: "console",
-      restat: true,
-    });
-  }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1009,20 +923,9 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   }
 
   // ─── Emit build node ───
-  // When the toolchain is rustup-managed and pinned, route through
-  // `rust_build_cross`, which does `rustup toolchain install ...`
-  // before cargo. That makes the first build after a `rust-toolchain.toml`
-  // channel bump (and a partially auto-installed toolchain) self-heal —
-  // see the rule comment above. Tier 1/2 also pass `--target <triple>` so
-  // the prebuilt `rust-std` for the cross triple is installed; Tier 3 omits
-  // it (no prebuilt — cargo gets `-Zbuild-std` instead) and just gets
-  // `rust-src`. Local builds without rustup, or without a pinned channel,
-  // fall back to plain `rust_build` and trust whatever toolchain `cfg.cargo`
-  // resolves to.
-  const useCrossRule = findRustup(cfg) !== undefined && cfg.rustToolchain !== undefined;
   n.build({
     outputs: [lib],
-    rule: useCrossRule ? "rust_build_cross" : "rust_build",
+    rule: "rust_build",
     inputs: [],
     // Cargo binary itself + every .rs/Cargo.toml so editing one re-invokes
     // (cargo's own fingerprinting then decides what to actually recompile).
@@ -1035,7 +938,6 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     vars: {
       cwd: cfg.cwd,
       args: quoteArgs(args, hostWin),
-      ...(useCrossRule ? { rust_target_arg: tier3 ? "" : `--target ${triple}` } : {}),
       label: `${cfg.libPrefix}bun_runtime${cfg.libSuffix}`,
       env: Object.entries(env)
         .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)

@@ -502,9 +502,14 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     // cross-chunk import specifiers. During printing, cross-chunk imports use
     // unique_key placeholders as paths. Now that final paths are known, replace
     // those placeholders with the resolved paths and serialize.
-    let mut module_info_strings =
-        bun_js_printer::analyze_transpiled_module::ModuleInfoStringTable::default();
+    let external_string_table = (c.options.generate_bytecode_cache
+        && c.options.compile_mode.is_executable())
+    .then(crate::bundle_v2::dispatch::EncoderStringTableHandle::new);
+    let mut module_info_strings = analyze_transpiled_module::ModuleInfoSlotTableBuilder::default();
     if c.options.generates_module_info() {
+        let external_string_table = external_string_table
+            .as_ref()
+            .expect("module_info is only generated for --compile --bytecode");
         // Build map from unique_key -> final resolved path
         // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
         let b: &mut BundleV2 =
@@ -578,7 +583,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 js.module_info = None;
                 continue;
             }
-            table_ids.push(module_info_strings.intern_all(mi));
+            table_ids.push(module_info_strings.intern_all(mi, |s| external_string_table.slot(s)));
         }
         let mut table_ids = table_ids.iter();
         for chunk in chunks.iter_mut() {
@@ -617,9 +622,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     let resolver = c.resolver.expect("resolver set in load()");
     let root_path: &[u8] = &resolver.opts.output_dir;
     let is_standalone = c.options.compile_mode.is_standalone_html();
-    let external_string_table = (c.options.generate_bytecode_cache
-        && c.options.compile_mode.is_executable())
-    .then(crate::bundle_v2::dispatch::EncoderStringTableHandle::new);
     let more_than_one_output = !is_standalone
         && (c.parse_graph().additional_output_files.len() > 0
             || c.options.generate_bytecode_cache
@@ -1358,10 +1360,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         );
     }
     if c.options.generates_module_info() {
-        let mut bytes = Vec::new();
-        module_info_strings
-            .serialize(&mut bytes)
-            .expect("Vec<u8> write");
+        let bytes = module_info_strings.serialize();
         debug!(
             "module_info string table: {} strings, {} bytes",
             module_info_strings.count(),
@@ -1408,15 +1407,32 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 }
 
 /// `--compile --bytecode`: the executable also carries ahead-of-time bytecode for the internal modules (node:fs, …) the
-/// bundle imports, so their first `require` decodes instead of parsing. One `OutputKind::BuiltinBytecode` per module;
-/// StandaloneModuleGraph::to_bytes lays them out and InternalModuleRegistry picks them up by id.
+/// bundle imports and everything those require while loading, so their first `require` decodes instead of parsing. One
+/// `OutputKind::BuiltinBytecode` per module; StandaloneModuleGraph::to_bytes lays them out and InternalModuleRegistry
+/// picks them up by id. The modules, their ids and (when compiling for another platform) their sources come from the
+/// builtins section of the executable the bundle is going into.
 fn append_internal_module_bytecode(
     c: &LinkerContext,
     output_files: &mut Vec<options::OutputFile>,
     external_strings: Option<core::ptr::NonNull<crate::bundle_v2::dispatch::EncoderStringTable>>,
 ) {
+    use crate::bundle_v2::dispatch;
+    let target_section = c.options.target_builtins.as_deref();
+    let builtins = match bun_exe_format::builtins::Builtins::parse(
+        target_section.unwrap_or_else(|| dispatch::host_builtins()),
+    ) {
+        Ok(b) => b,
+        Err(e) => {
+            debug!(
+                "Internal module bytecode: builtins section unreadable ({})",
+                <&'static str>::from(&e)
+            );
+            return;
+        }
+    };
+
     let import_records = c.graph.ast.items_import_records();
-    let mut specifiers: Vec<&[u8]> = Vec::new();
+    let mut wanted: Vec<u32> = Vec::new();
     for source_index in &c.graph.reachable_files {
         let Some(records) = import_records.get(source_index.get() as usize) else {
             continue;
@@ -1426,27 +1442,59 @@ fn append_internal_module_bytecode(
                 continue;
             }
             let text: &[u8] = record.path.text;
-            let is_builtin = record.tag == bun_ast::ImportRecordTag::Builtin
-                || text.starts_with(b"node:")
-                || text.starts_with(b"bun:")
-                || bun_resolve_builtins::HardcodedModule::Alias::has(
-                    text,
-                    crate::options::Target::Bun,
-                    Default::default(),
-                );
-            if is_builtin && !specifiers.contains(&text) {
-                specifiers.push(text);
+            let alias = bun_resolve_builtins::HardcodedModule::Alias::get(
+                text,
+                crate::options::Target::Bun,
+                Default::default(),
+            );
+            let canonical: &[u8] = match &alias {
+                // The one aliased npm specifier whose registry name is not the specifier (bundle-modules.ts).
+                Some(alias) if alias.path.as_bytes() == b"@vercel/fetch" => b"vercel_fetch",
+                Some(alias) => alias.path.as_bytes(),
+                None if record.tag == bun_ast::ImportRecordTag::Builtin
+                    || strings::has_prefix(text, b"node:")
+                    || strings::has_prefix(text, b"bun:") =>
+                {
+                    text
+                }
+                None => continue,
+            };
+            if let Some(id) = builtins.find(canonical) {
+                if !wanted.contains(&id) {
+                    wanted.push(id);
+                }
             }
         }
     }
-    if specifiers.is_empty() {
-        return;
+    let mut i = 0;
+    while i < wanted.len() {
+        for dep in builtins.dependencies(wanted[i]) {
+            if !wanted.contains(&dep) {
+                wanted.push(dep);
+            }
+        }
+        i += 1;
     }
-    for (id, bytecode) in crate::bundle_v2::dispatch::generate_internal_module_bytecode(
-        &specifiers,
-        c.options.bytecode_depth,
-        external_strings,
-    ) {
+
+    for id in wanted {
+        let bytecode = match target_section {
+            Some(_) => builtins.module(id).and_then(|m| {
+                dispatch::generate_internal_module_bytecode_from_source(
+                    &m,
+                    builtins.source_stamp,
+                    c.options.bytecode_depth,
+                    external_strings,
+                )
+            }),
+            None => dispatch::generate_internal_module_bytecode(
+                id,
+                c.options.bytecode_depth,
+                external_strings,
+            ),
+        };
+        let Some(bytecode) = bytecode else {
+            continue;
+        };
         debug!("Internal module bytecode {}: {} bytes", id, bytecode.len());
         output_files.push(options::OutputFile::init(options::OutputFileInit {
             output_path: id.to_string().into_bytes().into_boxed_slice(),

@@ -90,6 +90,53 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
   }, 30_000);
 
+  // Ctrl-D is EOF only on a POSIX tty; the Windows console has no equivalent
+  // key that ends a cooked-mode read.
+  test.skipIf(isWindows)("bun init exits quietly on Ctrl-D at a text prompt", async () => {
+    await using temp = tempDir("bun-init-ctrl-d", {});
+
+    const decoder = new TextDecoder();
+    let output = "";
+    const menu = Promise.withResolvers<void>();
+    const namePrompt = Promise.withResolvers<void>();
+    await using terminal = new Bun.Terminal({
+      cols: 80,
+      rows: 24,
+      data(_, chunk: Uint8Array) {
+        output += decoder.decode(chunk, { stream: true });
+        if (output.includes("Select a project template")) menu.resolve();
+        if (output.includes("package name")) namePrompt.resolve();
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init"],
+      cwd: temp,
+      env: initEnv,
+      terminal,
+    });
+    // Fail with the child's output if it exits before a prompt we wait for.
+    const exitedEarly = proc.exited.then(code => {
+      throw new Error(`bun init exited before the prompt (code ${code}):\n${output}`);
+    });
+    exitedEarly.catch(() => {});
+
+    await Promise.race([menu.promise, exitedEarly]);
+    // "3" picks the third entry (Library) and submits it. Library is the
+    // template that asks text questions.
+    terminal.write("3");
+    await Promise.race([namePrompt.promise, exitedEarly]);
+    // The menu left raw mode before the text prompt printed, so Ctrl-D on the
+    // empty line is EOF.
+    terminal.write("\x04");
+
+    const exitCode = await proc.exited;
+    expect(output).not.toContain("An internal error occurred");
+    expect(output).not.toContain("EndOfStream");
+    expect(exitCode).toBe(0);
+    expect(fs.existsSync(path.join(temp, "package.json"))).toBe(false);
+  });
+
   test("bun init in folder", async () => {
     await using temp = tempDir("bun-init-in-folder", {
       "mydir": {

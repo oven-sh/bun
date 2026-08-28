@@ -1,6 +1,6 @@
 import type { Server, ServerWebSocket, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
-import { heapStats } from "bun:jsc";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, forceGuardMalloc, isWindows, tempDir } from "harness";
 import net, { isIP } from "node:net";
@@ -942,25 +942,15 @@ describe("ServerWebSocket", () => {
           },
         },
       });
-      // Stays alive until the end, so it is part of both measurements.
       const payload = new Uint8Array(2 * 1024 * 1024);
-      let before = 0;
       const client = new WebSocket(`ws://${server.hostname}:${server.port}`);
       client.onerror = () => reject(new Error("client error"));
-      client.onopen = () => {
-        // Both sockets exist at this point, so only the transfer separates the two measurements.
-        Bun.gc(true);
-        before = heapStats().extraMemorySize;
-        client.send(payload);
-      };
+      client.onopen = () => client.send(payload);
       try {
         const blob = await promise;
-        Bun.gc(true);
-        const reported = heapStats().extraMemorySize - before;
         expect(blob.size).toBe(payload.byteLength);
-        // Without the report this is close to 0. Memory that earlier tests release in the
-        // meantime lowers the number a little, so half the payload is the bound.
-        expect(reported).toBeGreaterThanOrEqual(payload.byteLength / 2);
+        // The size the Blob's visitChildren reports; close to 0 when the bytes are not reported.
+        expect(estimateShallowMemoryUsageOf(blob)).toBeGreaterThanOrEqual(payload.byteLength);
       } finally {
         client.close();
       }

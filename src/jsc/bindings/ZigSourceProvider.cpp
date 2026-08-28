@@ -226,10 +226,22 @@ extern "C" void Bun__DecoderStringTable__install(JSC::VM* vm, const uint8_t* byt
     static_cast<WebCore::JSVMClientData*>(vm->clientData)->setDecoderStringTable(std::span<const uint8_t>(bytes, len));
 }
 
-extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, uint32_t depth, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, JSC::EncoderStringTable* externalStrings)
+extern "C" uint32_t Bun__EncoderStringTable__slotForLatin1(JSC::EncoderStringTable* table, const Latin1Character* chars, size_t length)
 {
-    std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
-    JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
+    std::span span { chars, length };
+    // slotFor keeps a string only when it takes an ordinal (4+ characters); shorter ones are packed into the slot.
+    Ref<StringImpl> string = length <= 3 ? StringImpl::createWithoutCopying(span) : StringImpl::create(span);
+    return table->slotFor(string.get());
+}
+
+extern "C" uint32_t Bun__EncoderStringTable__slotForUTF16(JSC::EncoderStringTable* table, const char16_t* chars, size_t length)
+{
+    return table->slotFor(StringImpl::create8BitIfPossible(std::span { chars, length }).get());
+}
+
+extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sourceProviderURL, const BunString* inputSourceCode, uint32_t depth, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, JSC::EncoderStringTable* externalStrings)
+{
+    JSC::SourceCode sourceCode = JSC::makeSource(inputSourceCode->toWTFString(), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
 
     JSC::VM& vm = vmForBytecodeCache();
 
@@ -247,7 +259,7 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sour
 
     auto key = JSC::sourceCodeKeyForSerializedModule(vm, sourceCode);
 
-    dataLogLnIf(JSC::Options::verboseDiskCache(), "[Bytecode Build] generateModule url=", sourceProviderURL->toWTFString(), " origin=", sourceCode.provider()->sourceOrigin().url().string(), " sourceSize=", inputSourceCodeSize, " keyHash=", key.hash());
+    dataLogLnIf(JSC::Options::verboseDiskCache(), "[Bytecode Build] generateModule url=", sourceProviderURL->toWTFString(), " origin=", sourceCode.provider()->sourceOrigin().url().string(), " sourceSize=", sourceCode.length(), " keyHash=", key.hash());
 
     // A --compile payload is a section of the executable: no per-record checksums, no patchable records.
     auto checksums = externalStrings ? JSC::BytecodeCacheChecksums::No : JSC::BytecodeCacheChecksums::Yes;
@@ -263,11 +275,9 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sour
     return true;
 }
 
-extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(const BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, uint32_t depth, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, JSC::EncoderStringTable* externalStrings)
+extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(const BunString* sourceProviderURL, const BunString* inputSourceCode, uint32_t depth, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, JSC::EncoderStringTable* externalStrings)
 {
-    std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
-
-    JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
+    JSC::SourceCode sourceCode = JSC::makeSource(inputSourceCode->toWTFString(), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
     JSC::VM& vm = vmForBytecodeCache();
 
     JSC::JSLockHolder locker(vm);
@@ -284,7 +294,7 @@ extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(const BunStr
 
     auto key = JSC::sourceCodeKeyForSerializedProgram(vm, sourceCode);
 
-    dataLogLnIf(JSC::Options::verboseDiskCache(), "[Bytecode Build] generateCJS url=", sourceProviderURL->toWTFString(), " origin=", sourceCode.provider()->sourceOrigin().url().string(), " sourceSize=", inputSourceCodeSize, " keyHash=", key.hash());
+    dataLogLnIf(JSC::Options::verboseDiskCache(), "[Bytecode Build] generateCJS url=", sourceProviderURL->toWTFString(), " origin=", sourceCode.provider()->sourceOrigin().url().string(), " sourceSize=", sourceCode.length(), " keyHash=", key.hash());
 
     // A --compile payload is a section of the executable: no per-record checksums, no patchable records.
     auto checksums = externalStrings ? JSC::BytecodeCacheChecksums::No : JSC::BytecodeCacheChecksums::Yes;
@@ -318,6 +328,11 @@ extern "C" BunString ZigSourceProvider__getSourceSlice(SourceProvider* provider)
 
 // What StringImpl::hash() returns for an 8-bit string with these bytes; `bun build --compile` records it per module.
 extern "C" uint32_t Bun__WTFStringHashLatin1(const Latin1Character* characters, size_t length)
+{
+    return StringHasher::computeHashAndMaskTop8Bits(std::span { characters, length });
+}
+
+extern "C" uint32_t Bun__WTFStringHashUTF16(const char16_t* characters, size_t length)
 {
     return StringHasher::computeHashAndMaskTop8Bits(std::span { characters, length });
 }

@@ -91,13 +91,6 @@ impl ExecCommand {
             }
         };
 
-        // if (code > 0) {
-        //     if (code != 2 and !silent) {
-        //         Output.prettyErrorln("<r><red>error<r><d>:<r> script <b>\"{s}\"<r> exited with code {d}<r>", .{ name, code });
-        //         Output.flush();
-        //     }
-
         Global::exit(u32::from(code));
-        // }
     }
 }

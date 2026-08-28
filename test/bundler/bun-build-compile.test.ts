@@ -103,9 +103,63 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
     60_000,
   );
 
-  test.each([false, true])(
+  // --bytecode into an executable for another os/arch/libc embeds bytecode written by this platform's JavaScriptCore for
+  // another's; such executables say so in crash reports (Features: cross_compiled_bytecode). The "other platform" build
+  // here is the same OS with the other CPU, and reuses this bun as the target executable, so it still runs here.
+  const otherPlatform = `bun-${isLinux ? "linux" : isMacOS ? "darwin" : "windows"}-${isArm64 ? "x64" : "aarch64"}${isMusl ? "-musl" : ""}`;
+  test.each([
+    ["this platform", undefined as string | undefined, false],
+    [otherPlatform, otherPlatform, true],
+  ])("--compile --bytecode for %s", async (_label, target, expected) => {
+    using dir = tempDir("build-compile-cross-bytecode", {
+      "app.js": `require("bun:internal-for-testing").crash_handler.panic();`,
+    });
+    const outfile = join(dir + "", isWindows ? "app.exe" : "app");
+    await using build = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--bytecode",
+        ...(target ? [`--target=${target}`, `--compile-executable-path=${process.execPath}`] : []),
+        join(dir + "", "app.js"),
+        "--outfile",
+        outfile,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).not.toContain("error");
+    expect(buildExit).toBe(0);
+    await using proc = Bun.spawn({
+      cmd: [outfile],
+      env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // (stdout is not asserted: ASAN builds print the symbolized crash trace there.)
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("panic");
+    expect(stderr.includes("cross_compiled_bytecode")).toBe(expected);
+    expect(exitCode).not.toBe(0);
+  });
+
+  // "cross": the target is not the host, so the internal modules' sources, ids and stamp are read out of the target
+  // executable's builtins section (here: this same bun under a different version, so the result still runs locally).
+  test.each([false, true, "cross" as const])(
     "--bytecode=%p: internal modules the app imports come from embedded bytecode",
-    async bytecode => {
+    async mode => {
+      const bytecode = mode !== false;
+      const os = isMacOS ? "darwin" : isLinux ? "linux" : isWindows ? "windows" : "unknown";
+      const cross =
+        mode === "cross"
+          ? {
+              target: `bun-${os}-${isArm64 ? "aarch64" : "x64"}${isMusl ? "-musl" : ""}-v1.0.0` as any,
+              executablePath: process.execPath,
+            }
+          : {};
       using dir = tempDir("build-compile-builtin-bytecode", {
         "app.js": `import { join } from "node:path";
 import http from "node:http";
@@ -117,7 +171,7 @@ server.close();`,
       const outfile = join(dir + "", "app");
       const result = await Bun.build({
         entrypoints: [join(dir + "", "app.js")],
-        compile: { outfile },
+        compile: { outfile, ...cross },
         bytecode,
         format: "esm",
         target: "bun",
@@ -136,6 +190,8 @@ server.close();`,
       }
       expect(exitCode).toBe(0);
     },
+    // A --compile build plus (for "cross") bytecode for ~45 internal modules: ~10s under debug+ASAN.
+    60_000,
   );
 
   test("compile with invalid target fails gracefully", async () => {
@@ -174,6 +230,49 @@ server.close();`,
       expect(await Bun.file(result.outputs[0].path).exists()).toBe(true);
     },
   );
+
+  test("compile without outfile writes the executable to the working directory", async () => {
+    using dir = tempDir("build-compile-default-outfile", {
+      "proj/sub/myapp.ts": `console.log("default outfile");`,
+      "cwd/build.ts": `
+        const result = await Bun.build({
+          entrypoints: [process.argv[2]],
+          compile: true,
+        });
+        console.log(JSON.stringify(result.outputs.map(output => output.path)));
+      `,
+    });
+    const cwd = join(String(dir), "cwd");
+    const entrypoint = join(String(dir), "proj", "sub", "myapp.ts");
+    const name = isWindows ? "myapp.exe" : "myapp";
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.ts", entrypoint],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // The name comes from the entrypoint. The directory is the working directory, like `bun build --compile`.
+    expect(JSON.parse(stdout)).toEqual([join(cwd, name)]);
+    expect(exitCode).toBe(0);
+
+    expect(await Bun.file(join(cwd, name)).exists()).toBe(true);
+    expect(await Bun.file(join(String(dir), "proj", "sub", name)).exists()).toBe(false);
+
+    await using app = Bun.spawn({
+      cmd: [join(cwd, name)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [appStdout, appStderr, appExitCode] = await Promise.all([app.stdout.text(), app.stderr.text(), app.exited]);
+    expect(appStdout).toBe("default outfile\n");
+    expect(appStderr).toBe("");
+    expect(appExitCode).toBe(0);
+  });
 
   test("compile with embedded resources uses correct module prefix", async () => {
     using dir = tempDir("build-compile-embedded-resources", {

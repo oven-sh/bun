@@ -2149,3 +2149,50 @@ describe("workspace integration", () => {
     expect(r.exitCode).toBe(0);
   });
 });
+
+// ─── BUNFIG [run] SECTION ─────────────────────────────────────────────────────
+
+// Serial: debug builds recreate the shared `node` shim dir on every `--bun`
+// run, so concurrent `--bun` processes can race each other.
+describe("auto-discovered bunfig.toml [run] section", () => {
+  // With `run.bun = true` bun puts a `node` shim on PATH, so `typeof Bun`
+  // tells which binary ran the script.
+  const typeofBun = `node -e "console.log('Bun is ' + typeof Bun)"`;
+
+  // Script names that are not also `bun` subcommand aliases (`bun a` is `bun add`).
+  test.each([
+    ["bun run --parallel", ["run", "--parallel", "one", "two"]],
+    ["bun --parallel", ["--parallel", "one", "two"]],
+    ["bun run --sequential", ["run", "--sequential", "one", "two"]],
+  ])("%s applies [run] bun = true", async (_, args) => {
+    using dir = tempDir("mr-bunfig-run-bun", {
+      "bunfig.toml": "[run]\nbun = true\n",
+      "package.json": JSON.stringify({ scripts: { one: typeofBun, two: typeofBun } }),
+    });
+    const r = await runMulti(args, String(dir));
+    expectPrefixed(r.stdout, "one", "Bun is object");
+    expectPrefixed(r.stdout, "two", "Bun is object");
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("--bun on the CLI wins over [run] bun = false", async () => {
+    using dir = tempDir("mr-bunfig-cli-bun", {
+      "bunfig.toml": "[run]\nbun = false\n",
+      "package.json": JSON.stringify({ scripts: { one: typeofBun } }),
+    });
+    const r = await runMulti(["run", "--bun", "--parallel", "one"], String(dir));
+    expectPrefixed(r.stdout, "one", "Bun is object");
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("a malformed bunfig.toml fails the run", async () => {
+    using dir = tempDir("mr-bunfig-malformed", {
+      "bunfig.toml": '[run]\nbun = "yes"\n',
+      "package.json": JSON.stringify({ scripts: { one: typeofBun } }),
+    });
+    const r = await runMulti(["run", "--parallel", "one"], String(dir));
+    expect(r.stderr).toContain("Expected boolean");
+    expect(r.stdout).not.toContain("Bun is");
+    expect(r.exitCode).toBe(1);
+  });
+});

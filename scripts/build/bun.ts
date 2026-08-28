@@ -345,7 +345,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // (`bun build --compile` icon injection) is the only consumer; everything
   // else in Bun works without it. Local-only build convenience; never set
   // in CI / release builds.
-  if (cfg.windows && !process.env.DSH_SKIP_RESCLE) {
+  if (cfg.windows && process.env.DSH_SKIP_RESCLE !== "1") {
     // rescle.h does `#define UNICODE` before including ATL; with PCH the
     // headers are already past in MBCS mode and ATL's TCHAR mismatches.
     const rescle = resolve(cfg.cwd, "src/jsc/bindings/windows/rescle.cpp");

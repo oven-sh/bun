@@ -742,13 +742,43 @@ BOOL CALLBACK ResourceUpdater::OnEnumResourceLanguage(HANDLE hModule, LPCWSTR lp
         }
         case 6: {
             // case reinterpret_cast<ptrdiff_t>(RT_STRING): {
+            // A string-table bucket holds 16 length-prefixed strings.
+            // LoadStringW cannot take wIDLanguage (it follows the thread's
+            // UI language) and truncates at its 256-char buffer, so read the
+            // raw bucket for the enumerated language instead — each variant
+            // keeps its own text and strings longer than 255 chars survive.
+            HRSRC hResInfo = FindResourceExW(instance->module_, lpszType, lpszName, wIDLanguage);
+            if (hResInfo == nullptr) {
+                return false;
+            }
+            DWORD cbResource = SizeofResource(instance->module_, hResInfo);
+            HGLOBAL hResData = LoadResource(instance->module_, hResInfo);
+            if (hResData == nullptr) {
+                return false;
+            }
+            const BYTE* pResource = (const BYTE*)LockResource(hResData);
+            const BYTE* pos = pResource;
+            const BYTE* end = pResource + cbResource;
+
             UINT id = reinterpret_cast<ptrdiff_t>(lpszName) - 1;
             auto& vector = instance->stringTableMap_[wIDLanguage][id];
             for (size_t k = 0; k < 16; k++) {
-                wchar_t buf[256];
-                int len = ::LoadStringW(instance->module_, id * 16 + k, buf, ARRAYSIZE(buf));
-                vector.push_back(std::wstring(buf, len));
+                if (pos + sizeof(WORD) > end) {
+                    break;
+                }
+                WORD len = 0;
+                memcpy(&len, pos, sizeof(len));
+                pos += sizeof(WORD);
+                size_t bytes = len * sizeof(WCHAR);
+                if (pos + bytes > end) {
+                    break;
+                }
+                vector.push_back(std::wstring(reinterpret_cast<const wchar_t*>(pos), len));
+                pos += bytes;
             }
+
+            UnlockResource(hResData);
+            FreeResource(hResData);
             break;
         }
         // case reinterpret_cast<ptrdiff_t>(RT_ICON): {

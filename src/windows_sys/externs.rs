@@ -1928,7 +1928,7 @@ pub const COINIT_DISABLE_OLE1DDE: DWORD = 0x4;
 /// to proceed in but must NOT be balanced with `CoUninitialize`.
 pub const S_OK: HRESULT = 0;
 pub const S_FALSE: HRESULT = 1;
-pub const RPC_E_CHANGED_MODE: HRESULT = -2_147_418_250; // 0x8001_0106
+pub const RPC_E_CHANGED_MODE: HRESULT = 0x8001_0106_u32 as HRESULT; // -2147417850
 
 #[cfg_attr(windows, link(name = "ole32"))]
 unsafe extern "system" {

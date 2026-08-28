@@ -483,7 +483,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // `rescle__setWindowsMetadata` then has no definition behind it, so the same
   // flag compiles a Rust stub returning -14 into src/sys/windows/mod.rs.
   rustflags.push("--check-cfg=cfg(dsh_skip_rescle)");
-  if (cfg.windows && process.env.DSH_SKIP_RESCLE) {
+  if (cfg.windows && process.env.DSH_SKIP_RESCLE === "1") {
     rustflags.push("--cfg=dsh_skip_rescle");
   }
   // Drop `#[track_caller]` source-location capture in release. Every

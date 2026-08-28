@@ -218,6 +218,49 @@ server.close();`,
     },
   );
 
+  test("compile without outfile writes the executable to the working directory", async () => {
+    using dir = tempDir("build-compile-default-outfile", {
+      "proj/sub/myapp.ts": `console.log("default outfile");`,
+      "cwd/build.ts": `
+        const result = await Bun.build({
+          entrypoints: [process.argv[2]],
+          compile: true,
+        });
+        console.log(JSON.stringify(result.outputs.map(output => output.path)));
+      `,
+    });
+    const cwd = join(String(dir), "cwd");
+    const entrypoint = join(String(dir), "proj", "sub", "myapp.ts");
+    const name = isWindows ? "myapp.exe" : "myapp";
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.ts", entrypoint],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // The name comes from the entrypoint. The directory is the working directory, like `bun build --compile`.
+    expect(JSON.parse(stdout)).toEqual([join(cwd, name)]);
+    expect(exitCode).toBe(0);
+
+    expect(await Bun.file(join(cwd, name)).exists()).toBe(true);
+    expect(await Bun.file(join(String(dir), "proj", "sub", name)).exists()).toBe(false);
+
+    await using app = Bun.spawn({
+      cmd: [join(cwd, name)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [appStdout, appStderr, appExitCode] = await Promise.all([app.stdout.text(), app.stderr.text(), app.exited]);
+    expect(appStdout).toBe("default outfile\n");
+    expect(appStderr).toBe("");
+    expect(appExitCode).toBe(0);
+  });
+
   test("compile with embedded resources uses correct module prefix", async () => {
     using dir = tempDir("build-compile-embedded-resources", {
       "app.js": `

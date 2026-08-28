@@ -202,16 +202,25 @@ describe.concurrent("bun test --isolate", () => {
       "a.test.ts": `
         import { test, expect } from "bun:test";
         import { a, ab, abc, abcd, café, слово, é, ф } from "./names";
-        test("first", () => { expect([a, ab, abc, abcd, café, слово, é, ф].join()).toBe("1,2,3,4,5,6,1,2"); });
+        test("first", () => {
+          (globalThis as any).__a_ran = true;
+          expect([a, ab, abc, abcd, café, слово, é, ф].join()).toBe("1,2,3,4,5,6,1,2");
+        });
       `,
       "b.test.ts": `
         import { test, expect } from "bun:test";
+        import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
         import { a, ab, abc, abcd, café, слово, é, ф } from "./names";
-        test("from cache", () => { expect([a, ab, abc, abcd, café, слово, é, ф].join()).toBe("1,2,3,4,5,6,1,2"); });
+        test("from cache", () => {
+          expect((globalThis as any).__a_ran).toBeUndefined();
+          expect(isolatedModuleCacheSourceType(require.resolve("./names"))).toBe("BunTranspiledModule");
+          expect([a, ab, abc, abcd, café, слово, é, ф].join()).toBe("1,2,3,4,5,6,1,2");
+        });
       `,
     });
     const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], ["./a.test.ts", "./b.test.ts"]);
     expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
     expect(exitCode).toBe(0);
   });
 

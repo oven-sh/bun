@@ -1,7 +1,4 @@
-//! Runs the `git` commands of the install's git tasks as child processes on
-//! the install thread's event loop, like `lifecycle_script_runner`. One
-//! [`GitSubprocess`] drives one task and pushes it onto `resolve_tasks` when
-//! its last command has exited.
+//! Runs the install's `git` commands as child processes on the install thread's event loop.
 
 use core::ffi::{CStr, c_void};
 use core::ptr::NonNull;
@@ -32,8 +29,7 @@ impl PackageManager {
         self.git_tasks.push_back(task);
     }
 
-    /// A finished task does not start the next one: `run_tasks` consumes it,
-    /// then `schedule_tasks` lands here.
+    /// Called from `schedule_tasks`; a finished task does not start the next one itself.
     pub(crate) fn start_git_tasks(&mut self) {
         let max = u32::from(bun_core::get_thread_count());
         while self.running_git_tasks < max {
@@ -197,8 +193,7 @@ impl GitSubprocess {
 
     // ── clone ───────────────────────────────────────────────────────────────
 
-    /// # Safety
-    /// `this` is live and not yet running a child.
+    /// SAFETY: `this` is live and not yet running a child.
     unsafe fn begin_clone(this: *mut Self) -> Result<(), Error> {
         // SAFETY: caller contract.
         unsafe {
@@ -262,8 +257,7 @@ impl GitSubprocess {
         }
     }
 
-    /// # Safety
-    /// `this` is live and not running a child; `urls` is not empty.
+    /// SAFETY: `this` is live and not running a child; `urls` is not empty.
     unsafe fn spawn_clone(this: *mut Self) -> Result<(), Error> {
         // SAFETY: caller contract.
         unsafe {
@@ -290,8 +284,7 @@ impl GitSubprocess {
 
     // ── find commit ─────────────────────────────────────────────────────────
 
-    /// # Safety
-    /// `this` is live and not yet running a child.
+    /// SAFETY: `this` is live and not yet running a child.
     unsafe fn begin_commit(this: *mut Self) -> Result<(), Error> {
         // SAFETY: caller contract.
         unsafe {
@@ -326,8 +319,7 @@ impl GitSubprocess {
 
     // ── checkout ────────────────────────────────────────────────────────────
 
-    /// # Safety
-    /// `this` is live and not yet running a child.
+    /// SAFETY: `this` is live and not yet running a child.
     unsafe fn begin_checkout(this: *mut Self) -> Result<(), Error> {
         // SAFETY: caller contract.
         unsafe {
@@ -396,8 +388,7 @@ impl GitSubprocess {
             .to_vec()
     }
 
-    /// # Safety
-    /// `this` is live; `staging` is set.
+    /// SAFETY: `this` is live; `staging` is set.
     unsafe fn finish_checkout(this: *mut Self) -> Result<ExtractData, Error> {
         // SAFETY: caller contract.
         unsafe {
@@ -459,10 +450,7 @@ impl GitSubprocess {
         }
     }
 
-    /// Closes `package_dir`.
-    ///
-    /// # Safety
-    /// `this` is live.
+    /// Closes `package_dir`. SAFETY: `this` is live.
     unsafe fn read_package_json(
         this: *mut Self,
         package_dir: bun_sys::Dir,
@@ -541,9 +529,8 @@ impl GitSubprocess {
 
     /// Spawns `git <args>` with stdout and stderr captured.
     ///
-    /// # Safety
-    /// `this` is live, allocation-rooted, and not running a child. On `Ok`
-    /// the child may already have exited and freed `this`.
+    /// SAFETY: `this` is live, allocation-rooted, and not running a child. On
+    /// `Ok` the child may already have exited and freed `this`.
     unsafe fn spawn(this: *mut Self, args: &[&[u8]]) -> Result<(), Error> {
         // SAFETY: caller contract; no whole-struct borrow spans a re-entrant call.
         unsafe {
@@ -700,8 +687,7 @@ impl GitSubprocess {
         let _ = fd;
     }
 
-    /// # Safety
-    /// `this` is live; the child has exited and both readers are done.
+    /// SAFETY: `this` is live; the child has exited and both readers are done.
     unsafe fn reset_polls(this: *mut Self) {
         // SAFETY: caller contract.
         unsafe {
@@ -714,8 +700,7 @@ impl GitSubprocess {
         }
     }
 
-    /// # Safety
-    /// `this` is the live runner the process was registered with. May free `this`.
+    /// SAFETY: `this` is the live runner the process was registered with. May free `this`.
     unsafe fn on_process_exit(this: *mut Self, process: *mut Process, _: Status, _: &Rusage) {
         // SAFETY: caller contract.
         unsafe {
@@ -728,8 +713,7 @@ impl GitSubprocess {
         }
     }
 
-    /// # Safety
-    /// `this` is the live runner the reader was registered with. May free `this`.
+    /// SAFETY: `this` is the live runner the reader was registered with. May free `this`.
     unsafe fn on_reader_done(this: *mut Self) {
         // SAFETY: caller contract.
         unsafe {
@@ -739,8 +723,7 @@ impl GitSubprocess {
         }
     }
 
-    /// # Safety
-    /// `this` is the live runner the reader was registered with. May free `this`.
+    /// SAFETY: `this` is the live runner the reader was registered with. May free `this`.
     unsafe fn on_reader_error(this: *mut Self, err: bun_sys::Error) {
         // SAFETY: caller contract.
         unsafe {
@@ -753,8 +736,7 @@ impl GitSubprocess {
         }
     }
 
-    /// # Safety
-    /// `this` is live. May free `this`.
+    /// SAFETY: `this` is live. May free `this`.
     unsafe fn maybe_finished(this: *mut Self) {
         // SAFETY: caller contract.
         unsafe {
@@ -771,17 +753,14 @@ impl GitSubprocess {
         }
     }
 
-    /// # Safety
-    /// `this` is live; the child has exited and its output is collected. May
-    /// free `this`.
+    /// SAFETY: `this` is live; the child has exited and its output is collected.
+    /// May free `this`.
     unsafe fn on_command_exit(this: *mut Self, status: &Status, stdout: &[u8], stderr: &[u8]) {
         // SAFETY: caller contract.
         unsafe {
             let ok = matches!(status, Status::Exited(exit) if exit.code == 0)
                 && (*this).read_error.is_none();
-            // remote: The page could not be found <-- for non git
-            // remote: Repository not found. <-- for git
-            // remote: fatal repository '<url>' does not exist <-- for git
+            // "remote: Repository not found." / "fatal: repository '<url>' does not exist"
             let not_found = !ok
                 && (*this).step == Step::Clone
                 && ((strings::contains(stderr, b"remote:")
@@ -898,10 +877,7 @@ impl GitSubprocess {
         }
     }
 
-    /// Mirrors git's stderr and termination kind, which name the cause.
-    ///
-    /// # Safety
-    /// `this` is live.
+    /// Mirrors git's stderr and termination kind, which name the cause. SAFETY: `this` is live.
     unsafe fn report_failure(this: *mut Self, status: &Status, stderr: &[u8]) {
         // SAFETY: caller contract.
         let read_error = unsafe { (*this).read_error.take() };
@@ -932,10 +908,7 @@ impl GitSubprocess {
         Output::flush();
     }
 
-    /// The package name of a git task.
-    ///
-    /// # Safety
-    /// `task` is live.
+    /// The package name of a git task. SAFETY: `task` is live.
     unsafe fn task_name<'a>(task: *mut Task::Task<'static>) -> &'a [u8] {
         // SAFETY: caller contract; the request strings live in the filename store.
         unsafe {
@@ -950,9 +923,8 @@ impl GitSubprocess {
 
     /// Hands the finished task to `resolve_tasks` and frees `this`.
     ///
-    /// # Safety
-    /// `this` is live and allocation-rooted (from `start`). Nothing may touch
-    /// `this` afterwards.
+    /// SAFETY: `this` is live and allocation-rooted (from `start`). Nothing may
+    /// touch `this` afterwards.
     unsafe fn finish(this: *mut Self, result: Result<Done, Error>) {
         // SAFETY: caller contract.
         let this = unsafe { bun_core::heap::take(this) };

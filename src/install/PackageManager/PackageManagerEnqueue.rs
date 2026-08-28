@@ -1396,8 +1396,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 let resolved = match pinned {
                     Some(resolved) => resolved,
                     None => {
-                        // The dependency waits on a `git log` task; `run_tasks`
-                        // fills `git_commits` and re-enters here.
+                        // Waits on a `git log` task; `run_tasks` fills `git_commits` and re-enters here.
                         let committish = this.lockfile.str_detached(&dep.committish);
                         let commit_id = Task::Id::for_git_commit(url, committish);
                         match this.git_commits.get(&commit_id) {

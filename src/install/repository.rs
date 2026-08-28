@@ -136,8 +136,7 @@ impl SloppyGlobalGitConfig {
 // once `RepositoryExt` is in scope.
 pub use bun_install_types::resolver_hooks::Repository;
 
-/// The environment every `git` the install spawns runs with. Built once, on
-/// first use, from the install's env loader (see `GitEnv::get`).
+/// The environment every `git` the install spawns runs with (see `GitEnv::get`).
 pub(crate) struct GitEnv {
     /// `KEY=VALUE\0` array for spawn.
     pub(crate) envp: bun_dotenv::NullDelimitedEnvMap,
@@ -145,9 +144,7 @@ pub(crate) struct GitEnv {
     pub(crate) git: Option<ZBox>,
 }
 
-// Written once from the install thread (the only thread that spawns git),
-// then read-only. RacyCell: `NullDelimitedEnvMap` holds raw pointers into its
-// own storage, so it is not `Sync` by inference.
+// Written once from the install thread (the only one that spawns git), then read-only.
 static GIT_ENV: bun_core::RacyCell<Option<GitEnv>> = bun_core::RacyCell::new(None);
 
 impl GitEnv {
@@ -164,12 +161,7 @@ impl GitEnv {
     }
 
     fn init(loader: &mut bun_dotenv::Loader) -> GitEnv {
-        // Note: currently if the user sets this to some value that causes
-        // a prompt for a password, the stdout of the prompt will be masked
-        // by further output of the rest of the install process.
-        // A value can still be entered, but we need to find a workaround
-        // so the user can see what is being prompted. By default the settings
-        // below will cause no prompt and throw instead.
+        // No prompts by default: the install's own output would hide them.
         let mut map = bun_core::handle_oom(loader.map.clone_with_allocator());
 
         if map.get(b"GIT_ASKPASS").is_none() {
@@ -189,8 +181,7 @@ impl GitEnv {
             }
         }
 
-        // Spawns exec the path as given (no `PATH` search), and the child
-        // runs with `map`, so resolve `git` on that `PATH`.
+        // The spawn does no `PATH` search; resolve `git` on the child's `PATH`.
         let mut git_buf = bun_paths::path_buffer_pool::get();
         let git = bun_which::which(&mut git_buf, map.get(b"PATH").unwrap_or(b""), b"", b"git")
             .map(|git| ZBox::from_bytes(git.as_bytes()));
@@ -234,11 +225,7 @@ pub(crate) fn is_safe_resolved_tag(resolved: &[u8]) -> bool {
             .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
 
-/// Install-tier `Repository` behaviour (parsing, formatting, clone URL
-/// forms). The git commands themselves run in `git_runner`. Data struct + buffer-relative `order`/`count`/`clone`/
-/// `eql` are inherent on [`Repository`] (defined in `bun_install_types`).
-/// Re-exported from `bun_install::repository` so existing
-/// `Repository::method(...)` / `repo.method(...)` call sites resolve via UFCS.
+/// Install-tier `Repository` behaviour: parsing, formatting, clone URL forms.
 pub trait RepositoryExt: Sized {
     fn parse_append_git(input: &[u8], buf: &mut StringBuf<'_>) -> Result<Repository, AllocError>;
     fn parse_append_github(input: &[u8], buf: &mut StringBuf<'_>)
@@ -252,8 +239,7 @@ pub trait RepositoryExt: Sized {
     fn fmt_store_path<'a>(&'a self, label: &'a str, string_buf: &'a [u8])
     -> StorePathFormatter<'a>;
     fn fmt<'a>(&'a self, label: &'a str, buf: &'a [u8]) -> Formatter<'a>;
-    /// The ssh form of a git URL, or `None` when it has none (an explicit
-    /// `http(s)://` URL, for example).
+    /// The ssh form of a git URL; `None` for an explicit `http(s)://` URL.
     fn try_ssh(url: &[u8]) -> Option<Vec<u8>>;
     /// The https form of a git URL, or `None` when it has none.
     fn try_https(url: &[u8]) -> Option<Vec<u8>>;
@@ -432,8 +418,7 @@ impl RepositoryExt for Repository {
     }
 }
 
-/// `host:path` → `<prefix>host/path`, with `.com`/`.org` appended to a known
-/// shorthand host (`github:user/repo` → `<prefix>github.com/user/repo`).
+/// `host:path` → `<prefix>host/path`; a shorthand host gets its TLD (`github` → `github.com`).
 fn scp_like_to_url(prefix: &[u8], url: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(prefix.len() + url.len() + b".org".len());
     out.extend_from_slice(prefix);

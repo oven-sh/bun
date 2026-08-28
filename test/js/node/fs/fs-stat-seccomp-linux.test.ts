@@ -105,10 +105,16 @@ function tryBuildHelper(syscall: string): string | null {
 // syscall failing with `errno`. Returns { stdout, stderr, exitCode } on
 // success, or null if the environment refused to install the seccomp filter
 // (skip).
-async function runUnderSeccomp(bin: string, errno: number, snippet: string, args: string[] = []) {
+async function runUnderSeccomp(
+  bin: string,
+  errno: number,
+  snippet: string,
+  args: string[] = [],
+  env: Record<string, string> = {},
+) {
   await using proc = Bun.spawn({
     cmd: [bin, String(errno), bunExe(), "-e", snippet, ...args],
-    env: bunEnv,
+    env: { ...bunEnv, ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -224,11 +230,16 @@ describe.skipIf(!isLinux)("node:fs errno outside the SystemErrno table", () => {
   // Each snippet runs `bun -e` with argv[1] = an existing file; the copy cases
   // write argv[1] + ".copy". The result line is one JSON object.
   const report = `console.log(JSON.stringify({ threw: true, errno: e.errno, code: e.code, syscall: e.syscall, message: e.message }))`;
+  // On a reflink-capable tmpdir (btrfs, XFS) fs.copyFile clones the file with
+  // ioctl(FICLONE) and never reaches copy_file_range; turn that fast path off
+  // so the blocked syscall is the one that runs.
+  const noReflink = { BUN_CONFIG_DISABLE_ioctl_ficlonerange: "1" };
   const cases = [
     {
       name: "fs.fsyncSync",
       blocked: "__NR_fsync",
       syscall: "fsync",
+      env: {},
       message: (_src: string) => "",
       snippet: `
         import * as fs from "node:fs";
@@ -240,6 +251,7 @@ describe.skipIf(!isLinux)("node:fs errno outside the SystemErrno table", () => {
       name: "fs.ftruncateSync",
       blocked: "__NR_ftruncate",
       syscall: "ftruncate",
+      env: {},
       message: (_src: string) => "",
       snippet: `
         import * as fs from "node:fs";
@@ -251,6 +263,7 @@ describe.skipIf(!isLinux)("node:fs errno outside the SystemErrno table", () => {
       name: "fs.copyFileSync",
       blocked: "__NR_copy_file_range",
       syscall: "copyfile",
+      env: noReflink,
       message: (src: string) => ` '${src}' -> '${src}.copy'`,
       snippet: `
         import * as fs from "node:fs";
@@ -261,6 +274,7 @@ describe.skipIf(!isLinux)("node:fs errno outside the SystemErrno table", () => {
       name: "Bun.write(Bun.file, Bun.file)",
       blocked: "__NR_copy_file_range",
       syscall: "copy_file_range",
+      env: noReflink,
       message: (_src: string) => "",
       snippet: `
         try { await Bun.write(Bun.file(process.argv[1] + ".copy"), Bun.file(process.argv[1])); console.log(JSON.stringify({ threw: false })); } catch (e) { ${report}; }
@@ -279,7 +293,7 @@ describe.skipIf(!isLinux)("node:fs errno outside the SystemErrno table", () => {
     }
     using dir = tempDir("errno-seccomp-target", { "file.txt": "hello" });
     const src = join(String(dir), "file.txt");
-    const out = await runUnderSeccomp(helperBin, errno, c.snippet, [src]);
+    const out = await runUnderSeccomp(helperBin, errno, c.snippet, [src], c.env);
     if (out == null) {
       console.warn(`SKIP ${c.name} seccomp: seccomp not permitted in this environment`);
       return null;

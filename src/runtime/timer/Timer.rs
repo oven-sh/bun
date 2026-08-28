@@ -3,9 +3,9 @@
 //!
 //! this file is loaded as `pub mod timer;` from `mod.rs` (codegen
 //! path `crate::timer::timer::*`). The canonical struct definitions (`All`,
-//! `Kind`, `Maps`, `TimerObject`, `DateHeaderTimer`, …) live in `mod.rs`;
-//! this module only adds the JS-facing `impl super::All { … }` surface plus
-//! the C-ABI export thunks.
+//! `Kind`, `Maps`, `TimeoutObject`, `ImmediateObject`, `TimerObjectInternals`,
+//! `DateHeaderTimer`, …) live in `mod.rs`; this module only adds the JS-facing
+//! `impl super::All { … }` surface plus the C-ABI export thunks.
 
 #![allow(clippy::missing_safety_doc)]
 
@@ -17,7 +17,7 @@ use bun_uws::Loop as UwsLoop;
 
 use super::{
     All, CountdownOverflowBehavior, DateHeaderTimer, EventLoopTimer, EventLoopTimerState,
-    EventLoopTimerTag, ImmediateObject, Kind, TimeoutObject, TimeoutWarning,
+    EventLoopTimerTag, ImmediateObject, Kind, TimeoutObject, TimeoutWarning, TimerObjectInternals,
 };
 use crate::jsc_hooks::{timer_all, timer_all_mut};
 
@@ -228,8 +228,6 @@ impl All {
         Ok(ImmediateObject::init(
             global,
             id,
-            Kind::SetImmediate,
-            0,
             wrapped_callback,
             arguments,
         ))
@@ -316,93 +314,103 @@ impl All {
         let vm = global_this.bun_vm_ptr();
         let all = timer_all_mut();
 
-        if timer_id_value.is_number() {
-            // Node.js looks the id up by value (`knownTimersById[id]`): a double holding an
-            // integer names the same timer as the int32. Anything else clears nothing.
-            let Some(id) = Self::timer_id_from_number(timer_id_value) else {
-                return Ok(());
-            };
-            // Immediates don't have numeric IDs in Node.js so we only have to look up timeouts and intervals
-            let Some(t) = all.remove_timer_by_id(id) else {
-                return Ok(());
-            };
-            // SAFETY: t is a valid TimeoutObject pointer
-            unsafe { (*t).cancel(vm) };
-            return Ok(());
-        } else if timer_id_value.is_string_literal() {
-            // Primitive string only (JSType::String) — boxed `new String(..)`
-            // must fall through to `from_js` below and be a no-op, matching
-            // Node.js array-index semantics.
-            let string = timer_id_value.to_bun_string(global_this)?;
-            // Custom parseInt logic. I've done this because Node.js is very strict about string
-            // parameters to this function: they can't have leading whitespace, trailing
-            // characters, signs, or even leading zeroes. None of the readily-available string
-            // parsing functions are this strict. The error case is to just do nothing (not
-            // clear any timer).
-            //
-            // The reason is that in Node.js this function's parameter is used for an array
-            // lookup, and array[0] is the same as array['0'] in JS but not the same as array['00'].
-            let parsed: i32 = {
-                let mut accumulator: i32 = 0;
-                // We can handle all encodings the same way since the only permitted characters
-                // are ASCII.
-                macro_rules! parse_slice {
-                    ($slice:expr) => {{
-                        let slice = $slice;
-                        for (i, &c) in slice.iter().enumerate() {
-                            let c = c as u32;
-                            if c < ('0' as u32) || c > ('9' as u32) {
-                                // Non-digit characters are not allowed
-                                return Ok(());
-                            } else if i == 0 && c == ('0' as u32) {
-                                // Leading zeroes are not allowed
-                                return Ok(());
+        let timer: Option<*mut TimerObjectInternals> = 'brk: {
+            if timer_id_value.is_number() {
+                // Node.js looks the id up by value (`knownTimersById[id]`): a double holding an
+                // integer names the same timer as the int32. Anything else clears nothing.
+                let Some(id) = Self::timer_id_from_number(timer_id_value) else {
+                    return Ok(());
+                };
+                // Immediates don't have numeric IDs in Node.js so we only have to look up timeouts and intervals
+                let Some(t) = all.remove_timer_by_id(id) else {
+                    return Ok(());
+                };
+                // SAFETY: t is a valid TimeoutObject pointer
+                break 'brk Some(unsafe { core::ptr::addr_of_mut!((*t).internals) });
+            } else if timer_id_value.is_string_literal() {
+                // Primitive string only (JSType::String) — boxed `new String(..)`
+                // must fall through to `from_js` below and be a no-op, matching
+                // Node.js array-index semantics.
+                let string = timer_id_value.to_bun_string(global_this)?;
+                // Custom parseInt logic. I've done this because Node.js is very strict about string
+                // parameters to this function: they can't have leading whitespace, trailing
+                // characters, signs, or even leading zeroes. None of the readily-available string
+                // parsing functions are this strict. The error case is to just do nothing (not
+                // clear any timer).
+                //
+                // The reason is that in Node.js this function's parameter is used for an array
+                // lookup, and array[0] is the same as array['0'] in JS but not the same as array['00'].
+                let parsed: i32 = {
+                    let mut accumulator: i32 = 0;
+                    // We can handle all encodings the same way since the only permitted characters
+                    // are ASCII.
+                    macro_rules! parse_slice {
+                        ($slice:expr) => {{
+                            let slice = $slice;
+                            for (i, &c) in slice.iter().enumerate() {
+                                let c = c as u32;
+                                if c < ('0' as u32) || c > ('9' as u32) {
+                                    // Non-digit characters are not allowed
+                                    return Ok(());
+                                } else if i == 0 && c == ('0' as u32) {
+                                    // Leading zeroes are not allowed
+                                    return Ok(());
+                                }
+                                // Fail on overflow
+                                accumulator = match accumulator.checked_mul(10) {
+                                    Some(v) => v,
+                                    None => return Ok(()),
+                                };
+                                accumulator = match accumulator
+                                    .checked_add(i32::try_from(c - '0' as u32).expect("int cast"))
+                                {
+                                    Some(v) => v,
+                                    None => return Ok(()),
+                                };
                             }
-                            // Fail on overflow
-                            accumulator = match accumulator.checked_mul(10) {
-                                Some(v) => v,
-                                None => return Ok(()),
-                            };
-                            accumulator = match accumulator
-                                .checked_add(i32::try_from(c - '0' as u32).expect("int cast"))
-                            {
-                                Some(v) => v,
-                                None => return Ok(()),
-                            };
-                        }
-                    }};
-                }
-                // bun_core::String has no `encoding()` accessor;
-                // dispatch on `is_utf16()` and treat the 8-bit case via
-                // `latin1()` (digit chars are in the ASCII range either way).
-                if string.is_utf16() {
-                    parse_slice!(string.utf16());
-                } else {
-                    parse_slice!(string.latin1());
-                }
-                accumulator
-            };
-            let Some(t) = all.remove_timer_by_id(parsed) else {
-                return Ok(());
-            };
-            // SAFETY: t is a valid TimeoutObject pointer
-            unsafe { (*t).cancel(vm) };
-            return Ok(());
-        }
+                        }};
+                    }
+                    // bun_core::String has no `encoding()` accessor;
+                    // dispatch on `is_utf16()` and treat the 8-bit case via
+                    // `latin1()` (digit chars are in the ASCII range either way).
+                    if string.is_utf16() {
+                        parse_slice!(string.utf16());
+                    } else {
+                        parse_slice!(string.latin1());
+                    }
+                    accumulator
+                };
+                let Some(t) = all.remove_timer_by_id(parsed) else {
+                    return Ok(());
+                };
+                // SAFETY: t is a valid TimeoutObject pointer
+                break 'brk Some(unsafe { core::ptr::addr_of_mut!((*t).internals) });
+            }
 
-        if let Some(timeout) = TimeoutObject::from_js(timer_id_value) {
-            // clearImmediate should be a noop if anything other than an Immediate is passed to it.
-            if kind != Kind::SetImmediate {
-                // SAFETY: `timeout` is a valid TimeoutObject pointer
-                unsafe { (*timeout).cancel(vm) };
+            if let Some(timeout) = TimeoutObject::from_js(timer_id_value) {
+                // clearImmediate should be a noop if anything other than an Immediate is passed to it.
+                if kind != Kind::SetImmediate {
+                    // SAFETY: `timeout` is a valid TimeoutObject pointer
+                    break 'brk Some(unsafe { core::ptr::addr_of_mut!((*timeout).internals) });
+                } else {
+                    return Ok(());
+                }
+            } else if let Some(immediate) = ImmediateObject::from_js(timer_id_value) {
+                // setImmediate can only be cleared by clearImmediate, not by clearTimeout or clearInterval.
+                if kind == Kind::SetImmediate {
+                    // SAFETY: `immediate` is a valid ImmediateObject pointer
+                    break 'brk Some(unsafe { core::ptr::addr_of_mut!((*immediate).internals) });
+                } else {
+                    return Ok(());
+                }
+            } else {
+                break 'brk None;
             }
-        } else if let Some(immediate) = ImmediateObject::from_js(timer_id_value) {
-            // setImmediate can only be cleared by clearImmediate, not by clearTimeout or clearInterval.
-            if kind == Kind::SetImmediate {
-                // SAFETY: `immediate` is a valid ImmediateObject pointer
-                unsafe { (*immediate).cancel(vm) };
-            }
-        }
+        };
+
+        let Some(timer) = timer else { return Ok(()) };
+        // SAFETY: timer points to a live TimerObjectInternals
+        unsafe { (*timer).cancel(vm) };
         Ok(())
     }
 
@@ -429,8 +437,10 @@ impl All {
 // Method bodies on canonical sibling types (`mod.rs` definitions).
 // ════════════════════════════════════════════════════════════════════════════
 
-// `TimeoutObject` / `ImmediateObject` (`init`, `from_js`) live in
-// `super::timer_object`.
+// `TimeoutObject::{init, from_js}` and `ImmediateObject::{init, from_js}` now
+// live in `super::{timeout_object, immediate_object}`; the inherent `init`
+// constructor and the `JsClass`-derived `from_js` are re-exported via
+// `super::{TimeoutObject, ImmediateObject}`.
 
 impl DateHeaderTimer {
     /// Schedule the "Date" header timer.

@@ -2065,10 +2065,11 @@ fn console_print_runtime_object_inner<const C: bool>(
         // Spec falls through (no `return`) when `toJSON` is absent.
     }
     if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
-        let id = timer.id;
+        let internals = &timer.internals;
+        let id = internals.id;
         formatter.add_for_new_line("Timeout(# ) ".len() + bun_core::fmt::digit_count(id.max(0)));
         let mut w = AsFmt::new(writer_);
-        if timer.flags.get().kind() == crate::timer::Kind::SetInterval {
+        if internals.flags.get().kind() == crate::timer::Kind::SetInterval {
             formatter.add_for_new_line("repeats ".len() + bun_core::fmt::digit_count(id.max(0)));
             let _ = write!(
                 w,
@@ -2099,7 +2100,7 @@ fn console_print_runtime_object_inner<const C: bool>(
         return Ok(true);
     }
     if let Some(immediate) = value.as_class_ref::<crate::timer::ImmediateObject>() {
-        let id = immediate.id;
+        let id = immediate.internals.id;
         formatter.add_for_new_line("Immediate(# ) ".len() + bun_core::fmt::digit_count(id.max(0)));
         let mut w = AsFmt::new(writer_);
         let _ = write!(

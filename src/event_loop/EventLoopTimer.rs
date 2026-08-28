@@ -38,7 +38,7 @@ unsafe extern "Rust" {
         now: *const timespec,
         vm: *mut (),
     ) -> crate::JsResult<()>;
-    /// Returns the JS-timer epoch (`TimerFlags::epoch`) for
+    /// Returns the JS-timer epoch (TimerObjectInternals.flags.epoch) for
     /// TimeoutObject/ImmediateObject/AbortSignalTimeout, else `None`.
     /// Defined in `bun_runtime::dispatch`.
     ///
@@ -284,7 +284,7 @@ pub enum State {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `TimerFlags` + `Kind` — moved DOWN from `bun_runtime::timer`
+// `TimerObjectInternals.Flags` + `Kind` — moved DOWN from `bun_runtime::timer`
 // (LAYERING: `bun_jsc::AbortSignal::Timeout` embeds `Flags` for the heap-order
 // epoch tiebreak; `bun_runtime` depends on `bun_jsc`, so the field type must
 // live in a crate both can see. Pure data — no high-tier deps.)

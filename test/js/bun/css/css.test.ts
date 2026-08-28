@@ -7780,6 +7780,16 @@ describe("css tests", () => {
         `,
         { chrome: 87 << 16, safari: 14 << 16 },
       );
+      // A target that supports color() gets no fallback.
+      prefix_test(
+        ".foo { color: color(a98-rgb 1 0 0) }",
+        indoc`
+          .foo {
+            color: color(a98-rgb 1 0 0);
+          }
+        `,
+        { chrome: 111 << 16 },
+      );
       prefix_test(
         ".foo { color: color(from #c86432 a98-rgb r g b / 50%) }",
         indoc`

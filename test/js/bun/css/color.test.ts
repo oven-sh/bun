@@ -382,6 +382,10 @@ describe("color() predefined color spaces", () => {
     expect(color("color(from #c86432 a98-rgb r g b)", "css")).toBe("color(a98-rgb .695066 .391898 .220089)");
   });
 
+  test("a98-rgb channels accept percentages", () => {
+    expect(color("color(A98-RGB 100% 50% 0%)", "css")).toBe("color(a98-rgb 1 .5 0)");
+  });
+
   test("srgb-linear relative colors can reference r", () => {
     expect(color("color(from red srgb-linear r g b)", "css")).toBe("color(srgb-linear 1 0 0)");
     expect(color("color(from red srgb-linear g g r)", "css")).toBe("color(srgb-linear 0 0 1)");
@@ -810,6 +814,24 @@ describe("conversions between color spaces", () => {
     const g = linear(0.5);
     const b = linear(0.002);
     const out = same("xyz", "color(display-p3 1 0.5 0.002)");
+    expect(out).toStartWith("color(xyz ");
+    expectChannels(
+      out,
+      [0, 1, 2].map(i => red[i] + g * green[i] + b * blue[i]),
+      4,
+    );
+  });
+
+  test("a98-rgb to xyz applies the 563/256 gamma before the matrix", () => {
+    // XYZ of the a98-rgb primaries, i.e. the columns of the matrix in
+    // https://www.w3.org/TR/css-color-4/#color-conversion-code. a98-rgb uses a
+    // pure power curve instead of the sRGB piecewise transfer function.
+    const red = [0.576669, 0.297345, 0.027031];
+    const green = [0.185558, 0.627364, 0.070689];
+    const blue = [0.188229, 0.075291, 0.991338];
+    const g = 0.5 ** (563 / 256);
+    const b = 0.002 ** (563 / 256);
+    const out = same("xyz", "color(a98-rgb 1 0.5 0.002)");
     expect(out).toStartWith("color(xyz ");
     expectChannels(
       out,

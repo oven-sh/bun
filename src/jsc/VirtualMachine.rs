@@ -3287,10 +3287,9 @@ pub struct Options {
     // forward-dep crate; callers pass it as the resolver's trait object so
     // both VM and resolver can hold it without the cycle.
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
-    // Note: debugger
-    // configuration is plumbed through `RuntimeHooks::ensure_debugger` (the
-    // CLI option struct lives in `bun_cli`, a forward dep). See
-    // `runtime/jsc_hooks.rs` for the `configureDebugger` call site.
+    /// The `--inspect*` CLI flag. Forwarded to `InitOptions::debugger` so
+    /// `RuntimeHooks::init_runtime_state` → `configureDebugger` sees it.
+    pub debugger: bun_options_types::context::Debugger,
     pub is_main_thread: bool,
 }
 
@@ -4051,6 +4050,7 @@ impl VirtualMachine {
         let graph = opts.graph.expect("init_with_module_graph requires graph");
         let init_opts = InitOptions {
             transform_options: opts.args,
+            debugger: opts.debugger,
             graph: Some(graph),
             log: opts.log,
             env_loader: opts.env_loader,
@@ -4063,6 +4063,7 @@ impl VirtualMachine {
         let vm = Self::init(init_opts)?;
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
+        vm_ref.dns_result_order = opts.dns_result_order;
         vm_ref.transpiler.resolver.standalone_module_graph = Some(graph);
         vm_ref.install_bytecode_string_table(graph);
         // Avoid reading from tsconfig.json & package.json when in standalone mode

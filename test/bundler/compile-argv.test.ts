@@ -1,4 +1,6 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { join } from "node:path";
 import { itBundled } from "./expectBundled";
 
 // `BUN_JSC_dumpOptions=2` prints every JSC option as `   name=value` on stderr
@@ -451,4 +453,96 @@ describe("bundler", () => {
       validate: expectFullJSCConfiguration,
     },
   });
+});
+
+// The standalone boot path parses exec argv into the CLI context and then
+// builds the VM through `init_with_module_graph`. Flags that only the VM acts
+// on (the inspector, the DNS result order) must survive that hand-off, not
+// just show up in `process.execArgv`.
+describe("compile-exec-argv runtime flags reach the VM", () => {
+  // `--inspect-wait` blocks the program until a client sends
+  // `Inspector.initialized`, so the shape is deterministic either way: the
+  // fixed binary prints the listening URL and waits, a binary that drops the
+  // flag runs to completion and its stderr ends without a URL.
+  const flags = ["--inspect-wait=127.0.0.1:0", "--dns-result-order=ipv4first"];
+
+  async function waitForInspectorUrl(stderr: ReadableStream<Uint8Array>): Promise<URL> {
+    const reader = stderr.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+      const match = text.match(/^\s*(ws:\/\/\S+)\n/m);
+      if (match) {
+        // Keep draining so the child never blocks on a full stderr pipe.
+        void (async () => {
+          while (!(await reader.read()).done) {}
+        })();
+        return new URL(match[1]);
+      }
+    }
+    throw new Error(`inspector did not start. stderr:\n${text}`);
+  }
+
+  for (const [source, execArgv, env] of [
+    ["--compile-exec-argv", flags, {}],
+    ["BUN_OPTIONS", [], { BUN_OPTIONS: flags.join(" ") }],
+  ] as const) {
+    test.concurrent(`--inspect-wait and --dns-result-order from ${source}`, async () => {
+      using dir = tempDir("compile-exec-argv-vm-flags", {
+        "entry.js": /* js */ `
+          const dns = require("node:dns");
+          console.log(JSON.stringify({ execArgv: process.execArgv, dnsOrder: dns.getDefaultResultOrder() }));
+        `,
+      });
+      const exe = join(String(dir), isWindows ? "app.exe" : "app");
+      await using build = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          "--compile",
+          ...(execArgv.length ? [`--compile-exec-argv=${execArgv.join(" ")}`] : []),
+          "--outfile",
+          exe,
+          "entry.js",
+        ],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect(buildStderr).not.toContain("error");
+      expect(buildExit).toBe(0);
+
+      await using proc = Bun.spawn({
+        cmd: [exe],
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const url = await waitForInspectorUrl(proc.stderr);
+      expect(url.hostname).toBe("127.0.0.1");
+
+      const ws = new WebSocket(url.href);
+      const opened = Promise.withResolvers<void>();
+      ws.onopen = () => opened.resolve();
+      ws.onerror = event => opened.reject(new Error("WebSocket error", { cause: event }));
+      await opened.promise;
+
+      // Releases the wait. A connected client keeps the process alive, so
+      // close once the inspector has acknowledged the message.
+      const reply = Promise.withResolvers<unknown>();
+      ws.onmessage = event => reply.resolve(JSON.parse(String(event.data)));
+      ws.send(JSON.stringify({ id: 1, method: "Inspector.initialized", params: {} }));
+      expect(await reply.promise).toEqual({ id: 1, result: {} });
+      ws.close();
+
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(JSON.parse(stdout)).toEqual({ execArgv: flags, dnsOrder: "ipv4first" });
+      expect(exitCode).toBe(0);
+    });
+  }
 });

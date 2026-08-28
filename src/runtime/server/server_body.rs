@@ -1188,8 +1188,6 @@ fn fetch_headers_from_js(value: JSValue, global: &JSGlobalObject) -> Option<*mut
     FetchHeaders::cast_(value, global.vm()).map(|p| p.as_ptr())
 }
 
-/// Per-process latch for the dev-mode idle-timeout warning, shared by every
-/// server instantiation and transport.
 #[inline]
 pub(super) fn did_send_idletimeout_warning_once() -> &'static core::sync::atomic::AtomicBool {
     static FLAG: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);

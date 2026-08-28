@@ -255,8 +255,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     let output_format = c.options.output_format;
 
     // The top-level directive must come first (the non-wrapped case is handled
-    // by the chunk generation code, although only for the chunk's own entry
-    // point). Another entry point can be a wrapped dependency of this chunk.
+    // by the chunk generation code, although only for the chunk's own entry point)
     let is_chunk_entry_point =
         chunk.is_entry_point() && chunk.entry_point.source_index() as usize == source_index;
     if flags.wrap != WrapKind::None

@@ -51,8 +51,6 @@ fn is_macro_path(str: &[u8]) -> bool {
 pub(crate) struct MacroContext {
     pub(crate) resolver: *mut Resolver<'static>,
     pub(crate) env: *mut DotEnvLoader,
-    /// The build's options. `Macro::init` creates the macro VM from these
-    /// when the thread has no VM yet.
     pub(crate) transform_options: Arc<TransformOptions>,
     pub(crate) macros: MacroMap,
     pub(crate) remap: bun_ptr::BackRef<MacroRemap>,
@@ -425,8 +423,6 @@ impl Macro {
         let (vm, is_new_vm): (*mut VirtualMachine, bool) = if VirtualMachine::is_loaded() {
             (VirtualMachine::get_mut_ptr(), false)
         } else {
-            // The build's options, so the macro module sees the same
-            // `--define`s, loaders and tsconfig as the rest of the build.
             let mut transform_options = transform_options.clone();
             // Build-only flags about the output bundle. The macro module's own
             // imports must still resolve.

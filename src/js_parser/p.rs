@@ -6314,7 +6314,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-/// The unscoped npm package a specifier (`react/x`) or a file path (`...node_modules<sep>react<sep>x.js`) is in.
+/// The unscoped npm package of a specifier (`react/x`) or path (`node_modules<sep>react<sep>x.js`).
 fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
     let (name_to_use, separators): (&[u8], &[u8]) =
         match strings::last_index_of(path.text, bun_paths::NODE_MODULES_NEEDLE) {

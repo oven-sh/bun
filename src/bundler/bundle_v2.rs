@@ -4361,7 +4361,6 @@ pub mod bv2_impl {
 
                         let output_path: Box<[u8]> = {
                             // TODO: outbase
-                            // (native comparison: case-insensitive on Windows; `/`-normalized below)
                             let pathname =
                                 Fs::PathName::init(bun_paths::resolve_path::relative_platform::<
                                     bun_paths::resolve_path::platform::Auto,

@@ -42,7 +42,7 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_io::{FmtAdapter, Write};
 use bun_js_printer::Encoding;
-use bun_paths::resolve_path::{platform_to_posix_in_place, relative_normalized};
+use bun_paths::resolve_path::{platform, platform_to_posix_in_place, relative_normalized};
 use bun_resolver::fs::FileSystem;
 
 use crate::Graph::Graph;
@@ -197,6 +197,7 @@ pub(crate) fn write<W: Write + ?Sized>(
     // Use the server-side public path here.
     let public_path: &[u8] = &options.public_path;
     let mut temp_buffer: Vec<u8> = Vec::new();
+    let mut input_buffer: Vec<u8> = Vec::new();
 
     for ch in chunks.iter() {
         if ch.entry_point.source_index() == browser_source_index && ch.entry_point.is_entry_point()
@@ -250,15 +251,14 @@ pub(crate) fn write<W: Write + ?Sized>(
             }
             first = false;
 
-            let input_buf;
             let input: &[u8] = if !ch.entry_point.is_entry_point() {
                 b""
             } else {
-                input_buf = source_path_relative_to_root(
+                source_path_relative_to_root(
+                    &mut input_buffer,
                     root_dir,
                     sources[ch.entry_point.source_index() as usize].path.text,
-                );
-                &input_buf
+                )
             };
 
             let path: &[u8] = if inject_compiler_filesystem_prefix {
@@ -310,6 +310,7 @@ pub(crate) fn write<W: Write + ?Sized>(
                 first = false;
 
                 let path_for_key = source_path_relative_to_root(
+                    &mut input_buffer,
                     root_dir,
                     sources[source_index.get() as usize].path.text,
                 );
@@ -327,7 +328,7 @@ pub(crate) fn write<W: Write + ?Sized>(
 
                 write_entry_item(
                     writer,
-                    &path_for_key,
+                    path_for_key,
                     path,
                     output_file.hash,
                     output_file.loader,
@@ -380,14 +381,13 @@ pub mod html_import_manifest {
     }
 }
 
-/// `path` (a source file's native absolute path) relative to `root_dir`, `/`-separated, without a leading `./` --
-/// the form the manifest's `input` field and asset keys use on every platform.
-fn source_path_relative_to_root(root_dir: &[u8], path: &[u8]) -> Vec<u8> {
-    let mut relative = strings::remove_leading_dot_slash(relative_normalized::<
-        bun_paths::platform::Auto,
-        false,
-    >(root_dir, path))
-    .to_vec();
-    platform_to_posix_in_place(&mut relative[..]);
-    relative
+/// `path` (a source file's absolute path) relative to `root_dir`, `/`-separated, no leading `./`:
+/// the form of the manifest's `input` field and asset keys.
+fn source_path_relative_to_root<'b>(buf: &'b mut Vec<u8>, root_dir: &[u8], path: &[u8]) -> &'b [u8] {
+    buf.clear();
+    buf.extend_from_slice(strings::remove_leading_dot_slash(
+        relative_normalized::<platform::Auto, false>(root_dir, path),
+    ));
+    platform_to_posix_in_place(&mut buf[..]);
+    buf
 }

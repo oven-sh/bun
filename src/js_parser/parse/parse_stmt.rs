@@ -1548,32 +1548,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if default_name == b"type" {
                         match p.lexer.token {
                             T::TIdentifier => {
-                                let name = p.lexer.identifier;
-                                let name_loc = p.lexer.loc();
-                                p.lexer.next()?;
+                                // A name of "from" is left to the code below when this is
+                                // "import type from 'bar';" (a value import named "type"), or
+                                // when only "import foo = bar" is valid here and the guard
+                                // below has to reject it.
+                                let import_equals_only = opts.is_export
+                                    || (opts.scope.is_namespace() && !opts.is_typescript_declare);
+                                let leave_from = p.lexer.identifier == b"from"
+                                    && (import_equals_only
+                                        || p.next_token_matches(|p| {
+                                            matches!(
+                                                p.lexer.token,
+                                                T::TStringLiteral
+                                                    | T::TNoSubstitutionTemplateLiteral
+                                            )
+                                        }));
+                                if !leave_from {
+                                    let name = p.lexer.identifier;
+                                    let name_loc = p.lexer.loc();
+                                    p.lexer.next()?;
 
-                                if p.lexer.token == T::TEquals {
-                                    // "import type foo = require('bar');" (foo may be "from")
-                                    opts.is_typescript_declare = true;
-                                    return p.parse_type_script_import_equals_stmt(
-                                        loc, opts, name_loc, name,
-                                    );
-                                } else if name == b"from"
-                                    && matches!(
-                                        p.lexer.token,
-                                        T::TStringLiteral | T::TNoSubstitutionTemplateLiteral
-                                    )
-                                {
-                                    // "import type from 'bar';" imports the default export as "type"
-                                    let path = p.parse_path()?;
-                                    p.lexer.expect_or_insert_semicolon()?;
-                                    return p.process_import_statement(stmt, path, loc, false);
-                                } else {
-                                    // "import type foo from 'bar';" (foo may be "from")
-                                    p.lexer.expect_contextual_keyword(b"from")?;
-                                    let _ = p.parse_path()?;
-                                    p.lexer.expect_or_insert_semicolon()?;
-                                    return Ok(p.s(S::TypeScript {}, loc));
+                                    if p.lexer.token == T::TEquals {
+                                        // "import type foo = require('bar');" (foo may be "from")
+                                        opts.is_typescript_declare = true;
+                                        return p.parse_type_script_import_equals_stmt(
+                                            loc, opts, name_loc, name,
+                                        );
+                                    } else {
+                                        // "import type foo from 'bar';" (foo may be "from")
+                                        p.lexer.expect_contextual_keyword(b"from")?;
+                                        let _ = p.parse_path()?;
+                                        p.lexer.expect_or_insert_semicolon()?;
+                                        return Ok(p.s(S::TypeScript {}, loc));
+                                    }
                                 }
                             }
                             T::TAsterisk => {

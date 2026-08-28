@@ -430,6 +430,11 @@ describe("Bun.Transpiler", () => {
       errStartsWith("import type from, {foo} from 'bar'", 'Expected "from" but found ","');
       errStartsWith("import type * as foo = require('bar')", 'Expected "from" but found "="');
       errStartsWith("import type {foo} = require('bar')", 'Expected "from" but found "="');
+
+      // Where only "import foo = bar" is valid, "import type from 'mod'" is not a default import
+      errStartsWith("export import type from 'mod'", 'Expected "=" but found "from"');
+      errStartsWith("namespace N { import type from 'mod' }", 'Expected "=" but found "from"');
+      exp("export import type = require('mod'); type", 'export const type = require("mod");\n');
     });
 
     it("runs TypeScript that tsc accepts at these parse edges", async () => {

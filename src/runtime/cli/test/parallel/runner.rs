@@ -533,9 +533,8 @@ impl<'a> WorkerLoop<'a> {
         // so a stray env var can't disable --parallel in a release build.
         if cfg!(any(debug_assertions, bun_asan)) {
             // SAFETY: env loader is initialized before the test runner runs.
-            if let Some(mode) =
-                unsafe { &*vm.transpiler.env }.get(b"BUN_TEST_WORKER_EXIT_BEFORE_READY")
-            {
+            let env = unsafe { &*vm.transpiler.env };
+            if let Some(mode) = env.get(b"BUN_TEST_WORKER_EXIT_BEFORE_READY") {
                 bun_core::pretty_errorln!(
                     "test worker exiting before ready (BUN_TEST_WORKER_EXIT_BEFORE_READY)"
                 );

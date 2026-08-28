@@ -1,10 +1,4 @@
-//! CI environment detection. A modified port of ci-info@4.0.0
-//! (https://github.com/watson/ci-info). Only the CI name is detected, `isPR`
-//! is not implemented.
-//!
-//! Lives in `bun_core` so both `bun_install` (the `user-agent` header of
-//! registry requests) and `bun_runtime` (`bun publish`, `bun test`) share
-//! one detector and one vendor table.
+//! CI detection, a port of ci-info@4.0.0 (https://github.com/watson/ci-info) without `isPR`.
 
 use crate::env_var;
 use crate::{Once, getenv_z, zstr};
@@ -33,9 +27,7 @@ fn detect_uncached() -> Option<&'static [u8]> {
     detect_uncached_generated()
 }
 
-// ─── vendor table ─────────────────────────────────────────────────────────────
-// Copied from watson/ci-info@4.0.0 vendors.json; maintained by hand. Keep in
-// sync with upstream.
+// Vendor table, copied by hand from ci-info@4.0.0 vendors.json.
 
 macro_rules! env_set {
     ($k:literal) => {

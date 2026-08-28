@@ -1205,8 +1205,7 @@ impl<'a> Default for SignOptions<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct S3CredentialsWithOptions {
-    /// A new ref on the caller's credentials, or a fresh copy when the
-    /// options object overrides a credential field.
+    /// The caller's credentials, or a copy when the options object overrides a field.
     pub credentials: RefPtr<S3Credentials>,
     pub options: MultiPartUploadOptions,
     pub acl: Option<ACL>,

@@ -489,7 +489,10 @@ describe("bundler", () => {
           var cos = Math.cos, sin = Math.sin;
           return [a + b, c + d, typeof cos(0), typeof sin(0)];
         }
-        console.log(JSON.stringify([globalHead(), globalMid(), getterReassigns(), blockHoisted(), stable({ a: "a2", b: "b2" })]));
+        var top = { get a() { swapTop(); return "a1"; }, b: "b1" };
+        var swapTop = () => eval("top = { a: 'a2', b: 'b2' }");
+        var ta = top.a, tb = top.b;
+        console.log(JSON.stringify([globalHead(), globalMid(), getterReassigns(), blockHoisted(), stable({ a: "a2", b: "b2" }), ta + tb]));
       `,
     },
     minifySyntax: true,
@@ -503,8 +506,10 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("{ a, b } = local");
       api.expectFile("/out.js").toContain("{ a: c, b: d } = param");
       api.expectFile("/out.js").toContain("{ cos, sin } = Math");
+      // The direct eval can assign any top-level variable.
+      api.expectFile("/out.js").toContain(", ta = top.a, tb = top.b;");
     },
-    run: { stdout: '[["h",1,2],[0,"h",1,2],"a1b2","a1b2",["a1b1","a2b2","number","number"]]' },
+    run: { stdout: '[["h",1,2],[0,"h",1,2],"a1b2","a1b2",["a1b1","a2b2","number","number"],"a1b2"]' },
   });
   // A `using` declaration admits only identifier bindings, so the transform
   // must not rewrite its declarators into an object pattern.

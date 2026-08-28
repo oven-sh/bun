@@ -2269,7 +2269,7 @@ pub(crate) mod __gated_printer {
                         let symbols = self.renamer.symbols();
                         let target_ref = symbols.follow(target_id.ref_);
 
-                        if !self.is_stable_destructuring_target(target_id, target_ref) {
+                        if !self.is_stable_destructuring_target(*target_id, target_ref) {
                             break 'brk;
                         }
 
@@ -2403,7 +2403,7 @@ pub(crate) mod __gated_printer {
         /// each, and a getter on the first property runs in between. The
         /// target must be a declared symbol that nothing assigns, outside
         /// `with` and direct `eval`, or a known pure global such as `Math`.
-        fn is_stable_destructuring_target(&self, id: &E::Identifier, target_ref: Ref) -> bool {
+        fn is_stable_destructuring_target(&self, id: E::Identifier, target_ref: Ref) -> bool {
             if id.must_keep_due_to_with_stmt() {
                 return false;
             }

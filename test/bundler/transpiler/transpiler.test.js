@@ -5758,6 +5758,19 @@ describe("same-target destructuring with an unstable target", () => {
     expect(
       plain.transformSync("function f() { var o = M; var g = () => eval(s); var a = o.a, b = o.b; return [a, b]; }"),
     ).toBe("function f() {\n  var o = M;\n  var g = () => eval(s);\n  var a = o.a, b = o.b;\n  return [a, b];\n}\n");
+    // A direct eval anywhere in the file can reach a top-level variable.
+    expect(plain.transformSync("var o = M; var g = () => eval(s); var a = o.a, b = o.b; console.log(a, b);")).toBe(
+      "var o = M;\nvar g = () => eval(s);\nvar a = o.a, b = o.b;\nconsole.log(a, b);\n",
+    );
+    expect(
+      minifier.transformSync("var o = M; function g() { return eval(s); } var a = o.a, b = o.b; console.log(a, b);"),
+    ).toBe("var o=M;function g(){return eval(s)}var a=o.a,b=o.b;console.log(a,b);");
+    expect(plain.transformSync("var o = M; var a = o.a, b = o.b; console.log(a, b, Math.cos, Math.sin);")).toBe(
+      "var o = M;\nvar { a, b } = o;\nconsole.log(a, b, Math.cos, Math.sin);\n",
+    );
+    expect(plain.transformSync("var o = M; var a = Math.cos, b = Math.sin; eval(s); console.log(a, b);")).toBe(
+      "var o = M;\nvar { cos: a, sin: b } = Math;\neval(s);\nconsole.log(a, b);\n",
+    );
   });
 
   it("keeps the reads of a parameter when a sloppy function uses arguments", () => {

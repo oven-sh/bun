@@ -8051,15 +8051,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // (as in esbuild) and eval may not see them. Import bindings are left
         // out: the linker merges them into the exporting file's symbol, which
         // would pin that name in every chunk that references it.
-        if bundling
-            && exports_kind == js_ast::ExportsKind::Cjs
-            && self.module_scope().contains_direct_eval
-        {
+        //
+        // Whatever the name, the eval can assign the variable.
+        if self.module_scope().contains_direct_eval {
+            let pin = bundling && exports_kind == js_ast::ExportsKind::Cjs;
             let module_scope = self.module_scope_ref();
             for member in module_scope.members.values() {
-                let symbol = &mut self.symbols[member.ref_.inner_index() as usize];
-                if symbol.kind != js_ast::symbol::Kind::Import {
-                    symbol.set_must_not_be_renamed(true);
+                let kind = self.symbols[member.ref_.inner_index() as usize].kind;
+                if kind == js_ast::symbol::Kind::Import {
+                    continue;
+                }
+                if kind != js_ast::symbol::Kind::Unbound {
+                    self.record_assignment(member.ref_);
+                }
+                if pin {
+                    self.symbols[member.ref_.inner_index() as usize].set_must_not_be_renamed(true);
                 }
             }
         }

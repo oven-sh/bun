@@ -743,6 +743,33 @@ describe("bundler", () => {
       expect(code.split('"use strict"')).toHaveLength(3);
     },
   });
+  // Two entry points where one requires the other. Only the chunk's own entry file has its directive printed at the
+  // top of that chunk. Inside the other chunk the same file is a wrapped dependency and keeps the directive there.
+  itBundled("cjs2esm/UseStrictEntryPointWrappedInsideOtherEntryPoint", {
+    files: {
+      "/a.cjs": /* js */ `
+        const b = require('./b.cjs');
+        console.log('a', (function() { return this === undefined; })(), 'b', b);
+      `,
+      "/b.cjs": /* js */ `
+        "use strict";
+        module.exports = (function() { return this === undefined; })();
+      `,
+    },
+    entryPoints: ["/a.cjs", "/b.cjs"],
+    outdir: "/out",
+    outputPaths: ["/out/a.js", "/out/b.js"],
+    format: "cjs",
+    onAfterBundle(api) {
+      const a = api.readFile("/out/a.js");
+      expect(a).not.toStartWith('"use strict"');
+      expect(a).toMatch(/require_b = __commonJS\(function\([^)]*\) \{\s*"use strict";/);
+      const b = api.readFile("/out/b.js");
+      expect(b).toStartWith('"use strict";\n');
+      expect(b.split('"use strict"')).toHaveLength(2);
+    },
+    run: { file: "/out/a.js", runtime: "node", stdout: "a false b true" },
+  });
   // An ESM file that a CommonJS file require()s is wrapped in __esm. Its "use strict" has to stay ahead of the
   // init_*() calls for its own wrapped imports, or it stops being a directive.
   itBundled("cjs2esm/UseStrictInsideESMWrapperBeforeInitCalls", {

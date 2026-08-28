@@ -255,13 +255,19 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     let output_format = c.options.output_format;
 
     // The top-level directive must come first (the non-wrapped case is handled
-    // by the chunk generation code, although only for the entry point file,
-    // whose directive `post_process_js_chunk` prints at the top of the chunk)
+    // by the chunk generation code, although only for the chunk's own entry
+    // point file, whose directive `post_process_js_chunk` prints at the top of
+    // the chunk). esbuild checks the file's entry point kind here, but it links
+    // each entry point on its own when code splitting is off. This graph is
+    // shared, so another entry point that this chunk pulls in as a wrapped
+    // dependency still needs the directive inside its wrapper.
+    let is_chunk_entry_point =
+        chunk.is_entry_point() && chunk.entry_point.source_index() as usize == source_index;
     if flags.wrap != WrapKind::None
         && ast
             .flags
             .contains(AstFlags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE)
-        && !c.graph.files.items_entry_point_kind()[source_index].is_entry_point()
+        && !is_chunk_entry_point
         && !output_format.is_always_strict_mode()
     {
         stmts.inside_wrapper_prefix.append_directive(Stmt::alloc(

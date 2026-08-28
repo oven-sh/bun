@@ -886,25 +886,17 @@ impl Loader {
     }
 }
 
-/// `O_NONBLOCK` so the open itself cannot block on a FIFO: a blocking
-/// `open(O_RDONLY)` of a FIFO waits for a writer. It has no effect on regular
-/// files. POSIX-only: on Windows it omits `FILE_SYNCHRONOUS_IO_NONALERT`
-/// (overlapped handle) and the subsequent sync read fails. Windows has no
-/// open-blocking FIFOs in a directory; the `fstat` kind check in
-/// `read_env_file_contents` still skips pipes and devices there.
+/// `O_NONBLOCK`: a blocking `open` of a FIFO waits for a writer. Unix only: a
+/// Windows handle opened without `FILE_SYNCHRONOUS_IO_NONALERT` cannot be read synchronously.
 #[cfg(unix)]
 const ENV_FILE_OPEN_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
 #[cfg(not(unix))]
 const ENV_FILE_OPEN_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
 
-/// Shared post-open tail of `load_env_file` / `load_env_file_dynamic`:
-/// `fstat` kind check, then `File::read_to_end` (fstat-presized) with the
-/// recoverable-errno filter. The two callers differ in their open-error
-/// handling and the memo slot they write — those stay in the callers. Only
-/// the shared read tail is factored here.
+/// Shared post-open tail of `load_env_file` / `load_env_file_dynamic`. The
+/// callers keep their own open-error handling and memo slot.
 enum ReadEnvFile {
-    /// Zero-length, or not a regular file (a directory, FIFO, socket, or
-    /// device) — caller marks the slot and returns.
+    /// Zero-length or not a regular file. The caller marks the slot and returns.
     Empty,
     /// Recoverable read errno (ENOMEM/EPIPE/EACCES/EISDIR) — caller prints
     /// (unless `quiet`), marks the slot, and returns.

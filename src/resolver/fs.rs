@@ -33,7 +33,9 @@ pub(crate) type FilenameStoreBacking =
 pub(crate) type EntryStoreBacking = allocators::BSSList<Entry, { preallocate::counts::FILES * 2 }>;
 
 // Per-monomorphization singleton storage, emitted at the declare site via
-// `bss_*!` macros (returns `*mut`).
+// `bss_*!` macros (returns `*mut`). Each declare site owns its own storage:
+// `crate::fs::FilenameStore` re-exports `filename_store_backing` from here so
+// it and `FilenameStoreAppender` share one store.
 bun_alloc::bss_string_list! { pub filename_store_backing : preallocate::counts::FILES * 2, 64 + 1 }
 bun_alloc::bss_list! { pub entry_store_backing : Entry, preallocate::counts::FILES * 2 }
 

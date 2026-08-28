@@ -7,7 +7,7 @@ import type { Matchers } from "bun:test";
 import * as esbuild from "esbuild";
 import filenamify from "filenamify";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isCI, isDebug } from "harness";
+import { bunEnv, bunExe, isCI, isDebug, isWindows } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 import { SourceMapConsumer } from "source-map";
@@ -679,6 +679,8 @@ function expectBundled(
     if (generateOutput === false) outputPaths = [];
 
     outfile = useOutFile ? path.join(root, outfile ?? (compile ? "/out" : "/out.js")) : undefined;
+    // `bun build --compile` appends `.exe` on Windows when the name has no extension; that is the file tests read.
+    if (outfile && compile && isWindows && path.extname(outfile) === "") outfile += ".exe";
     outdir = !useOutFile && generateOutput ? path.join(root, outdir ?? "/out") : undefined;
     metafile = metafile ? path.join(root, metafile) : undefined;
     outputPaths = (

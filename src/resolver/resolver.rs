@@ -2598,8 +2598,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // "import 'pkg'" when all packages are external, e.g. the `dep` that
-        // `"#dep": "dep"` remapped to.
+        // "import 'pkg'" when all packages are external, e.g. the target of `"#dep": "dep"`.
         if kind != ast::ImportKind::EntryPointBuild
             && kind != ast::ImportKind::EntryPointRun
             && self.opts.packages == options::Packages::External

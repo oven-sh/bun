@@ -101,15 +101,54 @@ describe("bunshell", () => {
     );
 
     // Every write to /dev/full fails with ENOSPC. Like bash, the builtin exits 1;
-    // the errno is not the exit code (it was 65508 for echo and which).
+    // the errno is not the exit code (it was 65508 for echo and which, 28 for rm).
     test.skipIf(!isLinux)("builtins exit 1 when an output write fails", async () => {
       const exitCodes = {
         echo: (await $`echo hi > /dev/full`.nothrow()).exitCode,
         which: (await $`which sh > /dev/full`.nothrow()).exitCode,
         export: (await $`export FOO=bar; export > /dev/full`.nothrow()).exitCode,
         cd: (await $`cd /nonexistent-dir 2> /dev/full`.nothrow()).exitCode,
+        rm: (await $`rm 2> /dev/full`.nothrow()).exitCode,
       };
-      expect(exitCodes).toEqual({ echo: 1, which: 1, export: 1, cd: 1 });
+      expect(exitCodes).toEqual({ echo: 1, which: 1, export: 1, cd: 1, rm: 1 });
+    });
+
+    // `[[ ]]` takes no redirect and `cat` reads stdin, so their failing write
+    // needs the process stdio itself to be /dev/full.
+    test.skipIf(!isLinux)("builtins exit 1 when a write to the process stdio fails", async () => {
+      using dir = tempDir("dead-stdio", {
+        "stderr-dead.ts": `
+          import { $ } from "bun";
+          const glob = import.meta.dir + "/nomatch/*.zz";
+          const condexpr = (await $\`[[ -f \${{ raw: glob }} ]]\`.throws(false)).exitCode;
+          console.log(JSON.stringify({ condexpr }));
+        `,
+        "stdout-dead.ts": `
+          import { $ } from "bun";
+          const cat = (await $\`echo hi | cat\`.throws(false)).exitCode;
+          console.error(JSON.stringify({ cat }));
+        `,
+      });
+      await using stderrDead = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "stderr-dead.ts")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: Bun.file("/dev/full"),
+      });
+      await using stdoutDead = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "stdout-dead.ts")],
+        env: bunEnv,
+        stdout: Bun.file("/dev/full"),
+        stderr: "pipe",
+      });
+      const [fromStdout, fromStderr, exitA, exitB] = await Promise.all([
+        stderrDead.stdout.text(),
+        stdoutDead.stderr.text(),
+        stderrDead.exited,
+        stdoutDead.exited,
+      ]);
+      expect({ ...JSON.parse(fromStdout), ...JSON.parse(fromStderr) }).toEqual({ condexpr: 1, cat: 1 });
+      expect([exitA, exitB]).toEqual([0, 0]);
     });
   });
 

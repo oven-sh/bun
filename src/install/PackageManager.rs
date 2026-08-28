@@ -1037,8 +1037,7 @@ impl PackageManager {
     /// Lifetime is decoupled from `&self` for the same reason as [`log_mut`] /
     /// [`downloads_node_mut`]: the loader is a singleton-leaked allocation
     /// outside the manager (set once in `init()`), and callers interleave env
-    /// mutation with disjoint `&mut self.X` field writes (e.g. `find_commit`
-    /// takes `env`, `log`, and reads `lockfile` in the same argument list).
+    /// mutation with disjoint `&mut self.X` field writes.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub fn env_mut<'a>(&self) -> &'a mut dot_env::Loader {

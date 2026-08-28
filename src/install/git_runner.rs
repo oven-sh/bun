@@ -803,7 +803,7 @@ impl GitSubprocess {
             let status = process.status.clone();
             let stdout = core::mem::take((*this).stdout.final_buffer());
             let stderr = core::mem::take((*this).stderr.final_buffer());
-            Self::on_command_exit(this, status, stdout, stderr);
+            Self::on_command_exit(this, &status, &stdout, &stderr);
         }
     }
 
@@ -813,13 +813,24 @@ impl GitSubprocess {
     /// # Safety
     /// `this` is live; the child has exited and its output is collected. May
     /// free `this`.
-    unsafe fn on_command_exit(this: *mut Self, status: Status, stdout: Vec<u8>, stderr: Vec<u8>) {
+    unsafe fn on_command_exit(this: *mut Self, status: &Status, stdout: &[u8], stderr: &[u8]) {
         // SAFETY: caller contract.
         unsafe {
-            let ok = matches!(&status, Status::Exited(exit) if exit.code == 0)
+            let ok = matches!(status, Status::Exited(exit) if exit.code == 0)
                 && (*this).read_error.is_none();
-            if !ok {
-                Self::report_failure(this, &status, &stderr);
+            // remote: The page could not be found <-- for non git
+            // remote: Repository not found. <-- for git
+            // remote: fatal repository '<url>' does not exist <-- for git
+            let not_found = !ok
+                && (*this).step == Step::Clone
+                && ((strings::contains(stderr, b"remote:")
+                    && strings::contains(stderr, b"not")
+                    && strings::contains(stderr, b"found"))
+                    || strings::contains(stderr, b"does not exist"));
+            // A missing repository is reported as such; every other failure
+            // shows git's own diagnostics.
+            if !ok && !not_found {
+                Self::report_failure(this, status, stderr);
             }
             let task = (*this).task.as_ptr();
             let name = Self::task_name(task);
@@ -854,13 +865,6 @@ impl GitSubprocess {
                         }
                     } else {
                         staging.discard();
-                        // remote: The page could not be found <-- for non git
-                        // remote: Repository not found. <-- for git
-                        // remote: fatal repository '<url>' does not exist <-- for git
-                        let not_found = (strings::contains(&stderr, b"remote:")
-                            && strings::contains(&stderr, b"not")
-                            && strings::contains(&stderr, b"found"))
-                            || strings::contains(&stderr, b"does not exist");
                         if !not_found && !(*this).urls.is_empty() {
                             // Try the next URL form (ssh after https).
                             Self::reset_polls(this);
@@ -881,7 +885,7 @@ impl GitSubprocess {
                 }
                 Step::Log => {
                     if ok {
-                        let sha = strings::trim(&stdout, b" \t\r\n").to_vec();
+                        let sha = strings::trim(stdout, b" \t\r\n").to_vec();
                         Self::finish(this, Ok(Done::Commit(sha)));
                         Ok(())
                     } else {

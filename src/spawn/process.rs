@@ -3106,9 +3106,9 @@ mod spawn_process_body {
             //
             // Also disabled off the watchdog-arming (main) thread: the subreaper
             // toggle is process-wide and `wait4(-1)` reaps *any* child, so
-            // concurrent calls from a worker pool (install's `repository::exec`
-            // git clones) would race the subreaper flag and steal each other's
-            // exit statuses. Those callers fall through to the plain
+            // concurrent calls from other threads (`Bun.openInEditor`'s
+            // editor thread) would race the subreaper flag and steal each
+            // other's exit statuses. Those callers fall through to the plain
             // `reap_child(pid)` path below; the inherited PDEATHSIG on the main
             // thread still tears the whole process down if our parent dies.
             let no_orphans = ParentDeathWatchdog::is_enabled()

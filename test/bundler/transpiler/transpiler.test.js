@@ -2661,6 +2661,20 @@ console.log(<div {...obj} key="after" />);`),
     throw new Error("Expected parse error for code\n\t" + code);
   };
 
+  // Like expectParseError, but only compares the first error when the parser
+  // reports several (an AggregateError has the generic "Parse error" message)
+  const expectFirstParseError = (code, message) => {
+    try {
+      parsed(code, false, false);
+    } catch (er) {
+      const err = er instanceof AggregateError ? er.errors[0] : er;
+      expect(err.message).toBe(message);
+      return;
+    }
+
+    throw new Error("Expected parse error for code\n\t" + code);
+  };
+
   describe("parser", () => {
     it("arrays", () => {
       expectPrinted("[]", "[]");
@@ -2789,6 +2803,236 @@ console.log(<div {...obj} key="after" />);`),
       //   "await delete x",
       //   "Delete of a bare identifier cannot be used in an ECMAScript module"
       // );
+    });
+
+    it("yield expressions", () => {
+      expectPrinted_("function *foo() { x = yield }", "function* foo() {\n  x = yield;\n}");
+      expectPrinted_("function *foo() { x = yield; }", "function* foo() {\n  x = yield;\n}");
+      expectPrinted_("function *foo() { (x = yield) }", "function* foo() {\n  x = yield;\n}");
+      expectPrinted_("function *foo() { [x = yield] }", "function* foo() {\n  x = yield;\n}");
+      expectPrinted_("function *foo() { x = (yield, yield) }", "function* foo() {\n  x = (yield, yield);\n}");
+      expectPrinted_("function *foo() { x = y ? yield : yield }", "function* foo() {\n  x = y ? yield : yield;\n}");
+      expectPrinted_("function *foo() { x = yield y }", "function* foo() {\n  x = yield y;\n}");
+      expectPrinted_("function *foo() { (x = yield y) }", "function* foo() {\n  x = yield y;\n}");
+      expectPrinted_("function *foo() { x = yield \n y }", "function* foo() {\n  x = yield;\n  y;\n}");
+      expectPrinted_("function *foo() { x = yield * y }", "function* foo() {\n  x = yield* y;\n}");
+      expectPrinted_("function *foo() { (x = yield * y) }", "function* foo() {\n  x = yield* y;\n}");
+      expectPrinted_("function *foo() { x = yield * \n y }", "function* foo() {\n  x = yield* y;\n}");
+      expectPrinted_("function foo() { x = yield * y }", "function foo() {\n  x = yield * y;\n}");
+      expectPrinted_("function foo() { (x = yield * y) }", "function foo() {\n  x = yield * y;\n}");
+
+      // "yield*" always delegates to an operand. Dropping the "*" would change
+      // the meaning of the program.
+      expectParseError("function *foo() { x = yield * }", "Unexpected }");
+      expectParseError("function *foo() { (x = yield *) }", "Unexpected )");
+      expectParseError("function *foo() { [x = yield *] }", "Unexpected ]");
+      expectParseError("function *foo() { x = yield *; }", "Unexpected ;");
+      expectParseError("function *foo() { x = yield *, y }", "Unexpected ,");
+      expectParseError("function *foo() { x = y ? yield * : z }", "Unexpected :");
+      expectParseError("async function *foo() { x = yield * }", "Unexpected }");
+      expectParseError("class C { *foo() { x = yield * } }", "Unexpected }");
+      expectParseError("function *foo() { x = yield \n * y }", "Unexpected *");
+      ts.expectParseError("function *foo() { x = yield * }", "Unexpected }");
+      ts.expectParseError("function *foo() { (x = yield *) }", "Unexpected )");
+    });
+
+    it("await and yield expressions in arrow function arguments", () => {
+      expectPrinted_("async function foo() { (x = await y) }", "async function foo() {\n  x = await y;\n}");
+      expectPrinted_("(x = await y)", "x = await y");
+      expectPrinted_("async(x = await y)", "async(x = await y)");
+      expectPrinted_("function *foo() { (x = yield y) }", "function* foo() {\n  x = yield y;\n}");
+      expectPrinted_("x = (y = () => {}) => {}", "x = (y = () => {}) => {}");
+      expectPrinted_("x = async (y = () => {}) => {}", "x = async (y = () => {}) => {}");
+      expectPrinted_("x = async (y = async () => await z) => {}", "x = async (y = async () => await z) => {}");
+      expectPrinted_("function foo() { (x = await) => {} }", "function foo() {}");
+      expectPrinted_(
+        "function *foo() { x = (y = function*() { yield z }) => {} }",
+        "function* foo() {\n  x = (y = function* () {\n    yield z;\n  }) => {};\n}",
+      );
+      expectPrinted_(
+        "async function foo() { x = (y = async function() { await z }) => {} }",
+        "async function foo() {\n  x = (y = async function() {\n    await z;\n  }) => {};\n}",
+      );
+
+      // Module top level
+      expectParseError("(x = await y) => {}", 'Cannot use an "await" expression here');
+      expectParseError("async (x = await y) => {}", 'Cannot use an "await" expression here');
+      expectParseError("(x = (await y)) => {}", 'Cannot use an "await" expression here');
+      expectParseError("(x, y = await z) => {}", 'Cannot use an "await" expression here');
+      expectParseError("([x = await y]) => {}", 'Cannot use an "await" expression here');
+      expectParseError("({x = await y}) => {}", 'Cannot use an "await" expression here');
+      ts.expectParseError("(x = await y): void => {}", 'Cannot use an "await" expression here');
+
+      // Inside an async function, a generator, an async generator, a class method and a static block
+      expectParseError("async function foo() { (x = await y) => {} }", 'Cannot use an "await" expression here');
+      expectParseError("async function foo() { async (x = await y) => {} }", 'Cannot use an "await" expression here');
+      expectParseError("async function foo() { (x = (await y)) => {} }", 'Cannot use an "await" expression here');
+      expectParseError("async function *foo() { (x = await y) => {} }", 'Cannot use an "await" expression here');
+      expectParseError("async function *foo() { (x = yield y) => {} }", 'Cannot use a "yield" expression here');
+      expectParseError("function *foo() { (x = yield y) => {} }", 'Cannot use a "yield" expression here');
+      expectParseError("function *foo() { (x = yield) => {} }", 'Cannot use a "yield" expression here');
+      expectParseError("function *foo() { (x = (yield y)) => {} }", 'Cannot use a "yield" expression here');
+      expectParseError("function *foo() { async (x = yield y) => {} }", 'Cannot use a "yield" expression here');
+      expectParseError("class C { async foo() { (x = await y) => {} } }", 'Cannot use an "await" expression here');
+      expectParseError("class C { *foo() { (x = yield y) => {} } }", 'Cannot use a "yield" expression here');
+      expectFirstParseError("class C { static { (x = await y) => {} } }", 'The keyword "await" cannot be used here');
+
+      ts.expectParseError("(x = await y) => {}", 'Cannot use an "await" expression here');
+      ts.expectParseError("async (x = await y) => {}", 'Cannot use an "await" expression here');
+      ts.expectParseError("(x: number = await y) => {}", 'Cannot use an "await" expression here');
+      ts.expectParseError("async function foo() { (x = await y) => {} }", 'Cannot use an "await" expression here');
+      ts.expectParseError("function *foo() { (x = yield y) => {} }", 'Cannot use a "yield" expression here');
+    });
+
+    it("await and yield as binding names", () => {
+      expectPrinted_("function foo() { var { yield } = {} }", "function foo() {\n  var { yield } = {};\n}");
+      expectPrinted_("function foo() { var { ...yield } = {} }", "function foo() {\n  var { ...yield } = {};\n}");
+      expectPrinted_("function foo() { var {} = { yield } }", "function foo() {\n  var {} = { yield };\n}");
+      expectPrinted_("var { await: x, yield: y } = {}", "var { await: x, yield: y } = {}");
+      expectPrinted_("function *foo() { var { yield: y } = {} }", "function* foo() {\n  var { yield: y } = {};\n}");
+      expectPrinted_("function *foo() { ({ yield: y } = {}) }", "function* foo() {\n  ({ yield: y } = {});\n}");
+
+      // Module top level
+      expectParseError("var { await } = {}", 'Cannot use "await" as an identifier here');
+      expectParseError("var { await = 1 } = {}", 'Cannot use "await" as an identifier here');
+      expectParseError("var { ...await } = {}", 'Cannot use "await" as an identifier here');
+      expectParseError("var {} = { await }", 'Cannot use "await" as an identifier here');
+      expectParseError("let { x: { await } } = {}", 'Cannot use "await" as an identifier here');
+      expectParseError("for (var { await } of x) ;", 'Cannot use "await" as an identifier here');
+      expectParseError("({ await } = {})", 'Cannot use "await" as an identifier here');
+      expectParseError("({ await }) => {}", 'Cannot use "await" as an identifier here');
+      expectParseError("try {} catch ({ await }) {}", 'Cannot use "await" as an identifier here');
+
+      // Inside an async function, an async generator, a class method and a static block
+      expectParseError("async function foo() { var { await } = {} }", 'Cannot use "await" as an identifier here');
+      expectParseError("async function foo() { var { ...await } = {} }", 'Cannot use "await" as an identifier here');
+      expectParseError("async function foo() { var {} = { await } }", 'Cannot use "await" as an identifier here');
+      expectParseError("async function *foo() { var { await } = {} }", 'Cannot use "await" as an identifier here');
+      expectParseError("async function *foo() { var {} = { await } }", 'Cannot use "await" as an identifier here');
+      expectParseError("class C { async foo() { var { await } = {} } }", 'Cannot use "await" as an identifier here');
+      expectParseError("class C { async foo() { var {} = { await } } }", 'Cannot use "await" as an identifier here');
+      expectParseError("class C { async *foo() { var { await } = {} } }", 'Cannot use "await" as an identifier here');
+      expectParseError("class C { async *foo() { var {} = { await } } }", 'Cannot use "await" as an identifier here');
+      expectParseError("class C { static { var { await } = {} } }", 'Cannot use "await" as an identifier here');
+      expectParseError("class C { static { var {} = { await } } }", 'Cannot use "await" as an identifier here');
+      expectParseError("const f = async () => { var { await } = {} }", 'Cannot use "await" as an identifier here');
+
+      // Inside a generator and an async generator
+      expectParseError("function *foo() { var { yield } = {} }", 'Cannot use "yield" as an identifier here');
+      expectParseError("function *foo() { var { yield = 1 } = {} }", 'Cannot use "yield" as an identifier here');
+      expectParseError("function *foo() { var { ...yield } = {} }", 'Cannot use "yield" as an identifier here');
+      expectParseError("function *foo() { var {} = { yield } }", 'Cannot use "yield" as an identifier here');
+      expectParseError("function *foo() { let [{ yield }] = [] }", 'Cannot use "yield" as an identifier here');
+      expectParseError("function *foo() { ({ yield } = {}) }", 'Cannot use "yield" as an identifier here');
+      expectParseError("async function *foo() { var { yield } = {} }", 'Cannot use "yield" as an identifier here');
+      expectParseError("class C { *foo() { var { yield } = {} } }", 'Cannot use "yield" as an identifier here');
+      expectParseError("({ *foo() { var { yield } = {} } })", 'Cannot use "yield" as an identifier here');
+
+      ts.expectParseError("var { await } = {}", 'Cannot use "await" as an identifier here');
+      ts.expectParseError("async function foo() { var { await } = {} }", 'Cannot use "await" as an identifier here');
+      ts.expectParseError("function *foo() { var { yield } = {} }", 'Cannot use "yield" as an identifier here');
+      ts.expectParseError("class C { static { var { await } = {} } }", 'Cannot use "await" as an identifier here');
+    });
+
+    it("reserved words as shorthand binding names", () => {
+      expectPrinted_("var { if: a, class: b, true: c, null: d } = x", "var { if: a, class: b, true: c, null: d } = x");
+      expectPrinted_("function f({ if: a, class: b }) {}", "function f({ if: a, class: b }) {}");
+      expectPrinted_("x = { if: 1, class: 2 }", "x = { if: 1, class: 2 }");
+      expectPrinted_(
+        "var { of, as, get, set, async, static: s } = x",
+        "var { of, as, get, set, async, static: s } = x",
+      );
+
+      expectFirstParseError("var { if } = x", 'Expected ":" but found "}"');
+      expectFirstParseError("var { class } = x", 'Expected ":" but found "}"');
+      expectFirstParseError("var { true } = x", 'Expected ":" but found "}"');
+      expectFirstParseError("var { null } = x", 'Expected ":" but found "}"');
+      expectFirstParseError("var { this } = x", 'Expected ":" but found "}"');
+      expectFirstParseError("var { if = 1 } = x", 'Expected ":" but found "="');
+      expectFirstParseError("let { if, x } = y", 'Expected ":" but found ","');
+      expectFirstParseError("x = { if }", 'Expected ":" but found "}"');
+      expectFirstParseError("({ if } = x)", 'Expected ":" but found "}"');
+      expectFirstParseError("function f({ class }) {}", 'Expected ":" but found "}"');
+      expectFirstParseError("const f = ({ typeof }) => {}", 'Expected ":" but found "}"');
+      ts.expectParseError("var { if } = x", 'Expected ":" but found "}"');
+      ts.expectParseError("function f({ class }) {}", 'Expected ":" but found "}"');
+    });
+
+    it("parenthesized expressions in arrow function binding patterns", () => {
+      // Parentheses are valid around an assignment target
+      expectPrinted_("[ (y) ] = 0", "[y] = 0");
+      expectPrinted_("([ (y) ] = 0)", "[y] = 0");
+      expectPrinted_("[ ...(y) ] = 0", "[...y] = 0");
+      expectPrinted_("({ y: (z) } = 0)", "({ y: z } = 0)");
+      expectPrinted_("({ ...(y) } = 0)", "({ ...y } = 0)");
+      expectPrinted_("[[(x)] = y] = z", "[[x] = y] = z");
+      expectPrintedNoTrim("for ([ (y) ] of z) ;", "for ([y] of z)\n  ;\n");
+      expectPrinted_("x = ([ (y) ] = z)", "x = [y] = z");
+      expectPrinted_("x = ({ y: (z) } = w)", "x = { y: z } = w");
+
+      // Parentheses around a default value are fine
+      expectPrinted_("x = ([ y = [ (z) ] ]) => 0", "x = ([y = [z]]) => 0;\n");
+      expectPrinted_("x = ([ y = [ ...(z) ] ]) => 0", "x = ([y = [...z]]) => 0;\n");
+      expectPrinted_("x = ({ y = { y: (z) } }) => 0", "x = ({ y = { y: z } }) => 0;\n");
+      expectPrinted_("x = ({ y = { ...(y) } }) => 0", "x = ({ y = { ...y } }) => 0;\n");
+      expectPrinted_("x = (y = (z)) => 0", "x = (y = z) => 0;\n");
+      expectPrinted_("x = ([y] = [(z)]) => 0", "x = ([y] = [z]) => 0;\n");
+      expectPrinted_("x = (y = (z) => 0) => 0", "x = (y = (z) => 0) => 0;\n");
+
+      // Parentheses are not valid around a binding
+      expectParseError("x = ((y)) => 0", "Unexpected parentheses in binding pattern");
+      expectParseError("x = ([ (y) ]) => 0", "Unexpected parentheses in binding pattern");
+      expectParseError("x = ([ ...(y) ]) => 0", "Unexpected parentheses in binding pattern");
+      expectParseError("x = ({ y: (z) }) => 0", "Unexpected parentheses in binding pattern");
+      expectParseError("x = ({ ...(y) }) => 0", "Unexpected parentheses in binding pattern");
+      expectParseError("x = ({ y: (z) = 1 }) => 0", "Unexpected parentheses in binding pattern");
+      expectParseError("x = ([ (y) ] = z) => 0", "Unexpected parentheses in binding pattern");
+      expectParseError("x = ({ y: (z) } = w) => 0", "Unexpected parentheses in binding pattern");
+      expectParseError("x = ([ [ (y) ] = z ]) => 0", "Unexpected parentheses in binding pattern");
+      expectParseError("x = ([ ([]) ] = z) => 0", "Unexpected parentheses in binding pattern");
+      expectParseError("x = async ((y)) => 0", "Unexpected parentheses in binding pattern");
+      expectParseError("x = async ([ (y) ]) => 0", "Unexpected parentheses in binding pattern");
+      expectFirstParseError("x = ({ (y) }) => 0", 'Expected identifier but found "("');
+      ts.expectParseError("x = ((y)) => 0", "Unexpected parentheses in binding pattern");
+      ts.expectParseError("x = ([ (y) ]) => 0", "Unexpected parentheses in binding pattern");
+      ts.expectParseError("x = ([ (y) ]): void => 0", "Unexpected parentheses in binding pattern");
+      ts.expectParseError("x = <T,>([ (y) ]) => 0", "Unexpected parentheses in binding pattern");
+    });
+
+    it("function declarations named await or yield", () => {
+      expectPrinted_("function foo() { function await() {} }", "function foo() {\n  function await() {}\n}");
+      expectPrinted_("function *yield() {}", "function* yield() {}");
+      expectPrinted_("async function *yield() {}", "async function* yield() {}");
+      expectPrinted_("function foo() { x = function await() {} }", "function foo() {\n  x = function await() {};\n}");
+      expectPrinted_("x = { async await() {} }", "x = { async await() {} }");
+      expectPrinted_("x = { async *await() {} }", "x = { async* await() {} }");
+      expectPrinted_("class Foo { async await() {} }", "class Foo {\n  async await() {}\n}");
+      expectPrinted_("class Foo { async *await() {} }", "class Foo {\n  async* await() {}\n}");
+      expectPrinted_("class Foo { *yield() {} }", "class Foo {\n  *yield() {}\n}");
+
+      expectParseError("async function await() {}", 'An async function cannot be named "await"');
+      expectParseError("async function *await() {}", 'An async function cannot be named "await"');
+      expectParseError("export async function await() {}", 'An async function cannot be named "await"');
+      expectParseError("export default async function await() {}", 'An async function cannot be named "await"');
+      expectParseError("(async function await() {})", 'An async function cannot be named "await"');
+      expectParseError("(async function *await() {})", 'An async function cannot be named "await"');
+      expectParseError("function foo() { async function await() {} }", 'An async function cannot be named "await"');
+      expectParseError("function foo() { (async function await() {}) }", 'An async function cannot be named "await"');
+      expectParseError("(function *yield() {})", 'A generator function expression cannot be named "yield"');
+      expectParseError("(async function *yield() {})", 'A generator function expression cannot be named "yield"');
+      expectParseError("function await() {}", 'Cannot use "await" as an identifier here');
+      expectParseError("async function foo() { function await() {} }", 'Cannot use "await" as an identifier here');
+      expectParseError("class C { static { function await() {} } }", 'Cannot use "await" as an identifier here');
+      expectParseError("function *foo() { function yield() {} }", 'Cannot use "yield" as an identifier here');
+      expectParseError("function *foo() { function *yield() {} }", 'Cannot use "yield" as an identifier here');
+      expectParseError(
+        "async function *foo() { async function yield() {} }",
+        'Cannot use "yield" as an identifier here',
+      );
+      expectPrinted_("function foo() { function *yield() {} }", "function foo() {\n  function* yield() {}\n}");
+      ts.expectParseError("async function await() {}", 'An async function cannot be named "await"');
+      ts.expectParseError("async function *await() {}", 'An async function cannot be named "await"');
+      ts.expectParseError("(function *yield() {})", 'A generator function expression cannot be named "yield"');
     });
 
     it("import assert", () => {

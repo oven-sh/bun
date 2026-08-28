@@ -555,24 +555,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && js_lexer::keyword(name).is_none();
 
                     if is_shorthand_property {
-                        if (p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
-                            && name == b"await")
-                            || (p.fn_or_arrow_data_parse.allow_yield != AwaitOrYield::AllowIdent
-                                && name == b"yield")
-                        {
-                            if name == b"await" {
-                                p.log().add_range_error(
-                                    Some(p.source),
-                                    name_range,
-                                    b"Cannot use \"await\" here",
-                                );
-                            } else {
-                                p.log().add_range_error(
-                                    Some(p.source),
-                                    name_range,
-                                    b"Cannot use \"yield\" here",
-                                );
-                            }
+                        if p.is_forbidden_await_or_yield_identifier(name) {
+                            p.log_invalid_identifier(name, name_range);
                         }
 
                         let ref_ = p.store_name_in_ref(name);

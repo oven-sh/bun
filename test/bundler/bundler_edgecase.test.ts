@@ -3223,6 +3223,113 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("var arguments = 1;");
     },
   });
+  // "await" is a keyword at the top level of a module, and an ordinary
+  // identifier at the top level of a script (the CJS output format).
+  itBundled("edgecase/AwaitAsBindingNameCJSOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        var { await } = { await: 1 };
+        function f() { var { ...await } = { a: 3 }; return await; }
+        console.log(await, f());
+      `,
+    },
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var { await } = { await: 1 };");
+      // The nested binding is renamed because it shadows the top-level one
+      api.expectFile("/out.js").toMatch(/var \{ \.\.\.await\d* \} = \{ a: 3 \};/);
+    },
+  });
+  itBundled("edgecase/AwaitAsBindingNameESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        var { await } = { await: 1 };
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/entry.js": ['Cannot use "await" as an identifier here'],
+    },
+  });
+  itBundled("edgecase/FunctionNamedAwaitCJSOutput", {
+    files: {
+      "/entry.js": /* js */ `
+        function await() { return "await"; }
+        console.log(await());
+      `,
+    },
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("function await() {");
+    },
+  });
+  itBundled("edgecase/FunctionNamedAwaitESMOutputIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        function await() { return "await"; }
+      `,
+    },
+    format: "esm",
+    bundleErrors: {
+      "/entry.js": ['Cannot use "await" as an identifier here'],
+    },
+  });
+  // These are errors in both scripts and modules
+  itBundled("edgecase/AsyncFunctionNamedAwaitIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        async function await() {}
+      `,
+    },
+    format: "cjs",
+    bundleErrors: {
+      "/entry.js": ['An async function cannot be named "await"'],
+    },
+  });
+  itBundled("edgecase/AwaitExpressionInArrowArgumentsIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        async function f() { (x = await y) => {} }
+      `,
+    },
+    format: "cjs",
+    bundleErrors: {
+      "/entry.js": ['Cannot use an "await" expression here'],
+    },
+  });
+  itBundled("edgecase/YieldAsBindingNameInGeneratorIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        function* g() { var { yield } = {} }
+      `,
+    },
+    format: "cjs",
+    bundleErrors: {
+      "/entry.js": ['Cannot use "yield" as an identifier here'],
+    },
+  });
+  itBundled("edgecase/YieldStarWithoutOperandIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        function* g() { x = yield * }
+      `,
+    },
+    format: "cjs",
+    bundleErrors: {
+      "/entry.js": ["Unexpected }"],
+    },
+  });
+  itBundled("edgecase/ParenthesizedArrowBindingIsAnError", {
+    files: {
+      "/entry.js": /* js */ `
+        x = ([ (y) ]) => 0;
+      `,
+    },
+    format: "cjs",
+    bundleErrors: {
+      "/entry.js": ["Unexpected parentheses in binding pattern"],
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

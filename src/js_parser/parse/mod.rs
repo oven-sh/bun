@@ -112,17 +112,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
         }
 
+        // The yield expression only has a value in certain cases
         let mut value: Option<ExprNodeIndex> = None;
-        match p.lexer.token {
-            T::TCloseBrace
-            | T::TCloseParen
-            | T::TCloseBracket
-            | T::TColon
-            | T::TComma
-            | T::TSemicolon => {}
-            _ => {
-                if is_star || !p.lexer.has_newline_before {
-                    value = Some(p.parse_expr(Level::Yield)?);
+        if is_star {
+            // "yield*" always delegates to an operand
+            value = Some(p.parse_expr(Level::Yield)?);
+        } else {
+            match p.lexer.token {
+                T::TCloseBrace
+                | T::TCloseParen
+                | T::TCloseBracket
+                | T::TColon
+                | T::TComma
+                | T::TSemicolon => {}
+                _ => {
+                    if !p.lexer.has_newline_before {
+                        value = Some(p.parse_expr(Level::Yield)?);
+                    }
                 }
             }
         }
@@ -412,7 +418,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         let mut items_list = BumpVec::<Expr>::new_in(p.arena);
         let mut errors = DeferredErrors::default();
-        let mut arrow_arg_errors = DeferredArrowArgErrors::default();
         let mut spread_range = bun_ast::Range::default();
         let mut type_colon_range = bun_ast::Range::default();
         let mut comma_after_spread = bun_ast::Loc::EMPTY;
@@ -430,9 +435,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_allow_in = p.allow_in;
         p.allow_in = true;
 
-        // Forbid "await" and "yield", but only for arrow functions
+        // Forbid "await" and "yield", but only for arrow functions. The errors
+        // are recorded into `fn_or_arrow_data_parse.arrow_arg_errors` while the
+        // arguments are parsed and copied back out below, once we know whether
+        // this is an arrow function.
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
-        p.fn_or_arrow_data_parse.arrow_arg_errors = arrow_arg_errors;
+        p.fn_or_arrow_data_parse.arrow_arg_errors = DeferredArrowArgErrors::default();
         p.fn_or_arrow_data_parse.track_arrow_arg_errors = true;
 
         // Scan over the comma-separated arguments or expressions
@@ -495,6 +503,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.allow_in = old_allow_in;
 
         // Also restore "await" and "yield" expression errors
+        let arrow_arg_errors = p.fn_or_arrow_data_parse.arrow_arg_errors;
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
         // Are these arguments to an arrow function?
@@ -553,7 +562,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 || opts.force_arrow_fn
             {
                 p.maybe_comma_spread_error(comma_after_spread);
-                p.log_arrow_arg_errors(&mut arrow_arg_errors);
+                p.log_arrow_arg_errors(&arrow_arg_errors);
+                p.log_deferred_arrow_arg_errors(&errors);
 
                 // Now that we've decided we're an arrow function, report binding pattern
                 // conversion errors
@@ -583,6 +593,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // scope we did earlier. This needs to flatten any child scopes into the
         // parent scope as if the scope was never pushed in the first place.
         p.pop_and_flatten_scope(scope_index);
+
+        // A plain parenthesized expression is still part of the arguments of an
+        // enclosing arrow function candidate: "(x = (await y)) => {}"
+        if p.fn_or_arrow_data_parse.track_arrow_arg_errors {
+            arrow_arg_errors.merge_into(&mut p.fn_or_arrow_data_parse.arrow_arg_errors);
+        }
 
         // If this isn't an arrow function, then types aren't allowed
         if type_colon_range.len > 0 {
@@ -977,17 +993,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match p.lexer.token {
             T::TIdentifier => {
                 let name = p.lexer.identifier;
-                if (p.fn_or_arrow_data_parse.allow_await != AwaitOrYield::AllowIdent
-                    && name == b"await")
-                    || (p.fn_or_arrow_data_parse.allow_yield != AwaitOrYield::AllowIdent
-                        && name == b"yield")
-                {
-                    // TODO: add fmt to addRangeError
-                    p.log().add_range_error(
-                        Some(p.source),
-                        p.lexer.range(),
-                        b"Cannot use \"yield\" or \"await\" here.",
-                    );
+                if p.is_forbidden_await_or_yield_identifier(name) {
+                    p.log_invalid_identifier(name, p.lexer.range());
                 }
 
                 let ref_ = p.store_name_in_ref(name);
@@ -1155,7 +1162,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match p.lexer.token {
             T::TDotDotDot => {
                 p.lexer.next()?;
-                let ident_ref = p.store_name_in_ref(p.lexer.identifier);
+                let name = p.lexer.identifier;
+                if p.lexer.token == T::TIdentifier && p.is_forbidden_await_or_yield_identifier(name)
+                {
+                    p.log_invalid_identifier(name, p.lexer.range());
+                }
+                let ident_ref = p.store_name_in_ref(name);
                 let value = p.b(B::Identifier { r#ref: ident_ref }, p.lexer.loc());
                 p.lexer.expect(T::TIdentifier)?;
                 return Ok(B::Property {
@@ -1191,7 +1203,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             _ => {
                 let name = p.lexer.identifier;
-                let loc = p.lexer.loc();
+                let name_range = p.lexer.range();
+                let loc = name_range.loc;
 
                 if !p.lexer.is_identifier_or_keyword() {
                     p.lexer.expect(T::TIdentifier)?;
@@ -1207,7 +1220,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     loc,
                 );
 
-                if p.lexer.token != T::TColon && p.lexer.token != T::TOpenParen {
+                // A shorthand property binds the key as an identifier, so a
+                // reserved word is only valid as a key: "{ if: x }" but not "{ if }"
+                if p.lexer.token != T::TColon
+                    && p.lexer.token != T::TOpenParen
+                    && crate::lexer::keyword(name).is_none()
+                {
+                    // Forbid invalid identifiers
+                    if p.is_forbidden_await_or_yield_identifier(name) {
+                        p.log_invalid_identifier(name, name_range);
+                    }
+
                     let ref_ = p.store_name_in_ref(name);
                     let value = p.b(B::Identifier { r#ref: ref_ }, loc);
                     let mut default_value: Option<Expr> = None;

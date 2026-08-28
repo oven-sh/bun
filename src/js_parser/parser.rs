@@ -1188,6 +1188,13 @@ pub enum AwaitOrYield {
     ForbidAll = 2,
 }
 
+/// Whether a `function` keyword starts a declaration or an expression.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum FnKind {
+    Stmt,
+    Expr,
+}
+
 /// This is function-specific information used during parsing. It is saved and
 /// restored on the call stack around code that parses nested functions and
 /// arrow expressions.
@@ -1280,21 +1287,26 @@ pub struct FnOnlyDataVisit {
 /// destructuring assignment until we hit the "=" operator later on.
 /// This object defers errors about being in one state or the other
 /// until we discover which state we're in.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub struct DeferredErrors {
     /// These are errors for expressions
     pub(crate) invalid_expr_default_value: Option<bun_ast::Range>,
     pub(crate) invalid_expr_after_question: Option<bun_ast::Range>,
+
+    /// These errors are for arrow functions: a parenthesized expression is not
+    /// a valid binding pattern, "([ (x) ]) => {}"
+    pub(crate) invalid_parens: smallvec::SmallVec<[bun_ast::Range; 2]>,
 }
 
 impl DeferredErrors {
-    pub(crate) fn merge_into(&self, to: &mut DeferredErrors) {
+    pub(crate) fn merge_into(&mut self, to: &mut DeferredErrors) {
         to.invalid_expr_default_value = self
             .invalid_expr_default_value
             .or(to.invalid_expr_default_value);
         to.invalid_expr_after_question = self
             .invalid_expr_after_question
             .or(to.invalid_expr_after_question);
+        to.invalid_parens.append(&mut self.invalid_parens);
     }
 }
 
@@ -1640,6 +1652,17 @@ impl Default for DeferredArrowArgErrors {
         Self {
             invalid_expr_await: bun_ast::Range::NONE,
             invalid_expr_yield: bun_ast::Range::NONE,
+        }
+    }
+}
+
+impl DeferredArrowArgErrors {
+    pub(crate) fn merge_into(&self, to: &mut DeferredArrowArgErrors) {
+        if self.invalid_expr_await.len > 0 {
+            to.invalid_expr_await = self.invalid_expr_await;
+        }
+        if self.invalid_expr_yield.len > 0 {
+            to.invalid_expr_yield = self.invalid_expr_yield;
         }
     }
 }

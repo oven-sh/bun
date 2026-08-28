@@ -5,7 +5,7 @@ use crate::js_lexer;
 use crate::js_lexer::T;
 use crate::p::P;
 use crate::parser::{
-    ARGUMENTS_STR as arguments_str, AwaitOrYield, FnOrArrowDataParse, LexicalDecl,
+    ARGUMENTS_STR as arguments_str, AwaitOrYield, FnKind, FnOrArrowDataParse, LexicalDecl,
     ParseStatementOptions, TypeParameterFlag,
 };
 use bun_ast as js_ast;
@@ -54,6 +54,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !opts.is_name_optional || p.lexer.token == T::TIdentifier {
             let name_loc = p.lexer.loc();
             name_text = p.lexer.identifier;
+
+            // The name binds in the enclosing scope, so it cannot be a keyword
+            // there. An async function named "await" is reported by
+            // validate_function_name instead.
+            if p.lexer.token == T::TIdentifier
+                && p.is_forbidden_await_or_yield_identifier(name_text)
+                && !(is_async && name_text == b"await")
+            {
+                p.log_invalid_identifier(
+                    name_text,
+                    js_lexer::range_of_identifier(p.source, name_loc),
+                );
+            }
             p.lexer.expect(T::TIdentifier)?;
             // Difference
             let ref_ = p.new_symbol(js_ast::symbol::Kind::Other, name_text);
@@ -156,6 +169,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if has_if_scope {
             p.pop_scope();
         }
+
+        p.validate_function_name(&func, FnKind::Stmt);
 
         Ok(p.s(S::Function { func }, loc))
     }
@@ -476,7 +491,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )?;
         p.fn_or_arrow_data_parse.has_argument_decorators = false;
 
-        p.validate_function_name(&func);
+        p.validate_function_name(&func, FnKind::Expr);
         p.pop_scope();
 
         Ok(p.new_expr(E::Function { func }, loc))

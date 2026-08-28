@@ -404,8 +404,6 @@ impl<'a> Installer<'a> {
             self.append_global_store_entry_path(&mut staging, entry_id, Which::Staging);
             let _ = Fd::cwd().delete_tree(staging.slice());
         } else {
-            // Remove the package directory so the next install builds this
-            // entry again instead of skipping it as installed.
             match pkg_res.tag {
                 ResolutionTag::Uninitialized
                 | ResolutionTag::SingleFileModule

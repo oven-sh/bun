@@ -1056,8 +1056,7 @@ impl Cmd {
         child.close_io(StdioKind::Stderr);
     }
 
-    /// A stdout/stderr relay read failed: the command's output was lost, so it
-    /// cannot report success. The child's own nonzero status still wins.
+    /// Lost relay output turns a successful exit into 1; a nonzero child status wins.
     fn fail_output_relay(&mut self) {
         if matches!(self.exit_code, None | Some(0)) {
             self.exit_code = Some(1);

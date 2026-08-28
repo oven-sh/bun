@@ -143,9 +143,11 @@ describe("bunshell", () => {
         stdout: "pipe",
         stderr: Bun.file("/dev/full"),
       });
+      // `cat` is a builtin only on Windows unless opted in; without the flag
+      // this would run /bin/cat and never reach the builtin's writer path.
       await using stdoutDead = Bun.spawn({
         cmd: [bunExe(), join(String(dir), "stdout-dead.ts")],
-        env: bunEnv,
+        env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
         stdout: Bun.file("/dev/full"),
         stderr: "pipe",
       });

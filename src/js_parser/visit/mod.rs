@@ -218,7 +218,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         for arg in args.iter_mut() {
             if arg.ts_decorators.len_u32() > 0 {
+                // A TypeScript parameter decorator is evaluated with the other
+                // decorators of the class, not inside the method, so a name in it
+                // refers to the class body scope. `parse_fn` parsed it in that scope
+                // and it is the parent of this function's argument scope.
+                let args_scope = self.current_scope;
+                let class_body_scope = args_scope
+                    .parent
+                    .expect("a method with parameter decorators is inside a class body");
+                debug_assert!(class_body_scope.kind == ScopeKind::ClassBody);
+                self.current_scope = class_body_scope;
                 self.visit_ts_decorators(&mut arg.ts_decorators);
+                self.current_scope = args_scope;
             }
 
             // reborrow per-iter.
@@ -232,8 +243,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // `Vec<Expr>` is not `Copy`; mutate in place.
     pub(crate) fn visit_ts_decorators(&mut self, decs: &mut ExprNodeList) {
+        let private_name_uses_before = self.private_name_use_count;
         for dec in decs.slice_mut() {
             self.visit_expr(dec);
+        }
+        if self.private_name_use_count != private_name_uses_before {
+            self.ts_decorators_use_private_names = true;
         }
     }
 
@@ -842,6 +857,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.push_scope_for_visit_pass(ScopeKind::ClassBody, class.body_loc)
                 .expect("unreachable");
 
+            // Set by `visit_ts_decorators` when a member or parameter decorator of
+            // this class reads a `#private` name. Class decorators were visited
+            // above and do not count: they run outside the class either way.
+            let outer_ts_decorators_use_private_names =
+                core::mem::replace(&mut self.ts_decorators_use_private_names, false);
+
             let mut constructor_function: Option<bun_ast::StoreRef<E::Function>> = None;
             let properties: &mut [G::Property] = class.properties.slice_mut();
             for property in properties.iter_mut() {
@@ -970,7 +991,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 if let Some(val) = property.initializer {
-                    // if (property.flags.is_static and )
                     if let Some(name) = name_to_keep {
                         let was_anon = val.is_anonymous_named();
                         let prev_dcn2 = self.decorator_class_name;
@@ -995,6 +1015,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.vis_scope().forbid_arguments = false;
                 self.fn_only_data_visit.is_this_nested = old_is_this_captured;
             }
+
+            class.ts_decorators_use_private_names = core::mem::replace(
+                &mut self.ts_decorators_use_private_names,
+                outer_ts_decorators_use_private_names,
+            );
 
             if Self::IS_TYPESCRIPT_ENABLED {
                 // `lower_standard_decorators_stmt` owns field placement for such classes.

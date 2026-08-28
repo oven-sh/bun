@@ -1970,6 +1970,7 @@ impl Data {
                     properties,
                     has_decorators: el.has_decorators,
                     should_lower_standard_decorators: el.should_lower_standard_decorators,
+                    ts_decorators_use_private_names: el.ts_decorators_use_private_names,
                 });
                 Ok(Data::EClass(StoreRef::from_bump(item)))
             }

@@ -228,7 +228,38 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let mut ts_decorators = bun_alloc::AstAlloc::vec();
             if opts.allow_ts_decorators {
-                ts_decorators = p.parse_type_script_decorators()?;
+                // TypeScript parameter decorators are not evaluated where they are
+                // written. The lowering moves them after the class declaration:
+                //
+                //   class Foo {
+                //     foo(@bar() baz) {}
+                //   }
+                //
+                // becomes
+                //
+                //   class Foo {
+                //     foo(baz) {}
+                //   }
+                //   __legacyDecorateClassTS([
+                //     __legacyDecorateParamTS(0, bar())
+                //   ], Foo.prototype, "foo", null);
+                //
+                // so "await" inside a parameter decorator follows the context that
+                // encloses the class, not the method, and a name in it is looked up
+                // from the class body scope, not from the argument scope.
+                let inner_allow_await = p.fn_or_arrow_data_parse.allow_await;
+                let inner_needs_async_loc = p.fn_or_arrow_data_parse.needs_async_loc;
+                let inner_scope = p.current_scope;
+                p.fn_or_arrow_data_parse.allow_await = old_fn_or_arrow_data.allow_await;
+                p.fn_or_arrow_data_parse.needs_async_loc = old_fn_or_arrow_data.needs_async_loc;
+                if let Some(decorator_scope) = opts.decorator_scope {
+                    p.current_scope = decorator_scope;
+                }
+                let decorators = p.parse_type_script_decorators();
+                p.current_scope = inner_scope;
+                p.fn_or_arrow_data_parse.allow_await = inner_allow_await;
+                p.fn_or_arrow_data_parse.needs_async_loc = inner_needs_async_loc;
+                ts_decorators = decorators?;
                 if ts_decorators.len_u32() > 0 {
                     arg_has_decorators = true;
                 }

@@ -104,6 +104,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 allow_super_call: opts.class_has_extends && is_constructor,
                 allow_super_property: true,
                 allow_ts_decorators: opts.allow_ts_decorators,
+                decorator_scope: opts.decorator_scope,
                 is_constructor,
                 has_decorators: opts.ts_decorators.len() > 0
                     || (opts.has_class_decorators && is_constructor),
@@ -463,10 +464,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         }
                                     }
                                     PropertyModifierKeyword::PAccessor => {
-                                        // "accessor" keyword for auto-accessor fields (TC39 standard decorators)
+                                        // "accessor" keyword for auto-accessor fields. Part of the
+                                        // TC39 decorators proposal, but TypeScript accepts it with
+                                        // "experimentalDecorators" too.
                                         if opts.is_class
                                             && !p.lexer.has_newline_before
-                                            && p.options.features.standard_decorators
                                             && PropertyModifierKeyword::find(raw)
                                                 == Some(PropertyModifierKeyword::PAccessor)
                                         {

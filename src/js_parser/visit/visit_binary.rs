@@ -715,6 +715,7 @@ impl BinaryExpressionVisitor {
                     let name = p.load_name_from_ref(private.ref_);
                     let result = p.find_symbol(e_.left.loc, name).expect("unreachable");
                     private.ref_ = result.r#ref;
+                    p.private_name_use_count += 1;
 
                     // Unlike regular identifiers, there are no unbound private identifiers
                     let kind = p.symbols[result.r#ref.inner_index() as usize].kind;

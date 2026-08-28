@@ -79,7 +79,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Parse decorators before class statements, which are potentially exported
         if Self::IS_TYPESCRIPT_ENABLED || p.options.features.standard_decorators {
             let scope_index = p.scopes_in_order.len();
+            let at_loc = p.lexer.loc();
             let ts_decorators = p.parse_type_script_decorators()?;
+
+            // "@x export @y class Foo {}"
+            // "@x export default @y class Foo {}"
+            if opts.ts_decorators.is_some() {
+                p.log().add_range_error(
+                    Some(p.source),
+                    bun_ast::Range {
+                        loc: at_loc,
+                        len: p.lexer.range().end().start - at_loc.start,
+                    },
+                    b"Decorators are not valid here",
+                );
+                p.discard_scopes_up_to(scope_index);
+                return p.parse_stmt(opts);
+            }
 
             // If this turns out to be a "declare class" statement, we need to undo the
             // scopes that were potentially pushed while parsing the decorator arguments.
@@ -848,6 +864,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if opts.ts_decorators.is_some()
             && p.lexer.token != T::TClass
             && p.lexer.token != T::TDefault
+            && p.lexer.token != T::TAt
             && !p.lexer.is_contextual_keyword(b"abstract")
             && !p.lexer.is_contextual_keyword(b"declare")
         {
@@ -978,6 +995,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "@decorator export default abstract class Foo {}"
                 if opts.ts_decorators.is_some()
                     && p.lexer.token != T::TClass
+                    && p.lexer.token != T::TAt
                     && !p.lexer.is_contextual_keyword(b"abstract")
                 {
                     p.lexer.expected(T::TClass)?;
@@ -1037,8 +1055,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ));
                 }
 
+                // "export default class {}"
+                // "export default class Foo {}"
+                // "export default @x class {}"
+                // "export default @x class Foo {}"
+                // "export default function() {}"
+                // "export default function foo() {}"
+                // "export default interface Foo {}"
                 if p.lexer.token == T::TFunction
                     || p.lexer.token == T::TClass
+                    || p.lexer.token == T::TAt
                     || p.lexer.is_contextual_keyword(b"interface")
                 {
                     let mut _opts = ParseStatementOptions {
@@ -1070,6 +1096,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         loc: name.loc,
                                         ref_: name.ref_,
                                     };
+                                }
+
+                                // "export default @x class {}" with standard decorators:
+                                // the class keeps the name "default", as the spec says,
+                                // when it is lowered as an anonymous class expression.
+                                if class.class.should_lower_standard_decorators {
+                                    let mut class_ref = *class;
+                                    let class_value = core::mem::take(&mut class_ref.class);
+                                    let expr = p.new_expr(class_value, stmt.loc);
+                                    let default_name = p.create_default_name(default_loc);
+                                    p.has_es_module_syntax = true;
+                                    return Ok(p.s(
+                                        S::ExportDefault {
+                                            default_name,
+                                            value: js_ast::StmtOrExpr::Expr(expr),
+                                        },
+                                        loc,
+                                    ));
                                 }
                             }
                             // "interface" turned out not to start an interface

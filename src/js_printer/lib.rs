@@ -4877,47 +4877,41 @@ pub(crate) mod __gated_printer {
                     self.add_source_mapping(key.loc);
                     if key_str.is_utf8() {
                         self.print_space_before_identifier();
-                        let mut allow_shorthand = true;
                         if !IS_JSON && self.can_print_identifier(key_str.slice8()) {
                             self.print_identifier(key_str.slice8());
-                        } else {
-                            allow_shorthand = false;
-                            self.print_string_literal_e_string(&key_str, false);
-                        }
 
-                        // Use a shorthand property if the names are the same
-                        if let Some(val) = &item.value {
-                            match &val.data {
-                                ExprData::EIdentifier(e) => {
-                                    if key_str.slice8() == self.name_for_symbol(e.ref_) {
-                                        if let Some(initial) = &item.initializer {
-                                            self.print_initializer(*initial);
-                                        }
-                                        if allow_shorthand {
-                                            return;
-                                        }
-                                    }
-                                }
-                                ExprData::EImportIdentifier(e) => 'inner: {
-                                    let ref_ = self.symbols().follow(e.ref_);
-                                    if self.options.input_files_for_dev_server.is_some() {
-                                        break 'inner;
-                                    }
-                                    if let Some(symbol) = self.symbols().get_const(ref_) {
-                                        if symbol.namespace_alias.is_none()
-                                            && key_str.slice8() == self.name_for_symbol(e.ref_)
-                                        {
+                            // Use a shorthand property if the names are the same
+                            if let Some(val) = &item.value {
+                                match &val.data {
+                                    ExprData::EIdentifier(e) => {
+                                        if key_str.slice8() == self.name_for_symbol(e.ref_) {
                                             if let Some(initial) = &item.initializer {
                                                 self.print_initializer(*initial);
                                             }
-                                            if allow_shorthand {
+                                            return;
+                                        }
+                                    }
+                                    ExprData::EImportIdentifier(e) => 'inner: {
+                                        let ref_ = self.symbols().follow(e.ref_);
+                                        if self.options.input_files_for_dev_server.is_some() {
+                                            break 'inner;
+                                        }
+                                        if let Some(symbol) = self.symbols().get_const(ref_) {
+                                            if symbol.namespace_alias.is_none()
+                                                && key_str.slice8() == self.name_for_symbol(e.ref_)
+                                            {
+                                                if let Some(initial) = &item.initializer {
+                                                    self.print_initializer(*initial);
+                                                }
                                                 return;
                                             }
                                         }
                                     }
+                                    _ => {}
                                 }
-                                _ => {}
                             }
+                        } else {
+                            self.print_string_literal_e_string(&key_str, false);
                         }
                     } else if !IS_JSON && self.can_print_identifier_utf16(key_str.slice16()) {
                         self.print_space_before_identifier();

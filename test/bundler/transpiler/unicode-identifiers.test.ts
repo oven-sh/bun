@@ -65,6 +65,16 @@ describe("Unicode 15.1 Other_ID_Continue", () => {
     );
   });
 
+  test("shorthand properties with a default value", () => {
+    const dot = KATAKANA_MIDDLE_DOT;
+    // A quoted key cannot use the shorthand form, so the default is printed once after the value.
+    expect(transform(`({ x${dot} = 1 } = o);`)).toBe(`({ "x${dot}": x${dot} = 1 } = o);`);
+    expect(transform(`({ \u{10EC2} = 2, abc = 3 } = o);`)).toBe(`({ "\u{10EC2}": \u{10EC2} = 2, abc = 3 } = o);`);
+    expect(transform(`const { x${dot} = 1 } = o;`)).toBe(`const { "x${dot}": x${dot} = 1 } = o;`);
+    expect(transform(`function f({ x${dot} = 1 }) {}`)).toBe(`function f({ "x${dot}": x${dot} = 1 }) {}`);
+    expect(transform(`const o2 = { x${dot} };`)).toBe(`const o2 = { "x${dot}": x${dot} };`);
+  });
+
   test("runtime: JSC and the lexer agree", async () => {
     using dir = tempDir("unicode-15-1", {
       "c.js": `var y\uFF65 = 5; const o = { x\u30FB: 0 }; console.log(y\uFF65, o.x\u30FB, JSON.stringify(o));\n`,

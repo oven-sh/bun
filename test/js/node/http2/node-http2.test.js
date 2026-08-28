@@ -3138,11 +3138,17 @@ describe("http2 header values are latin-1 byte strings", () => {
     try {
       const response = Promise.withResolvers();
       const trailers = Promise.withResolvers();
-      client.on("error", response.reject);
+      const fail = err => {
+        response.reject(err);
+        trailers.reject(err);
+      };
+      client.on("error", fail);
       const req = client.request({ ":path": "/" }, { endStream: true });
-      req.on("error", response.reject);
+      req.on("error", fail);
       req.on("response", (headers, _flags, rawHeaders) => response.resolve({ headers, rawHeaders }));
       req.on("trailers", headers => trailers.resolve(headers));
+      // A settled promise ignores this, so it only fires when trailers never arrived.
+      req.on("close", () => fail(new Error(`stream closed without trailers (rstCode ${req.rstCode})`)));
       req.resume();
 
       const { headers, rawHeaders } = await response.promise;

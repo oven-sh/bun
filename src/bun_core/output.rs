@@ -1694,8 +1694,7 @@ pub use bun_core_macros::pretty_fmt;
 /// Input accepted by [`pretty_fmt`]: either a `&str` template or a
 /// pre-formatted `&fmt::Arguments<'_>` (which is first rendered to a string
 /// then `<tag>`-rewritten — used by `Custom Inspect`-style call sites that
-/// build the template via `format_args!`). Every input is UTF-8, which is what
-/// lets [`PrettyBuf`] hand out a `&str`.
+/// build the template via `format_args!`). Both are UTF-8; [`PrettyBuf`] relies on that.
 pub trait PrettyFmtInput {
     fn into_pretty_buf(self, is_enabled: bool) -> PrettyBuf;
 }
@@ -1740,11 +1739,7 @@ pub fn pretty_fmt_rt(input: impl PrettyFmtInput, is_enabled: bool) -> PrettyBuf 
 
 /// Owned ANSI-rewritten buffer; derefs to `[u8]` so it can be passed to
 /// `write_all(&buf)` directly, and implements `Display` so it can be used in
-/// `write!(w, "{}", pretty_fmt::<true>("…"))`.
-///
-/// Only [`PrettyFmtInput`] builds one, from UTF-8 input. `pretty_fmt_runtime`
-/// copies that input byte for byte and only drops `<tag>` spans and inserts
-/// ASCII escapes, so the buffer stays UTF-8.
+/// `write!(w, "{}", pretty_fmt::<true>("…"))`. UTF-8 by construction: see [`PrettyFmtInput`].
 #[repr(transparent)]
 pub struct PrettyBuf(Vec<u8>);
 impl core::ops::Deref for PrettyBuf {
@@ -1763,8 +1758,7 @@ impl AsRef<[u8]> for PrettyBuf {
 impl AsRef<str> for PrettyBuf {
     #[inline]
     fn as_ref(&self) -> &str {
-        // SAFETY: UTF-8 by construction, see the type docs. The field is
-        // private, so no other constructor exists.
+        // SAFETY: the field is private and every `PrettyFmtInput` is UTF-8.
         unsafe { core::str::from_utf8_unchecked(&self.0) }
     }
 }

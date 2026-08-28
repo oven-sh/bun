@@ -395,16 +395,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 Ok(expr)
             }
             T::TLessThan => {
-                // An element or fragment without braces: <div a=<b/> c=<>d</> />
-                // This may be removed in the future: https://github.com/facebook/jsx/issues/53
+                // Unbraced element or fragment value: https://github.com/facebook/jsx/issues/53
                 let loc = p.lexer.loc();
                 p.lexer.next_inside_jsx_element()?;
                 let value = p.parse_jsx_element(loc)?;
 
-                // The call to parse_jsx_element() above doesn't consume the last
-                // TGreaterThan because the caller knows what next() function to call.
-                // Use next_inside_jsx_element() here since the next token is inside
-                // the enclosing element's attribute list.
+                // The element's closing `>` is still current. The next token is another attribute.
                 p.lexer.next_inside_jsx_element()?;
                 Ok(value)
             }

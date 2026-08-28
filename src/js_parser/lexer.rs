@@ -241,8 +241,7 @@ pub struct Lexer<'a> {
     pub(crate) temp_buffer_u16: Vec<u16>,
     pub(crate) track_comments: bool,
     pub(crate) track_react_suppressions: bool,
-    /// Set by `P::init` from the `TYPESCRIPT` const generic. Decides whether
-    /// a `>` or `}` in JSX text is an error (TSX) or a warning (JSX).
+    /// Set by `P::init`. A `>` or `}` in JSX text is an error for TSX, a warning for JSX.
     pub(crate) is_typescript: bool,
     pub(crate) all_comments: Vec<Range>,
 }
@@ -2515,9 +2514,7 @@ impl<'a> Lexer<'a> {
                             self.step();
                         }
 
-                        // A namespaced name (`a:b`) is three tokens here. The parser
-                        // joins them in `parse_jsx_namespaced_name` so that whitespace
-                        // around the colon is allowed.
+                        // `a:b` is three tokens here, joined by `parse_jsx_namespaced_name`.
                         self.identifier = self.raw();
                         self.token = T::TIdentifier;
                         break;
@@ -2643,9 +2640,7 @@ impl<'a> Lexer<'a> {
         self.next_jsx_element_child()
     }
 
-    /// `>` or `}` in JSX text. TypeScript rejects it (TS1382/TS1381). Babel
-    /// still accepts it, so plain JS only gets a warning. Lexing continues
-    /// either way so every occurrence is reported.
+    /// `>` or `}` in JSX text: an error like tsc (TS1382/TS1381), a warning for JS like Babel.
     #[cold]
     #[inline(never)]
     fn add_invalid_jsx_text_character(&mut self) {
@@ -2723,10 +2718,7 @@ impl<'a> Lexer<'a> {
                                 break 'string_literal;
                             }
                             0x7D | 0x3E => {
-                                // These aren't valid JSX: https://facebook.github.io/jsx/
-                                //
-                                //   JSXTextCharacter :
-                                //     * SourceCharacter but not one of {, <, > or }
+                                // Not a JSXTextCharacter: https://facebook.github.io/jsx/
                                 self.add_invalid_jsx_text_character();
                                 self.step();
                             }

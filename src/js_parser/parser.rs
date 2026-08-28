@@ -730,14 +730,8 @@ pub(crate) struct JSXTag<'a> {
     pub name: &'a [u8],
 }
 
-/// Parses a JSX element name or attribute name: `name` or `ns:name`. The
-/// current token must be `TIdentifier`. Inside a JSX element the lexer emits
-/// `:` as its own token, so `<rdf : Description rdf : ID="x"/>` is accepted.
-///
-/// JSX namespaces are not supported by React or TypeScript, but someone using
-/// JSX syntax in more obscure ways may find a use for them. A namespaced name
-/// is always turned into a string, so it cannot reference a JavaScript
-/// identifier. Returns the range of the whole name and the joined name.
+/// Parses a JSX tag or attribute name, `name` or `ns : name`, from the current
+/// `TIdentifier`. Returns the range of the whole name and the joined `ns:name`.
 pub(crate) fn parse_jsx_namespaced_name<'a, P>(
     p: &mut P,
 ) -> crate::CrateResult<(bun_ast::Range, &'a [u8])>

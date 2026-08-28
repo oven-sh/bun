@@ -502,7 +502,14 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!(
             "--react-compiler                 Enable the React Compiler optimizing transform"
         ),
+        parse_param!(
+            "--bundle                         Bundle dependencies into the output. This is the default behavior"
+        ),
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
+        // Hidden compat flags: `--entrypoints` from old docs, `--experimental-*` from 1.1 scripts.
+        parse_param!("--entrypoints <STR>..."),
+        parse_param!("--experimental-css"),
+        parse_param!("--experimental-html"),
         parse_param!(
             "--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."
         ),
@@ -514,7 +521,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--keep-names                     Preserve original function and class names when minifying"
         ),
         parse_param!(
-            "--css-chunking                   Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS"
+            "--css-chunking/--experimental-css-chunking   Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS"
         ),
         parse_param!("--dump-environment-variables"),
         parse_param!("--conditions <STR>...            Pass custom conditions to resolve"),
@@ -787,6 +794,13 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             // Only the paths standing in for `node` get node's aliases.
             short_aliases: match cmd {
                 CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
+                _ => &[],
+            },
+            // No argv passthrough after the keyword, so an unknown flag is a typo (#40558).
+            reject_unrecognized_flags: cmd == CommandTag::BuildCommand,
+            // esbuild spellings in-tree scripts (react init template, node-fallbacks) still use.
+            colon_value_flags: match cmd {
+                CommandTag::BuildCommand => &[b"define", b"external", b"loader", b"drop"],
                 _ => &[],
             },
         },
@@ -1540,6 +1554,14 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
 
         opts.entry_points = entry_points.to_vec();
+
+        if cmd == CommandTag::BuildCommand {
+            opts.entry_points.extend(
+                args.options(b"--entrypoints")
+                    .iter()
+                    .map(|s| Box::<[u8]>::from(*s)),
+            );
+        }
     }
 
     let jsx_factory = args.option(b"--jsx-factory");

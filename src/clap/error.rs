@@ -6,6 +6,8 @@ pub enum Error {
     MissingValue,
     #[error("InvalidArgument")]
     InvalidArgument,
+    #[error("UnrecognizedFlag")]
+    UnrecognizedFlag,
 }
 
 impl Error {
@@ -15,6 +17,7 @@ impl Error {
             Self::DoesntTakeValue => "DoesntTakeValue",
             Self::MissingValue => "MissingValue",
             Self::InvalidArgument => "InvalidArgument",
+            Self::UnrecognizedFlag => "UnrecognizedFlag",
         }
     }
 }
@@ -31,6 +34,7 @@ impl From<crate::streaming::ArgError> for Error {
             crate::streaming::ArgError::DoesntTakeValue => Self::DoesntTakeValue,
             crate::streaming::ArgError::MissingValue => Self::MissingValue,
             crate::streaming::ArgError::InvalidArgument => Self::InvalidArgument,
+            crate::streaming::ArgError::UnrecognizedFlag => Self::UnrecognizedFlag,
         }
     }
 }

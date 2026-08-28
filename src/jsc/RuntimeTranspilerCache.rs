@@ -679,18 +679,11 @@ impl RuntimeTranspilerCache {
         }
     }
 
-    /// `<tmpdir>/bun-<euid>/@t@`: the last resort when there is no home
-    /// directory (minimal containers, some CI runners, systemd services).
-    ///
-    /// A cache entry is executed as code, and every local user can write to
-    /// the temp directory, so a shared `<tmpdir>/bun/@t@` would let another
-    /// user plant entries. The root is per-user instead: created `0700` and
-    /// checked through an `O_NOFOLLOW` directory fd before anything is read
-    /// from it. It has to be a directory owned by the effective uid with no
-    /// group/other write bits. Later opens go by path, so the temp directory
-    /// itself must not let another user rename or unlink that root (see
-    /// `entries_replaceable_by_others`). Anything else returns 0, which
-    /// means "cache disabled".
+    /// `<tmpdir>/bun-<euid>/@t@`, the last resort when there is no home
+    /// directory. A cache entry runs as code and other users can write to the
+    /// temp directory, so the root is per-user and used only when neither it
+    /// nor its parent can be replaced by another user. Returns 0 to mean
+    /// "cache disabled".
     #[cfg(unix)]
     fn tmpdir_cache_dir(top: &[u8], buf: &mut PathBuffer) -> usize {
         let euid = sys::c::geteuid();
@@ -742,10 +735,9 @@ impl RuntimeTranspilerCache {
         path_handler::join_abs_string_buf_z::<platform::Loose>(top, &mut buf[..], parts).len()
     }
 
-    /// Can another user rename or unlink an entry of this directory? Write
-    /// permission on the directory is enough, unless the sticky bit limits
-    /// that to the entry owner, the directory owner and root, and the
-    /// directory owner is us or root. A standard `1777 /tmp` passes.
+    /// Whether another user can rename or unlink entries of this directory:
+    /// it is group/other writable and the sticky bit does not limit that to
+    /// the entry owner and a trusted directory owner (us or root).
     #[cfg(unix)]
     fn entries_replaceable_by_others(st: &sys::Stat, euid: libc::uid_t) -> bool {
         let mode = st.st_mode as sys::Mode;

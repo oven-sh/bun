@@ -1464,10 +1464,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Hoisting and re-declaration link the refs of one variable into a chain
-    /// (`var n` in a block, `var n` after a parameter `n`). A fact about the
-    /// variable, such as "something assigns it", belongs on the symbol at the
-    /// end of that chain, which is the one `symbol::Map::follow` returns.
+    /// Marks the root of the link chain, the symbol `symbol::Map::follow`
+    /// returns. A block `var n` hoisted onto a parameter `n` is a linked ref
+    /// of the same variable.
     pub(crate) fn record_assignment(&mut self, ref_: Ref) {
         let mut ref_ = ref_;
         loop {

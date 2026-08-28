@@ -2230,8 +2230,7 @@ pub(crate) mod __gated_printer {
                     //
                     // Caveats:
                     //   - Same consecutive target
-                    //   - The target reads as the same value every time
-                    //     (see `is_stable_destructuring_target`)
+                    //   - A stable target (`is_stable_destructuring_target`)
                     //   - No optional chaining
                     //   - No computed property access
                     //   - Identifier bindings only
@@ -2400,15 +2399,10 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// A destructuring group reads its target once where the declarators
-        /// it replaces read it once per member. That is the same program only
-        /// when every read is a pure read of the same value. A getter on the
-        /// first property runs between two reads, so the target must be a
-        /// symbol this file declares and never assigns after its declaration,
-        /// reached without a `with` scope or a direct `eval`. An unbound name
-        /// may be an accessor on the global object. The known pure globals
-        /// (`Math`, `Object`, ...) are the exception, as in dead-code
-        /// elimination.
+        /// The group reads its target once where the declarators read it once
+        /// each, and a getter on the first property runs in between. The
+        /// target must be a declared symbol that nothing assigns, outside
+        /// `with` and direct `eval`, or a known pure global such as `Math`.
         fn is_stable_destructuring_target(&self, id: &E::Identifier, target_ref: Ref) -> bool {
             if id.must_keep_due_to_with_stmt() {
                 return false;

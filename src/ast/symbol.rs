@@ -118,12 +118,9 @@ bitflags::bitflags! {
 
         const REMOVE_OVERWRITTEN_FUNCTION_DECLARATION = 1 << 4;
 
-        /// Set on the root of a symbol's link chain when the file assigns the
-        /// variable after its declaration, or when `arguments` can rebind it
-        /// (a parameter of a sloppy-mode function that uses `arguments`).
-        /// HMR uses it to decide when live binding code is needed. The
-        /// printer uses it to decide whether two reads of the variable see
-        /// the same value.
+        /// The file assigns this variable after its declaration (or a mapped
+        /// `arguments` object can). Set on the root of the symbol's link
+        /// chain. Read by HMR live bindings and the printer's same-target fold.
         const HAS_BEEN_ASSIGNED_TO = 1 << 5;
     }
 }

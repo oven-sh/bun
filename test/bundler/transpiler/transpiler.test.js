@@ -1467,25 +1467,42 @@ function foo() {}
       exp("let x: abstract new <T>() => Foo<T>", "let x");
     });
 
-    it("declare is only valid on a plain class field", () => {
+    // Every member the "declare" modifier is not valid on is rejected instead of being
+    // silently deleted from the class. Matches esbuild's ts_parser_test.go.
+    describe.each(["declare ", "declare static ", "static declare "])(
+      "%sis only valid on a plain class field",
+      modifiers => {
+        const err = ts.expectParseError;
+
+        it("rejects a method", () => {
+          err(`class Foo { ${modifiers}foo() }`, '"declare" cannot be used with a method');
+          err(`class Foo { ${modifiers}foo() { console.log("ran") } }`, '"declare" cannot be used with a method');
+          err(`class Foo { ${modifiers}foo?(): void }`, '"declare" cannot be used with a method');
+          err(`class Foo { ${modifiers}async foo() {} }`, '"declare" cannot be used with a method');
+          err(`class Foo { ${modifiers}*foo() {} }`, '"declare" cannot be used with a method');
+          err(`class Foo { ${modifiers}['foo']() {} }`, '"declare" cannot be used with a method');
+        });
+
+        it("rejects a getter and a setter", () => {
+          err(`class Foo { ${modifiers}get foo() { return 1 } }`, '"declare" cannot be used with a getter');
+          err(`class Foo { ${modifiers}set foo(v) {} }`, '"declare" cannot be used with a setter');
+        });
+
+        it("rejects a private identifier", () => {
+          err(`class Foo { ${modifiers}#foo }`, '"declare" cannot be used with a private identifier');
+          err(`class Foo { ${modifiers}#foo = 1 }`, '"declare" cannot be used with a private identifier');
+        });
+
+        it("rejects an index signature", () => {
+          err(`class Foo { ${modifiers}[foo: string]: number }`, '"declare" cannot be used with an index signature');
+        });
+      },
+    );
+
+    it("declare on a plain class field is erased", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;
 
-      // Every member the modifier is not valid on is rejected instead of being
-      // silently deleted from the class. Matches esbuild's ts_parser_test.go.
-      for (const modifiers of ["declare ", "declare static ", "static declare "]) {
-        err(`class Foo { ${modifiers}foo() }`, '"declare" cannot be used with a method');
-        err(`class Foo { ${modifiers}foo() { console.log("ran") } }`, '"declare" cannot be used with a method');
-        err(`class Foo { ${modifiers}foo?(): void }`, '"declare" cannot be used with a method');
-        err(`class Foo { ${modifiers}async foo() {} }`, '"declare" cannot be used with a method');
-        err(`class Foo { ${modifiers}*foo() {} }`, '"declare" cannot be used with a method');
-        err(`class Foo { ${modifiers}['foo']() {} }`, '"declare" cannot be used with a method');
-        err(`class Foo { ${modifiers}get foo() { return 1 } }`, '"declare" cannot be used with a getter');
-        err(`class Foo { ${modifiers}set foo(v) {} }`, '"declare" cannot be used with a setter');
-        err(`class Foo { ${modifiers}#foo }`, '"declare" cannot be used with a private identifier');
-        err(`class Foo { ${modifiers}#foo = 1 }`, '"declare" cannot be used with a private identifier');
-        err(`class Foo { ${modifiers}[foo: string]: number }`, '"declare" cannot be used with an index signature');
-      }
       // The second "declare" is a field name, not a modifier.
       err("class Foo { declare declare foo }", 'Expected ";" but found "foo"');
 
@@ -1569,7 +1586,7 @@ function foo() {}
       err("type T = { foo(1): void };", "Unexpected 1");
     });
 
-    it("decorators are not valid on a declare or abstract field unless experimentalDecorators is set", () => {
+    it("standard decorators are not valid on a class member TypeScript erases", () => {
       const err = ts.expectParseError;
 
       err("class Foo { @dec declare foo: any; @dec bar: any }", "Decorators are not valid here");
@@ -1581,28 +1598,31 @@ function foo() {}
       err("class Foo { @dec [key: string]: any }", "Decorators are not valid here");
       // A "declare class" body is erased as a whole.
       ts.expectPrinted_("declare class Foo { @dec declare foo: any; @dec bar(): void }", "");
+    });
 
-      // TypeScript experimental decorators are allowed on declare and abstract
-      // fields. The decorator call is kept and the field is still erased.
+    describe("TypeScript experimental decorators on a declare or abstract field", () => {
+      // The decorator call is kept and the field is still erased.
       const legacy = new Bun.Transpiler({
         loader: "ts",
         tsconfig: { compilerOptions: { experimentalDecorators: true } },
       });
-      for (const code of [
+
+      it.each([
         "class Foo { @dec declare foo: any; @dec bar: any }",
         "abstract class Foo { @dec abstract foo: any; @dec bar: any }",
-      ]) {
+      ])("keep the decorator call for %s", code => {
         const out = legacy.transformSync(code);
         expect(out).toContain("class Foo {\n}");
         expect(out).toContain('Foo.prototype, "foo", undefined);');
         expect(out).toContain('Foo.prototype, "bar", undefined);');
-      }
-      expect(() => legacy.transformSync("class Foo { @dec foo(): void; @dec foo(): void {} }")).toThrow(
-        "Decorators are not valid here",
-      );
-      expect(() => legacy.transformSync("abstract class Foo { @dec abstract foo(): void }")).toThrow(
-        "Decorators are not valid here",
-      );
+      });
+
+      it.each([
+        "class Foo { @dec foo(): void; @dec foo(): void {} }",
+        "abstract class Foo { @dec abstract foo(): void }",
+      ])("are still rejected on %s", code => {
+        expect(() => legacy.transformSync(code)).toThrow("Decorators are not valid here");
+      });
     });
 
     describe("the .mts and .cts extensions", () => {
@@ -1610,14 +1630,6 @@ function foo() {}
       // ".tsx" file would read as a JSX element: the "<T>x" cast and the
       // "<T>() => {}" arrow function. "<T,>" and "<T extends X>" stay allowed.
       const message = 'This syntax is not allowed in files with the ".mts" or ".cts" extension';
-      const rejected = {
-        "cast.mts": "let y = 1; let a = <any>y;",
-        "cast.cts": "let y = 1; let a = <any>y;",
-        "arrow.mts": "let f = <T>() => {};",
-        "arrow.cts": "let f = <T>() => {};",
-        "arrow-args.mts": "let f = <T>(x: T) => x;",
-        "arrow-args.cts": "let f = <T>(x: T) => x;",
-      };
       const allowedSource = `
         const f1 = <T,>(x: T) => x;
         const f2 = <T extends string>(x: T) => x;
@@ -1629,11 +1641,22 @@ function foo() {}
         const arr = new Array<number>(1);
         console.log(JSON.stringify([f1(1), f2("s"), f3(1, 2), f4(3), g, h, arr.length, (1 as any) + 1]));
       `;
-      const allowed = {
-        "allowed.mts": allowedSource,
-        "allowed.cts": allowedSource,
-        "allowed.ts": "let y = 1; let a = <any>y; let f = <T>() => a; console.log(JSON.stringify([a, f()]));",
-      };
+      // [file, source, stdout when run (null when the file is rejected)]
+      const cases = [
+        ["cast.mts", "let y = 1; let a = <any>y;", null],
+        ["cast.cts", "let y = 1; let a = <any>y;", null],
+        ["arrow.mts", "let f = <T>() => {};", null],
+        ["arrow.cts", "let f = <T>() => {};", null],
+        ["arrow-args.mts", "let f = <T>(x: T) => x;", null],
+        ["arrow-args.cts", "let f = <T>(x: T) => x;", null],
+        ["allowed.mts", allowedSource, '[1,"s",[1,2],3,true,false,1,2]'],
+        ["allowed.cts", allowedSource, '[1,"s",[1,2],3,true,false,1,2]'],
+        [
+          "allowed.ts",
+          "let y = 1; let a = <any>y; let f = <T>() => a; console.log(JSON.stringify([a, f()]));",
+          "[1,1]",
+        ],
+      ];
 
       async function run(cmd, cwd) {
         await using proc = Bun.spawn({ cmd, env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
@@ -1641,72 +1664,63 @@ function foo() {}
         return { stdout, stderr, exitCode };
       }
 
-      it.concurrent("bun build rejects the ambiguous syntax", async () => {
-        using dir = tempDir("ts-no-ambiguous-less-than-build", { ...rejected, ...allowed });
-        for (const file of Object.keys(rejected)) {
+      describe.each(cases)("%s", (file, source, expected) => {
+        it.concurrent("bun build", async () => {
+          using dir = tempDir("ts-no-ambiguous-less-than-build", { [file]: source });
           const { stderr, exitCode } = await run([bunExe(), "build", "--no-bundle", file], String(dir));
-          expect({ file, hasError: stderr.includes(message), exitCode }).toEqual({ file, hasError: true, exitCode: 1 });
-        }
-        for (const file of Object.keys(allowed)) {
-          const { stderr, exitCode } = await run([bunExe(), "build", "--no-bundle", file], String(dir));
-          expect({ file, stderr, exitCode }).toEqual({ file, stderr: "", exitCode: 0 });
-        }
-      });
+          if (expected === null) {
+            expect({ hasError: stderr.includes(message), exitCode }).toEqual({ hasError: true, exitCode: 1 });
+          } else {
+            expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+          }
+        });
 
-      it.concurrent("bun run rejects the ambiguous syntax", async () => {
-        using dir = tempDir("ts-no-ambiguous-less-than-run", { ...rejected, ...allowed });
-        for (const file of Object.keys(rejected)) {
-          const { stderr, exitCode } = await run([bunExe(), file], String(dir));
-          expect({ file, hasError: stderr.includes(message), exitCode }).toEqual({ file, hasError: true, exitCode: 1 });
-        }
-        for (const [file, expected] of [
-          ["allowed.mts", '[1,"s",[1,2],3,true,false,1,2]'],
-          ["allowed.cts", '[1,"s",[1,2],3,true,false,1,2]'],
-          ["allowed.ts", "[1,1]"],
-        ]) {
+        it.concurrent("bun run", async () => {
+          using dir = tempDir("ts-no-ambiguous-less-than-run", { [file]: source });
           const { stdout, stderr, exitCode } = await run([bunExe(), file], String(dir));
-          expect({ file, stdout: stdout.trim(), stderr, exitCode }).toEqual({
-            file,
-            stdout: expected,
-            stderr: "",
-            exitCode: 0,
-          });
-        }
+          if (expected === null) {
+            expect({ hasError: stderr.includes(message), exitCode }).toEqual({ hasError: true, exitCode: 1 });
+          } else {
+            expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+          }
+        });
       });
     });
 
-    it("a class member that declare cannot apply to is an error at runtime too", async () => {
-      using dir = tempDir("ts-declare-class-member", {
-        "method.ts": `
-          class B { declare foo() { console.log("ran") } }
-          new B().foo();
-        `,
-        "decorated.ts": `
-          function d(v: any, ctx: any) { console.log("dec", ctx.kind, ctx.name) }
-          class F { @d declare foo: any; @d bar: any }
-          console.log(Object.keys(new F()));
-        `,
-        "tsconfig.json": `{ "compilerOptions": { "experimentalDecorators": false } }`,
-      });
-      for (const [file, expected] of [
-        ["method.ts", '"declare" cannot be used with a method'],
-        ["decorated.ts", "Decorators are not valid here"],
-      ]) {
+    describe.each([
+      [
+        "a declare method",
+        `class B { declare foo() { console.log("ran") } }
+         new B().foo();`,
+        '"declare" cannot be used with a method',
+      ],
+      [
+        "a standard decorator on a declare field",
+        `function d(v: any, ctx: any) { console.log("dec", ctx.kind, ctx.name) }
+         class F { @d declare foo: any; @d bar: any }
+         console.log(Object.keys(new F()));`,
+        "Decorators are not valid here",
+      ],
+    ])("%s is an error at runtime too", (_name, source, expected) => {
+      it.concurrent("bun run", async () => {
+        using dir = tempDir("ts-declare-class-member", {
+          "index.ts": source,
+          "tsconfig.json": `{ "compilerOptions": { "experimentalDecorators": false } }`,
+        });
         await using proc = Bun.spawn({
-          cmd: [bunExe(), file],
+          cmd: [bunExe(), "index.ts"],
           env: bunEnv,
           cwd: String(dir),
           stdout: "pipe",
           stderr: "pipe",
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ file, stdout, hasError: stderr.includes(expected), exitCode }).toEqual({
-          file,
+        expect({ stdout, hasError: stderr.includes(expected), exitCode }).toEqual({
           stdout: "",
           hasError: true,
           exitCode: 1,
         });
-      }
+      });
     });
 
     it("as", () => {

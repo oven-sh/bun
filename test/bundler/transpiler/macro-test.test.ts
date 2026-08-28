@@ -406,7 +406,7 @@ describe("a hostile macro", () => {
         .split("\n")
         .filter(line => !line.startsWith("[macro]"))
         .join("\n"),
-      stderr: stderr.replaceAll(String(dir), "[dir]"),
+      stderr: stderr.replaceAll(String(dir), "[dir]").replaceAll("\\", "/"),
       exitCode,
       signalCode: proc.signalCode,
     };

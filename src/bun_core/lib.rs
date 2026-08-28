@@ -2841,6 +2841,7 @@ pub mod asan {
         safe fn __asan_describe_address(ptr: *const c_void);
         safe fn __lsan_register_root_region(ptr: *const c_void, size: usize);
         safe fn __lsan_unregister_root_region(ptr: *const c_void, size: usize);
+        safe fn __lsan_ignore_object(ptr: *const c_void);
     }
 
     #[inline]
@@ -2885,6 +2886,15 @@ pub mod asan {
         __lsan_unregister_root_region(ptr, size);
         #[cfg(not(bun_asan))]
         let _ = (ptr, size);
+    }
+    /// The heap allocation containing `ptr` is owned through a reference LeakSanitizer cannot follow (e.g. a
+    /// tagged pointer); do not report it. Its owner is still responsible for freeing it.
+    #[inline]
+    pub fn lsan_ignore_object(ptr: *const c_void) {
+        #[cfg(bun_asan)]
+        __lsan_ignore_object(ptr);
+        #[cfg(not(bun_asan))]
+        let _ = ptr;
     }
 }
 

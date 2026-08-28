@@ -238,8 +238,15 @@ devTest("export * as namespace", {
 devTest("export named __proto__", {
   framework: minimalFramework,
   files: {
+    // an unused constant with a literal value is moved into the exports literal
     "moved.ts": `
-      export const __proto__ = { moved: true };
+      export const __proto__ = "moved";
+    `,
+    "local.ts": `
+      export const __proto__ = { local: true };
+    `,
+    "klass.ts": `
+      export class __proto__ { static tag = "class"; }
     `,
     "clause.ts": `
       function p() { return "clause"; }
@@ -250,12 +257,16 @@ devTest("export named __proto__", {
     `,
     "routes/index.ts": `
       import * as moved from '../moved';
+      import * as local from '../local';
+      import * as klass from '../klass';
       import * as clause from '../clause';
       import * as star from '../star';
       import { __proto__ as p } from '../clause';
       export default function(req, meta) {
         return new Response(JSON.stringify([
-          Object.hasOwn(moved, "__proto__") && moved.__proto__.moved,
+          Object.hasOwn(moved, "__proto__") && moved.__proto__ === "moved",
+          Object.hasOwn(local, "__proto__") && local.__proto__.local,
+          Object.hasOwn(klass, "__proto__") && klass.__proto__.tag === "class",
           Object.hasOwn(clause, "__proto__") && clause.__proto__ === p && p() === "clause",
           Object.hasOwn(star, "__proto__") && star.__proto__.other === p,
         ]));
@@ -263,7 +274,7 @@ devTest("export named __proto__", {
     `,
   },
   async test(dev) {
-    await dev.fetch("/").equals("[true,true,true]");
+    await dev.fetch("/").equals("[true,true,true,true,true]");
   },
 });
 devTest("ESM <-> CJS sync", {

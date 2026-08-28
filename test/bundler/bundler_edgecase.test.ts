@@ -1425,6 +1425,9 @@ describe("bundler", () => {
           function spread(__proto__) { return { a: 1, ...{ b: 2, __proto__ }, c: 3 }; }
           class Field { __proto__ = P; }
           function destructure(o) { { let __proto__ = null; ({ __proto__ } = o); return __proto__; } }
+          // a default value has to print once, after the (renamed) target
+          function destructureDefault(o) { { let __proto__ = null; ({ __proto__: __proto__ = 7 } = o); return __proto__; } }
+          function destructureShorthandDefault(o) { { let __proto__ = null; ({ __proto__ = 8 } = o); return __proto__; } }
           function describe(o) {
             return [Object.getPrototypeOf(o) === P, Object.hasOwn(o, "__proto__")];
           }
@@ -1440,6 +1443,8 @@ describe("bundler", () => {
             spread: describe(spread(P)),
             field: describe(new Field()),
             destructure: destructure({ ["__proto__"]: 42 }),
+            destructureDefault: [destructureDefault(Object.create(null)), destructureDefault({ ["__proto__"]: 42 })],
+            destructureShorthandDefault: [destructureShorthandDefault(Object.create(null)), destructureShorthandDefault({ ["__proto__"]: 42 })],
             importShorthand: describe({ __proto__ }),
             importColon: describe({ __proto__: __proto__ }),
             importComputed: describe({ ["__proto__"]: __proto__ }),
@@ -1480,6 +1485,8 @@ describe("bundler", () => {
           spread: [false, true],
           field: [false, true],
           destructure: 42,
+          destructureDefault: [7, 42],
+          destructureShorthandDefault: [8, 42],
           importShorthand: [false, true],
           importColon: [true, false],
           importComputed: [false, true],
@@ -1536,6 +1543,46 @@ describe("bundler", () => {
     run: {
       file: "/test.js",
       stdout: JSON.stringify([true, true, ["__proto__", "other"]]),
+    },
+  });
+  // The dev server lowers the exports of a module to "hmr.exports = { ... }".
+  // Four arms build that literal from a user-chosen name: an export clause
+  // alias, a moved constant, a class declaration and "export * as".
+  itBundled("edgecase/ExportNamedProtoHmrExports", {
+    format: "internal_bake_dev",
+    files: {
+      "/entry.ts": /* js */ `
+        import * as a from './a';
+        import * as b from './b';
+        import * as c from './c';
+        import * as d from './d';
+        console.log(a, b, c, d);
+      `,
+      "/a.ts": `const x = { own: true }; export { x as __proto__ };`,
+      "/b.ts": `export const __proto__ = 1;`,
+      "/c.ts": `export class __proto__ {}`,
+      "/d.ts": `export * as __proto__ from './other';`,
+      "/other.ts": `export const y = 1;`,
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      const withProto = (output.match(/hmr\.exports = \{[^}]*\}/g) ?? []).filter(o => o.includes("__proto__"));
+      expect(withProto).toHaveLength(4);
+      for (const o of withProto) expect(o).toContain('["__proto__"]:');
+    },
+  });
+  // The namespace of a JSON module goes through the same "__export" literal.
+  itBundled("edgecase/JsonNamespaceImportProtoKey", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./data.json";
+        const get = k => ns[k];
+        console.log(JSON.stringify([Object.keys(ns).sort(), get("__proto__"), get("a")]));
+      `,
+      "/data.json": `{ "__proto__": { "fromJson": true }, "a": 1 }`,
+    },
+    run: {
+      stdout: JSON.stringify([["__proto__", "a", "default"], { fromJson: true }, 1]),
     },
   });
   // The named import turns the "__proto__" key of the JSON object literal into

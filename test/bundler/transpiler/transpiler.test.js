@@ -340,6 +340,12 @@ describe("Bun.Transpiler", () => {
       );
       ts.expectPrinted_("({ __proto__: x, __proto__: y } = z)", "({ __proto__: x, __proto__: y } = z)");
     });
+
+    it("prints a destructuring default once, in both key forms", () => {
+      ts.expectPrinted_("({ __proto__: __proto__ = 1 } = z)", "({ __proto__: __proto__ = 1 } = z)");
+      ts.expectPrinted_("({ __proto__ = 1 } = z)", "({ __proto__ = 1 } = z)");
+      ts.expectPrinted_("({ a: __proto__ = 1, __proto__: a = 2 } = z)", "({ a: __proto__ = 1, __proto__: a = 2 } = z)");
+    });
   });
 
   describe("TypeScript", () => {

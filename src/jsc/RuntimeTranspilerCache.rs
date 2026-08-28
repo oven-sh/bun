@@ -55,7 +55,9 @@ bun_core::declare_scope!(cache, visible);
 /// offsets picked by a header byte) plus a body of tagged records with
 /// u8/u16/u32 ids and implied slots dropped, instead of fixed u32 arrays.
 /// Version 27: ModuleInfo string table holds Latin-1 / UTF-16 bodies, not WTF-8.
-const EXPECTED_VERSION: u32 = 27;
+/// Version 28: section hashes are seeded with `input_hash` (not the fixed
+/// `SEED`) and a stored hash of 0 no longer skips verification.
+const EXPECTED_VERSION: u32 = 28;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -297,11 +299,9 @@ impl Entry {
                     ..Default::default()
                 };
 
-                metadata.output_hash = hash(output_bytes);
-                metadata.sourcemap_hash = hash(sourcemap);
-                if !esm_record.is_empty() {
-                    metadata.esm_record_hash = hash(esm_record);
-                }
+                metadata.output_hash = Wyhash::hash(input_hash, output_bytes);
+                metadata.sourcemap_hash = Wyhash::hash(input_hash, sourcemap);
+                metadata.esm_record_hash = Wyhash::hash(input_hash, esm_record);
 
                 let mut metadata_stream = bun_io::FixedBufferStream::new_mut(&mut metadata_buf[..]);
                 metadata.encode(&mut metadata_stream)?;
@@ -393,6 +393,8 @@ impl Entry {
             return Err(crate::CrateError::MissingData);
         }
 
+        let section_seed = self.metadata.input_hash;
+
         debug_assert!(
             self.output_code.is_empty(),
             "this should be the default value"
@@ -433,7 +435,7 @@ impl Entry {
                         return Err(crate::CrateError::MissingData);
                     }
 
-                    if self.metadata.output_hash != 0 && hash(bytes) != self.metadata.output_hash {
+                    if Wyhash::hash(section_seed, bytes) != self.metadata.output_hash {
                         return Err(crate::CrateError::InvalidHash);
                     }
 
@@ -457,15 +459,12 @@ impl Entry {
                         return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
                     }
                     let read_bytes = file.pread_all(bytes, self.metadata.output_byte_offset)?;
-
-                    if self.metadata.output_hash != 0 {
-                        if hash(latin1.latin1()) != self.metadata.output_hash {
-                            return Err(crate::CrateError::InvalidHash);
-                        }
-                    }
-
                     if read_bytes as u64 != self.metadata.output_byte_length {
                         return Err(crate::CrateError::MissingData);
+                    }
+
+                    if Wyhash::hash(section_seed, latin1.latin1()) != self.metadata.output_hash {
+                        return Err(crate::CrateError::InvalidHash);
                     }
 
                     latin1
@@ -488,11 +487,9 @@ impl Entry {
                         return Err(crate::CrateError::MissingData);
                     }
 
-                    if self.metadata.output_hash != 0 {
-                        let utf16_bytes: &[u8] = bytemuck::cast_slice(string.utf16());
-                        if hash(utf16_bytes) != self.metadata.output_hash {
-                            return Err(crate::CrateError::InvalidHash);
-                        }
+                    let utf16_bytes: &[u8] = bytemuck::cast_slice(string.utf16());
+                    if Wyhash::hash(section_seed, utf16_bytes) != self.metadata.output_hash {
+                        return Err(crate::CrateError::InvalidHash);
                     }
 
                     string
@@ -508,6 +505,9 @@ impl Entry {
                 self.metadata.sourcemap_byte_length as usize,
                 self.metadata.sourcemap_byte_offset,
             )?;
+            if Wyhash::hash(section_seed, &self.sourcemap) != self.metadata.sourcemap_hash {
+                return Err(crate::CrateError::InvalidHash);
+            }
         }
 
         if self.metadata.esm_record_byte_length > 0 {
@@ -517,10 +517,8 @@ impl Entry {
                 self.metadata.esm_record_byte_offset,
             )?;
 
-            if self.metadata.esm_record_hash != 0 {
-                if hash(&esm_record) != self.metadata.esm_record_hash {
-                    return Err(crate::CrateError::InvalidHash);
-                }
+            if Wyhash::hash(section_seed, &esm_record) != self.metadata.esm_record_hash {
+                return Err(crate::CrateError::InvalidHash);
             }
 
             self.esm_record = esm_record;
@@ -544,6 +542,55 @@ pub struct RuntimeTranspilerCache {
 
 pub(crate) fn hash(bytes: &[u8]) -> u64 {
     Wyhash::hash(SEED, bytes)
+}
+
+/// Effective uid: the identity the kernel checks file access against.
+#[cfg(unix)]
+#[inline]
+fn current_user_id() -> u32 {
+    bun_sys::c::geteuid() as u32
+}
+
+#[cfg(windows)]
+#[inline]
+fn current_user_id() -> u32 {
+    bun_sys::windows::user_unique_id()
+}
+
+#[cfg(unix)]
+fn is_trusted_dir_stat(st: &sys::Stat) -> bool {
+    (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
+        && st.st_uid == bun_sys::c::geteuid()
+        && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+}
+
+/// `true` when `path` lstat's as a directory owned by the current uid with no
+/// group/other write bits, or does not exist. Any other result fails closed.
+#[cfg(unix)]
+fn is_trusted_cache_root(path: &ZStr) -> bool {
+    match sys::lstat(path) {
+        Ok(st) => is_trusted_dir_stat(&st),
+        Err(e) if e.get_errno() == sys::E::ENOENT => true,
+        Err(_) => false,
+    }
+}
+
+/// Same predicate as `is_trusted_cache_root`, on the directory we opened.
+#[cfg(unix)]
+fn is_trusted_opened_cache_dir(fd: Fd) -> bool {
+    sys::fstat(fd).is_ok_and(|st| is_trusted_dir_stat(&st))
+}
+
+#[cfg(not(unix))]
+#[inline(always)]
+fn is_trusted_cache_root(_path: &ZStr) -> bool {
+    true
+}
+
+#[cfg(not(unix))]
+#[inline(always)]
+fn is_trusted_opened_cache_dir(_fd: Fd) -> bool {
+    true
 }
 
 /// Allocate `len` bytes and fill them via `pread_all` at `offset`, returning
@@ -635,8 +682,13 @@ impl RuntimeTranspilerCache {
         // that `absBufZ` used.
         let top = FileSystem::instance().top_level_dir;
 
+        let mut seg = [0u8; 4 + 10];
+        seg[..4].copy_from_slice(b"@t@-");
+        let n = bun_core::fmt::print_int(&mut seg[4..], current_user_id());
+        let tcache_seg: &[u8] = &seg[..4 + n];
+
         if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
-            let parts: &[&[u8]] = &[dir, b"bun", b"@t@"];
+            let parts: &[&[u8]] = &[dir, b"bun", tcache_seg];
             return path_handler::join_abs_string_buf_z::<platform::Loose>(
                 top,
                 &mut buf[..],
@@ -650,7 +702,7 @@ impl RuntimeTranspilerCache {
             // On a mac, default to ~/Library/Caches/bun/*
             // This is different than ~/.bun/install/cache, and not configurable by the user.
             if let Some(home) = env_var::HOME.get() {
-                let parts: &[&[u8]] = &[home, b"Library/", b"Caches/", b"bun", b"@t@"];
+                let parts: &[&[u8]] = &[home, b"Library/", b"Caches/", b"bun", tcache_seg];
                 return path_handler::join_abs_string_buf_z::<platform::Loose>(
                     top,
                     &mut buf[..],
@@ -661,7 +713,7 @@ impl RuntimeTranspilerCache {
         }
 
         if let Some(dir) = env_var::HOME.get() {
-            let parts: &[&[u8]] = &[dir, b".bun", b"install", b"cache", b"@t@"];
+            let parts: &[&[u8]] = &[dir, b".bun", b"install", b"cache", tcache_seg];
             return path_handler::join_abs_string_buf_z::<platform::Loose>(
                 top,
                 &mut buf[..],
@@ -693,8 +745,17 @@ impl RuntimeTranspilerCache {
         let path_len = match Self::RUNTIME_TRANSPILER_CACHE.with(|c| c.get()) {
             Some(len) => len,
             None => {
-                let len = Self::CACHE_DIR_BUF
-                    .with_borrow_mut(|tl_buf| Self::really_get_cache_dir(tl_buf));
+                let len = Self::CACHE_DIR_BUF.with_borrow_mut(|tl_buf| {
+                    let len = Self::really_get_cache_dir(tl_buf);
+                    if len > 0 && !is_trusted_cache_root(ZStr::from_buf(&tl_buf[..], len)) {
+                        bun_core::scoped_log!(
+                            cache,
+                            "transpiler cache root failed ownership/mode check, disabling"
+                        );
+                        return 0;
+                    }
+                    len
+                });
                 if len == 0 {
                     IS_DISABLED.store(true, Ordering::Relaxed);
                     return Err(crate::CrateError::CacheDisabled);
@@ -813,6 +874,11 @@ impl RuntimeTranspilerCache {
                 fd.close();
             }
         });
+
+        if cache_dir_fd != Fd::cwd() && !is_trusted_opened_cache_dir(cache_dir_fd) {
+            IS_DISABLED.store(true, Ordering::Relaxed);
+            return Err(crate::CrateError::CacheDisabled);
+        }
 
         Entry::save(
             cache_dir_fd,

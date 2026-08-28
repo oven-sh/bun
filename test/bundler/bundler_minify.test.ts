@@ -19,6 +19,46 @@ describe("bundler", () => {
     },
     run: { stdout: "top fn" },
   });
+  // A sloppy direct eval can declare a binding that shadows a `const` of an
+  // enclosing scope, so a scope that contains a direct eval keeps its
+  // constants as references instead of inlining their values.
+  itBundled("minify/DirectEvalKeepsConstReference", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const variable = false;
+        (function () {
+          eval("var variable = true");
+          console.log(variable);
+        })();
+        console.log(variable);
+      `,
+    },
+    minifySyntax: true,
+    format: "cjs",
+    outfile: "/out.cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.cjs").toContain("console.log(variable)");
+      api.expectFile("/out.cjs").not.toContain("console.log(!1)");
+    },
+    run: { stdout: "true\nfalse" },
+  });
+  // Without bundling the file is printed on its own, so a direct eval
+  // anywhere in it can reach every top-level name.
+  itBundled("minify/DirectEvalKeepsTopLevelNamesNoBundle", {
+    files: {
+      "/entry.js": /* js */ `
+        var outerVariable = 123;
+        var r = function (code) { var inner = 1; return eval(code) }("outerVariable + inner");
+        console.log(r);
+      `,
+    },
+    bundling: false,
+    minifyIdentifiers: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var outerVariable = 123");
+    },
+    run: { stdout: "124" },
+  });
   itBundled("minify/TemplateStringFolding", {
     files: {
       "/entry.js": /* js */ `

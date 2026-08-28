@@ -1505,7 +1505,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Expr {
         let ref_ = ident.ref_;
 
-        if self.options.features.inlining {
+        // A direct eval in this scope can declare a new binding with the same
+        // name (sloppy `eval("var x = ...")`), so the constant must stay a
+        // reference.
+        if self.options.features.inlining && !self.current_scope().contains_direct_eval {
             if let Some(replacement) = self.const_values.get(&ref_) {
                 let replacement = *replacement;
                 self.ignore_usage(ref_);
@@ -8029,23 +8032,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // A direct eval at module scope can reach every top-level name. Nested
-        // scopes are pinned in `pop_scope`; the module scope never pops. When
+        // scopes are pinned in `pop_scope`; the module scope never pops, so pin
+        // it here. Without bundling the file is printed on its own and every
+        // top-level name, import bindings included, must keep its name. When
         // the bundler wraps this file in a CommonJS closure those names stay
         // private to it, so pin them too. A flat ESM file's top-level names
         // share the chunk's scope with other files', so they stay renameable
-        // (as in esbuild) and eval may not see them. Import bindings are left
-        // out: the linker merges them into the exporting file's symbol, which
-        // would pin that name in every chunk that references it.
-        if bundling
-            && exports_kind == js_ast::ExportsKind::Cjs
-            && self.module_scope().contains_direct_eval
+        // (as in esbuild) and eval may not see them. When bundling, import
+        // bindings are left out: the linker merges them into the exporting
+        // file's symbol, which would pin that name in every chunk that
+        // references it.
+        if self.module_scope().contains_direct_eval
+            && (!bundling || exports_kind == js_ast::ExportsKind::Cjs)
         {
             let module_scope = self.module_scope_ref();
             for member in module_scope.members.values() {
                 let symbol = &mut self.symbols[member.ref_.inner_index() as usize];
-                if symbol.kind != js_ast::symbol::Kind::Import {
-                    symbol.set_must_not_be_renamed(true);
+                if bundling && symbol.kind == js_ast::symbol::Kind::Import {
+                    continue;
                 }
+                symbol.set_must_not_be_renamed(true);
             }
         }
 

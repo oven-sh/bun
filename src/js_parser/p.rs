@@ -6705,8 +6705,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         continue;
                     }
 
-                    // The old backing slice is overwritten right after this loop, so
-                    // `take` is fine here (Property: Default).
                     class_properties.push(core::mem::take(prop));
                 }
 

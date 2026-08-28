@@ -228,8 +228,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let mut ts_decorators = bun_alloc::AstAlloc::vec();
             if opts.allow_ts_decorators {
-                // The lowering evaluates a parameter decorator with the class's
-                // decorators, outside the method: parse it in that context.
+                // Parameter decorators are evaluated outside the method, with the class.
                 let inner_allow_await = p.fn_or_arrow_data_parse.allow_await;
                 let inner_needs_async_loc = p.fn_or_arrow_data_parse.needs_async_loc;
                 let inner_scope = p.current_scope;

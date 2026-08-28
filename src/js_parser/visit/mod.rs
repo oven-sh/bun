@@ -1153,8 +1153,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             };
                             injected.push(Stmt::assign(target, init));
                         }
-                        // Keep `#x;` for brand. A decorated field stays only for its
-                        // decorator call and emits nothing itself, like `declare`.
+                        // Keep `#x;` for brand. A decorated field stays only for its decorator call.
                         if is_private {
                             class_body.push(G::Property {
                                 initializer: None,

@@ -1352,9 +1352,7 @@ pub(super) enum DevHandlerId {
 /// rebound origin (`attacker.com` → 127.0.0.1) presents `Host: attacker.com`;
 /// rejecting non-loopback / non-IP / non-configured hostnames prevents the
 /// attacker's page from reading bundled source via same-origin fetch.
-/// `development.allowedHosts` (or `[serve.static] allowedHosts`) extends the
-/// list for names the developer trusts (mDNS names, tunnels, `/etc/hosts`
-/// entries). It does not relax `is_allowed_dev_origin`.
+/// `allowedHosts` extends the list; it does not relax `is_allowed_dev_origin`.
 pub(crate) fn is_allowed_dev_host(dev: &DevServer, req: &Request) -> bool {
     is_allowed_host_header(req, dev.server.as_ref().map(|server| server.config()))
 }
@@ -1411,9 +1409,7 @@ pub(crate) fn is_allowed_host_header(
     false
 }
 
-/// `host` ends with `suffix` (which starts with `.`) and has at least one
-/// label before it: `a.example.com` matches `.example.com`, `.example.com`
-/// alone does not.
+/// `a.example.com` matches `.example.com`; `.example.com` alone does not.
 fn has_domain_suffix(host: &[u8], suffix: &[u8]) -> bool {
     host.len() > suffix.len()
         && strings::eql_case_insensitive_ascii(&host[host.len() - suffix.len()..], suffix, true)

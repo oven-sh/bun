@@ -40,9 +40,7 @@ pub struct ServerConfig {
     pub(crate) max_request_body_size: usize,
     pub(crate) development: DevelopmentOption,
     pub(crate) broadcast_console_log_from_browser_to_server_for_bake: bool,
-    /// Extra `Host` header values the dev server answers for, from
-    /// `[serve.static] allowedHosts` or `development.allowedHosts`. See
-    /// `bake::is_allowed_host_header`.
+    /// `[serve.static] allowedHosts`, overridden by `development.allowedHosts`.
     pub(crate) allowed_hosts: AllowedHosts,
 
     /// Enable automatic workspace folders for Chrome DevTools
@@ -176,8 +174,8 @@ fn allowed_hosts_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Al
         if !AllowedHosts::is_valid_entry(&host) {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Bun.serve() expects each entry of 'development.allowedHosts' to be a hostname \
-                 without a scheme, port, or path (a leading \".\" allows subdomains), got \"{}\"",
-                bstr::BStr::new(&*host),
+                 without a scheme, port, or path (a leading \".\" allows subdomains), got {}",
+                bun_fmt::quote(&host),
             )));
         }
         hosts.push(Box::<[u8]>::from(&*host));

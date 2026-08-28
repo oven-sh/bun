@@ -346,11 +346,12 @@ function hmrHandshakeStatus(dev: Dev, host: string, origin = `http://${host}`): 
   socket.on("data", chunk => {
     received += chunk;
     if (received.includes("\r\n\r\n")) {
-      socket.destroy();
       resolve(received.split("\r\n")[0]);
+      socket.destroy();
     }
   });
   socket.on("error", reject);
+  socket.on("close", () => reject(new Error(`socket closed before the response ended: ${JSON.stringify(received)}`)));
   return promise;
 }
 

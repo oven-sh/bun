@@ -47,27 +47,22 @@ pub mod api {
             __ComptimeStringMap_UNHANDLED_REJECTIONS_MAP(());
     }
 
-    /// Which `Host` header values the dev server answers for. The built-in
-    /// list (`localhost`, `*.localhost`, IP literals, the bound `hostname`)
-    /// always applies; `[serve.static] allowedHosts` in bunfig.toml and
-    /// `development.allowedHosts` in `Bun.serve()` add to it or turn the
-    /// check off.
+    /// `allowedHosts` for the dev server's `Host` header check, from
+    /// `[serve.static]` in bunfig.toml or `development` in `Bun.serve()`.
     #[derive(Clone, Debug, Default)]
     pub enum AllowedHosts {
+        /// Only `localhost`, `*.localhost`, IP literals, and the bound `hostname`.
         #[default]
         BuiltIn,
-        /// Hostnames without a port. An entry with a leading `.` allows that
-        /// domain and every subdomain of it.
+        /// Hostnames without a port. A leading `.` also matches every subdomain.
         List(Vec<Box<[u8]>>),
         /// `allowedHosts = true`: every `Host` header is accepted.
         Any,
     }
 
     impl AllowedHosts {
-        /// Both config parsers reject the same entries. `.` alone would match
-        /// every host with a trailing dot, an empty entry would match a
-        /// malformed `Host` header, and a scheme, port, path, or glob never
-        /// matches anything.
+        /// Rejects `""` and `"."`, which would match a malformed `Host`, and
+        /// entries with a scheme, port, path, or glob, which never match.
         pub fn is_valid_entry(entry: &[u8]) -> bool {
             !entry.is_empty()
                 && entry != b"."

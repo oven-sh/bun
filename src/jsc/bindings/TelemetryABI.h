@@ -18,6 +18,17 @@ class GlobalObject;
 namespace Bun {
 
 // bun_telemetry::SpanStub — identity + start time of a span.
+/// What a request span's cell keeps once its pool slot is released
+/// (src/runtime/telemetry/span.rs `CellSnapshotAbi`).
+struct TelemetryCellSnapshot {
+    const uint8_t* name;
+    size_t nameLen;
+    const uint8_t* traceState;
+    size_t traceStateLen;
+    const uint8_t* baggage;
+    size_t baggageLen;
+};
+
 struct TelemetrySpanStub {
     uint8_t traceId[16];
     uint8_t spanId[8];

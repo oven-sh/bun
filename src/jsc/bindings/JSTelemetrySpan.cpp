@@ -95,22 +95,27 @@ extern "C" JSC::EncodedJSValue Bun__TelemetrySpan__createNative(Zig::GlobalObjec
 static void markEnded(Zig::GlobalObject*, JSTelemetrySpan*);
 
 /// A pooled span with a materialized cell ended natively: the same Ended
-/// transition as end(). The pool slot is gone after this, so the tracestate /
-/// baggage the span carried move onto the cell now unless already read.
-extern "C" void Bun__TelemetrySpan__nativeEnded(JSC::EncodedJSValue v, const uint8_t* traceState, size_t traceStateLen, const uint8_t* baggage, size_t baggageLen)
+/// transition as end(). The pool slot is gone after this, so what the cell
+/// read from it lazily (name, tracestate, baggage) moves onto the cell now
+/// unless already there. `snapshot` is null for a discarded span.
+extern "C" void Bun__TelemetrySpan__nativeEnded(JSC::EncodedJSValue v, const Bun::TelemetryCellSnapshot* snapshot)
 {
     auto* span = toTelemetrySpan(JSValue::decode(v));
     if (!span)
         return;
     auto* globalObject = defaultGlobalObject(span->globalObject());
     using Field = JSTelemetrySpan::Field;
-    if (span->get(Field::TraceState).isNull()) {
+    if (snapshot) {
         auto& vm = globalObject->vm();
         auto make = [&](const uint8_t* p, size_t n) -> JSString* {
             return n ? jsString(vm, WTF::String::fromUTF8ReplacingInvalidSequences(std::span { p, n })) : jsEmptyString(vm);
         };
-        span->field(Field::TraceState).set(vm, span, make(traceState, traceStateLen));
-        span->field(Field::Baggage).set(vm, span, make(baggage, baggageLen));
+        if (!span->string(Field::Name))
+            span->field(Field::Name).set(vm, span, make(snapshot->name, snapshot->nameLen));
+        if (span->get(Field::TraceState).isNull()) {
+            span->field(Field::TraceState).set(vm, span, make(snapshot->traceState, snapshot->traceStateLen));
+            span->field(Field::Baggage).set(vm, span, make(snapshot->baggage, snapshot->baggageLen));
+        }
     }
     if (!span->ended())
         markEnded(globalObject, span);

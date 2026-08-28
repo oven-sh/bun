@@ -391,7 +391,7 @@ describe("Bun.serve", () => {
             Bun.otel.propagator.inject(apiTrace.setSpan(API_ROOT, span), carrier, {
               set: (c: any, k: string, v: string) => (c[k] = v),
             });
-            resolve({ ts: (span.spanContext().traceState as any)?.serialize() ?? "", carrier });
+            resolve({ ts: (span.spanContext().traceState as any)?.serialize() ?? "", carrier, name: span.name });
           }, 20),
         );
         return new Response("ok");
@@ -407,8 +407,8 @@ describe("Bun.serve", () => {
       })
     ).text();
     await collect(1); // the SERVER span has ended by now
-    const { ts, carrier } = await late!;
-    expect([ts, carrier.tracestate, carrier.baggage]).toEqual(["vendor=late", "vendor=late", "k=v"]);
+    const { ts, carrier, name } = await late!;
+    expect([ts, carrier.tracestate, carrier.baggage, name]).toEqual(["vendor=late", "vendor=late", "k=v", "GET"]);
   });
 
   test("a traceparent the caller sets on fetch() becomes the CLIENT span's parent and the header is re-pointed at the CLIENT span", async () => {

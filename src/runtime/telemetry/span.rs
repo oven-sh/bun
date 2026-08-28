@@ -34,15 +34,9 @@ unsafe extern "C" {
     safe fn Bun__TelemetrySpan__createSuppressedCarrier(global: &JSGlobalObject) -> JSValue;
     safe fn Bun__TelemetrySpan__is(value: JSValue) -> bool;
     safe fn Bun__Telemetry__activeNativeHandle(global: &JSGlobalObject) -> NativeSpan;
-    /// `trace_state`/`baggage`: what the ended span carried (may be empty),
-    /// for the cell to keep answering with.
-    safe fn Bun__TelemetrySpan__nativeEnded(
-        cell: JSValue,
-        trace_state: *const u8,
-        trace_state_len: usize,
-        baggage: *const u8,
-        baggage_len: usize,
-    );
+    /// `snapshot`: the ended span's name / tracestate / baggage for the cell
+    /// to keep answering with; null when the span was discarded.
+    safe fn Bun__TelemetrySpan__nativeEnded(cell: JSValue, snapshot: *const CellSnapshotAbi);
     /// Borrowed (not ref'd) header strings of a JS-owned span; Empty otherwise.
     /// Valid until the caller next runs JS.
     safe fn Bun__TelemetrySpan__traceState(cell: JSValue) -> bun_core::StringView<'static>;
@@ -108,19 +102,39 @@ pub fn native_context_value(native: NativeSpan) -> JSValue {
 }
 
 /// Release the JS cell a pooled span materialized (see `pool::Ended`).
+/// `pool::CellSnapshot` as (ptr, len) pairs for C++ (TelemetryABI.h).
+#[repr(C)]
+pub struct CellSnapshotAbi {
+    name: *const u8,
+    name_len: usize,
+    trace_state: *const u8,
+    trace_state_len: usize,
+    baggage: *const u8,
+    baggage_len: usize,
+}
+
 pub(crate) fn release_cell(
     js_cell: bun_telemetry::JsCellRef,
-    propagation: Option<&(Vec<u8>, Vec<u8>)>,
+    snapshot: Option<&bun_telemetry::pool::CellSnapshot>,
 ) {
     if !js_cell.is_some() {
         return;
     }
     let v = JSValue::from_encoded(js_cell.0);
-    let (ts, bg): (&[u8], &[u8]) = match propagation {
-        Some((ts, bg)) => (ts, bg),
-        None => (b"", b""),
-    };
-    Bun__TelemetrySpan__nativeEnded(v, ts.as_ptr(), ts.len(), bg.as_ptr(), bg.len());
+    match snapshot {
+        Some(s) => {
+            let abi = CellSnapshotAbi {
+                name: s.name.as_ptr(),
+                name_len: s.name.len(),
+                trace_state: s.trace_state.as_ptr(),
+                trace_state_len: s.trace_state.len(),
+                baggage: s.baggage.as_ptr(),
+                baggage_len: s.baggage.len(),
+            };
+            Bun__TelemetrySpan__nativeEnded(v, &abi);
+        }
+        None => Bun__TelemetrySpan__nativeEnded(v, core::ptr::null()),
+    }
     v.unprotect();
 }
 

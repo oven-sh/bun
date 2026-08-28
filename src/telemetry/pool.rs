@@ -438,8 +438,17 @@ pub fn with_ref<R>(p: &Pool, handle: NativeSpan, f: impl FnOnce(&Slot) -> R) -> 
 pub struct Ended {
     pub recorded: bool,
     pub js_cell: JsCellRef,
-    /// `(trace_state, baggage)`; only when `js_cell` is some and either is non-empty.
-    pub propagation: Option<Box<(Vec<u8>, Vec<u8>)>>,
+    /// What the cell keeps answering after the slot is gone; only when
+    /// `js_cell` is some.
+    pub snapshot: Option<Box<CellSnapshot>>,
+}
+
+/// The slot-backed values a materialized span cell reads lazily: its final
+/// name and its W3C `tracestate` / `baggage`.
+pub struct CellSnapshot {
+    pub name: Vec<u8>,
+    pub trace_state: Vec<u8>,
+    pub baggage: Vec<u8>,
 }
 
 /// End the span: encode it into the VM's batch (if recording) and release
@@ -461,9 +470,17 @@ pub fn end(
     } = l;
     let slot = pool.live_slot(handle)?;
     let js_cell = slot.js_cell;
-    let propagation = (js_cell.is_some()
-        && !(slot.trace_state.is_empty() && slot.baggage.is_empty()))
-    .then(|| Box::new((slot.trace_state.clone(), slot.baggage.clone())));
+    let snapshot = js_cell.is_some().then(|| {
+        let mut name = slot.name.clone();
+        if name.is_empty() && slot.http.active {
+            slot.http.append_name(&mut name);
+        }
+        Box::new(CellSnapshot {
+            name,
+            trace_state: slot.trace_state.clone(),
+            baggage: slot.baggage.clone(),
+        })
+    });
     let recording = slot.is_recording();
     if recording {
         crate::batch::record(batch, slot.scope, &mut |buf: &mut Vec<u8>| {
@@ -474,7 +491,7 @@ pub fn end(
     Some(Ended {
         recorded: recording,
         js_cell,
-        propagation,
+        snapshot,
     })
 }
 

@@ -22,9 +22,9 @@ pub struct Hooks {
     /// Called after a span is recorded on `global`'s VM (arms the flush timer).
     pub after_record: fn(global: *mut c_void),
     /// A pooled span that had a JS cell materialized for it ended: release it.
-    /// `propagation`: the ended span's `(tracestate, baggage)` for the cell to
-    /// keep, when it had any (see [`pool::Ended`]).
-    pub release_cell: fn(js_cell: crate::pool::JsCellRef, propagation: Option<&(Vec<u8>, Vec<u8>)>),
+    /// `snapshot`: what the ended span's cell keeps answering (see [`pool::Ended`]);
+    /// `None` when the span was discarded.
+    pub release_cell: fn(js_cell: crate::pool::JsCellRef, snapshot: Option<&crate::pool::CellSnapshot>),
     /// `f(tracestate)` once, with the active span's W3C `tracestate` (empty if
     /// none); `f` may call [`with_local`]. Used by [`begin_pooled`].
     pub active_trace_state: fn(global: *mut c_void, f: &mut dyn FnMut(&[u8])),
@@ -140,7 +140,7 @@ pub fn end_pooled(
     let ended = with_local(global, |l| pool::end(l, span, end_ns, extra)).flatten();
     let live = ended.is_some();
     if let Some(e) = ended {
-        release_cell(e.js_cell, e.propagation.as_deref());
+        release_cell(e.js_cell, e.snapshot.as_deref());
         if e.recorded {
             (hooks().after_record)(global);
         }
@@ -159,9 +159,9 @@ pub fn discard_pooled(global: *mut c_void, span: NativeSpan) {
     }
 }
 
-fn release_cell(cell: JsCellRef, propagation: Option<&(Vec<u8>, Vec<u8>)>) {
+fn release_cell(cell: JsCellRef, snapshot: Option<&crate::pool::CellSnapshot>) {
     if cell.is_some() {
-        (hooks().release_cell)(cell, propagation);
+        (hooks().release_cell)(cell, snapshot);
     }
 }
 

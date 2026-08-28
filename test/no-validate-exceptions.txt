@@ -4,7 +4,6 @@
 test/bake/dev/production.test.ts
 test/integration/vite-build/vite-build.test.ts
 test/js/bun/test/parallel/test-integration-rspack.ts
-test/js/bun/util/BunObject.test.ts
 test/js/bun/util/fuzzy-wuzzy.test.ts
 test/js/node/module/node-module-module.test.js
 test/js/node/test/parallel/test-vm-module-referrer-realm.mjs

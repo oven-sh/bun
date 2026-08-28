@@ -3,7 +3,12 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "ceb9f90fb774fdb1ebf1275ae1aaf136ec66c754";
+// Preview of oven-sh/WebKit#475 (on top of ceb9f90f, the previous pin here): a property
+// lookup stops at a static-table lazy property whose builder threw, instead of walking on
+// to the prototype and, on the megamorphic slow paths, recording the property as missing,
+// and reifyAllStaticProperties checks each builder's exception scope. Swap in the merged
+// sha once that PR lands.
+export const WEBKIT_VERSION = "autobuild-preview-pr-475-94c5a2d5";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

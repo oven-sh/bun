@@ -59,6 +59,286 @@ describe("bundler", () => {
       "/index.js": [`Invalid JSX escape - use XML entity codes quotes or pass a JavaScript string instead`],
     },
   });
+
+  // Test the "browser" field in "package.json". These are esbuild's 19
+  // end-to-end cases. The target defaults to "browser". A mapped file prints
+  // "works"; the file the map replaces throws, has invalid syntax, or is absent.
+  const works = `console.log('works')`;
+  itBundled("extra/BrowserFieldBareToRelativeKeyDotSlash", {
+    files: {
+      "entry.js": `require('foo')`,
+      "package.json": `{ "browser": { "./foo": "./file" } }`,
+      "file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("extra/BrowserFieldBareToRelativeKeyBare", {
+    files: {
+      "entry.js": `require('foo')`,
+      "package.json": `{ "browser": { "foo": "./file" } }`,
+      "file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("extra/BrowserFieldRelativeToRelativeKeyDotSlash", {
+    files: {
+      "entry.js": `require('./foo')`,
+      "package.json": `{ "browser": { "./foo": "./file" } }`,
+      "file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("extra/BrowserFieldRelativeToRelativeKeyBare", {
+    files: {
+      "entry.js": `require('./foo')`,
+      "package.json": `{ "browser": { "foo": "./file" } }`,
+      "file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("extra/BrowserFieldSubpathKeyDotSlashFilePresent", {
+    files: {
+      "entry.js": `require('pkg/foo/bar')`,
+      "node_modules/pkg/package.json": `{ "browser": { "./foo/bar": "./file" } }`,
+      "node_modules/pkg/foo/bar.js": `invalid syntax`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("extra/BrowserFieldSubpathKeyBareFilePresent", {
+    files: {
+      "entry.js": `require('pkg/foo/bar')`,
+      "node_modules/pkg/package.json": `{ "browser": { "foo/bar": "./file" } }`,
+      "node_modules/pkg/foo/bar.js": `invalid syntax`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("extra/BrowserFieldSubpathKeyDotSlashFileAbsent", {
+    files: {
+      "entry.js": `require('pkg/foo/bar')`,
+      "node_modules/pkg/package.json": `{ "browser": { "./foo/bar": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("extra/BrowserFieldSubpathKeyBareFileAbsent", {
+    files: {
+      "entry.js": `require('pkg/foo/bar')`,
+      "node_modules/pkg/package.json": `{ "browser": { "foo/bar": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("extra/BrowserFieldBareSubpathInsidePackageKeyDotSlash", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "node_modules/pkg/index.js": `require('foo/bar')`,
+      "node_modules/pkg/package.json": `{ "browser": { "./foo/bar": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("extra/BrowserFieldBareSubpathInsidePackageKeyBare", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "node_modules/pkg/index.js": `require('foo/bar')`,
+      "node_modules/pkg/package.json": `{ "browser": { "foo/bar": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("extra/BrowserFieldIndexKeyWithExtFilePresent", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "node_modules/pkg/index.js": `throw 'fail'`,
+      "node_modules/pkg/package.json": `{ "browser": { "./index.js": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("extra/BrowserFieldIndexKeyWithExtFileAbsent", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "node_modules/pkg/package.json": `{ "browser": { "./index.js": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("extra/BrowserFieldIndexKeyNoExtFilePresent", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "node_modules/pkg/index.js": `throw 'fail'`,
+      "node_modules/pkg/package.json": `{ "browser": { "./index": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("extra/BrowserFieldIndexKeyNoExtFileAbsent", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "node_modules/pkg/package.json": `{ "browser": { "./index": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("extra/BrowserFieldMainKeyWithExtFilePresent", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "node_modules/pkg/main.js": `throw 'fail'`,
+      "node_modules/pkg/package.json": `{ "main": "./main",\n  "browser": { "./main.js": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("extra/BrowserFieldMainKeyWithExtFileAbsent", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "node_modules/pkg/package.json": `{ "main": "./main",\n  "browser": { "./main.js": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("extra/BrowserFieldInnerPackageMapWinsOverOuter", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "package.json": `{ "browser": { "pkg2": "pkg3" } }`,
+      "node_modules/pkg/index.js": `require('pkg2')`,
+      "node_modules/pkg/package.json": `{ "browser": { "pkg2": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("extra/BrowserFieldOuterPackageMapAppliesInsideNodeModules", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "package.json": `{ "browser": { "pkg2": "pkg3" } }`,
+      "node_modules/pkg/index.js": `require('pkg2')`,
+      "node_modules/pkg2/index.js": `throw 'fail'`,
+      "node_modules/pkg3/index.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("extra/BrowserFieldInnerPackageDotSlashKeyOverridesBarePath", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "package.json": `{ "browser": { "pkg2": "pkg3" } }`,
+      "node_modules/pkg/index.js": `require('pkg2')`,
+      "node_modules/pkg/package.json": `{ "browser": { "./pkg2": "./file" } }`,
+      "node_modules/pkg/file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+
+  // The same matrix through `import` statements.
+  itBundled("extra/BrowserFieldImportBareKeyDotSlash", {
+    files: {
+      "entry.js": `import 'foo'`,
+      "package.json": `{ "browser": { "./foo": "./file" } }`,
+      "file.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("extra/BrowserFieldImportSubpathKeyDotSlashFileAbsent", {
+    files: {
+      "entry.js": `import {value} from 'pkg/foo/bar'; console.log(value)`,
+      "node_modules/pkg/package.json": `{ "browser": { "./foo/bar": "./file" } }`,
+      "node_modules/pkg/file.js": `export const value = 'works'`,
+    },
+    run: { stdout: "works" },
+  });
+  itBundled("extra/BrowserFieldImportSubpathKeyBareFilePresent", {
+    files: {
+      "entry.js": `import {value} from 'pkg/foo/bar'; console.log(value)`,
+      "node_modules/pkg/package.json": `{ "browser": { "foo/bar": "./file" } }`,
+      "node_modules/pkg/foo/bar.js": `invalid syntax`,
+      "node_modules/pkg/file.js": `export const value = 'works'`,
+    },
+    run: { stdout: "works" },
+  });
+
+  // Browserify lets "./pkg" match `require('pkg')` only from the package that
+  // owns the map. A "./pkg2" entry in the project does not reach into a
+  // dependency that requires "pkg2".
+  itBundled("extra/BrowserFieldDotSlashKeyDoesNotCrossNodeModules", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "package.json": `{ "browser": { "./pkg2": "./file" } }`,
+      "file.js": `throw 'fail'`,
+      "node_modules/pkg/index.js": `require('pkg2')`,
+      "node_modules/pkg2/index.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  // The "./pkg" spelling is matched without implicit extensions: "./sub.js" does
+  // not remap `require('sub')`, so the real "sub" package is used.
+  itBundled("extra/BrowserFieldDotSlashKeyWithExtDoesNotMatchBarePath", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "node_modules/pkg/index.js": `require('sub')`,
+      "node_modules/pkg/package.json": `{ "browser": { "./sub.js": "./file.js" } }`,
+      "node_modules/pkg/file.js": `throw 'fail'`,
+      "node_modules/sub/index.js": works,
+    },
+    run: { stdout: "works" },
+  });
+  // From a subdirectory of the package, the bare path is matched against the
+  // key spelled relative to the importer's directory.
+  itBundled("extra/BrowserFieldBarePathFromSubdirectory", {
+    files: {
+      "entry.js": `require('pkg')`,
+      "node_modules/pkg/package.json": `{ "main": "./sub/foo.js", "browser": { "./sub/sub": "./sub/bar.js", "./sub/nodeonly": false } }`,
+      "node_modules/pkg/sub/foo.js": `require('sub'); console.log(JSON.stringify(require('nodeonly')))`,
+      "node_modules/pkg/sub/bar.js": works,
+      "node_modules/sub/index.js": `throw 'fail'`,
+      "node_modules/nodeonly/index.js": `throw 'fail'`,
+    },
+    run: { stdout: "works\n{}" },
+  });
+
+  // A module disabled with `false` is an empty CommonJS module: `require()`
+  // returns the same `{}` every time and `import` sees its namespace object.
+  itBundled("extra/BrowserFieldDisabledModuleIsEmptyObject", {
+    files: {
+      "entry.js": `console.log(JSON.stringify(require('pkg')))`,
+      "node_modules/pkg/package.json": `{ "main": "index.js", "browser": { "./node.js": false, "nodeonly": false, "./missing.js": false } }`,
+      "node_modules/pkg/index.js": `
+        var n = require('./node.js'), m = require('nodeonly'), x = require('./missing.js')
+        module.exports = [typeof n, Object.keys(n).length, typeof m, Object.keys(m).length, typeof x, n === require('./node.js')]
+      `,
+      "node_modules/pkg/node.js": `throw 'fail'`,
+      "node_modules/nodeonly/index.js": `throw 'fail'`,
+    },
+    run: { stdout: `["object",0,"object",0,"object",true]` },
+  });
+  itBundled("extra/BrowserFieldDisabledModuleImportForms", {
+    files: {
+      "entry.js": `import {info} from 'pkg'; console.log(JSON.stringify(info))`,
+      "node_modules/pkg/package.json": `{ "main": "index.js", "browser": { "./node.js": false } }`,
+      "node_modules/pkg/index.js": `
+        import * as ns from './node.js'
+        import def, {named} from './node.js'
+        import './node.js'
+        export const info = [typeof ns, Object.keys(ns), typeof def, Object.keys(def).length, typeof named]
+      `,
+      "node_modules/pkg/node.js": `throw 'fail'`,
+    },
+    run: { stdout: `["object",["default"],"object",0,"undefined"]` },
+  });
+  // A subpath the package disables is also disabled when imported from outside
+  // the package, and it stays a separate module from the enabled file.
+  itBundled("extra/BrowserFieldDisabledSubpathFromOutside", {
+    files: {
+      "entry.js": `
+        import * as ns from 'pkg/node.js'
+        console.log(typeof ns, JSON.stringify(require('pkg/node.js')))
+      `,
+      "node_modules/pkg/package.json": `{ "browser": { "./node.js": false } }`,
+      "node_modules/pkg/node.js": `throw 'fail'`,
+    },
+    run: { stdout: "object {}" },
+  });
+
   // Test arbitrary module namespace identifier names
   // See https://github.com/tc39/ecma262/pull/2154
   itBundled("extra/ArbitraryModuleNamespaceIdentifiers1", {

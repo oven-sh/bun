@@ -323,7 +323,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserMapModuleDisabled", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -564,7 +563,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserNodeModulesNoExt", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {value as a} from 'demo-pkg/no-ext'
@@ -599,7 +597,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserNodeModulesIndexNoExt", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {value as a} from 'demo-pkg/no-ext'
@@ -702,7 +699,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserESBuildIssue2002A", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": `require('pkg/sub')`,
       "/Users/user/project/src/node_modules/pkg/package.json": /* json */ `
@@ -721,7 +717,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserESBuildIssue2002B", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": `require('pkg/sub')`,
       "/Users/user/project/src/node_modules/pkg/package.json": /* json */ `
@@ -740,7 +735,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/BrowserESBuildIssue2002C", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": `require('pkg/sub')`,
       "/Users/user/project/src/node_modules/pkg/package.json": /* json */ `
@@ -2167,10 +2161,8 @@ describe("bundler", () => {
       stdout: "exact with-ext as-index as-index-ext",
     },
   });
-  // Browser-map keys are normalized at parse time ("./name" -> "name"), so a
-  // "./name" entry also remaps the *package path* "name" imported from within
-  // the same package (Browserify compatibility quirk); the normalized key
-  // matches the package specifier on the checker's first probe.
+  // A "./name" entry also remaps the *package path* "name" imported from within
+  // the same package (Browserify compatibility quirk).
   itBundled("packagejson/BrowserMapDotSlashOverridesPackagePath", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `

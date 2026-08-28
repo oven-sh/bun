@@ -1357,7 +1357,7 @@ pub mod bv2_impl {
     use crate::DeferredBatchTask::DeferredBatchTask;
     use crate::Graph::Graph;
     use crate::LinkerContext;
-    use crate::PathToSourceIndexMap::PathToSourceIndexMap;
+    use crate::PathToSourceIndexMap::{PathLike as _, PathToSourceIndexMap};
     use crate::ServerComponentParseTask::ServerComponentParseTask;
     use crate::barrel_imports;
 
@@ -5961,6 +5961,47 @@ pub mod bv2_impl {
             Ok(out)
         }
 
+        /// The pretty path of a module the "browser" field disabled:
+        /// `(disabled):<path relative to the project>`, the spelling esbuild uses.
+        /// `text` stays the resolved path (or the bare specifier when nothing
+        /// resolved), so the loader and the debugger still see where it came from.
+        fn disabled_path_with_pretty(
+            &self,
+            path: &Fs::Path<'static>,
+        ) -> Result<Fs::Path<'static>, Error> {
+            use crate::bun_fs::PathResolverExt as _;
+            use bun_io::Write as _;
+
+            debug_assert!(path.is_disabled);
+            // SAFETY: arena outlives the bundle pass; see `path_with_pretty_initialized`.
+            let bump: &'static bun_alloc::Arena =
+                unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(self.arena()) };
+
+            let mut rel_buf = bun_paths::path_buffer_pool::get();
+            let rel: &[u8] = if path.is_file() && bun_paths::is_absolute(path.text) {
+                bun_paths::resolve_path::relative_platform_buf::<
+                    bun_paths::resolve_path::platform::Loose,
+                    false,
+                >(
+                    &mut **rel_buf,
+                    self.transpiler.fs().top_level_dir,
+                    path.text,
+                )
+            } else {
+                path.text
+            };
+
+            let mut pretty_buf = bun_paths::path_buffer_pool::get();
+            let mut fbs = bun_io::FixedBufferStream::new_mut(&mut pretty_buf.0[..]);
+            let _ = fbs.write_all(b"(disabled):");
+            let _ = fbs.write_all(rel);
+            let written = fbs.pos;
+
+            let mut with_pretty: Fs::Path<'_> = *path;
+            with_pretty.pretty = &pretty_buf.0[..written];
+            with_pretty.dupe_alloc_fix_pretty(bump).map_err(Into::into)
+        }
+
         fn reserve_source_indexes_for_bake(&mut self) -> Result<(), Error> {
             let Some(fw) = &self.framework else {
                 return Ok(());
@@ -6615,11 +6656,25 @@ pub mod bv2_impl {
                     // SAFETY: `resolve_result` outlives this borrow; see note above.
                     Some(p) => unsafe { bun_ptr::detach_lifetime_mut::<Fs::Path>(p) },
                     None => {
-                        import_record.path.is_disabled = true;
-                        import_record.source_index = Index::INVALID;
-                        continue;
+                        // The "browser" field disabled this import (or it is a Node.js
+                        // builtin with no browser polyfill). Like esbuild, it becomes an
+                        // empty CommonJS module, so `require()` returns one `{}` and an
+                        // `import` gets a namespace object. The DevServer keeps the
+                        // external form, which its module runtime handles itself.
+                        if self.dev_server.is_some() {
+                            import_record.path.is_disabled = true;
+                            import_record.source_index = Index::INVALID;
+                            continue;
+                        }
+                        // SAFETY: same as the `Some` arm.
+                        unsafe {
+                            bun_ptr::detach_lifetime_mut::<Fs::Path>(
+                                &mut resolve_result.path_pair.primary,
+                            )
+                        }
                     }
                 };
+                let is_disabled = path.is_disabled;
 
                 if resolve_result.flags.is_external() {
                     if resolve_result.flags.external_kind()
@@ -6718,6 +6773,10 @@ pub mod bv2_impl {
                 }
 
                 let import_record_loader = 'brk: {
+                    if is_disabled {
+                        // Empty module, whatever the extension (or lack of one) says.
+                        break 'brk Loader::Js;
+                    }
                     let resolved_loader = import_record.loader.unwrap_or_else(|| {
                         path.loader(&transpiler.options.loaders)
                             .unwrap_or(Loader::File)
@@ -6744,7 +6803,14 @@ pub mod bv2_impl {
                     && target.is_server_side()
                     && self.dev_server.is_none();
 
-                if let Some(id) = self.path_to_source_index_map(target).get(path.text) {
+                // A disabled module gets the pretty path esbuild uses,
+                // "(disabled):<path>", which is also its `source_key()`.
+                if is_disabled {
+                    *path = self.disabled_path_with_pretty(path).expect("oom");
+                }
+                let source_key: &[u8] = path.source_key();
+
+                if let Some(id) = self.path_to_source_index_map(target).get(source_key) {
                     if self.dev_server.is_some() && loader != Loader::Html {
                         import_record.path =
                             self.graph.input_files.items_source()[id as usize].path;
@@ -6758,7 +6824,7 @@ pub mod bv2_impl {
                     import_record.kind = ImportKind::HtmlManifest;
                 }
 
-                let resolve_entry = resolve_queue.get_or_put(path.text).expect("oom");
+                let resolve_entry = resolve_queue.get_or_put(source_key).expect("oom");
                 if resolve_entry.found_existing {
                     // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
                     import_record.path =
@@ -6766,9 +6832,11 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                *path = self
-                    .path_with_pretty_initialized(path, target)
-                    .expect("oom");
+                if !is_disabled {
+                    *path = self
+                        .path_with_pretty_initialized(path, target)
+                        .expect("oom");
+                }
 
                 import_record.path = path_as_static(path);
                 // key already interned by get_or_put — no key_ptr on StringHashMapGetOrPut
@@ -6789,6 +6857,11 @@ pub mod bv2_impl {
                 resolve_task.jsx.development = transpiler.options.forced_jsx_development();
 
                 resolve_task.loader = Some(import_record_loader);
+                if is_disabled {
+                    // Nothing is read from disk: the path may not exist, and when it
+                    // does, its contents are exactly what the "browser" field excludes.
+                    resolve_task.contents_or_fd = parse_task::ContentsOrFd::Contents(b"");
+                }
                 *resolve_entry.value_ptr = resolve_task;
                 if let Some(secondary) = &resolve_result.path_pair.secondary {
                     if !secondary.is_disabled

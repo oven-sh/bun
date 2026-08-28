@@ -178,6 +178,15 @@ pub(crate) fn scan_imports_and_exports(
 
                 match record.kind {
                     ImportKind::Stmt => {
+                        // A module the "browser" field disabled is an empty CommonJS
+                        // module whatever the import syntax: star and default imports get
+                        // the `__toESM` namespace, named imports read `undefined` off it.
+                        if col_ref!(input_files)[other_file].path.is_disabled {
+                            col!(exports_kind)[other_file] = ExportsKind::Cjs;
+                            col!(flags)[other_file].wrap = WrapKind::Cjs;
+                            continue;
+                        }
+
                         // Importing using ES6 syntax from a file without any ES6 syntax
                         // causes that module to be considered CommonJS-style, even if it
                         // doesn't have any CommonJS exports.

@@ -1271,7 +1271,7 @@ describe.concurrent("bundler", () => {
     },
     target: "browser",
     run: {
-      stdout: "[Function]",
+      stdout: "{}",
     },
   });
   itBundled("default/RequireFSNode", {
@@ -1306,7 +1306,7 @@ describe.concurrent("bundler", () => {
       `,
     },
     run: {
-      stdout: "[Function: fs] undefined undefined",
+      stdout: "{\n  default: {},\n} undefined {}",
     },
     target: "browser",
   });

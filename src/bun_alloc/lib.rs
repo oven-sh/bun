@@ -1019,16 +1019,14 @@ pub mod allocators {
 // ──────────────────────────────────────────────────────────────────────────
 // Per-monomorphization singleton macros
 //
-// Each instantiation needs its own singleton. Rust forbids
-// generic statics, so the storage is emitted at the *declare site* instead:
+// Rust forbids generic statics, so each instantiation's storage is emitted at
+// the declare site:
 //
 //   bss_string_list! { pub dirname_store: 4096, 129 }
-//   // → static STORAGE: AtomicPtr<BSSStringList<4096, 129, 1024>>
-//   //   pub fn dirname_store() -> *mut BSSStringList<4096, 129, 1024>
+//   // → pub fn dirname_store() -> *mut BSSStringList<4096, 129, 1024>
 //
-// The accessor heap-allocates and field-initializes via `init_at` on first
-// call. It returns a raw `*mut`; callers must not hold overlapping unique
-// borrows.
+// The accessor runs `init_at` on first call and returns a raw `*mut`; callers
+// must not hold overlapping unique borrows.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Emit a process-lifetime singleton accessor for any type with an
@@ -1288,8 +1286,7 @@ macro_rules! bss_list {
     };
 }
 
-/// Declare a `BSSStringList<COUNT, ITEM_LENGTH, OVERFLOW_BLOCK_SIZE>` singleton
-/// accessor. The overflow block size is derived from `$count`.
+/// Declare a `BSSStringList` singleton accessor; the block size comes from `$count`.
 #[macro_export]
 macro_rules! bss_string_list {
     ($(#[$m:meta])* $vis:vis $name:ident : $count:expr, $item_len:expr) => {
@@ -1301,8 +1298,7 @@ macro_rules! bss_string_list {
     };
 }
 
-/// Declare a `BSSMapInner<T, COUNT, OVERFLOW_BLOCK_SIZE, RM_SLASH>` singleton
-/// accessor. The overflow block size is derived from `$count`.
+/// Declare a `BSSMapInner` singleton accessor; the block size comes from `$count`.
 #[macro_export]
 macro_rules! bss_map_inner {
     ($(#[$m:meta])* $vis:vis $name:ident : $value_ty:ty, $count:expr, $rm_slash:expr) => {
@@ -1517,6 +1513,7 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
     /// `bss_heap_init`/`bss_lazy_bytes`, NOT `mi_malloc`/stack `MaybeUninit`).
     #[inline]
     pub(crate) unsafe fn init_counters_at(slot: *mut Self) {
+        const { assert!(COUNT > 0, "an overflow block must hold at least one item") };
         // SAFETY: caller contract.
         unsafe {
             addr_of_mut!((*slot).list.used).write(0);
@@ -1610,13 +1607,10 @@ unsafe impl<ValueType: Send, const COUNT: usize> Sync for BSSList<ValueType, COU
 
 const BSS_LIST_CHUNK_SIZE: usize = 256;
 
-/// Capacity of one heap-allocated overflow block for a `BSSStringList` or
-/// `BSSMapInner` that holds `count` entries inline.
-///
-/// Stable Rust cannot write `COUNT / 4` in a field type, so each store takes
-/// the result as its own `OVERFLOW_BLOCK_SIZE` const generic. The `bss_*!`
-/// macros pass it from `$count`; a hand-written type alias must pass the same
-/// value.
+/// Overflow block capacity for a store with `count` inline entries. Each store
+/// takes it as its `OVERFLOW_BLOCK_SIZE` const generic because a field type
+/// cannot spell `COUNT / 4` (see the note above `OverflowListBlock`). A store
+/// needs `count >= 4`; a zero-capacity block fails to compile.
 pub const fn bss_overflow_block_size(count: usize) -> usize {
     count / 4
 }

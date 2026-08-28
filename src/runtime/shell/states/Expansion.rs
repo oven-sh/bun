@@ -489,10 +489,9 @@ impl Expansion {
         match atom {
             ast::SimpleAtom::Text(txt) => out.extend_from_slice(txt),
             ast::SimpleAtom::QuotedEmpty => {
-                // Sets `has_quoted_empty = true` so an empty word is still pushed
-                // as an arg. The flag is *required* — without it Cmd cannot
-                // tell `""` (one empty arg) from `$unset` (no arg), since
-                // both leave `out.buf` empty.
+                // The final flush in `next` pushes an empty `current_out` as a
+                // word only when this flag is set: `""` is one empty arg,
+                // `$unset` is no arg, and both leave `current_out` empty.
                 *has_quoted_empty = true;
             }
             ast::SimpleAtom::Var(label) => {

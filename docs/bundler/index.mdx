@@ -383,6 +383,8 @@ Specifies the module format of the generated bundles.
 
 Bun defaults to `"esm"`, and provides experimental support for `"cjs"` and `"iife"`.
 
+When the CLI is given `--outfile` without `--format`, the output file extension sets the format: `.cjs` implies `"cjs"` and `.mjs` implies `"esm"`. This inference does not apply with `--bytecode` or `--compile`.
+
 #### format: "esm" - ES Module
 
 The default format. Supports ES Module syntax, including top-level await and `import.meta`.

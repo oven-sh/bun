@@ -2067,7 +2067,7 @@ fn parse_build_command_options(
 
     if ctx.bundler_options.bytecode {
         ctx.bundler_options.output_format = options::Format::Cjs;
-        ctx.args.target = Some(api::Target::Bun);
+        // build_command forces the bun target for bytecode after parsing.
     }
 
     if let Some(public_path) = args.option(b"--public-path") {
@@ -2520,8 +2520,9 @@ fn parse_build_command_options(
                 Output::flush();
             }
             options::Format::Cjs => {
-                if ctx.args.target.is_none() {
-                    ctx.args.target = Some(api::Target::Node);
+                // `ctx.args` is replaced by the returned `opts`, so defaults go through `opts`.
+                if opts.target.is_none() {
+                    opts.target = Some(api::Target::Node);
                 }
             }
             _ => {}
@@ -2543,6 +2544,17 @@ fn parse_build_command_options(
                 );
                 Global::exit(1);
             }
+        }
+    } else if !ctx.bundler_options.bytecode && !ctx.bundler_options.compile {
+        // No explicit --format: infer it from the --outfile extension, like esbuild.
+        let outfile: &[u8] = &ctx.bundler_options.outfile;
+        if strings::has_suffix_comptime(outfile, b".cjs") {
+            ctx.bundler_options.output_format = options::Format::Cjs;
+            if opts.target.is_none() {
+                opts.target = Some(api::Target::Node);
+            }
+        } else if strings::has_suffix_comptime(outfile, b".mjs") {
+            ctx.bundler_options.output_format = options::Format::Esm;
         }
     }
 

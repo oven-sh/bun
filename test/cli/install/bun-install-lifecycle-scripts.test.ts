@@ -299,9 +299,13 @@ test.concurrent("node-gyp shim directory added to lifecycle script PATH gets a r
   expect(distance > 21_600_000_000_000n).toBe(true);
 });
 
-for (const linker of ["hoisted", "isolated"] as const) {
+for (const [linker, globalStore] of [
+  ["hoisted", false],
+  ["isolated", false],
+  ["isolated", true],
+] as const) {
   test.concurrent(
-    `default trusted dependencies require a tarball URL on the configured registry (${linker})`,
+    `default trusted dependencies require a tarball URL on the configured registry (${linker}${globalStore ? ", global store" : ""})`,
     async () => {
       using ctx = await setupTest();
       const { packageDir, packageJson, env } = ctx;
@@ -309,7 +313,7 @@ for (const linker of ["hoisted", "isolated"] as const) {
       // No `trustedDependencies` in package.json: `electron` is on the default
       // trusted list, so the genuine registry package's lifecycle scripts run.
       await Promise.all([
-        verdaccio.writeBunfig(packageDir, { linker }),
+        verdaccio.writeBunfig(packageDir, { linker, globalStore }),
         writeFile(
           packageJson,
           JSON.stringify({

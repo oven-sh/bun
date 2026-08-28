@@ -1581,8 +1581,10 @@ impl Task {
                     let string_buf = lockfile.buffers.string_bytes.as_slice();
                     let dep = &lockfile.buffers.dependencies[dep_id as usize];
 
+                    // A global-store entry is still in its staging directory
+                    // here. `Step::Binaries` renames it into place.
                     let mut pkg_cwd = AutoAbsPath::init_top_level_dir();
-                    installer.append_store_path(&mut pkg_cwd, self.entry_id);
+                    installer.append_real_store_path(&mut pkg_cwd, self.entry_id, Which::Staging);
 
                     let default_trust_denied = if installer
                         .trusted_dependencies_from_update_requests

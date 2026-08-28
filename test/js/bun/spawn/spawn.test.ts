@@ -1701,7 +1701,9 @@ describe("uid/gid", () => {
   it.if(isPosix && !isRoot)("throws EPERM for a uid the process cannot set", () => {
     let thrown: any;
     try {
-      spawn({ cmd: ["id"], uid: 0 });
+      // bunExe is on PATH everywhere; the sandbox PATH on OHOS lacks 'id',
+      // which would surface ENOENT before the uid check.
+      spawn({ cmd: [bunExe(), "-e", ""], uid: 0 });
     } catch (e) {
       thrown = e;
     }

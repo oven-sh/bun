@@ -552,6 +552,7 @@ impl<'a> WorkerLoop<'a> {
             let before_unhandled = self.reporter.jest.unhandled_errors_between_tests;
             let started_ns =
                 bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns();
+            let wait_before_ns = runqueue_wait_ns();
 
             // A worker never knows which file is its last, so preload-level hooks wrap every file (with or without --isolate).
             if let Err(err) = TestCommand::run(
@@ -581,6 +582,19 @@ impl<'a> WorkerLoop<'a> {
                 .ns()
                 .saturating_sub(started_ns);
 
+            // --timings gets the file's own cost, not scheduler queueing:
+            // contended wall time scales with the worker count and misbalances
+            // --shard. Subtract only when both samples exist; a lone
+            // after-sample would subtract the thread's cumulative wait from
+            // before this file.
+            let waited_ns = match (wait_before_ns, runqueue_wait_ns()) {
+                (Some(before), Some(after)) => after.saturating_sub(before),
+                _ => 0,
+            };
+            let duration_ms =
+                u32::try_from(elapsed_ns.saturating_sub(waited_ns) / bun_core::time::NS_PER_MS)
+                    .unwrap_or(u32::MAX);
+
             let after = *self.reporter.summary();
             wf.begin(frame::Kind::FileDone);
             for v in [
@@ -593,12 +607,31 @@ impl<'a> WorkerLoop<'a> {
                 after.skipped_because_label - before.skipped_because_label,
                 after.files - before.files,
                 self.reporter.jest.unhandled_errors_between_tests - before_unhandled,
+                duration_ms,
             ] {
                 wf.u32(v);
             }
             wf.u64(elapsed_ns);
             self.cmds.send(wf.finish());
         }
+    }
+}
+
+/// Nanoseconds this thread has spent runnable but waiting for a CPU (Linux:
+/// second field of /proc/thread-self/schedstat). None elsewhere or on a
+/// failed read; the caller then records plain wall time.
+fn runqueue_wait_ns() -> Option<u64> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        // "<running_ns> <waiting_ns> <timeslices>"
+        let contents = bun_sys::File::read_from(Fd::cwd(), b"/proc/thread-self/schedstat").ok()?;
+        let mut fields = bun_core::strings::tokenize_any(&contents, b" \n");
+        let _running = fields.next();
+        bun_core::fmt::parse_int::<u64>(fields.next()?, 10).ok()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    {
+        None
     }
 }
 

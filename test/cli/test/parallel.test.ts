@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
 
 test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID", async () => {
   // Sleep so worker 0 is busy when workers 1/2 come online and pick up the
@@ -1327,4 +1327,85 @@ test("--parallel --no-isolate: a worker keeps one global and module registry acr
   expect(shared.stderr).toContain("3 pass");
   expect(shared.stderr).not.toContain("error:");
   expect(shared.exitCode).toBe(0);
+});
+
+// --update-timings under --parallel: a file's recorded duration must be a
+// property of the file, not of how many sibling workers contend for the CPU
+// (issue #40283). The worker measures each file's wall time and subtracts the
+// time its main thread spent waiting on the run queue, so an oversubscribed
+// run records roughly the same numbers as an uncontended one. The subtraction
+// reads /proc/thread-self/schedstat, so this only holds on Linux. taskset
+// pins both runs to two CPUs so the oversubscription factor is deterministic.
+const taskset = isLinux ? Bun.which("taskset") : null;
+test.skipIf(!taskset)("--update-timings under --parallel does not record sibling-worker contention", async () => {
+  // Pin to the first two CPUs this process may use (containers and cgroups
+  // restrict affinity, so "0,1" is not always allowed). If the pin still
+  // fails there is no deterministic contention to measure.
+  const allowed = (await Bun.file("/proc/self/status").text()).match(/Cpus_allowed_list:\s*(\S+)/)?.[1] ?? "";
+  const cpus: number[] = [];
+  for (const part of allowed.split(",")) {
+    const [lo, hi = lo] = part.split("-").map(Number);
+    for (let c = lo; c <= hi && cpus.length < 2; c++) cpus.push(c);
+    if (cpus.length >= 2) break;
+  }
+  if (cpus.length === 0) return;
+  const pin = [taskset!, "-c", cpus.join(",")];
+  const probe = Bun.spawnSync({ cmd: [...pin, bunExe(), "--version"], env: bunEnv });
+  if (probe.exitCode !== 0) return;
+
+  // Calibrate a fixed-work spin to ~60ms on this build. Debug/ASAN builds run
+  // the same iteration count slower; both child runs use the same constant,
+  // and only their ratio is asserted.
+  const spin = (n: number) => {
+    let x = 1;
+    for (let i = 0; i < n; i++) x = (x * 1103515245 + 12345) % 2147483648;
+    return x;
+  };
+  let iters = 1 << 14;
+  let dt = 0;
+  for (;;) {
+    const t0 = performance.now();
+    spin(iters);
+    dt = performance.now() - t0;
+    if (dt >= 30 || iters >= 1 << 26) break;
+    iters *= 2;
+  }
+  iters = Math.max(1, Math.ceil((iters * 60) / Math.max(dt, 1)));
+
+  const fixture =
+    `import {test, expect} from "bun:test";\n` +
+    `test("spin", () => { let x = 1; for (let i = 0; i < ${iters}; i++) x = (x * 1103515245 + 12345) % 2147483648; expect(x).toBeGreaterThanOrEqual(0); });\n`;
+
+  // One file per worker, all dispatched at once; returns the median recorded
+  // duration in milliseconds.
+  const medianRecorded = async (count: number) => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < count; i++) files[`f${i}.test.ts`] = fixture;
+    using dir = tempDir(`parallel-timings-${count}`, files);
+    await using proc = Bun.spawn({
+      cmd: [...pin, bunExe(), "test", `--parallel=${count}`, "--timings=t.json", "--update-timings"],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("PARALLEL");
+    expect(stderr).toContain(`${count} pass`);
+    expect(exitCode).toBe(0);
+    const json = await Bun.file(`${dir}/t.json`).json();
+    const recorded = Object.values(json.files) as number[];
+    expect(recorded).toHaveLength(count);
+    recorded.sort((a, b) => a - b);
+    return recorded[Math.floor(count / 2)];
+  };
+
+  // Two workers on two pinned CPUs: uncontended baseline.
+  const baseline = await medianRecorded(2);
+  // Ten workers on the same two CPUs: ~5x oversubscribed. Before the fix the
+  // recorded duration was the coordinator-observed wall time, which scales
+  // with the oversubscription factor; with the run-queue wait subtracted it
+  // stays near the baseline.
+  const contended = await medianRecorded(10);
+  expect(contended).toBeLessThan(Math.max(baseline, 25) * 3);
 });

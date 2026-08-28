@@ -1571,9 +1571,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        if !p.options.features.minify_syntax || !p.options.features.dead_code_elimination {
+        // A case body is one slice of the switch block scope, so a `let` or
+        // `const` declared here can still be used by a later case that has not
+        // been visited yet. `s_switch` mangles every case body once all of them
+        // have been visited and the use counts are final.
+        if kind == StmtsKind::SwitchStmt {
             return Ok(());
         }
+
+        if p.options.features.minify_syntax && p.options.features.dead_code_elimination {
+            p.mangle_stmts(stmts);
+        }
+        Ok(())
+    }
+
+    /// The minify-syntax pass over one visited statement list: drops fully
+    /// inlined constants, inlines single-use `let`/`const` declarations into the
+    /// statement that follows them, and merges adjacent statements.
+    ///
+    /// Every use of a `let`/`const` declared in `stmts` must have been visited
+    /// before this runs, since it trusts `use_count_estimate`.
+    fn mangle_stmts(&mut self, stmts: &mut ListManaged<'a, Stmt>) {
+        let p = self;
 
         // SAFETY: current_scope is a valid arena ptr for the parse.
         if p.current_scope().parent.is_some() && !p.current_scope().contains_direct_eval {
@@ -1934,7 +1953,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // stmts.deinit(); — Drop handles freeing the old buffer (BumpVec is arena-backed).
         *stmts = output;
-        Ok(())
     }
 }
 

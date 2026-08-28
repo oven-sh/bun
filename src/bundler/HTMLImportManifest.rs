@@ -382,11 +382,16 @@ pub mod html_import_manifest {
 }
 
 /// The manifest's `input` / asset-key form of a source path: root-relative, `/`-separated.
-fn source_path_relative_to_root<'b>(buf: &'b mut Vec<u8>, root_dir: &[u8], path: &[u8]) -> &'b [u8] {
+fn source_path_relative_to_root<'b>(
+    buf: &'b mut Vec<u8>,
+    root_dir: &[u8],
+    path: &[u8],
+) -> &'b [u8] {
     buf.clear();
-    buf.extend_from_slice(strings::remove_leading_dot_slash(
-        relative_normalized::<platform::Auto, false>(root_dir, path),
-    ));
+    buf.extend_from_slice(strings::remove_leading_dot_slash(relative_normalized::<
+        platform::Auto,
+        false,
+    >(root_dir, path)));
     platform_to_posix_in_place(&mut buf[..]);
     buf
 }

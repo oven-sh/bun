@@ -2075,7 +2075,6 @@ describe("bundler", () => {
     ],
   });
   itBundled("ts/EnumDefine", {
-    todo: true,
     files: {
       "/entry.ts": `
       enum a { b = 123, c = d }

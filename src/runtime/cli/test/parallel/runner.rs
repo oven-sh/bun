@@ -527,20 +527,27 @@ impl<'a> WorkerLoop<'a> {
             WORKER_CMDS.write(Some(&raw mut self.cmds));
         }
 
-        // Test hook for the coordinator's pre-ready exit path. Real triggers
-        // (an init crash, a failed fd-3 adopt) aren't reproducible from a
-        // test; this lets parallel-startup-failure.test.ts assert the respawn
-        // loop is bounded. Same pattern as BUN_TEST_PARALLEL_SCALE_MS.
-        // SAFETY: env loader is initialized before the test runner runs.
-        if unsafe { &*vm.transpiler.env }
-            .get(b"BUN_TEST_WORKER_EXIT_BEFORE_READY")
-            .is_some()
-        {
-            bun_core::pretty_errorln!(
-                "test worker exiting before ready (BUN_TEST_WORKER_EXIT_BEFORE_READY)"
-            );
-            Output::flush();
-            Global::exit(1);
+        // Test hook for the coordinator's pre-ready exit path: "abort" dies
+        // by SIGABRT (the startup-panic branch), anything else exits 1 (the
+        // bounded-respawn branch). Real triggers (an init crash, a failed
+        // fd-3 adopt) aren't reproducible from a test; this lets
+        // parallel-startup-failure.test.ts assert both branches. Compiled
+        // only into debug/ASAN builds so a stray env var can't disable
+        // --parallel for users of a release build.
+        if cfg!(any(debug_assertions, bun_asan)) {
+            // SAFETY: env loader is initialized before the test runner runs.
+            if let Some(mode) =
+                unsafe { &*vm.transpiler.env }.get(b"BUN_TEST_WORKER_EXIT_BEFORE_READY")
+            {
+                bun_core::pretty_errorln!(
+                    "test worker exiting before ready (BUN_TEST_WORKER_EXIT_BEFORE_READY)"
+                );
+                Output::flush();
+                if bun_core::strings::eql(mode, b"abort") {
+                    std::process::abort();
+                }
+                Global::exit(1);
+            }
         }
 
         // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer

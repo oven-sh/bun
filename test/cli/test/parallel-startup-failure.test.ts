@@ -5,25 +5,24 @@
 // isolation from those unrelated timing-sensitive cases.
 
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 
-test("--parallel terminates when a worker exits before sending .ready", async () => {
-  // A worker that spawns OK but dies during init (before the IPC handshake)
-  // has `inflight == None`, so the mid-file crash handling in reap_worker
-  // never applied and the coordinator would respawn the slot forever with
-  // no output (issue #40782). The run must terminate with a non-zero exit
-  // after a bounded number of attempts.
-  //
-  // Real triggers (startup crash, failed fd-3 adopt) aren't reproducible
-  // from a test, so the worker loop honours BUN_TEST_WORKER_EXIT_BEFORE_READY.
-  using dir = tempDir("parallel-pre-ready-exit", {
+// The BUN_TEST_WORKER_EXIT_BEFORE_READY hook is compiled only into
+// debug/ASAN builds so a stray env var can't disable --parallel in release.
+const hasHook = isDebug || isASAN;
+
+function makeDir(prefix: string) {
+  return tempDir(prefix, {
     "a.test.js": `import {test,expect} from "bun:test"; test("a",()=>expect(1).toBe(1));`,
     "b.test.js": `import {test,expect} from "bun:test"; test("b",()=>expect(1).toBe(1));`,
   });
+}
+
+async function runParallel(dir: string, mode: string) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--parallel=2"],
-    env: { ...bunEnv, BUN_TEST_WORKER_EXIT_BEFORE_READY: "1" },
-    cwd: String(dir),
+    env: { ...bunEnv, BUN_TEST_WORKER_EXIT_BEFORE_READY: mode },
+    cwd: dir,
     stderr: "pipe",
     stdout: "pipe",
   });
@@ -37,7 +36,17 @@ test("--parallel terminates when a worker exits before sending .ready", async ()
   ]);
   if (result === "TIMEOUT") proc.kill("SIGKILL");
   expect(result).not.toBe("TIMEOUT");
-  const [, stderr, exitCode] = result as [string, string, number];
+  return result as [string, string, number];
+}
+
+test.skipIf(!hasHook)("--parallel terminates when a worker exits before sending .ready", async () => {
+  // A worker that spawns OK but dies during init (before the IPC handshake)
+  // has `inflight == None`, so the mid-file crash handling in reap_worker
+  // never applied and the coordinator would respawn the slot forever with
+  // no output (issue #40782). The run must terminate with a non-zero exit
+  // after a bounded number of attempts.
+  using dir = makeDir("parallel-pre-ready-exit");
+  const [, stderr, exitCode] = await runParallel(String(dir), "1");
   // Assert only on coordinator-generated output: try_reap gates on ipc.done
   // but not err.done, so the worker's own stderr line can race the reap and
   // be dropped before it's captured. The coordinator prints "exited during
@@ -56,5 +65,21 @@ test("--parallel terminates when a worker exits before sending .ready", async ()
   const spawns = (stderr.match(/exited during startup/g) ?? []).length;
   expect(spawns).toBeGreaterThanOrEqual(2);
   expect(spawns).toBeLessThanOrEqual(4);
+  expect(exitCode).not.toBe(0);
+}, 60_000);
+
+test.skipIf(!hasHook)("--parallel aborts the whole run when a worker crashes before sending .ready", async () => {
+  // A fatal signal during init is a Bun bug just like one mid-file: the
+  // coordinator must print the crash banner, sweep the queued files, and
+  // end the run instead of retrying the slot.
+  using dir = makeDir("parallel-pre-ready-crash");
+  const [, stderr, exitCode] = await runParallel(String(dir), "abort");
+  expect(stderr).toContain("crashed with");
+  expect(stderr).toContain("during startup");
+  // Queued files are swept, not silently dropped, and not retried.
+  expect(stderr).toContain("aborted: worker panicked during startup");
+  expect(stderr).toContain("a.test.js");
+  expect(stderr).toContain("b.test.js");
+  expect(stderr).not.toContain("retrying");
   expect(exitCode).not.toBe(0);
 }, 60_000);

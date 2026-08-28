@@ -8029,17 +8029,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // The module scope never goes through `pop_scope`, so its direct-eval
-        // pinning happens here. Exempt, as in esbuild: the top level of a
-        // bundled ESM file (it shares the chunk scope with other files) and,
-        // when bundling, import bindings (the linker merges them into the
-        // exporting file's symbol, which would pin that name in every chunk).
+        // The module scope never pops; `pop_scope` explains the bundled-ESM exemption.
         if self.module_scope().contains_direct_eval
             && (!bundling || exports_kind == js_ast::ExportsKind::Cjs)
         {
             let module_scope = self.module_scope_ref();
             for member in module_scope.members.values() {
                 let symbol = &mut self.symbols[member.ref_.inner_index() as usize];
+                // The linker merges an import binding into the exporting file's symbol.
                 if bundling && symbol.kind == js_ast::symbol::Kind::Import {
                     continue;
                 }

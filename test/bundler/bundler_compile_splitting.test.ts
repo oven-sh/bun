@@ -84,13 +84,15 @@ describe("bundler", () => {
       banner: "// ✓ non-ascii banner",
       files: {
         "/entry.ts": /* js */ `
-          import { a, ab, abc, abcd, café, слово } from "./names";
+          import { a, ab, abc, abcd, café, слово, "" as empty } from "./names";
           import { report } from "./report";
           const { lazy } = await import("./lazy");
-          console.log(report(a, ab, abc, abcd, café, слово), lazy());
+          console.log(report(a, ab, abc, abcd, café, слово, empty), lazy());
         `,
         "/names.ts": /* js */ `
           export const a = 1, ab = 2, abc = 3, abcd = 4, café = 5, слово = 6;
+          const empty = 7;
+          export { empty as "" };
         `,
         "/report.ts": /* js */ `
           export function report(...values: number[]) { return values.join(","); }
@@ -104,7 +106,7 @@ describe("bundler", () => {
       minifyIdentifiers: false,
       run: {
         env: { BUN_JSC_verboseDiskCache: "1" },
-        stdout: "1,2,3,4,5,6 1+2+3+4+5+6éф",
+        stdout: "1,2,3,4,5,6,7 1+2+3+4+5+6éф",
         validate({ stderr }) {
           const count = (text: string) => stderr.split("\n").filter(l => l.includes(text)).length;
           // bun:main carries no bytecode; the entry and its two chunks must hit.

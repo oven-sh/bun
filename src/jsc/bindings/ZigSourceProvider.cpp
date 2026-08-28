@@ -226,10 +226,17 @@ extern "C" void Bun__DecoderStringTable__install(JSC::VM* vm, const uint8_t* byt
     static_cast<WebCore::JSVMClientData*>(vm->clientData)->setDecoderStringTable(std::span<const uint8_t>(bytes, len));
 }
 
-extern "C" uint32_t Bun__EncoderStringTable__slotFor(JSC::EncoderStringTable* table, const BunString* string)
+extern "C" uint32_t Bun__EncoderStringTable__slotForLatin1(JSC::EncoderStringTable* table, const Latin1Character* chars, size_t length)
 {
-    WTF::String wtf = string->toWTFString();
-    return table->slotFor(wtf.isNull() ? *WTF::emptyString().impl() : *wtf.impl());
+    std::span span { chars, length };
+    // slotFor keeps a string only when it takes an ordinal (4+ characters); shorter ones are packed into the slot.
+    Ref<StringImpl> string = length <= 3 ? StringImpl::createWithoutCopying(span) : StringImpl::create(span);
+    return table->slotFor(string.get());
+}
+
+extern "C" uint32_t Bun__EncoderStringTable__slotForUTF16(JSC::EncoderStringTable* table, const char16_t* chars, size_t length)
+{
+    return table->slotFor(StringImpl::create8BitIfPossible(std::span { chars, length }).get());
 }
 
 extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sourceProviderURL, const BunString* inputSourceCode, uint32_t depth, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, JSC::EncoderStringTable* externalStrings)

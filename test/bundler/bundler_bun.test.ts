@@ -42,27 +42,6 @@ describe("bundler", () => {
     });
   }
 
-  // The source key is computed over the same Latin-1 / UTF-16 string at build and load time, so a
-  // non-ASCII banner must not turn the bytecode into a cache miss.
-  itBundled("bun/bytecode-non-ascii-banner", {
-    target: "bun",
-    format: "cjs",
-    bytecode: true,
-    banner: "// ✓ résumé",
-    outdir: "/out",
-    files: { "/entry.ts": `console.log("résumé");` },
-    run: {
-      stdout: "résumé\n",
-      env: { BUN_JSC_verboseDiskCache: "1" },
-      validate({ stderr }) {
-        // The bundle is the first source JSC looks up; anything after it is not this bundle's bytecode.
-        expect(stderr.split("\n").find(l => l.startsWith("[Disk Cache] "))).toBe(
-          "[Disk Cache] Cache hit for sourceCode",
-        );
-      },
-    },
-  });
-
   // https://github.com/oven-sh/bun/issues/18899
   itBundled("bun/import-bun-format-cjs", {
     target: "bun",

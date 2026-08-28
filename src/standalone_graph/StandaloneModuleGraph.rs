@@ -825,10 +825,6 @@ fn wtf_latin1_string_hash(bytes: &[u8]) -> u32 {
     // SAFETY: reads `len` bytes from `ptr`; pure function.
     unsafe { Bun__WTFStringHashLatin1(bytes.as_ptr(), bytes.len()) }
 }
-fn wtf_utf16_string_hash(units: &[u16]) -> u32 {
-    // SAFETY: reads `len` units from `ptr`; pure function.
-    unsafe { Bun__WTFStringHashUTF16(units.as_ptr(), units.len()) }
-}
 
 impl StandaloneModuleGraph {
     fn from_bytes(
@@ -1142,39 +1138,34 @@ fn is_stored_as_string(output_file: &OutputFile) -> bool {
             && output_file.side != Some(options::Side::Client))
 }
 
-/// Writes `utf8` as the `WTF::StringImpl` body `clone_utf8` builds (8-bit if ASCII, else UTF-16 at an even offset), with its hash.
+/// Writes `utf8` as a `WTF::StringImpl` body (8-bit if ASCII, else UTF-16 at an even offset) with its hash.
 fn encode_text_module(
     string_builder: &mut bun_core::StringBuilder,
     utf8: &[u8],
 ) -> (StringPointer, Encoding, u32) {
-    if utf8.is_empty() {
-        return (string_builder.append_count_z(utf8), Encoding::Latin1, 0);
-    }
-    let string = BunString::clone_utf8(utf8);
-    if string.is_dead() {
-        bun_alloc::out_of_memory();
-    }
-    if string.is_8bit() {
-        let bytes = string.latin1();
-        return (
-            string_builder.append_count_z(bytes),
-            Encoding::Latin1,
-            wtf_latin1_string_hash(bytes),
-        );
-    }
-    let units = string.utf16();
+    let Some(first_non_ascii) = strings::first_non_ascii(utf8) else {
+        let hash = if utf8.is_empty() {
+            0
+        } else {
+            wtf_latin1_string_hash(utf8)
+        };
+        return (string_builder.append_count_z(utf8), Encoding::Latin1, hash);
+    };
     if !string_builder.len.is_multiple_of(align_of::<u16>()) {
         string_builder.writable()[0] = 0;
         string_builder.len += 1;
     }
     let start = string_builder.len;
-    let byte_len = units.len() * 2;
-    // SAFETY: a `u8` view over initialized `u16`s is in bounds and aligned.
-    let bytes = unsafe { core::slice::from_raw_parts(units.as_ptr().cast::<u8>(), byte_len) };
     let dst = string_builder.writable();
-    dst[..byte_len].copy_from_slice(bytes);
+    assert!(dst.len() >= 2 * utf8.len() + 2);
+    // SAFETY: `to_bytes` reserved `2 * utf8.len() + 4` bytes for this file; asserted above.
+    let byte_len = unsafe {
+        bun_core::strings::write_wtf8_as_utf16le(utf8, first_non_ascii as usize, dst.as_mut_ptr())
+    };
     dst[byte_len] = 0;
     dst[byte_len + 1] = 0;
+    // SAFETY: `byte_len` initialized bytes at an even offset of the (page-aligned) section buffer.
+    let hash = unsafe { Bun__WTFStringHashUTF16(dst.as_ptr().cast::<u16>(), byte_len / 2) };
     string_builder.len += byte_len + 2;
     (
         StringPointer {
@@ -1182,7 +1173,7 @@ fn encode_text_module(
             length: byte_len as u32,
         },
         Encoding::Utf16,
-        wtf_utf16_string_hash(units),
+        hash,
     )
 }
 

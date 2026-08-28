@@ -982,7 +982,7 @@ impl TranspilerJob {
             let bytecode_cache =
                 crate::resolved_source::Bytecode::owned(already_bundled.into_bytecode());
             self.resolved_source = ResolvedSource {
-                source_code: String::clone_utf8(&parse_result.source.contents),
+                source_code: String::clone_latin1(&parse_result.source.contents),
                 already_bundled: true,
                 bytecode_cache,
                 is_commonjs_module,
@@ -1126,7 +1126,7 @@ impl TranspilerJob {
             // `cache.output_code` (only the `r#impl == None` fallback does,
             // and `r#impl` is `Some(Jsc)` here), so it is always `None`.
             debug_assert!(cache.output_code.is_none());
-            let result = String::clone_utf8(written);
+            let result = String::clone_latin1(written);
 
             // SAFETY: leaf scalar field read on `*vm`; see `vm` note above.
             if written.len() > 1024 * 1024 * 2 || unsafe { (*vm).smol } {

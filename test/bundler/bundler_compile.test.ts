@@ -1007,14 +1007,14 @@ describe("bundler", () => {
       if (embedded.length !== 1 || !embedded[0].startsWith("asset-")) throw new Error("embeddedFiles: " + embedded);
       if ((await Bun.file(asset).text()) !== "abcd") throw new Error("asset: " + asset);
 
-      // The embedded bytes are the string body itself.
+      // Reading the embedded module as a file gives its text as UTF-8, whichever width the body is stored in.
       const encoded = {
-        "ascii.txt": Buffer.from(expected.ascii, "latin1"),
-        "latin1.txt": Buffer.from(expected.latin1, "utf16le"),
-        "wide.txt": Buffer.from(expected.wide, "utf16le"),
+        "ascii.txt": Buffer.from(expected.ascii),
+        "latin1.txt": Buffer.from(expected.latin1),
+        "wide.txt": Buffer.from(expected.wide),
         "empty.txt": Buffer.alloc(0),
-        "invalid.txt": Buffer.from(expected.invalid, "utf16le"),
-        "doc.md": Buffer.from(expected.doc, "utf16le"),
+        "invalid.txt": Buffer.from(expected.invalid),
+        "doc.md": Buffer.from(expected.doc),
       };
       const embeddedNames = readdirSync(root);
       for (const [name, bytes] of Object.entries(encoded)) {

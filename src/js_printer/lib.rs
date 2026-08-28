@@ -233,7 +233,7 @@ pub mod analyze_transpiled_module {
     /// u8   offset width W ∈ {1,2,4}; u8 0, 0, 0
     /// u32  count
     /// uW   × (count + 1): byte offset of each string's record, then the blob length
-    /// blob: per string, u8 is8Bit then the characters (UTF-16 little-endian, unaligned)
+    /// blob: per string, u8 is8Bit then the characters (Latin-1 bytes, or unaligned UTF-16LE)
     /// ```
     fn serialize_string_table<'a, W: std::io::Write>(
         w: &mut W,
@@ -243,22 +243,23 @@ pub mod analyze_transpiled_module {
         let mut offsets: Vec<u32> = Vec::with_capacity(count + 1);
         let mut blob: Vec<u8> = Vec::new();
         for wtf8 in strings {
-            match bun_core::strings::wtf8_to_utf16_alloc(wtf8) {
+            offsets.push(blob.len() as u32);
+            match bun_core::strings::first_non_ascii(wtf8) {
                 None => {
-                    offsets.push(blob.len() as u32);
                     blob.push(1);
                     blob.extend_from_slice(wtf8);
                 }
-                Some(units) if units.iter().all(|&u| u <= 0xFF) => {
-                    offsets.push(blob.len() as u32);
-                    blob.push(1);
-                    blob.extend(units.iter().map(|&u| u as u8));
-                }
-                Some(units) => {
-                    offsets.push(blob.len() as u32);
+                Some(first_non_ascii) => {
                     blob.push(0);
-                    for u in units {
-                        blob.extend_from_slice(&u.to_le_bytes());
+                    blob.reserve(2 * wtf8.len());
+                    // SAFETY: `2 * wtf8.len()` spare bytes reserved, the bound `write_wtf8_as_utf16le` requires.
+                    unsafe {
+                        let n = bun_core::strings::write_wtf8_as_utf16le(
+                            wtf8,
+                            first_non_ascii as usize,
+                            blob.as_mut_ptr().add(blob.len()),
+                        );
+                        blob.set_len(blob.len() + n);
                     }
                 }
             }

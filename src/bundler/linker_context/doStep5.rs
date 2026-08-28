@@ -504,8 +504,6 @@ impl LinkerContext<'_> {
                 )),
                 ..Default::default()
             };
-            // An export named "__proto__" must not become the prototype of the
-            // "__export(exports, { ... })" object literal.
             property.flags =
                 E::own_key_property_flags(property.key.as_ref().expect("infallible: prop has key"));
             properties.push(property);

@@ -1472,9 +1472,7 @@ impl Object {
     }
 }
 
-/// Flags for a property synthesized from a name (a data-file key, an export
-/// alias) that must define an own property. A plain `"__proto__":` key in a
-/// printed object literal sets the prototype, so that key is marked computed.
+/// A synthesized `"__proto__"` key is computed: a plain `__proto__:` would set the prototype.
 pub fn own_key_property_flags(key: &Expr) -> crate::flags::PropertySet {
     match &key.data {
         crate::expr::Data::EString(key_str) if key_str.eql_comptime(b"__proto__") => {

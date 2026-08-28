@@ -950,10 +950,7 @@ where
     b'"'
 }
 
-/// `{ __proto__: x }` sets the prototype of the object while `{ __proto__ }`
-/// defines an own property, so the two forms are interchangeable for every key
-/// except `__proto__`, which has to keep the form it was parsed with. See
-/// https://tc39.es/ecma262/#sec-runtime-semantics-propertydefinitionevaluation
+/// A `__proto__` key keeps its parsed form: `{ __proto__: x }` sets the prototype, `{ __proto__ }` is an own property.
 fn can_use_shorthand_property(
     key: &js_ast::e::String,
     name: &[u8],
@@ -964,9 +961,7 @@ fn can_use_shorthand_property(
             || flags.contains(js_ast::flags::Property::WasShorthand))
 }
 
-/// A shorthand `__proto__` whose value no longer prints as the bare identifier
-/// `__proto__` (the symbol was renamed, inlined, or is a namespace import)
-/// keeps its own-property meaning only as a computed key: `["__proto__"]: x`.
+/// `["__proto__"]: x` is the only own-property form left once the shorthand value was renamed.
 fn must_print_proto_key_as_computed(
     key: &js_ast::e::String,
     flags: js_ast::flags::PropertySet,
@@ -4727,8 +4722,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// The name a property value prints as when it prints as a bare
-        /// identifier, which is what lets `key: value` collapse to shorthand.
+        /// The identifier a property value prints as, if it prints as a bare identifier.
         fn shorthand_value_name(&mut self, item: &G::Property) -> Option<&'a [u8]> {
             match &item.value.as_ref()?.data {
                 ExprData::EIdentifier(e) => Some(self.name_for_symbol(e.ref_)),

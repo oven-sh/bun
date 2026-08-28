@@ -451,8 +451,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             // empty" invariant makes that drop a no-op today, but
                             // `ptr::write` enforces it structurally.
                             let key = prop.key;
-                            // Keep the computed flag a "__proto__" key carries so
-                            // the property stays an own property of the object.
+                            // keeps a "__proto__" key computed
                             let flags = prop.flags;
                             let value_loc =
                                 prop.value.as_ref().expect("infallible: prop has value").loc;

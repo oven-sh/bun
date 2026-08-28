@@ -1,6 +1,6 @@
-import { S3Client, type S3File, type S3Options } from "bun";
+import { S3Client, type S3Options } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow } from "harness";
 
 // `S3Client.file()` and the other per-key methods share the client's
 // credentials with the returned S3 file when the call passes no credential
@@ -36,21 +36,25 @@ describe("S3Client credentials", () => {
     expect(signer(client.presign("dir/file.txt"))).toEqual(clientSigner);
   });
 
-  test("file() without overrides does not copy the client's credentials", () => {
-    // Two 64 KiB strings make one copy of the credentials cost 128 KiB.
-    const big = Buffer.alloc(64 * 1024, "s").toString();
-    const client = new S3Client({ ...clientOptions, secretAccessKey: big, sessionToken: big });
-    const count = 500;
-    const copyCost = count * 128 * 1024;
-
-    const files: S3File[] = [];
-    Bun.gc(true);
-    const rssBefore = process.memoryUsage.rss();
-    for (let i = 0; i < count; i++) files.push(client.file(`dir/file-${i}.txt`));
-    const rssGrowth = process.memoryUsage.rss() - rssBefore;
-
-    expect(files).toHaveLength(count);
-    expect(rssGrowth).toBeLessThan(copyCost / 4);
+  test("file() without overrides does not copy the client's credentials", async () => {
+    // Two 64 KiB strings make one copy of the credentials cost 128 KiB, so 500
+    // copies are 64 MiB.
+    await expectRssDeltaBelow(
+      [
+        "-e",
+        `
+          const big = Buffer.alloc(64 * 1024, "s").toString();
+          const client = new Bun.S3Client({ ...${JSON.stringify(clientOptions)}, secretAccessKey: big, sessionToken: big });
+          const files = [];
+          Bun.gc(true);
+          const rssBefore = process.memoryUsage.rss();
+          for (let i = 0; i < 500; i++) files.push(client.file("dir/file-" + i + ".txt"));
+          const deltaMiB = (process.memoryUsage.rss() - rssBefore) / 1024 / 1024;
+          console.log(JSON.stringify({ deltaMiB, count: files.length }));
+        `,
+      ],
+      { release: 16, debug: 32 },
+    );
   });
 
   test("non-credential options keep the client's credentials", () => {

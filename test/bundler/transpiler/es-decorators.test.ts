@@ -1210,4 +1210,102 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
   });
+
+  // https://github.com/oven-sh/bun/issues/40761
+  describe("multiple decorated classes in one module", () => {
+    test("accessor decorator init does not leak into another class's field", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function Field(value, ctx) {}
+        function AccessorDecorator(target, ctx) {
+          const name = ctx.name;
+          return { init: () => name, get: () => name };
+        }
+        class Entity {
+          @Field id;
+        }
+        class Action {
+          @AccessorDecorator accessor success;
+        }
+        const entity = new Entity();
+        console.log(entity.id);
+        console.log(new Action().success);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("undefined\nsuccess\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("decorated private methods keep separate brand checks per class", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function F(method, ctx) { return method; }
+        class A {
+          @F #m() { return "A"; }
+          call(o) { return o.#m(); }
+        }
+        class B {
+          @F #m() { return "B"; }
+          call(o) { return o.#m(); }
+        }
+        const a = new A();
+        const b = new B();
+        console.log(a.call(a), b.call(b));
+        try {
+          a.call(b);
+          console.log("no-throw");
+        } catch (e) {
+          console.log("threw");
+        }
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("A B\nthrew\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("decorated classes from different bundled files do not share state", async () => {
+      using dir = tempDir("es-dec-bundle", {
+        "a.js": `
+          function Field(value, ctx) {}
+          export class Entity {
+            @Field id;
+          }
+        `,
+        "b.js": `
+          function AccessorDecorator(target, ctx) {
+            const name = ctx.name;
+            return { init: () => name, get: () => name };
+          }
+          export class Action {
+            @AccessorDecorator accessor success;
+          }
+        `,
+        "main.js": `
+          import { Entity } from "./a.js";
+          import { Action } from "./b.js";
+          console.log(new Entity().id);
+          console.log(new Action().success);
+        `,
+      });
+
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "main.js", "--outfile=out.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [buildStderr, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+      expect(filterStderr(buildStderr)).toBe("");
+      expect(buildExitCode).toBe(0);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "out.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("undefined\nsuccess\n");
+      expect(exitCode).toBe(0);
+    });
+  });
 });

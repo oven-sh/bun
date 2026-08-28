@@ -40,8 +40,7 @@ pub struct Expansion {
     /// Whether the in-flight command substitution was `"$(...)"` (no IFS
     /// splitting on its result). Only meaningful while `state == CmdSubst`.
     pub(crate) cmd_subst_quoted: bool,
-    /// Set when a `""`/`''` literal was seen. The final flush pushes an empty
-    /// `current_out` as a word only then: `""` is one empty arg, `$unset` is none.
+    /// Set when a `""`/`''` literal was seen, so the final flush keeps an empty word.
     pub(crate) has_quoted_empty: bool,
     /// Exit code of a sole-command-substitution arg — propagated to `Cmd`
     /// so `$(false)` as argv0 fails.
@@ -66,8 +65,7 @@ pub enum ExpansionState {
 #[derive(Default)]
 pub struct ExpansionOut {
     pub(crate) buf: Vec<u8>,
-    /// End offset in `buf` of each word, one entry per word, so an empty word
-    /// is representable in any position (`{,b}` is `["", "b"]`).
+    /// End offset in `buf` of each word. An empty word repeats the previous offset.
     pub(crate) word_ends: Vec<u32>,
     /// Set when the atom is a sole `$(…)`
     /// that exited non-zero, so [`Cmd::child_done`] can propagate it as the

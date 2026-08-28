@@ -1064,16 +1064,14 @@ fn expr_from_blob(
 ) -> crate::Result<Expr> {
     use bun_ast::{E, ExprData, StoreStr as Str};
 
-    // `type/subtype` without the parameters. `Response.json()` and most
-    // servers send `application/json;charset=utf-8`.
+    // MIME essence: `type/subtype` with the parameters cut off.
     let essence: &[u8] = match strings::index_of_char_usize(content_type, b';') {
         Some(semicolon) => &content_type[..semicolon],
         None => content_type,
     }
     .trim_ascii();
 
-    // `application/json`, `text/json`, and the `+json` structured syntax
-    // suffix (RFC 6839): `application/ld+json`, `application/vnd.api+json`.
+    // `+json` is the RFC 6839 structured syntax suffix: `application/ld+json`.
     let is_json = essence.ends_with(b"/json") || essence.ends_with(b"+json");
 
     if is_json {

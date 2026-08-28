@@ -4408,7 +4408,6 @@ pub mod ret {
 
 pub struct NodeFS {
     /// Scratch for a temporary file path that might appear in a returned error message.
-    /// Pooled on the heap: a `PathBuffer` is 96 KB on Windows and a `NodeFS` is often a stack local.
     pub(crate) sync_error_buf: paths::path_buffer_pool::Guard,
     pub(crate) vm: Option<NonNull<VirtualMachine>>,
 }

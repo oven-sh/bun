@@ -218,9 +218,14 @@ impl<T: RefCounted> RefCount<T> {
         self.raw_count.get()
     }
 
-    /// The count is 0 after the destructor is called.
+    /// The count is 0 after the destructor is called. Debug-only: a release
+    /// build must not abort in a destructor over a refcount slip.
     pub fn assert_no_refs(&self) {
-        assert!(self.raw_count.get() == 0);
+        debug_assert_eq!(
+            self.raw_count.get(),
+            0,
+            "destructor ran with refs outstanding"
+        );
     }
 
     fn assert_single_threaded(&self) {
@@ -380,9 +385,14 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
         self.get() == 1
     }
 
-    /// The count is 0 after the destructor is called.
+    /// The count is 0 after the destructor is called. Debug-only: a release
+    /// build must not abort in a destructor over a refcount slip.
     pub fn assert_no_refs(&self) {
-        assert!(self.raw_count.load(Ordering::SeqCst) == 0);
+        debug_assert_eq!(
+            self.raw_count.load(Ordering::SeqCst),
+            0,
+            "destructor ran with refs outstanding"
+        );
     }
 
     #[inline]
@@ -919,6 +929,29 @@ mod tests {
             drop(bun_core::heap::take(s));
         }
         assert_eq!(drops(), before + 1);
+    }
+
+    // ── assert_no_refs ────────────────────────────────────────────────────
+    //
+    // A destructor that runs with refs outstanding is a debug-build assertion
+    // only. Release builds must not abort over it.
+
+    #[test]
+    #[cfg_attr(
+        debug_assertions,
+        should_panic(expected = "destructor ran with refs outstanding")
+    )]
+    fn ref_count_assert_no_refs_is_debug_only() {
+        RefCount::<Thing>::init().assert_no_refs();
+    }
+
+    #[test]
+    #[cfg_attr(
+        debug_assertions,
+        should_panic(expected = "destructor ran with refs outstanding")
+    )]
+    fn thread_safe_ref_count_assert_no_refs_is_debug_only() {
+        ThreadSafeRefCount::<Shared>::init().assert_no_refs();
     }
 
     // ── CellRefCounted ────────────────────────────────────────────────────

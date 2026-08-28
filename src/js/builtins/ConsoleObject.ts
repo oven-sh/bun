@@ -137,20 +137,20 @@ export function write(this: Console, input) {
 }
 
 // Returns the `console.createTask` function. Called lazily from a custom
-// getter in ZigGlobalObject.cpp so the WeakSet and the shared `run` method are
-// created once per global object. Node implements this in the V8 inspector
-// (v8-console.cc); `run` brackets the callback with async-stack tagging for an
-// attached inspector frontend. Bun has no equivalent inspector hook, so the
-// task only validates its arguments and invokes the callback, which is the
-// observable behavior when no frontend is attached.
+// getter in ZigGlobalObject.cpp so the shared `run` method is created once per
+// global object. Node implements this in the V8 inspector (v8-console.cc);
+// `run` brackets the callback with async-stack tagging for an attached
+// inspector frontend. Bun has no equivalent inspector hook, so the task only
+// validates its arguments and invokes the callback, which is the observable
+// behavior when no frontend is attached. Tasks are marked with a private name,
+// like Node's internal slot, so user code cannot forge or break the receiver
+// check.
 export function createCreateTask() {
-  const tasks = new WeakSet();
-
   function run(f) {
     if (!$isCallable(f)) {
       throw new Error("First argument must be a function.");
     }
-    if (!tasks.has(this)) {
+    if (!$isObject(this) || !$getByIdDirectPrivate(this, "consoleTask")) {
       throw new Error("'run' called with illegal receiver.");
     }
     return f.$call(undefined);
@@ -161,7 +161,7 @@ export function createCreateTask() {
       throw new Error("First argument must be a non-empty string.");
     }
     const task = { run };
-    tasks.add(task);
+    $putByIdDirectPrivate(task, "consoleTask", true);
     return task;
   };
 }

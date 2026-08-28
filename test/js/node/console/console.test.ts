@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Console } from "node:console";
+import consoleModule, { Console } from "node:console";
 
 import { Writable } from "node:stream";
 
@@ -92,7 +92,6 @@ test("console._stderr", () => {
 describe("console.createTask", () => {
   test("exists on the global console and node:console", () => {
     expect(typeof console.createTask).toBe("function");
-    const consoleModule = require("node:console");
     expect(consoleModule.createTask).toBe(console.createTask);
   });
 

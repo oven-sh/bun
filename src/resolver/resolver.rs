@@ -1597,6 +1597,9 @@ impl<'a> Resolver<'a> {
                 if let Some(v) = tsconfig.use_define_for_class_fields {
                     result.flags.set_use_define_for_class_fields(v);
                 }
+                result
+                    .flags
+                    .set_unused_import_flags_ts(tsconfig.unused_import_flags());
             }
 
             // If you use mjs or mts, then you're using esm
@@ -6589,6 +6592,12 @@ impl<'a> Resolver<'a> {
 
                         if let Some(value) = parent_config.preserve_imports_not_used_as_values {
                             mc.preserve_imports_not_used_as_values = Some(value);
+                        }
+                        if let Some(value) = parent_config.preserve_value_imports {
+                            mc.preserve_value_imports = Some(value);
+                        }
+                        if let Some(value) = parent_config.verbatim_module_syntax {
+                            mc.verbatim_module_syntax = Some(value);
                         }
 
                         // TypeScript replaces paths across extends (child overrides parent

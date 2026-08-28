@@ -2642,6 +2642,10 @@ fn transpile_source_code_inner(
                     use_define_for_class_fields: unsafe {
                         (*jsc_vm).transpiler.options.use_define_for_class_fields
                     },
+                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                    unused_import_flags_ts: unsafe {
+                        (*jsc_vm).transpiler.options.unused_import_flags_ts
+                    },
                     virtual_source,
                     dont_bundle_twice: true,
                     allow_commonjs: true,

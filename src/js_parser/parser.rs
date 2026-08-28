@@ -1303,7 +1303,6 @@ pub(crate) struct ImportClause<'a> {
     /// (`S::Import.items: StoreSlice<ClauseItem>`).
     pub(crate) items: &'a mut [js_ast::ClauseItem],
     pub(crate) is_single_line: bool,
-    pub(crate) had_type_only_imports: bool,
 }
 
 pub struct PropertyOpts {

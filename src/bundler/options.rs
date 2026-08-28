@@ -325,6 +325,7 @@ impl TargetExt for Target {
 }
 
 pub use bun_options_types::Format;
+pub use bun_options_types::TSUnusedImportFlags;
 pub use bun_options_types::WindowsOptions;
 
 // Re-export of `bun_ast::Loader`.
@@ -1192,6 +1193,7 @@ pub struct BundleOptions<'a> {
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
     pub use_define_for_class_fields: bool,
+    pub unused_import_flags_ts: TSUnusedImportFlags,
     pub auto_import_jsx: bool,
     pub allow_runtime: bool,
 
@@ -1425,6 +1427,7 @@ impl<'a> BundleOptions<'a> {
             emit_decorator_metadata: self.emit_decorator_metadata,
             experimental_decorators: self.experimental_decorators,
             use_define_for_class_fields: self.use_define_for_class_fields,
+            unused_import_flags_ts: self.unused_import_flags_ts,
             auto_import_jsx: self.auto_import_jsx,
             allow_runtime: self.allow_runtime,
             trim_unused_imports: self.trim_unused_imports,
@@ -1686,6 +1689,7 @@ impl<'a> BundleOptions<'a> {
             emit_decorator_metadata: false,
             experimental_decorators: false,
             use_define_for_class_fields: true,
+            unused_import_flags_ts: TSUnusedImportFlags::empty(),
             auto_import_jsx: true,
             allow_runtime: true,
             trim_unused_imports: None,

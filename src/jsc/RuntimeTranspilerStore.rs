@@ -802,6 +802,7 @@ impl TranspilerJob {
             emit_decorator_metadata: transpiler.options.emit_decorator_metadata,
             experimental_decorators: transpiler.options.experimental_decorators,
             use_define_for_class_fields: transpiler.options.use_define_for_class_fields,
+            unused_import_flags_ts: transpiler.options.unused_import_flags_ts,
             virtual_source: None,
             replace_exports: Default::default(),
             dont_bundle_twice: true,

@@ -495,6 +495,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 import_record_index,
                 is_single_line: true,
                 default_name,
+                has_items_clause: !items.is_empty(),
                 items,
                 namespace_ref,
                 star_name_loc,

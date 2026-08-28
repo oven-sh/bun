@@ -23,7 +23,7 @@ pub use jsx as JSX;
 // (`Format`, `ModuleType`, …) are surfaced from this crate.
 pub use bundle_enums::{
     BuiltInModule, BundlePackage, ForceNodeEnv, Format, LOADER_API_NAMES, LoaderExt, ModuleType,
-    TargetExt, WindowsOptions,
+    TSUnusedImportFlags, TargetExt, WindowsOptions,
 };
 
 /// Compiled-standalone-binary virtual filesystem path prefix + predicate.

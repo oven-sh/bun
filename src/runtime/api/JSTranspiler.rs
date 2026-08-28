@@ -780,6 +780,9 @@ impl TransformTask {
             use_define_for_class_fields: tsconfig
                 .and_then(|ts| ts.use_define_for_class_fields)
                 .unwrap_or(true),
+            unused_import_flags_ts: tsconfig
+                .map(|ts| ts.unused_import_flags())
+                .unwrap_or_default(),
             macro_js_ctx: MacroJSCtx::ZERO,
             file_fd_ptr: None,
             inject_jest_globals: false,
@@ -1244,6 +1247,11 @@ impl JSTranspiler {
                 .as_deref()
                 .and_then(|ts| ts.use_define_for_class_fields)
                 .unwrap_or(true),
+            unused_import_flags_ts: config
+                .tsconfig
+                .as_deref()
+                .map(|ts| ts.unused_import_flags())
+                .unwrap_or_default(),
             file_fd_ptr: None,
             inject_jest_globals: false,
             set_breakpoint_on_first_line: false,
@@ -1669,6 +1677,13 @@ impl JSTranspiler {
         };
 
         let mut opts = bun_js_parser::ParserOptions::init(jsx, loader);
+        opts.unused_import_flags_ts = self
+            .config
+            .get()
+            .tsconfig
+            .as_deref()
+            .map(|ts| ts.unused_import_flags())
+            .unwrap_or_default();
         // SAFETY: see `transpiler_mut`. The `&mut Transpiler` is reborrowed
         // disjointly for `macro_context` (stored in `opts`) and `options.define`
         // (raw-addr read) below; both end when `opts` is consumed by `scan()`.

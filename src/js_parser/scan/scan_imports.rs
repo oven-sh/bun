@@ -2,6 +2,7 @@
 #![warn(unused_must_use)]
 use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
 use crate::p::P;
+use crate::parser::options::TSUnusedImportFlags;
 use crate::parser::{ImportItemForNamespaceMap, Ref};
 use bun_ast::{self as js_ast, Expr, G, LocRef, S, Stmt, Symbol};
 use bun_ast::{ImportRecord, import_record};
@@ -81,19 +82,12 @@ impl<'a> ImportScanner<'a> {
                         continue;
                     }
 
-                    // The official TypeScript compiler always removes unused imported
-                    // symbols. However, we deliberately deviate from the official
-                    // TypeScript compiler's behavior doing this in a specific scenario:
-                    // we are not bundling, symbol renaming is off, and the tsconfig.json
-                    // "importsNotUsedAsValues" setting is present and is not set to
-                    // "remove".
-                    //
-                    // This exists to support the use case of compiling partial modules for
-                    // compile-to-JavaScript languages such as Svelte. These languages try
-                    // to reference imports in ways that are impossible for esbuild to know
-                    // about when esbuild is only given a partial module to compile. Here
-                    // is an example of some Svelte code that might use esbuild to convert
-                    // TypeScript to JavaScript:
+                    // We implement TypeScript's "preserveValueImports" tsconfig.json setting
+                    // to support the use case of compiling partial modules for compile-to-
+                    // JavaScript languages such as Svelte. These languages try to reference
+                    // imports in ways that are impossible for TypeScript and esbuild to know
+                    // about when they are only given a partial module to compile. Here is an
+                    // example of some Svelte code that contains a TypeScript snippet:
                     //
                     //   <script lang="ts">
                     //     import Counter from './Counter.svelte';
@@ -106,24 +100,11 @@ impl<'a> ImportScanner<'a> {
                     //
                     // Tools that use esbuild to compile TypeScript code inside a Svelte
                     // file like this only give esbuild the contents of the <script> tag.
-                    // These tools work around this missing import problem when using the
-                    // official TypeScript compiler by hacking the TypeScript AST to
-                    // remove the "unused import" flags. This isn't possible in esbuild
-                    // because esbuild deliberately does not expose an AST manipulation
-                    // API for performance reasons.
+                    // The "preserveValueImports" setting avoids removing unused import
+                    // names, which means additional code appended after the TypeScript-
+                    // to-JavaScript conversion can still access those unused imports.
                     //
-                    // We deviate from the TypeScript compiler's behavior in this specific
-                    // case because doing so is useful for these compile-to-JavaScript
-                    // languages and is benign in other cases. The rationale is as follows:
-                    //
-                    //   * If "importsNotUsedAsValues" is absent or set to "remove", then
-                    //     we don't know if these imports are values or types. It's not
-                    //     safe to keep them because if they are types, the missing imports
-                    //     will cause run-time failures because there will be no matching
-                    //     exports. It's only safe keep imports if "importsNotUsedAsValues"
-                    //     is set to "preserve" or "error" because then we can assume that
-                    //     none of the imports are types (since the TypeScript compiler
-                    //     would generate an error in that case).
+                    // There are two scenarios where we don't do this:
                     //
                     //   * If we're bundling, then we know we aren't being used to compile
                     //     a partial module. The parser is seeing the entire code for the
@@ -137,8 +118,15 @@ impl<'a> ImportScanner<'a> {
                     //     user is expecting the output to be as small as possible. So we
                     //     should omit unused imports.
                     //
+                    let unused_import_flags = p.options.unused_import_flags_ts;
+                    let keep_values_ts =
+                        unused_import_flags.contains(TSUnusedImportFlags::KEEP_VALUES);
                     let mut did_remove_star_loc = false;
-                    let keep_unused_imports = !p.options.features.trim_unused_imports;
+                    let keep_unused_imports = !p.options.features.trim_unused_imports
+                        || (is_typescript_enabled
+                            && keep_values_ts
+                            && !p.options.bundle
+                            && !p.options.features.minify_identifiers);
                     // TypeScript always trims unused imports. This is important for
                     // correctness since some imports might be fake (only in the type
                     // system and used for type-only imports).
@@ -152,7 +140,8 @@ impl<'a> ImportScanner<'a> {
 
                             // TypeScript has a separate definition of unused
                             if is_typescript_enabled
-                                && p.ts_use_counts[default_name.ref_.inner_index() as usize] != 0
+                                && (p.ts_use_counts[default_name.ref_.inner_index() as usize] != 0
+                                    || keep_values_ts)
                             {
                                 is_unused_in_typescript = false;
                             }
@@ -170,7 +159,8 @@ impl<'a> ImportScanner<'a> {
 
                             // TypeScript has a separate definition of unused
                             if is_typescript_enabled
-                                && p.ts_use_counts[st.namespace_ref.inner_index() as usize] != 0
+                                && (p.ts_use_counts[st.namespace_ref.inner_index() as usize] != 0
+                                    || keep_values_ts)
                             {
                                 is_unused_in_typescript = false;
                             }
@@ -204,9 +194,10 @@ impl<'a> ImportScanner<'a> {
                             }
                         }
 
-                        // Remove items if they are unused
+                        // Remove items if they are unused. In TypeScript an empty
+                        // clause counts as "found": `import {} from 'x'` is type-only.
                         let items: &mut [js_ast::ClauseItem] = st.items.slice_mut();
-                        if !items.is_empty() {
+                        if !items.is_empty() || (is_typescript_enabled && st.has_items_clause) {
                             found_imports = true;
                             let mut items_end: usize = 0;
                             let len = items.len();
@@ -216,7 +207,8 @@ impl<'a> ImportScanner<'a> {
 
                                 // TypeScript has a separate definition of unused
                                 if is_typescript_enabled
-                                    && p.ts_use_counts[ref_.inner_index() as usize] != 0
+                                    && (p.ts_use_counts[ref_.inner_index() as usize] != 0
+                                        || keep_values_ts)
                                 {
                                     is_unused_in_typescript = false;
                                 }
@@ -240,6 +232,11 @@ impl<'a> ImportScanner<'a> {
                             }
 
                             st.items.truncate(items_end);
+                            // An emptied clause prints as a bare import, so the
+                            // statement reads `import "path"` and not `import {} from "path"`.
+                            if items_end == 0 {
+                                st.has_items_clause = false;
+                            }
                         }
 
                         // -- Original Comment --
@@ -268,7 +265,7 @@ impl<'a> ImportScanner<'a> {
                         if (is_typescript_enabled
                             && found_imports
                             && is_unused_in_typescript
-                            && !p.options.preserve_unused_imports_ts)
+                            && !unused_import_flags.contains(TSUnusedImportFlags::KEEP_STMT))
                             || (!is_typescript_enabled
                                 && p.options.features.trim_unused_imports
                                 && found_imports

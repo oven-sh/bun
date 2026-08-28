@@ -5617,37 +5617,42 @@ pub(crate) mod __gated_printer {
 
                     let import_record = self.import_record(s.import_record_index as usize);
 
-                    self.print_whitespacer(ws!(b"export {"));
-
-                    if !s.is_single_line {
-                        self.indent();
+                    if slice_of(s.items).is_empty() {
+                        // "export {} from 'path'"
+                        self.print_whitespacer(ws!(b"export {} from "));
                     } else {
-                        self.print_space();
-                    }
+                        self.print_whitespacer(ws!(b"export {"));
 
-                    for (i, item) in slice_of(s.items).iter().enumerate() {
-                        if i != 0 {
-                            self.print(b",");
-                            if s.is_single_line {
-                                self.print_space();
-                            }
-                        }
                         if !s.is_single_line {
+                            self.indent();
+                        } else {
+                            self.print_space();
+                        }
+
+                        for (i, item) in slice_of(s.items).iter().enumerate() {
+                            if i != 0 {
+                                self.print(b",");
+                                if s.is_single_line {
+                                    self.print_space();
+                                }
+                            }
+                            if !s.is_single_line {
+                                self.print_newline();
+                                self.print_indent();
+                            }
+                            self.print_export_from_clause_item(item);
+                        }
+
+                        if !s.is_single_line {
+                            self.unindent();
                             self.print_newline();
                             self.print_indent();
+                        } else {
+                            self.print_space();
                         }
-                        self.print_export_from_clause_item(item);
-                    }
 
-                    if !s.is_single_line {
-                        self.unindent();
-                        self.print_newline();
-                        self.print_indent();
-                    } else {
-                        self.print_space();
+                        self.print_whitespacer(ws!(b"} from "));
                     }
-
-                    self.print_whitespacer(ws!(b"} from "));
                     let irp = &import_record.path.text;
                     self.print_import_record_path(import_record);
                     self.print_semicolon_after_statement();
@@ -6051,6 +6056,14 @@ pub(crate) mod __gated_printer {
                         }
                         self.print(b"}");
                         item_count += 1;
+                    } else if s.has_items_clause {
+                        // "import {} from 'path'"
+                        if item_count > 0 {
+                            self.print(b",");
+                        }
+                        self.print_space();
+                        self.print(b"{}");
+                        item_count += 1;
                     }
 
                     if record
@@ -6068,11 +6081,13 @@ pub(crate) mod __gated_printer {
                     }
 
                     if item_count > 0 {
+                        // A space is required after an identifier (`ns` or the
+                        // default name) but not after `}`.
                         if !self.options.minify_whitespace
                             || record
                                 .flags
                                 .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
-                            || slice_of(s.items).is_empty()
+                            || (slice_of(s.items).is_empty() && !s.has_items_clause)
                         {
                             self.print(b" ");
                         }

@@ -17,8 +17,6 @@ macro_rules! impl_get_errno_libc {
                 // against the type's own all-ones value instead (== -1 for
                 // signed, == MAX for unsigned — both are libc's failure rc).
                 if self == !(0 as $t) {
-                    // A code that does not fit the table is `EUNKNOWN`, never
-                    // a truncated cast that lands on another variant.
                     u16::try_from($crate::posix::errno())
                         .map_or($crate::E::EUNKNOWN, $crate::E::from_raw)
                 } else {
@@ -277,10 +275,8 @@ pub fn e_from_negated(errno: core::ffi::c_int) -> E {
 }
 
 impl SystemErrno {
-    /// Map a raw errno to its variant. A code the enum does not declare
-    /// becomes `EUNKNOWN`: the kernel is not bound to the table (Linux FUSE
-    /// and driver-internal codes such as `ENOTSUPP` 524 reach userspace), so
-    /// the result is defined for every `u16`.
+    /// A code the enum does not declare (the kernel is not bound to the
+    /// table: FUSE, `ENOTSUPP` 524) maps to `EUNKNOWN`.
     #[inline]
     pub const fn from_raw(n: u16) -> SystemErrno {
         match Self::from_repr(n) {
@@ -301,9 +297,7 @@ pub fn from_errno(errno: i32) -> SystemErrno {
 
 #[cfg(not(windows))]
 impl SystemErrno {
-    // `i64` covers every concrete call site (errno-range values). The sign is
-    // ignored: Node-style negated codes decode the same as positive ones.
-    // `None` for a code the enum does not declare.
+    // `i64` covers every concrete call site (errno-range values).
     //
     // Windows defines its own `init<C: SystemErrnoInit>` (typed dispatch over
     // DWORD/c_int/Win32Error) in windows_errno.rs, so this impl is POSIX-only.
@@ -453,8 +447,7 @@ mod errno_name_tests {
         #[cfg(not(windows))]
         assert_eq!(system_errno_name(max as i32), None);
 
-        // Spot-check the last kernel entry on each platform; `EUNKNOWN` sits
-        // one past it.
+        // Spot-check the last entry on each platform.
         #[cfg(any(target_os = "linux", target_os = "android", target_family = "wasm"))]
         {
             assert_eq!(system_errno_name(133), Some("EHWPOISON"));
@@ -482,8 +475,6 @@ mod errno_name_tests {
         }
     }
 
-    /// A code the enum does not declare is not UB: `from_raw` is total and
-    /// lands on `EUNKNOWN`, the checked decoders report `None`.
     #[test]
     fn unknown_errno_is_defined() {
         // Linux `ENOTSUPP`, `ERESTARTSYS`, and the largest possible code.

@@ -163,10 +163,7 @@ impl Error {
 
     #[inline]
     pub fn get_errno(&self) -> E {
-        // `self.errno` is a raw u16 and may hold a code the enum does not
-        // declare (a kernel errno above the table, or the placeholder from
-        // `Error::default()`). Such an `Error` is still a failure, so it reads
-        // as `EUNKNOWN`, not `SUCCESS`.
+        // An errno the enum does not declare is still a failure: `EUNKNOWN`, not `SUCCESS`.
         #[cfg(windows)]
         {
             // `self.errno` already stores an E/SystemErrno *discriminant* (set via `E as Int`),

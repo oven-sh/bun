@@ -242,10 +242,7 @@ pub enum E {
 }} // ← UV_* tail appended by `for_each_uv_errno!`
 
 impl E {
-    /// Map a raw discriminant to its variant; an undeclared value becomes
-    /// `UNKNOWN`. `E` is sparse (dense 0..=137 plus isolated UV_* tags
-    /// ~3000–4095), so the lookup goes through the `strum::FromRepr` match
-    /// and not a range check.
+    /// An undeclared discriminant maps to `UNKNOWN`.
     #[inline]
     pub(crate) const fn from_raw(n: u16) -> Self {
         match Self::from_repr(n) {

@@ -114,8 +114,7 @@ pub enum SystemErrno {
     ENOTRECOVERABLE = 95,
     EOWNERDEAD = 96,
     EINTEGRITY = 97,
-    /// Not a kernel errno. `from_raw` maps every code the enum does not
-    /// declare here.
+    /// Not a kernel errno: the `from_raw` result for an undeclared code.
     EUNKNOWN = 98,
 }
 

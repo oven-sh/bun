@@ -153,9 +153,7 @@ pub enum SystemErrno {
     ENOTRECOVERABLE = 131,
     ERFKILL = 132,
     EHWPOISON = 133,
-    /// Not a kernel errno. `from_raw` maps every code the enum does not
-    /// declare here: FUSE and driver-internal codes such as `ENOTSUPP` (524)
-    /// do reach userspace.
+    /// Not a kernel errno: the `from_raw` result for an undeclared code.
     EUNKNOWN = 134,
 }
 

@@ -1426,6 +1426,21 @@ describe("deno_task", () => {
         expect(stdout).toEndWith("done\n");
       })
       .runAsTest("export treats a leading -- as the end of options");
+
+    TestBuilder.command`export ""`
+      .stderr("export: ``: not a valid identifier\n")
+      .exitCode(1)
+      .runAsTest("export exits 1 on an empty word");
+
+    TestBuilder.command`export A=1 2B C=3 3D || echo "failed A=$A C=$C"`
+      .stdout("failed A=1 C=3\n")
+      .stderr("export: `2B`: not a valid identifier\nexport: `3D`: not a valid identifier\n")
+      .runAsTest("export exits 1 when a bare name is invalid and still exports the valid ones");
+
+    TestBuilder.command`export a-b=5 1FOO=bar OK=1 || echo "failed OK=$OK"`
+      .stdout("failed OK=1\n")
+      .stderr("export: `a-b=5`: not a valid identifier\nexport: `1FOO=bar`: not a valid identifier\n")
+      .runAsTest("export exits 1 when an assignment name is invalid and still exports the valid ones");
   });
 
   describe("pipeline", async () => {

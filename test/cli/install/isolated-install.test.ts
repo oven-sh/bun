@@ -520,7 +520,10 @@ test("a failed install removes the store entry's package so the next install bui
   const storePackage = join(packageDir, "node_modules", ".bun", "folder-dep@file+pkg-1", "node_modules", "folder-dep");
 
   await Promise.all([
-    write(packageJson, JSON.stringify({ name: "test-pkg-failed-link", dependencies: { "folder-dep": "file:./pkg-1" } })),
+    write(
+      packageJson,
+      JSON.stringify({ name: "test-pkg-failed-link", dependencies: { "folder-dep": "file:./pkg-1" } }),
+    ),
     write(join(packageDir, "pkg-1", "package.json"), JSON.stringify({ name: "folder-dep", version: "1.0.0" })),
     write(join(packageDir, "pkg-1", "lib"), "module.exports = 'file';"),
   ]);

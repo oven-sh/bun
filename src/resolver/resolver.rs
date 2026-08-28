@@ -3839,11 +3839,8 @@ impl<'a> Resolver<'a> {
     }
 
     /// `exports`/`imports` target isn't a file: probe extensions like `load_as_file` does.
-    ///
-    /// Only a wildcard target (`"./*": "./dist/*"`) gets `extension_order`
-    /// appended when it has no extension (oven-sh/bun#29679). Every target gets
-    /// the TypeScript `.js` → `.ts` rewrite, like esbuild's
-    /// `finalizeImportsExportsResult` (oven-sh/bun#10001).
+    /// `is_wildcard` enables the extensionless probe (oven-sh/bun#29679). The
+    /// TypeScript rewrite (oven-sh/bun#10001) runs for every target, as in esbuild.
     ///
     /// Each probe goes through [`DirInfo::get_entry`] so the map walk happens
     /// under `entries_mutex`; `dirname_fd` was captured under the caller's
@@ -4965,9 +4962,8 @@ impl<'a> Resolver<'a> {
         MatchStatus::NotFound
     }
 
-    /// A `paths` substitution that names a declaration file is only there for
-    /// type checking. Skip it so the import falls through to the real module,
-    /// like esbuild's `matchTSConfigPaths` (which checks `.d.ts` only).
+    /// A `paths` substitution that names a declaration file exists for type checking
+    /// only. Skip it, like esbuild's `matchTSConfigPaths` (which checks `.d.ts` only).
     fn is_type_only_tsconfig_path(&mut self, substitution: &[u8]) -> bool {
         const DECLARATION_EXTS: [&[u8]; 3] = [b".d.ts", b".d.mts", b".d.cts"];
         let Some(ext) = DECLARATION_EXTS.iter().find(|ext| {
@@ -6786,33 +6782,16 @@ fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
     MODULE_TYPE_FROM_EXT.get(ext).copied()
 }
 
-/// TypeScript-specific behavior: if the extension is ".js" or ".jsx", try
-/// replacing it with ".ts" or ".tsx". At the time of writing this specific
-/// behavior comes from the function "loadModuleFromFile()" in the file
-/// "moduleNameResolver.ts" in the TypeScript compiler source code. It
-/// contains this comment:
-///
-///   If that didn't work, try stripping a ".js" or ".jsx" extension and
-///   replacing it with a TypeScript one; e.g. "./foo.js" can be matched
-///   by "./foo.ts" or "./foo.d.ts"
-///
-/// We don't care about ".d.ts" files because we can't do anything with
-/// those, so we ignore that part of the behavior.
-///
-/// See the discussion here for more historical context:
-/// https://github.com/microsoft/TypeScript/issues/4595
-///
-/// Same table as esbuild's `rewrittenFileExtensions`, except that the `.js`
-/// arm also tries `.mts` (oven-sh/bun#12580). `inside_node_modules` only
-/// gates the `.mjs` and `.cjs` arms (`DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES`
-/// never applied to `.js`/`.jsx`).
+/// TypeScript matches `./foo.js` with `./foo.ts` (microsoft/TypeScript#4595). This
+/// is esbuild's `rewrittenFileExtensions` table plus Bun's `.js` → `.mts`
+/// (oven-sh/bun#12580). `inside_node_modules` gates only `.mjs` and `.cjs`:
+/// `DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES` never applied to `.js`/`.jsx`.
 fn rewritten_file_extensions(
     ext: &[u8],
     inside_node_modules: impl Fn() -> bool,
 ) -> &'static [&'static [u8]] {
     match ext {
-        // Note that the official compiler code always tries ".ts" before
-        // ".tsx" even if the original extension was ".jsx".
+        // tsc tries `.ts` before `.tsx` even for a `.jsx` import.
         b".js" | b".jsx" => &[b".ts", b".tsx", b".mts"],
         b".mjs" | b".cjs"
             if FeatureFlags::DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES && inside_node_modules() =>

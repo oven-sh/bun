@@ -28,6 +28,7 @@ use bun_jsc::module_loader::{ArenaResetGuard, FetchFlags, TranspileArgs, Transpi
 use bun_jsc::resolved_source::Bytecode;
 use bun_jsc::virtual_machine::{
     InitOptions, RuntimeHooks, RuntimeState as OpaqueRuntimeState, SweepResult, VirtualMachine,
+    WorkerExecArgvFlags,
 };
 use bun_jsc::{
     AnyPromise, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSModuleLoader,
@@ -305,7 +306,11 @@ pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCt
             )),
         }
     }
-    rare.default_client_ssl_ctx.unwrap()
+    rare.default_client_ssl_ctx
+        .as_ref()
+        .unwrap()
+        .as_ptr()
+        .cast()
 }
 
 /// `RareData.sslCtxCache().getOrCreateOpts(opts, &err)` — RuntimeHooks slot
@@ -325,10 +330,7 @@ fn ssl_ctx_cache_get_or_create(
     // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a stable
     // address for the VM's lifetime and is only touched from the JS thread.
     let cache = unsafe { &mut (*state).ssl_ctx_cache };
-    cache
-        .get_or_create_opts(opts, err)
-        // SAFETY: `get_or_create_opts` returns a +1 ref.
-        .and_then(|ctx| unsafe { bun_boringssl::c::OwnedSslCtx::from_raw(ctx) })
+    cache.get_or_create_opts(opts, err)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1524,7 +1526,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     console_print_runtime_object,
     load_standalone_sourcemap,
     apply_standalone_runtime_flags,
-    parse_worker_exec_argv_allow_addons,
+    parse_worker_exec_argv_flags,
     stop_cron_for_vm_teardown,
     cron_clear_all_reload,
     retroactively_report_discovered_tests,
@@ -1564,26 +1566,19 @@ unsafe fn apply_standalone_runtime_flags(
     crate::run_main::apply_standalone_runtime_flags(unsafe { &mut *transpiler }, graph);
 }
 
-/// Parse a Worker's `execArgv` against the
-/// `RunCommand` param table and return `!args.flag("--no-addons")`, or `None`
-/// on parse error.
-///
-/// Note: the Rust `bun_clap::parse_ex` port currently constrains
-/// `ArgIter<'static>` (parsed values are stored by reference), which would
-/// force leaking the per-call UTF-8 copies of `exec_argv`. Spec only ever
-/// reads the single `--no-addons` flag from the result (per the in-tree
-/// `// TODO: currently this only checks for --no-addons`), so this body scans
-/// the converted argv directly with the same `stop_after_positional_at = 1`
-/// short-circuit. Full clap routing can return when `ComptimeClap` grows a
-/// borrowed-lifetime variant.
+/// Scan a Worker's `execArgv` for `--no-addons` and `--no-ffi-cc`. Like the
+/// CLI parser, the scan stops at the first positional.
 ///
 /// # Safety
 /// Each `WTFStringImpl` in `exec_argv` is a live WTF string (the C++
 /// `Worker::create` array, kept alive for the worker's lifetime).
-unsafe fn parse_worker_exec_argv_allow_addons(
+unsafe fn parse_worker_exec_argv_flags(
     exec_argv: &[bun_core::WTFStringImpl],
-) -> Option<bool> {
-    let mut no_addons = false;
+) -> Option<WorkerExecArgvFlags> {
+    let mut flags = WorkerExecArgvFlags {
+        allow_addons: true,
+        allow_ffi_cc: true,
+    };
     for &arg in exec_argv {
         if arg.is_null() {
             continue;
@@ -1591,7 +1586,6 @@ unsafe fn parse_worker_exec_argv_allow_addons(
         // SAFETY: per fn contract — `arg` is a live `WTFStringImpl*`.
         let owned = unsafe { &*arg }.to_owned_slice_z();
         let bytes = owned.as_bytes();
-        // `stop_after_positional_at = 1` — first non-flag token ends parsing.
         if bytes.first() != Some(&b'-') {
             break;
         }
@@ -1599,11 +1593,12 @@ unsafe fn parse_worker_exec_argv_allow_addons(
             break;
         }
         if bytes == b"--no-addons" {
-            no_addons = true;
+            flags.allow_addons = false;
+        } else if bytes == b"--no-ffi-cc" {
+            flags.allow_ffi_cc = false;
         }
     }
-    // Override `allow_addons` unconditionally on successful parse.
-    Some(!no_addons)
+    Some(flags)
 }
 
 /// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` —
@@ -2788,15 +2783,11 @@ fn transpile_source_code_inner(
                 // disable_transpiling: return raw source.
                 if disable_transpilying {
                     let source_code = match args.flags {
-                        FetchFlags::PrintSourceAndClone => {
-                            bun_core::String::clone_utf8(&source.contents)
-                        }
                         FetchFlags::PrintSource => {
                             // The file contents live in a Drop-carrying
                             // `source_contents_backing` on `parse_result`, so a
                             // borrow would dangle once `parse_result` drops on
-                            // return. Clone instead — matches the
-                            // `PrintSourceAndClone` arm.
+                            // return. Clone instead.
                             bun_core::String::clone_utf8(&source.contents)
                         }
                         FetchFlags::Transpile => unreachable!(),
@@ -4478,7 +4469,7 @@ fn transpile_error_value(
     err: crate::Error,
 ) -> Option<JSValue> {
     match err {
-        crate::Error::PluginError | crate::Error::Bundler(bun_bundler::Error::Plugin) => None,
+        crate::Error::Bundler(bun_bundler::Error::Plugin) => None,
         // `take_error` unwraps the JSC::Exception to its inner value; the C++
         // caller re-wraps via `JSC::Exception::create`, so storing the raw
         // Exception here would double-wrap and trip

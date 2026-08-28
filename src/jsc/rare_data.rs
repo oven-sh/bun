@@ -14,7 +14,7 @@ use bun_event_loop::MiniEventLoop::__bun_stdio_blob_store_new;
 use bun_io::{self as Async};
 use bun_paths::MAX_PATH_BYTES;
 use bun_sys::{self as syscall, Fd, Mode};
-use bun_uws::{self as uws, SocketGroup, SslCtx};
+use bun_uws::{self as uws, SocketGroup};
 
 use bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop;
 
@@ -245,7 +245,8 @@ pub struct RareData {
     /// CTX. Cached separately so the hot `tls:true` / `wss://` path skips even the
     /// SHA-256 + map lookup. Ref owned here. Lazy-init body lives in
     /// `bun_runtime` (it calls `SSLContextCache::get_or_create_opts`).
-    pub default_client_ssl_ctx: Option<*mut SslCtx>,
+    /// Held for the VM's lifetime so the weak-cache entry never tombstones.
+    pub default_client_ssl_ctx: Option<boring::OwnedSslCtx>,
 
     /// `bun_runtime::node::StatWatcherScheduler` — erased `RefPtr` payload;
     /// lazy-init in `bun_runtime::node::node_fs_stat_watcher`.
@@ -1070,10 +1071,7 @@ impl Drop for RareData {
             unsafe { boring::ENGINE_free(engine) };
         }
 
-        if let Some(s) = self.default_client_ssl_ctx.take() {
-            // SAFETY: returned by ssl_ctx_cache.get_or_create_opts with +1 ref.
-            unsafe { boring::SSL_CTX_free(s) };
-        }
+        self.default_client_ssl_ctx = None;
         // After the default-ctx free so the tombstone callback still finds a live
         // map; ssl_ctx_cache itself lives in `RuntimeState` and is dropped there.
 

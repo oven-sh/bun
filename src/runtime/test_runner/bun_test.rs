@@ -1489,26 +1489,18 @@ impl fmt::Display for RefDataValue {
 
 // Intrusive single-thread refcount.
 #[derive(bun_ptr::RefCounted)]
-#[ref_count(destroy = Self::destroy)]
 pub struct RefData {
     pub(crate) buntest_weak: BunTestPtrWeak,
     pub(crate) phase: RefDataValue,
     pub(crate) ref_count: bun_ptr::RefCount<RefData>,
 }
-impl RefData {
-    /// `RefCounted` destructor — last ref dropped.
-    ///
-    /// # Safety
-    /// `this` must be the sole owner of a `RefPtr::new`-boxed allocation.
-    unsafe fn destroy(this: *mut RefData) {
+impl Drop for RefData {
+    fn drop(&mut self) {
         let _g = group_begin!();
-        // SAFETY: caller contract — refcount hit zero.
-        unsafe {
-            bun_core::scoped_log!(bun_test_group, "refData: {}", (*this).phase);
-            // buntest_weak.deinit() → Weak::drop
-            drop(bun_core::heap::take(this));
-        }
+        bun_core::scoped_log!(bun_test_group, "refData: {}", self.phase);
     }
+}
+impl RefData {
     pub(crate) fn has_one_ref(&self) -> bool {
         self.ref_count.has_one_ref()
     }

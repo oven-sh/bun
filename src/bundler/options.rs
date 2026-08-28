@@ -1113,6 +1113,18 @@ bun_core::comptime_string_map! {
     };
 }
 
+/// `--compile --bytecode`: the executable whose internal JS modules (node:fs, ...) get ahead-of-time bytecode. Their
+/// sources differ per platform, so for another platform they are read out of that bun executable's builtins section
+/// (`bun_exe_format::builtins`); `None` is a target executable without one (an older bun), which then gets no builtin
+/// bytecode.
+#[derive(Clone, Default)]
+pub enum CompileTargetBuiltins {
+    #[default]
+    Host,
+    Target(std::sync::Arc<[u8]>),
+    None,
+}
+
 /// What `--compile` resolved to for this bundle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CompileMode {
@@ -1295,9 +1307,8 @@ pub struct BundleOptions<'a> {
     pub bytecode: bool,
     /// How many levels of nested functions get bytecode (`u32::MAX` = all; 0 = only each module's top level).
     pub bytecode_depth: u32,
-    /// `--compile --bytecode` for another platform: the executable's internal-module sources (and their bytecode) are that
-    /// platform's, not this one's, so don't embed bytecode generated from ours.
-    pub compile_target_is_host: bool,
+    /// `--compile --bytecode`: whose internal modules get ahead-of-time bytecode embedded alongside the bundle's.
+    pub compile_target_builtins: CompileTargetBuiltins,
 
     pub code_coverage: bool,
     pub debugger: bool,
@@ -1491,7 +1502,7 @@ impl<'a> BundleOptions<'a> {
             emit_dce_annotations: self.emit_dce_annotations,
             bytecode: self.bytecode,
             bytecode_depth: self.bytecode_depth,
-            compile_target_is_host: self.compile_target_is_host,
+            compile_target_builtins: self.compile_target_builtins.clone(),
             code_coverage: self.code_coverage,
             debugger: self.debugger,
             compile_mode: self.compile_mode,
@@ -1739,7 +1750,7 @@ impl<'a> BundleOptions<'a> {
             emit_dce_annotations: false,
             bytecode: false,
             bytecode_depth: u32::MAX,
-            compile_target_is_host: true,
+            compile_target_builtins: CompileTargetBuiltins::Host,
             code_coverage: false,
             debugger: false,
             compile_mode: CompileMode::None,

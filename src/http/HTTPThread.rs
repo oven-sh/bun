@@ -24,40 +24,19 @@ bun_core::declare_scope!(HTTPThread_log, visible); // log
 /// Since configs are interned via `ssl_config::global_registry`, pointer
 /// equality is sufficient for lookup. Each entry holds a ref on its SSLConfig.
 struct SslContextCacheEntry {
-    /// Intrusive-refcounted custom-SSL context. The cache holds one strong
-    /// ref (taken in `connect`); released via `ctx.deref()` on eviction.
-    ctx: NonNull<NewHttpContext<true>>,
+    ctx: RefPtr<NewHttpContext<true>>,
     last_used_ns: u64,
     /// Strong ref held by the cache entry (released on eviction).
     _config_ref: ssl_config::SharedPtr,
 }
 
 impl SslContextCacheEntry {
-    /// Mutable access to the cached `NewHttpContext`.
-    ///
-    /// INVARIANT: `ctx` is set once at insert (in `connect`) to a fresh
-    /// `heap::release`-boxed `NewHttpContext` on which the cache holds one
-    /// strong intrusive ref; it stays live until eviction's `deref` drops it.
-    /// The map and all callers are HTTP-thread-only, so the returned `&mut`
-    /// is the sole live borrow. Centralises the `Option<NonNull>`-style
-    /// `(*entry.ctx.as_ptr()).…` raw deref repeated at every lookup.
+    /// Mutable access to the cached `NewHttpContext`. The map and all callers
+    /// are HTTP-thread-only, so the returned `&mut` is the sole live borrow.
     #[inline]
     fn ctx_mut<'a>(&self) -> &'a mut NewHttpContext<true> {
-        // SAFETY: see INVARIANT above.
+        // SAFETY: see above.
         unsafe { &mut *self.ctx.as_ptr() }
-    }
-
-    /// Release the strong intrusive ref the cache holds on `ctx` (taken at
-    /// insert in `connect`). Consumes the entry; `config_ref`'s `Drop` releases
-    /// the SSLConfig ref. Centralises the raw
-    /// `NewHttpContext::deref(entry.ctx.as_ptr())` open-coded at both eviction
-    /// paths so the set-once `NonNull` is dereferenced in one place.
-    fn release(self) {
-        // SAFETY: same INVARIANT as [`ctx_mut`] — `ctx` is a
-        // `heap::release`-boxed `NewHttpContext` on which the cache holds one
-        // strong ref; this `deref` is its sole release.
-        unsafe { NewHttpContext::<true>::deref(self.ctx.as_ptr()) };
-        // self.config_ref drops here (entry.config_ref.deinit()).
     }
 }
 const SSL_CONTEXT_CACHE_MAX_SIZE: usize = 60;
@@ -130,7 +109,9 @@ pub struct HttpThread {
     pub(crate) queued_receive_resumes_lock: Mutex,
     pub(crate) queued_cert_check_resumes_lock: Mutex,
 
-    pub(crate) queued_threadlocal_proxy_derefs: Vec<*mut ProxyTunnel>,
+    /// Refs released on the next loop tick rather than inside the socket
+    /// callback that gave them up.
+    pub(crate) queued_threadlocal_proxy_derefs: Vec<RefPtr<ProxyTunnel>>,
 
     pub(crate) has_awoken: AtomicBool,
     pub(crate) timer: Instant,
@@ -431,7 +412,7 @@ impl HttpThread {
                 if let Some(entry) = custom_ssl_context_map().get_mut(&requested_config) {
                     // Cache hit - reuse existing SSL context
                     entry.last_used_ns = self.timer_read();
-                    client.set_custom_ssl_ctx(entry.ctx);
+                    client.set_custom_ssl_ctx(entry.ctx.clone());
                     let ctx = entry.ctx_mut();
                     // Keepalive is now supported for custom SSL contexts
                     return if let Some(url) = client.http_proxy.clone() {
@@ -445,7 +426,7 @@ impl HttpThread {
                 }
 
                 // Cache miss - create new SSL context
-                let custom_context = bun_core::heap::release(Box::new(NewHttpContext::<true> {
+                let ctx = RefPtr::new(NewHttpContext::<true> {
                     ref_count: Cell::new(1),
                     pending_sockets: bun_collections::HiveArray::init(),
                     group: uws::SocketGroup::default(),
@@ -453,20 +434,14 @@ impl HttpThread {
                     active_h2_sessions: Vec::new(),
                     pending_h2_connects: Vec::new(),
                     session_cache: crate::session_cache::SessionCache::new(),
-                }));
+                });
+                // SAFETY: fresh allocation; HTTP-thread-only.
+                let custom_context = unsafe { &mut *ctx.as_ptr() };
                 if let Err(err) = custom_context.init_with_client_config(client) {
                     // `init_with_client_config` fails before `group.init()` runs.
-                    // `impl Drop for HTTPContext` tolerates an
-                    // uninitialized group (skips close_all/destroy when
-                    // `group.loop_` is null), so reclaiming the Box is safe.
-                    // SAFETY: custom_context was just Box::leak'd above and
-                    // has refcount 1; reclaim and drop on error.
-                    drop(unsafe {
-                        bun_core::heap::take(std::ptr::from_mut::<NewHttpContext<true>>(
-                            custom_context,
-                        ))
-                    });
-
+                    // `impl Drop for HTTPContext` tolerates an uninitialized
+                    // group (skips close_all/destroy when `group.loop_` is
+                    // null), so dropping `ctx` here is safe.
                     return Err(match err {
                         InitError::InvalidCRL => crate::Error::InvalidCRL,
                         InitError::FailedToOpenSocket
@@ -477,11 +452,11 @@ impl HttpThread {
                 }
 
                 let now = self.timer_read();
-                let ctx_nn = NonNull::from(&mut *custom_context);
+                client.set_custom_ssl_ctx(ctx.clone());
                 let _ = custom_ssl_context_map().put(
                     requested_config,
                     SslContextCacheEntry {
-                        ctx: ctx_nn,
+                        ctx,
                         last_used_ns: now,
                         // Strong ref for the cache entry; client.tls_props keeps its own.
                         _config_ref: tls,
@@ -493,7 +468,6 @@ impl HttpThread {
                     evict_oldest_ssl_context();
                 }
 
-                client.set_custom_ssl_ctx(ctx_nn);
                 // Keepalive is now supported for custom SSL contexts
                 let result = if let Some(url) = client.http_proxy.clone() {
                     if url.protocol.is_empty() || url.has_http_like_protocol() {
@@ -534,8 +508,7 @@ impl HttpThread {
         while i < map.count() {
             let entry_last_used = map.values()[i].last_used_ns;
             if now.saturating_sub(entry_last_used) > SSL_CONTEXT_CACHE_TTL_NS {
-                let (_k, entry) = map.swap_remove_at(i);
-                entry.release();
+                map.swap_remove_at(i);
             } else {
                 i += 1;
             }
@@ -799,11 +772,7 @@ impl HttpThread {
         self.drain_queued_cert_check_resumes();
         h3::PendingConnect::drain_resolved();
 
-        for http in self.queued_threadlocal_proxy_derefs.drain(..) {
-            // SAFETY: pointer was queued by schedule_proxy_deref on this thread; still live.
-            unsafe { ProxyTunnel::deref(http) };
-        }
-        // .clearRetainingCapacity() — drain(..) above already cleared while keeping capacity.
+        self.queued_threadlocal_proxy_derefs.clear();
 
         let mut count: usize = 0;
         let mut active = ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed);
@@ -939,7 +908,7 @@ impl HttpThread {
         self.wakeup();
     }
 
-    pub(crate) fn schedule_proxy_deref(&mut self, proxy: *mut ProxyTunnel) {
+    pub(crate) fn schedule_proxy_deref(&mut self, proxy: RefPtr<ProxyTunnel>) {
         // this is always called on the http thread,
         self.queued_threadlocal_proxy_derefs.push(proxy);
         self.wakeup();
@@ -1092,8 +1061,7 @@ fn evict_oldest_ssl_context() {
             oldest_idx = i;
         }
     }
-    let (_k, entry) = map.swap_remove_at(oldest_idx);
-    entry.release();
+    map.swap_remove_at(oldest_idx);
 }
 
 fn start_queued_task(

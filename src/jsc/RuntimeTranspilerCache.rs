@@ -265,10 +265,8 @@ impl Entry {
         let mut tmpfile = sys::Tmpfile::create(destination_dir, tmpfilename)?;
         let _close_guard = sys::CloseOnDrop::new(tmpfile.fd);
         {
-            let errdefer = scopeguard::guard(tmpfile.using_tmpfile, |using_tmpfile| {
-                if !using_tmpfile {
-                    let _ = sys::unlinkat(destination_dir, tmpfilename);
-                }
+            let errdefer = scopeguard::guard((), |()| {
+                let _ = sys::unlinkat(destination_dir, tmpfilename);
             });
 
             let mut metadata_buf = [0u8; Metadata::SIZE * 2];

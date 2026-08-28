@@ -115,11 +115,7 @@ test.skipIf(!isLinux)(
       stderr: "pipe",
       stdout: "pipe",
     });
-    const [, buildErr, buildExit] = await Promise.all([
-      build.stdout.text(),
-      build.stderr.text(),
-      build.exited,
-    ]);
+    const [, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
     expect(buildErr).not.toContain("error:");
     expect(buildExit).toBe(0);
 

@@ -502,6 +502,13 @@ export function windowsEnv(
     }
   }
 
+  // null when the write is dropped: Node rejects an empty name or one with '='
+  // (https://github.com/nodejs/node/issues/32920); a NUL cannot reach the OS.
+  function envName(p: string): string | null {
+    if (p === "" || p.includes("=") || p.includes("\0")) return null;
+    return p;
+  }
+
   return new Proxy(internalEnv, {
     get(_, p) {
       if (typeof p !== "string") {
@@ -525,15 +532,17 @@ export function windowsEnv(
       if (typeof p === "symbol" || typeof value === "symbol") {
         throw new TypeError("Cannot convert a Symbol value to a string");
       }
-      const k = p.toUpperCase();
-      // Node silently ignores assignments to an empty variable name
-      // (https://github.com/nodejs/node/issues/32920).
-      if (k === "") {
+      const name = envName(p);
+      if (name === null) {
         return true;
       }
       // If toString() throws, we want to avoid the key existing in envMapList.
-      writeEnvVar(p, k, value);
+      writeEnvVar(name, name.toUpperCase(), value);
       return true;
+    },
+    preventExtensions() {
+      // Object.freeze / seal / preventExtensions throw on process.env in Node.
+      return false;
     },
     has(_, p) {
       // Case-insensitive env-var query first, then ordinary lookup so own
@@ -549,7 +558,11 @@ export function windowsEnv(
       if (typeof p === "symbol") {
         return true;
       }
-      const k = String(p).toUpperCase();
+      const name = envName(p);
+      if (name === null) {
+        return true;
+      }
+      const k = name.toUpperCase();
       const i = envMapList.findIndex(x => x.toUpperCase() === k);
       if (i !== -1) {
         envMapList.splice(i, 1);
@@ -588,14 +601,13 @@ export function windowsEnv(
       if (typeof attributes.value === "symbol") {
         throw new TypeError("Cannot convert a Symbol value to a string");
       }
-      const k = p.toUpperCase();
-      // Node silently ignores an empty variable name, like the set trap.
-      if (k === "") {
+      const name = envName(p);
+      if (name === null) {
         return true;
       }
       // Node's EnvDefiner delegates the validated value to EnvSetter, i.e.
       // plain assignment — never a real defineProperty on the target.
-      writeEnvVar(p, k, attributes.value);
+      writeEnvVar(name, name.toUpperCase(), attributes.value);
       return true;
     },
     getOwnPropertyDescriptor(target, p) {

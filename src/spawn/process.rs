@@ -1848,8 +1848,6 @@ mod spawn_process_body {
     /// The environment block handed to the child by [`spawn_process_cstr`].
     #[derive(Clone, Copy)]
     pub enum SpawnEnv<'a> {
-        /// This process's own `environ`.
-        Inherit,
         /// `KEY=VALUE` strings; the null-terminated pointer block is built here.
         Strings(&'a [&'a core::ffi::CStr]),
     }
@@ -1869,11 +1867,6 @@ mod spawn_process_body {
             .collect();
         let env_block: Vec<CStrPtr>;
         let envp: Envp = match env {
-            // libuv: a null `env` inherits the parent's environment.
-            #[cfg(windows)]
-            SpawnEnv::Inherit => core::ptr::null(),
-            #[cfg(unix)]
-            SpawnEnv::Inherit => bun_core::c_environ(),
             SpawnEnv::Strings(strings) => {
                 env_block = strings
                     .iter()

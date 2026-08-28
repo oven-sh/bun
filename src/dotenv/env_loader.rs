@@ -595,26 +595,40 @@ impl Loader {
         }
     }
 
+    /// A copy for another thread to read while this loader keeps changing. The
+    /// loaded-files bookkeeping comes along so `load_process` / `load` on the
+    /// copy are the same no-ops as on `self`; the derived caches start empty.
+    pub fn snapshot(&self) -> Result<Loader, AllocError> {
+        Ok(Loader {
+            map: self.map.clone_with_allocator()?,
+            default_files_loaded: self.default_files_loaded,
+            custom_files_loaded: self.custom_files_loaded.clone()?,
+            quiet: self.quiet,
+            did_load_process: self.did_load_process,
+            reject_unauthorized: Cell::new(None),
+            aws_credentials: None,
+        })
+    }
+
     pub fn load_process(&mut self) -> Result<(), AllocError> {
         if self.did_load_process {
             return Ok(());
         }
 
+        #[cfg(unix)]
+        let _environ_guard = bun_core::environ_read_lock();
         let environ: &[*const c_char] = bun_sys::environ();
         self.map.map.ensure_total_capacity(environ.len())?;
         for &_env in environ {
             // SAFETY: environ entries are NUL-terminated C strings from the OS
             let env = unsafe { bun_core::ffi::cstr(_env) }.to_bytes();
-            if let Some(i) = strings::index_of_char(env, b'=') {
-                let key = &env[..i as usize];
-                let value = &env[i as usize + 1..];
-                if !key.is_empty() {
-                    self.map.put(key, value)?;
-                }
-            } else {
-                if !env.is_empty() {
-                    self.map.put(env, b"")?;
-                }
+            // An entry with no '=' is malformed; getenv() ignores it.
+            let Some(i) = strings::index_of_char_usize(env, b'=') else {
+                continue;
+            };
+            let key = &env[..i];
+            if !key.is_empty() {
+                self.map.put(key, &env[i + 1..])?;
             }
         }
         self.did_load_process = true;

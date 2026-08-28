@@ -423,17 +423,30 @@ impl Macro {
             // `RuntimeHooks::init_runtime_state` builds the macro VM's
             // transpiler from a fresh `TransformOptions` value rather than
             // borrowing the caller's, so there is nothing to mutate-and-restore
-            // on `resolver.opts` here. `log`/`env_loader` *are* threaded so the
-            // CLI-path macro VM uses the caller's log sink and env loader.
+            // on `resolver.opts` here. `log` *is* threaded so the CLI-path
+            // macro VM uses the caller's log sink.
 
             // JSC needs to be initialized if building from CLI
             jsc::initialize(jsc::InitializeOptions::default());
 
+            // This VM outlives the build (later builds' macros reuse it) and
+            // `env` does not, so the VM gets its own copy.
+            let env_loader = NonNull::new(env).map(|env| {
+                // SAFETY: the caller's loader, live and unwritten during this build.
+                let copy = bun_core::handle_oom(unsafe { env.as_ref() }.snapshot());
+                bun_core::heap::into_raw_nn(Box::new(copy))
+            });
             let _vm = VirtualMachine::init(VirtualMachineInitOptions {
                 log: Some(NonNull::from(&mut *log)),
-                env_loader: NonNull::new(env),
+                env_loader,
                 is_main_thread: false,
                 ..Default::default()
+            })
+            .inspect_err(|_| {
+                if let Some(copy) = env_loader {
+                    // SAFETY: a failed `init` never stored this pointer.
+                    unsafe { bun_core::heap::destroy(copy.as_ptr()) };
+                }
             })?;
             (_vm, true)
         };

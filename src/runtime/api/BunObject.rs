@@ -523,8 +523,9 @@ fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
         return Ok(JSValue::NULL);
     }
 
-    // SAFETY: `transpiler.env` / `.fs` are process-lifetime singletons set during VM init.
-    let mut path_str = Utf8Bytes::Borrowed(vm.env_loader().get(b"PATH").unwrap_or(b""));
+    // A copy: the option getters below run user JS, and `process.env.PATH = ...`
+    // there replaces the map's value in place.
+    let mut path_str = Utf8Bytes::Owned(vm.env_loader().get(b"PATH").unwrap_or(b"").to_vec());
     let mut cwd_str = Utf8Bytes::Borrowed(vm.top_level_dir());
 
     if let Some(arg) = arguments.next_eat() {
@@ -2099,6 +2100,79 @@ pub(crate) mod environment_variables {
         let utf8 = name.to_utf8();
         let value = vm.env_loader().get(utf8.slice())?;
         Some(EncodedSlice::from_bytes(value))
+    }
+
+    /// setenv(3) takes C strings: a value ends at its first NUL.
+    #[inline]
+    fn truncate_at_nul(s: &[u8]) -> &[u8] {
+        match bun_core::strings::index_of_char_usize(s, 0) {
+            Some(i) => &s[..i],
+            None => s,
+        }
+    }
+
+    /// The names the C++ setter drops; kept here too so the SHARE_ENV
+    /// write-through cannot hand putenv an invalid name.
+    #[inline]
+    fn is_rejected_env_name(key: &[u8]) -> bool {
+        key.is_empty()
+            || bun_core::strings::contains_char(key, b'=')
+            || bun_core::strings::contains_char(key, 0)
+    }
+
+    /// `process.env[name] = value`: the env map, plus the OS environment on the
+    /// main thread (a worker's env is a copy, like Node's `MapKVStore`).
+    #[unsafe(no_mangle)]
+    extern "C" fn Bun__ProcessEnv__put(
+        global_object: &JSGlobalObject,
+        name: &BunString,
+        value: &BunString,
+    ) {
+        let vm = global_object.bun_vm().as_mut();
+        let name_slice = name.to_utf8();
+        let key = name_slice.slice();
+        if is_rejected_env_name(key) {
+            return;
+        }
+        let value_slice = value.to_utf8();
+        let val = truncate_at_nul(value_slice.slice());
+
+        {
+            // A spawning worker clones this map under the same lock.
+            let _slots = vm.proxy_env_storage.lock();
+            bun_core::handle_oom(vm.transpiler.env_mut().map.put(key, val));
+        }
+
+        #[cfg(unix)]
+        if vm.is_main_thread {
+            bun_core::putenv_leaked(key, val);
+        }
+    }
+
+    /// `delete process.env[name]`: the env map, plus the OS environment on the
+    /// main thread.
+    #[unsafe(no_mangle)]
+    extern "C" fn Bun__ProcessEnv__delete(global_object: &JSGlobalObject, name: &BunString) {
+        let vm = global_object.bun_vm().as_mut();
+        let name_slice = name.to_utf8();
+        let key = name_slice.slice();
+        if is_rejected_env_name(key) {
+            return;
+        }
+
+        {
+            let mut slots = vm.proxy_env_storage.lock();
+            // Or `sync_into` re-inserts the deleted proxy var into the next worker's map.
+            if let Some(slot) = slots.slot(key) {
+                *slot.ptr = None;
+            }
+            vm.transpiler.env_mut().map.remove(key);
+        }
+
+        #[cfg(unix)]
+        if vm.is_main_thread {
+            bun_core::unsetenv(key);
+        }
     }
 }
 

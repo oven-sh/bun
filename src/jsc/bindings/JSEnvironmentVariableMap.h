@@ -18,7 +18,11 @@ namespace Bun {
 class JSEnvironmentVariableMap final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut;
+    // A cached put or fast indexed store would bypass put() / putByIndex().
+    static constexpr unsigned StructureFlags = Base::StructureFlags
+        | JSC::OverridesPut
+        | JSC::ProhibitsPropertyCaching
+        | JSC::InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero;
 
     static JSEnvironmentVariableMap* create(JSC::VM& vm, JSC::Structure* structure)
     {
@@ -45,6 +49,8 @@ public:
     static bool putByIndex(JSC::JSCell*, JSC::JSGlobalObject*, unsigned, JSC::JSValue, bool shouldThrow);
     static bool defineOwnProperty(JSC::JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
     static bool deleteProperty(JSC::JSCell*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::DeletePropertySlot&);
+    static bool deletePropertyByIndex(JSC::JSCell*, JSC::JSGlobalObject*, unsigned);
+    static bool preventExtensions(JSC::JSObject*, JSC::JSGlobalObject*);
 
 private:
     JSEnvironmentVariableMap(JSC::VM& vm, JSC::Structure* structure)

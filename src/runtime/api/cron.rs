@@ -2020,13 +2020,10 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
             }
         }
     }
-    #[cfg(unix)]
-    let env = spawn::SpawnEnv::Inherit;
-    #[cfg(windows)]
+    // The env map, like Bun.spawn: it carries runtime `process.env` writes, and
+    // raw `environ` may be rewritten by the main thread while a worker spawns.
     let envp_owned;
-    #[cfg(windows)]
     let env_strings: Vec<&CStr>;
-    #[cfg(windows)]
     let env = {
         match vm_mut()
             .transpiler

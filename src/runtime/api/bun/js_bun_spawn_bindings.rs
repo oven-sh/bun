@@ -350,9 +350,10 @@ fn spawn_maybe_sync(
     let mut lazy = false;
     let mut on_exit_callback = JSValue::ZERO;
     let mut on_disconnect_callback = JSValue::ZERO;
-    // `env_loader()` is the audited safe accessor for the per-VM DotEnv loader
-    // (process-lifetime; centralised non-null deref in `VirtualMachine`).
-    let mut path: &[u8] = jsc_vm.env_loader().get(b"PATH").unwrap_or(b"");
+    // A copy: the option getters below run user JS, and `process.env.PATH = ...`
+    // there replaces the map's value in place.
+    let path_storage: Box<[u8]> = Box::from(jsc_vm.env_loader().get(b"PATH").unwrap_or(b""));
+    let mut path: &[u8] = &path_storage;
     let mut argv: Vec<CStrPtr> = Vec::new();
     let cmd_value: JSValue;
     let mut detached = false;

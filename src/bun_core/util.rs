@@ -314,6 +314,49 @@ impl core::ops::Deref for ZStr {
     }
 }
 
+/// Readers of libc `environ` (`getenv`, a walk of the array) against the
+/// `process.env` write path, which reallocates or shifts that array.
+#[cfg(unix)]
+static ENVIRON_LOCK: RwLock<()> = RwLock::new(());
+
+#[cfg(unix)]
+pub fn environ_read_lock() -> RwLockReadGuard<'static, ()> {
+    ENVIRON_LOCK.read()
+}
+
+/// `process.env[key] = value`. `putenv` with a leaked Bun-owned string, not
+/// `setenv`: musl, macOS and FreeBSD free a `setenv` copy on overwrite, which
+/// would dangle the `&'static [u8]` slices [`getenv_z`] hands out.
+/// `key` has no `=` or NUL and `value` has no NUL (the setter cuts both).
+#[cfg(unix)]
+pub fn putenv_leaked(key: &[u8], value: &[u8]) {
+    debug_assert!(!key.is_empty());
+    debug_assert!(!crate::strings::contains_char(key, b'='));
+    debug_assert!(!crate::strings::contains_char(key, 0));
+    debug_assert!(!crate::strings::contains_char(value, 0));
+    let mut entry: Vec<u8> = Vec::with_capacity(key.len() + 1 + value.len() + 1);
+    entry.extend_from_slice(key);
+    entry.push(b'=');
+    entry.extend_from_slice(value);
+    entry.push(0);
+    let entry: &'static mut [u8] = Vec::leak(entry);
+    crate::asan::ignore_object(entry.as_ptr());
+    let _guard = ENVIRON_LOCK.write();
+    // SAFETY: `entry` is NUL-terminated and never freed; putenv stores the pointer.
+    unsafe { libc::putenv(entry.as_mut_ptr().cast()) };
+}
+
+/// `delete process.env[key]`.
+#[cfg(unix)]
+pub fn unsetenv(key: &[u8]) {
+    let Ok(key_z) = std::ffi::CString::new(key) else {
+        return;
+    };
+    let _guard = ENVIRON_LOCK.write();
+    // SAFETY: NUL-terminated C string.
+    unsafe { libc::unsetenv(key_z.as_ptr()) };
+}
+
 /// `bun.getenvZ` — read an environment variable. Returns the value as borrowed
 /// process-static bytes (env block lives for the process). On POSIX wraps
 /// `libc::getenv`; on Windows scans `environ` case-insensitively.
@@ -324,16 +367,18 @@ pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
         return None;
     }
     #[cfg(unix)]
-    unsafe {
-        // SAFETY: key is NUL-terminated by ZStr invariant; getenv reads until NUL.
-        let p = libc::getenv(key.as_ptr());
-        if p.is_null() {
-            return None;
+    {
+        let _guard = ENVIRON_LOCK.read();
+        // SAFETY: key is NUL-terminated by ZStr invariant; getenv reads until NUL
+        // and returns a pointer into the env block, which is never freed.
+        unsafe {
+            let p = libc::getenv(key.as_ptr());
+            if p.is_null() {
+                return None;
+            }
+            let len = libc::strlen(p);
+            return Some(core::slice::from_raw_parts(p.cast::<u8>(), len));
         }
-        // SAFETY: getenv returns a pointer into the process env block, valid for
-        // process lifetime (modulo setenv races).
-        let len = libc::strlen(p);
-        return Some(core::slice::from_raw_parts(p.cast::<u8>(), len));
     }
     #[cfg(windows)]
     {
@@ -368,21 +413,24 @@ pub fn c_environ() -> *const *const core::ffi::c_char {
 /// CI-detection vars where casing varies across providers).
 pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
     #[cfg(unix)]
-    unsafe {
+    {
+        let _guard = ENVIRON_LOCK.read();
         // SAFETY: `environ` is the C env block; entries are NUL-terminated `KEY=VALUE`.
-        let mut p = c_environ();
-        while !(*p).is_null() {
-            let line = core::slice::from_raw_parts((*p).cast::<u8>(), libc::strlen(*p));
-            let key_end = crate::strings::index_of_char_usize(line, b'=').unwrap_or(line.len());
-            if crate::strings::eql_case_insensitive_ascii_check_length(
-                &line[..key_end],
-                key.as_bytes(),
-            ) {
-                return Some(&line[(key_end + 1).min(line.len())..]);
+        unsafe {
+            let mut p = c_environ();
+            while !(*p).is_null() {
+                let line = core::slice::from_raw_parts((*p).cast::<u8>(), libc::strlen(*p));
+                let key_end = crate::strings::index_of_char_usize(line, b'=').unwrap_or(line.len());
+                if crate::strings::eql_case_insensitive_ascii_check_length(
+                    &line[..key_end],
+                    key.as_bytes(),
+                ) {
+                    return Some(&line[(key_end + 1).min(line.len())..]);
+                }
+                p = p.add(1);
             }
-            p = p.add(1);
+            None
         }
-        None
     }
     #[cfg(windows)]
     {
@@ -4433,13 +4481,17 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         newargv.push(core::ptr::null());
 
         // We clone envp so that the memory address of environment variables isn't
-        // the same as the libc one.
+        // the same as the libc one. The watcher thread gets here while the main
+        // thread may be inside a `process.env` write.
         let mut dupe_env: Vec<ZBox> = Vec::new();
-        let mut p = c_environ();
-        while !p.is_null() && !(*p).is_null() {
-            let s = crate::ffi::cstr(*p);
-            dupe_env.push(ZBox::from_vec_with_nul(s.to_bytes().to_vec()));
-            p = p.add(1);
+        {
+            let _environ_guard = ENVIRON_LOCK.read();
+            let mut p = c_environ();
+            while !p.is_null() && !(*p).is_null() {
+                let s = crate::ffi::cstr(*p);
+                dupe_env.push(ZBox::from_vec_with_nul(s.to_bytes().to_vec()));
+                p = p.add(1);
+            }
         }
         let mut envp: Vec<*const core::ffi::c_char> = dupe_env.iter().map(|z| z.as_ptr()).collect();
         envp.push(core::ptr::null());

@@ -443,7 +443,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::ExprData::EString(str_) => {
-                    if p.options.features.minify_syntax {
+                    // `"foo".length = x` must stay a property write, not `3 = x`.
+                    if p.options.features.minify_syntax
+                        && identifier_opts.assign_target() == js_ast::AssignTarget::None
+                    {
                         // minify "long-string".length to 11
                         if name == b"length" {
                             if let Some(len) = e_string_javascript_length(&str_) {

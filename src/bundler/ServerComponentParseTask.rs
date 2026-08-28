@@ -98,6 +98,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         task: Default::default(),
         value,
         external: ExternalFreeFunction::NONE,
+        plugin_owns_source: false,
         watcher_data: WatcherData::NONE,
     });
     let result = bun_core::heap::into_raw(result);

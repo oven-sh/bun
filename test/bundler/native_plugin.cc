@@ -672,4 +672,22 @@ plugin_impl_bad_free_function_pointer(const OnBeforeParseArguments *args,
   result->free_plugin_source_code_context = random_user_context_free;
 }
 
+// Fetches the source and keeps it as-is: `source_ptr` stays Bun's own buffer,
+// but the plugin still hands Bun a context to free.
+extern "C" BUN_PLUGIN_EXPORT void
+plugin_impl_keep_source(const OnBeforeParseArguments *args,
+                        OnBeforeParseResult *result) {
+  if (result->fetchSourceCode(args, result) != 0) {
+    exit(1);
+  }
+  std::atomic<size_t> *free_counter = nullptr;
+  if (args->external) {
+    free_counter = &((External *)args->external)->compilation_ctx_freed_count;
+  }
+  result->plugin_source_code_context =
+      compilation_ctx_new(nullptr, 0, free_counter);
+  result->free_plugin_source_code_context =
+      (void (*)(void *))compilation_ctx_free;
+}
+
 NAPI_MODULE(NODE_GYP_MODULE_NAME, Init)

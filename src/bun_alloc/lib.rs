@@ -256,6 +256,9 @@ pub mod default_alloc {
 pub use max_heap_allocator::MaxHeapAllocator;
 pub use stack_fallback::ArenaPtr;
 
+mod owned_bytes;
+pub use owned_bytes::OwnedBytes;
+
 #[path = "MimallocArena.rs"]
 pub mod mimalloc_arena;
 

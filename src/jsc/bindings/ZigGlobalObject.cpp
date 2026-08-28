@@ -3865,7 +3865,7 @@ static void registerStandaloneClosure(Zig::GlobalObject* globalObject, JSModuleL
         auto* entry = loader->ensureRegistered(globalObject, m.key, ScriptFetchParameters::Type::JavaScript);
         RETURN_IF_EXCEPTION(scope, void());
         RELEASE_ASSERT(!entry->record()); // nothing between collect and register can register one of these keys
-        entry->provideModule(vm, m.source, m.record);
+        entry->provideModule(vm, m.record);
         releaseModuleInfo(globalObject, m.source);
     }
     if (!closure.complete)

@@ -1220,6 +1220,23 @@ pub mod O {
     #[cfg(not(target_os = "macos"))]
     pub const NOFOLLOW_ANY: i32 = 0;
 }
+
+/// `madvise(2)` advice values; see `bun_sys::madvise`.
+#[cfg(unix)]
+pub mod MADV {
+    pub const NORMAL: i32 = libc::MADV_NORMAL;
+    pub const WILLNEED: i32 = libc::MADV_WILLNEED;
+    pub const DONTNEED: i32 = libc::MADV_DONTNEED;
+}
+
+/// `mprotect(2)` / `mmap(2)` page protection bits; see `bun_sys::mprotect`.
+#[cfg(unix)]
+pub mod PROT {
+    pub const NONE: i32 = libc::PROT_NONE;
+    pub const READ: i32 = libc::PROT_READ;
+    pub const WRITE: i32 = libc::PROT_WRITE;
+    pub const EXEC: i32 = libc::PROT_EXEC;
+}
 // ──────────────────────────────────────────────────────────────────────────
 // `File` / `Dir` — high-level handles. Extracted to file.rs / dir.rs.
 // ──────────────────────────────────────────────────────────────────────────
@@ -1389,6 +1406,8 @@ impl Tag {
     #[cfg(not(windows))]
     pub(crate) const setrlimit: Tag = Tag(106);
     pub const clone3: Tag = Tag(107);
+    pub const madvise: Tag = Tag(108);
+    pub const mprotect: Tag = Tag(109);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1396,7 +1415,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 108] = [
+        const NAMES: [&str; 110] = [
             "TODO",
             "dup",
             "access",
@@ -1506,6 +1525,8 @@ impl Tag {
             "getrlimit",
             "setrlimit",
             "clone3",
+            "madvise",
+            "mprotect",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -3333,6 +3354,32 @@ mod posix_impl {
         Ok(())
     }
 
+    /// `madvise(2)` with one of `MADV::*` over the pages of `[ptr, ptr + len)`.
+    /// `ptr` must be page aligned. Callers own the mapping and pick advice that
+    /// keeps its contents intact for every live reference into it.
+    pub fn madvise(ptr: *mut u8, len: usize, advice: i32) -> Maybe<()> {
+        check!(
+            // SAFETY: `madvise` neither reads nor writes through `ptr`; the kernel
+            // validates the range and reports a bad one as ENOMEM/EINVAL.
+            unsafe { libc::madvise(ptr.cast(), len, advice) },
+            Tag::madvise
+        );
+        Ok(())
+    }
+
+    /// `mprotect(2)`: sets the `PROT::*` bits of the pages of `[ptr, ptr + len)`.
+    /// `ptr` must be page aligned. Callers own the mapping and must not hold
+    /// references that access it in a way the new protection forbids.
+    pub fn mprotect(ptr: *mut u8, len: usize, prot: i32) -> Maybe<()> {
+        check!(
+            // SAFETY: `mprotect` neither reads nor writes through `ptr`; the kernel
+            // validates the range and reports a bad one as ENOMEM/EINVAL/EACCES.
+            unsafe { libc::mprotect(ptr.cast(), len, prot) },
+            Tag::mprotect
+        );
+        Ok(())
+    }
+
     /// `bun.sys.mmapFile` — open `path` RDWR, fstat for size, mmap [offset, offset+len).
     /// Returns `(map, delta)` where `map` is the full page-aligned mapping and
     /// `delta = offset % page_size` is the byte offset into `map` at which the
@@ -4399,6 +4446,12 @@ mod windows_impl {
     }
     pub fn munmap(_ptr: *mut u8, _len: usize) -> Maybe<()> {
         Err(Error::new(E::ENOTSUP, Tag::munmap))
+    }
+    pub fn madvise(_ptr: *mut u8, _len: usize, _advice: i32) -> Maybe<()> {
+        Err(Error::new(E::ENOTSUP, Tag::madvise))
+    }
+    pub fn mprotect(_ptr: *mut u8, _len: usize, _prot: i32) -> Maybe<()> {
+        Err(Error::new(E::ENOTSUP, Tag::mprotect))
     }
     pub type FcntlInt = isize;
 }

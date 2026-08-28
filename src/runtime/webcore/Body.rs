@@ -242,7 +242,6 @@ pub struct PendingValue {
     pub producer: streams::SourceHandle,
     pub(crate) size_hint: blob::SizeType,
 
-    pub(crate) deinit: bool,
     pub(crate) action: Action,
 }
 
@@ -270,7 +269,6 @@ impl Default for PendingValue {
             on_readable_stream_available: None,
             producer: streams::SourceHandle::None,
             size_hint: 0,
-            deinit: false,
             action: Action::None,
         }
     }
@@ -363,7 +361,7 @@ impl PendingValue {
         let mut stream = self.readable.get()?;
 
         if let Some(blob) = stream.to_any_blob(global) {
-            self.readable.deinit();
+            self.readable = webcore::readable_stream::Strong::Empty;
             return Some(blob);
         }
 
@@ -407,7 +405,7 @@ impl PendingValue {
                         }
                         _ => unreachable!(),
                     };
-                    self.readable.deinit();
+                    self.readable = webcore::readable_stream::Strong::Empty;
                     // The ReadableStream within is expected to keep this Promise alive.
                     // If you try to protect() this, it will leak memory because the other end of the ReadableStream won't call it.
                     // See https://github.com/oven-sh/bun/issues/13678
@@ -754,8 +752,7 @@ impl Value {
             Value::Empty => ReadableStream::empty(global_this),
             Value::Null => Ok(JSValue::NULL),
             Value::InternalBlob(_) | Value::Blob(_) | Value::WTFStringImpl(_) => {
-                // `deinit` must run on every exit incl. `?` paths.
-                let blob = scopeguard::guard(self.use_(), |mut b| b.deinit());
+                let blob = self.use_();
                 blob.resolve_size();
                 let blob_size = blob.size.get();
                 let value = ReadableStream::from_blob_copy_ref(global_this, &blob, blob_size)?;
@@ -813,7 +810,7 @@ impl Value {
             }
             Value::Blob(_) => {
                 let stream = {
-                    let blob = scopeguard::guard(self.use_(), |mut b| b.deinit());
+                    let blob = self.use_();
                     blob.resolve_size();
                     if blob.needs_to_read_file() || blob.is_s3() {
                         let blob_size = blob.size.get();
@@ -1069,7 +1066,7 @@ impl Value {
                 } else {
                     readable.done();
                 }
-                locked.readable.deinit();
+                locked.readable = webcore::readable_stream::Strong::Empty;
             }
 
             if let Some(callback) = locked.on_receive_value.take() {
@@ -1169,8 +1166,7 @@ impl Value {
         match self {
             Value::Blob(b) => {
                 // `Value` has `Drop`, so we cannot move the `Blob` out by
-                // value (E0509). `mem::take` leaves a default `Blob` whose `deinit()`
-                // (run by `Value::drop` on the assignment below) is a no-op.
+                // value (E0509); `mem::take` leaves a default `Blob`.
                 let new_blob = core::mem::take(b);
                 *self = Value::Used;
                 debug_assert!(!new_blob.is_heap_allocated()); // owned by Body
@@ -1299,9 +1295,8 @@ impl Value {
         global: &JSGlobalObject,
     ) -> jsc::JsResult<()> {
         if let Value::Locked(_) = self {
-            // reshaped for borrowck + E0509 (`Value` has `Drop`) — `mem::take`
-            // the `PendingValue` out (leaves `Locked(default)`, whose Drop is a no-op on
-            // an empty readable), then overwrite with `Error`.
+            // `Value` has `Drop` (E0509): `mem::take` the `PendingValue` out, then
+            // overwrite with `Error`.
             let mut locked = match self {
                 Value::Locked(l) => core::mem::take(l),
                 _ => unreachable!(),
@@ -1313,10 +1308,6 @@ impl Value {
             let Value::Error(err_ref) = self else {
                 unreachable!()
             };
-
-            // `deinit` must run on every exit incl. `?` paths.
-            let strong_readable =
-                scopeguard::guard(core::mem::take(&mut locked.readable), |mut r| r.deinit());
 
             if let Some(promise_value) = locked.promise.take() {
                 // `unprotect` + `ensure_still_alive` are non-Drop side effects
@@ -1335,7 +1326,7 @@ impl Value {
 
             // The Promise version goes before the ReadableStream version incase the Promise version is used too.
             // Avoid creating unnecessary duplicate JSValue.
-            if let Some(readable) = strong_readable.get() {
+            if let Some(readable) = locked.readable.get() {
                 // BACKREF: see `Source::bytes()` — payload live for the
                 // lifetime of the ReadableStream JS wrapper.
                 if let Some(bytes) = readable.ptr.bytes() {
@@ -1361,51 +1352,24 @@ impl Value {
         Ok(())
     }
 
-    // mutates self to Null and is called explicitly at specific protocol points.
-    // Renamed from `deinit` per PORTING.md (never expose `pub fn deinit(&mut self)`). Now
-    // delegates the actual resource release to `Drop` (below) via assignment, so a later
-    // `HiveArray::put()` → `drop_in_place` on the resulting `Null` is a guaranteed no-op
-    // (idempotent — no double-free).
+    /// Release the payload now, at an explicit protocol point: `Locked` stays
+    /// `Locked` with its GC root released (callers may still inspect the
+    /// variant); everything else becomes `Null`.
     pub fn reset(&mut self) {
         if let Value::Locked(locked) = self {
-            // Locked stays Locked (callers may still inspect the variant after
-            // reset()); flip the `deinit` latch so Drop is a no-op afterwards.
-            if !locked.deinit {
-                locked.deinit = true;
-                locked.readable.deinit();
-                locked.readable = Default::default();
-            }
+            locked.readable = webcore::readable_stream::Strong::Empty;
             return;
         }
-        // Assignment runs `Drop` on the old variant: deref WTFStringImpl, deinit
-        // Blob, free InternalBlob's Vec, reset Error. Null/Used/Empty are no-ops.
         *self = Value::Null;
     }
 }
 
-/// Runs when a `HiveRef<Value>` slot is recycled
-/// (`HiveArray::Fallback::put` → `drop_in_place`; see
-/// `bun_collections::HiveRef::unref`). Without this impl `Request`/`Response`
-/// GC finalization leaked `WTFStringImpl` refs / `Blob` stores /
-/// `InternalBlob` buffers (H3 elysia rss).
-///
-/// Unlike `reset()` this never reassigns `*self` (it's already being torn
-/// down), so calling `reset()` first then dropping (or dropping a `Null`
-/// produced by `reset()`) is a no-op second pass — no double-free.
+/// `WTFStringImpl` is the one payload held as a raw ref; every other variant's
+/// payload releases itself.
 impl Drop for Value {
     fn drop(&mut self) {
-        match self {
-            Value::Locked(locked) => {
-                if !locked.deinit {
-                    locked.deinit = true;
-                    locked.readable.deinit();
-                }
-            }
-            Value::WTFStringImpl(s) => wtf_impl(s).deref(),
-            Value::Blob(b) => b.deinit(),
-            Value::Error(e) => e.reset(),
-            // `InternalBlob`'s `Vec<u8>` is freed by the compiler's drop glue.
-            Value::InternalBlob(_) | Value::Used | Value::Empty | Value::Null => {}
+        if let Value::WTFStringImpl(s) = self {
+            wtf_impl(s).deref();
         }
     }
 }
@@ -2059,7 +2023,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 webcore::form_data::Encoding::Multipart(b)
             }
         };
-        // encoder dropped at end of scope (replaces defer encoder.deinit())
 
         let js_value =
             match webcore::form_data::FormData::to_js(global_object, blob.slice(), &encoding) {

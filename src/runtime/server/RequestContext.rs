@@ -1532,7 +1532,7 @@ where
 
         self.detach_request_body_producer();
         self.request_body_readable_stream_ref
-            .with_mut(|s| s.deinit());
+            .set(readable_stream::Strong::Empty);
 
         // Releases the ref taken in `set_cookies` (via `CookieMapRef::drop`).
         drop(self.cookies.replace(None));
@@ -1570,7 +1570,7 @@ where
         }
 
         self.response_body_readable_stream_ref
-            .with_mut(|s| s.deinit());
+            .set(readable_stream::Strong::Empty);
 
         self.pathname.set(BunString::EMPTY);
     }
@@ -2006,7 +2006,7 @@ where
         global_this: &JSGlobalObject,
     ) {
         stream_log!("aborted while attaching the stream");
-        let mut readable_ref = self
+        let _readable_ref = self
             .response_body_readable_stream_ref
             .replace(readable_stream::Strong::default());
         if let Some(wrapper_ptr) = self.sink.take() {
@@ -2020,7 +2020,6 @@ where
             wrapper.sink.finalize();
             Self::destroy_sink(wrapper_ptr);
         }
-        readable_ref.deinit();
     }
 
     fn do_render_stream(pair: *mut StreamPair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, MUX>) {
@@ -2037,7 +2036,7 @@ where
         if this.is_aborted_or_ended() {
             crate::dispatch::fold(stream.cancel(global_this));
             this.response_body_readable_stream_ref
-                .with_mut(|s| s.deinit());
+                .set(readable_stream::Strong::Empty);
             return;
         }
         let resp = this.resp.get().expect("infallible: resp bound");
@@ -2116,7 +2115,7 @@ where
             Self::destroy_sink(response_stream_ptr);
             stream.done();
             this.response_body_readable_stream_ref
-                .with_mut(|s| s.deinit());
+                .set(readable_stream::Strong::Empty);
             this.end_stream(this.should_close_connection());
             return;
         }
@@ -2186,14 +2185,13 @@ where
                     }
                     jsc::PromiseResult::Fulfilled(_) => {
                         stream_log!("promise Fulfilled");
-                        let mut readable_ref = this
+                        let _readable_ref = this
                             .response_body_readable_stream_ref
                             .replace(readable_stream::Strong::default());
                         // NOTE: cleanup runs after handle_resolve_stream:
                         // body first, then the deferred cleanup.
                         this.handle_resolve_stream();
                         stream.done();
-                        readable_ref.deinit();
                     }
                     jsc::PromiseResult::Rejected(err) => {
                         stream_log!("promise Rejected");
@@ -2206,12 +2204,11 @@ where
                         {
                             server.vm().as_mut().run_error_handler(err, None);
                         }
-                        let mut readable_ref = this
+                        let _readable_ref = this
                             .response_body_readable_stream_ref
                             .replace(readable_stream::Strong::default());
                         this.handle_reject_stream(global_this, err);
                         crate::dispatch::fold(stream.cancel(global_this));
-                        readable_ref.deinit();
                     }
                 }
                 return;
@@ -2228,7 +2225,7 @@ where
             }
         }
 
-        let mut readable_ref = this
+        let _readable_ref = this
             .response_body_readable_stream_ref
             .replace(readable_stream::Strong::default());
 
@@ -2250,7 +2247,6 @@ where
                     response_stream.sink.finalize();
                     this.sink.set(None);
                     Self::destroy_sink(response_stream_ptr);
-                    readable_ref.deinit();
                     this.render_missing();
                     return;
                 }
@@ -2266,7 +2262,6 @@ where
         response_stream.sink.finalize();
         this.sink.set(None);
         Self::destroy_sink(response_stream_ptr);
-        readable_ref.deinit();
         this.render_missing();
     }
 
@@ -3131,7 +3126,7 @@ where
                     match stream.ptr {
                         readable_stream::Source::Invalid => {
                             this.response_body_readable_stream_ref
-                                .with_mut(|s| s.deinit());
+                                .set(readable_stream::Strong::Empty);
                             // Stream is invalid, render empty body
                             this.do_render_blob();
                             return;
@@ -3162,7 +3157,7 @@ where
                                 // we don't have a response, so we can discard the stream
                                 stream.done();
                                 this.response_body_readable_stream_ref
-                                    .with_mut(|s| s.deinit());
+                                    .set(readable_stream::Strong::Empty);
                                 return;
                             }
                             let resp = this.resp.get().expect("infallible: resp bound");
@@ -3174,7 +3169,7 @@ where
                                     byte_list.move_to_list_managed(),
                                 ));
                                 this.response_body_readable_stream_ref
-                                    .with_mut(|s| s.deinit());
+                                    .set(readable_stream::Strong::Empty);
                                 this.do_render_blob();
                                 return;
                             }
@@ -3188,10 +3183,6 @@ where
                             ));
                             stream.lock_native(global_this);
                             byte_stream.signal_consumer_attached();
-                            // Deinit the old Strong reference before creating a new one
-                            // to avoid leaking the Strong.Impl memory
-                            this.response_body_readable_stream_ref
-                                .with_mut(|s| s.deinit());
                             this.response_body_readable_stream_ref
                                 .set(readable_stream::Strong::init(stream, global_this));
 
@@ -3320,7 +3311,7 @@ where
                 let global_this = this.server().global_this();
                 let js_err = err.to_js(global_this);
                 this.response_body_readable_stream_ref
-                    .with_mut(|s| s.deinit());
+                    .set(readable_stream::Strong::Empty);
                 this.run_error_handler(js_err);
                 return;
             }

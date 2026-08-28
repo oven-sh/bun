@@ -2240,11 +2240,14 @@ pub(crate) mod __gated_printer {
                         let first_decl = &decls[0];
                         let second_decl = &decls[1];
 
-                        if !matches!(first_decl.binding.data, BindingData::BIdentifier(_))
-                            || !matches!(second_decl.binding.data, BindingData::BIdentifier(_))
-                        {
+                        let BindingData::BIdentifier(first_binding) = &first_decl.binding.data
+                        else {
                             break 'brk;
-                        }
+                        };
+                        let BindingData::BIdentifier(second_binding) = &second_decl.binding.data
+                        else {
+                            break 'brk;
+                        };
 
                         let Some(target_value) = &first_decl.value else {
                             break 'brk;
@@ -2260,6 +2263,15 @@ pub(crate) mod __gated_printer {
                         }
                         let target_ref = target_id.ref_;
 
+                        // A group evaluates its target once, before any
+                        // assignment, but the original declarators execute in
+                        // order. A declarator that binds the target itself can
+                        // only be the last member of a group: a later member
+                        // would read the rebound target.
+                        if first_binding.get().r#ref.eql(target_ref) {
+                            break 'brk;
+                        }
+
                         let Some(second_value) = &second_decl.value else {
                             break 'brk;
                         };
@@ -2273,6 +2285,7 @@ pub(crate) mod __gated_printer {
                         {
                             break 'brk;
                         }
+                        let mut target_rebound = second_binding.get().r#ref.eql(target_ref);
 
                         {
                             // Reset the temporary bindings array early on
@@ -2298,12 +2311,12 @@ pub(crate) mod __gated_printer {
                             });
 
                             decls = &decls[2..];
-                            while !decls.is_empty() {
+                            while !decls.is_empty() && !target_rebound {
                                 let decl = &decls[0];
 
-                                if !matches!(decl.binding.data, BindingData::BIdentifier(_)) {
+                                let BindingData::BIdentifier(binding) = &decl.binding.data else {
                                     break;
-                                }
+                                };
                                 let Some(value) = &decl.value else {
                                     break;
                                 };
@@ -2316,6 +2329,7 @@ pub(crate) mod __gated_printer {
                                 if e_dot.optional_chain.is_some() || !id.ref_.eql(target_ref) {
                                     break;
                                 }
+                                target_rebound = binding.get().r#ref.eql(target_ref);
 
                                 temp_bindings.push(B::Property {
                                     flags: Default::default(),

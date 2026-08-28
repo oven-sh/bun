@@ -390,6 +390,26 @@ describe("bundler", () => {
     },
     run: { stdout: "1 2 3 4 3 3 4" },
   });
+  // A destructuring group evaluates its target once, before any assignment.
+  // A declarator that rebinds the target itself must end the group, or a
+  // later member reads the old target instead of the rebound one.
+  itBundled("minify/SameTargetDestructuringStopsWhenTargetRebound", {
+    files: {
+      "/entry.js": /* js */ `
+        var o = { a: 1, o: { b: 99 } };
+        var a = o.a;
+        var o = o.o;
+        var b = o.b;
+        console.log(a, b);
+        var p = { x: { y: 5 }, y: 7 };
+        var p = p.x;
+        var c = p.y;
+        console.log(c);
+      `,
+    },
+    minifySyntax: true,
+    run: { stdout: "1 99\n5" },
+  });
   // A `using` declaration admits only identifier bindings, so the transform
   // must not rewrite its declarators into an object pattern.
   itBundled("minify/SameTargetDestructuringSkipsUsingDecls", {

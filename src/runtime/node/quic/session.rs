@@ -2355,12 +2355,6 @@ impl QuicSession {
         };
         Self::transport_params_to_js(global, &tp)
     }
-
-    #[expect(
-        clippy::boxed_local,
-        reason = "codegen's host_fn_finalize calls this as `|b| QuicSession::finalize(b)` and requires `self: Box<Self>`"
-    )]
-    pub(crate) fn finalize(self: Box<Self>) {}
 }
 
 lsquic_callback! {

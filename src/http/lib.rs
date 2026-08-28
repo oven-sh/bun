@@ -2340,11 +2340,8 @@ impl<'a> HTTPClient<'a> {
         unsafe { &mut *ctx }
     }
 
-    pub(crate) fn set_custom_ssl_ctx(&mut self, ctx: NonNull<HttpsContext>) {
-        // Intrusive-refcounted: this fn takes ownership of one strong ref by
-        // bumping it here. Callers do NOT pre-bump.
-        // SAFETY: ctx points at a live HttpsContext.
-        self.custom_ssl_ctx = Some(unsafe { RefPtr::init_ref(ctx.as_ptr()) });
+    pub(crate) fn set_custom_ssl_ctx(&mut self, ctx: RefPtr<HttpsContext>) {
+        self.custom_ssl_ctx = Some(ctx);
     }
 
     pub(crate) fn header_str(&self, ptr: StringPointer) -> &'a [u8] {

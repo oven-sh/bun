@@ -5,7 +5,7 @@ use std::time::Instant;
 
 #[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
-use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
+use crate::api::bun::process::{self as spawn, Rusage, SpawnOptions, Status};
 use crate::cli::Command;
 use crate::cli::filter_arg as FilterArg;
 use crate::cli::run_command::{ConfigureEnvOptions, ForceUsingBun, RunCommand};
@@ -40,9 +40,7 @@ struct ScriptConfig {
 }
 
 struct ProcessInfo {
-    // Intrusive ref-counted (`ThreadSafeRefCount<Process>`); raw `*mut` matches
-    // `to_process()` and `set_exit_handler` callers.
-    ptr: *mut Process,
+    process: spawn::ProcessHandle,
     status: Status,
     start_time: Instant,
     /// Set together with `status` when the exit arrives.
@@ -145,7 +143,7 @@ impl<'a> ProcessHandle<'a> {
         let mut spawned = spawned;
         #[cfg(windows)]
         let (stdout_pipe, stderr_pipe) = (spawned.stdout.take(), spawned.stderr.take());
-        let process = spawned.to_process(EventLoopHandle::init_mini(state.event_loop));
+        let process = spawned.to_process_handle(EventLoopHandle::init_mini(state.event_loop));
 
         let handle_ptr = std::ptr::from_mut::<ProcessHandle<'a>>(handle).cast::<c_void>();
         handle.stdout.set_parent(handle_ptr);
@@ -183,21 +181,20 @@ impl<'a> ProcessHandle<'a> {
         }
 
         handle.process = Some(ProcessInfo {
-            ptr: process,
+            process,
             status: Status::Running,
             start_time,
             end_time: None,
         });
-        // SAFETY: `process` was just allocated by `to_process` (heap::alloc);
-        // sole owner until reaped, owner backref set before reap callback can fire.
-        let process = unsafe { &mut *process };
+        let handle_ptr = std::ptr::from_mut::<ProcessHandle<'a>>(handle);
+        // The exit handler re-borrows `handle.process`, so go through the
+        // `Process` allocation itself rather than a borrow of the slot.
+        // SAFETY: just spawned; the slot's handle keeps it live.
+        let process = unsafe { &mut *handle.process.as_ref().unwrap().process.as_ptr() };
         // SAFETY: `handle` is the live `ProcessHandle` slot in `State.handles`;
         // it owns `process` and outlives it.
         process.set_exit_handler(unsafe {
-            bun_spawn::ProcessExit::new(
-                bun_spawn::ProcessExitKind::FilterRunHandle,
-                std::ptr::from_mut::<ProcessHandle<'a>>(handle),
-            )
+            bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::FilterRunHandle, handle_ptr)
         });
 
         match process.watch_or_reap() {
@@ -653,9 +650,7 @@ impl<'a> State<'a> {
             // SAFETY: points into `self.handles`, live for the whole run loop.
             if let Some(proc) = unsafe { (*handle).process.as_ref() } {
                 // if we get an error here we simply ignore it
-                // SAFETY: proc.ptr is a live `*mut Process` (set in start(); leaked
-                // until program exit per on_process_exit note).
-                let _ = unsafe { (*proc.ptr).kill(bun_sys::SignalCode::SIGINT.0) };
+                let _ = proc.process.kill(bun_sys::SignalCode::SIGINT.0);
             }
             // An already-exited handle may be waiting on pipes a grandchild
             // still holds; with `aborted` set this finishes it now. Killed

@@ -190,9 +190,9 @@ pub(super) fn early_data_info(ssl_ptr: *mut ssl::SSL) -> (bool, bool) {
     (attempted, accepted)
 }
 
-/// lsquic borrows the raw pointer; this struct owns it and frees it on Drop.
+/// lsquic borrows the raw pointer; this struct owns it.
 pub(super) struct TlsContext {
-    ctx: *mut ssl::SSL_CTX,
+    ctx: ssl::OwnedSslCtx,
     /// Keep the wire-format ALPN alive at a stable heap address: BoringSSL
     /// stores the `arg` pointer we pass to `SSL_CTX_set_alpn_select_cb` and
     /// the callback dereferences it on every ClientHello.
@@ -201,15 +201,6 @@ pub(super) struct TlsContext {
         reason = "BoringSSL keeps the `arg` pointer (this Vec's header address) across ClientHellos, so the Vec must not move; the Box pins it"
     )]
     _alpn: Option<Box<Vec<u8>>>,
-}
-
-impl Drop for TlsContext {
-    fn drop(&mut self) {
-        if !self.ctx.is_null() {
-            // SAFETY: `ctx` was created by `SSL_CTX_new` and not freed before.
-            unsafe { ssl::SSL_CTX_free(self.ctx) };
-        }
-    }
 }
 
 unsafe extern "C" fn keylog_cb(ssl: *const ssl::SSL, line: *const core::ffi::c_char) {
@@ -422,11 +413,15 @@ impl TlsContext {
         // SAFETY: each SSL_CTX call below is paired with the matching free on
         // failure via Drop (the half-built `this` is dropped on early return).
         unsafe {
-            let ctx = ssl::SSL_CTX_new(ssl::TLS_method());
-            if ctx.is_null() {
+            let Some(owned) = ssl::OwnedSslCtx::from_raw(ssl::SSL_CTX_new(ssl::TLS_method()))
+            else {
                 return Err("failed to allocate SSL_CTX");
-            }
-            let mut this = TlsContext { ctx, _alpn: None };
+            };
+            let ctx = owned.as_ptr();
+            let mut this = TlsContext {
+                ctx: owned,
+                _alpn: None,
+            };
 
             if let Some(policy) = config.ciphers.as_deref().and_then(tls13_policy_for_ciphers) {
                 if ssl::SSL_CTX_set_compliance_policy(ctx, policy) != 1 {
@@ -526,7 +521,7 @@ impl TlsContext {
     }
 
     pub(super) fn raw(&self) -> *mut ssl::SSL_CTX {
-        self.ctx
+        self.ctx.as_ptr()
     }
 
     pub(super) fn alpn_cstr(config: &TlsConfig) -> Vec<u8> {

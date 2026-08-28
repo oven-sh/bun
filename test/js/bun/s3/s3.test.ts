@@ -1930,6 +1930,68 @@ describe("s3 upload stream body error", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A `type: "direct"` pull() ends the body through the sink controller's own
+  // `close(error?)`. The argument is optional, so a falsy one is the same clean
+  // close as `close()`: the bytes written so far are the object and the PUT
+  // goes out. Only a truthy error aborts the upload.
+  it.each([
+    ["", "resolved 12", { "/my_bucket/obj": 12, "/my_bucket/ok": 1 }],
+    ["undefined", "resolved 12", { "/my_bucket/obj": 12, "/my_bucket/ok": 1 }],
+    ["null", "resolved 12", { "/my_bucket/obj": 12, "/my_bucket/ok": 1 }],
+    ["false", "resolved 12", { "/my_bucket/obj": 12, "/my_bucket/ok": 1 }],
+    ['""', "resolved 12", { "/my_bucket/obj": 12, "/my_bucket/ok": 1 }],
+    ["new Error('boom')", "rejected boom", { "/my_bucket/ok": 1 }],
+  ])("a direct stream body that calls controller.close(%s)", async (closeArg, expectedOutcome, expectedPuts) => {
+    const fixture = `
+      const puts = {};
+      const server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const key = new URL(req.url).pathname;
+          puts[key] = (puts[key] ?? 0) + (await req.arrayBuffer()).byteLength;
+          return new Response(undefined, { status: 200, headers: { ETag: '"etag"' } });
+        },
+      });
+      const client = new Bun.S3Client({
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        region: "eu-west-3",
+        bucket: "my_bucket",
+        endpoint: \`http://127.0.0.1:\${server.port}\`,
+        virtualHostedStyle: false,
+      });
+      const rs = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          controller.write("<b>hello</b>");
+          controller.close(${closeArg});
+        },
+      });
+      const outcome = await client.write("obj", new Response(rs)).then(
+        bytes => "resolved " + bytes,
+        e => "rejected " + e.message,
+      );
+      const after = await client.write("ok", "x");
+      server.stop(true);
+      console.log(JSON.stringify({ outcome, after, puts }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      // The S3 client honors the proxy environment; the stub is on loopback.
+      env: { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, http_proxy: undefined, https_proxy: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({
+      outcome: expectedOutcome,
+      after: 1,
+      puts: expectedPuts,
+    });
+    expect(exitCode).toBe(0);
+  });
+
   // A native ByteStream source (fetch response body) that errors mid-stream must
   // reject the s3.write() promise with the original JS error, not commit a
   // truncated PUT or reject with a generic UnknownError.

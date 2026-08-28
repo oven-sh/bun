@@ -14,7 +14,6 @@
 
 use core::cell::Cell;
 use core::ffi::{CStr, c_uint, c_void};
-use core::ptr::NonNull;
 
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, host_fn};
@@ -495,26 +494,16 @@ impl UpgradedDuplex {
         Ok(())
     }
 
-    /// Adopts `ctx` (one ref) — freed on both success (via `wrapper.deinit`) and
-    /// error. Mirrors `start_tls` but skips the
+    /// Mirrors `start_tls` but skips the
     /// `SSLConfig.asUSockets() → us_ssl_ctx_from_options()` round-trip so a
     /// memoised `SecureContext` can be reused on the duplex/named-pipe path.
     pub(crate) fn start_tls_with_ctx(
         &self,
-        ctx: *mut bun_boringssl_sys::SSL_CTX,
+        ctx: bun_boringssl_sys::OwnedSslCtx,
         is_client: TlsRole,
         verify: ServerVerify,
     ) -> Result<(), crate::Error> {
-        // errdefer SSL_CTX_free(ctx) — free the adopted ref on the error path only.
-        let ctx_guard = scopeguard::guard(ctx, |ctx| {
-            // SAFETY: ctx is a valid SSL_CTX* with one ref adopted by this fn.
-            unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
-        });
-        let ctx_nn =
-            NonNull::new(ctx).expect("caller passes a non-null SSL_CTX* with one adopted ref");
-        let wrapper = WrapperType::init_with_ctx(ctx_nn, is_client, self.wrapper_handlers())?;
-        // Success: disarm the errdefer.
-        scopeguard::ScopeGuard::into_inner(ctx_guard);
+        let wrapper = WrapperType::init_with_ctx(ctx, is_client, self.wrapper_handlers())?;
         self.install_and_start(wrapper, verify);
         Ok(())
     }

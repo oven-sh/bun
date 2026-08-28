@@ -281,6 +281,15 @@ impl OwnedSslCtx {
     }
 }
 
+impl Clone for OwnedSslCtx {
+    /// Another reference to the same `SSL_CTX` (`SSL_CTX_up_ref`).
+    fn clone(&self) -> Self {
+        // SAFETY: `self.0` is a live SSL_CTX.
+        unsafe { SSL_CTX_up_ref(self.0.as_ptr()) };
+        Self(self.0)
+    }
+}
+
 impl Drop for OwnedSslCtx {
     fn drop(&mut self) {
         // SAFETY: we own exactly one reference, released once.

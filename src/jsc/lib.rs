@@ -1479,18 +1479,19 @@ pub trait JsClass: Sized {
     }
 }
 
-/// GC-finalize hook resolved by the generated `${T}Class__finalize` thunk
-/// (generate-classes.ts:2893-2902). The thunk body is
+/// GC-finalize hook resolved by the generated `${T}Class__finalize` thunk for
+/// `finalize: true` classes. The thunk body is
 /// `host_fn::host_fn_finalize(this, |b| ${T}::finalize(b))` — Rust path
 /// resolution on `${T}::finalize` picks an *inherent* `fn finalize(self:
-/// Box<Self>)` first when one exists (refcounted / leak-on-pending types),
-/// otherwise falls through to this trait's default: drop the `Box`, running
-/// `T`'s `Drop` glue and freeing the allocation.
+/// Box<Self>)` first when one exists (leak-on-pending types), otherwise falls
+/// through to this trait's default: drop the `Box`, running `T`'s `Drop` glue
+/// and freeing the allocation. Refcounted payloads are `refCounted: true` classes
+/// ([`JsFinalizeRefCounted`]) instead.
 ///
 /// **Override by defining an inherent `pub fn finalize(self: Box<Self>)` on
 /// the concrete type** — do *not* `impl JsFinalize for MyType`; the blanket
 /// impl below already covers every `Sized` type and a second impl would
-/// conflict. The generated thunk file imports `JsFinalize as _` so the trait
+/// conflict. The generated thunk imports `JsFinalize as _` so the trait
 /// is in scope for path resolution without polluting any per-type module.
 pub trait JsFinalize: Sized {
     #[inline]
@@ -1499,6 +1500,14 @@ pub trait JsFinalize: Sized {
     }
 }
 impl<T: Sized> JsFinalize for T {}
+
+/// [`JsFinalize`] for `refCounted: true` classes: the hook that runs before the
+/// wrapper's ref is dropped. Override with an inherent `pub fn finalize(&self)`.
+pub trait JsFinalizeRefCounted {
+    #[inline]
+    fn finalize(&self) {}
+}
+impl<T: bun_ptr::AnyRefCounted> JsFinalizeRefCounted for T {}
 
 /// Track whether an object should keep the event loop alive
 #[derive(Default)]

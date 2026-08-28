@@ -25,13 +25,13 @@ use bun_io::Loop as AsyncLoop;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
 use bun_io::{BufferedReader, IsPollable, ReadState};
-use bun_ptr::{RefCount, RefPtr, ThreadSafeRefCount};
+use bun_ptr::{RefCount, RefPtr};
 #[cfg(not(windows))]
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::subprocess::{self, StdioResult};
 use bun_spawn::{
-    self as spawn, Exited, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, Status,
-    Stdio,
+    self as spawn, Exited, Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage,
+    SpawnOptions, Status, Stdio,
 };
 use bun_sys::{self, Fd, FdExt as _};
 
@@ -957,11 +957,7 @@ pub struct SecurityScanSubprocess<'a> {
     event_loop_handle: EventLoopHandle,
     code: Box<[u8]>,
     json_data: Box<[u8]>,
-    /// Intrusive `*mut Process`. `Process` is
-    /// `ThreadSafeRefCounted` and Box-allocated by `to_process`; wrapping in
-    /// `Arc` would be UB (no `ArcInner` header). We hold one ref and `deref()`
-    /// it in `Drop`.
-    process: Option<*mut Process>,
+    process: Option<ProcessHandle>,
     ipc_reader: BufferedReader,
     ipc_data: Vec<u8>,
     stderr_data: Vec<u8>,
@@ -1000,16 +996,7 @@ bun_spawn::link_impl_ProcessExit! {
 
 impl<'a> Drop for SecurityScanSubprocess<'a> {
     fn drop(&mut self) {
-        if let Some(p) = self.process.take() {
-            // SAFETY: `p` is the live intrusive `*mut Process` returned from
-            // `to_process`; we hold one ref. `detach()` clears the exit handler
-            // so a late callback won't touch a dangling `self`, then `deref()`
-            // drops our ref (may free if last).
-            unsafe {
-                (*p).detach();
-                ThreadSafeRefCount::<Process>::deref(p);
-            }
-        }
+        self.process = None;
         // Dropping the writer can synchronously close it and re-enter
         // `on_close_io` through the parent backref; move it out first so that
         // sees `None`.
@@ -1300,7 +1287,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `&mut self` on Windows); take ownership of the result and let the
         // moved-from `*spawned` drop empty (`extra_pipes` already read).
         let event_loop = EventLoopHandle::from_any(&mut self.manager.event_loop);
-        let process: *mut Process = std::mem::take(spawned).to_process(event_loop);
+        let process_handle = std::mem::take(spawned).to_process_handle(event_loop);
+        let process: *mut Process = process_handle.as_ptr();
 
         // Derive the raw backref once and use it for all subsequent field
         // access. `start()`/`watch_or_reap()` below may re-enter
@@ -1313,7 +1301,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `&mut self` and outlives `process` (it `deref`s it in `Drop`).
         unsafe {
             (*process).set_exit_handler(ProcessExit::new(ProcessExitKind::SecurityScan, parent));
-            (*parent).process = Some(process);
+            (*parent).process = Some(process_handle);
         }
 
         // Assign the field BEFORE `start()`. `start()` may complete the write synchronously

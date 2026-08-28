@@ -647,9 +647,6 @@ pub(crate) fn wrap_handler_slot(
 }
 
 impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
-    /// The warning is process-global by intent (printed at most once
-    /// regardless of how many servers are running), so this reads the one
-    /// latch that `server_body::add_timeout_handler_for_warning` sets.
     fn should_add_timeout_handler_for_warning(&self) -> bool {
         if DEBUG {
             if !server_body::did_send_idletimeout_warning_once().load(Ordering::Relaxed)

@@ -1188,23 +1188,14 @@ fn fetch_headers_from_js(value: JSValue, global: &JSGlobalObject) -> Option<*mut
     FetchHeaders::cast_(value, global.vm()).map(|p| p.as_ptr())
 }
 
-/// Per-process latch for the dev-mode idle-timeout warning. The
-/// warning is gated on `DEBUG && !silent` and only fires once globally, so a
-/// single shared `AtomicBool` matches user-visible behavior across every
-/// `(SSL, DEBUG)` instantiation and every transport (HTTP/1, HTTP/2, HTTP/3).
+/// Per-process latch for the dev-mode idle-timeout warning, shared by every
+/// server instantiation and transport.
 #[inline]
 pub(super) fn did_send_idletimeout_warning_once() -> &'static core::sync::atomic::AtomicBool {
     static FLAG: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
     &FLAG
 }
 
-/// Emits the once-only dev-mode
-/// warning. Factored out as a free fn so the `RespLike::on_timeout_warn`
-/// closures (which cannot name `NewServer<SSL,DEBUG>`) can call it.
-///
-/// uWS runs the timeout handler from its timer sweep and closes the socket
-/// right after. Nothing else flushes stderr on that path, so the flush here
-/// is what makes the warning visible while the server is still running.
 fn on_timeout_for_idle_warn() {
     if !did_send_idletimeout_warning_once().swap(true, core::sync::atomic::Ordering::Relaxed)
         && !crate::cli::Command::get().debug.silent
@@ -1212,20 +1203,15 @@ fn on_timeout_for_idle_warn() {
         bun_core::pretty_errorln!(
             "<r><yellow>[Bun.serve]<r><d>:<r> request timed out after 10 seconds. Pass <d><cyan>`idleTimeout`<r> to configure."
         );
+        // Otherwise the line stays in the stderr buffer until the process exits.
         Output::flush();
     }
 }
 
-/// Registers `on_timeout_for_idle_warn` on `resp`. Shared by the HTTP/1
-/// (`mod.rs`) and the HTTP/2 / HTTP/3 request paths so both emit the same
-/// warning through the same latch.
+/// Registers the dev-mode idle-timeout warning on `resp` (HTTP/1, HTTP/2 and HTTP/3).
 #[inline]
 pub(super) fn add_timeout_handler_for_warning<R: RespLike + ?Sized>(resp: &mut R) {
-    // uWS skips the handler when the user-data pointer is null; any non-null
-    // pointer will do. `on_timeout_for_idle_warn` ignores it and reads the
-    // static directly. `AtomicBool::as_ptr` yields a `*mut` with
-    // interior-mutability provenance, so no `&T as *const _ as *mut _` cast
-    // is needed.
+    // uWS skips a handler whose user-data pointer is null; the handler itself ignores it.
     resp.on_timeout_warn(
         did_send_idletimeout_warning_once()
             .as_ptr()

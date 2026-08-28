@@ -171,11 +171,9 @@ pub fn argv_for(
         match opts.app.as_ref() {
             Some(app) => {
                 // A named app executes directly; the default opener is
-                // bypassed because the app knows its own handlers.
+                // bypassed because the app knows its own handlers. Only its
+                // configured arguments ride along — never the opener's.
                 argv.push(app.slice().to_vec());
-                if opener_override == Some("gio") {
-                    argv.push(b"open".to_vec());
-                }
             }
             None => {
                 let opener = opener_override.ok_or_else(|| {
@@ -436,8 +434,9 @@ pub mod native {
 /// the shell-returned process handle and settles the JS promises on the JS
 /// thread when the handler exits.
 ///
-/// The timer is unref'd so a long-lived browser never pins the runtime's
-/// exit; if the runtime tears down first, OS cleanup closes the handle.
+/// The timer stays ref'd so it can wake an idle loop and deliver `.exited`,
+/// which pins the runtime until the handler exits or `MAX_TICKS` elapses.
+/// If the runtime tears down first, OS cleanup closes the handle.
 #[cfg(windows)]
 pub(crate) mod watch {
     use super::native::ShellLaunch;
@@ -496,17 +495,6 @@ pub(crate) mod watch {
         // `bun_sys::windows` safe-wrapper rationale).
         let status = unsafe { win32::WaitForSingleObject(watch.process, 0) };
         watch.tick.set(watch.tick.get() + 1);
-        if watch.tick.get() >= MAX_TICKS {
-            // Abandon: stop polling and release the loop pin. The strong
-            // roots must survive a possible later settle, so leak the box
-            // exactly like on_close does.
-            let t = unsafe { &mut *timer_ };
-            t.stop();
-            t.unref();
-            t.data = core::ptr::null_mut();
-            t.close(on_close);
-            return;
-        }
         match status {
             win32::WAIT_OBJECT_0 => settle(watch, timer_, None),
             win32::WAIT_FAILED => {
@@ -519,7 +507,22 @@ pub(crate) mod watch {
                 let err = bun_core::String::create_format(message).to_error_instance(global);
                 settle(watch, timer_, Some(err));
             }
-            _ => {}
+            _ => {
+                // Still running (and tick limit would only be reached here):
+                // downgrade to best-effort, but only after the status above
+                // had its chance to settle — a process exiting on the final
+                // tick must not leave `.exited` pending forever.
+                if watch.tick.get() >= MAX_TICKS {
+                    // Abandon: stop polling and release the loop pin. The
+                    // strong roots must survive a possible later settle, so
+                    // leak the box exactly like on_close does; `data` stays
+                    // set so on_close still closes the process handle.
+                    let t = unsafe { &mut *timer_ };
+                    t.stop();
+                    t.unref();
+                    t.close(on_close);
+                }
+            }
         }
     }
 
@@ -589,15 +592,20 @@ pub(crate) mod watch {
                     b"Bun.open could not read the launched process's exit code",
                 )
                 .to_error_instance(global);
-                let _ = w.exited.reject_with_async_stack(global, Ok(err));
+                let mut outer = w.outer.take();
+                let _ = w.exited.reject_with_async_stack(global, Ok(err.clone()));
+                if let Some(outer) = outer.as_mut() {
+                    let _ = outer.reject_with_async_stack(global, Ok(err));
+                }
             }
         }
 
-        // Free the timer allocation and then the Watch itself once the handle
-        // close completes (libuv calls back on a later tick).
+        // `data` deliberately stays set: on_close needs it to reach
+        // `Watch.process` and release the OS handle here (same cleanup as
+        // the abandon path). The Watch box itself is leaked there — its
+        // strong roots must survive teardown.
         // SAFETY: `timer` was heap-allocated via `heap::into_raw_nn` in arm.
         let t = unsafe { &mut *timer_ };
-        t.data = core::ptr::null_mut();
         t.close(on_close);
     }
 

@@ -1170,7 +1170,22 @@ fn do_open(global_this: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsRe
                 result.put(global_this, b"exited", exited);
                 let mut outer = JSPromiseStrong::init(global_this);
                 let value = outer.value();
-                let _ = outer.resolve(global_this, result);
+                if wait {
+                    // Honor `wait` for directory targets too: park the outer
+                    // promise until the spawned `explorer.exe` exits, matching
+                    // the ShellExecute branch's settle contract.
+                    let ctx = JSValue::create_empty_object(global_this, 2);
+                    ctx.put(global_this, b"result", result);
+                    ctx.put(global_this, b"outer", outer.value());
+                    exited.then_with_value(
+                        global_this,
+                        ctx,
+                        __jsc_host_open_wait_resolve,
+                        __jsc_host_open_wait_reject,
+                    );
+                } else {
+                    let _ = outer.resolve(global_this, result);
+                }
                 return Ok(value);
             }
         }
@@ -1273,10 +1288,50 @@ fn open_error_to_js(global_this: &JSGlobalObject, err: open_api::OpenError) -> j
             };
             global_this.throw_value(sys_err.to_error_instance(global_this))
         }
+        // Keep the OpenError's own machine code (e.g. `ERR_UNSUPPORTED_OP` on
+        // Android) instead of folding it into an invalid-argument TypeError;
+        // the generated ErrCode table has no UNSUPPORTED_OP variant.
+        open_api::OpenError::UnsupportedOs(_) => {
+            let sys_err = jsc::SystemError {
+                message: bun_core::String::create_format(format_args!("{}", err)),
+                code: bun_core::String::static_(err.code()),
+                errno: -sys::UV_E::NOTSUP,
+                ..Default::default()
+            };
+            global_this.throw_value(sys_err.to_error_instance(global_this))
+        }
         _ => global_this
             .err(jsc::ErrCode::INVALID_ARG_VALUE, format_args!("{}", err))
             .throw(),
     }
+}
+
+/// Reaction for the Windows directory-target `wait: true` path: once the
+/// spawned `explorer.exe` exits, resolve the parked outer promise with the
+/// result object. `ctx` (`{ result, outer }`) is rooted by the promise
+/// reaction, so both survive whether the promise settles or not.
+#[bun_jsc::host_fn]
+fn open_wait_resolve(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let arguments = callframe.arguments_as_array::<2>();
+    let ctx = arguments[1];
+    let result = ctx.get(global_this, b"result")?.unwrap_or(JSValue::UNDEFINED);
+    let outer = ctx.get(global_this, b"outer")?.unwrap_or(JSValue::UNDEFINED);
+    let mut promise = jsc::JSPromiseStrong::from_value(outer, global_this);
+    let _ = promise.resolve(global_this, result)?;
+    Ok(JSValue::UNDEFINED)
+}
+
+/// Reject counterpart of [`open_wait_resolve`]: a failed `explorer.exe`
+/// launch rejects the parked outer promise with the spawn error.
+#[bun_jsc::host_fn]
+fn open_wait_reject(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let arguments = callframe.arguments_as_array::<2>();
+    let outer = arguments[1]
+        .get(global_this, b"outer")?
+        .unwrap_or(JSValue::UNDEFINED);
+    let mut promise = jsc::JSPromiseStrong::from_value(outer, global_this);
+    let _ = promise.reject(global_this, Ok(arguments[0]))?;
+    Ok(JSValue::UNDEFINED)
 }
 
 /// Parse `options.app`: either an application name string, or an object

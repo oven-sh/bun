@@ -1,7 +1,6 @@
 import { describe, expect, test, beforeAll, afterAll } from "bun:test";
-import { isMacOS, isWindows } from "harness";
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { isMacOS, isWindows, tempDirWithFiles } from "harness";
+import { chmodSync, existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // ─── hermetic launcher fixture ──────────────────────────────────────────────
@@ -18,7 +17,7 @@ let launcherPath: string;
 let sentinelPath: string;
 
 beforeAll(() => {
-  fixtureDir = mkdtempSync(join(tmpdir(), "bun-open-test-"));
+  fixtureDir = tempDirWithFiles("bun-open-test", {});
   sentinelPath = join(fixtureDir, "sentinel.txt");
   if (isWindows) {
     // A .cmd opener runs through cmd.exe (libuv spawns batch files via
@@ -177,7 +176,7 @@ describe("Bun.open", () => {
       // Windows: cmd.exe re-tokenizes the line and caps itself at 8_191
       // chars even though CreateProcessW allows 32_767, so stay under that.
       // POSIX argv is unbounded in practice.
-      const longTarget = "x".repeat(isWindows ? 4_000 : 20_000);
+      const longTarget = Buffer.alloc(isWindows ? 4_000 : 20_000, "x").toString();
       const result = await Bun.open(longTarget, { app: launcherPath, wait: true });
       await result.exited;
       expect(await waitForSentinel()).toBe(true);
@@ -189,7 +188,7 @@ describe("Bun.open", () => {
       // whose own 8_191-char limit applies even though CreateProcessW allows
       // 32_767. The contract: settle deterministically (exit code or
       // rejection), never crash or hang.
-      const huge = "x".repeat(20_000);
+      const huge = Buffer.alloc(20_000, "x").toString();
       const outcome = await Bun.open(huge, { app: launcherPath, wait: true }).then(
         () => "fulfilled" as const,
         error => {
@@ -245,6 +244,22 @@ describe("Bun.open", () => {
       resetSentinel();
     }, 20000);
 
+    test.skipIf(!isWindows || !process.env.DSH_BUN_OPEN_E2E)("wait: true is honored for directory targets (settles after exited)", async () => {
+      // Directory targets route through `explorer.exe` via Bun.spawn; the
+      // outer promise must park until that process exits when `wait: true`,
+      // matching the ShellExecute path's settle contract. Before the fix it
+      // resolved immediately, so `exited` could still be pending here.
+      // E2E-gated: explorer.exe pops a file-browser window.
+      const result = await Bun.open(import.meta.dir, { wait: true });
+      expect(result.pid).toBeGreaterThan(0);
+      expect(result.exited).toBeInstanceOf(Promise);
+      const exitCode = await Promise.race([
+        result.exited,
+        new Promise(resolve => setTimeout(() => resolve("timeout"), 5_000)),
+      ]);
+      expect(typeof exitCode).toBe("number");
+    }, 20000);
+
     test.skipIf(!isWindows)("hideErrors suppresses the shell dialog and surfaces an error", async () => {
       // An extension nothing handles would normally pop the "How do you want
       // to open this?" dialog; SEE_MASK_FLAG_NO_UI turns it into a rejection.
@@ -263,6 +278,7 @@ describe("Bun.open", () => {
       }
       // Every launch got its own process.
       expect(new Set(results.map(r => r.pid)).size).toBe(5);
+      resetSentinel();
     }, 20000);
 
     test("handles sequential launches", async () => {
@@ -270,9 +286,11 @@ describe("Bun.open", () => {
         const result = await Bun.open(`sequential-${i}`, { app: launcherPath, wait: true });
         await result.exited;
       }
+      resetSentinel();
     }, 20000);
 
     test("survives unicode and space-laden targets", async () => {
+      resetSentinel();
       const result = await Bun.open("héllo wörld 🦀", { app: launcherPath, wait: true });
       await result.exited;
       expect(await waitForSentinel()).toBe(true);

@@ -1229,3 +1229,28 @@ pub fn compute_reserved_names_for_scope(
         }
     }
 }
+
+/// Like `compute_reserved_names_for_scope`, but only for the symbols that the
+/// live parts use. A part that tree shaking dropped never prints, so a global it
+/// references must not push a user's declaration of the same name out of the way.
+pub fn compute_reserved_names_for_live_parts(
+    parts: &[js_ast::Part],
+    live: &bun_collections::AutoBitSet,
+    symbols: &symbol::Map,
+    names: &mut StringHashMap<u32>,
+) {
+    for (index, part) in parts.iter().enumerate() {
+        if !live.is_set(index) {
+            continue;
+        }
+        for ref_ in part.symbol_uses.keys() {
+            let symbol: &Symbol = symbols.get_const(*ref_).unwrap();
+            if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed() {
+                // SAFETY: `original_name` is an AST-arena slice.
+                names
+                    .put(symbol.original_name.slice(), 1)
+                    .expect("unreachable");
+            }
+        }
+    }
+}

@@ -11,7 +11,7 @@ use crate::bun_renamer as renamer;
 use crate::bun_renamer::{ChunkRenamer, MinifyRenamer, NumberRenamer, StableSymbolCount};
 use crate::chunk::Content;
 use crate::js_meta;
-use crate::{Chunk, LinkerContext, StableRef, WrapKind};
+use crate::{Chunk, Index, LinkerContext, StableRef, WrapKind};
 
 /// TODO: investigate if we need to parallelize this function
 /// esbuild does parallelize it.
@@ -127,12 +127,25 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
 
     let mut reserved_names = renamer::compute_initial_reserved_names(c.options.output_format)?;
     for &source_index in files_in_order {
-        renamer::compute_reserved_names_for_scope(
-            &all_module_scopes[source_index as usize],
-            // SAFETY: `symbols` points to the live `c.graph.symbols`; read-only here.
-            unsafe { &*symbols },
-            &mut reserved_names,
-        );
+        // SAFETY: `symbols` points to the live `c.graph.symbols`; read-only here.
+        let symbols_ref: &symbol::Map = unsafe { &*symbols };
+        if source_index == Index::RUNTIME.value() {
+            // The runtime ships every helper, and most bundles use a few. Only
+            // the helpers that survived tree shaking print, so only the globals
+            // they reference may take a name away from user code.
+            renamer::compute_reserved_names_for_live_parts(
+                all_parts[source_index as usize].as_slice(),
+                &c.graph.parts_live[source_index as usize],
+                symbols_ref,
+                &mut reserved_names,
+            );
+        } else {
+            renamer::compute_reserved_names_for_scope(
+                &all_module_scopes[source_index as usize],
+                symbols_ref,
+                &mut reserved_names,
+            );
+        }
     }
 
     let sorted_imports_from_other_chunks: Vec<StableRef> = {

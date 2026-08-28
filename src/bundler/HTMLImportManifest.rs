@@ -381,8 +381,7 @@ pub mod html_import_manifest {
     }
 }
 
-/// `path` (a source file's absolute path) relative to `root_dir`, `/`-separated, no leading `./`:
-/// the form of the manifest's `input` field and asset keys.
+/// The manifest's `input` / asset-key form of a source path: root-relative, `/`-separated.
 fn source_path_relative_to_root<'b>(buf: &'b mut Vec<u8>, root_dir: &[u8], path: &[u8]) -> &'b [u8] {
     buf.clear();
     buf.extend_from_slice(strings::remove_leading_dot_slash(

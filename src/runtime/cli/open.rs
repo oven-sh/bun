@@ -19,12 +19,9 @@ const OPENER: &[u8] = b"start";
 #[cfg(not(any(target_os = "macos", windows)))]
 const OPENER: &[u8] = b"xdg-open";
 
-/// Open `url` with the system's default handler, with inherited stdio.
-/// Returns `false` when the spawn fails or the opener exits non-zero (e.g.
-/// headless/CI environments).
+/// Returns `false` when the opener is missing or exits non-zero (headless, CI).
 pub(crate) fn try_open_url(url: &[u8]) -> bool {
-    // Android has no `xdg-open`. `am start` sends a VIEW intent to the
-    // default handler instead.
+    // Android has no `xdg-open`; `am start` sends the URL to the default handler.
     #[cfg(target_os = "android")]
     let argv: &[&[u8]] = &[
         b"/system/bin/am",
@@ -39,8 +36,7 @@ pub(crate) fn try_open_url(url: &[u8]) -> bool {
     matches!(bun_core::spawn_sync_inherit(argv), Ok(status) if status.is_ok())
 }
 
-/// [`try_open_url`], then print the URL when that fails so the user can open
-/// it by hand.
+/// [`try_open_url`], and print the URL when that fails.
 pub(crate) fn open_url(url: &[u8]) {
     if !try_open_url(url) {
         bun_core::prettyln!("-> {}", bstr::BStr::new(url));

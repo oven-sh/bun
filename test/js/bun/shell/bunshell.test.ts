@@ -3206,9 +3206,11 @@ test.skipIf(isWindows)(
     // see the buffer unpinned: a `transfer()` detaches it instead of copying.
     const buffer = new Uint8Array(new ArrayBuffer(1 << 16));
     const gate = Promise.withResolvers<void>();
+    const grandchildStarted = Promise.withResolvers<void>();
     await using server = Bun.serve({
       port: 0,
       async fetch() {
+        grandchildStarted.resolve();
         await gate.promise;
         return new Response("ok");
       },
@@ -3218,6 +3220,9 @@ test.skipIf(isWindows)(
       .env(bunEnv)
       .nothrow();
     const running = promise.then(o => o);
+    // By the time the request arrives, `sh` has exited and the grandchild is
+    // the only holder of the stdout pipe.
+    await grandchildStarted.promise;
 
     // The grandchild still holds stdout, so the buffer is pinned: a detach
     // attempt copies instead (or throws).
@@ -3230,10 +3235,10 @@ test.skipIf(isWindows)(
 
     const result = await running;
     expect(stringifyBuffer(buffer)).toEqual("hi\n");
-    expect(result.exitCode).toBe(0);
 
     buffer.buffer.transfer();
     expect(buffer.buffer.detached).toBe(true);
+    expect(result.exitCode).toBe(0);
   },
 );
 

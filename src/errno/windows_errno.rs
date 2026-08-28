@@ -85,18 +85,7 @@ macro_rules! __errno_enum_with_uv_tail {
 
 for_each_uv_errno! { __errno_enum_with_uv_tail {
 #[repr(u16)]
-#[derive(
-    Copy,
-    Clone,
-    Eq,
-    PartialEq,
-    Hash,
-    Debug,
-    strum::IntoStaticStr,
-    strum::EnumString,
-    strum::FromRepr,
-    enum_map::Enum,
-)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::FromRepr, enum_map::Enum)]
 pub enum E {
     SUCCESS = 0,
     PERM = 1,
@@ -106,7 +95,6 @@ pub enum E {
     IO = 5,
     NXIO = 6,
     // Rust identifiers cannot start with a digit.
-    #[strum(serialize = "2BIG")]
     _2BIG = 7,
     NOEXEC = 8,
     BADF = 9,
@@ -330,6 +318,22 @@ impl E {
     pub const EUNKNOWN: E = E::UNKNOWN;
     pub const ECHARSET: E = E::CHARSET;
     pub const EFTYPE: E = E::FTYPE;
+}
+
+/// `ENOENT`, as the POSIX alias `E = SystemErrno` spells it, not the variant name `NOENT`.
+impl From<E> for &'static str {
+    #[inline]
+    fn from(e: E) -> &'static str {
+        // Same discriminant set; `SystemErrno::to_e` is the reverse cast.
+        <&'static str>::from(SystemErrno::from_raw(e as u16))
+    }
+}
+
+impl From<&E> for &'static str {
+    #[inline]
+    fn from(e: &E) -> &'static str {
+        <&'static str>::from(*e)
+    }
 }
 
 /// Mirrors `bun_errno::posix` on POSIX targets so callers can `use

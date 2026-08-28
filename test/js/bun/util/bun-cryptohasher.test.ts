@@ -270,6 +270,47 @@ test("Bun.sha reads its buffers only after every argument has been coerced", asy
   expect(exitCode).toBe(0);
 });
 
+test("Bun.sha validates its arguments like Bun.SHA512_256.hash", () => {
+  const hex = "53048e2681941ef99b2e29b76b4c7dabe4c2d0c634fc6d46e0e2f13107e7af23";
+  expect(Bun.sha("abc", "hex")).toBe(hex);
+  expect(Bun.SHA512_256.hash("abc", "hex")).toBe(hex);
+  const out = new Uint8Array(32);
+  expect(Bun.sha("abc", out)).toBe(out);
+  expect(Buffer.from(out).toString("hex")).toBe(hex);
+  expect(Bun.sha("abc")).toEqual(out);
+  expect(Bun.sha("abc", undefined)).toEqual(out);
+
+  // An output argument that is neither an encoding nor a TypedArray throws
+  // instead of being ignored.
+  const badOutput = expect.objectContaining({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: "expected string or buffer",
+  });
+  for (const output of [123, {}, null, true, [], () => {}, Symbol("x")]) {
+    const label = `output ${typeof output}`;
+    // @ts-expect-error
+    expect(() => Bun.sha("abc", output), label).toThrow(badOutput);
+    // @ts-expect-error
+    expect(() => Bun.SHA512_256.hash("abc", output), label).toThrow(badOutput);
+  }
+
+  const badInput = expect.objectContaining({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: "expected blob, string or buffer",
+  });
+  for (const input of [undefined, 123, null, {}]) {
+    const label = `input ${typeof input}`;
+    // @ts-expect-error
+    expect(() => Bun.sha(input), label).toThrow(badInput);
+    // @ts-expect-error
+    expect(() => Bun.SHA512_256.hash(input), label).toThrow(badInput);
+  }
+  // @ts-expect-error
+  expect(() => Bun.sha()).toThrow(badInput);
+});
+
 describe("HMAC", () => {
   const hashes = {
     "sha1": "e2e1f7f597941d9b0021978618218a9e08731426",

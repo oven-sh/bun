@@ -8,7 +8,7 @@ export default [
     construct: true,
     constructNeedsThis: true,
     call: false,
-    finalize: true,
+    refCounted: true,
     configurable: false,
     JSType: "0b11101110",
     memoryCost: true,

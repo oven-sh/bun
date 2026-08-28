@@ -173,6 +173,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             loc: body_loc,
         };
 
+        // In sloppy mode, a function with a simple parameter list maps
+        // `arguments` onto its parameters: `arguments[0] = v` rebinds the
+        // first one. Any use of `arguments` can reach such a write.
+        if !self.is_strict_mode()
+            && func.arguments_ref.is_valid()
+            && self.symbols[func.arguments_ref.inner_index() as usize].use_count_estimate > 0
+            && Self::is_simple_parameter_list(
+                func.args.slice(),
+                func.flags.contains(flags::Function::HasRestArg),
+            )
+        {
+            for arg in func.args.slice() {
+                if let BData::BIdentifier(id) = arg.binding.data {
+                    self.record_assignment(id.r#ref);
+                }
+            }
+        }
+
         self.pop_scope();
         self.pop_scope();
 

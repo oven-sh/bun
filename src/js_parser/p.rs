@@ -1464,6 +1464,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Hoisting and re-declaration link the refs of one variable into a chain
+    /// (`var n` in a block, `var n` after a parameter `n`). A fact about the
+    /// variable, such as "something assigns it", belongs on the symbol at the
+    /// end of that chain, which is the one `symbol::Map::follow` returns.
+    pub(crate) fn record_assignment(&mut self, ref_: Ref) {
+        let mut ref_ = ref_;
+        loop {
+            let symbol = &mut self.symbols[ref_.inner_index() as usize];
+            if !symbol.has_link() {
+                symbol.set_has_been_assigned_to(true);
+                return;
+            }
+            ref_ = symbol.link.get();
+        }
+    }
+
     pub(crate) fn log_arrow_arg_errors(&mut self, errors: &mut DeferredArrowArgErrors) {
         if errors.invalid_expr_await.len > 0 {
             let r = errors.invalid_expr_await;

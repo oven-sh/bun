@@ -2230,6 +2230,8 @@ pub(crate) mod __gated_printer {
                     //
                     // Caveats:
                     //   - Same consecutive target
+                    //   - The target reads as the same value every time
+                    //     (see `is_stable_destructuring_target`)
                     //   - No optional chaining
                     //   - No computed property access
                     //   - Identifier bindings only
@@ -2267,6 +2269,10 @@ pub(crate) mod __gated_printer {
                         // the `n` it reads are two refs for one variable.
                         let symbols = self.renamer.symbols();
                         let target_ref = symbols.follow(target_id.ref_);
+
+                        if !self.is_stable_destructuring_target(target_id, target_ref) {
+                            break 'brk;
+                        }
 
                         // A group evaluates its target once, before any
                         // assignment, but the original declarators execute in
@@ -2392,6 +2398,31 @@ pub(crate) mod __gated_printer {
                 }
                 decls = &decls[1..];
             }
+        }
+
+        /// A destructuring group reads its target once where the declarators
+        /// it replaces read it once per member. That is the same program only
+        /// when every read is a pure read of the same value. A getter on the
+        /// first property runs between two reads, so the target must be a
+        /// symbol this file declares and never assigns after its declaration,
+        /// reached without a `with` scope or a direct `eval`. An unbound name
+        /// may be an accessor on the global object. The known pure globals
+        /// (`Math`, `Object`, ...) are the exception, as in dead-code
+        /// elimination.
+        fn is_stable_destructuring_target(&self, id: &E::Identifier, target_ref: Ref) -> bool {
+            if id.must_keep_due_to_with_stmt() {
+                return false;
+            }
+            let Some(symbol) = self.symbols().get_const(target_ref) else {
+                return false;
+            };
+            if symbol.has_been_assigned_to() || symbol.namespace_alias.is_some() {
+                return false;
+            }
+            if symbol.kind == js_ast::symbol::Kind::Unbound {
+                return id.can_be_removed_if_unused();
+            }
+            !symbol.must_not_be_renamed()
         }
 
         #[inline]

@@ -1028,7 +1028,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     let default_name = p.create_default_name(loc);
 
-                    let mut expr = p.parse_async_prefix_expr(async_range, Level::Comma)?;
+                    let mut expr =
+                        p.parse_async_prefix_expr(async_range, Level::Comma, EFlags::None)?;
                     p.parse_suffix(&mut expr, Level::Comma, None, EFlags::None)?;
                     p.lexer.expect_or_insert_semicolon()?;
                     let value = js_ast::StmtOrExpr::Expr(expr);
@@ -1557,7 +1558,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     return p.parse_type_script_import_equals_stmt(
                                         loc, opts, name_loc, name,
                                     );
-                                } else if p.lexer.token == T::TStringLiteral && name == b"from" {
+                                } else if name == b"from"
+                                    && matches!(
+                                        p.lexer.token,
+                                        T::TStringLiteral | T::TNoSubstitutionTemplateLiteral
+                                    )
+                                {
                                     // "import type from 'bar';" imports the default export as "type"
                                     let path = p.parse_path()?;
                                     p.lexer.expect_or_insert_semicolon()?;
@@ -1706,7 +1712,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return p.parse_fn_stmt(async_range.loc, opts, Some(async_range));
             }
 
-            expr = p.parse_async_prefix_expr(async_range, Level::Lowest)?;
+            expr = p.parse_async_prefix_expr(async_range, Level::Lowest, EFlags::None)?;
             p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::None)?;
         } else {
             let expr_or_let = p.parse_expr_or_let_stmt(opts)?;

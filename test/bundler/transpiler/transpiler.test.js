@@ -315,6 +315,12 @@ describe("Bun.Transpiler", () => {
       exp("x = a ? (b) : c is d => e : f", "x = a ? (b) => e : f;\n");
       exp("a ? (1 + 2) : (3 + 4)", "a ? 1 + 2 : 3 + 4;\n");
 
+      // The same rule for "async (...)": a call to "async" or an async arrow
+      exp("x = a ? async (b) : c => d", "x = a ? async(b) : (c) => d;\n");
+      exp("x = a ? async (b) : c => d : e", "x = a ? async (b) => d : e;\n");
+      exp("x = a ? async (b) : c => await d : e", "x = a ? async (b) => await d : e;\n");
+      exp("x = a ? async (b) : c => d ? e : f", "x = a ? async(b) : (c) => d ? e : f;\n");
+
       // https://github.com/evanw/esbuild/issues/4241
       exp("x = a ? (b = c) : d", "x = a ? b = c : d;\n");
       exp("x = a ? (b = c) : d => e", "x = a ? b = c : (d) => e;\n");
@@ -370,6 +376,21 @@ describe("Bun.Transpiler", () => {
         "x = a ? (b) : c => { return a ? (b) : c => d : e } : f",
         "x = a ? (b) => {\n  return a ? (b) => d : e;\n} : f;\n",
       );
+
+      // The attempt parses the body, so an attempt nested in the body must not
+      // run again when the body is parsed for real: 2^40 parses would hang.
+      let kept = "d";
+      let discarded = "d";
+      let keptOut = "d";
+      let discardedOut = "d";
+      for (let i = 0; i < 40; i++) {
+        kept = `a ? (b) : c => ${kept} : e`;
+        keptOut = `a ? (b) => ${keptOut} : e`;
+        discarded = `a ? (b) : c => ${discarded}`;
+        discardedOut = `a ? b : (c) => ${discardedOut}`;
+      }
+      exp(`x = ${kept}`, `x = ${keptOut};\n`);
+      exp(`x = ${discarded}`, `x = ${discardedOut};\n`);
     });
 
     it("type-only import syntax", () => {
@@ -398,6 +419,7 @@ describe("Bun.Transpiler", () => {
       exp("import type = foo.bar; type", "const type = foo.bar;\n");
       exp("import type = require('type'); type", 'const type = require("type");\n');
       exp("import type from 'bar'; type", 'import type from "bar";\ntype;\n');
+      exp("import type from `bar`; type", 'import type from "bar";\ntype;\n');
       exp("import type, { a } from 'mod'; type, a", 'import type, { a } from "mod";\ntype, a;\n');
       exp("import { type } from 'mod'; type", 'import { type } from "mod";\ntype;\n');
 

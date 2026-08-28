@@ -1577,6 +1577,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         async_range: bun_ast::Range,
         level: Level,
+        flags: EFlags,
     ) -> Result<Expr, Error> {
         let p = self;
         // "async function() {}"
@@ -1669,6 +1670,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         level,
                         ParenExprOpts {
                             is_async: true,
+                            is_after_question_and_before_colon: flags
+                                == EFlags::AfterQuestionAndBeforeColon,
                             ..Default::default()
                         },
                     );

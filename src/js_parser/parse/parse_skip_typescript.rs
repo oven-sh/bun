@@ -1578,12 +1578,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// caller when this returns true. Parsing an expression mutates parser
     /// state, so the whole parser is restored from a snapshot. The current
     /// scope is the arrow's `FunctionArgs` scope; no arguments are declared so
-    /// that its members stay untouched.
+    /// that its members stay untouched. The outcome is memoized by the offset
+    /// of the ":" in `ts_conditional_arrow_attempts`, so the real parse does not
+    /// repeat the attempts nested inside the body.
     pub(crate) fn is_type_script_arrow_return_type_after_question_and_before_colon(
         &mut self,
         arrow_data: &FnOrArrowDataParse,
     ) -> Result<bool, Error> {
         self.mark_type_script_only();
+        debug_assert!(self.lexer.start <= (u32::MAX >> 1) as usize);
+        let memo_key = self.lexer.start as u32;
+        if let Ok(i) = self
+            .ts_conditional_arrow_attempts
+            .binary_search_by_key(&memo_key, |&packed| packed >> 1)
+        {
+            return Ok(self.ts_conditional_arrow_attempts[i] & 1 == 1);
+        }
+
         let snapshot = self.parser_snapshot();
         self.lexer.is_log_disabled = true;
 
@@ -1598,12 +1609,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })();
 
         self.restore_parser_snapshot(snapshot);
-        match result {
-            Ok(()) => Ok(true),
+        let is_arrow_fn = match result {
+            Ok(()) => true,
             // Stack and memory exhaustion are not properties of the attempt
-            Err(err @ (Error::StackOverflow | Error::Alloc(_))) => Err(err),
-            Err(_) => Ok(false),
+            Err(err @ (Error::StackOverflow | Error::Alloc(_))) => return Err(err),
+            Err(_) => false,
+        };
+
+        // Re-search for the insertion point: attempts nested inside this one may
+        // have added entries of their own.
+        if let Err(insert_at) = self
+            .ts_conditional_arrow_attempts
+            .binary_search_by_key(&memo_key, |&packed| packed >> 1)
+        {
+            self.ts_conditional_arrow_attempts
+                .insert(insert_at, (memo_key << 1) | is_arrow_fn as u32);
         }
+        Ok(is_arrow_fn)
     }
 
     // ─────────────────────── try_* wrappers ───────────────────────

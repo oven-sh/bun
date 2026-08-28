@@ -343,6 +343,16 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// until a constraint attempt actually backtracks, which is rare in real code.
     pub(crate) ts_infer_constraint_backtracks: Vec<u32>,
 
+    /// Outcomes of `is_type_script_arrow_return_type_after_question_and_before_colon`,
+    /// keyed by the byte offset of the `:` shifted left by one, with the low bit set
+    /// when the attempt parsed an arrow function. The outcome depends only on the
+    /// source from that offset on, so the real parse that follows a discarded
+    /// attempt can reuse it. Without this memo every nested
+    /// `a ? (b) : c => <body> : e` inside the body is parsed once by the attempt and
+    /// once for real, which is exponential in the nesting depth. Kept sorted for
+    /// binary search.
+    pub(crate) ts_conditional_arrow_attempts: Vec<u32>,
+
     /// When this flag is enabled, we attempt to fold all expressions that
     /// TypeScript would consider to be "constant expressions". This flag is
     /// enabled inside each enum body block since TypeScript requires numeric
@@ -8764,6 +8774,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             stack_check: bun_core::StackCheck::init(),
             reported_stack_overflow: core::cell::Cell::new(false),
             ts_infer_constraint_backtracks: Vec::new(),
+            ts_conditional_arrow_attempts: Vec::new(),
             arena,
             then_catch_chain: ThenCatchChain {
                 next_target: null_expr_data(),

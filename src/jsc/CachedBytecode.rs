@@ -121,6 +121,27 @@ unsafe extern "C" {
     fn Bun__builtinsSection(length: *mut usize) -> *const u8;
 }
 
+/// `input` (WTF-8, non-ASCII from `first_non_ascii`) as a UTF-16 string JSC owns, written in place.
+fn utf16_source(input: &[u8], first_non_ascii: usize) -> BunString {
+    use bun_core::strings;
+    let tail = &input[first_non_ascii..];
+    if strings::is_valid_utf8(tail) {
+        let len = first_non_ascii + strings::element_length_utf8_into_utf16(tail);
+        let (string, units) = BunString::create_uninitialized_utf16(len);
+        if string.is_dead() {
+            bun_alloc::out_of_memory();
+        }
+        // SAFETY: valid UTF-8 converts to exactly `len` units; `units` is `len` u16s, 2-byte aligned.
+        let written = unsafe {
+            strings::write_wtf8_as_utf16le(input, first_non_ascii, units.as_mut_ptr().cast::<u8>())
+        };
+        debug_assert_eq!(written, 2 * len);
+        return string;
+    }
+    // A lone surrogate or an invalid byte: the scalar path decides the length.
+    BunString::clone_utf16(&strings::wtf8_to_utf16_alloc(input).expect("non-ASCII input"))
+}
+
 impl CachedBytecode {
     // SAFETY CONTRACT: the returned `&'static [u8]` actually borrows from the
     // `CachedBytecode` handle and is invalidated when `deref()` is called. Callers own
@@ -139,11 +160,11 @@ impl CachedBytecode {
         };
         // An executable stores the chunk as `encode_text_module` writes it (Latin-1, or UTF-16 when non-ASCII) and
         // aliases it at runtime; a `.jsc` next to a bundle is keyed on the file's bytes read as Latin-1.
-        let source =
-            match external_strings.and_then(|_| bun_core::strings::wtf8_to_utf16_alloc(input)) {
-                Some(units) => BunString::create_external_globally_allocated_utf16(units),
-                None => BunString::clone_latin1(input),
-            };
+        let source = match external_strings.and_then(|_| bun_core::strings::first_non_ascii(input))
+        {
+            Some(first_non_ascii) => utf16_source(input, first_non_ascii as usize),
+            None => BunString::clone_latin1(input),
+        };
         let mut this: Option<NonNull<CachedBytecode>> = None;
         let mut out_size: usize = 0;
         let mut out_ptr: Option<NonNull<u8>> = None;

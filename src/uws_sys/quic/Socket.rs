@@ -18,7 +18,6 @@ unsafe extern "C" {
     safe fn us_quic_socket_make_stream(s: &mut Socket);
     safe fn us_quic_socket_streams_avail(s: &mut Socket) -> c_uint;
     fn us_quic_socket_status(s: *mut Socket, buf: *mut u8, len: c_uint) -> c_int;
-    safe fn us_quic_socket_close(s: &mut Socket);
     safe fn us_quic_socket_ext(s: &mut Socket) -> *mut c_void;
 }
 
@@ -43,11 +42,6 @@ impl Socket {
                 c_uint::try_from(buf.len()).expect("int cast"),
             )
         }
-    }
-
-    #[inline]
-    pub fn close(&mut self) {
-        us_quic_socket_close(self)
     }
 
     /// `conn_ext_size` bytes of caller storage co-allocated with the socket.

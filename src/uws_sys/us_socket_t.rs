@@ -53,27 +53,6 @@ pub struct UsIoVec {
 }
 
 impl us_socket_t {
-    pub fn open(&mut self, is_client: bool, ip_addr: Option<&[u8]>) {
-        bun_core::scoped_log!(uws, "us_socket_open({:p}, is_client: {})", self, is_client);
-        if let Some(ip) = ip_addr {
-            debug_assert!(ip.len() < MAX_I32);
-            unsafe {
-                // SAFETY: self is a live us_socket_t; ip.ptr valid for ip.len bytes
-                let _ = c::us_socket_open(
-                    self,
-                    is_client as i32,
-                    ip.as_ptr(),
-                    i32::try_from(ip.len().min(MAX_I32)).expect("int cast"),
-                );
-            }
-        } else {
-            unsafe {
-                // SAFETY: self is a live us_socket_t
-                let _ = c::us_socket_open(self, is_client as i32, ptr::null(), 0);
-            }
-        }
-    }
-
     pub(crate) fn pause(&mut self) {
         bun_core::scoped_log!(uws, "us_socket_pause({:p})", self);
         c::us_socket_pause(self);
@@ -374,13 +353,6 @@ impl us_socket_t {
         );
         rc
     }
-    #[cfg(windows)]
-    pub fn write_fd(&mut self, _data: &[u8], _file_descriptor: Fd) -> i32 {
-        // A `compile_error!` here would brick the windows build even with no
-        // callers (it is evaluated at item definition), so use a runtime trap
-        // instead; no current Windows call site.
-        unreachable!("us_socket_t::write_fd is not implemented on Windows")
-    }
 
     pub fn write2(&mut self, first: &[u8], second: &[u8]) -> i32 {
         let rc = unsafe {
@@ -552,12 +524,6 @@ mod c {
         -> i32;
         pub(super) safe fn us_socket_flush(s: &mut us_socket_t);
 
-        pub(super) fn us_socket_open(
-            s: *mut us_socket_t,
-            is_client: i32,
-            ip: *const u8,
-            ip_length: i32,
-        ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_pause(s: &mut us_socket_t);
         pub(super) safe fn us_socket_resume(s: &mut us_socket_t);
         pub(super) fn us_socket_close(

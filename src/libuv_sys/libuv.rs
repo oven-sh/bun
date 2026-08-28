@@ -261,8 +261,6 @@ pub enum HandleType {
 }
 pub type uv_handle_type = HandleType;
 pub const UV_TTY: HandleType = HandleType::Tty;
-pub const UV_NAMED_PIPE: HandleType = HandleType::NamedPipe;
-pub const UV_UNKNOWN_HANDLE: HandleType = HandleType::Unknown;
 
 /// Safe `uv_guess_handle` wrapper. The FFI symbol returns `c_int` (see
 /// [`uv_guess_handle_raw`]); range-check before producing a [`HandleType`] so an
@@ -279,7 +277,6 @@ pub fn uv_guess_handle(file: uv_file) -> uv_handle_type {
         HandleType::Unknown
     }
 }
-pub const UV_HANDLE_TYPE_MAX: c_int = 18;
 
 /// `RunMode` — `uv_run` mode argument.
 #[repr(C)]
@@ -2396,25 +2393,18 @@ pub mod O {
     pub const CREAT: i32 = 0x0100;
     pub(crate) const EXCL: i32 = 0x0400;
     pub(crate) const FILEMAP: i32 = 0x2000_0000;
-    pub const RANDOM: i32 = 0x0010;
     pub const RDONLY: i32 = 0x0000;
     pub const RDWR: i32 = 0x0002;
     pub const SEQUENTIAL: i32 = 0x0020;
-    pub const SHORT_LIVED: i32 = 0x1000;
-    pub const TEMPORARY: i32 = 0x0040;
     pub const TRUNC: i32 = 0x0200;
     pub const WRONLY: i32 = 0x0001;
     pub(crate) const DIRECT: i32 = 0x0200_0000;
     pub(crate) const DSYNC: i32 = 0x0400_0000;
     pub(crate) const SYNC: i32 = 0x0800_0000;
     // No-ops on Windows.
-    pub const DIRECTORY: i32 = 0;
-    pub const EXLOCK: i32 = 0x1000_0000;
-    pub const NOATIME: i32 = 0;
     pub const NOCTTY: i32 = 0;
     pub(crate) const NOFOLLOW: i32 = 0;
     pub const NONBLOCK: i32 = 0;
-    pub const SYMLINK: i32 = 0;
 
     // `bun.O.*` — POSIX-shaped flag values Bun normalises to internally.
     //
@@ -2525,10 +2515,6 @@ pub mod O {
 // ──────────────────────────────────────────────────────────────────────────
 // Error constants (uv-errno.h, Windows values).
 // ──────────────────────────────────────────────────────────────────────────
-pub const UV__EOF: c_int = -4095;
-pub const UV__UNKNOWN: c_int = -4094;
-pub const UV__ECHARSET: c_int = -4080;
-
 pub const UV_E2BIG: c_int = -4093;
 pub const UV_EACCES: c_int = -4092;
 pub const UV_EADDRINUSE: c_int = -4091;
@@ -2616,36 +2602,18 @@ pub const UV_EUNATCH: c_int = -4023;
 pub const UV_ENOEXEC: c_int = -4022;
 pub const UV_ERRNO_MAX: c_int = -4096;
 
-// `uv_dirent_type_t` discriminants — compared against
-// `uv_dirent_t.type_` by Windows `fs.readdir`.
-pub const UV_DIRENT_UNKNOWN: c_int = 0;
-pub const UV_DIRENT_FILE: c_int = 1;
-pub const UV_DIRENT_DIR: c_int = 2;
-pub const UV_DIRENT_LINK: c_int = 3;
-pub const UV_DIRENT_FIFO: c_int = 4;
-pub const UV_DIRENT_SOCKET: c_int = 5;
-pub const UV_DIRENT_CHAR: c_int = 6;
-pub const UV_DIRENT_BLOCK: c_int = 7;
-
 // Misc flag constants.
 pub const UV_READABLE: c_int = 1;
 pub const UV_WRITABLE: c_int = 2;
-pub const UV_DISCONNECT: c_int = 4;
-pub const UV_PRIORITIZED: c_int = 8;
 pub(crate) const UV_PIPE_NO_TRUNCATE: c_uint = 1;
-pub const UV_FS_SYMLINK_DIR: c_int = 0x0001;
 pub const UV_FS_SYMLINK_JUNCTION: c_int = 0x0002;
 pub const UV_RENAME: c_int = 1;
-pub const UV_CHANGE: c_int = 2;
-pub const UV_FS_EVENT_WATCH_ENTRY: c_int = 1;
-pub const UV_FS_EVENT_STAT: c_int = 2;
 pub const UV_FS_EVENT_RECURSIVE: c_int = 4;
 
 // Stdio / process flags.
 pub const UV_IGNORE: c_uint = 0;
 pub const UV_CREATE_PIPE: c_uint = 1;
 pub const UV_INHERIT_FD: c_uint = 2;
-pub const UV_INHERIT_STREAM: c_uint = 4;
 pub const UV_READABLE_PIPE: c_uint = 16;
 pub const UV_WRITABLE_PIPE: c_uint = 32;
 pub const UV_NONBLOCK_PIPE: c_uint = 64;
@@ -2657,13 +2625,6 @@ pub const UV_PROCESS_SETGID: c_uint = 2;
 pub const UV_PROCESS_WINDOWS_VERBATIM_ARGUMENTS: c_uint = 4;
 pub const UV_PROCESS_DETACHED: c_uint = 8;
 pub const UV_PROCESS_WINDOWS_HIDE: c_uint = 16;
-pub const UV_PROCESS_WINDOWS_HIDE_CONSOLE: c_uint = 32;
-pub const UV_PROCESS_WINDOWS_HIDE_GUI: c_uint = 64;
-
-pub const SIGHUP: c_int = 1;
-pub const SIGQUIT: c_int = 3;
-pub const SIGKILL: c_int = 9;
-pub const SIGWINCH: c_int = 28;
 
 pub(crate) const UV_HANDLE_CLOSED: c_uint = 0x0000_0002;
 

@@ -192,8 +192,8 @@ test("should call only some functions", () => {
 ---------------|---------|---------|-------------------
 File           | % Funcs | % Lines | Uncovered Line #s
 ---------------|---------|---------|-------------------
-All files      |   75.00 |   83.33 |
- include-me.ts |   50.00 |   66.67 | 6
+All files      |   75.00 |   80.00 |
+ include-me.ts |   50.00 |   60.00 | 6-7
  test.test.ts  |  100.00 |  100.00 | 
 ---------------|---------|---------|-------------------
 
@@ -636,7 +636,8 @@ test("only imports the function", () => {
   expect(record).toBeDefined();
   // Blank line 5 is only "executable" in the worker that never ran count().
   expect(record).not.toContain("DA:5,");
-  expect(record).toMatch(/LF:4\nLH:4\n/);
+  // Lines 1, 3, 4, 6 and the function's closing brace on line 7.
+  expect(record).toMatch(/LF:5\nLH:5\n/);
 
   expect(stderr).toMatch(/ subject\.ts +\| +100\.00 +\| +100\.00 +\| +\n/);
   expect(exitCode).toBe(0);

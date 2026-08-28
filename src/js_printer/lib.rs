@@ -5823,7 +5823,8 @@ pub(crate) mod __gated_printer {
                         self.print_indent();
                     }
                     self.print_space_before_identifier();
-                    self.add_source_mapping(stmt.loc);
+                    // The statement starts at the label, so this is also the
+                    // statement's mapping.
                     self.print_symbol_with_mapping(s.name.loc, s.name.ref_);
                     self.print(b":");
                     self.print_body(s.stmt);

@@ -99,7 +99,12 @@ describe("bundler", () => {
         export function fn(firstArgument) { return helperA(firstArgument) + helperB(firstArgument) }
       `,
       "/a.js": /* js */ `
-        export function helperA(argumentA) { return argumentA + 1 }
+        export function helperA(argumentA) {
+          outerLoop: for (const item of argumentA) {
+            for (const inner of item) if (inner) continue outerLoop;
+          }
+          return argumentA + 1
+        }
       `,
       "/b.js": /* js */ `
         export function helperB(argumentB) { return argumentB + 2 }
@@ -128,7 +133,7 @@ describe("bundler", () => {
       }
 
       const namesIn = (file: string) => new Set(named.filter(m => m.src === sourceFor(file)).map(m => m.name));
-      expect(namesIn("a.js")).toEqual(new Set(["helperA", "argumentA"]));
+      expect(namesIn("a.js")).toEqual(new Set(["helperA", "argumentA", "outerLoop", "item", "inner"]));
       expect(namesIn("b.js")).toEqual(new Set(["helperB", "argumentB"]));
       expect(namesIn("entry.js")).toEqual(new Set(["fn", "firstArgument", "helperA", "helperB"]));
     },

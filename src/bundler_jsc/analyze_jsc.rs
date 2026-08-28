@@ -78,6 +78,19 @@ fn to_js_module_record(
         Ok(id)
     };
 
+    let import_count = body
+        .record_tags
+        .iter()
+        .filter(|&&tag| {
+            matches!(
+                RecordKind(tag & 0b111),
+                RecordKind::ImportInfoSingle
+                    | RecordKind::ImportInfoSingleTypeScript
+                    | RecordKind::ImportInfoNamespace
+                    | RecordKind::ImportInfoNamespaceDefer
+            )
+        })
+        .count();
     let module_record = JSModuleRecord::create(
         global_object,
         vm,
@@ -86,6 +99,9 @@ fn to_js_module_record(
         res.flags.contains_import_meta(),
         res.flags.is_typescript(),
         res.flags.has_tla(),
+        u32::try_from(body.requested_tags.len()).expect("int cast"),
+        u32::try_from(import_count).expect("int cast"),
+        u32::try_from(body.record_tags.len() - import_count).expect("int cast"),
     );
 
     let mut ids = res.ids();
@@ -302,6 +318,9 @@ unsafe extern "C" {
         has_import_meta: bool,
         is_typescript: bool,
         has_tla: bool,
+        requested_module_count: u32,
+        import_count: u32,
+        export_count: u32,
     ) -> *mut JSModuleRecord;
 
     fn JSC_JSModuleRecord__addIndirectExport(
@@ -407,6 +426,9 @@ impl JSModuleRecord {
         has_import_meta: bool,
         is_typescript: bool,
         has_tla: bool,
+        requested_module_count: u32,
+        import_count: u32,
+        export_count: u32,
     ) -> *mut JSModuleRecord {
         // SAFETY: all pointer args derive from valid references.
         unsafe {
@@ -418,6 +440,9 @@ impl JSModuleRecord {
                 has_import_meta,
                 is_typescript,
                 has_tla,
+                requested_module_count,
+                import_count,
+                export_count,
             )
         }
     }

@@ -4,6 +4,75 @@ import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   describe("compile with splitting", () => {
+    // The executable's loader registers an entry's whole static-import closure before JSC walks the graph. These
+    // shapes must still load and link in order: a cycle back through the entry, builtins reached from pre-registered
+    // chunks, two dynamic imports issued back to back whose closures overlap, and a dynamic import of a chunk that an
+    // earlier closure already registered but has not finished loading.
+    for (const bytecode of [false, true]) {
+      itBundled(`compile/splitting/PreRegisteredClosure${bytecode ? "+bytecode" : ""}`, {
+        compile: true,
+        splitting: true,
+        bytecode,
+        format: "esm",
+        files: {
+          "/entry.ts": /* js */ `
+            import { a } from "./a";
+            import { isAbsolute } from "node:path";
+            import { run } from "./run";
+            export const fromEntry = "entry";
+            console.log("static", a, isAbsolute("/x"));
+            run();
+          `,
+          "/run.ts": /* js */ `
+            export async function run() {
+              const [x, y, s] = await Promise.all([import("./lazy-x"), import("./lazy-y"), import("./shared")]);
+              console.log("dynamic", x.value, y.value, s.sharedValue);
+            }
+          `,
+          "/a.ts": /* js */ `
+            import { b } from "./b";
+            import os from "os";
+            export const a = "a" + b + typeof os.platform;
+          `,
+          "/b.ts": /* js */ `
+            import { fromEntry } from "./entry";
+            import { readFileSync } from "fs";
+            export const b = "b" + typeof readFileSync;
+            export const later = () => fromEntry;
+          `,
+          "/lazy-x.ts": /* js */ `
+            import { sharedValue } from "./shared";
+            import { createHash } from "crypto";
+            export const value = "x" + sharedValue + typeof createHash;
+          `,
+          "/lazy-y.ts": /* js */ `
+            import { sharedValue } from "./shared";
+            import { inspect } from "node:util";
+            export const value = "y" + sharedValue + typeof inspect;
+          `,
+          "/shared.ts": /* js */ `
+            import { a } from "./a";
+            import zlib from "zlib";
+            export const sharedValue = "s" + a.length + typeof zlib.gzipSync;
+          `,
+        },
+        run: {
+          stdout: "static abfunctionfunction true\ndynamic xs18functionfunction ys18functionfunction s18function",
+          // JSC logs one line per host-hook call. The graph has 7 source modules, 6 distinct builtins and 4 roots
+          // (entry + 3 dynamic imports). With --bytecode each chunk carries its module record, so loading must cost a
+          // host fetch per root (plus the shared chunk reached first by import()) rather than per module, and a host
+          // resolve per root/builtin rather than per import edge.
+          env: { BUN_JSC_dumpModuleLoadingState: "1" },
+          validate({ stderr }) {
+            const count = (kind: string) => stderr.split("\n").filter(l => l.startsWith(`Loader [${kind}] `)).length;
+            expect(count("evaluate")).toBe(7);
+            expect(count("fetch")).toBeLessThanOrEqual(bytecode ? 5 : 13);
+            expect(count("resolve")).toBeLessThanOrEqual(bytecode ? 14 : 23);
+          },
+        },
+      });
+    }
+
     // The embedded module graph is laid out in load order: the entry point's
     // static imports (dependencies first), then each dynamic import's closure,
     // breadth-first. Chunk index order would be entry, lazy1, lazy2, shared,

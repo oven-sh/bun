@@ -114,10 +114,17 @@ describe.concurrent("Streaming body via", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("async generator function throws an error but continues to send the headers", async () => {
+  // The generator fails before producing any chunk. The status and headers
+  // were already committed to uWS, so the server closes the connection without
+  // a complete response instead of sending them with an empty body and a clean
+  // chunked terminator.
+  test("async generator function throws an error before its first chunk closes the connection", async () => {
+    let outcome: string | undefined;
     const onMessage = mock(async url => {
-      const response = await fetch(url);
-      expect(response.headers.get("X-Hey")).toBe("123");
+      outcome = await fetch(url).then(
+        response => `resolved ${response.status}`,
+        (err: any) => `rejected ${err.code}`,
+      );
       subprocess?.kill();
     });
 
@@ -132,6 +139,7 @@ describe.concurrent("Streaming body via", () => {
 
     let [exitCode, stderr] = await Promise.all([subprocess.exited, subprocess.stderr.text()]);
     expect(exitCode).toBeInteger();
+    expect(outcome).toBe("rejected ECONNRESET");
     expect(stderr).toContain("error: Oops");
     expect(onMessage).toHaveBeenCalledTimes(1);
   });

@@ -158,7 +158,6 @@ bun_io::impl_streaming_writer_parent! {
 
 pub struct Options {
     pub(crate) input_path: PathOrFileDescriptor,
-    pub close: bool,
     pub(crate) mode: bun_sys::Mode,
     /// `Bun.write(path, stream)`: replace the file's contents.
     pub(crate) truncate: bool,
@@ -170,7 +169,6 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             input_path: PathOrFileDescriptor::Fd(Fd::INVALID),
-            close: false,
             mode: 0o664,
             truncate: false,
             mkdirp: false,

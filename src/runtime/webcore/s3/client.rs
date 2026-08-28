@@ -44,7 +44,6 @@ pub use crate::webcore::s3::simple_request::S3UploadResult;
 
 use crate::webcore::s3::simple_request as s3_simple_request;
 
-use crate::webcore::BlobSizeType;
 use crate::webcore::ByteStream;
 use crate::webcore::ReadableStream;
 use crate::webcore::readable_stream::Source as ReadableStreamPtr;
@@ -496,7 +495,6 @@ pub(crate) fn writable_stream(
     // objects which keep the task alive); stored via `GlobalRef` in the heap-allocated
     // MultiPartUpload.
     let global_static = GlobalRef::from(global_this);
-    let part_size = options.part_size;
     let task_ptr: *mut MultiPartUpload = bun_core::heap::into_raw(Box::new(MultiPartUpload {
         root: Cell::new(None),
         queue: JsCell::new(None),
@@ -549,7 +547,6 @@ pub(crate) fn writable_stream(
             // SAFETY: adopts one of `task_ptr`'s two initial refs (released in `detach_writable`).
             task: Some(unsafe { RefPtr::from_raw(task_ptr) }),
             global_this: Some(bun_ptr::BackRef::new(global_this)),
-            high_water_mark: part_size as BlobSizeType,
             writer_holders: Cell::new(2),
             ..Default::default()
         }));
@@ -919,7 +916,6 @@ pub(crate) fn upload_stream(
 
     // SAFETY (JSC_BORROW): see `writable_stream` for rationale.
     let global_static = GlobalRef::from(global_this);
-    let part_size = options.part_size;
     let task_ptr: *mut MultiPartUpload = bun_core::heap::into_raw(Box::new(MultiPartUpload {
         root: Cell::new(None),
         queue: JsCell::new(None),
@@ -991,7 +987,6 @@ pub(crate) fn upload_stream(
         // SAFETY: `task_ptr` is live; the sink's ref is released in `detach_writable`.
         task: Some(unsafe { RefPtr::init_ref(task_ptr) }),
         global_this: Some(bun_ptr::BackRef::new(global_this)),
-        high_water_mark: part_size as BlobSizeType,
         ..Default::default()
     }));
     let sink_handle = crate::webcore::SinkHandle::S3Upload(bun_ptr::BackRef::new_mut(sink));

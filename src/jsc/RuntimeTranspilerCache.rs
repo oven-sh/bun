@@ -55,9 +55,7 @@ bun_core::declare_scope!(cache, visible);
 /// offsets picked by a header byte) plus a body of tagged records with
 /// u8/u16/u32 ids and implied slots dropped, instead of fixed u32 arrays.
 /// Version 27: ModuleInfo string table holds Latin-1 / UTF-16 bodies, not WTF-8.
-/// Version 28: `delete`, assign and call targets no longer fold under
-/// minify_syntax, and a define with a constant value keeps the identifier in an
-/// assignment target (#21210). Older entries can hold the invalid output (`0 = 1`).
+/// Version 28: delete and assignment targets are no longer folded to a value (#21210).
 const EXPECTED_VERSION: u32 = 28;
 
 /// Source files smaller than this are not written to / read from the on-disk

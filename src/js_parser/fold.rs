@@ -443,8 +443,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::ExprData::EString(str_) => {
-                    // A write or delete keeps the property reference: `3 = x` is a
-                    // syntax error and `delete 3` is `true`, not `false`.
                     if p.options.features.minify_syntax
                         && !identifier_opts.is_delete_target()
                         && identifier_opts.assign_target() == js_ast::AssignTarget::None
@@ -674,9 +672,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     E::Special::HotEnabled | E::Special::HotDisabled => {
                         let enabled = p.options.features.hot_module_reloading;
-                        // !enabled rewrites produce values (undefined/{}), so keep the
-                        // reference under delete/assign. enabled rewrites produce hmr.<name>
-                        // refs and must run (HotEnabled prints as throwing `hmr.indirectHot`).
+                        // Only the disabled rewrites produce values; the enabled ones are `hmr.<name>` references.
                         if !enabled
                             && (identifier_opts.is_delete_target()
                                 || identifier_opts.assign_target() != js_ast::AssignTarget::None)

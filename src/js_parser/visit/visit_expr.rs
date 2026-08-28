@@ -1047,9 +1047,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let target = e_.target.unwrap_inlined();
         let index = e_.index.unwrap_inlined();
 
-        // Folding a property reference to a value is unsafe where the
-        // reference itself is observed (delete result, assign target; the call
-        // receiver case is handled inside via `(0, x)`).
+        // `[x][0] = v` and `delete [x][0]` act on the temporary, not on `x`.
         if p.options.features.minify_syntax
             && !is_delete_target
             && in_.assign_target == js_ast::AssignTarget::None

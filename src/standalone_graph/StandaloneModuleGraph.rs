@@ -330,6 +330,9 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     fn bytecode_string_table(&self) -> &'static [u8] {
         self.bytecode_string_table
     }
+    fn payload_len(&self) -> usize {
+        self.bytes.len()
+    }
 }
 
 #[repr(C)]

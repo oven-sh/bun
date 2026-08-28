@@ -40,4 +40,8 @@ pub trait StandaloneModuleGraph: Send + Sync {
     fn bytecode_string_table(&self) -> &'static [u8] {
         &[]
     }
+    /// Size of the embedded payload (sources, bytecode, module records) in bytes.
+    fn payload_len(&self) -> usize {
+        0
+    }
 }

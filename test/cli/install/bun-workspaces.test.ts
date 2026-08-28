@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { cp, exists, mkdir, rm } from "fs/promises";
 import {
   assertManifestsPopulated,
@@ -231,6 +231,34 @@ test.concurrent("allowing negative workspace patterns", async () => {
     name: "no-deps",
     version: "1.0.0",
   });
+});
+
+// Junctions on Windows take absolute targets, so only POSIX resolves the
+// workspace link relative to where node_modules really is.
+test.skipIf(process.platform === "win32")("workspace links resolve when node_modules is a symlink", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "root", workspaces: ["packages/*"], dependencies: { "@scope/pkg": "workspace:*" } }),
+    ),
+    write(join(packageDir, "packages", "pkg", "package.json"), JSON.stringify({ name: "@scope/pkg" })),
+    write(join(packageDir, "packages", "pkg", "index.js"), "module.exports = 'pkg';"),
+    mkdir(join(packageDir, "elsewhere", "deep", "modules"), { recursive: true }),
+  ]);
+  // e.g. a Docker volume mounted over node_modules
+  symlinkSync(join(packageDir, "elsewhere", "deep", "modules"), join(packageDir, "node_modules"));
+
+  const { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+
+  expect(realpathSync(join(packageDir, "node_modules", "@scope", "pkg"))).toBe(
+    realpathSync(join(packageDir, "packages", "pkg")),
+  );
+  expect(await file(join(packageDir, "node_modules", "@scope", "pkg", "index.js")).text()).toBe(
+    "module.exports = 'pkg';",
+  );
 });
 
 test("dependency on same name as workspace and dist-tag", async () => {

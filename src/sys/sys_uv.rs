@@ -24,7 +24,6 @@ pub use crate::Error;
 
 // libuv dont support openat (https://github.com/libuv/libuv/issues/4167)
 pub use crate::access;
-pub use crate::get_fd_path;
 pub use crate::openat;
 // Re-export the bun.sys versions of these (libuv has no
 // equivalent or `bun.sys` already routes through Win32 directly).

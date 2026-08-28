@@ -354,7 +354,7 @@ pub trait RepositoryExt: Sized {
         env: &bun_dotenv::Map,
         log: &mut bun_ast::Log,
         cache_dir: bun_sys::Fd,
-        repo_dir: bun_sys::Fd,
+        clone_id: crate::package_manager_task::Id,
         name: &[u8],
         url: &[u8],
         resolved: &[u8],
@@ -697,7 +697,7 @@ impl RepositoryExt for Repository {
     fn try_https(url: &[u8]) -> Option<&[u8]> {
         // May return a slice into the thread-local `final_path_buf` (see `tl_bufs()`);
         // it is only valid until the next use of `TlBufs::final_path_buf()` on this
-        // thread (another `try_https` call, or `checkout`'s `get_fd_path`).
+        // thread (another `try_https` call, or `checkout`'s `repo_path`).
         let final_path_buf = TlBufs::final_path_buf();
         if url.starts_with(b"http") {
             return Some(url);
@@ -930,12 +930,12 @@ impl RepositoryExt for Repository {
         env: &bun_dotenv::Map,
         log: &mut bun_ast::Log,
         cache_dir: bun_sys::Fd,
-        repo_dir: bun_sys::Fd,
+        clone_id: crate::package_manager_task::Id,
         name: &[u8],
         url: &[u8],
         resolved: &[u8],
     ) -> Result<ExtractData, Error> {
-        // `cache_dir`/`repo_dir` are borrowed views; only `package_dir` is owned.
+        // `cache_dir` is a borrowed view; only `package_dir` is owned.
         bun_analytics::features::git_dependencies
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
@@ -971,12 +971,24 @@ impl RepositoryExt for Repository {
                 Err(err) if err.get_errno() == bun_sys::E::ENOENT => {}
                 Err(err) => return Err(err.into()),
             }
-            let repo_path = bun_sys::get_fd_path(
-                repo_dir,
+            let repo_path = {
+                use std::io::Write;
+                let mut repo_name = [0u8; 20];
+                let mut cursor = &mut repo_name[..];
+                write!(
+                    &mut cursor,
+                    "{}.git",
+                    bun_core::fmt::hex_int_lower::<16>(clone_id.get())
+                )
+                .expect("16 hex digits + \".git\" fit in 20 bytes");
                 // Per-field accessor — disjoint from `folder_name_buf`
                 // borrow above. See `TlBufs` accessor doc.
-                TlBufs::final_path_buf(),
-            )?;
+                Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
+                    &PackageManager::get().cache_directory_path,
+                    &mut TlBufs::final_path_buf().0,
+                    &[&repo_name],
+                )
+            };
 
             let staging = CacheStaging::new(cache_dir)?;
             if let Err(err) = exec(
@@ -1098,23 +1110,11 @@ impl RepositoryExt for Repository {
                 }
             };
 
-        let json_path = match json_file.get_path(TlBufs::json_path_buf()) {
-            Ok(p) => p,
-            Err(err) => {
-                log.add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!(
-                        "\"package.json\" for \"{}\" failed to resolve: {}",
-                        BStr::new(name),
-                        BStr::new(err.name())
-                    ),
-                );
-                let _ = json_file.close(); // close error is non-actionable
-                package_dir.close();
-                return Err(crate::Error::InstallFailed);
-            }
-        };
+        let json_path = Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
+            &PackageManager::get().cache_directory_path,
+            &mut TlBufs::json_path_buf().0,
+            &[folder_name, b"package.json"],
+        );
 
         // `json_path` lives in the thread-local
         // `json_path_buf` (not in `json_file`), and `json_buf` is an owned alloc,

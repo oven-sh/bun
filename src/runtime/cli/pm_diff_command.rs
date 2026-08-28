@@ -595,6 +595,7 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
                 let dir = bun_sys::Dir::from_fd(root_fd);
                 let (queue, _bins) = crate::cli::pack_command::published_files(
                     &dir,
+                    root,
                     &json,
                     &bump,
                     bun_install::package_manager::LogLevel::Silent,

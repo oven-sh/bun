@@ -817,9 +817,10 @@ impl Cmd {
                 };
                 let path = bun_core::ZStr::from_buf(&path_buf, path_buf.len() - 1);
                 log!("Expanded Redirect: {}\n", bstr::BStr::new(path.as_bytes()));
-                let cwd_fd = interp.as_cmd(this).base.shell().cwd_fd;
+                let shell = interp.as_cmd(this).base.shell();
                 let redirfd = match crate::shell::interpreter::shell_openat(
-                    cwd_fd,
+                    shell.cwd_fd,
+                    shell.cwd(),
                     path,
                     flags.to_flags(),
                     0o666,

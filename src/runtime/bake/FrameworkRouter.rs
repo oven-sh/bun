@@ -1543,7 +1543,7 @@ impl FrameworkRouter {
                 // SAFETY: `Entry::kind` mutates only the entry's lazily-cached kind; `file_ptr`
                 // is the unique live reference to this entry during the scan, and `fs_impl`
                 // points at the process-global FS implementation.
-                match unsafe { (*file_ptr).kind(&raw mut *fs_impl, false) } {
+                match unsafe { (*file_ptr).kind(&raw mut *fs_impl) } {
                     bun_resolver::fs::EntryKind::Dir => {
                         let t = &self.types[t_index.get() as usize];
                         if t.ignore_underscores && base.starts_with(b"_") {

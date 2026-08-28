@@ -108,7 +108,8 @@ impl Ls {
                     &raw const exec.task_count
                 };
 
-                let cwd = Builtin::cwd(interp, cmd);
+                let shell = Builtin::shell(interp, cmd);
+                let (cwd, cwd_path): (_, Box<[u8]>) = (shell.cwd_fd, Box::from(shell.cwd()));
                 let opts = Self::state_mut(interp, cmd).opts;
                 let evtloop = Builtin::event_loop(interp, cmd);
                 let interp_ptr = interp.as_ctx_ptr();
@@ -121,6 +122,7 @@ impl Ls {
                             opts,
                             task_count_ptr,
                             cwd,
+                            cwd_path.clone(),
                             ZBox::from_bytes(path),
                             evtloop,
                             interp_ptr,
@@ -137,6 +139,7 @@ impl Ls {
                         opts,
                         task_count_ptr,
                         cwd,
+                        cwd_path,
                         ZBox::from_bytes(b"."),
                         evtloop,
                         interp_ptr,
@@ -350,6 +353,7 @@ pub(crate) struct ShellLsTask {
     /// is stable for the lifetime of the Exec state).
     pub task_count: *const AtomicUsize,
     pub cwd: bun_sys::Fd,
+    pub cwd_path: Box<[u8]>,
     pub path: ZBox,
     pub output: Vec<u8>,
     pub is_absolute: bool,
@@ -370,6 +374,7 @@ impl ShellLsTask {
         opts: Opts,
         task_count: *const AtomicUsize,
         cwd: bun_sys::Fd,
+        cwd_path: Box<[u8]>,
         path: ZBox,
         event_loop: EventLoopHandle,
         interp: *mut Interpreter,
@@ -380,6 +385,7 @@ impl ShellLsTask {
             print_directory: false,
             task_count,
             cwd,
+            cwd_path,
             path,
             output: Vec::new(),
             is_absolute: false,
@@ -405,6 +411,7 @@ impl ShellLsTask {
             print_directory: false,
             task_count: self.task_count,
             cwd: self.cwd,
+            cwd_path: self.cwd_path.clone(),
             path: new_path,
             output: Vec::new(),
             is_absolute: false,
@@ -456,7 +463,13 @@ impl ShellLsTask {
             this.now_secs = bun_core::time::timestamp().max(0) as u64;
         }
 
-        let fd = match shell_openat(this.cwd, this.path.as_zstr(), O::RDONLY | O::DIRECTORY, 0) {
+        let fd = match shell_openat(
+            this.cwd,
+            &this.cwd_path,
+            this.path.as_zstr(),
+            O::RDONLY | O::DIRECTORY,
+            0,
+        ) {
             Err(open_err) => {
                 this.list_non_directory_operand(&open_err);
                 return;
@@ -512,7 +525,7 @@ impl ShellLsTask {
 
     /// coreutils operand rule: `stat`, and on ENOENT or ELOOP `lstat` so a symlink is itself.
     fn list_non_directory_operand(&mut self, open_err: &bun_sys::Error) {
-        match shell_statat(self.cwd, self.path.as_zstr()) {
+        match shell_statat(self.cwd, &self.cwd_path, self.path.as_zstr()) {
             // A directory that would not open: report the open error.
             Ok(stat) if S::ISDIR(stat.st_mode as _) => {
                 self.err = Some(self.error_with_path(open_err));
@@ -525,7 +538,7 @@ impl ShellLsTask {
                 return;
             }
         }
-        match shell_lstatat(self.cwd, self.path.as_zstr()) {
+        match shell_lstatat(self.cwd, &self.cwd_path, self.path.as_zstr()) {
             Ok(stat) => {
                 // An operand is never subject to the -a/-A filter.
                 let name = ZBox::from_bytes(self.path.as_bytes());

@@ -1951,6 +1951,20 @@ impl ShellExecEnv {
         in_init: bool,
     ) -> bun_sys::Result<()> {
         let is_abs = bun_paths::is_absolute(new_cwd_);
+        // Windows: a rooted path without a drive (`/foo`, `\foo`) is on the
+        // current cwd's volume, so `cwd()` always keeps its drive/UNC root
+        // (`shell_get_path` relies on that).
+        #[cfg(windows)]
+        let (root, abs_rest): (&[u8], &[u8]) = if is_rooted_without_drive(new_cwd_) {
+            (
+                bun_paths::resolve_path::windows_filesystem_root(self.cwd()),
+                &new_cwd_[1..],
+            )
+        } else {
+            (b"", new_cwd_)
+        };
+        #[cfg(not(windows))]
+        let (root, abs_rest): (&[u8], &[u8]) = (b"", new_cwd_);
 
         // Bounds-check against a `[4096]u8` buffer on *every* platform. Do NOT
         // use `bun_paths::PathBuffer` here: on Windows that is `MAX_PATH_BYTES
@@ -1958,7 +1972,7 @@ impl ShellExecEnv {
         // `>= buf.len()` check would change the ENAMETOOLONG bound.
         let mut buf = [0u8; 4096];
         let required_len = if is_abs {
-            new_cwd_.len()
+            root.len() + abs_rest.len()
         } else {
             self.cwd().len() + 1 + new_cwd_.len()
         };
@@ -1971,9 +1985,11 @@ impl ShellExecEnv {
 
         // Build NUL-terminated `new_cwd` in `buf`.
         let new_cwd_len: usize = if is_abs {
-            buf[..new_cwd_.len()].copy_from_slice(new_cwd_);
-            buf[new_cwd_.len()] = 0;
-            new_cwd_.len()
+            let n = root.len() + abs_rest.len();
+            buf[..root.len()].copy_from_slice(root);
+            buf[root.len()..n].copy_from_slice(abs_rest);
+            buf[n] = 0;
+            n
         } else {
             // `join_z_buf` normalizes `.`/`..` so the stored `$PWD`/`$OLDPWD`
             // strings reflect the resolved path (not `<cwd>/..`).
@@ -2007,6 +2023,7 @@ impl ShellExecEnv {
 
         let new_cwd_fd = shell_openat(
             self.cwd_fd,
+            self.cwd(),
             new_cwd_z,
             bun_sys::O::DIRECTORY | bun_sys::O::RDONLY,
             0,
@@ -2251,86 +2268,100 @@ pub(crate) fn shell_dup(fd: Fd) -> bun_sys::Result<Fd> {
     }
 }
 
-/// Windows-only: rewrite shell paths so POSIX-absolute `/foo` resolves onto
-/// `dirfd`'s drive root, `/dev/null` maps to `NUL`, and relative paths are
-/// joined against `dirfd`'s real path. Returns a NUL-terminated slice that
-/// either borrows `buf` or is `to` itself.
+/// Windows-only: a rooted path without a drive (`/foo`, `\foo`) is on `cwd`'s
+/// volume.
 #[cfg(windows)]
-fn shell_get_path<'a>(
-    dirfd: Fd,
-    to: &'a bun_core::ZStr,
-    buf: &'a mut bun_paths::PathBuffer,
-) -> bun_sys::Result<&'a bun_core::ZStr> {
-    if to.as_bytes() == b"/dev/null" {
-        return Ok(crate::shell::shell_body::WINDOWS_DEV_NULL);
-    }
-    if bun_paths::Platform::Posix.is_absolute(to.as_bytes()) {
-        let source_root_len = {
-            let dirpath = bun_sys::get_fd_path(dirfd, buf).map_err(|e| e.with_fd(dirfd))?;
-            bun_paths::resolve_path::windows_filesystem_root(dirpath).len()
-        };
-        // `dirpath` already
-        // occupies `buf[0..]` and the root is its prefix, so no copy is
-        // needed. Splice `to[1..]` after the root.
-        let to_tail = &to.as_bytes()[1..];
-        let end = source_root_len + to_tail.len();
-        buf[source_root_len..end].copy_from_slice(to_tail);
-        buf[end] = 0;
-        return Ok(bun_core::ZStr::from_buf(buf.as_slice(), end));
-    }
-    if bun_paths::Platform::Windows.is_absolute(to.as_bytes()) {
-        return Ok(to);
-    }
-    // Relative: resolve dirfd → path, then join.
-    // Note: a single-buffer join would read `dirpath` (a slice of `buf`)
-    // while writing `buf`; copy `dirpath`
-    // out first so the mutable borrow on `buf` is exclusive.
-    let dirpath = bun_sys::get_fd_path(dirfd, buf)
-        .map_err(|e| e.with_fd(dirfd))?
-        .to_vec();
-    Ok(bun_paths::resolve_path::join_z_buf::<
-        bun_paths::platform::Auto,
-    >(&mut buf[..], &[&dirpath, to.as_bytes()]))
+fn is_rooted_without_drive(path: &[u8]) -> bool {
+    bun_paths::Platform::Windows.is_absolute(path)
+        && bun_paths::string_paths::is_windows_absolute_path_missing_drive_letter(path)
 }
 
-/// Windows: rewrite the path via `shell_get_path` then `bun_sys::stat`, tagging
-/// the error with the *original* `path_` (not the rewritten one). POSIX: plain
-/// `bun_sys::fstatat(dir, path_)`.
+/// Windows-only: rewrite shell paths so rooted-without-drive `/foo` resolves
+/// onto `cwd`'s drive root, `/dev/null` maps to `NUL`, and relative paths are
+/// joined against `cwd` (the shell's cwd string). Returns a NUL-terminated
+/// slice that either borrows `buf` or is `to` itself.
+#[cfg(windows)]
+fn shell_get_path<'a>(
+    cwd: &[u8],
+    to: &'a bun_core::ZStr,
+    buf: &'a mut bun_paths::PathBuffer,
+) -> &'a bun_core::ZStr {
+    if to.as_bytes() == b"/dev/null" {
+        return crate::shell::shell_body::WINDOWS_DEV_NULL;
+    }
+    if is_rooted_without_drive(to.as_bytes()) {
+        let root = bun_paths::resolve_path::windows_filesystem_root(cwd);
+        let to_tail = &to.as_bytes()[1..];
+        let end = root.len() + to_tail.len();
+        buf[..root.len()].copy_from_slice(root);
+        buf[root.len()..end].copy_from_slice(to_tail);
+        buf[end] = 0;
+        return bun_core::ZStr::from_buf(buf.as_slice(), end);
+    }
+    if bun_paths::Platform::Windows.is_absolute(to.as_bytes()) {
+        return to;
+    }
+    bun_paths::resolve_path::join_z_buf::<bun_paths::platform::Auto>(
+        &mut buf[..],
+        &[cwd, to.as_bytes()],
+    )
+}
+
+/// `cwd_fd`/`cwd` are the shell env's cwd fd and cwd string. Windows: rewrite
+/// the path via `shell_get_path` then `bun_sys::stat`, tagging the error with
+/// the *original* `path_` (not the rewritten one). POSIX: plain
+/// `bun_sys::fstatat(cwd_fd, path_)`.
 // consumed by states/CondExpr (`[[ -e/-f/-d ... ]]`) and the `ls` builtin
-pub(crate) fn shell_statat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<bun_sys::Stat> {
+pub(crate) fn shell_statat(
+    cwd_fd: Fd,
+    cwd: &[u8],
+    path_: &bun_core::ZStr,
+) -> bun_sys::Result<bun_sys::Stat> {
     #[cfg(windows)]
     {
+        let _ = cwd_fd;
         let mut buf = bun_paths::path_buffer_pool::get();
-        let p = shell_get_path(dir, path_, &mut buf)?;
+        let p = shell_get_path(cwd, path_, &mut buf);
         return bun_sys::stat(p).map_err(|e| e.with_path(path_.as_bytes()));
     }
     #[cfg(not(windows))]
     {
-        bun_sys::fstatat(dir, path_)
+        let _ = cwd;
+        bun_sys::fstatat(cwd_fd, path_)
     }
 }
 
 /// `shell_statat` without following a final symlink.
-pub(crate) fn shell_lstatat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<bun_sys::Stat> {
+pub(crate) fn shell_lstatat(
+    cwd_fd: Fd,
+    cwd: &[u8],
+    path_: &bun_core::ZStr,
+) -> bun_sys::Result<bun_sys::Stat> {
     #[cfg(windows)]
     {
+        let _ = cwd_fd;
         let mut buf = bun_paths::path_buffer_pool::get();
-        let p = shell_get_path(dir, path_, &mut buf)?;
+        let p = shell_get_path(cwd, path_, &mut buf);
         return bun_sys::lstat(p).map_err(|e| e.with_path(path_.as_bytes()));
     }
     #[cfg(not(windows))]
     {
-        bun_sys::lstatat(dir, path_)
+        let _ = cwd;
+        bun_sys::lstatat(cwd_fd, path_)
     }
 }
 
+/// `cwd` is the shell env's cwd string; `dir` is its cwd fd, except for
+/// `O_DIRECTORY` opens of entry names found by iterating `dir`.
+///
 /// POSIX: `bun_sys::openat` with the error tagged `.with_path(path)`.
-/// Windows: for `O_DIRECTORY` opens, rewrite POSIX-absolute paths via
+/// Windows: for `O_DIRECTORY` opens, rewrite rooted-without-drive paths via
 /// `shell_get_path` and use `openDirAtWindowsA(.iterable=true)` +
 /// `makeLibUVOwnedForSyscall`; for file opens, resolve via `shell_get_path`
-/// then `bun_sys::open`.
+/// then `bun_sys::open` (libuv, which has no `openat`).
 pub(crate) fn shell_openat(
     dir: Fd,
+    cwd: &[u8],
     path: &bun_core::ZStr,
     flags: i32,
     perm: bun_sys::Mode,
@@ -2338,28 +2369,16 @@ pub(crate) fn shell_openat(
     #[cfg(windows)]
     {
         use bun_sys::FdExt;
+        let mut buf = bun_paths::path_buffer_pool::get();
         if flags & bun_sys::O::DIRECTORY != 0 {
-            if bun_paths::Platform::Posix.is_absolute(path.as_bytes()) {
-                let mut buf = bun_paths::path_buffer_pool::get();
-                let p = shell_get_path(dir, path, &mut buf)?;
-                return bun_sys::open_dir_at_windows_a(
-                    dir,
-                    p.as_bytes(),
-                    bun_sys::WindowsOpenDirOptions {
-                        iterable: true,
-                        no_follow: flags & bun_sys::O::NOFOLLOW != 0,
-                        ..Default::default()
-                    },
-                )
-                .map_err(|e| e.with_path(path.as_bytes()))?
-                .make_lib_uv_owned_for_syscall(
-                    bun_sys::Tag::open,
-                    bun_sys::ErrorCase::CloseOnFail,
-                );
-            }
+            let p = if is_rooted_without_drive(path.as_bytes()) {
+                shell_get_path(cwd, path, &mut buf)
+            } else {
+                path
+            };
             return bun_sys::open_dir_at_windows_a(
                 dir,
-                path.as_bytes(),
+                p.as_bytes(),
                 bun_sys::WindowsOpenDirOptions {
                     iterable: true,
                     no_follow: flags & bun_sys::O::NOFOLLOW != 0,
@@ -2369,14 +2388,15 @@ pub(crate) fn shell_openat(
             .map_err(|e| e.with_path(path.as_bytes()))?
             .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail);
         }
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let p = shell_get_path(dir, path, &mut buf)?;
+        let _ = dir;
+        let p = shell_get_path(cwd, path, &mut buf);
         // No `makeLibUVOwnedForSyscall` here: `bun_sys::open` on Windows
         // routes through `sys_uv` and already yields a uv-owned fd.
         return bun_sys::open(p, flags, perm);
     }
     #[cfg(not(windows))]
     {
+        let _ = cwd;
         bun_sys::openat(dir, path, flags, perm).map_err(|e| e.with_path(path.as_bytes()))
     }
 }

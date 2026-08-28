@@ -7463,18 +7463,7 @@ impl NodeFS {
             inbuf[path_len] = 0;
             let path = ZStr::from_buf(&inbuf[..], path_len);
 
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            let flags = sys::O::PATH; // O_PATH is faster
-            #[cfg(not(any(target_os = "linux", target_os = "android")))]
-            let flags = sys::O::RDONLY | sys::O::NONBLOCK | sys::O::NOCTTY;
-
-            let fd = match sys::open(path, flags, 0) {
-                Err(err) => return Err(err.with_path(path)),
-                Ok(fd_) => fd_,
-            };
-            let _close = scopeguard::guard(fd, |fd| fd.close());
-
-            let buf = match Syscall::get_fd_path(fd, &mut outbuf) {
+            let buf = match sys::realpath(path, &mut outbuf) {
                 Err(err) => return Err(err.with_path(path)),
                 Ok(buf_) => buf_,
             };
@@ -8770,19 +8759,14 @@ impl NodeFS {
                     ..Default::default()
                 });
             }
-            // Precompute both ENOENT fallbacks once,
-            // before any branch. Re-deriving them inline inside `unwrap_or_else`
+            // Precompute the ENOENT fallback once,
+            // before any branch. Re-deriving it inline inside `unwrap_or_else`
             // double-borrows `&mut self` (the outer `errno_sys_p` arg already holds
             // a borrow into `sync_error_buf`).
             let src_enoent_maybe = Maybe::<ret::CopyFile>::init_err_with_p(
                 SystemErrno::ENOENT,
                 sys::Tag::copyfile,
                 self.os_path_into_sync_error_buf(src.as_slice()),
-            );
-            let dst_enoent_maybe = Maybe::<ret::CopyFile>::init_err_with_p(
-                SystemErrno::ENOENT,
-                sys::Tag::copyfile,
-                self.os_path_into_sync_error_buf(dest.as_slice()),
             );
             let stat_ = match reuse_stat {
                 Some(a) => a,
@@ -8843,53 +8827,61 @@ impl NodeFS {
                 }
                 return Ok(());
             } else {
-                let handle = match sys::openat_windows(FD::INVALID, src, sys::O::RDONLY, 0) {
-                    Err(err) => return Err(err),
-                    Ok(fd) => fd,
+                let mut src8_buf = paths::path_buffer_pool::get();
+                let src8 = strings::from_wpath(&mut src8_buf[..], src.as_slice());
+                let mut link_buf = paths::path_buffer_pool::get();
+                let link_len = match sys::readlink(src8, &mut link_buf[..]) {
+                    Ok(len) => len,
+                    Err(err) => {
+                        let p = self.os_path_into_sync_error_buf(src.as_slice());
+                        return Err(err.with_path(p));
+                    }
                 };
-                let _close = scopeguard::guard(handle, |fd| fd.close());
-                let mut wbuf = paths::os_path_buffer_pool::get();
-                let len = unsafe {
-                    windows::GetFinalPathNameByHandleW(
-                        handle.native(),
-                        wbuf.as_mut_ptr(),
-                        wbuf.len() as u32,
-                        0,
-                    )
-                } as usize;
-                if len == 0 || len >= wbuf.len() {
-                    let p = self.os_path_into_sync_error_buf(dest.as_slice());
-                    return Maybe::<ret::CopyFile>::errno_sys_p(0, sys::Tag::copyfile, p)
-                        .unwrap_or(dst_enoent_maybe);
-                }
-                wbuf[len] = 0;
-                // `GetFinalPathNameByHandleW(VOLUME_NAME_DOS)` spells network
-                // targets as `\\?\UNC\server\share\…`; rewrite in place to the
-                // absolute `\\server\share\…` form (libuv `fs__realpath_handle`).
-                let is_unc = strings::has_prefix_comptime_utf16(&wbuf[..len], b"\\\\?\\UNC\\");
-                let target = if is_unc {
-                    let skip = b"\\\\?\\UN".len();
-                    wbuf[skip] = u16::from(b'\\');
-                    bun_core::WStr::from_buf(&wbuf[skip..], len - skip)
+                link_buf[link_len] = 0;
+                let link_target = &link_buf[..link_len];
+                let mut resolved_buf = paths::path_buffer_pool::get();
+                let mut cwd_buf = paths::path_buffer_pool::get();
+                let target: &ZStr = if paths::is_absolute(link_target) {
+                    ZStr::from_buf(&link_buf[..], link_len)
                 } else {
-                    bun_core::WStr::from_buf(&wbuf[..], len)
+                    // `src8` is absolute (a kernel32 path), so the cwd is only
+                    // the join's required base.
+                    let cwd_len = match sys::getcwd(&mut cwd_buf[..]) {
+                        Ok(n) => n,
+                        Err(err) => {
+                            let p = self.os_path_into_sync_error_buf(dest.as_slice());
+                            return Err(err.with_path(p));
+                        }
+                    };
+                    let src_dir =
+                        paths::resolve_path::dirname::<paths::platform::Windows>(src8.as_bytes());
+                    paths::resolve_path::join_abs_string_buf_z::<paths::platform::Windows>(
+                        &cwd_buf[..cwd_len],
+                        &mut resolved_buf[..],
+                        &[src_dir, link_target],
+                    )
                 };
                 let is_dir = stat_ & windows::FILE_ATTRIBUTE_DIRECTORY != 0;
-                // `symlink_w`/`symlink_or_junction` (not raw `CreateSymbolicLinkW`)
-                // so unprivileged creation is requested. UNC targets skip the junction
-                // fallback: libuv's `fs__create_junction` only accepts drive-letter targets.
+                // UNC targets skip the junction fallback: libuv's
+                // `fs__create_junction` only accepts drive-letter targets.
+                let t = target.as_bytes();
+                let is_unc = t.starts_with(b"\\\\")
+                    && (!t.starts_with(b"\\\\?\\") || t.starts_with(b"\\\\?\\UNC\\"));
                 let link_result = if is_dir && !is_unc {
                     let mut dest8 = paths::path_buffer_pool::get();
-                    let mut target8 = paths::path_buffer_pool::get();
                     sys::symlink_or_junction(
                         strings::from_wpath(&mut dest8[..], dest.as_slice()),
-                        strings::from_wpath(&mut target8[..], target.as_slice()),
+                        target,
                         None,
                     )
                 } else {
+                    let mut target16 = paths::w_path_buffer_pool::get();
                     sys::symlink_w(
                         dest,
-                        target,
+                        paths::string_paths::to_w_path_normalize_auto_extend(
+                            &mut target16[..],
+                            target.as_bytes(),
+                        ),
                         sys::WindowsSymlinkOptions { directory: is_dir },
                     )
                 };

@@ -9,7 +9,7 @@ use bun_install::dependency::Dependency;
 use bun_install::lockfile::{LoadResult, LoadStep, Lockfile, package::PackageColumns as _, tree};
 use bun_install::npm as Npm;
 use bun_install::package_manager_real::{
-    CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
+    CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory_path,
     package_manager_options::LogLevel, setup_global_dir,
 };
 use bun_install::{DependencyID, PackageID, PackageManager, migration};
@@ -440,34 +440,15 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 let mut process_env = bun_dotenv::Loader::init();
                 process_env.load_process()?;
                 let cache_dir = fetch_cache_directory_path(&mut process_env, None);
-                let mut rm_buf = PathBuffer::uninit();
-                let rm_dir = match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
-                    Ok(d) => d,
-                    Err(err) => {
-                        bun_core::pretty_errorln!(
-                            "{} getting cache directory",
-                            crate::Error::from(err).name(),
-                        );
-                        Global::crash();
-                    }
-                };
-                let rm_path = match rm_dir.get_fd_path(&mut rm_buf) {
-                    Ok(p) => &p[..],
-                    Err(err) => {
-                        bun_core::pretty_errorln!(
-                            "{} getting cache directory",
-                            crate::Error::from(err).name(),
-                        );
-                        Global::crash();
-                    }
-                };
-                rm_dir.close();
+                let rm_path: &[u8] = &cache_dir.path;
 
-                if let Err(err) = bun_sys::delete_tree_absolute(rm_path) {
-                    Output::err(err, "Could not delete {s}", (bstr::BStr::new(rm_path),));
-                    had_err = true;
+                match bun_sys::delete_tree_absolute(rm_path) {
+                    Err(err) if err.get_errno() != bun_sys::E::ENOENT => {
+                        Output::err(err, "Could not delete {s}", (bstr::BStr::new(rm_path),));
+                        had_err = true;
+                    }
+                    _ => bun_core::prettyln!("Cleared 'bun install' cache"),
                 }
-                bun_core::prettyln!("Cleared 'bun install' cache");
 
                 'bunx: {
                     let tmp = Fs::RealFS::platform_temp_dir();
@@ -532,19 +513,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 Global::exit(if had_err { 1 } else { 0 });
             }
 
-            let mut dir = PathBuffer::uninit();
-            let fd = get_cache_directory(pm);
-            let outpath = match bun_sys::get_fd_path(fd, &mut dir) {
-                Ok(p) => &p[..],
-                Err(err) => {
-                    bun_core::pretty_errorln!(
-                        "{} getting cache directory",
-                        crate::Error::from(err).name(),
-                    );
-                    Global::crash();
-                }
-            };
-            let _ = Output::writer().write_all(outpath);
+            let _ = Output::writer().write_all(get_cache_directory_path(pm).as_bytes());
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"default-trusted") {
             DefaultTrustedCommand::exec()?;
@@ -733,6 +702,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 migration::detect_and_load_other_lockfile(
                     &mut *lockfile,
                     Fd::cwd(),
+                    Fs::FileSystem::get().top_level_dir,
                     &mut *pm_raw,
                     &mut *log,
                 )

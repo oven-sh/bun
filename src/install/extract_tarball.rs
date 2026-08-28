@@ -701,41 +701,12 @@ impl ExtractTarball {
                 }
             }
 
-            // We return a resolved absolute absolute file path to the cache dir.
-            // To get that directory, we open the directory again.
-            let final_dir = match cache_dir
-                .open_at(folder_name)
-                .map_err(crate::Error::from)
-            {
-                Ok(d) => d,
-                Err(err) => {
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "failed to verify cache dir for \"{}\": {}",
-                            bun_fmt::s(name),
-                            err.name(),
-                        ),
-                    );
-                    return Err(crate::Error::InstallFailed);
-                }
-            };
-            let final_path = match sys::get_fd_path_z(final_dir.fd(), &mut bufs.final_path_buf) {
-                Ok(p) => p,
-                Err(err) => {
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "failed to resolve cache dir for \"{}\": {}",
-                            bun_fmt::s(name),
-                            bun_fmt::s(err.name()),
-                        ),
-                    );
-                    return Err(crate::Error::InstallFailed);
-                }
-            };
+            // only set once, should be fine to read not on main thread
+            let final_path = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
+                package_manager.cache_directory_path.as_bytes(),
+                &mut bufs.final_path_buf.0,
+                &[folder_name],
+            );
 
             let url = FileSystem::instance()
                 .dirname_store()
@@ -786,24 +757,11 @@ impl ExtractTarball {
                     }
                 };
                 json_buf = buf;
-                // `defer json_file.close()` → close after resolving path.
-                json_path = match json_file.get_path(&mut bufs.json_path_buf) {
-                    Ok(p) => p,
-                    Err(err) => {
-                        let _ = json_file.close();
-                        log.add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "\"package.json\" for \"{}\" failed to resolve: {}",
-                                bun_fmt::s(name),
-                                bun_fmt::s(err.name()),
-                            ),
-                        );
-                        return Err(crate::Error::InstallFailed);
-                    }
-                };
                 let _ = json_file.close();
+                json_path = path::resolve_path::join_string_buf::<path::platform::Auto>(
+                    &mut bufs.json_path_buf.0,
+                    &[final_path.as_bytes(), b"package.json"],
+                );
             }
 
             if !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_INSTALL_INDEX
@@ -832,7 +790,6 @@ impl ExtractTarball {
                             let dest_path = path::resolve_path::join_abs_string_buf_z::<
                                 path::platform::Windows,
                             >(
-                                // only set once, should be fine to read not on main thread
                                 package_manager.cache_directory_path.as_bytes(),
                                 &mut dest_buf,
                                 &[name, dest_name],

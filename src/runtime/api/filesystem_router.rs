@@ -394,7 +394,7 @@ impl FileSystemRouter {
                         // SAFETY: `entry_ptr` is a live `*mut Entry` in the process-static
                         // EntryStore (checked non-null above); the lazy-stat rewrite is
                         // serialized on `Entry.mutex`; fs_impl is the process-global RealFS.
-                        unsafe { (&*entry_ptr).kind(fs_impl, false) }
+                        unsafe { (&*entry_ptr).kind(fs_impl) }
                     };
                     if kind == Fs::EntryKind::Dir {
                         for banned_dir in Router::BANNED_DIRS.iter() {

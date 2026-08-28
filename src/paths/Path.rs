@@ -11,7 +11,7 @@ use crate::{
     MAX_PATH_BYTES, PATH_MAX_WIDE, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS, WPathBuffer,
     resolve_path as path,
 };
-use bun_core::{Fd, WStr, ZStr, strings};
+use bun_core::{WStr, ZStr, strings};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Options
@@ -656,87 +656,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         this.buf_append_input(trimmed, false);
 
         this
-    }
-
-    pub fn init_fd_path(fd: Fd) -> crate::Result<Self> {
-        match Kind::from_u8(KIND) {
-            Kind::Abs => {}
-            Kind::Rel => panic!("cannot create a relative path from getFdPath"),
-            Kind::Any => {}
-        }
-
-        // `getFdPath`/`getFdPathW` are libc/kernel32-only, so the bodies live
-        // in `bun_core::fd_path_raw[_w]` (T0). >0 = units written, <0 = error.
-        // Dispatch on the pooled buffer's element type (u8 →
-        // readlink/F_GETPATH, u16 → GetFinalPathNameByHandleW) via TypeId.
-        use core::any::TypeId;
-        let mut this = Self::init();
-
-        if TypeId::of::<U>() == TypeId::of::<u8>() {
-            let buf: &mut [u8] = U::id_u8_mut(U::buffer_as_mut_slice(&mut this._buf.pooled));
-
-            // On Windows the u8 path still resolves via
-            // `GetFinalPathNameByHandleW` into a stack `WPathBuffer`, then
-            // transcodes to UTF-8. `fd_path_raw` has no Windows arm
-            // (returns 0), so route through the wide call here.
-            #[cfg(windows)]
-            {
-                let mut wbuf = crate::w_path_buffer_pool::get();
-                let wslice: &mut [u16] = wbuf.as_mut_slice();
-                // SAFETY: wslice is valid for wslice.len() writable u16 units.
-                let n = unsafe { bun_core::fd_path_raw_w(fd, wslice.as_mut_ptr(), wslice.len()) };
-                if n <= 0 {
-                    // `GetFinalPathNameByHandle` surfaces
-                    // FileNotFound (return_length==0 → -1) or
-                    // NameTooLong (return_length>=buf.len → -2).
-                    return Err(if n == -2 {
-                        crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
-                    } else {
-                        crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
-                    });
-                }
-                let wide = &wslice[..n as usize];
-                let written = strings::convert_utf16_to_utf8_in_buffer(buf, wide).len();
-                let raw = &buf[..written];
-                let trimmed = trim_input(TrimInputKind::Abs, raw);
-                this._buf.len = trimmed.len();
-                return Ok(this);
-            }
-
-            #[cfg(not(windows))]
-            {
-                // SAFETY: buf is valid for buf.len() writable bytes.
-                let n = unsafe { bun_core::fd_path_raw(fd, buf.as_mut_ptr(), buf.len()) };
-                // `fd_path_raw` returns 0 on misc failure — do not swallow as
-                // an empty path; propagate an error.
-                if n <= 0 {
-                    return Err(crate::Error::Sys(bun_errno::SystemErrno::EBADF)); // EBADF — fd_path_raw surfaces no errno
-                }
-                let raw = &buf[..n as usize];
-                let trimmed = trim_input(TrimInputKind::Abs, raw);
-                this._buf.len = trimmed.len();
-            }
-        } else {
-            // U == u16 → getFdPathW (Windows GetFinalPathNameByHandleW).
-            let buf: &mut [u16] = U::id_u16_mut(U::buffer_as_mut_slice(&mut this._buf.pooled));
-
-            // SAFETY: buf is valid for buf.len() writable u16 units.
-            let n = unsafe { bun_core::fd_path_raw_w(fd, buf.as_mut_ptr(), buf.len()) };
-            if n <= 0 {
-                // `GetFinalPathNameByHandle` surfaces
-                // FileNotFound (return_length==0 → -1) or
-                // NameTooLong (return_length>=buf.len → -2).
-                return Err(if n == -2 {
-                    crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
-                } else {
-                    crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
-                });
-            }
-            let raw = &buf[..n as usize];
-            let trimmed = trim_input(TrimInputKind::Abs, raw);
-            this._buf.len = trimmed.len();
-        }
-        Ok(this)
     }
 
     fn trim_input_for_kind<C: PathUnit>(input: &[C]) -> options::Result<&[C]> {

@@ -49,7 +49,6 @@ pub(crate) fn validate_path(
     if rel_path.is_empty() {
         return Box::default();
     }
-    // TODO: switch to getFdPath()-based implementation
     // `join_abs_string` resolves `.`/`..` against `cwd` into a threadlocal
     // buffer which is then boxed.
     let _ = path_kind;
@@ -1897,11 +1896,7 @@ impl<'a> BundleOptions<'a> {
 
         if opts.write && !opts.output_dir.is_empty() {
             let handle = open_output_dir(&opts.output_dir)?;
-            // The inline `bun_resolver::fs::FileSystem` does
-            // not yet expose `get_fd_path`, so resolve via `bun_sys` and box.
-            let mut buf = bun_paths::PathBuffer::uninit();
-            let dir = bun_sys::get_fd_path(handle.fd(), &mut buf).map_err(crate::Error::from)?;
-            opts.output_dir = Box::from(&dir[..]);
+            opts.output_dir = Box::from(fs.abs(&[&opts.output_dir]));
             opts.output_dir_handle = Some(handle);
         }
 

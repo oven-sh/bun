@@ -24,7 +24,7 @@ use bun_paths::WPathBuffer;
 use bun_paths::strings;
 use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_resolver::package_json::PackageJSON;
-use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_sys::{self as sys, Fd};
 use bun_which::which;
 
 use crate::cli;
@@ -974,6 +974,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.argv = std::mem::take(&mut ctx.passthrough);
         // `InitOptions` has no `store_fd` field, so set it on the resolver directly.
         vm.transpiler.resolver.store_fd = ctx.debug.hot_reload != cli::command::HotReload::None;
+        vm.preserve_symlinks_main |= ctx.runtime_options.preserve_symlinks_main;
         // `vm.dns_result_order` is a `u8` until the b2-cycle widens
         // it to `bun_dns::Order`; the enum is `#[repr(u8)]` so `as u8` is exact.
         vm.dns_result_order =
@@ -2708,15 +2709,9 @@ impl RunCommand {
             return false;
         }
 
-        // We OPEN the file (rather than
-        // just stat()ing the path), fstat() the fd, then derive the canonical
-        // absolute path via `get_fd_path` before booting. The
-        // get_fd_path step matters: it resolves symlinks so module-relative
-        // resolution sees the real location.
         let mut script_name_buf = PathBuffer::uninit();
 
-        // Build a NUL-terminated path to open (branching for
-        // absolute vs. simple-relative vs. `..`/`~`-prefixed).
+        // Build a NUL-terminated absolute path to probe.
         let open_len: usize = if paths::is_absolute(target) {
             // `PosixToWinNormalizer::resolve_cwd` prepends the cwd drive
             // letter on Windows for `/abs` paths; then, on Windows only,
@@ -2735,23 +2730,15 @@ impl RunCommand {
             }
             script_name_buf[..resolved.len()].copy_from_slice(resolved);
             resolved.len()
-        } else if !target.starts_with(b"..") && target[0] != b'~' {
-            // open relative to cwd as-is
-            if target.len() >= MAX_PATH_BYTES {
-                return false;
-            }
-            script_name_buf[..target.len()].copy_from_slice(target);
-            target.len()
         } else {
-            // `..foo` / `~foo` — resolve against cwd via joinAbsStringBuf.
-            let mut cwd_buf = PathBuffer::uninit();
-            let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else {
+            let Some(cwd) = ctx.args.absolute_working_dir.as_deref() else {
                 return false;
             };
-            let cwd_len = cwd.as_bytes().len();
-            cwd_buf[cwd_len] = paths::SEP;
+            if cwd.len() + 1 + target.len() >= MAX_PATH_BYTES {
+                return false;
+            }
             let joined = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
-                &cwd_buf[..cwd_len + 1],
+                cwd,
                 &mut script_name_buf.0,
                 &[target],
             );
@@ -2765,49 +2752,17 @@ impl RunCommand {
         // `script_name_buf[..open_len]` is init.
         let open_z = bun_core::ZStr::from_buf(&script_name_buf[..], open_len);
 
-        // Open read-only.
-        let Ok(fd) = bun_sys::open(open_z, bun_sys::O::RDONLY, 0) else {
-            return false;
-        };
-        // `.makeLibUVOwnedForSyscall(.open, .close_on_fail)` — hands the
-        // HANDLE off to libuv ownership on Windows; pass-through on POSIX.
-        let Ok(fd) = fd.make_lib_uv_owned_for_syscall(sys::Tag::open, sys::ErrorCase::CloseOnFail)
-        else {
-            return false;
-        };
-
-        // fstat: directories cannot be run. if only there was a faster way to
-        // check this
-        let is_dir = match bun_sys::fstat(fd) {
-            Ok(st) => bun_sys::S::ISDIR(st.st_mode as _),
-            Err(_) => {
-                let _ = bun_sys::close(fd);
-                return false;
-            }
-        };
-        if is_dir {
-            let _ = bun_sys::close(fd);
-            return false;
+        // Directories cannot be run.
+        match bun_sys::stat(open_z) {
+            Ok(st) if !bun_sys::S::ISDIR(st.st_mode as _) => {}
+            _ => return false,
         }
+        let absolute_script_path: Box<[u8]> = Box::from(open_z.as_bytes());
 
         Global::configure_allocator(core::Global::AllocatorConfiguration {
             long_running: true,
             ..Default::default()
         });
-
-        // Re-derive the canonical absolute path from the open fd (resolves
-        // symlinks).
-        let absolute_script_path: Box<[u8]> = {
-            let resolved = match bun_sys::get_fd_path(fd, &mut script_name_buf) {
-                Ok(p) => p,
-                Err(_) => {
-                    let _ = bun_sys::close(fd);
-                    return false;
-                }
-            };
-            resolved.to_vec().into_boxed_slice()
-        };
-        let _ = bun_sys::close(fd);
 
         Self::boot_and_handle_error(ctx, &absolute_script_path, None)
     }
@@ -3583,7 +3538,7 @@ impl RunCommand {
                             // SAFETY: `Transpiler::fs` is the non-null process-static
                             // singleton; the lazy-stat rewrite inside `kind()` is
                             // serialized on the per-entry mutex.
-                            if unsafe { value.kind(&raw mut (*this_transpiler.fs).fs, true) }
+                            if unsafe { value.kind(&raw mut (*this_transpiler.fs).fs) }
                                 == bun_resolver::fs::EntryKind::File
                             {
                                 if !has_copied {
@@ -3653,7 +3608,7 @@ impl RunCommand {
                             // SAFETY: `Transpiler::fs` is the non-null process-static
                             // singleton; the lazy-stat rewrite inside `kind()` is
                             // serialized on the per-entry mutex.
-                            && unsafe { value.kind(&raw mut (*this_transpiler.fs).fs, true) }
+                            && unsafe { value.kind(&raw mut (*this_transpiler.fs).fs) }
                                 == bun_resolver::fs::EntryKind::File
                         {
                             // SAFETY: `Transpiler::fs` is the non-null process-static singleton.

@@ -270,7 +270,7 @@ impl OutputFile {
         #[cfg(windows)]
         {
             let _ = (fd_out, fd_in);
-            // use paths instead of bun.getFdPathW()
+            // Both paths are known here: `self.src_path.text` and `root_dir_path` + `rel_path`.
             panic!("TODO windows");
         }
         #[cfg(not(windows))]

@@ -95,16 +95,16 @@ impl CondExpr {
                 // Post a
                 // `ShellCondExprStatTask` to the thread pool; the result comes
                 // back on the main thread via `on_stat_task_done`.
-                let (cwd_fd, mut path) = {
+                let (cwd_fd, cwd, mut path) = {
                     let me = interp.as_condexpr(this);
-                    let cwd_fd = me.base.shell().cwd_fd;
-                    (cwd_fd, me.args[0].clone())
+                    let shell = me.base.shell();
+                    (shell.cwd_fd, Box::from(shell.cwd()), me.args[0].clone())
                 };
                 if path.last() != Some(&0) {
                     path.push(0);
                 }
                 interp.as_condexpr_mut(this).state = CondExprState::WaitingStat;
-                Self::do_stat(interp, this, cwd_fd, path)
+                Self::do_stat(interp, this, cwd_fd, cwd, path)
             }
             Op::DashZ => {
                 let exit = {
@@ -256,7 +256,13 @@ impl CondExpr {
     /// `statat`, then the main thread resumes via
     /// `ShellCondExprStatTask::run_from_main_thread` → `on_stat_task_done`.
     /// `path` is NUL-terminated by the caller.
-    fn do_stat(interp: &Interpreter, this: NodeId, cwd_fd: bun_sys::Fd, path: Vec<u8>) -> Yield {
+    fn do_stat(
+        interp: &Interpreter,
+        this: NodeId,
+        cwd_fd: bun_sys::Fd,
+        cwd: Box<[u8]>,
+        path: Vec<u8>,
+    ) -> Yield {
         use crate::shell::dispatch_tasks::{CondExprStatInner, ShellCondExprStatTask};
         use crate::shell::interpreter::ShellTask;
         debug_assert!(path.last() == Some(&0));
@@ -271,6 +277,7 @@ impl CondExpr {
                 stat: Err(Default::default()),
                 path,
                 cwd_fd,
+                cwd,
             },
         });
         // SAFETY: `stat_task` is a fresh heap allocation embedding `ShellTask`
@@ -358,7 +365,7 @@ impl crate::shell::interpreter::ShellTaskCtx
         let inner = &mut this.task;
         debug_assert!(inner.path.last() == Some(&0));
         let z = bun_core::ZStr::from_buf(&inner.path, inner.path.len() - 1);
-        inner.stat = crate::shell::interpreter::shell_statat(inner.cwd_fd, z);
+        inner.stat = crate::shell::interpreter::shell_statat(inner.cwd_fd, &inner.cwd, z);
     }
 
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {

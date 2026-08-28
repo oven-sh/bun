@@ -44,47 +44,8 @@ pub struct PatchFile<'a> {
     pub(crate) parts: Vec<PatchFilePart<'a>>,
 }
 
-#[cfg_attr(unix, allow(dead_code))]
-struct ApplyState {
-    pathbuf: PathBuffer,
-    patch_dir_abs_path: Option<usize>,
-}
-
-impl ApplyState {
-    fn new() -> Self {
-        Self {
-            pathbuf: PathBuffer::uninit(),
-            patch_dir_abs_path: None,
-        }
-    }
-
-    #[cfg_attr(unix, allow(dead_code))]
-    fn patch_dir_abs_path(&mut self, fd: Fd) -> sys::Result<&ZStr> {
-        if let Some(len) = self.patch_dir_abs_path {
-            // pathbuf[len] == 0 was written below on a previous call.
-            return sys::Result::Ok(ZStr::from_buf(&self.pathbuf.0, len));
-        }
-        match sys::get_fd_path(fd, &mut self.pathbuf) {
-            sys::Result::Ok(p) => {
-                // reshaped for borrowck — capture len, drop `p`,
-                // then re-borrow `self.pathbuf` to write the sentinel.
-                let len = p.len();
-                // On Linux `readlink(2)` does not NUL-terminate, so write the
-                // sentinel explicitly (the buffer is zero-initialized but be
-                // defensive).
-                self.pathbuf.0[len] = 0;
-                self.patch_dir_abs_path = Some(len);
-                sys::Result::Ok(ZStr::from_buf(&self.pathbuf.0, len))
-            }
-            sys::Result::Err(e) => sys::Result::Err(e.with_fd(fd)),
-        }
-    }
-}
-
 impl<'a> PatchFile<'a> {
     pub fn apply(&self, patch_dir: Fd) -> Option<sys::Error> {
-        let mut state = ApplyState::new();
-
         for part in &self.parts {
             match part {
                 PatchFilePart::FileDeletion(file_deletion) => {
@@ -203,7 +164,7 @@ impl<'a> PatchFile<'a> {
                         return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
                     }
                     // TODO: should we compute the hash of the original file and check it against the on in the patch?
-                    if let sys::Result::Err(e) = apply_patch(file_patch, patch_dir, &mut state) {
+                    if let sys::Result::Err(e) = apply_patch(file_patch, patch_dir) {
                         return Some(e.without_path());
                     }
                 }
@@ -224,17 +185,15 @@ impl<'a> PatchFile<'a> {
 
                     #[cfg(windows)]
                     {
-                        let absfilepath = match state.patch_dir_abs_path(patch_dir) {
-                            sys::Result::Ok(p) => p,
-                            sys::Result::Err(e) => return Some(e.without_path()),
-                        };
-                        let mut buf = PathBuffer::uninit();
-                        let joined_absfilepath =
-                            paths::resolve_path::join_z_buf::<paths::platform::Auto>(
-                                &mut buf[..],
-                                &[absfilepath.as_bytes(), filepath.as_bytes()],
-                            );
-                        let fd = match sys::open(&joined_absfilepath, sys::O::RDWR, 0) {
+                        // `sys::fchmod` is libuv-backed on Windows and needs a uv-owned fd.
+                        let fd = match sys::openat(patch_dir, &filepath, sys::O::RDWR, 0).and_then(
+                            |fd| {
+                                fd.make_lib_uv_owned_for_syscall(
+                                    sys::Tag::open,
+                                    sys::ErrorCase::CloseOnFail,
+                                )
+                            },
+                        ) {
                             sys::Result::Err(e) => return Some(e.without_path()),
                             sys::Result::Ok(f) => f,
                         };
@@ -259,32 +218,15 @@ impl<'a> PatchFile<'a> {
 /// we can speed it up by:
 /// - If file size <= PAGE_SIZE, read the whole file into memory. memcpy/memmove the file contents around will be fast
 /// - If file size > PAGE_SIZE, rather than making a list of lines, make a list of chunks
-fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> sys::Result<()> {
+fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd) -> sys::Result<()> {
     let file_path = ZBox::from_vec_with_nul(patch.path.to_vec());
 
     // Need to get the mode of the original file
     // And also get the size to read file into memory
-    let stat = {
-        #[cfg(unix)]
-        let r = sys::fstatat(patch_dir, &file_path);
-        #[cfg(not(unix))]
-        let r = {
-            let p = match state.patch_dir_abs_path(patch_dir) {
-                sys::Result::Ok(p) => paths::resolve_path::join_z::<paths::platform::Auto>(&[
-                    p.as_bytes(),
-                    file_path.as_bytes(),
-                ]),
-                sys::Result::Err(e) => return sys::Result::Err(e),
-            };
-            sys::stat(p)
-        };
-        match r {
-            sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
-            sys::Result::Ok(stat) => stat,
-        }
+    let stat = match sys::fstatat(patch_dir, &file_path) {
+        sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
+        sys::Result::Ok(stat) => stat,
     };
-    #[cfg(unix)]
-    let _ = state; // suppress unused on posix
 
     let filebuf: Vec<u8> = match read_file_alloc(patch_dir, &file_path, 1024 * 1024 * 1024 * 4) {
         Ok(b) => b,

@@ -379,14 +379,23 @@ mod _impl {
         } else {
             b"/[stdin]"
         };
-        if !vm.main().is_empty()
-            && !strings::ends_with(vm.main(), EVAL_SUFFIX)
-            && !strings::ends_with(vm.main(), STDIN_SUFFIX)
+        // As `node`, argv[1] is the entry point as given (Node does not resolve
+        // it); as `bun`, it is the loaded module's path so that
+        // `process.argv[1] === Bun.main` / `fileURLToPath(import.meta.url)`.
+        let entry_path =
+            if bun_install::PRETEND_TO_BE_NODE.load(core::sync::atomic::Ordering::Relaxed) {
+                vm.entry_path()
+            } else {
+                vm.main()
+            };
+        if !entry_path.is_empty()
+            && !strings::ends_with(entry_path, EVAL_SUFFIX)
+            && !strings::ends_with(entry_path, STDIN_SUFFIX)
         {
             if worker.is_some_and(|w| w.eval_mode()) {
                 args_list.push(BunString::static_("[worker eval]"));
             } else {
-                args_list.push(BunString::borrow_utf8(vm.main()));
+                args_list.push(BunString::borrow_utf8(entry_path));
             }
         }
 

@@ -1497,7 +1497,7 @@ fn run_tasks_erased(
                         let queued = enqueue::enqueue_git_checkout(
                             manager,
                             checkout_id,
-                            repo_fd,
+                            task.id,
                             dep_id,
                             dep_name,
                             &res,

@@ -70,12 +70,6 @@ impl Dir {
     pub fn open_file(&self, sub_path: &[u8], flags: i32, mode: Mode) -> Maybe<File> {
         File::openat(self.fd, sub_path, flags, mode)
     }
-    /// Resolve this dir's absolute path via `/proc/self/fd` (Linux),
-    /// `F_GETPATH` (macOS), or `GetFinalPathNameByHandle` (Windows).
-    #[inline]
-    pub fn get_fd_path<'b>(&self, buf: &'b mut bun_paths::PathBuffer) -> Maybe<&'b mut [u8]> {
-        get_fd_path(self.fd, buf)
-    }
     /// Close now. Equivalent to dropping `self` but discards the syscall
     /// result.
     #[inline]
@@ -332,10 +326,9 @@ impl Dir {
         }
     }
 
-    /// `symlinkat(target, self.fd, link)`. The
-    /// `is_directory` flag is a no-op on POSIX;
-    /// on Windows it selects junction vs. file-symlink and
-    /// callers route through `sys_uv::symlink_uv` instead.
+    /// `symlinkat(target, self.fd, link)`. Windows callers route through
+    /// `sys_uv::symlink_uv` / `symlink_or_junction` with a full path instead.
+    #[cfg(not(windows))]
     pub fn sym_link(&self, target: &[u8], link_name: &[u8], _is_directory: bool) -> Maybe<()> {
         let mut tbuf = bun_paths::PathBuffer::default();
         let tlen = target.len().min(tbuf.0.len() - 1);

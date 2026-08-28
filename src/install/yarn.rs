@@ -597,6 +597,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     log: &mut bun_ast::Log,
     data: &[u8],
     dir: Fd,
+    dir_path: &[u8],
 ) -> Result<LoadResult<'a>, Error> {
     // yarn v2+ (berry) lockfiles are not supported; only the v1 format migrates.
     if !strings::index_of(data, b"# yarn lockfile v1").is_some() {
@@ -642,12 +643,12 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     // `package_json_source.path` borrows this buffer (lifetime-erased); keep it alive until the overrides are parsed below.
     let mut package_json_path_buf = PathBuffer::uninit();
     let package_json_source = {
-        let Ok(package_json_path) =
-            bun_sys::get_fd_path(package_json_fd.handle(), &mut package_json_path_buf)
-        else {
-            return Err(crate::Error::InvalidPackageJSON);
-        };
-        bun_ast::Source::init_path_string(&*package_json_path, package_json_contents.as_slice())
+        let package_json_path = bun_paths::resolve_path::join_abs_string_buf::<
+            bun_paths::platform::Auto,
+        >(
+            dir_path, &mut package_json_path_buf.0, &[b"package.json"]
+        );
+        bun_ast::Source::init_path_string(package_json_path, package_json_contents.as_slice())
     };
     drop(package_json_fd);
 

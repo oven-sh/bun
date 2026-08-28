@@ -444,6 +444,7 @@ fn iterate_included_project_tree(
     includes: &[Pattern],
     excludes: &[Pattern],
     root_dir: &Dir,
+    abs_workspace_path: &[u8],
     log_level: LogLevel,
 ) -> Result<(), AllocError> {
     if cfg!(debug_assertions) {
@@ -644,6 +645,7 @@ fn iterate_included_project_tree(
         add_entire_tree(
             bins,
             excludes,
+            abs_workspace_path,
             included_dir_info,
             pack_queue,
             &mut subpath_dedupe,
@@ -658,6 +660,7 @@ fn iterate_included_project_tree(
 fn add_entire_tree(
     bins: &[BinInfo],
     excludes: &[Pattern],
+    abs_workspace_path: &[u8],
     root_dir_info: DirInfo,
     pack_queue: &mut PackQueue,
     dedupe: &mut StringHashMap<()>,
@@ -698,7 +701,9 @@ fn add_entire_tree(
             ignores.pop();
         }
 
-        if let Some(patterns) = IgnorePatterns::read_from_disk(&dir, dir_depth)? {
+        if let Some(patterns) =
+            IgnorePatterns::read_from_disk(&dir, abs_workspace_path, &dir_subpath, dir_depth)?
+        {
             ignores.push(patterns);
         }
 
@@ -1243,6 +1248,7 @@ fn add_bundled_dep(
 fn iterate_project_tree(
     pack_queue: &mut PackQueue,
     bins: &[BinInfo],
+    abs_workspace_path: &[u8],
     root_dir: DirInfo,
     log_level: LogLevel,
 ) -> Result<(), AllocError> {
@@ -1270,7 +1276,9 @@ fn iterate_project_tree(
             ignores.pop();
         }
 
-        if let Some(patterns) = IgnorePatterns::read_from_disk(&dir, dir_depth)? {
+        if let Some(patterns) =
+            IgnorePatterns::read_from_disk(&dir, abs_workspace_path, &dir_subpath, dir_depth)?
+        {
             ignores.push(patterns);
         }
 
@@ -1891,8 +1899,12 @@ pub(crate) type PackReturn<'a, const FOR_PUBLISH: bool> = Option<Publish::Contex
 
 /// Everything `bun pm pack` would put in the tarball besides package.json: bins, then either the `files` list or
 /// the whole tree minus ignores. Shared with `bun pm diff`, whose local side is "what would be published".
+///
+/// `root_path` is the absolute path `root_dir` was opened from; it only names
+/// files in error messages.
 pub(crate) fn published_files(
     root_dir: &Dir,
+    root_path: &[u8],
     json_root: &Expr,
     bump: &bun_alloc::Arena,
     log_level: LogLevel,
@@ -1927,6 +1939,7 @@ pub(crate) fn published_files(
                 iterate_project_tree(
                     &mut pack_queue,
                     &[],
+                    root_path,
                     DirInfo(bin_dir, bin.path.as_bytes().into(), 2),
                     log_level,
                 )?;
@@ -1975,6 +1988,7 @@ pub(crate) fn published_files(
                         &includes,
                         &excludes,
                         root_dir,
+                        root_path,
                         log_level,
                     )?;
                     break 'iterate_project_tree;
@@ -1991,6 +2005,7 @@ pub(crate) fn published_files(
             iterate_project_tree(
                 &mut pack_queue,
                 &bins,
+                root_path,
                 DirInfo(Dir::from_fd(root_dir.fd), Box::from(&b""[..]), 1),
                 log_level,
             )?;
@@ -2376,7 +2391,8 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         None => get_bundled_deps(&json.root, "bundleDependencies")?.unwrap_or_default(),
     };
 
-    let (mut pack_queue, bins) = published_files(&root_dir, &json.root, bump, log_level)?;
+    let (mut pack_queue, bins) =
+        published_files(&root_dir, abs_workspace_path, &json.root, bump, log_level)?;
 
     let mut bundled_pack_queue = iterate_bundled_deps(
         &mut ctx.bundled_deps,
@@ -3652,26 +3668,27 @@ enum IgnoreFileFailReason {
 }
 
 impl IgnorePatterns {
+    /// `dir_subpath` is the directory's path relative to `abs_workspace_path`.
     fn ignore_file_fail(
-        dir: &Dir,
+        abs_workspace_path: &[u8],
+        dir_subpath: &[u8],
         ignore_kind: IgnorePatternsKind,
         reason: IgnoreFileFailReason,
         err: crate::Error,
     ) -> ! {
-        let mut buf = PathBuffer::uninit();
-        let dir_path: &[u8] = match bun_sys::get_fd_path(Fd::from_std_dir(dir), &mut buf) {
-            Ok(p) => &*p,
-            Err(_) => b"",
-        };
+        let mut path_buf = PathBuffer::uninit();
+        let ignore_file_path = resolve_path::join_abs_string_buf::<resolve_path::platform::Auto>(
+            abs_workspace_path,
+            &mut path_buf,
+            &[dir_subpath, <&str>::from(ignore_kind).as_bytes()],
+        );
         Output::err(
             err,
-            "failed to {} {} at: \"{}{}{}\"",
+            "failed to {} {} at: \"{}\"",
             (
                 <&str>::from(reason),
                 <&str>::from(ignore_kind),
-                bstr::BStr::new(strings::without_trailing_slash(dir_path)),
-                SEP_STR,
-                <&str>::from(ignore_kind),
+                bstr::BStr::new(ignore_file_path),
             ),
         );
         Global::crash();
@@ -3684,7 +3701,12 @@ impl IgnorePatterns {
     }
 
     /// ignore files are always ignored, don't need to worry about opening or reading twice
-    fn read_from_disk(dir: &Dir, dir_depth: usize) -> Result<Option<IgnorePatterns>, AllocError> {
+    fn read_from_disk(
+        dir: &Dir,
+        abs_workspace_path: &[u8],
+        dir_subpath: &[u8],
+        dir_depth: usize,
+    ) -> Result<Option<IgnorePatterns>, AllocError> {
         let mut patterns: Vec<Pattern> = Vec::new();
 
         let mut ignore_kind = IgnorePatternsKind::Npmignore;
@@ -3696,7 +3718,8 @@ impl IgnorePatterns {
                     // Crash if the file exists and fails to open. Don't want to create a tarball
                     // with files you want to ignore.
                     Self::ignore_file_fail(
-                        dir,
+                        abs_workspace_path,
+                        dir_subpath,
                         ignore_kind,
                         IgnoreFileFailReason::Open,
                         err.into(),
@@ -3708,7 +3731,8 @@ impl IgnorePatterns {
                     Err(err2) => {
                         if err2.get_errno() != bun_sys::E::ENOENT {
                             Self::ignore_file_fail(
-                                dir,
+                                abs_workspace_path,
+                                dir_subpath,
                                 ignore_kind,
                                 IgnoreFileFailReason::Open,
                                 err2.into(),
@@ -3723,7 +3747,13 @@ impl IgnorePatterns {
         let contents = match ignore_file.read_to_end() {
             Ok(c) => c,
             Err(err) => {
-                Self::ignore_file_fail(dir, ignore_kind, IgnoreFileFailReason::Read, err.into());
+                Self::ignore_file_fail(
+                    abs_workspace_path,
+                    dir_subpath,
+                    ignore_kind,
+                    IgnoreFileFailReason::Read,
+                    err.into(),
+                );
             }
         };
         let _ = ignore_file.close();

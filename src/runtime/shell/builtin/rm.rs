@@ -299,7 +299,9 @@ impl Rm {
                         _ => unreachable!(),
                     };
                     if !started {
-                        let cwd = Builtin::cwd(interp, cmd);
+                        let shell = Builtin::shell(interp, cmd);
+                        let (cwd, cwd_path): (_, Box<[u8]>) =
+                            (shell.cwd_fd, Box::from(shell.cwd()));
                         let evtloop = Builtin::event_loop(interp, cmd);
                         let opts = Self::state_mut(interp, cmd).opts;
                         let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
@@ -321,7 +323,15 @@ impl Rm {
                         for i in args_start..argc {
                             let root = Builtin::of(interp, cmd).arg_bytes(i);
                             let task = ShellRmTask::create(
-                                cmd, opts, root, cwd, sig, out_count, evtloop, interp_ptr,
+                                cmd,
+                                opts,
+                                root,
+                                cwd,
+                                cwd_path.clone(),
+                                sig,
+                                out_count,
+                                evtloop,
+                                interp_ptr,
                             );
                             // SAFETY: freshly heap-allocated.
                             unsafe { ShellRmTask::schedule(task) };
@@ -604,6 +614,7 @@ pub struct ShellRmTask {
     pub(crate) cmd: NodeId,
     pub(crate) opts: Opts,
     pub(crate) cwd: bun_sys::Fd,
+    pub(crate) cwd_path: Box<[u8]>,
     /// The root DirTask lives in
     /// its own `heap::alloc`'d allocation so that `&ShellRmTask` (held as
     /// the `&self` receiver throughout `remove_entry*`) never overlaps the
@@ -666,6 +677,7 @@ impl ShellRmTask {
         opts: Opts,
         root_path: &[u8],
         cwd: bun_sys::Fd,
+        cwd_path: Box<[u8]>,
         error_signal: bun_ptr::BackRef<AtomicBool>,
         output_count: bun_ptr::BackRef<AtomicUsize>,
         evtloop: EventLoopHandle,
@@ -694,6 +706,7 @@ impl ShellRmTask {
             cmd,
             opts,
             cwd,
+            cwd_path,
             root_task,
             error_signal,
             output_count,
@@ -1012,7 +1025,7 @@ impl ShellRmTask {
         // swapped in between classification and open from redirecting the
         // recursive delete into an unrelated tree (same as Dir::delete_tree).
         let flags = bun_sys::O::DIRECTORY | bun_sys::O::RDONLY | bun_sys::O::NOFOLLOW;
-        let fd = match shell_openat(dirfd, path, flags, 0) {
+        let fd = match shell_openat(dirfd, &self.cwd_path, path, flags, 0) {
             Ok(fd) => fd,
             Err(e) => match e.get_errno() {
                 E::ENOENT => {

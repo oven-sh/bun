@@ -155,6 +155,10 @@ pub struct VirtualMachine {
     /// `RawSlice` carries the BACKREF outlives-holder invariant — read via
     /// `main()`.
     main: bun_ptr::RawSlice<u8>,
+    /// The entry point as it was launched; `main` may later be replaced by
+    /// the resolver's path for the same file (extension added, symlinks
+    /// followed). Same storage contract as `main`.
+    entry_path: bun_ptr::RawSlice<u8>,
     pub main_is_html_entrypoint: bool,
     pub main_resolved_path: bun_core::String,
     pub main_hash: u32,
@@ -267,6 +271,10 @@ pub struct VirtualMachine {
     /// Used by bun:test to set global hooks for beforeAll, beforeEach, etc.
     pub is_in_preload: bool,
     pub has_patched_run_main: bool,
+    /// `--preserve-symlinks-main` / `NODE_PRESERVE_SYMLINKS_MAIN=1`: resolve
+    /// the entry point without following symlinks (`--preserve-symlinks`
+    /// alone does not, as in Node).
+    pub preserve_symlinks_main: bool,
 
     pub transpiler_store: crate::runtime_transpiler_store::RuntimeTranspilerStore,
 
@@ -2594,6 +2602,7 @@ impl VirtualMachine {
             // `log` is a fresh leaked Box; outlives the VM.
             addr_of_mut!((*vm).log).write(NonNull::new(log));
             addr_of_mut!((*vm).main).write(bun_ptr::RawSlice::EMPTY);
+            addr_of_mut!((*vm).entry_path).write(bun_ptr::RawSlice::EMPTY);
             addr_of_mut!((*vm).main_hash).write(0);
             addr_of_mut!((*vm).main_resolved_path).write(bun_core::String::EMPTY);
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
@@ -2761,11 +2770,18 @@ impl VirtualMachine {
         self.main.slice()
     }
 
+    /// See the `entry_path` field.
+    #[inline]
+    pub fn entry_path(&self) -> &[u8] {
+        self.entry_path.slice()
+    }
+
     /// Set the entry-point path. Caller guarantees `path`'s storage outlives
     /// this VM (BACKREF — see `main` field doc).
     #[inline]
     pub fn set_main(&mut self, path: &[u8]) {
         self.main = bun_ptr::RawSlice::new(path);
+        self.entry_path = self.main;
     }
 
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until
@@ -3691,6 +3707,9 @@ impl VirtualMachine {
         if let Some(value) = map.get(b"NODE_PRESERVE_SYMLINKS") {
             self.transpiler.resolver.opts.preserve_symlinks = value == b"1";
         }
+        if map.get(b"NODE_PRESERVE_SYMLINKS_MAIN") == Some(b"1".as_slice()) {
+            self.preserve_symlinks_main = true;
+        }
 
         if let Some(gc_level) = map.get(b"BUN_GARBAGE_COLLECTOR_LEVEL") {
             // Reuse this flag for other things to avoid unnecessary hashtable
@@ -4477,6 +4496,8 @@ impl VirtualMachine {
         }
 
         let is_special_source = source == MAIN_FILE_NAME || Macro::is_macro_path(source);
+        // The generated `bun:main` wrapper importing the entry point.
+        let is_entry_point = source == MAIN_FILE_NAME && specifier == self.main();
         let mut query_string: &[u8] = b"";
         let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
         let top_level_dir = self.top_level_dir();
@@ -4589,6 +4610,41 @@ impl VirtualMachine {
         // outlives `ResolveFunctionResult` (see the struct's lifetime-erasure
         // note).
         ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
+        if is_entry_point {
+            // As in Node, `--preserve-symlinks-main` alone decides whether the
+            // entry point is followed. The resolver followed it (or not) per
+            // `--preserve-symlinks`, whose directory cache must not see a
+            // per-resolve flag flip, so adjust the one result here instead.
+            if self.preserve_symlinks_main {
+                if result_path.is_symlink {
+                    // SAFETY: as for `text` above.
+                    ret.path = unsafe { bun_ptr::detach_lifetime(result_path.pretty) };
+                }
+            } else if self.transpiler.resolver.opts.preserve_symlinks {
+                let mut in_buf = bun_paths::path_buffer_pool::get();
+                let mut out_buf = bun_paths::path_buffer_pool::get();
+                if ret.path.len() < in_buf.len() {
+                    in_buf[..ret.path.len()].copy_from_slice(ret.path);
+                    in_buf[ret.path.len()] = 0;
+                    let z = bun_core::ZStr::from_buf(&in_buf[..], ret.path.len());
+                    if let Ok(real) = bun_sys::realpath(z, &mut out_buf) {
+                        if real != ret.path {
+                            ret.path = bun_resolver::fs::FileSystem::instance()
+                                .filename_store()
+                                .append_slice(real)?;
+                        }
+                    }
+                }
+            }
+        }
+        // `main` becomes the path the entry module is actually keyed by, so
+        // `is_main`, `Bun.main` and `import.meta.main` agree with the loaded
+        // module.
+        if is_entry_point && ret.path != self.main() {
+            self.main = bun_ptr::RawSlice::new(ret.path);
+            self.main_hash = bun_watcher::Watcher::get_hash(ret.path);
+            self.main_resolved_path = bun_core::String::EMPTY;
+        }
         ret.result = Some(result);
 
         Ok(())

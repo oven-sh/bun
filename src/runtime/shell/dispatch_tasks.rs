@@ -31,10 +31,11 @@ pub(crate) struct CondExprStatInner {
     pub cond: NodeId,
     pub stat: bun_sys::Result<bun_sys::Stat>,
     pub path: Vec<u8>,
-    /// The shell env's cwd fd, captured at schedule time so
+    /// The shell env's cwd fd and cwd string, captured at schedule time so
     /// `run_from_thread_pool` can
     /// `statat` without touching the interpreter off-thread.
     pub cwd_fd: bun_sys::Fd,
+    pub cwd: Box<[u8]>,
 }
 
 impl ShellCondExprStatTask {

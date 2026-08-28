@@ -853,14 +853,17 @@ pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
     #[cfg(windows)]
     {
         // Open with `O.NOFOLLOW` (→ `FILE_OPEN_REPARSE_POINT`),
-        // `fstat` the handle, then close.
+        // stat the handle as a link, then close.
         match openat_windows_a(fd, path.as_bytes(), O::NOFOLLOW, 0) {
             Ok(file) => {
-                let r = fstat(file);
+                let r = windows_impl::fstat_handle(file, true);
                 let _ = close(file);
                 r
             }
-            Err(err) => Err(err),
+            Err(mut err) => {
+                err.syscall = Tag::fstatat;
+                Err(err)
+            }
         }
     }
 }
@@ -1369,8 +1372,6 @@ impl Tag {
     pub const NtQueryDirectoryFile: Tag = Tag(95);
     #[cfg(windows)]
     pub(crate) const NtSetInformationFile: Tag = Tag(96);
-    #[cfg(windows)]
-    pub(crate) const GetFinalPathNameByHandle: Tag = Tag(97);
     #[cfg(windows)]
     pub(crate) const CloseHandle: Tag = Tag(98);
     #[cfg(windows)]
@@ -2975,6 +2976,86 @@ mod posix_impl {
         }
         #[cfg(not(target_os = "macos"))]
         use libc::realpath as _realpath;
+
+        // Linux: one `open(O_PATH)` has the kernel resolve the whole path, and
+        // procfs reads the result back — three syscalls regardless of depth,
+        // where libc's `realpath` issues a `readlink` per component. `O_PATH`
+        // needs no permission on the file itself, matching `realpath(3)`.
+        // Without a usable procfs (not mounted, `hidepid`, non-dumpable
+        // process) fall through to libc for the rest of the process.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            use core::sync::atomic::{AtomicBool, Ordering};
+            static PROCFS_UNAVAILABLE: AtomicBool = AtomicBool::new(false);
+            if !PROCFS_UNAVAILABLE.load(Ordering::Relaxed) {
+                match open(path, O::PATH | O::CLOEXEC, 0) {
+                    Ok(fd) => {
+                        let mut proc = [0u8; 32];
+                        let n = {
+                            use std::io::Write as _;
+                            let mut c = std::io::Cursor::new(&mut proc[..]);
+                            let _ = write!(c, "/proc/self/fd/{}\0", fd.native());
+                            c.position() as usize - 1
+                        };
+                        let r = readlink(ZStr::from_buf(&proc[..], n), &mut buf.0);
+                        let _ = close(fd);
+                        match r {
+                            Ok(len) => return Ok(&buf.0[..len]),
+                            Err(_) => PROCFS_UNAVAILABLE.store(true, Ordering::Relaxed),
+                        }
+                    }
+                    // The lookup errors `realpath(3)` itself reports are final.
+                    Err(e)
+                        if matches!(
+                            e.get_errno(),
+                            E::ENOENT | E::ENOTDIR | E::ELOOP | E::ENAMETOOLONG | E::EACCES
+                        ) =>
+                    {
+                        return Err(
+                            Error::new(e.get_errno(), Tag::realpath).with_path(path.as_bytes())
+                        );
+                    }
+                    // No `O_PATH` here (old kernel, gVisor, seccomp): use libc.
+                    Err(e) if matches!(e.get_errno(), E::EINVAL | E::ENOSYS | E::EOPNOTSUPP) => {
+                        PROCFS_UNAVAILABLE.store(true, Ordering::Relaxed)
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+
+        // macOS: same idea via `F_GETPATH` — open resolves the path once and
+        // the vnode's name is read back, instead of `realpath$DARWIN_EXTSN`'s
+        // `getattrlist` per component. `open` needs read permission on the
+        // file (there is no `O_PATH`) and can fail on sockets and some
+        // devices where `realpath(3)` would not, so any open failure other
+        // than the lookup errors realpath itself reports falls back to libc.
+        #[cfg(target_os = "macos")]
+        {
+            match open(path, O::RDONLY | O::NONBLOCK | O::NOCTTY | O::CLOEXEC, 0) {
+                Ok(fd) => {
+                    buf.0[0] = 0;
+                    let r = fcntl(fd, libc::F_GETPATH, buf.0.as_mut_ptr() as isize);
+                    let _ = close(fd);
+                    if r.is_ok() && buf.0[0] != 0 {
+                        // SAFETY: F_GETPATH wrote a NUL-terminated path into `buf`
+                        // (MAXPATHLEN bytes, which `PathBuffer` is).
+                        let len = unsafe { libc::strlen(buf.0.as_ptr().cast()) };
+                        return Ok(&buf.0[..len]);
+                    }
+                }
+                Err(e)
+                    if matches!(
+                        e.get_errno(),
+                        E::ENOENT | E::ENOTDIR | E::ELOOP | E::ENAMETOOLONG
+                    ) =>
+                {
+                    return Err(Error::new(e.get_errno(), Tag::realpath).with_path(path.as_bytes()));
+                }
+                Err(_) => {}
+            }
+        }
+
         // SAFETY: `path` is NUL-terminated (`ZStr`); `buf` is a `PathBuffer`
         // (>= PATH_MAX bytes) which `realpath` requires for the resolved path.
         let p = unsafe { _realpath(path.as_ptr(), buf.0.as_mut_ptr().cast()) };
@@ -3717,12 +3798,14 @@ mod windows_impl {
         // HANDLE directly instead of allocating a throwaway CRT fd via
         // `_open_osfhandle` (which cannot be `_close`d without also closing
         // the caller's HANDLE, so it leaked a CRT slot per call).
-        fstat_handle(fd)
+        fstat_handle(fd, false)
     }
     /// Port of libuv's `fs__fstat_handle` + `fs__stat_handle` +
     /// `fs__stat_assign_statbuf` (`src/win/fs.c`). Fills a `uv_stat_t` from a
-    /// raw HANDLE without touching the CRT fd table.
-    fn fstat_handle(fd: Fd) -> Maybe<Stat> {
+    /// raw HANDLE without touching the CRT fd table. `as_link`: the handle
+    /// was opened on the reparse point itself (`FILE_OPEN_REPARSE_POINT`), so
+    /// report one as `S_IFLNK`, as `lstat` does.
+    pub(crate) fn fstat_handle(fd: Fd, as_link: bool) -> Maybe<Stat> {
         use bun_core::S;
         let handle = fd.native();
         let nt_err = |rc: w::NTSTATUS| {
@@ -3816,10 +3899,13 @@ mod windows_impl {
             st.st_dev = volume_info.VolumeSerialNumber as u64;
         }
 
-        // libuv's `S_IFLNK` arm is gated on `do_lstat`, which is always 0 on
-        // the fstat path, so reparse points fall through to DIR-or-REG.
+        // As libuv: a followed handle is DIR-or-REG; only an `lstat`-style
+        // open reports the reparse point itself as a link.
         let attrs = file_info.BasicInformation.FileAttributes;
-        if attrs & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
+        if as_link && attrs & w::FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            st.st_mode = S::IFLNK as u64;
+            st.st_size = 0;
+        } else if attrs & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
             st.st_mode = S::IFDIR as u64;
             st.st_size = 0;
         } else {
@@ -4139,36 +4225,15 @@ mod windows_impl {
             }
         })
     }
-    pub fn symlinkat(target: &ZStr, dirfd: impl AsFd, dest: &ZStr) -> Maybe<()> {
-        let dirfd = dirfd.as_fd();
-        // Resolve `dest` against `dirfd`, then symlink via libuv.
-        let mut db = bun_core::PathBuffer::default();
-        let d = super::get_fd_path(dirfd, &mut db)?;
-        let mut dj = bun_core::PathBuffer::default();
-        let d_abs = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Windows>(
-            &mut dj.0,
-            &[d, dest.as_bytes()],
-        );
-        sys_uv::symlink_uv(target, d_abs, 0)
-    }
-    pub fn readlinkat(fd: impl AsFd, path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
-        let fd = fd.as_fd();
-        // No `readlinkat` on Windows — resolve and call `readlink`.
-        let mut db = bun_core::PathBuffer::default();
-        let d = super::get_fd_path(fd, &mut db)?;
-        let mut dj = bun_core::PathBuffer::default();
-        let abs = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Windows>(
-            &mut dj.0,
-            &[d, path.as_bytes()],
-        );
-        readlink(abs, buf)
-    }
     pub fn fstatat(fd: impl AsFd, path: &ZStr) -> Maybe<Stat> {
         let fd = fd.as_fd();
         // `openat(fd, path, 0, 0)` (flags=0
         // → FOLLOWS reparse points) then `fstat(file)`. Do NOT use `lstat` here —
         // that's the `lstatat` no-follow variant.
-        let file = openat(fd, path, 0, 0)?;
+        let file = openat(fd, path, 0, 0).map_err(|mut e| {
+            e.syscall = Tag::fstatat;
+            e
+        })?;
         let r = fstat(file);
         let _ = close(file);
         r
@@ -4278,13 +4343,46 @@ mod windows_impl {
         // negative LARGE_INTEGER never becomes ~18 EB after the i64→u64 cast.
         Ok(size.max(0) as u64)
     }
+    /// `GetFinalPathNameByHandleW` on a handle opened with no access rights
+    /// (so no permission on the file itself is needed), as `uv_fs_realpath`.
     pub fn realpath<'a>(path: &ZStr, buf: &'a mut bun_core::PathBuffer) -> Maybe<&'a [u8]> {
-        // sys_uv.rs:216 — open + GetFinalPathNameByHandle (uv_fs_realpath edge cases).
-        let fd = open(path, O::RDONLY, 0)?;
-        let r = super::get_fd_path(fd, buf);
-        let _ = close(fd);
-        // get_fd_path yields `&mut [u8]`; coerce to shared.
-        r.map(|s| &*s)
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
+        let wpath = bun_paths::string_paths::to_kernel32_path(&mut wbuf.0[..], path.as_bytes());
+        // SAFETY: `wpath` is NUL-terminated; null security attributes / template.
+        let handle = unsafe {
+            w::kernel32::CreateFileW(
+                wpath.as_ptr(),
+                0,
+                w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
+                core::ptr::null_mut(),
+                w::OPEN_EXISTING,
+                w::FILE_FLAG_BACKUP_SEMANTICS,
+                core::ptr::null_mut(),
+            )
+        };
+        if handle == w::INVALID_HANDLE_VALUE {
+            return Err(Error::new(w::get_last_errno(), Tag::realpath).with_path(path.as_bytes()));
+        }
+        // SAFETY: `handle` is a valid HANDLE from CreateFileW above.
+        let _close = scopeguard::guard(handle, |h| unsafe {
+            let _ = w::CloseHandle(h);
+        });
+        let wide =
+            crate::windows::GetFinalPathNameByHandle(handle, Default::default(), &mut wbuf.0)
+                .map_err(|e| {
+                    use crate::windows::GetFinalPathNameByHandleError as GE;
+                    Error::from_code(
+                        match e {
+                            GE::FileNotFound => E::ENOENT,
+                            GE::NameTooLong => E::ENAMETOOLONG,
+                        },
+                        Tag::realpath,
+                    )
+                    .with_path(path.as_bytes())
+                })?;
+        Ok(bun_core::strings::convert_utf16_to_utf8_in_buffer(
+            &mut buf.0, wide,
+        ))
     }
     pub fn pipe() -> Maybe<[Fd; 2]> {
         // uv_pipe(fds, 0, 0).
@@ -4338,15 +4436,6 @@ mod windows_impl {
             return Err(Error::new(w::get_last_errno(), Tag::chdir).with_path(path.as_bytes()));
         }
         Ok(())
-    }
-    pub fn fchdir(fd: Fd) -> Maybe<()> {
-        let mut buf = bun_core::PathBuffer::default();
-        let p = super::get_fd_path(fd, &mut buf)?;
-        let mut zb = bun_core::PathBuffer::default();
-        zb.0[..p.len()].copy_from_slice(p);
-        zb.0[p.len()] = 0;
-        // SAFETY: NUL-terminated above.
-        chdir(ZStr::from_buf(&zb.0[..], p.len()))
     }
     pub fn umask(mode: Mode) -> Mode {
         unsafe extern "C" {
@@ -7429,186 +7518,6 @@ pub fn clonefileat(_from_dir: impl AsFd, from: &ZStr, _to_dir: impl AsFd, to: &Z
         .with_path_dest(from.as_bytes(), to.as_bytes()))
 }
 
-// ── getFdPath ──
-
-/// Cached probe of `/proc/version` for "freebsd"
-/// (linprocfs hardcodes "des@freebsd.org"). Under FreeBSD's Linuxulator
-/// `/proc/self/fd/*` doesn't readlink, but `/dev/fd/*` does.
-/// 0=unknown, 1=linux, 2=freebsd.
-#[cfg(any(target_os = "linux", target_os = "android"))]
-static LINUX_KERNEL_CACHED: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
-
-/// Non-probing
-/// fast-path check. Returns `true` only when a previous probe already proved
-/// FreeBSD's Linuxulator; never triggers the `/proc/version` read itself.
-#[cfg(any(target_os = "linux", target_os = "android"))]
-#[inline]
-fn linux_kernel_cached_is_freebsd() -> bool {
-    LINUX_KERNEL_CACHED.load(core::sync::atomic::Ordering::Acquire) == 2
-}
-
-/// Probing variant: reads `/proc/version`
-/// once (memoized) and returns whether this is FreeBSD's Linuxulator.
-#[cfg(any(target_os = "linux", target_os = "android"))]
-fn linux_kernel_is_freebsd() -> bool {
-    use core::sync::atomic::Ordering;
-    let v = LINUX_KERNEL_CACHED.load(Ordering::Acquire);
-    if v != 0 {
-        return v == 2;
-    }
-    let detected: u8 = 'detect: {
-        // SAFETY: literal is NUL-terminated.
-        let z = ZStr::from_static(b"/proc/version\0");
-        let Ok(fd) = open(z, O::RDONLY | O::NOCTTY, 0) else {
-            break 'detect 1;
-        };
-        let mut buf = [0u8; 512];
-        let n = read(fd, &mut buf).unwrap_or(0);
-        let _ = close(fd);
-        if bun_core::strings::contains_case_insensitive_ascii(&buf[..n], b"freebsd") {
-            2
-        } else {
-            1
-        }
-    };
-    LINUX_KERNEL_CACHED.store(detected, Ordering::Release);
-    detected == 2
-}
-
-/// readlink `/dev/fd/N` (fdescfs).
-#[cfg(any(target_os = "linux", target_os = "android"))]
-fn get_fd_path_freebsd_linuxulator<'a>(
-    fd: Fd,
-    out: &'a mut bun_paths::PathBuffer,
-) -> Maybe<&'a mut [u8]> {
-    let mut dev = [0u8; 32];
-    let n = {
-        use std::io::Write as _;
-        let mut c = std::io::Cursor::new(&mut dev[..]);
-        let _ = write!(c, "/dev/fd/{}\0", fd.native());
-        c.position() as usize - 1
-    };
-    // SAFETY: NUL written above.
-    let z = ZStr::from_buf(&dev[..], n);
-    let len = readlink(z, &mut out.0)?;
-    Ok(&mut out.0[..len])
-}
-
-/// fd → absolute path. Linux: readlink `/proc/self/fd/N`;
-/// macOS: `fcntl(F_GETPATH)`; Windows: `GetFinalPathNameByHandle`.
-pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a mut [u8]> {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
-        // Fast path: a previous call already proved this is
-        // FreeBSD's Linuxulator. Skip the doomed `/proc/self/fd/N` readlink.
-        if linux_kernel_cached_is_freebsd() {
-            return get_fd_path_freebsd_linuxulator(fd, out);
-        }
-        let mut proc = [0u8; 32];
-        let n = {
-            use std::io::Write as _;
-            let mut c = std::io::Cursor::new(&mut proc[..]);
-            let _ = write!(c, "/proc/self/fd/{}\0", fd.native());
-            c.position() as usize - 1
-        };
-        // SAFETY: NUL written above.
-        let z = ZStr::from_buf(&proc[..], n);
-        match readlink(z, &mut out.0) {
-            Ok(len) => return Ok(&mut out.0[..len]),
-            Err(e) => {
-                // Under FreeBSD Linuxulator, fall back to
-                // `getFdPathFreeBSDLinuxulator` (`/dev/fd/N`). Probing variant
-                // (memoized read of `/proc/version`); only taken once.
-                if linux_kernel_is_freebsd() {
-                    return get_fd_path_freebsd_linuxulator(fd, out);
-                }
-                return Err(e);
-            }
-        }
-    }
-    #[cfg(target_os = "macos")]
-    {
-        out.0.fill(0);
-        fcntl(fd, libc::F_GETPATH, out.0.as_mut_ptr() as isize)?;
-        // SAFETY: F_GETPATH writes a NUL-terminated string into `out`.
-        let len = unsafe { libc::strlen(out.0.as_ptr().cast()) };
-        return Ok(&mut out.0[..len]);
-    }
-    #[cfg(windows)]
-    {
-        // `GetFinalPathNameByHandle` into a wide buffer,
-        // then transcode WTF-16 → UTF-8 into `out`.
-        let mut wide_buf = bun_paths::w_path_buffer_pool::get();
-        let wide_slice = match crate::windows::GetFinalPathNameByHandle(
-            fd.native(),
-            Default::default(),
-            &mut wide_buf.0[..],
-        ) {
-            Ok(p) => p,
-            Err(_) => return Err(Error::from_code(E::EBADF, Tag::GetFinalPathNameByHandle)),
-        };
-        // Trust that Windows gives us valid UTF-16LE.
-        let len = bun_paths::string_paths::from_w_path(&mut out.0[..], wide_slice).len();
-        return Ok(&mut out.0[..len]);
-    }
-    #[cfg(target_os = "freebsd")]
-    {
-        // FreeBSD: F_KINFO returns a `struct kinfo_file`
-        // with `kf_path`. The /dev/fd readlink trick used for the Linuxulator
-        // path doesn't resolve to an absolute path on native FreeBSD, so go
-        // via fcntl. Mirrors `bun_core::util::fd_path_raw` (T0 sibling).
-        use core::ptr::{addr_of, addr_of_mut};
-        let mut kif = core::mem::MaybeUninit::<libc::kinfo_file>::zeroed();
-        // SAFETY: kif is zeroed; kf_structsize is a c_int at a valid offset.
-        unsafe {
-            addr_of_mut!((*kif.as_mut_ptr()).kf_structsize)
-                .write(core::mem::size_of::<libc::kinfo_file>() as c_int);
-        }
-        fcntl(fd, libc::F_KINFO, kif.as_mut_ptr() as isize)?;
-        // SAFETY: kernel wrote a NUL-terminated path into kf_path.
-        let path_ptr = unsafe { addr_of!((*kif.as_ptr()).kf_path) } as *const u8;
-        let len = unsafe { libc::strlen(path_ptr.cast()) };
-        // The kernel fills kf_path from the namecache and leaves it empty when it
-        // has no name for the vnode (seen for a just-created file on UFS).
-        if len == 0 {
-            return Err(Error::from_code_int(libc::ENOENT, Tag::fcntl).with_fd(fd));
-        }
-        // SAFETY: path_ptr has `len` initialized bytes (kernel-written).
-        out.0[..len].copy_from_slice(unsafe { core::slice::from_raw_parts(path_ptr, len) });
-        return Ok(&mut out.0[..len]);
-    }
-    #[cfg(not(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "macos",
-        target_os = "freebsd",
-        windows
-    )))]
-    {
-        let _ = (fd, out);
-        Err(Error::from_code_int(libc::ENOSYS, Tag::readlink))
-    }
-}
-
-/// fd → absolute wide path (Windows `GetFinalPathNameByHandleW`).
-/// `\\?\` prefix and `\\?\UNC\` are stripped. Higher-tier callers
-/// (`bun.getFdPathW`) re-export this. A libc/kernel32-only sibling lives at
-/// `bun_core::fd_path_raw_w` for T0/T1 callers that cannot depend on this
-/// crate.
-#[cfg(windows)]
-pub fn get_fd_path_w(fd: Fd, out: &mut [u16]) -> Maybe<&mut [u16]> {
-    crate::windows::GetFinalPathNameByHandle(fd.native(), Default::default(), out).map_err(|e| {
-        use crate::windows::GetFinalPathNameByHandleError as GE;
-        Error::from_code(
-            match e {
-                GE::FileNotFound => E::ENOENT,
-                GE::NameTooLong => E::ENAMETOOLONG,
-            },
-            Tag::GetFinalPathNameByHandle,
-        )
-    })
-}
-
 // ── environ ──
 
 /// Borrowed slice of the process's `KEY=VALUE\0` C strings.
@@ -8847,15 +8756,6 @@ pub fn open_file(path: &[u8], flags: OpenFlags) -> Maybe<File> {
 pub fn open_dir_for_iteration(dir: Fd, path: &[u8]) -> Maybe<Fd> {
     open_dir_at(dir, path)
 }
-/// `bun.getFdPathZ(fd, buf)`. Wraps [`get_fd_path`] then
-/// NUL-terminates in-place so callers receive a `&ZStr`.
-pub fn get_fd_path_z<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a ZStr> {
-    let len = get_fd_path(fd, out)?.len();
-    out.0[len] = 0;
-    // SAFETY: NUL written at out[len]; bytes [0..len] initialised by get_fd_path.
-    Ok(ZStr::from_buf(&out.0[..], len))
-}
-
 /// `&[u8]`-taking convenience over [`renameat_concurrently`] — Z-terminates both
 /// paths into stack buffers.
 pub fn renameat_concurrently_a(

@@ -31,6 +31,8 @@ describe.each([
     ["a string byteOffset", () => view(address, "garbage" as any, 8), "Expected number for byteOffset"],
     ["an object byteOffset", () => view(address, {} as any, 8), "Expected number for byteOffset"],
     ["an infinite byteOffset", () => view(address, Infinity, 8), "byteOffset must be a finite number"],
+    ["a negative infinite byteOffset", () => view(address, -Infinity, 8), "byteOffset must be a finite number"],
+    ["a NaN byteOffset", () => view(address, NaN, 8), "byteOffset must be a finite number"],
     ["a string byteLength", () => view(address, 0, "x" as any), "length must be a number."],
     ["a zero byteLength", () => view(address, 0, 0), "length must be > 0. This usually means a bug in your code."],
     ["a negative byteLength", () => view(address, 0, -1), "length must be > 0. This usually means a bug in your code."],

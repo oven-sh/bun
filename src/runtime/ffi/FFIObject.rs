@@ -531,6 +531,11 @@ fn get_ptr_slice(
 
     if let Some(byte_off) = byte_offset {
         if byte_off.is_number() {
+            if !byte_off.as_number().is_finite() {
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("byteOffset must be a finite number")));
+            }
+
             let off = byte_off.to_int64();
             if off < 0 {
                 addr =
@@ -543,11 +548,6 @@ fn get_ptr_slice(
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "ptr cannot be zero, that would segfault Bun :("
                 )));
-            }
-
-            if !byte_off.as_number().is_finite() {
-                return Err(global_this
-                    .throw_invalid_arguments(format_args!("byteOffset must be a finite number")));
             }
         } else if !byte_off.is_empty_or_undefined_or_null() {
             return Err(

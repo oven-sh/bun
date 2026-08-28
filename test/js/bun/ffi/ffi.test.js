@@ -804,10 +804,11 @@ describe("read edge cases", () => {
   });
 
   it("a byteOffset of 2^31 or more is added in full, not truncated to int32", async () => {
-    // read.X(base, off) reads base + off. A base placed `off` bytes below the
-    // buffer reaches the buffer only when the whole offset is added, so this
-    // checks 4 GiB offsets without a 4 GiB allocation. Runs in a subprocess
-    // because a truncated offset reads unmapped memory and can crash.
+    // read.X(base, off) reads base + off. A base placed `off` bytes away from
+    // the buffer reaches the buffer only when the whole offset is added, so this
+    // checks 4 GiB offsets in both directions without a 4 GiB allocation. Runs
+    // in a subprocess because a truncated offset reads unmapped memory and can
+    // crash.
     const src = `
       import { ptr, read } from "bun:ffi";
       const buf = new Uint8Array(32);
@@ -833,7 +834,9 @@ describe("read edge cases", () => {
       };
 
       const wrong = [];
-      for (const off of [2 ** 31, 2 ** 31 + 1, 2 ** 32, 2 ** 32 + 1]) {
+      // int32 holds -(2 ** 31) to 2 ** 31 - 1. Every offset here is outside it.
+      const large = [2 ** 31, 2 ** 31 + 1, 2 ** 32, 2 ** 32 + 1];
+      for (const off of [...large, ...large.map(o => -o - 1)]) {
         const base = p + at - off;
         for (const name in readers) {
           const [fn, want] = readers[name];

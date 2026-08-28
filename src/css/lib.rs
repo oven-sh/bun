@@ -390,9 +390,6 @@ pub enum Token {
     Comment(&'static [u8]),
 }
 
-/// Error messages interpolate tokens with `{}`. The output is the token as
-/// CSS (`@media`, `url(x)`, `#id`, `"str"`, `fn(`), the same bytes
-/// `Token::to_css_generic` writes.
 impl core::fmt::Display for Token {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.to_css_generic(&mut bun_io::FmtAdapter::new(f))

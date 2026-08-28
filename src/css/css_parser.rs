@@ -5276,8 +5276,6 @@ impl Token {
         }
     }
 
-    /// Serialize the token as CSS into any byte sink. `Display` and
-    /// `to_css` both route through here.
     pub(crate) fn to_css_generic<W: WriteAll + ?Sized>(
         &self,
         writer: &mut W,
@@ -5371,9 +5369,7 @@ impl Token {
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
-            // These payloads are written raw and can hold newlines.
-            // `Printer::write_bytes` tracks line/col across them; the
-            // `bun_io::Write` sink of `Printer` (`write_str`) does not.
+            // Raw payloads can hold newlines, which only `write_bytes` counts.
             Token::Whitespace(content) => dest.write_bytes(content),
             Token::Comment(content) => {
                 dest.write_str("/*")?;

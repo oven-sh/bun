@@ -4,6 +4,7 @@
 
 use bun_alloc::ArenaVecExt as _;
 use bun_paths::strings;
+use core::cmp::Ordering;
 use core::fmt;
 use core::mem::size_of;
 
@@ -387,6 +388,37 @@ impl EncodedPattern {
             }
         }
         i == path.len()
+    }
+
+    /// Next.js precedence between two patterns that match the same path.
+    /// `Less` means `self` wins: at the first part where they differ, text
+    /// beats a param, a param beats a catch-all, and a catch-all beats an
+    /// optional catch-all. A pattern that ends first beats a longer one.
+    fn cmp_precedence(&self, other: &EncodedPattern) -> Ordering {
+        fn rank(part: &Part<'_>) -> u8 {
+            match part {
+                Part::Text(_) => 0,
+                Part::Param(_) => 1,
+                Part::CatchAll(_) => 2,
+                Part::CatchAllOptional(_) => 3,
+                // Groups are not part of the URL and are filtered out below.
+                Part::Group(_) => unreachable!(),
+            }
+        }
+        let is_segment = |part: &Part<'_>| !matches!(part, Part::Group(_));
+        let mut a = self.iterate().filter(is_segment);
+        let mut b = other.iterate().filter(is_segment);
+        loop {
+            match (a.next(), b.next()) {
+                (None, None) => return Ordering::Equal,
+                (None, Some(_)) => return Ordering::Less,
+                (Some(_), None) => return Ordering::Greater,
+                (Some(pa), Some(pb)) => match rank(&pa).cmp(&rank(&pb)) {
+                    Ordering::Equal => continue,
+                    ordering => return ordering,
+                },
+            }
+        }
     }
 }
 
@@ -1257,13 +1289,22 @@ impl FrameworkRouter {
             return Some(*static_route);
         }
 
-        for (i, pattern) in self.dynamic_routes.keys().iter().enumerate() {
-            if pattern.matches(path, params) {
-                return Some(self.dynamic_routes.values()[i]);
+        // `dynamic_routes` is in scan order, so the first match is arbitrary.
+        // Take the most specific one and run it again to fill `params`.
+        let patterns = self.dynamic_routes.keys();
+        let mut best: Option<usize> = None;
+        for (i, pattern) in patterns.iter().enumerate() {
+            if pattern.matches(path, params)
+                && best.is_none_or(|b| pattern.cmp_precedence(&patterns[b]).is_lt())
+            {
+                best = Some(i);
             }
         }
-
-        None
+        let i = best?;
+        params.params = BoundedArray::default();
+        let matched = patterns[i].matches(path, params);
+        debug_assert!(matched);
+        Some(self.dynamic_routes.values()[i])
     }
 
     pub(crate) fn route_ptr(&self, i: RouteIndex) -> &Route {
@@ -1449,21 +1490,6 @@ pub trait InsertionHandler {
     ) -> Result<(), AllocError>;
 }
 
-/// Static names scan before `[param]`, then `[...catchAll]`, then
-/// `[[...optionalCatchAll]]`: `match_slow` takes the first dynamic route
-/// that matches, so the more specific name has to be inserted first.
-fn scan_precedence(name: &[u8]) -> u8 {
-    if name.starts_with(b"[[") {
-        3
-    } else if name.starts_with(b"[...") {
-        2
-    } else if name.starts_with(b"[") {
-        1
-    } else {
-        0
-    }
-}
-
 impl FrameworkRouter {
     pub(crate) fn scan(
         &mut self,
@@ -1508,14 +1534,11 @@ impl FrameworkRouter {
                     None => return Ok(()),
                 }
             };
-            // Insertion order is the sibling order in the route tree and the match
-            // precedence, so it must not depend on the hash layout or readdir order.
+            // Insertion order is the sibling order in the route tree, so it must
+            // not depend on the hash layout or on the readdir order.
             bun_collections::index_sort::sort_slice_unstable_by(&mut entry_ptrs, |&a, &b| {
                 // SAFETY: EntryStore-owned pointers, valid for the process lifetime.
-                let (a, b) = unsafe { ((*a).base(), (*b).base()) };
-                scan_precedence(a)
-                    .cmp(&scan_precedence(b))
-                    .then_with(|| a.cmp(b))
+                unsafe { (*a).base().cmp((*b).base()) }
             });
             'outer: for file_ptr in entry_ptrs {
                 // SAFETY: EntryMap stores `*mut Entry` into the EntryStore singleton

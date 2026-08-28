@@ -92,6 +92,12 @@ test("discovers from filesystem paths", () => {
     layout: null,
     children: [
       {
+        part: "/:world",
+        page: path.join(dir, "[world].tsx"),
+        layout: null,
+        children: [],
+      },
+      {
         part: "/hello",
         page: path.join(dir, "hello.tsx"),
         layout: null,
@@ -124,17 +130,11 @@ test("discovers from filesystem paths", () => {
           },
         ],
       },
-      {
-        part: "/:world",
-        page: path.join(dir, "[world].tsx"),
-        layout: null,
-        children: [],
-      },
     ],
   });
 });
 
-test("route children are ordered static first, then param, then catch-all, then by file name", () => {
+test("route children are ordered by file name", () => {
   // The files are listed in an order that is neither sorted nor the order a
   // hash table walk produces, so the result only matches when the scan sorts.
   using dir = tempDir("fsr-order", {
@@ -152,11 +152,13 @@ test("route children are ordered static first, then param, then catch-all, then 
   const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
   const parts = (route: { children: { part: string }[] }) => route.children.map(child => child.part);
   const root = router.toJSON();
-  expect(parts(root)).toEqual(["/Beta", "/alpha", "/delta", "/epsilon", "/gamma", "/zeta", "/:id", "/:*rest"]);
-  expect(parts(root.children.find(child => child.part === "/delta"))).toEqual(["/Zed", "/about", "/:slug"]);
+  expect(parts(root)).toEqual(["/Beta", "/:*rest", "/:id", "/alpha", "/delta", "/epsilon", "/gamma", "/zeta"]);
+  expect(parts(root.children.find(child => child.part === "/delta"))).toEqual(["/Zed", "/:slug", "/about"]);
 });
 
-test("a more specific dynamic route matches before a less specific one", () => {
+test("the most specific dynamic route matches, whatever the scan order", () => {
+  // In file name order "[...rest]" and "[section]" come before "[id]" and
+  // "blog", so a first-match walk of the dynamic routes picks the wrong one.
   using dir = tempDir("fsr-precedence", {
     "[...rest].tsx": "1",
     "[id].tsx": "1",
@@ -164,9 +166,7 @@ test("a more specific dynamic route matches before a less specific one", () => {
     "docs/blog/[slug].tsx": "1",
   });
   const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
-  // [id] before [...rest]
   expect(router.match("/foo")).toMatchObject({ params: { id: "foo" }, route: { part: "/:id" } });
-  // docs/blog before docs/[section]
   expect(router.match("/docs/blog/post")).toMatchObject({
     params: { slug: "post" },
     route: { part: "/:slug", parent: { part: "/blog" } },
@@ -176,4 +176,14 @@ test("a more specific dynamic route matches before a less specific one", () => {
     route: { part: "/:slug", parent: { part: "/:section" } },
   });
   expect(router.match("/a/b/c")).toMatchObject({ route: { part: "/:*rest" } });
+});
+
+test("a route group does not change the precedence of the routes inside it", () => {
+  using dir = tempDir("fsr-group-precedence", {
+    "(marketing)/[...slug]/page.tsx": "1",
+    "[id]/page.tsx": "1",
+  });
+  const router = new FrameworkRouter({ root: dir, style: "nextjs-app-ui" });
+  expect(router.match("/foo")).toMatchObject({ params: { id: "foo" }, route: { part: "/:id" } });
+  expect(router.match("/foo/bar")).toMatchObject({ route: { part: "/:*slug", parent: { part: "/(marketing)" } } });
 });

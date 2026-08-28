@@ -224,11 +224,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Section 15.1.1 Static Semantics: Early Errors: "Multiple occurrences of
         // the same BindingIdentifier in a FormalParameterList is only allowed for
         // functions which have simple parameter lists and which are not defined in
-        // strict mode code."
+        // strict mode code." The ESM output is strict mode code too.
         if opts.is_unique_formal_parameters
             || strict_loc.is_some()
             || !has_simple_args
             || self.is_strict_mode()
+            || self.is_strict_mode_output_format()
         {
             duplicate_args_check = Some(StringVoidMap::get());
         }

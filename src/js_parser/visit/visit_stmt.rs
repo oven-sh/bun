@@ -148,19 +148,38 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::Import,
     ) -> Result<(), Error> {
         p.record_declared_symbol(data.namespace_ref);
+        if let Some(star_name_loc) = data.star_name_loc.to_nullable() {
+            p.validate_import_name(star_name_loc, data.namespace_ref)?;
+        }
 
         if let Some(default_name) = data.default_name {
             p.record_declared_symbol(default_name.ref_);
+            p.validate_import_name(default_name.loc, default_name.ref_)?;
         }
 
         let items = data.items.slice();
         if !items.is_empty() {
             for item in items.iter() {
                 p.record_declared_symbol(item.name.ref_);
+                p.validate_import_name(item.name.loc, item.name.ref_)?;
             }
         }
 
         stmts.push(*stmt);
+        Ok(())
+    }
+
+    /// An import makes the file a module, so a reserved word cannot be an imported binding.
+    /// `eval` and `arguments` are rejected in the parse pass.
+    fn validate_import_name(&mut self, loc: bun_ast::Loc, ref_: Ref) -> Result<(), Error> {
+        let name = self.load_name_from_ref(ref_);
+        if js_lexer::is_strict_mode_reserved_word(name) {
+            self.mark_strict_mode_feature(
+                StrictModeFeature::ReservedWord,
+                js_lexer::range_of_identifier(self.source, loc),
+                name,
+            )?;
+        }
         Ok(())
     }
 
@@ -2195,6 +2214,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         p.record_declared_symbol(data.name.ref_);
+        // The enum lowers to a `var` with this name.
+        let enum_name = p.load_name_from_ref(data.name.ref_);
+        p.validate_declared_symbol_name(data.name.loc, enum_name);
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Entry, stmt.loc)?;
         p.record_declared_symbol(data.arg);
 
@@ -2388,6 +2410,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::Namespace,
     ) -> Result<(), Error> {
         p.record_declared_symbol(data.name.ref_);
+        // The namespace lowers to a `var` with this name.
+        let namespace_name = p.load_name_from_ref(data.name.ref_);
+        p.validate_declared_symbol_name(data.name.loc, namespace_name);
 
         // Scan ahead for any variables inside this namespace. This must be done
         // ahead of time before visiting any statements inside the namespace

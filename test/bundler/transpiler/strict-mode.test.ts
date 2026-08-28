@@ -8,12 +8,13 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // Warnings (for example the legacy HTML comment warning) also make
 // `transformSync` throw, so only errors are recorded.
 const transpiler = new Bun.Transpiler({ loader: "js", logLevel: "error" });
+const tsTranspiler = new Bun.Transpiler({ loader: "ts", logLevel: "error" });
 
 type ParseMessage = { message: string; notes: { message: string; position: { line: number; column: number } }[] };
 
-function parseErrors(code: string): ParseMessage[] {
+function parseErrors(code: string, t: Bun.Transpiler = transpiler): ParseMessage[] {
   try {
-    transpiler.transformSync(code);
+    t.transformSync(code);
   } catch (e: any) {
     const errors: any[] = e instanceof AggregateError ? e.errors : [e];
     return errors.map(err => ({
@@ -33,6 +34,14 @@ function expectParseError(code: string, ...messages: string[]) {
 
 function expectNoParseError(code: string) {
   expect(parseErrors(code)).toEqual([]);
+}
+
+function expectTSParseError(code: string, ...messages: string[]) {
+  expect(parseErrors(code, tsTranspiler).map(e => e.message)).toEqual(messages);
+}
+
+function expectNoTSParseError(code: string) {
+  expect(parseErrors(code, tsTranspiler)).toEqual([]);
 }
 
 const useStrictNote = 'Strict mode is triggered by the "use strict" directive here:';
@@ -90,6 +99,7 @@ describe("strict mode early errors", () => {
       "let x = '\\9'",
       "'\\00'",
       "'\\08'",
+      "require('\\1')",
       "function f() {} function f() {}",
       "function f() {} function *f() {}",
       "async function f() {} function f() {}",
@@ -347,6 +357,13 @@ describe("strict mode early errors", () => {
       ],
       ["class static {}\nexport {}", '"static" is a reserved word and cannot be used in an ECMAScript module'],
       ["protected: 0; export {}", '"protected" is a reserved word and cannot be used in an ECMAScript module'],
+      ["import protected from 'x'", '"protected" is a reserved word and cannot be used in an ECMAScript module'],
+      ["import * as protected from 'x'", '"protected" is a reserved word and cannot be used in an ECMAScript module'],
+      ["import { protected } from 'x'", '"protected" is a reserved word and cannot be used in an ECMAScript module'],
+      ["import { x as protected } from 'x'", '"protected" is a reserved word and cannot be used in an ECMAScript module'],
+      ["import 'x\\1'", "Legacy octal escape sequences cannot be used in an ECMAScript module"],
+      ["export * from 'x\\1'", "Legacy octal escape sequences cannot be used in an ECMAScript module"],
+      ["export { x } from 'x\\1'", "Legacy octal escape sequences cannot be used in an ECMAScript module"],
       ["export let n = 010", "Legacy octal literals cannot be used in an ECMAScript module"],
       ["export let n = 08", "Legacy octal literals cannot be used in an ECMAScript module"],
       ["export let o = { 0123: 4 }", "Legacy octal literals cannot be used in an ECMAScript module"],
@@ -393,6 +410,36 @@ describe("strict mode early errors", () => {
           notes: [{ message: exportNote, position: { line: 2, column: 1 } }],
         },
       ]);
+    });
+
+    test("the error points at the imported binding, not the alias", () => {
+      let error: any;
+      try {
+        transpiler.transformSync("import { x as protected } from 'x'");
+      } catch (e: any) {
+        error = e instanceof AggregateError ? e.errors[0] : e;
+      }
+      expect(error?.message).toBe('"protected" is a reserved word and cannot be used in an ECMAScript module');
+      expect(error?.position).toMatchObject({ line: 1, column: 15, length: 9 });
+    });
+  });
+
+  describe("TypeScript declarations that lower to var", () => {
+    const reserved = '"protected" is a reserved word and cannot be used in strict mode';
+    const reservedInModule = '"protected" is a reserved word and cannot be used in an ECMAScript module';
+    test("enum", () => {
+      expectNoTSParseError("enum protected { A }");
+      expectTSParseError("'use strict'; enum protected { A }", reserved);
+      expectTSParseError("enum protected { A }\nexport {}", reservedInModule);
+    });
+    test("namespace", () => {
+      expectNoTSParseError("namespace protected { export let x = 1 }");
+      expectTSParseError("'use strict'; namespace protected { export let x = 1 }", reserved);
+      expectTSParseError("namespace protected { export let x = 1 }\nexport {}", reservedInModule);
+    });
+    test("import equals", () => {
+      expectNoTSParseError("import protected = require('x')");
+      expectTSParseError("'use strict'; import protected = require('x')", reserved);
     });
   });
 

@@ -1328,6 +1328,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             loader: None,
         };
 
+        // An import or export statement makes the file a module, and the module
+        // scope only becomes strict after the parse pass, so report this here.
+        if p.lexer.legacy_octal_loc.start > path.loc.start {
+            let notes = p.why_es_module();
+            p.log().add_range_error_fmt_with_notes(
+                Some(p.source),
+                p.source.range_of_legacy_octal_escape(p.lexer.legacy_octal_loc),
+                notes,
+                format_args!(
+                    "Legacy octal escape sequences cannot be used in an ECMAScript module"
+                ),
+            );
+        }
+
         if p.lexer.token == T::TNoSubstitutionTemplateLiteral {
             p.lexer.next()?;
         } else {

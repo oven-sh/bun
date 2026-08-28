@@ -93,6 +93,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn e_string(p: &mut Self, e: &mut Expr, _: ExprIn) {
+        // The substitution revisit walks an already-visited literal; its errors are logged.
+        if p.is_revisit_for_substitution {
+            return;
+        }
         let str_ = e.data.e_string().expect("infallible: variant checked");
         let legacy_octal_loc = str_.legacy_octal_loc;
         if legacy_octal_loc.start > 0 {
@@ -114,6 +118,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn e_number(p: &mut Self, e: &mut Expr, _: ExprIn) {
+        if p.is_revisit_for_substitution {
+            return;
+        }
         if !p.legacy_octal_literals.is_empty() && p.is_strict_mode() {
             if let Some(range) = p.legacy_octal_literals.get(&e.loc.start).copied() {
                 p.mark_strict_mode_feature(StrictModeFeature::LegacyOctalLiteral, range, b"")
@@ -335,6 +342,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 *e = p.value_for_require(expr.loc);
                 return;
+            }
+
+            // The renamer rewrites a bound reserved word, but an unbound one is
+            // printed as written and the ESM output would not parse.
+            if !p.is_strict_mode()
+                && p.is_strict_mode_output_format()
+                && js_lexer::is_strict_mode_reserved_word(name)
+            {
+                p.mark_strict_mode_feature(
+                    StrictModeFeature::ReservedWord,
+                    js_lexer::range_of_identifier(p.source, expr.loc),
+                    name,
+                )
+                .expect("unreachable");
             }
         }
 
@@ -1256,7 +1277,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             Op::UnDelete => {
-                if matches!(e_.value.data, Data::EIdentifier(_)) {
+                if matches!(e_.value.data, Data::EIdentifier(_)) && !p.is_revisit_for_substitution {
                     p.mark_strict_mode_feature(
                         StrictModeFeature::DeleteBareName,
                         js_lexer::range_of_identifier(p.source, e_.value.loc),

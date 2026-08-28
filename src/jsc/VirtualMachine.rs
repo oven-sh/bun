@@ -3287,8 +3287,6 @@ pub struct Options {
     // forward-dep crate; callers pass it as the resolver's trait object so
     // both VM and resolver can hold it without the cycle.
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
-    /// The `--inspect*` CLI flag. Forwarded to `InitOptions::debugger` so
-    /// `RuntimeHooks::init_runtime_state` → `configureDebugger` sees it.
     pub debugger: bun_options_types::context::Debugger,
     pub is_main_thread: bool,
 }

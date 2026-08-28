@@ -2392,7 +2392,8 @@ impl NetworkSink {
             if !reason.is_empty_or_undefined_or_null() {
                 (*this).upstream_error.set(global, reason);
             }
-            (*this).task.as_deref()
+            // Our own ref: `fail` re-enters and may clear `(*this).task`.
+            (*this).task.clone()
         };
         let Some(task) = task_ref else {
             return;
@@ -2437,7 +2438,8 @@ impl NetworkSink {
         let (task, wrapper) = unsafe {
             (*this).ended = true;
             (*this).source.clear();
-            let Some(task) = (*this).task.as_deref() else {
+            // Our own ref: `fail`/`write_bytes` re-enter and may clear `(*this).task`.
+            let Some(task) = (*this).task.clone() else {
                 return;
             };
             let wrapper = task

@@ -450,8 +450,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             if let Some(prop) =
                                                 p.parse_property(kind, opts, None)?
                                             {
-                                                if prop.kind == PropertyKind::Normal
-                                                    && prop.value.is_none()
+                                                if matches!(
+                                                    prop.kind,
+                                                    PropertyKind::Normal
+                                                        | PropertyKind::AutoAccessor
+                                                ) && prop.value.is_none()
                                                     && opts.ts_decorators.len() > 0
                                                 {
                                                     let mut prop_ = prop;

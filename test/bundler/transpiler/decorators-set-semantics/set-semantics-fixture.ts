@@ -40,9 +40,9 @@ function Emoji() {
 }
 
 const iceCream = new IceCreamComponent();
-expect(iceCream.flavor === "🍦 vanilla 🍦").toBe(true);
+expect(iceCream.flavor).toBe("🍦 vanilla 🍦");
 iceCream.flavor = "chocolate";
-expect(iceCream.flavor === "🍦 chocolate 🍦").toBe(true);
+expect(iceCream.flavor).toBe("🍦 chocolate 🍦");
 
 // No instance field below has a computed key: with useDefineForClassFields
 // false, one such key keeps every instance field of the class native.

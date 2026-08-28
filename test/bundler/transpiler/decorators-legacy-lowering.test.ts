@@ -144,24 +144,26 @@ const fixtures: Record<string, Fixture> = {
   },
   "accessor fields are lowered and can be decorated": {
     source: `
-      function dec(t: any, k: any, d: any) { console.log("dec", String(k), typeof d.get, typeof d.set) }
+      function dec(t: any, k: any, d: any) { console.log("dec", String(k), d === undefined ? "undefined" : typeof d.get) }
       const sym = Symbol("s");
-      class Acc {
+      abstract class Acc {
         accessor y = 2;
         @dec accessor z = 3;
         @dec static accessor s: string;
         @dec accessor [sym] = 4;
         accessor #p = 5;
+        @dec abstract accessor q: number;
         p() { return this.#p }
       }
-      const a = new Acc();
-      console.log(a.y, a.z, Acc.s, a[sym], a.p());
+      class Impl extends Acc { accessor q = 6 }
+      const a = new Impl();
+      console.log(a.y, a.z, Acc.s, a[sym], a.p(), a.q);
       a.y = 20; a.z = 30; Acc.s = "s"; a[sym] = 40;
       console.log(a.y, a.z, Acc.s, a[sym]);
       console.log(JSON.stringify(Object.getOwnPropertyNames(a)), JSON.stringify(Object.getOwnPropertyNames(Acc.prototype)));
     `,
     expected:
-      'dec z function function\ndec Symbol(s) function function\ndec s function function\n2 3 undefined 4 5\n20 30 s 40\n[] ["constructor","y","z","p"]\n',
+      'dec z function\ndec Symbol(s) function\ndec q undefined\ndec s function\n2 3 undefined 4 5 6\n20 30 s 40\n[] ["constructor","y","z","p"]\n',
   },
   "accessor storage names stay unique and class expressions are lowered too": {
     source: `
@@ -222,20 +224,20 @@ const tscEmitAndRun = `
 const typescriptPath = require.resolve("typescript");
 
 describe("experimentalDecorators lowering", () => {
-  for (const [name, fixture] of Object.entries(fixtures)) {
+  describe.each(Object.entries(fixtures))("%s", (_name, fixture) => {
     const files = {
       "tsconfig.json": tsconfig(fixture.useDefineForClassFields),
       "index.ts": fixture.source,
       ...fixture.files,
     };
 
-    test(`${name} (bun)`, async () => {
+    test("bun", async () => {
       using dir = tempDir("legacy-dec-run", files);
       const { stdout, stderr, exitCode } = await run([bunExe(), "index.ts"], String(dir));
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: fixture.expected, stderr: "", exitCode: 0 });
     });
 
-    test(`${name} (bundled and minified)`, async () => {
+    test("bundled and minified", async () => {
       using dir = tempDir("legacy-dec-build", files);
       const build = await Bun.build({
         entrypoints: [join(String(dir), "index.ts")],
@@ -247,7 +249,7 @@ describe("experimentalDecorators lowering", () => {
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: fixture.expected, stderr: "", exitCode: 0 });
     });
 
-    test.skipIf(!nodeExe())(`${name} (tsc emit)`, async () => {
+    test.skipIf(!nodeExe())("tsc emit", async () => {
       // The reference: tsc's own output for the same source, run as plain JavaScript.
       using dir = tempDir("legacy-dec-tsc", { ...files, "tsc-emit-and-run.cjs": tscEmitAndRun });
       const { stdout, stderr, exitCode } = await run(
@@ -256,7 +258,7 @@ describe("experimentalDecorators lowering", () => {
       );
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: fixture.expected, stderr: "", exitCode: 0 });
     });
-  }
+  });
 
   test("decorated auto-accessor and declare fields get design:type metadata", async () => {
     using dir = tempDir("legacy-dec-metadata", {

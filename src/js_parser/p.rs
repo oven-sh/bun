@@ -6689,6 +6689,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
+        // A computed key temporary needs a statement list to be declared in.
+        let can_declare_temps = self.nearest_stmt_list.is_some();
         let temp_refs_before = self.temp_refs_to_declare.len();
         let mut storage_names = self.private_names_in_class(class);
         let mut properties =
@@ -6698,7 +6700,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 properties.push(core::mem::take(prop));
                 continue;
             }
-            let (key_for_reuse, _) = self.capture_computed_key(prop);
+            let key_for_reuse = if can_declare_temps {
+                self.capture_computed_key(prop).0
+            } else {
+                prop.key.expect("infallible: prop has key")
+            };
             self.lower_ts_auto_accessor(prop, key_for_reuse, &mut storage_names, &mut properties);
         }
         class.properties = bun_ast::StoreSlice::new_mut(properties.into_bump_slice_mut());
@@ -6777,7 +6783,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .into_bump_str()
                 .as_bytes();
         let mut suffix = 1;
-        while storage_names.iter().any(|name| *name == storage_name) {
+        while storage_names.contains(&storage_name) {
             storage_name = bun_alloc::arena_format!(
                 in self.arena,
                 "#{}_accessor_storage_{}",

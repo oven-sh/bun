@@ -229,21 +229,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut ts_decorators = bun_alloc::AstAlloc::vec();
             if opts.allow_ts_decorators {
                 // Parameter decorators are evaluated outside the method, with the class.
-                let inner_allow_await = p.fn_or_arrow_data_parse.allow_await;
-                let inner_allow_yield = p.fn_or_arrow_data_parse.allow_yield;
-                let inner_needs_async_loc = p.fn_or_arrow_data_parse.needs_async_loc;
+                let inner_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
                 let inner_scope = p.current_scope;
                 p.fn_or_arrow_data_parse.allow_await = old_fn_or_arrow_data.allow_await;
                 p.fn_or_arrow_data_parse.allow_yield = old_fn_or_arrow_data.allow_yield;
                 p.fn_or_arrow_data_parse.needs_async_loc = old_fn_or_arrow_data.needs_async_loc;
+                p.fn_or_arrow_data_parse.allow_super_call = old_fn_or_arrow_data.allow_super_call;
+                p.fn_or_arrow_data_parse.allow_super_property =
+                    old_fn_or_arrow_data.allow_super_property;
                 if let Some(decorator_scope) = opts.decorator_scope {
                     p.current_scope = decorator_scope;
                 }
                 let decorators = p.parse_type_script_decorators();
                 p.current_scope = inner_scope;
-                p.fn_or_arrow_data_parse.allow_await = inner_allow_await;
-                p.fn_or_arrow_data_parse.allow_yield = inner_allow_yield;
-                p.fn_or_arrow_data_parse.needs_async_loc = inner_needs_async_loc;
+                p.fn_or_arrow_data_parse = inner_fn_or_arrow_data;
                 ts_decorators = decorators?;
                 if ts_decorators.len_u32() > 0 {
                     arg_has_decorators = true;

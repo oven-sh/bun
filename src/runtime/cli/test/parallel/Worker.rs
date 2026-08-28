@@ -348,7 +348,7 @@ impl Worker {
         f.begin(frame::Kind::Shutdown);
         self.ipc.send(f.finish());
         // Leave the channel open so the reader drains trailing
-        // repeat_bufs / junit_chunk / coverage_chunk frames; the worker exits on
+        // repeat_bufs / coverage_file frames; the worker exits on
         // `.shutdown` and its exit closes the peer end.
     }
 }

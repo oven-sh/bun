@@ -228,8 +228,9 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     // Ctrl-C cancels the menu without creating a project.
     terminal.write("\x03");
     await waitFor(all => all.includes("Cancelled"));
-    expect(await proc.exited).toBe(0);
+    const exitCode = await proc.exited;
     expect(fs.existsSync(path.join(temp, "package.json"))).toBe(false);
+    expect(exitCode).toBe(0);
   });
 
   test("bun init in folder", async () => {

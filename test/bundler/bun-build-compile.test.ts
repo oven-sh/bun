@@ -1001,10 +1001,10 @@ describe("cross-compile executable cache", () => {
     return gzipSync(Buffer.concat([header, body, pad, Buffer.alloc(1024, 0)]));
   })();
 
-  // Runs the cross-compile of `<dir>/project/app.js`. `env` sets the variables the cache directory
-  // comes from; `null` unsets one. HOME points into `dir`, so a wrongly placed download shows up
-  // there and not in the real home directory.
-  async function crossCompile(dir: string, env: Record<string, string | null>, args: string[] = []) {
+  // Runs the cross-compile of `<dir>/project/app.js` and returns its stderr. `env` sets the variables
+  // the cache directory comes from; `null` unsets one. HOME points into `dir`, so a wrongly placed
+  // download shows up there and not in the real home directory.
+  async function crossCompile(dir: string, env: Record<string, string | null>, args: string[] = []): Promise<string> {
     await using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -1033,14 +1033,15 @@ describe("cross-compile executable cache", () => {
       stderr: "pipe",
     });
     const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // The download worked and the build failed on the placeholder, not earlier.
-    expect(stderr).toContain("failed to write compiled executable");
     expect(existsSync(join(dir, "home", ".bun"))).toBe(false);
     expect(existsSync(join(dir, "project", ".bun-cache"))).toBe(false);
+    return stderr;
   }
 
   // The cache directory holds the download and nothing else.
-  function cachedDownload(cacheDir: string): string {
+  function cachedDownload(stderr: string, cacheDir: string): string {
+    // The download worked and the build failed on the placeholder, not earlier.
+    expect(stderr).toContain("failed to write compiled executable");
     const entries = readdirSync(cacheDir);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toStartWith("bun-linux-");
@@ -1051,14 +1052,14 @@ describe("cross-compile executable cache", () => {
 
   test.concurrent("caches the download under $XDG_CACHE_HOME/.bun/install/cache", async () => {
     using dir = tempDir("compile-cache-xdg", files);
-    await crossCompile(String(dir), { XDG_CACHE_HOME: join(String(dir), "xdg") });
-    expect(cachedDownload(join(String(dir), "xdg", ".bun", "install", "cache"))).toBe(placeholder);
+    const stderr = await crossCompile(String(dir), { XDG_CACHE_HOME: join(String(dir), "xdg") });
+    expect(cachedDownload(stderr, join(String(dir), "xdg", ".bun", "install", "cache"))).toBe(placeholder);
   });
 
   test.concurrent("caches the download under $BUN_INSTALL/install/cache", async () => {
     using dir = tempDir("compile-cache-bun-install", files);
-    await crossCompile(String(dir), { BUN_INSTALL: join(String(dir), "bun-install") });
-    expect(cachedDownload(join(String(dir), "bun-install", "install", "cache"))).toBe(placeholder);
+    const stderr = await crossCompile(String(dir), { BUN_INSTALL: join(String(dir), "bun-install") });
+    expect(cachedDownload(stderr, join(String(dir), "bun-install", "install", "cache"))).toBe(placeholder);
   });
 
   // `--env=disable` makes `bun build` load .env files without inlining them into the bundle.
@@ -1066,15 +1067,27 @@ describe("cross-compile executable cache", () => {
     using dir = tempDir("compile-cache-dotenv", files);
     const cacheDir = join(String(dir), "dotenv-cache");
     writeFileSync(join(String(dir), "project", ".env"), `BUN_INSTALL_CACHE_DIR=${cacheDir.replaceAll("\\", "/")}\n`);
-    await crossCompile(String(dir), {}, ["--env=disable"]);
-    expect(cachedDownload(cacheDir)).toBe(placeholder);
+    const stderr = await crossCompile(String(dir), {}, ["--env=disable"]);
+    expect(cachedDownload(stderr, cacheDir)).toBe(placeholder);
   });
 
   // Without a home directory the cache goes under the project's node_modules, like `bun install`.
   test.concurrent.skipIf(isWindows)("caches the download under node_modules/.bun-cache without HOME", async () => {
     using dir = tempDir("compile-cache-no-home", files);
-    await crossCompile(String(dir), { HOME: null });
-    expect(cachedDownload(join(String(dir), "project", "node_modules", ".bun-cache"))).toBe(placeholder);
+    const stderr = await crossCompile(String(dir), { HOME: null });
+    expect(cachedDownload(stderr, join(String(dir), "project", "node_modules", ".bun-cache"))).toBe(placeholder);
+  });
+
+  // The configured cache directory is a regular file, so nothing can be written under it. The error
+  // names the path bun tried to write and the errno, so the user knows which directory to fix.
+  test.concurrent("names the cache path and the errno when the download cannot be cached", async () => {
+    using dir = tempDir("compile-cache-unwritable", { ...files, "not-a-directory": "" });
+    const cacheDir = join(String(dir), "not-a-directory");
+    const stderr = await crossCompile(String(dir), { BUN_INSTALL_CACHE_DIR: cacheDir });
+    const line = stderr.split("\n").find(line => line.startsWith("Failed to write cached executable")) ?? stderr;
+    expect(line.replaceAll("\\", "/")).toContain(`' to "${cacheDir.replaceAll("\\", "/")}/bun-linux-`);
+    expect(line).toMatch(isWindows ? /": E[A-Z]+$/ : /": ENOTDIR$/);
+    expect(stderr).not.toContain("The download may be incomplete");
   });
 });
 

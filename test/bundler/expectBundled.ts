@@ -254,8 +254,8 @@ export interface BundlerTestInput {
   minifyIdentifiers?: boolean;
   minifySyntax?: boolean;
   targetFromAPI?: "TargetWasConfigured";
-  /** esbuild's transform-only mode ("passthrough"); not implemented in this harness */
-  mode?: "passthrough";
+  /** esbuild's non-bundling modes; not implemented in this harness */
+  mode?: "passthrough" | "convertformat";
   minifyWhitespace?: boolean;
   splitting?: boolean;
   /** `splitRequire` (`--no-split-require` when false); on by default for target bun. */

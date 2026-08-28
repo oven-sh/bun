@@ -2,23 +2,13 @@
 //! - `cd` by itself or `cd ~` will always put the user in their home directory.
 //! - `cd -` will put the user in the previous directory
 
-use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
+use crate::shell::builtin::{Builtin, IoKind, Kind};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
-pub struct Cd {
-    state: State,
-}
-
-#[derive(Default)]
-enum State {
-    #[default]
-    Idle,
-    WaitingIo,
-    Done,
-}
+pub struct Cd {}
 
 impl Cd {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
@@ -101,7 +91,6 @@ impl Cd {
         cmd: NodeId,
         args: core::fmt::Arguments<'_>,
     ) -> Yield {
-        Self::state_mut(interp, cmd).state = State::WaitingIo;
         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
             return Builtin::of_mut(interp, cmd).stderr.enqueue_fmt(
@@ -113,7 +102,6 @@ impl Cd {
         }
         let buf = Builtin::fmt_error_arena(interp, cmd, Some(Kind::Cd), args).to_vec();
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &buf);
-        Self::state_mut(interp, cmd).state = State::Done;
         Builtin::done(interp, cmd, 1)
     }
 
@@ -123,7 +111,6 @@ impl Cd {
         _: usize,
         _err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        Self::state_mut(interp, cmd).state = State::Done;
         Builtin::done(interp, cmd, 1)
     }
 }

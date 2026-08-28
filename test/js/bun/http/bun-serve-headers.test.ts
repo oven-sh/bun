@@ -110,6 +110,36 @@ describe("response header values are isomorphic-encoded on the wire", () => {
     expect(headerHex(await rawResponse(server.port, "/8"), "set-cookie")).toEqual(expected);
     expect(headerHex(await rawResponse(server.port, "/16"), "set-cookie")).toEqual(expected);
   });
+
+  test("long values and values that start with a non-ASCII char", async () => {
+    // 300 ASCII code units, then latin-1, then digits: longer than the writer's inline buffer.
+    const units = Array.from({ length: 300 }, (_, i) => 0x41 + (i % 26));
+    units.push(0xe9, 0x80, 0xff, ...Array.from({ length: 100 }, (_, i) => 0x30 + (i % 10)));
+    const values: Record<string, Uint16Array> = {
+      long: new Uint16Array(units),
+      lead: new Uint16Array([0xe9, 0x61]),
+      ascii: new Uint16Array([0x61, 0x62, 0x63]),
+    };
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch(req) {
+        const url = new URL(req.url);
+        const codeUnits = values[url.pathname.slice(1)];
+        const value =
+          url.searchParams.get("bits") === "16"
+            ? new TextDecoder("utf-16le").decode(codeUnits)
+            : String.fromCharCode(...codeUnits);
+        return new Response("ok", { headers: { "x-t": value } });
+      },
+    });
+
+    for (const [name, codeUnits] of Object.entries(values)) {
+      const expected = [[...codeUnits].map(c => c.toString(16).padStart(2, "0")).join(" ")];
+      expect(headerHex(await rawResponse(server.port, `/${name}?bits=8`), "x-t")).toEqual(expected);
+      expect(headerHex(await rawResponse(server.port, `/${name}?bits=16`), "x-t")).toEqual(expected);
+    }
+  });
 });
 
 // RFC 9112 §9.6: a server that sends "Connection: close" MUST close the

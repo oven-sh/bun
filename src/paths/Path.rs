@@ -1019,8 +1019,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         self.append_with(|writer| writer.write_fmt(args))
     }
 
-    /// Appends the bytes that `write` produces, trimmed and separated like `append`.
-    /// Unlike `append_fmt`, the bytes do not have to be UTF-8.
+    /// Like `append_fmt`, for a producer of bytes that need not be UTF-8.
     pub fn append_with(
         &mut self,
         write: impl FnOnce(&mut dyn bun_core::io::Write) -> bun_core::CrateResult<()>,

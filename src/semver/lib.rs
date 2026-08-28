@@ -700,15 +700,13 @@ pub mod semver_string {
 
     // ── String.StorePathFormatter ─────────────────────────────────────────
 
-    /// Writes `bytes` as a single path component of the isolated store:
-    /// `/`, `\`, `:`, `#` and `?` become `+`, every other byte is written unchanged.
+    /// `bytes` as one path component of the isolated store: `/`, `\`, `:`, `#` and `?` become `+`.
     pub fn write_store_path<W: bun_core::io::Write + ?Sized>(
         writer: &mut W,
         bytes: &[u8],
     ) -> bun_core::CrateResult<()> {
         let mut rest = bytes;
-        // `?` would be parsed as a query-string delimiter during module
-        // resolution (and is invalid in Windows filenames).
+        // `?` is a query-string delimiter in module resolution and invalid in Windows filenames.
         while let Some(i) = strings::index_of_any(rest, b"/\\:#?") {
             writer.write_all(&rest[..i])?;
             writer.write_byte(b'+')?;

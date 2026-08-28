@@ -2190,11 +2190,18 @@ pub(crate) mod __gated_printer {
 
         pub(crate) fn print_decls(
             &mut self,
-            keyword: &'static [u8],
+            kind: S::Kind,
             decls_: &[G::Decl],
             flags: ExprFlagSet,
             tlm: TopLevelAndIsExport,
         ) {
+            let keyword: &'static [u8] = match kind {
+                S::Kind::KVar => b"var",
+                S::Kind::KLet => b"let",
+                S::Kind::KConst => b"const",
+                S::Kind::KUsing => b"using",
+                S::Kind::KAwaitUsing => b"await using",
+            };
             self.print(keyword);
             self.print_space();
             let mut decls = decls_;
@@ -2208,8 +2215,7 @@ pub(crate) mod __gated_printer {
             // A `using` or `await using` declaration admits only identifier
             // bindings, never a binding pattern.
             let allow_destructuring = bun_core::FeatureFlags::SAME_TARGET_BECOMES_DESTRUCTURING
-                && keyword != b"using"
-                && keyword != b"await using";
+                && !kind.is_using();
 
             let mut needs_comma = false;
             'decls: while !decls.is_empty() {
@@ -5669,19 +5675,7 @@ pub(crate) mod __gated_printer {
                     self.print_indent();
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
-                    match s.kind {
-                        S::Kind::KConst => {
-                            self.print_decl_stmt(s.is_export, b"const", s.decls.slice())
-                        }
-                        S::Kind::KLet => self.print_decl_stmt(s.is_export, b"let", s.decls.slice()),
-                        S::Kind::KVar => self.print_decl_stmt(s.is_export, b"var", s.decls.slice()),
-                        S::Kind::KUsing => {
-                            self.print_decl_stmt(s.is_export, b"using", s.decls.slice())
-                        }
-                        S::Kind::KAwaitUsing => {
-                            self.print_decl_stmt(s.is_export, b"await using", s.decls.slice())
-                        }
-                    }
+                    self.print_decl_stmt(s.is_export, s.kind, s.decls.slice());
                 }
                 StmtData::SIf(s) => {
                     self.print_indent();
@@ -6379,38 +6373,12 @@ pub(crate) mod __gated_printer {
                 }
                 StmtData::SLocal(s) => {
                     let flags = ExprFlag::ForbidIn.into();
-                    match s.kind {
-                        S::Kind::KVar => self.print_decls(
-                            b"var",
-                            s.decls.slice(),
-                            flags,
-                            TopLevelAndIsExport::default(),
-                        ),
-                        S::Kind::KLet => self.print_decls(
-                            b"let",
-                            s.decls.slice(),
-                            flags,
-                            TopLevelAndIsExport::default(),
-                        ),
-                        S::Kind::KConst => self.print_decls(
-                            b"const",
-                            s.decls.slice(),
-                            flags,
-                            TopLevelAndIsExport::default(),
-                        ),
-                        S::Kind::KUsing => self.print_decls(
-                            b"using",
-                            s.decls.slice(),
-                            flags,
-                            TopLevelAndIsExport::default(),
-                        ),
-                        S::Kind::KAwaitUsing => self.print_decls(
-                            b"await using",
-                            s.decls.slice(),
-                            flags,
-                            TopLevelAndIsExport::default(),
-                        ),
-                    }
+                    self.print_decls(
+                        s.kind,
+                        s.decls.slice(),
+                        flags,
+                        TopLevelAndIsExport::default(),
+                    );
                 }
                 // for(;)
                 StmtData::SEmpty(_) => {}
@@ -6583,7 +6551,7 @@ pub(crate) mod __gated_printer {
         pub(crate) fn print_decl_stmt(
             &mut self,
             is_export: bool,
-            keyword: &'static [u8],
+            kind: S::Kind,
             decls: &[G::Decl],
         ) {
             if is_export {
@@ -6594,7 +6562,7 @@ pub(crate) mod __gated_printer {
             } else {
                 TopLevelAndIsExport::default()
             };
-            self.print_decls(keyword, decls, ExprFlag::none(), tlm);
+            self.print_decls(kind, decls, ExprFlag::none(), tlm);
             self.print_semicolon_after_statement();
         }
 

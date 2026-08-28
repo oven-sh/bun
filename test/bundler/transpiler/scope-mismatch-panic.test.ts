@@ -235,39 +235,24 @@ describe("dropped TypeScript class members discard scopes", () => {
   // so visiting a later scope of a different kind hit "Scope mismatch while visiting".
   const cases: [name: string, source: string, expected: string[]][] = [
     [
-      "arrow decorator on a method overload signature plus an arrow parameter decorator",
-      "class C {\r@((td) => { })oo(): oo;\n h(@(() => {})ny) {}}",
-      ["class C"],
-    ],
-    [
-      "arrow decorator on a method overload signature followed by a nested block",
-      "class C { @((td) => { })oo(): oo; h() { { let x; } } }",
-      ["class C"],
-    ],
-    [
-      "arrow decorator on an abstract method",
-      "abstract class C { @((td) => { })abstract oo(): void; h() { { let x; } } }",
-      ["class C"],
-    ],
-    [
-      "arrow decorator on a declare method",
-      "class C { @((td) => { })declare oo(): void;\n h() { { let x; } } }",
-      ["class C"],
-    ],
-    [
-      "arrow decorator on an index signature",
-      "class C { @((td) => { })[key: string]: any;\n h() { { let x; } } }",
-      ["class C"],
-    ],
-    [
-      "arrow decorator on a method overload signature followed by a function after the class",
-      "class C { @((td) => { })oo(): oo; }\nfunction f() { { let x; } }",
-      ["class C", "function f"],
-    ],
-    [
       "arrow function in the computed key of a method overload signature",
       "class C { [((x) => x)('foo')](): void; h() { { let x; } } }",
       ["class C"],
+    ],
+    [
+      "arrow function in the computed key of a method overload signature followed by a function after the class",
+      "class C { [((x) => x)('foo')](): void; }\nfunction f() { { let x; } }",
+      ["class C", "function f"],
+    ],
+    [
+      "arrow functions in the computed keys of an abstract method and a declare field",
+      "abstract class C { abstract [((x) => x)('foo')](): void; declare [((x) => x)('bar')]: number; h() { { let x; } } }",
+      ["class C"],
+    ],
+    [
+      "arrow decorators inside a declare class body followed by a function and a class",
+      "declare class C { @((td) => { })oo(): oo; h(@(() => {})ny) {} }\nfunction f() { { let x; } }\nclass D { h() { { let y; } } }",
+      ["function f", "class D"],
     ],
   ];
 
@@ -290,5 +275,48 @@ describe("dropped TypeScript class members discard scopes", () => {
       expect(stdout).toContain(substring);
     }
     expect(exitCode).toBe(0);
+  });
+
+  // Outside of a "declare class" body, decorators on a dropped member are a syntax
+  // error ("Decorators are not valid here"), like tsc and esbuild report. The parse
+  // stops there, so the scopes of the dropped member are never visited.
+  const rejected: [name: string, source: string][] = [
+    [
+      "arrow decorator on a method overload signature plus an arrow parameter decorator",
+      "class C {\r@((td) => { })oo(): oo;\n h(@(() => {})ny) {}}",
+    ],
+    [
+      "arrow decorator on a method overload signature followed by a nested block",
+      "class C { @((td) => { })oo(): oo; h() { { let x; } } }",
+    ],
+    [
+      "arrow decorator on an abstract method",
+      "abstract class C { @((td) => { })abstract oo(): void; h() { { let x; } } }",
+    ],
+    ["arrow decorator on a declare method", "class C { @((td) => { })declare oo(): void;\n h() { { let x; } } }"],
+    ["arrow decorator on an index signature", "class C { @((td) => { })[key: string]: any;\n h() { { let x; } } }"],
+    [
+      "arrow decorator on a method overload signature followed by a function after the class",
+      "class C { @((td) => { })oo(): oo; }\nfunction f() { { let x; } }",
+    ],
+  ];
+
+  test.concurrent.each(rejected)("%s is rejected", async (_name, source) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stdout.write(new Bun.Transpiler({ loader: "tsx" }).transformSync(${JSON.stringify(source)}))`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Decorators are not valid here");
+    expect(exitCode).toBe(1);
   });
 });

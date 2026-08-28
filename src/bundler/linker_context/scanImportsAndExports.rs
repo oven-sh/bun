@@ -1518,53 +1518,39 @@ mod __css_validation {
                     .original_name
                     .slice();
 
-                let _ = self.log.add_msg(bun_ast::Msg {
-                    kind: bun_ast::Kind::Err,
-                    data: bun_ast::range_data(
-                        Some(&col_ref!(self.all_sources)[source_index as usize]),
-                        range,
+                let notes: Box<[bun_ast::Data]> = Box::new([
+                    bun_ast::range_data(
+                        Some(&col_ref!(self.all_sources)[entry.value_ptr.source_index as usize]),
+                        entry.value_ptr.range,
                         bun_ast::alloc_print(format_args!(
-                            "The value of {} in the class {} is undefined.",
-                            bstr::BStr::new(property_name),
-                            bstr::BStr::new(local_original_name),
+                            "The first definition of {} is in this style rule:",
+                            bstr::BStr::new(property_name)
                         )),
-                    )
-                    .clone_line_text(self.log.clone_line_text),
-                    notes: Box::<[bun_ast::Data]>::from(
-                        &[
-                            bun_ast::range_data(
-                                Some(
-                                    &col_ref!(self.all_sources)
-                                        [entry.value_ptr.source_index as usize],
-                                ),
-                                entry.value_ptr.range,
-                                bun_ast::alloc_print(format_args!(
-                                    "The first definition of {} is in this style rule:",
-                                    bstr::BStr::new(property_name)
-                                )),
-                            ),
-                            bun_ast::Data {
-                                text: {
-                                    use std::io::Write;
-                                    let mut v = Vec::new();
-                                    let _ = write!(
-                                        &mut v,
-                                        "The specification of \"composes\" does not define an order when class declarations from separate files are composed together. \
-                                         The value of the {} property for {} may change unpredictably as the code is edited. \
-                                         Make sure that all definitions of {} for {} are in a single file.",
-                                        bun_core::fmt::quote(property_name),
-                                        bun_core::fmt::quote(local_original_name),
-                                        bun_core::fmt::quote(property_name),
-                                        bun_core::fmt::quote(local_original_name),
-                                    );
-                                    std::borrow::Cow::Owned(v)
-                                },
-                                ..Default::default()
-                            },
-                        ][..],
                     ),
-                    ..Default::default()
-                });
+                    bun_ast::Data {
+                        text: bun_ast::alloc_print(format_args!(
+                            "The specification of \"composes\" does not define an order when class declarations from separate files are composed together. \
+                             The value of the {} property for {} may change unpredictably as the code is edited. \
+                             Make sure that all definitions of {} for {} are in a single file.",
+                            bun_core::fmt::quote(property_name),
+                            bun_core::fmt::quote(local_original_name),
+                            bun_core::fmt::quote(property_name),
+                            bun_core::fmt::quote(local_original_name),
+                        )),
+                        ..Default::default()
+                    },
+                ]);
+
+                self.log.add_range_warning_fmt_with_notes(
+                    Some(&col_ref!(self.all_sources)[source_index as usize]),
+                    range,
+                    notes,
+                    format_args!(
+                        "The value of {} in the class {} is undefined.",
+                        bstr::BStr::new(property_name),
+                        bstr::BStr::new(local_original_name),
+                    ),
+                );
                 // Don't warn more than once
                 entry.value_ptr.source_index = Index::INVALID.get();
             }

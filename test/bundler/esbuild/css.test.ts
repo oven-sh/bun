@@ -1,5 +1,6 @@
-import { describe } from "bun:test";
-import { join } from "node:path";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { basename, join } from "node:path";
 import { itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -668,33 +669,112 @@ describe("bundler", () => {
     });
   }
 
-  itBundled("css/ComposesWithSharedPropertiesError", {
-    files: {
-      "/entry.js": `
+  // Composing classes from separate files that set the same property is
+  // undefined behavior per the CSS modules spec. The build still succeeds, so
+  // the diagnostic is a warning (as in esbuild), not an error.
+  const composesWithSharedPropertiesFiles = {
+    "/entry.js": `
       import styles from "./styles.module.css"
       console.log(styles)
     `,
-      "/styles.module.css": `
+    "/styles.module.css": `
       .button {
         color: blue;
         composes: otherButton from "./other.module.css";
       }
     `,
-      "/other.module.css": `
+    "/other.module.css": `
       .otherButton {
         color: red;
         font-size: 16px;
       }
     `,
-    },
+  };
+
+  itBundled("css/ComposesWithSharedPropertiesWarning", {
+    files: composesWithSharedPropertiesFiles,
     entryPoints: ["/entry.js"],
     outdir: "/out",
-    bundleWarnings: true,
-    onAfterBundle(api) {
-      // Check that the output files were generated correctly
-      api.expectFile("/out/entry.js").toMatchSnapshot();
-      api.expectFile("/out/entry.css").toMatchSnapshot();
+    bundleWarnings: {
+      "/styles.module.css": ["The value of color in the class button is undefined."],
     },
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          button: "otherButton_NlEjJA button_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* other.module.css */
+        .otherButton_NlEjJA {
+          color: red;
+          font-size: 16px;
+        }
+
+        /* styles.module.css */
+        .button_-MSaAA {
+          color: #00f;
+        }
+        "
+      `);
+    },
+  });
+
+  itBundled("css/ComposesWithSharedPropertiesWarningAPI", {
+    files: composesWithSharedPropertiesFiles,
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    backend: "api",
+    onAfterApiBundle(build) {
+      expect(build.success).toBe(true);
+      expect(
+        build.logs.map(log => ({
+          level: log.level,
+          message: log.message,
+          file: basename(log.position!.file),
+        })),
+      ).toEqual([
+        {
+          level: "warn",
+          message: "The value of color in the class button is undefined.",
+          file: "styles.module.css",
+        },
+      ]);
+      expect(build.outputs.map(output => basename(output.path)).sort()).toEqual(["entry.css", "entry.js"]);
+    },
+  });
+
+  // Bun.build() returns every message the bundler recorded, so a bunfig
+  // logLevel that hides warnings has to keep this one out of the log like any
+  // other warning. Spawned because bunfig.toml is read at process startup.
+  test.concurrent.each([
+    ['logLevel = "warn"', [["warn", "The value of color in the class button is undefined."]]],
+    ['logLevel = "error"', []],
+  ])("css/ComposesWithSharedPropertiesWarning honors bunfig %s", async (bunfig, expectedLogs) => {
+    using dir = tempDir("composes-loglevel", {
+      ...composesWithSharedPropertiesFiles,
+      "bunfig.toml": bunfig,
+      "build.js": `
+        const result = await Bun.build({ entrypoints: ["./entry.js"], throw: false });
+        console.log(JSON.stringify({ success: result.success, logs: result.logs.map(log => [log.level, log.message]) }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ success: true, logs: expectedLogs });
+    expect(exitCode).toBe(0);
   });
 
   itBundled("css/ComposesSameFile", {

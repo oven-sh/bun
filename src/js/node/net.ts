@@ -4025,6 +4025,7 @@ function emitListeningNextTick(self) {
   self.emit("listening");
 }
 
+const { isPrimary } = require("internal/cluster/isPrimary");
 let cluster;
 function listenInCluster(
   server,
@@ -4048,10 +4049,8 @@ function listenInCluster(
 ) {
   exclusive = !!exclusive;
 
-  if (cluster === undefined) cluster = require("node:cluster");
-
   if (
-    !cluster.isPrimary &&
+    !isPrimary &&
     !exclusive &&
     typeof address === "string" &&
     address.length > 0 &&
@@ -4092,7 +4091,7 @@ function listenInCluster(
     return;
   }
 
-  if (cluster.isPrimary || exclusive) {
+  if (isPrimary || exclusive) {
     server[kRealListen](
       path,
       port,
@@ -4124,6 +4123,7 @@ function listenInCluster(
   };
   const listeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
   // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2080-L2102
+  if (cluster === undefined) cluster = require("node:cluster");
   cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle, _reply) {
     if (listeningId !== server[kClusterListeningId]) {
       handle?.close();

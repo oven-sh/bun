@@ -63,8 +63,7 @@ pub mod js_printer {
         .map_err(|_| fmt::Error)
     }
 
-    /// Byte sink over a `fmt::Write` for `string::printer`, which writes escapes,
-    /// ASCII runs and whole code points, so every chunk is UTF-8 on its own.
+    /// `string::printer` writes escapes, ASCII runs and whole code points, so each chunk is UTF-8 on its own.
     struct FmtSink<'a, W: fmt::Write>(&'a mut W);
 
     impl<W: fmt::Write> crate::io::Write for FmtSink<'_, W> {

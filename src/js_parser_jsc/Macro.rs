@@ -1063,13 +1063,20 @@ fn expr_from_blob(
     loc: bun_ast::Loc,
 ) -> crate::Result<Expr> {
     use bun_ast::{E, ExprData, StoreStr as Str};
-    use bun_http_types::MimeType::{Category, MimeType};
 
-    // `Response.json()` and most servers send parameters (`;charset=utf-8`),
-    // so classify through the same parser the runtime uses for blob types.
-    let mime_type = MimeType::init(content_type, false, None);
+    // `type/subtype` without the parameters. `Response.json()` and most
+    // servers send `application/json;charset=utf-8`.
+    let essence: &[u8] = match strings::index_of_char_usize(content_type, b';') {
+        Some(semicolon) => &content_type[..semicolon],
+        None => content_type,
+    }
+    .trim_ascii();
 
-    if mime_type.category == Category::Json {
+    // `application/json`, `text/json`, and the `+json` structured syntax
+    // suffix (RFC 6839): `application/ld+json`, `application/vnd.api+json`.
+    let is_json = essence.ends_with(b"/json") || essence.ends_with(b"+json");
+
+    if is_json {
         let source = &Source::init_path_string(b"fetch.json", bytes);
         let mut out_expr: Expr = match bun_parsers::json::parse_for_macro(source, log, bump) {
             Ok(e) => e,
@@ -1084,7 +1091,16 @@ fn expr_from_blob(
         return Ok(out_expr);
     }
 
-    if mime_type.category.is_text_like() {
+    let is_text_like = essence.starts_with(b"text/")
+        || matches!(
+            essence,
+            b"application/javascript"
+                | b"application/x-javascript"
+                | b"application/ecmascript"
+                | b"application/xml"
+        );
+
+    if is_text_like {
         let mut output = bun_core::MutableString::init_empty();
         bun_core::quote_for_json(bytes, &mut output, true)?;
         let owned = output.to_owned_slice();

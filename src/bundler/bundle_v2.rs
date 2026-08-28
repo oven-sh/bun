@@ -4933,9 +4933,7 @@ pub mod bv2_impl {
                         // Capture `value_ptr` as a raw ptr + `found_existing` and drop
                         // the borrow; the map entry is not rehashed before we write
                         // through `value_ptr` (no intervening map mutation).
-                        // The importer's `with { type }` loader, and the attributes that key
-                        // the module, travel with the plugin's answer as they do for a
-                        // resolution the bundler did itself.
+                        // The importer's attributes key the module and pick the loader here too.
                         let (key_attributes, attribute_loader): (
                             &'static [bun_ast::ImportAttribute],
                             Option<Loader>,

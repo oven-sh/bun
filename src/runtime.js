@@ -327,8 +327,7 @@ export var __jsonParse = /* @__PURE__ */ a => JSON.parse(a);
 
 export var __promiseAll = args => Promise.all(args);
 
-// Decodes the base64 the `bytes` loader inlined into a fresh Uint8Array. The globals are read off
-// `globalThis` so they do not become reserved names that rename user code shadowing them.
+// Decodes the base64 the `bytes` loader inlined. Globals come off `globalThis` so they are not reserved names.
 export var __toBytes = /* @__PURE__ */ (() => {
   var { Buffer, Uint8Array } = globalThis;
   if (typeof Buffer !== "undefined" && typeof Buffer.from === "function")

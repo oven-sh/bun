@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { parseRustFragment, type Node, type RustFile, type StructField } from "../../../scripts/rust-parser/index.ts";
+import { parseRustFragment, type RustFile, type Span } from "../../../scripts/rust-parser/index.ts";
 import { rustSources } from "./rust-sources.ts";
 
 // https://github.com/oven-sh/bun/issues/31976
@@ -14,26 +14,46 @@ import { rustSources } from "./rust-sources.ts";
 // `unsafe fn`, so the pairing invariant is acknowledged at every call site.
 
 /**
- * Every node that declares or refers to the identifier `name`: a path segment
+ * Every place that declares or refers to the identifier `name`: a path segment
  * (in a type, expression, pattern, `impl` header or attribute), an item, field
- * or variant declaration, a binding, or a `use` tree leaf, including the
- * `as` side of `use a::B as name`.
+ * or variant declaration, a binding, a `use` tree leaf including the `as` side
+ * of `use a::B as name`, and an identifier token inside macro input or a
+ * `macro_rules!` template.
  */
-function findNamed(file: RustFile, name: string): Node[] {
-  return file.findAll(
+function findNamed(file: RustFile, name: string): Span[] {
+  const nodes: Span[] = file.findAll(
     node => ("name" in node && node.name === name) || (node.kind === "UseRename" && node.rename === name),
   );
+  const tokens = file.macroTokens().filter(t => t.kind === "ident" && t.text === name);
+  return nodes.concat(tokens);
 }
 
 /**
  * `pub dtor: unsafe fn(..)` fields. Any visibility counts, `pub(crate)`
  * included: safe code anywhere in the crate can still forge the pair. So does
- * an `unsafe extern "C" fn` pointer.
+ * an `unsafe extern "C" fn` pointer. Inside a macro template the field is a
+ * run of tokens, `pub [(..)] dtor : unsafe [extern ["C"]] fn`.
  */
-function findPubDtorFields(file: RustFile): StructField[] {
-  return file
+function findPubDtorFields(file: RustFile): Span[] {
+  const fields: Span[] = file
     .find("StructField")
     .filter(field => field.vis !== null && field.name === "dtor" && field.ty.kind === "TypeBareFn" && field.ty.unsafe);
+  const tokens = file.macroTokens();
+  const word = (i: number) => (tokens[i]?.kind === "ident" ? tokens[i].text : tokens[i]?.text);
+  for (let i = 0; i < tokens.length; i++) {
+    if (word(i) !== "pub") continue;
+    let j = i + 1;
+    if (tokens[j]?.kind === "open" && tokens[j].text === "(") {
+      while (j < tokens.length && !(tokens[j].kind === "close" && tokens[j].text === ")")) j++;
+      j++;
+    }
+    if (word(j) !== "dtor" || word(j + 1) !== ":" || word(j + 2) !== "unsafe") continue;
+    let k = j + 3;
+    if (word(k) === "extern") k += tokens[k + 1]?.kind === "literal" ? 2 : 1;
+    if (word(k) !== "fn") continue;
+    fields.push({ start: tokens[i].start, end: tokens[k].end });
+  }
+  return fields;
 }
 
 const sources = rustSources();
@@ -65,6 +85,9 @@ test("the queries recognize the spellings they claim to", () => {
     "let b = ErasedBox { ptr, dtor };",
     "drop(ErasedBox::new(ptr, dtor));",
     "debug_assert!(size_of::<ErasedBox>() == 16);",
+    // Macro input and templates.
+    "quote! { impl Drop for ErasedBox {} }",
+    "macro_rules! m { () => { let b: ErasedBox = x; }; }",
   ];
   const notMentioned = [
     // Prose and string literals are not the identifier.
@@ -85,6 +108,9 @@ test("the queries recognize the spellings they claim to", () => {
     'struct E { pub dtor: unsafe extern "C" fn(*mut c_void) }',
     // rustfmt-wrapped field.
     "struct E {\n    pub dtor:\n        unsafe fn(*mut c_void, usize, usize, usize, usize, usize, usize),\n}",
+    // Inside a macro template.
+    "macro_rules! m { ($t:ty) => { struct E { pub dtor: unsafe fn(*mut $t) } }; }",
+    'macro_rules! m { () => { struct E { pub(crate) dtor: unsafe extern "C" fn(*mut c_void) } }; }',
   ];
   const allowed = [
     // Private: only this module can pair it with the pointer.
@@ -94,6 +120,7 @@ test("the queries recognize the spellings they claim to", () => {
     // The lint is about the `dtor` slot by name.
     "struct E { pub on_close: unsafe fn(*mut c_void) }",
     "// pub dtor: unsafe fn(*mut c_void)",
+    "macro_rules! m { () => { struct E { dtor: unsafe fn(*mut c_void) } }; }",
   ];
   expect(banned.filter(s => !hasPubDtor(s))).toEqual([]);
   expect(allowed.filter(hasPubDtor)).toEqual([]);

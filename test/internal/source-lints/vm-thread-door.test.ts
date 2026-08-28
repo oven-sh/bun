@@ -89,6 +89,7 @@ function markerImplsInTokens(file: RustFile, trees: TokenTree[], marker: "Send" 
         else if (tokens[j].text === ">") depth--;
         j++;
       } while (depth > 0 && j < tokens.length);
+      if (j >= tokens.length) break;
     }
     // The trait path, possibly qualified.
     if (tokens[j].text === ":" && tokens[j + 1].text === ":") j += 2;

@@ -28,13 +28,13 @@ const LINTS = ["invalid_value", "clippy::uninit_assumed_init"];
 
 /**
  * `#[allow(..)]` / `#[expect(..)]` attributes, outer or inner, wherever they
- * are written, whose list names one of `LINTS` directly. rustfmt wrapping and
- * the position in the list do not matter; prose in comments and strings is
- * never matched.
+ * are written (macro input and `macro_rules!` templates included), whose list
+ * names one of `LINTS` directly. rustfmt wrapping and the position in the list
+ * do not matter; prose in comments and strings is never matched.
  */
 function findUninitEscapes(file: RustFile): Attribute[] {
   return file
-    .find("Attribute")
+    .allAttributes()
     .filter(
       attr =>
         (attr.name === "allow" || attr.name === "expect") &&
@@ -65,6 +65,8 @@ test("the query recognizes the attribute spellings it claims to", () => {
     "#![allow(invalid_value)]\nfn f() {}",
     // rustfmt-wrapped, and on a statement rather than an item.
     "fn f() {\n    #[allow(\n        clippy::uninit_assumed_init,\n        invalid_value\n    )]\n    let buf: [u8; 4] = unsafe { MaybeUninit::uninit().assume_init() };\n}",
+    // Inside a macro template: the escape lands at every expansion.
+    "macro_rules! m { () => { #[allow(invalid_value)] fn f() {} }; }",
   ];
   const allowed = [
     "#[allow(dead_code)]\nfn f() {}",

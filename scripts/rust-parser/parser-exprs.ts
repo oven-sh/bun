@@ -2,6 +2,7 @@
 
 import type * as ast from "./ast.ts";
 import { flattenTokenTrees, splitTokenTrees, type Token, type TokenTree } from "./lexer.ts";
+import { RustParseError } from "./parser-base.ts";
 import { PatParser } from "./parser-pats.ts";
 
 const PREC_ASSIGN = 1;
@@ -735,7 +736,8 @@ export abstract class ExprParser extends PatParser {
       try {
         const expr = sub.parseExpr();
         out.push(sub.atEof() ? expr : null);
-      } catch {
+      } catch (e) {
+        if (!(e instanceof RustParseError)) throw e;
         out.push(null);
       }
     }
@@ -787,7 +789,8 @@ export abstract class ExprParser extends PatParser {
         try {
           const e = sub.parseExpr();
           if (sub.atEof()) expr = e;
-        } catch {
+        } catch (err) {
+          if (!(err instanceof RustParseError)) throw err;
           expr = null;
         }
         out.push({ kind: "MetaNameValue", path, value, expr });

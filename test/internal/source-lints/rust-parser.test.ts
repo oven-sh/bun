@@ -503,6 +503,13 @@ test("fragments keep their offsets", () => {
   const calls = frag.find("Call");
   expect(calls.map(c => frag.text(c))).toEqual(["foo(1)", "bar(x)"]);
   expect(calls.map(c => frag.lineOf(c))).toEqual([1, 2]);
+  // Objects reachable twice (an attribute's value is also its meta's
+  // expression) are shifted once.
+  const attributed = parseRustFragment('#[doc = "text"]\n#[cfg(all(unix, x = "y"))]\nlet y = 1;');
+  const [doc, cfg] = attributed.find("Attribute");
+  expect(attributed.text(doc.value!)).toBe('"text"');
+  expect(doc.meta.kind === "MetaNameValue" && attributed.text(doc.meta.expr!)).toBe('"text"');
+  expect(cfg.tokens!.map(t => attributed.text(t))).toEqual(["all", '(unix, x = "y")']);
 });
 
 test("errors carry an offset", () => {
@@ -524,12 +531,14 @@ test("errors carry an offset", () => {
 const sources = rustSources();
 
 const parseErrors: string[] = [];
+const unparsable = new Set<string>();
 for (const src of sources) {
   try {
     src.file;
   } catch (e) {
     if (!(e instanceof RustParseError)) throw e;
     parseErrors.push(`${src.path}: ${e.message} (offset ${e.offset})`);
+    unparsable.add(src.path);
   }
 }
 
@@ -540,6 +549,7 @@ const treeProblems: string[] = [];
   const stride = Math.max(1, Math.floor(sources.length / 24));
   let budget = 40_000;
   for (let i = 0; i < sources.length && budget > 0 && treeProblems.length < 20; i += stride) {
+    if (unparsable.has(sources[i].path)) continue;
     const file = sources[i].file;
     walk(file.ast, (node: Node, parent: Node | null) => {
       budget--;

@@ -267,6 +267,10 @@ export function sexpr(input: unknown): string {
 
 if (import.meta.main) {
   const [mode, input] = process.argv.slice(2);
+  if (input === undefined) {
+    console.error("usage: bun scripts/rust-parser/debug.ts <expr|type|pat|stmts|file> <input>");
+    process.exit(1);
+  }
   if (mode === "expr") console.log(sexpr(parseRustExpr(input)));
   else if (mode === "type") console.log(sexpr(parseRustType(input)));
   else if (mode === "pat") console.log(sexpr(parseRustPat(input)));

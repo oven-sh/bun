@@ -19,6 +19,7 @@
 // with their positions in `RustFile.comments`.
 
 import type * as ast from "./ast.ts";
+import { flattenTokenTrees, type Token } from "./lexer.ts";
 import {
   attributesInTokens,
   parseExpr,
@@ -810,6 +811,26 @@ export class RustFile {
       if (node.kind === "Macro" || node.kind === "MacroRules") fromTokens(node.tokens);
     });
     return attrs.sort((a, b) => a.start - b.start);
+  }
+
+  /**
+   * Every token inside macro input and `macro_rules!` bodies, which the tree
+   * keeps as token trees, as one flat list in source order with delimiters as
+   * `open`/`close` tokens. Each position appears once, although a macro nested
+   * in another's input is reachable through both.
+   */
+  macroTokens(): Token[] {
+    const out: Token[] = [];
+    const seen = new Set<number>();
+    this.walk(node => {
+      if (node.kind !== "Macro" && node.kind !== "MacroRules") return;
+      for (const t of flattenTokenTrees(node.tokens, node.end)) {
+        if (t.kind === "eof" || seen.has(t.start)) continue;
+        seen.add(t.start);
+        out.push(t);
+      }
+    });
+    return out.sort((a, b) => a.start - b.start);
   }
 
   /**

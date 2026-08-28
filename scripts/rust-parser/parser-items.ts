@@ -781,18 +781,27 @@ export function attributesInTokens(trees: TokenTree[], src: string, path?: strin
   return out;
 }
 
-function shiftSpans(node: unknown, delta: number): void {
-  if (node === null || typeof node !== "object") return;
-  if (Array.isArray(node)) {
-    for (const n of node) shiftSpans(n, delta);
-    return;
-  }
-  const o = node as Record<string, unknown>;
-  if (typeof o.start === "number") o.start += delta;
-  if (typeof o.end === "number") o.end += delta;
-  for (const key in o) {
-    if (key === "start" || key === "end") continue;
-    const v = o[key];
-    if (v !== null && typeof v === "object") shiftSpans(v, delta);
-  }
+/**
+ * Moves every span in the tree by `delta`. Some objects are reachable twice
+ * (`Attribute.value` is also `meta.expr`, a `MetaTokens` item shares its
+ * token trees with `Attribute.tokens`), so each is shifted once.
+ */
+function shiftSpans(root: unknown, delta: number): void {
+  const seen = new Set<object>();
+  const visit = (node: unknown) => {
+    if (node === null || typeof node !== "object" || seen.has(node)) return;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      for (const n of node) visit(n);
+      return;
+    }
+    const o = node as Record<string, unknown>;
+    if (typeof o.start === "number") o.start += delta;
+    if (typeof o.end === "number") o.end += delta;
+    for (const key in o) {
+      if (key === "start" || key === "end") continue;
+      visit(o[key]);
+    }
+  };
+  visit(root);
 }

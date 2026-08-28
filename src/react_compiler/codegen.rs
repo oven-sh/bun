@@ -1894,8 +1894,7 @@ fn codegen_base_instruction_value(
                 E::Call {
                     // Babel prints the callee as written, so `props.foo(...)` from
                     // optimize_props_method_calls stays a method call.
-                    target_was_originally_property_access: callee_expr
-                        .has_value_for_this_in_call(),
+                    target_was_originally_property_access: callee_expr.has_value_for_this_in_call(),
                     target: callee_expr,
                     args: arguments,
                     ..Default::default()

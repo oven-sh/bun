@@ -1164,6 +1164,12 @@ describe("the config key's authority is normalized like a WHATWG URL", () => {
 
   // npm compares a hand-written key as written: a port in it stays, so `//host:443/`
   // is the key of `http://host:443/` (a TLS-terminating proxy) and not of `https://host/`.
+  // Bun's fast URL parser collapses a one-byte path (`/r/`) to `/`; the key must not.
+  it("keeps a one-character registry path in the key", () => {
+    expect(token(`registry=https://example.com/r/\n//example.com/r/:_authToken=T\n`)).toBe("T");
+    expect(token(`registry=https://example.com/r/\n//example.com/:_authToken=T\n`)).toBe("T");
+  });
+
   it("keeps a port written in a scheme-less key", () => {
     expect(token(`registry=http://example.com:443/api/\n//example.com:443/:_authToken=T\n`)).toBe("T");
     expect(token(`registry=https://example.com/api/\n//example.com:443/:_authToken=T\n`)).toBe("");

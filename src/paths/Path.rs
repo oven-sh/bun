@@ -422,29 +422,6 @@ impl<U: PathUnit, const SEP_OPT: u8> Buf<U, SEP_OPT> {
     }
 }
 
-/// The sink behind `Path::append_with`: a cursor that fails with `NoSpaceLeft` instead of growing.
-struct ScratchWriter<'a> {
-    buf: &'a mut [u8],
-    len: usize,
-}
-
-impl bun_core::io::Write for ScratchWriter<'_> {
-    fn write_all(&mut self, bytes: &[u8]) -> bun_core::CrateResult<()> {
-        let end = self.len + bytes.len();
-        let room = self
-            .buf
-            .get_mut(self.len..end)
-            .ok_or(bun_core::CrateError::NoSpaceLeft)?;
-        room.copy_from_slice(bytes);
-        self.len = end;
-        Ok(())
-    }
-
-    fn written_len(&self) -> usize {
-        self.len
-    }
-}
-
 /// Width-generic `bun.strings.basename`.
 /// Platform-split: POSIX recognizes only `/`; Windows recognizes `/`, `\`, and
 /// the `X:` drive designator at index 1.
@@ -1025,17 +1002,14 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         write: impl FnOnce(&mut dyn bun_core::io::Write) -> bun_core::CrateResult<()>,
     ) -> options::Result<()> {
         let mut scratch = crate::path_buffer_pool::get();
-        let mut writer = ScratchWriter {
-            buf: &mut scratch[..],
-            len: 0,
-        };
-        if write(&mut writer).is_err() {
+        let mut cursor = bun_core::fmt::SliceCursor::new(&mut scratch[..]);
+        if write(&mut cursor).is_err() {
             if CheckLength::from_u8(CHECK) == CheckLength::CheckForGreaterThanMaxPath {
                 return Err(PathError::MaxPathExceeded);
             }
             unreachable!();
         }
-        let len = writer.len;
+        let len = cursor.at;
         self.append(&scratch[..len])
     }
 

@@ -3710,15 +3710,17 @@ describe.concurrent("handler GC tracing (heapStats wrapper-count)", () => {
 // The warning is only registered when `idleTimeout` is not passed, so the test
 // has to wait for the default 10 second timeout to fire. uWS sweeps timeouts on
 // a coarse timer, so the close lands a couple of seconds after that.
-test("development mode prints the idle timeout warning when the timeout fires, not at exit", async () => {
-  using dir = tempDir("serve-idle-timeout-warn", {});
-  const stderrPath = path.join(String(dir), "stderr.txt");
+test.concurrent(
+  "development mode prints the idle timeout warning when the timeout fires, not at exit",
+  async () => {
+    using dir = tempDir("serve-idle-timeout-warn", {});
+    const stderrPath = path.join(String(dir), "stderr.txt");
 
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
         import { readFileSync } from "node:fs";
         const server = Bun.serve({
           port: 0,
@@ -3750,22 +3752,24 @@ test("development mode prints the idle timeout warning when the timeout fires, n
           },
         });
       `,
-    ],
-    env: { ...bunEnv, STDERR_PATH: stderrPath },
-    stdout: "pipe",
-    stderr: Bun.file(stderrPath),
-  });
+      ],
+      env: { ...bunEnv, STDERR_PATH: stderrPath },
+      stdout: "pipe",
+      stderr: Bun.file(stderrPath),
+    });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  const warning = "[Bun.serve]: request timed out after 10 seconds. Pass `idleTimeout` to configure.\n";
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const warning = "[Bun.serve]: request timed out after 10 seconds. Pass `idleTimeout` to configure.\n";
 
-  expect({
-    out: JSON.parse(stdout.trim() || "null"),
-    stderrAtExit: await Bun.file(stderrPath).text(),
-    exitCode,
-  }).toEqual({
-    out: { stderrAtClose: warning },
-    stderrAtExit: warning,
-    exitCode: 0,
-  });
-}, 30_000);
+    expect({
+      out: JSON.parse(stdout.trim() || "null"),
+      stderrAtExit: await Bun.file(stderrPath).text(),
+      exitCode,
+    }).toEqual({
+      out: { stderrAtClose: warning },
+      stderrAtExit: warning,
+      exitCode: 0,
+    });
+  },
+  30_000,
+);

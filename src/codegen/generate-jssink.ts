@@ -394,7 +394,10 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
     ${name}__controllerDetached(ptr, JSC::JSValue::encode(controller));
     controller->m_sinkPtr = nullptr;
 
-    ${name}__close(lexicalGlobalObject, ptr);
+    // A failed source closes with its error (possibly undefined); a clean
+    // close passes no argument, encoded as the empty value.
+    ${name}__close(lexicalGlobalObject, ptr,
+        callFrame->argumentCount() > 0 ? JSC::JSValue::encode(callFrame->argument(0)) : JSC::JSValue::encode(JSC::JSValue()));
 
     // detach() must still fire onClose (it transitions the direct
     // ReadableStream to closed/errored and calls underlyingSource.cancel())
@@ -505,7 +508,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
     }
 
     sink->detach();
-    ${name}__close(lexicalGlobalObject, ptr);
+    ${name}__close(lexicalGlobalObject, ptr, JSC::JSValue::encode(JSC::JSValue()));
     // detach() nulled m_sinkPtr so ~${className} won't finalize ptr; do the
     // destructor's teardown (onDestroy first so Subprocess clears its weak
     // back-pointer, then __finalize) here instead, even if __close threw.
@@ -1153,13 +1156,15 @@ pub extern "C" fn ${name}__controllerDetached(this: &mut ${name}, controller: JS
 
 `;
 
-    // ZIG_DECL JSC::EncodedJSValue ${name}__close(JSC::JSGlobalObject*, void* sinkPtr)
-    // C++ caller null-checks `ptr` before calling.
+    // ZIG_DECL JSC::EncodedJSValue ${name}__close(JSC::JSGlobalObject*, void* sinkPtr, JSC::EncodedJSValue reason)
+    // C++ caller null-checks `ptr` before calling. `*mut`: a failing close can
+    // re-enter the sink (see `JsSinkType::close_with_error`).
     symbols.push(`${name}__close`);
     templ += `#[allow(dead_code, unreachable_pub, unused)]
 #[unsafe(no_mangle)]
-pub extern "C" fn ${name}__close(global: &JSGlobalObject, this: &mut ${name}) -> JSValue {
-    ${JSSinkT}::js_close(global, this)
+pub unsafe extern "C" fn ${name}__close(global: &JSGlobalObject, this: *mut ${name}, reason: JSValue) -> JSValue {
+    // SAFETY: C++ passes its live, null-checked \`m_sinkPtr\`.
+    unsafe { ${JSSinkT}::js_close(global, this, reason) }
 }
 
 `;

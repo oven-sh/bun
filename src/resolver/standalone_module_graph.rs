@@ -13,6 +13,10 @@ pub trait StandaloneModuleGraph: Send + Sync {
     /// Look up `name` (already known to be under the standalone virtual root)
     /// and return the embedded file's canonical name slice if present.
     fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&[u8]>;
+    /// Whether the embedded file at `name` carries a serialized ES module record (`module_info`).
+    fn has_module_info(&self, _name: &[u8]) -> bool {
+        false
+    }
     /// Look up `name` (any path — checks the standalone virtual-root prefix
     /// first) and return the embedded file's canonical name slice if present.
     /// Spec `StandaloneModuleGraph.find`.

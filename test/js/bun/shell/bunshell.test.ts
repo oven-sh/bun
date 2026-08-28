@@ -3221,8 +3221,15 @@ test.skipIf(isWindows)(
       .nothrow();
     const running = promise.then(o => o);
     // By the time the request arrives, `sh` has exited and the grandchild is
-    // the only holder of the stdout pipe.
-    await grandchildStarted.promise;
+    // the only holder of the stdout pipe. If the command settles first, the
+    // grandchild never held it: fail with the shell's output instead of
+    // waiting on the gate until the test times out.
+    await Promise.race([
+      grandchildStarted.promise,
+      running.then(r => {
+        throw new Error(`command settled before the grandchild connected (exit ${r.exitCode}): ${r.stderr}`);
+      }),
+    ]);
 
     // The grandchild still holds stdout, so the buffer is pinned: a detach
     // attempt copies instead (or throws).

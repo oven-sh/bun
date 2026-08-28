@@ -51,10 +51,8 @@ fn is_macro_path(str: &[u8]) -> bool {
 pub(crate) struct MacroContext {
     pub(crate) resolver: *mut Resolver<'static>,
     pub(crate) env: *mut DotEnvLoader,
-    /// The owning build's `TransformOptions` (`--define`, `--loader`,
-    /// `--tsconfig-override`, ...). When no VM is loaded on this thread,
-    /// `Macro::init` creates the macro VM from these so the macro module is
-    /// transpiled with the same options as the rest of the build.
+    /// The build's options. `Macro::init` creates the macro VM from these
+    /// when the thread has no VM yet.
     pub(crate) transform_options: Arc<TransformOptions>,
     pub(crate) macros: MacroMap,
     pub(crate) remap: bun_ptr::BackRef<MacroRemap>,
@@ -427,14 +425,10 @@ impl Macro {
         let (vm, is_new_vm): (*mut VirtualMachine, bool) = if VirtualMachine::is_loaded() {
             (VirtualMachine::get_mut_ptr(), false)
         } else {
-            // No VM on this thread (CLI build or bundler worker thread): create
-            // one for the macros from the build's own options, so the macro
-            // module is transpiled with the same `--define`s, loaders and
-            // tsconfig as the rest of the build. `InitOptions` owns its
-            // `TransformOptions`, hence the clone.
+            // The build's options, so the macro module sees the same
+            // `--define`s, loaders and tsconfig as the rest of the build.
             let mut transform_options = transform_options.clone();
-            // `--external` and `--packages=external` describe the output
-            // bundle. The macro module runs here, at build time, so its own
+            // Build-only flags about the output bundle. The macro module's own
             // imports must still resolve.
             transform_options.external = Vec::new();
             transform_options.packages = None;

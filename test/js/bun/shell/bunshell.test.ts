@@ -3194,6 +3194,49 @@ test("redirect target buffer stays attached while a builtin command is running",
   expect(stringifyBuffer(buffer)).toEqual("pin.txt\n");
 });
 
+test.skipIf(isWindows)(
+  "output redirect buffer for an external command is detachable as soon as the command settles",
+  async () => {
+    // `> ${buf}` for an external command is pinned until the child's stdout
+    // reaches EOF. Here `sh` prints and exits at once while a background
+    // grandchild inherits the stdout pipe and holds it open until the gated
+    // fetch below is answered. The process exit and the stderr EOF are then
+    // processed long before the stdout EOF, so the stdout reader is the
+    // callback that settles the promise. The code after `await` must already
+    // see the buffer unpinned: a `transfer()` detaches it instead of copying.
+    const buffer = new Uint8Array(new ArrayBuffer(1 << 16));
+    const gate = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      async fetch() {
+        await gate.promise;
+        return new Response("ok");
+      },
+    });
+    const grandchildCode = `await fetch(${JSON.stringify(String(server.url))})`;
+    const promise = $`sh -c ${'"$0" -e "$1" 2>/dev/null & echo hi'} ${BUN} ${grandchildCode} > ${buffer}`
+      .env(bunEnv)
+      .nothrow();
+    const running = promise.then(o => o);
+
+    // The grandchild still holds stdout, so the buffer is pinned: a detach
+    // attempt copies instead (or throws).
+    try {
+      buffer.buffer.transfer();
+    } catch {}
+    const detachedWhileOpen = buffer.buffer.detached;
+    gate.resolve();
+    expect(detachedWhileOpen).toBe(false);
+
+    const result = await running;
+    expect(stringifyBuffer(buffer)).toEqual("hi\n");
+    expect(result.exitCode).toBe(0);
+
+    buffer.buffer.transfer();
+    expect(buffer.buffer.detached).toBe(true);
+  },
+);
+
 test("stdin redirect from a Uint8Array sends the bytes captured when the command starts", async () => {
   // `< ${buf}` snapshots the buffer's contents when the command starts and
   // streams them to the child's stdin across multiple event-loop turns.

@@ -47,11 +47,10 @@ impl KeepAlive {
             return;
         }
         self.status = Status::Inactive;
-        let loop_ = event_loop_ctx.loop_for(self.spawn_sync_loop);
         #[cfg(not(windows))]
-        loop_.unref();
+        event_loop_ctx.loop_unref_for(self.spawn_sync_loop);
         #[cfg(windows)]
-        loop_.sub_active(1);
+        event_loop_ctx.loop_sub_active(1);
     }
 
     /// Prevent a poll from keeping the process alive on the next tick.

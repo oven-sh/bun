@@ -374,13 +374,14 @@ impl EventLoopCtx {
     }
     /// True while `Bun.spawnSync` has its isolated loop installed as the current loop.
     #[inline]
-    pub(crate) fn is_spawn_sync_loop(&self) -> bool {
+    pub fn is_spawn_sync_loop(&self) -> bool {
         self.platform_event_loop_ptr() != bun_uws_sys::Loop::get()
     }
     /// The loop a counter was taken on: the isolated `spawnSync` loop when its
     /// owner recorded `spawn_sync_loop` from [`Self::is_spawn_sync_loop`], else
     /// the thread's loop, even while `spawnSync` has swapped the current loop.
     #[inline]
+    #[cfg(not(windows))]
     fn loop_for(&self, spawn_sync_loop: bool) -> &'static mut bun_uws_sys::Loop {
         if spawn_sync_loop {
             debug_assert!(
@@ -393,8 +394,14 @@ impl EventLoopCtx {
         unsafe { &mut *bun_uws_sys::Loop::get() }
     }
     #[inline]
-    pub(crate) fn loop_ref(&self) {
+    pub fn loop_ref(&self) {
         self.loop_mut().ref_();
+    }
+    /// Releases a [`Self::loop_ref`] taken while [`Self::is_spawn_sync_loop`] was `spawn_sync_loop`.
+    #[inline]
+    #[cfg(not(windows))]
+    pub fn loop_unref_for(&self, spawn_sync_loop: bool) {
+        self.loop_for(spawn_sync_loop).unref();
     }
     #[inline]
     #[cfg(windows)]

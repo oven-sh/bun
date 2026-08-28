@@ -638,29 +638,6 @@ pub(crate) struct All {
     pub(crate) wtf_timers: Guarded<TimerHeap>,
 }
 
-/// Whether `uws_loop`, the VM's current loop, is `Bun.spawnSync`'s isolated loop.
-#[cfg(not(windows))]
-fn is_spawn_sync_loop(uws_loop: *mut bun_uws_sys::Loop) -> bool {
-    uws_loop != bun_uws_sys::Loop::get()
-}
-
-/// The loop a ref was taken on: the current loop `uws_loop` when the ref was
-/// taken on the isolated `spawnSync` loop, else the thread's loop.
-#[cfg(not(windows))]
-fn refd_loop(
-    spawn_sync_loop: bool,
-    uws_loop: *mut bun_uws_sys::Loop,
-) -> &'static mut bun_uws_sys::Loop {
-    let loop_ = if spawn_sync_loop {
-        uws_loop
-    } else {
-        bun_uws_sys::Loop::get()
-    };
-    // SAFETY: the caller passes the VM's live current loop, and the thread's
-    // loop lives as long as the VM.
-    unsafe { &mut *loop_ }
-}
-
 impl All {
     pub(crate) fn init() -> Self {
         Self {
@@ -1156,22 +1133,15 @@ impl All {
         }
     }
 
-    /// # Safety
-    /// `uws_loop` must point to the calling VM's live uws loop.
-    // `uws_loop` is an FFI handle held as `*mut` by every caller; contract is
-    // documented in `# Safety` above. Cannot be `&mut` without breaking the
-    // out-of-file call sites that hold raw pointers.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn increment_immediate_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
+    pub(crate) fn increment_immediate_ref(&mut self, delta: i32, ctx: bun_io::EventLoopCtx) {
         let old = self.immediate_ref_count;
         let new = old + delta;
         self.immediate_ref_count = new;
         if old <= 0 && new > 0 {
             #[cfg(not(windows))]
             {
-                self.immediate_refd_spawn_sync_loop = is_spawn_sync_loop(uws_loop);
-                // SAFETY: caller passes the VM's live uws loop
-                unsafe { &mut *uws_loop }.ref_();
+                self.immediate_refd_spawn_sync_loop = ctx.is_spawn_sync_loop();
+                ctx.loop_ref();
             }
             #[cfg(windows)]
             {
@@ -1189,14 +1159,14 @@ impl All {
             }
         } else if old > 0 && new <= 0 {
             #[cfg(not(windows))]
-            refd_loop(self.immediate_refd_spawn_sync_loop, uws_loop).unref();
+            ctx.loop_unref_for(self.immediate_refd_spawn_sync_loop);
             #[cfg(windows)]
             if !self.uv_idle.data.is_null() {
                 self.uv_idle.stop();
             }
         }
         #[cfg(windows)]
-        let _ = uws_loop;
+        let _ = ctx;
     }
 
     /// Empty `uv_idle` callback. Its presence alone
@@ -1208,13 +1178,7 @@ impl All {
         // prevent libuv from polling forever
     }
 
-    /// # Safety
-    /// `uws_loop` must point to the calling VM's live uws loop.
-    // `uws_loop` is an FFI handle held as `*mut` by every caller; contract is
-    // documented in `# Safety` above. Cannot be `&mut` without breaking the
-    // out-of-file call sites that hold raw pointers.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn increment_timer_ref(&mut self, delta: i32, uws_loop: *mut bun_uws_sys::Loop) {
+    pub(crate) fn increment_timer_ref(&mut self, delta: i32, ctx: bun_io::EventLoopCtx) {
         let old = self.active_timer_count;
         let new = old + delta;
         debug_assert!(new >= 0);
@@ -1222,9 +1186,8 @@ impl All {
         if old <= 0 && new > 0 {
             #[cfg(not(windows))]
             {
-                self.timer_refd_spawn_sync_loop = is_spawn_sync_loop(uws_loop);
-                // SAFETY: caller passes the VM's live uws loop
-                unsafe { &mut *uws_loop }.ref_();
+                self.timer_refd_spawn_sync_loop = ctx.is_spawn_sync_loop();
+                ctx.loop_ref();
             }
             // `uv_timer.ref()` is intentionally unconditional (no `data !=
             // null` guard). Invariant: every path that reaches a positive
@@ -1235,12 +1198,12 @@ impl All {
             self.uv_timer.ref_();
         } else if old > 0 && new <= 0 {
             #[cfg(not(windows))]
-            refd_loop(self.timer_refd_spawn_sync_loop, uws_loop).unref();
+            ctx.loop_unref_for(self.timer_refd_spawn_sync_loop);
             #[cfg(windows)]
             self.uv_timer.unref();
         }
         #[cfg(windows)]
-        let _ = uws_loop;
+        let _ = ctx;
     }
 
     /// VM teardown, after `cancel_all_timeout_objects`: unlink every timer still

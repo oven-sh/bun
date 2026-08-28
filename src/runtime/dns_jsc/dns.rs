@@ -3951,7 +3951,6 @@ impl Resolver {
             sec: now.sec,
             nsec: now.nsec,
         };
-        let uws_loop = vm.uws_loop();
         // R-2: `&self` carries no `noalias`, and every field touched below is
         // UnsafeCell-backed, so the re-entrant `ares_process_fd` callbacks
         // (`request_completed`, `drain_pending_*`) may freely re-derive
@@ -3962,7 +3961,7 @@ impl Resolver {
             // resolve via the high-tier `RuntimeState` hook.
             let state = crate::jsc_hooks::runtime_state();
             // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
-            unsafe { (*state).timer.increment_timer_ref(-1, uws_loop) };
+            unsafe { (*state).timer.increment_timer_ref(-1, js_event_loop_ctx()) };
             // SAFETY: `deref_this` is the heap allocation from `init`; releases
             // `add_timer`'s ref. May be the final release; nothing touches
             // `*self` after this point.
@@ -4054,11 +4053,10 @@ impl Resolver {
                 nsec: next.nsec,
             }
         });
-        let uws_loop = self.vm().uws_loop();
         let state = crate::jsc_hooks::runtime_state();
         // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
         unsafe {
-            (*state).timer.increment_timer_ref(1, uws_loop);
+            (*state).timer.increment_timer_ref(1, js_event_loop_ctx());
             // whole-struct provenance: `from_field_ptr!` recovers the container on fire
             (*state).timer.insert(
                 core::ptr::addr_of!(self.event_loop_timer)
@@ -4083,9 +4081,8 @@ impl Resolver {
             // global-resolver permanent pin), so this
             // `deref` cannot reach 0 while `&self` is live.
             unsafe {
-                let uws_loop = (*this).vm().uws_loop();
                 let state = crate::jsc_hooks::runtime_state();
-                (*state).timer.increment_timer_ref(-1, uws_loop);
+                (*state).timer.increment_timer_ref(-1, js_event_loop_ctx());
                 Self::deref(this);
             }
         }

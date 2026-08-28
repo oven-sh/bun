@@ -1,5 +1,4 @@
 import { describe } from "bun:test";
-import { isBroken, isWindows } from "harness";
 import { itBundled } from "./expectBundled";
 
 for (let backend of ["api", "cli"] as const) {
@@ -28,24 +27,28 @@ for (let backend of ["api", "cli"] as const) {
         },
       });
 
+    // A variable from the process environment (not a .env file) is inlined at build time. It has to be one this
+    // process started with (the api backend builds in-process), spelled as the environment spells it (on Windows the
+    // inlined name is case-sensitive even though process.env is not: `Path`, not `PATH`).
+    const [systemKey, systemValue] = Object.entries(process.env).find(
+      ([key, value]) => /^[A-Z][A-Z0-9_]*$/.test(key) && value && /^[\x20-\x7e]+$/.test(value) && !/["`$\\]/.test(value),
+    )!;
     itBundled("env/inline system", {
-      // On Windows CI the inlined process.env.PATH is not substituted; prints the runtime value instead.
-      todo: isBroken && isWindows,
       env: {
-        PATH: process.env.PATH,
+        [systemKey]: systemValue,
       },
       backend: backend,
       dotenv: "inline",
       files: {
         "/a.js": `
-        console.log(process.env.PATH);
+        console.log(process.env.${systemKey});
       `,
       },
       run: {
         env: {
-          PATH: "/fail",
+          [systemKey]: "the run-time value, which inlining should have replaced",
         },
-        stdout: process.env.PATH + "\n",
+        stdout: systemValue + "\n",
       },
     });
 

@@ -42,7 +42,7 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_io::{FmtAdapter, Write};
 use bun_js_printer::Encoding;
-use bun_paths::resolve_path::relative_normalized;
+use bun_paths::resolve_path::{relative_normalized, slashes_to_posix_in_place};
 use bun_resolver::fs::FileSystem;
 
 use crate::Graph::Graph;
@@ -250,14 +250,15 @@ pub(crate) fn write<W: Write + ?Sized>(
             }
             first = false;
 
+            let input_buf;
             let input: &[u8] = if !ch.entry_point.is_entry_point() {
                 b""
             } else {
-                let path_for_key = relative_normalized::<bun_paths::platform::Posix, false>(
+                input_buf = source_path_relative_to_root(
                     root_dir,
                     sources[ch.entry_point.source_index() as usize].path.text,
                 );
-                strings::remove_leading_dot_slash(path_for_key)
+                &input_buf
             };
 
             let path: &[u8] = if inject_compiler_filesystem_prefix {
@@ -308,11 +309,11 @@ pub(crate) fn write<W: Write + ?Sized>(
                 }
                 first = false;
 
-                let path_for_key = relative_normalized::<bun_paths::platform::Posix, false>(
+                let path_for_key = source_path_relative_to_root(
                     root_dir,
                     sources[source_index.get() as usize].path.text,
                 );
-                let path_for_key = strings::remove_leading_dot_slash(path_for_key);
+                let path_for_key: &[u8] = &path_for_key;
 
                 let path: &[u8] = if inject_compiler_filesystem_prefix {
                     temp_buffer.clear();
@@ -378,4 +379,16 @@ pub mod html_import_manifest {
         *w = &mut buffer[pos..];
         Ok(())
     }
+}
+
+/// `path` (a source file's native absolute path) relative to `root_dir`, `/`-separated, without a leading `./` --
+/// the form the manifest's `input` field and asset keys use on every platform.
+fn source_path_relative_to_root(root_dir: &[u8], path: &[u8]) -> Vec<u8> {
+    let mut relative = strings::remove_leading_dot_slash(relative_normalized::<
+        bun_paths::platform::Auto,
+        false,
+    >(root_dir, path))
+    .to_vec();
+    slashes_to_posix_in_place(&mut relative[..]);
+    relative
 }

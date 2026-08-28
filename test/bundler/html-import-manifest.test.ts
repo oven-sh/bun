@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isWindows, tempDir } from "harness";
+import { tempDir } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SourceMapConsumer } from "source-map";
@@ -8,8 +8,6 @@ import { itBundled } from "./expectBundled";
 describe.concurrent("bundler", () => {
   // Test HTML import manifest with enhanced metadata
   itBundled("html-import/manifest-with-metadata", {
-    // On Windows the manifest "input"/"path" fields leak absolute temp paths instead of project-relative ones.
-    todo: isWindows,
     outdir: "out/",
     files: {
       "/server.js": `
@@ -215,8 +213,6 @@ console.log(JSON.stringify(html, null, 2));
 
   // Test manifest with multiple HTML imports
   itBundled("html-import/multiple-manifests", {
-    // On Windows the manifest "input" field leaks absolute temp paths instead of project-relative ones.
-    todo: isWindows,
     outdir: "out/",
     backend: "cli",
     files: {

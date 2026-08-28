@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { ESBUILD, itBundled } from "./expectBundled";
 
@@ -168,8 +168,6 @@ describe("bundler", () => {
     },
   });
   itBundled("naming/AssetNamingDir", {
-    // On Windows the [dir] placeholder resolves relative to the drive root instead of the project root.
-    todo: isWindows,
     files: {
       "/src/lib/first/file.js": /* js */ `
         import file from "../second/data.file";

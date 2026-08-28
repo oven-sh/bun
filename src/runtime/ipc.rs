@@ -3,6 +3,7 @@ use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 
 use bun_jsc::JsCell;
+use bun_ptr::RefPtr;
 
 use crate::json_line_buffer::JSONLineBuffer;
 use bun_collections::{ByteVecExt, VecExt};
@@ -1017,9 +1018,13 @@ impl SendQueue {
         self.owner.set(None);
     }
 
-    pub fn new(mode: Mode, owner: Option<SendQueueOwner>, socket: SocketUnion) -> *mut SendQueue {
+    pub fn new(
+        mode: Mode,
+        owner: Option<SendQueueOwner>,
+        socket: SocketUnion,
+    ) -> RefPtr<SendQueue> {
         log!("SendQueue#init");
-        let this = bun_core::heap::into_raw(Box::new(Self {
+        let this = RefPtr::new(Self {
             ref_count: Cell::new(1),
             root: Cell::new(None),
             queue: JsCell::new(Vec::new()),
@@ -1041,9 +1046,8 @@ impl SendQueue {
             write_in_progress: Cell::new(false),
             close_event_sent: Cell::new(false),
             windows: JsCell::new(WindowsState::default()),
-        }));
-        // SAFETY: `this` is the fresh, non-null allocation root.
-        unsafe { (*this).root.set(core::ptr::NonNull::new(this)) };
+        });
+        this.root.set(Some(this.as_non_null()));
         this
     }
 

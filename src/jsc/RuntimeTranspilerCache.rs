@@ -732,15 +732,14 @@ impl RuntimeTranspilerCache {
         path_handler::join_abs_string_buf_z::<platform::Loose>(top, &mut buf[..], parts).len()
     }
 
-    /// Group/other writable, and not sticky with us or root as the owner.
+    /// Owned by a third user, or group/other writable without the sticky bit.
     #[cfg(unix)]
     fn entries_replaceable_by_others(st: &sys::Stat, euid: libc::uid_t) -> bool {
-        let mode = st.st_mode as sys::Mode;
-        if mode & (sys::S::IWGRP | sys::S::IWOTH) == 0 {
-            return false;
+        if st.st_uid != euid && st.st_uid != 0 {
+            return true;
         }
-        let sticky = mode & sys::S::ISVTX != 0;
-        !(sticky && (st.st_uid == euid || st.st_uid == 0))
+        let mode = st.st_mode as sys::Mode;
+        mode & (sys::S::IWGRP | sys::S::IWOTH) != 0 && mode & sys::S::ISVTX == 0
     }
 
     // Only do this at most once per-thread.

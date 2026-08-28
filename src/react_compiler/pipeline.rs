@@ -8,10 +8,6 @@
 //! Analogous to TS `Pipeline.ts` (`compileFn` → `run` → `runWithEnvironment`).
 //!
 //! Port of `react_compiler/entrypoint/pipeline.rs` — see DESIGN.md.
-//!
-//! Bun has no Babel-shim debug surface, so upstream's per-pass timing and
-//! debug log calls are not ported. The pass sequence and gating predicates
-//! match upstream.
 
 #![allow(
     clippy::disallowed_types,

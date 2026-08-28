@@ -12,7 +12,7 @@ use bun_sys::windows::libuv as uv;
 // `close`/`set_data`/`ref_` are default trait methods; bring traits into scope
 // so method resolution finds them on `Pipe`/`uv_tty_t`/`fs_t`.
 use bun_sys::windows::libuv::UvHandle as _;
-use bun_sys::{self as sys, Fd};
+use bun_sys::{self as sys, Fd, FdExt as _};
 
 use crate::{EventLoopHandle, FilePollFlag, FilePollKind, FilePollRef, Owner, PollTag};
 
@@ -1051,6 +1051,11 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
         match poll.register_with_fd(event_loop, FilePollKind::Writable, fd) {
             sys::Result::Err(err) => {
+                // A fresh poll holds `fd` and closes it with the writer. A poll kept
+                // from an earlier `start` still holds that fd, so `fd` is closed here.
+                if poll.fd() != fd {
+                    fd.close();
+                }
                 return sys::Result::Err(err);
             }
             sys::Result::Ok(()) => {}

@@ -1190,9 +1190,10 @@ fn fetch_headers_from_js(value: JSValue, global: &JSGlobalObject) -> Option<*mut
 
 /// Per-process latch for the dev-mode idle-timeout warning. The
 /// warning is gated on `DEBUG && !silent` and only fires once globally, so a
-/// single shared `AtomicBool` matches user-visible behavior.
+/// single shared `AtomicBool` matches user-visible behavior across every
+/// `(SSL, DEBUG)` instantiation and every transport (HTTP/1, HTTP/2, HTTP/3).
 #[inline]
-fn did_send_idletimeout_warning_once() -> &'static core::sync::atomic::AtomicBool {
+pub(super) fn did_send_idletimeout_warning_once() -> &'static core::sync::atomic::AtomicBool {
     static FLAG: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
     &FLAG
 }
@@ -1200,6 +1201,10 @@ fn did_send_idletimeout_warning_once() -> &'static core::sync::atomic::AtomicBoo
 /// Emits the once-only dev-mode
 /// warning. Factored out as a free fn so the `RespLike::on_timeout_warn`
 /// closures (which cannot name `NewServer<SSL,DEBUG>`) can call it.
+///
+/// uWS runs the timeout handler from its timer sweep and closes the socket
+/// right after. Nothing else flushes stderr on that path, so the flush here
+/// is what makes the warning visible while the server is still running.
 fn on_timeout_for_idle_warn() {
     if !did_send_idletimeout_warning_once().swap(true, core::sync::atomic::Ordering::Relaxed)
         && !crate::cli::Command::get().debug.silent
@@ -1209,6 +1214,23 @@ fn on_timeout_for_idle_warn() {
         );
         Output::flush();
     }
+}
+
+/// Registers `on_timeout_for_idle_warn` on `resp`. Shared by the HTTP/1
+/// (`mod.rs`) and the HTTP/2 / HTTP/3 request paths so both emit the same
+/// warning through the same latch.
+#[inline]
+pub(super) fn add_timeout_handler_for_warning<R: RespLike + ?Sized>(resp: &mut R) {
+    // uWS skips the handler when the user-data pointer is null; any non-null
+    // pointer will do. `on_timeout_for_idle_warn` ignores it and reads the
+    // static directly. `AtomicBool::as_ptr` yields a `*mut` with
+    // interior-mutability provenance, so no `&T as *const _ as *mut _` cast
+    // is needed.
+    resp.on_timeout_warn(
+        did_send_idletimeout_warning_once()
+            .as_ptr()
+            .cast::<c_void>(),
+    );
 }
 
 // ─── NewServer ───────────────────────────────────────────────────────────────
@@ -2940,16 +2962,7 @@ where
         // Since we do timeouts by default, we should tell the user when
         // this happens - but limit it to only warn once.
         if server.should_add_timeout_handler_for_warning() {
-            // We need to pass it a pointer, any pointer should do.
-            // SAFETY: the user-data pointer is an opaque sentinel — `on_timeout_for_idle_warn`
-            // ignores it and reads the static directly. `AtomicBool::as_ptr` yields a `*mut`
-            // with interior-mutability provenance, so no `&T as *const _ as *mut _` cast is needed.
-            RespLike::on_timeout_warn(
-                resp,
-                did_send_idletimeout_warning_once()
-                    .as_ptr()
-                    .cast::<c_void>(),
-            );
+            add_timeout_handler_for_warning(resp);
         }
 
         let any_resp = RespLike::to_any_response(resp);

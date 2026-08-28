@@ -48,7 +48,7 @@ const fifo = join(process.cwd(), "sync-fifo");
 
 async function once() {
   try { rmSync(fifo); } catch {}
-  execFileSync("mkfifo", [fifo]);
+  execFileSync(Bun.which("mkfifo") ?? "/system/bin/mkfifo", [fifo]);
 
   const before = snapshotFds();
 

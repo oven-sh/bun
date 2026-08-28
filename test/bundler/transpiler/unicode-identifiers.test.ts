@@ -42,6 +42,19 @@ const unicode16Continue = [
   "\u{1E5F1}", // OL ONAL DIGIT ONE (Nd)
 ];
 
+// JSC checks identifier characters against the ICU it links. On macOS that is the system
+// ICU, and macOS 14 ships ICU 74 (Unicode 15.1), so JSC there rejects Unicode 16 characters.
+function jscAccepts(code: string): boolean {
+  try {
+    new Function(code);
+    return true;
+  } catch {
+    return false;
+  }
+}
+const jscHasUnicode15_1 = jscAccepts(`var y${HALFWIDTH_KATAKANA_MIDDLE_DOT}, x${KATAKANA_MIDDLE_DOT};`);
+const jscHasUnicode16 = jscAccepts(`var ${unicode16Start.join(", ")};`);
+
 describe("Unicode 15.1 Other_ID_Continue", () => {
   test("U+30FB and U+FF65 are identifier parts but not identifier starts", () => {
     for (const dot of [KATAKANA_MIDDLE_DOT, HALFWIDTH_KATAKANA_MIDDLE_DOT]) {
@@ -75,7 +88,7 @@ describe("Unicode 15.1 Other_ID_Continue", () => {
     expect(transform(`const o2 = { x${dot} };`)).toBe(`const o2 = { "x${dot}": x${dot} };`);
   });
 
-  test("runtime: JSC and the lexer agree", async () => {
+  test.skipIf(!jscHasUnicode15_1)("runtime: JSC and the lexer agree", async () => {
     using dir = tempDir("unicode-15-1", {
       "c.js": `var y\uFF65 = 5; const o = { x\u30FB: 0 }; console.log(y\uFF65, o.x\u30FB, JSON.stringify(o));\n`,
     });
@@ -109,7 +122,7 @@ describe("Unicode 16 identifier characters", () => {
     }
   });
 
-  test("runtime", async () => {
+  test.skipIf(!jscHasUnicode16)("runtime: JSC and the lexer agree", async () => {
     using dir = tempDir("unicode-16", {
       "c16.js": `var \u{10EC2} = 1; const o = { \u{1E5D0}: 2 }; console.log(\u{10EC2}, o.\u{1E5D0});\n`,
     });

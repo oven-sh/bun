@@ -2572,11 +2572,11 @@ pub mod bv2_impl {
             // borrowck: a `&mut` into `resolve_result` can't be held while
             // also reading other fields and re-borrowing `self`,
             // so we clone the active path out and operate on an owned value.
-            let mut path: Fs::Path<'static> = match resolve_result.path() {
-                Some(p) => *p,
-                None => {
-                    // See `resolve_import_records`: the DevServer keeps disabled imports external.
-                    if self.dev_server.is_some() {
+            let mut path: Fs::Path<'static> = if self.dev_server.is_some() {
+                // The DevServer keeps a disabled import external.
+                match resolve_result.path() {
+                    Some(p) => *p,
+                    None => {
                         let record: &mut ImportRecord =
                             &mut self.graph.ast.items_import_records_mut()
                                 [import_record.importer_source_index as usize]
@@ -2585,8 +2585,10 @@ pub mod bv2_impl {
                         record.path.is_disabled = true;
                         return;
                     }
-                    resolve_result.path_pair.primary
                 }
+            } else {
+                // See `resolve_import_records`: a disabled primary is the empty module.
+                resolve_result.path_pair.primary
             };
             let is_disabled = path.is_disabled;
 
@@ -2629,10 +2631,12 @@ pub mod bv2_impl {
                 // `path` out, so write the prettified path back so
                 // `ParseTask::init(&resolve_result, ..)` (via `enqueue_parse_task`)
                 // sees the relativized `pretty`.
-                if is_disabled {
+                if self.dev_server.is_some() {
+                    if let Some(p) = resolve_result.path() {
+                        *p = path;
+                    }
+                } else {
                     resolve_result.path_pair.primary = path;
-                } else if let Some(p) = resolve_result.path() {
-                    *p = path;
                 }
                 let loader: Loader = 'brk: {
                     if is_disabled {
@@ -6664,23 +6668,27 @@ pub mod bv2_impl {
                 // would lock the whole struct while the loop body still needs to
                 // read other `resolve_result` fields (`.flags`, `.path_pair`,
                 // `.primary_side_effects_data`, `.jsx`). Detach via raw ptr.
-                let path: &mut Fs::Path = match resolve_result.path() {
-                    // SAFETY: `resolve_result` outlives this borrow; see note above.
-                    Some(p) => unsafe { bun_ptr::detach_lifetime_mut::<Fs::Path>(p) },
-                    None => {
-                        // Like esbuild, a disabled import is an empty CommonJS module.
-                        // The DevServer keeps the external form.
-                        if self.dev_server.is_some() {
+                let path: &mut Fs::Path = if self.dev_server.is_some() {
+                    // The DevServer keeps a disabled import external.
+                    match resolve_result.path() {
+                        // SAFETY: `resolve_result` outlives this borrow; see note above.
+                        Some(p) => unsafe { bun_ptr::detach_lifetime_mut::<Fs::Path>(p) },
+                        None => {
                             import_record.path.is_disabled = true;
                             import_record.source_index = Index::INVALID;
                             continue;
                         }
-                        // SAFETY: same as the `Some` arm.
-                        unsafe {
-                            bun_ptr::detach_lifetime_mut::<Fs::Path>(
-                                &mut resolve_result.path_pair.primary,
-                            )
-                        }
+                    }
+                } else {
+                    // Like esbuild, a disabled import is an empty CommonJS module. When the
+                    // "browser" field disables the "module" entry, "main" stays the
+                    // secondary: `scan_for_secondary_paths` redirects to it once a
+                    // `require()` bundles that file.
+                    // SAFETY: see note above.
+                    unsafe {
+                        bun_ptr::detach_lifetime_mut::<Fs::Path>(
+                            &mut resolve_result.path_pair.primary,
+                        )
                     }
                 };
                 let is_disabled = path.is_disabled;

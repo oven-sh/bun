@@ -374,6 +374,15 @@ describe("bundler", () => {
     },
     run: { stdout: "main" },
   });
+  // Once a `require` bundles "main", the `import` is redirected to it as well
+  // (the dual package hazard rule), so the disabled module is not in the output.
+  itBundled("extra/BrowserFieldDisabledModuleEntryImportAndRequire", {
+    files: {
+      "entry.js": `import v from 'pkg'; console.log(JSON.stringify([typeof v, v]), require('pkg'))`,
+      ...disabledModuleEntry,
+    },
+    run: { stdout: `["string","main"] main` },
+  });
 
   // Test arbitrary module namespace identifier names
   // See https://github.com/tc39/ecma262/pull/2154

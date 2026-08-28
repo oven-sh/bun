@@ -364,24 +364,13 @@ impl Cmd {
                             interp.as_cmd_mut(this).exit_code = Some(out.out_exit_code);
                         }
                     }
-                    // `out.bounds` splits the expansion into multiple argv
-                    // words (glob/IFS).
+                    // Every word becomes an argv entry, empty words included.
+                    // `$unset` produced no word, so it adds nothing.
                     let me = interp.as_cmd_mut(this);
-                    if out.bounds.is_empty() {
-                        // An empty
-                        // expansion that did *not* see a `""` literal pushes
-                        // no arg at all — `$unset` vanishes, only `""` yields
-                        // an empty argv word.
-                        if !out.buf.is_empty() || out.has_quoted_empty {
-                            me.args.push(out.buf);
-                        }
+                    if out.word_count() == 1 {
+                        me.args.push(out.buf);
                     } else {
-                        let mut prev = 0usize;
-                        for &b in &out.bounds {
-                            me.args.push(out.buf[prev..b as usize].to_vec());
-                            prev = b as usize;
-                        }
-                        me.args.push(out.buf[prev..].to_vec());
+                        me.args.extend(out.words().map(<[u8]>::to_vec));
                     }
                 }
                 CmdState::ExpandingRedirect { ref mut idx } => {
@@ -389,7 +378,7 @@ impl Cmd {
                     // Zero words or >1 word (glob/brace split) leave the buffer
                     // empty so the ambiguous-redirect check in
                     // `Builtin::init_redirections` / `init_subproc_redirections` fires.
-                    let mut buf = if out.bounds.is_empty() {
+                    let mut buf = if out.word_count() == 1 {
                         out.buf
                     } else {
                         Vec::new()

@@ -42,9 +42,9 @@ pub struct Expansion {
     pub(crate) cmd_subst_quoted: bool,
     /// Set when a `""`/`''` literal
     /// was seen so an *empty* expansion is still pushed as an argv word.
-    /// Without this, `$unset` and `""` are indistinguishable in
-    /// [`ExpansionOut`] (both → `buf=[], bounds=[]`) and Cmd would push an
-    /// empty arg for unset vars — diverging from POSIX field-splitting.
+    /// Without this, `$unset` and `""` both leave `current_out` empty and the
+    /// final flush could not tell "no word" from "one empty word". Pushing
+    /// an empty arg for unset vars would diverge from POSIX field-splitting.
     pub(crate) has_quoted_empty: bool,
     /// Exit code of a sole-command-substitution arg — propagated to `Cmd`
     /// so `$(false)` as argv0 fails.
@@ -65,20 +65,41 @@ pub enum ExpansionState {
     Err(Box<ShellErr>),
 }
 
+/// The argv words one atom expanded to, stored contiguously in `buf`.
 #[derive(Default)]
 pub struct ExpansionOut {
     pub(crate) buf: Vec<u8>,
-    /// Word boundaries within `buf` (for IFS splitting / glob results).
-    pub(crate) bounds: Vec<u32>,
+    /// End offset in `buf` of each word, one entry per word. Words are
+    /// delimited by their end offsets rather than by non-empty spans so an
+    /// empty word is representable in any position: `{,b}` is `["", "b"]`,
+    /// `{,}` is `["", ""]`, and `$unset` (no word at all) is an empty list.
+    pub(crate) word_ends: Vec<u32>,
     /// Set when the atom is a sole `$(…)`
     /// that exited non-zero, so [`Cmd::child_done`] can propagate it as the
     /// command's exit code when that substitution was argv0 and argv is
     /// otherwise empty.
     pub(crate) out_exit_code: ExitCode,
-    /// When `buf`/`bounds` are both
-    /// empty, this distinguishes `""` (push one empty arg) from `$unset`
-    /// (push no arg). See [`Expansion::has_quoted_empty`].
-    pub(crate) has_quoted_empty: bool,
+}
+
+impl ExpansionOut {
+    fn push_word(&mut self, word: &[u8]) {
+        self.buf.extend_from_slice(word);
+        self.word_ends.push(self.buf.len() as u32);
+    }
+
+    /// Number of words, including empty ones.
+    pub(crate) fn word_count(&self) -> usize {
+        self.word_ends.len()
+    }
+
+    pub(crate) fn words(&self) -> impl Iterator<Item = &[u8]> + '_ {
+        let mut prev = 0usize;
+        self.word_ends.iter().map(move |&end| {
+            let word = &self.buf[prev..end as usize];
+            prev = end as usize;
+            word
+        })
+    }
 }
 
 impl Expansion {
@@ -256,7 +277,11 @@ impl Expansion {
             if atom.has_glob_expansion() {
                 return Self::transition_to_glob_state(interp, this);
             }
-            Self::push_current_out(me);
+            // `$unset` expands to no word at all; only an explicit `""`
+            // yields an empty one.
+            if !me.current_out.is_empty() || me.has_quoted_empty {
+                Self::push_current_out(me);
+            }
             me.state = ExpansionState::Done;
         }
         let parent = interp.as_expansion(this).base.parent;
@@ -335,13 +360,9 @@ impl Expansion {
             expanded
         };
 
-        // Push each variant as its own word; word boundaries are recorded
-        // via `bounds`.
+        // Push each variant as its own word, empty variants included.
         for s in expanded {
-            if !me.out.buf.is_empty() {
-                me.out.bounds.push(me.out.buf.len() as u32);
-            }
-            me.out.buf.extend_from_slice(&s);
+            me.out.push_word(&s);
         }
 
         let node = me.node;
@@ -526,15 +547,10 @@ impl Expansion {
         false
     }
 
-    /// Flush `current_out` into `out`
-    /// as the next argv word. The word boundary is recorded as the *previous*
-    /// end-offset so the consumer's `[prev..bound]` slicing reconstructs each
-    /// word and the trailing `[prev..]` slice yields the final one.
+    /// Flush `current_out` into `out` as the next argv word.
     fn push_current_out(me: &mut Expansion) {
-        if !me.out.buf.is_empty() {
-            me.out.bounds.push(me.out.buf.len() as u32);
-        }
         me.out.buf.append(&mut me.current_out);
+        me.out.word_ends.push(me.out.buf.len() as u32);
         me.meta_offsets.clear();
     }
 
@@ -692,10 +708,7 @@ impl Expansion {
             // Push each match as its own argv word. The
             // walker arena owns the strings, so they were `to_vec`'d already.
             for entry in result {
-                if !me.out.buf.is_empty() {
-                    me.out.bounds.push(me.out.buf.len() as u32);
-                }
-                me.out.buf.extend_from_slice(&entry);
+                me.out.push_word(&entry);
             }
             me.state = ExpansionState::Done;
         }
@@ -723,7 +736,7 @@ impl Expansion {
         }
         let me = interp.as_expansion_mut(this);
         me.out.buf.clear();
-        me.out.bounds.clear();
+        me.out.word_ends.clear();
         me.current_out.clear();
     }
 
@@ -732,7 +745,6 @@ impl Expansion {
         let me = interp.as_expansion_mut(this);
         let mut out = core::mem::take(&mut me.out);
         out.out_exit_code = me.out_exit_code;
-        out.has_quoted_empty = me.has_quoted_empty;
         out
     }
 }

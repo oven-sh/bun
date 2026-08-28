@@ -128,6 +128,44 @@ console.log(JSON.stringify(Bun.$.braces("{" + inner)));`,
   });
 });
 
+// The expansion collected its words into one buffer and recorded a word
+// boundary only when that buffer was already non-empty, so an empty variant
+// at the start of the list had no representation and was dropped: `{,b}`
+// gave ["b"] while `{b,}` gave ["b", ""]. Every variant is an argv word.
+describe("empty brace variants are argv words in every position", () => {
+  // With `-e` there is no script path, so the user args start at argv[1].
+  const printArgv = "console.log(JSON.stringify(process.argv.slice(1)))";
+  const cases: [string, string[]][] = [
+    ["{,b}", ["", "b"]],
+    ["{b,}", ["b", ""]],
+    ["{,}", ["", ""]],
+    ["{,,b}", ["", "", "b"]],
+    ["{a,,b}", ["a", "", "b"]],
+    ["{,b}{,c}", ["", "c", "b", "bc"]],
+    ["{{,a},b}", ["", "a", "b"]],
+    ["x {,b} y", ["x", "", "b", "y"]],
+    // A quoted empty prefix belongs to the same word, it is not a word of its own.
+    ['""{,b}', ["", "b"]],
+  ];
+
+  test.concurrent.each(cases)("%s", async (words, expected) => {
+    const { stdout, stderr, exitCode } = await $`${bunExe()} -e ${printArgv} ${{ raw: words }}`
+      .env(bunEnv)
+      .nothrow()
+      .quiet();
+    expect({ argv: JSON.parse(stdout.toString()), stderr: stderr.toString(), exitCode }).toEqual({
+      argv: expected,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("builtin echo prints the empty word", async () => {
+    expect(await $`echo {,b}`.text()).toBe(" b\n");
+    expect(await $`echo {,}`.text()).toBe(" \n");
+  });
+});
+
 // A shell word combining brace + glob (`src/*.{ts,tsx}`, `{src,lib}/*.ts`) was
 // brace-expanded but the resulting `*` patterns were never globbed (the
 // brace-expand state always transitioned to Done instead of re-entering glob).

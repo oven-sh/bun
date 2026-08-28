@@ -56,7 +56,9 @@ describe("bundler", () => {
       env: { BUN_JSC_verboseDiskCache: "1" },
       validate({ stderr }) {
         // The bundle is the first source JSC looks up; anything after it is not this bundle's bytecode.
-        expect(stderr.split("\n").find(l => l.startsWith("[Disk Cache] "))).toBe("[Disk Cache] Cache hit for sourceCode");
+        expect(stderr.split("\n").find(l => l.startsWith("[Disk Cache] "))).toBe(
+          "[Disk Cache] Cache hit for sourceCode",
+        );
       },
     },
   });

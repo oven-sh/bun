@@ -598,10 +598,8 @@ impl PackageJSON {
                 if let js_ast::ExprData::EObjectJSON(obj) = &browser_prop.expr.data {
                     // The value is an object
 
-                    // Remap all files in the browser field. Keys are stored as written:
-                    // "./foo" and "foo" are different keys, and `check_browser_map`
-                    // decides which spellings an import may match (Browserify lets
-                    // "./foo" match `require("foo")`, but not "./foo.js").
+                    // Remap all files in the browser field. Keys are stored as written;
+                    // `check_browser_map` decides which spellings an import may match.
                     for prop in obj.get().properties() {
                         let key: &[u8] = prop.key.slice();
 

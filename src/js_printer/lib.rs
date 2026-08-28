@@ -6361,8 +6361,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// A disabled module evaluates to an empty object, like the empty module
-        /// esbuild, webpack and Browserify substitute for `"browser": {"x": false}`.
+        /// A disabled module evaluates to an empty object, as in other bundlers.
         #[inline]
         fn print_disabled_import(&mut self) {
             self.print_whitespacer(ws!(b"({})"));

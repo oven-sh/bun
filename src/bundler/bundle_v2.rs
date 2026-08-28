@@ -2575,8 +2575,7 @@ pub mod bv2_impl {
             let mut path: Fs::Path<'static> = match resolve_result.path() {
                 Some(p) => *p,
                 None => {
-                    // A disabled import becomes an empty module, as in
-                    // `resolve_import_records`. The DevServer keeps the external form.
+                    // See `resolve_import_records`: the DevServer keeps disabled imports external.
                     if self.dev_server.is_some() {
                         let record: &mut ImportRecord =
                             &mut self.graph.ast.items_import_records_mut()
@@ -5978,10 +5977,8 @@ pub mod bv2_impl {
             Ok(out)
         }
 
-        /// The pretty path of a module the "browser" field disabled:
         /// `(disabled):<path relative to the project>`, the spelling esbuild uses.
-        /// `text` stays the resolved path (or the bare specifier when nothing
-        /// resolved), so the loader and the debugger still see where it came from.
+        /// `text` stays the resolved path, or the bare specifier when nothing resolved.
         fn disabled_path_with_pretty(
             &self,
             path: &Fs::Path<'static>,
@@ -6671,11 +6668,8 @@ pub mod bv2_impl {
                     // SAFETY: `resolve_result` outlives this borrow; see note above.
                     Some(p) => unsafe { bun_ptr::detach_lifetime_mut::<Fs::Path>(p) },
                     None => {
-                        // The "browser" field disabled this import (or it is a Node.js
-                        // builtin with no browser polyfill). Like esbuild, it becomes an
-                        // empty CommonJS module, so `require()` returns one `{}` and an
-                        // `import` gets a namespace object. The DevServer keeps the
-                        // external form, which its module runtime handles itself.
+                        // Like esbuild, a disabled import is an empty CommonJS module.
+                        // The DevServer keeps the external form.
                         if self.dev_server.is_some() {
                             import_record.path.is_disabled = true;
                             import_record.source_index = Index::INVALID;
@@ -6818,8 +6812,7 @@ pub mod bv2_impl {
                     && target.is_server_side()
                     && self.dev_server.is_none();
 
-                // A disabled module gets the pretty path esbuild uses,
-                // "(disabled):<path>", which is also its `source_key()`.
+                // The `(disabled):` pretty path is also the `source_key()`.
                 if is_disabled {
                     *path = self.disabled_path_with_pretty(path).expect("oom");
                 }

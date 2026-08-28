@@ -259,9 +259,7 @@ impl ParseTask {
         ParseTask {
             ctx: Some(ctx_ref),
             path,
-            // A path the "browser" field disabled is an empty module. Nothing is read
-            // from disk: the path may not exist, and when it does, its contents are
-            // exactly what the field excludes.
+            // A disabled path is an empty module; nothing is read from disk.
             contents_or_fd: if path.is_disabled {
                 ContentsOrFd::Contents(b"")
             } else {

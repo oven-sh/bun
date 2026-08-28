@@ -3618,9 +3618,8 @@ impl<'a> LinkerContext<'a> {
                         }
                     }
 
-                    // Warn about importing from a file that is known to not have any exports.
-                    // A disabled module is empty too, but its default import is the `{}`
-                    // exports object, so only a named import reads `undefined`.
+                    // Warn about importing from a file that is known to not have any exports
+                    // (for a disabled module, its default import is the `{}` exports object).
                     let is_always_undefined = match status {
                         ImportTrackerStatus::CjsWithoutExports => true,
                         ImportTrackerStatus::Disabled => {

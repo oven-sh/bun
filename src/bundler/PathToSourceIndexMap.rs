@@ -8,9 +8,8 @@ use crate::IndexStringMap::IndexInt;
 pub trait PathLike {
     fn path_text(&self) -> &[u8];
 
-    /// The key this module is filed under. A module the "browser" field
-    /// disabled is keyed by its `(disabled):...` pretty path: the same file can
-    /// also be in the graph enabled, and the two must stay separate modules.
+    /// The map key. A disabled module is keyed by its `(disabled):` pretty path,
+    /// so it stays separate from the same file enabled.
     fn source_key(&self) -> &[u8];
 }
 

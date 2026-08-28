@@ -1875,8 +1875,7 @@ impl<'a> Resolver<'a> {
         }
 
         if check_package {
-            // Check for external packages first: a package the user marked external is
-            // never replaced by a browser polyfill or disabled builtin.
+            // Check for external packages first, before the browser polyfills below.
             if self.opts.external.node_modules.count() > 0
             // Imports like "process/" need to resolve to the filesystem, not a builtin
             && !import_path.ends_with(b"/")
@@ -2521,8 +2520,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // Stack, not `bufs!`: a "browser" remap to another package re-enters this
-        // function while `esm.subpath` is still in use.
+        // On the stack: a "browser" remap can re-enter this function while `esm` is in use.
         let mut esm_subpath_buf = [0u8; 512];
         let esm_ = crate::package_json::Package::parse(import_path, &mut esm_subpath_buf);
 
@@ -5032,16 +5030,11 @@ impl<'a> Resolver<'a> {
         )
     }
 
-    /// A package subpath (`require("pkg/foo/bar")`) is checked against the
-    /// package's "browser" map before node's file and directory lookup.
-    /// `abs_path` is the subpath joined onto the package directory, without an
-    /// implicit extension, so a key like "./foo/bar" matches even when
-    /// "foo/bar.js" does not exist.
+    /// Checks a package subpath (`require("pkg/foo/bar")`) against the package's
+    /// "browser" map before node's file lookup. `abs_path` has no implicit extension.
     ///
-    /// Resolving a remap target can re-enter `load_node_modules`, which reuses
-    /// the threadlocal scratch buffers the caller's `abs_path` may live in. So on
-    /// `BrowserMapSubpath::NotFound` the fallback file lookup for `abs_path` has
-    /// already run here, and the caller must not use `abs_path` again.
+    /// Resolving a remap target can re-enter `load_node_modules`, which reuses the
+    /// scratch buffer `abs_path` may live in, so the fallback lookup runs in here.
     fn load_package_subpath_from_browser_map(
         &mut self,
         pkg_dir_info: DirInfoRef,
@@ -5078,7 +5071,6 @@ impl<'a> Resolver<'a> {
             return BrowserMapSubpath::Found;
         }
 
-        // The copy survives the re-entrant lookup below.
         let mut abs_path_buf = bun_paths::path_buffer_pool::get();
         let Some(abs_path) = concat_into(&mut **abs_path_buf, &[abs_path]) else {
             return BrowserMapSubpath::NotFound;
@@ -5091,7 +5083,7 @@ impl<'a> Resolver<'a> {
             return BrowserMapSubpath::Found;
         }
 
-        // Like esbuild, a target that does not resolve falls back to the file itself.
+        // Like esbuild, an unresolved target falls back to the file itself.
         if self
             .load_as_file_or_directory(abs_path, kind, out)
             .is_success()
@@ -5102,14 +5094,9 @@ impl<'a> Resolver<'a> {
         BrowserMapSubpath::NotFound
     }
 
-    /// Looks `input_path` up in the "browser" map of the package that encloses
-    /// `resolve_dir_info`. For `PackagePath`, `resolve_dir_info` is the importer's
-    /// directory and `input_path` the specifier as written. For `AbsolutePath`,
-    /// `input_path` is the absolute path that is about to be loaded (without
-    /// implicit extensions).
-    ///
-    /// Returns the remap target relative to the browser scope, or an empty slice
-    /// when the entry is `false` (the module is disabled).
+    /// Looks `input_path` up in the "browser" map enclosing `resolve_dir_info`
+    /// (the importer's directory for `PackagePath`). Returns the remap target
+    /// relative to the browser scope, or an empty slice for a disabled entry.
     pub(crate) fn check_browser_map<const KIND: BrowserMapPathKind>(
         &mut self,
         resolve_dir_info: DirInfoRef,
@@ -5196,8 +5183,6 @@ impl<'a> Resolver<'a> {
                 };
 
                 // Browserify lets "require('pkg')" match "./pkg" but not "./pkg.js".
-                // So don't add implicit extensions specifically in this place so we
-                // match Browserify's behavior.
                 if checker.check_path(candidate, ImplicitExtensions::Skip) {
                     return Some(checker.remapped);
                 }
@@ -6705,11 +6690,11 @@ enum ImplicitExtensions {
 /// Result of `Resolver::load_package_subpath_from_browser_map`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BrowserMapSubpath {
-    /// The map has no entry for the subpath. The caller runs node's file lookup.
+    /// No entry for the subpath; the caller runs node's file lookup.
     NoEntry,
-    /// `out` holds the module: the remap target, or the disabled path.
+    /// `out` holds the remap target or the disabled path.
     Found,
-    /// The map has an entry, but neither its target nor the subpath itself resolves.
+    /// An entry exists, but neither its target nor the subpath itself resolves.
     NotFound,
 }
 
@@ -6720,9 +6705,7 @@ pub(crate) struct BrowserMapPath<'b> {
 }
 
 impl<'b> BrowserMapPath<'b> {
-    /// Looks up one key. On a match only `self.remapped` is updated; the
-    /// candidate may borrow threadlocal scratch buffers and must never be
-    /// stored back into the checker.
+    /// On a match only `self.remapped` is stored; `key` may be scratch storage.
     fn lookup(&mut self, key: &[u8]) -> bool {
         let Some(result) = self.map.get(key) else {
             return false;
@@ -6756,9 +6739,8 @@ impl<'b> BrowserMapPath<'b> {
         false
     }
 
-    /// Probes the map the way Browserify and esbuild do: the path as written,
-    /// the path with an implicit extension, the path as a directory with an
-    /// "index" file, and that index with an implicit extension.
+    /// Probes the path as written, with an implicit extension, as a directory
+    /// with an "index" file, and that index with an implicit extension.
     pub(crate) fn check_path(
         &mut self,
         path_to_check: &[u8],
@@ -6813,16 +6795,14 @@ fn concat_into<'a>(buf: &'a mut [u8], parts: &[&[u8]]) -> Option<&'a [u8]> {
     Some(&buf[..len])
 }
 
-/// `path` relative to the directory `base`, with forward slashes and no
-/// trailing slash, so it can be compared against "browser" map keys. Empty when
-/// `path` is `base` itself. `None` when `path` is not inside `base`.
+/// `path` relative to the directory `base`, with forward slashes and no trailing
+/// slash. Empty when `path` is `base` itself, `None` when it is not inside `base`.
 fn browser_map_relative_path<'a>(base: &[u8], path: &[u8], buf: &'a mut [u8]) -> Option<&'a [u8]> {
     if !path.starts_with(base) {
         return None;
     }
     let rest = &path[base.len()..];
-    // The remainder has to start at a path component boundary: `base` may or
-    // may not carry its trailing separator.
+    // `base` may or may not carry its trailing separator.
     if !rest.is_empty()
         && !strings::char_is_any_slash(rest[0])
         && !base.last().is_some_and(|&c| strings::char_is_any_slash(c))

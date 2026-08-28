@@ -3317,6 +3317,27 @@ describe("bundler", () => {
       "/entry.js": ['"package" is a reserved word and cannot be used with the ESM output format due to strict mode'],
     },
   });
+  // The printer writes numbers in decimal and escapes as `\xNN`, so legacy octal
+  // syntax never reaches the output and is not an error for ESM output.
+  itBundled("edgecase/SloppyLegacyOctalESMOutputIsReprinted", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(JSON.stringify(require("./dep.cjs")));
+      `,
+      "/dep.cjs": /* js */ `
+        var n = 010, m = 08, s = "\\1", t = "\\012";
+        module.exports = [n, m, s, t];
+      `,
+    },
+    format: "esm",
+    run: { stdout: '[8,8,"\\u0001","\\n"]' },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("var n = 8");
+      expect(out).not.toContain("010");
+      expect(out).not.toContain("\\1");
+    },
+  });
   // A for-in initializer is lowered to an assignment before the loop, so it is
   // not an error for any output format.
   itBundled("edgecase/SloppyForInInitializerIsLowered", {

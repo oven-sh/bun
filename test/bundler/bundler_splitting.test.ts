@@ -907,6 +907,44 @@ describe("bundler", () => {
     },
     run: { file: "/out/entry.js", stdout: "hi a A A\nhi b B\nE" },
   });
+  // A file that prints nothing still belongs to its chunk, because the walk
+  // that orders a chunk's imports starts from the chunk's files: an import()
+  // target that only re-exports loads its targets in source order.
+  itBundled("splitting/ReExportOnlyEntryKeepsImportOrder", {
+    files: {
+      "/entry.js": /* js */ `
+        const m = await import('./barrel.js');
+        console.log(m.a, m.b);
+        await import('./x.js'); await import('./y.js');
+      `,
+      "/barrel.js": `export { b } from "./implB.js"; export { a } from "./implA.js";`,
+      "/x.js": `import { a } from "./implA.js"; export const x = a;`,
+      "/y.js": `import { b } from "./implB.js"; export const y = b;`,
+      "/implA.js": `console.log("A"); export const a = "a";`,
+      "/implB.js": `console.log("B"); export const b = "b";`,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "B\nA\na b" },
+  });
+  // The same inside a shared chunk: the walk reaches barrel.js before other.js
+  // and prints implB.js (kept only for its side effects) from there.
+  itBundled("splitting/ReExportOnlyFileKeepsChunkOrder", {
+    files: {
+      "/entry.js": `await import('./a.js'); await import('./b.js');`,
+      "/a.js": `import { x } from "./barrel.js"; import "./other.js"; console.log("a", x);`,
+      "/b.js": `import { x } from "./barrel.js"; import "./other.js"; console.log("b", x);`,
+      "/barrel.js": `export { y } from "./implB.js"; export { x } from "./implA.js";`,
+      "/other.js": `console.log("other");`,
+      "/implA.js": `console.log("A"); export const x = "x";`,
+      "/implB.js": `console.log("B"); export const y = "y";`,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "A\nB\nother\na x\nb x" },
+  });
   // An entry point with exports of its own keeps its module namespace as
   // written: shared code is not folded into it (which would add exports),
   // but the chunks that are always loaded with it still fold into one.

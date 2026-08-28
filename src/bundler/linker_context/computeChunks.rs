@@ -47,6 +47,10 @@ pub(crate) fn compute_chunks(
     // Keys borrow from `temp`; the map and the arena are both dropped at end of fn.
     let mut js_chunks: ArrayHashMap<&[u8], Chunk> = ArrayHashMap::new();
     js_chunks.reserve(this.graph.entry_points.len());
+    // Parallel to `js_chunks.values()`: whether a file in the chunk prints code.
+    // A code-splitting chunk with none is dropped below instead of becoming an
+    // empty output file (two of those share a content hash).
+    let mut js_chunk_has_code: Vec<bool> = Vec::with_capacity(this.graph.entry_points.len());
 
     // Key is the hash of the CSS order. This deduplicates identical CSS files.
     let mut css_chunks: ArrayHashMap<u64, Chunk> = ArrayHashMap::new();
@@ -205,6 +209,9 @@ pub(crate) fn compute_chunks(
         let js_chunk_entry = js_chunks.get_or_put(js_chunk_key)?;
         entry_point_to_js_chunk_idx[entry_id_] =
             u32::try_from(js_chunk_entry.index).expect("int cast");
+        if !js_chunk_entry.found_existing {
+            js_chunk_has_code.push(true);
+        }
         *js_chunk_entry.value_ptr = Chunk {
             entry_point: chunk::EntryPoint::entry_point(source_index, entry_bit),
             entry_bits: entry_point_chunk_bits,
@@ -314,17 +321,20 @@ pub(crate) fn compute_chunks(
                     }
 
                     if this.graph.code_splitting {
-                        // Its chunk would be an empty file.
-                        if !this
+                        let js_chunk_key =
+                            temp.alloc_slice_copy(entry_bits.bytes(this.graph.entry_points.len()));
+                        let js_chunk_entry = js_chunks.get_or_put(js_chunk_key)?;
+
+                        if !js_chunk_entry.found_existing {
+                            js_chunk_has_code.push(false);
+                        }
+                        if this
                             .graph
                             .files_with_code
                             .is_set(source_index.get() as usize)
                         {
-                            continue;
+                            js_chunk_has_code[js_chunk_entry.index] = true;
                         }
-                        let js_chunk_key =
-                            temp.alloc_slice_copy(entry_bits.bytes(this.graph.entry_points.len()));
-                        let js_chunk_entry = js_chunks.get_or_put(js_chunk_key)?;
 
                         if !js_chunk_entry.found_existing {
                             let is_browser_chunk_from_server_build =
@@ -413,7 +423,12 @@ pub(crate) fn compute_chunks(
 
         let mut sorted_keys = Vec::<&[u8]>::init_capacity(js_chunks.count());
 
-        sorted_keys.append_slice_assume_capacity(js_chunks.keys());
+        debug_assert_eq!(js_chunk_has_code.len(), js_chunks.count());
+        for (&key, &has_code) in js_chunks.keys().iter().zip(js_chunk_has_code.iter()) {
+            if has_code {
+                sorted_keys.append_assume_capacity(key);
+            }
+        }
 
         // sort by entry_point_id to ensure the main entry point (id=0) comes first,
         // then by key for determinism among the rest.

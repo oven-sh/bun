@@ -367,8 +367,7 @@ fn set_aside_node_modules(cwd: &[u8]) -> bun_sys::Result<()> {
         Fd::cwd(),
         previous.slice_z(),
     ) {
-        // `mkdirat` (like `renameat`) takes the long-path route on Windows;
-        // `mkdir` goes through libuv and stops at MAX_PATH.
+        // `mkdirat` takes the long-path route on Windows; `mkdir` (libuv) stops at MAX_PATH.
         Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
             bun_sys::mkdirat(Fd::cwd(), previous.slice_z(), 0o755)
         }

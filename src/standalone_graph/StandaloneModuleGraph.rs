@@ -49,7 +49,7 @@ pub struct StandaloneModuleGraph {
     pub builtin_bytecode: Vec<(u32, *mut [u8])>,
     /// The one shared bytecode string table (`JSC::EncoderStringTable::serialize`) every chunk's payload references by ordinal; installed on the VM's `DecoderStringTable` at startup.
     pub bytecode_string_table: &'static [u8],
-    /// The string table every module's `module_info` body indexes (`ModuleInfoStringTable`); empty when there is none.
+    /// The slot table every module's `module_info` body indexes (`ModuleInfoSlotTable`); empty when there is none.
     pub module_info_string_table: &'static [u8],
     /// The first `startup_module_count` of `files` (table order = load order) are the entry
     /// point's static import closure, i.e. what loads before the first `import()`.

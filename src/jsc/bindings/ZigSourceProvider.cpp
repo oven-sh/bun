@@ -226,10 +226,32 @@ extern "C" void Bun__DecoderStringTable__install(JSC::VM* vm, const uint8_t* byt
     static_cast<WebCore::JSVMClientData*>(vm->clientData)->setDecoderStringTable(std::span<const uint8_t>(bytes, len));
 }
 
-extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, uint32_t depth, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, JSC::EncoderStringTable* externalStrings)
+// The chunk arrives as UTF-8; the executable hands the runtime the same text as Latin-1 when it is ASCII and as
+// UTF-16 otherwise (StandaloneModuleGraph `Encoding`), and the bytecode's source key must be computed over that.
+static WTF::String sourceStringForBytecode(const uint8_t* bytes, size_t length)
 {
-    std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
-    JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
+    std::span<const uint8_t> span(bytes, length);
+    if (WTF::charactersAreAllASCII(span))
+        return WTF::String(byteCast<Latin1Character>(span));
+    return WTF::String::fromUTF8(byteCast<char8_t>(span));
+}
+
+extern "C" uint32_t Bun__EncoderStringTable__ordinalForLatin1(JSC::EncoderStringTable* table, const uint8_t* bytes, size_t length)
+{
+    return table->ordinalFor(*WTF::String(std::span { reinterpret_cast<const Latin1Character*>(bytes), length }).impl());
+}
+
+extern "C" uint32_t Bun__EncoderStringTable__ordinalForUTF16(JSC::EncoderStringTable* table, const char16_t* units, size_t length)
+{
+    return table->ordinalFor(*WTF::String(std::span { units, length }).impl());
+}
+
+extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sourceProviderURL, const uint8_t* inputSourceCode, size_t inputSourceCodeSize, uint32_t depth, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, JSC::EncoderStringTable* externalStrings)
+{
+    WTF::String source = sourceStringForBytecode(inputSourceCode, inputSourceCodeSize);
+    if (source.isNull())
+        return false;
+    JSC::SourceCode sourceCode = JSC::makeSource(WTF::move(source), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
 
     JSC::VM& vm = vmForBytecodeCache();
 
@@ -263,11 +285,12 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(const BunString* sour
     return true;
 }
 
-extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(const BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, uint32_t depth, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, JSC::EncoderStringTable* externalStrings)
+extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(const BunString* sourceProviderURL, const uint8_t* inputSourceCode, size_t inputSourceCodeSize, uint32_t depth, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr, JSC::EncoderStringTable* externalStrings)
 {
-    std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
-
-    JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
+    WTF::String source = sourceStringForBytecode(inputSourceCode, inputSourceCodeSize);
+    if (source.isNull())
+        return false;
+    JSC::SourceCode sourceCode = JSC::makeSource(WTF::move(source), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
     JSC::VM& vm = vmForBytecodeCache();
 
     JSC::JSLockHolder locker(vm);

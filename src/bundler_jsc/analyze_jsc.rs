@@ -68,11 +68,14 @@ fn to_js_module_record(
         if shared && (id.0 as usize) < identifier_count {
             // SAFETY: `identifiers` has at least `identifier_count` slots.
             if unsafe { IdentifierArray::is_null(identifiers, id.0 as usize) } {
-                let sub = res
-                    .string(id.0)
+                let slot = res
+                    .slot(id.0)
                     .ok_or(analyze::ModuleInfoError::BadModuleInfo)?;
                 // SAFETY: as above.
-                unsafe { IdentifierArray::set_from_utf8(identifiers, id.0 as usize, vm, sub) };
+                if !unsafe { IdentifierArray::set_from_slot(identifiers, id.0 as usize, vm, slot) }
+                {
+                    return Err(analyze::ModuleInfoError::BadModuleInfo);
+                }
             }
         }
         Ok(id)
@@ -258,6 +261,12 @@ unsafe extern "C" {
         str_: *const u8,
         len: usize,
     );
+    fn JSC__IdentifierArray__setFromSlot(
+        identifier_array: *mut IdentifierArray,
+        n: usize,
+        vm: *const VM,
+        slot: u32,
+    ) -> bool;
 }
 impl IdentifierArray {
     /// The VM's slots for the executable's shared module-info string table,
@@ -302,6 +311,20 @@ impl IdentifierArray {
     pub(crate) unsafe fn set_from_utf8(this: *mut IdentifierArray, n: usize, vm: &VM, str_: &[u8]) {
         // SAFETY: caller contract — `this` is live, `n` is in bounds; `str_` is a valid slice for the call.
         unsafe { JSC__IdentifierArray__setFromUtf8(this, n, vm, str_.as_ptr(), str_.len()) }
+    }
+    /// Resolves a `ModuleInfoSlotTable` slot; false when it cannot (no bytecode
+    /// string table on this VM, or a malformed slot).
+    /// # Safety
+    /// `this` must be live; `n` must be in-bounds for the array's length.
+    #[inline]
+    pub(crate) unsafe fn set_from_slot(
+        this: *mut IdentifierArray,
+        n: usize,
+        vm: &VM,
+        slot: u32,
+    ) -> bool {
+        // SAFETY: caller contract.
+        unsafe { JSC__IdentifierArray__setFromSlot(this, n, vm, slot) }
     }
 }
 

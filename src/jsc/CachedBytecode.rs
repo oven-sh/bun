@@ -34,6 +34,45 @@ impl EncoderStringTable {
         // SAFETY: `this` was produced by `new`.
         unsafe { Bun__EncoderStringTable__destroy(this.as_ptr()) };
     }
+    /// The 4-byte slot the runtime resolves a module-info string from, spelled like the bytecode
+    /// cache's string slots (`CachedPtr` in CachedTypes.cpp): `tag 1` + up to three Latin-1
+    /// characters inline, `tag 2` + an ordinal into this table, `tag 3` for the empty string.
+    /// `JSC__IdentifierArray__setFromSlot` decodes it.
+    pub fn slot_for_wtf8(this: NonNull<EncoderStringTable>, wtf8: &[u8]) -> u32 {
+        if wtf8.is_empty() {
+            return 3;
+        }
+        let units: Vec<u16> = match bun_core::strings::to_utf16_alloc(wtf8, false, false) {
+            Ok(None) => wtf8.iter().map(|&b| b as u16).collect(),
+            Ok(Some(units)) => units,
+            Err(_) => bun_alloc::out_of_memory(),
+        };
+        let latin1 = units.iter().all(|&u| u <= 0xFF);
+        if latin1 && units.len() <= 3 {
+            let mut slot = 1 | (units.len() as u32) << 2;
+            for (i, &u) in units.iter().enumerate() {
+                slot |= (u as u32) << (8 * (i + 1));
+            }
+            return slot;
+        }
+        let ordinal = if latin1 {
+            let bytes: Vec<u8> = units.iter().map(|&u| u as u8).collect();
+            // SAFETY: `this` is a live table; `bytes` is valid for the call.
+            unsafe {
+                Bun__EncoderStringTable__ordinalForLatin1(
+                    this.as_ptr(),
+                    bytes.as_ptr(),
+                    bytes.len(),
+                )
+            }
+        } else {
+            // SAFETY: as above, with UTF-16 units.
+            unsafe {
+                Bun__EncoderStringTable__ordinalForUTF16(this.as_ptr(), units.as_ptr(), units.len())
+            }
+        };
+        2 | ordinal << 2
+    }
 }
 
 unsafe extern "C" {
@@ -44,6 +83,16 @@ unsafe extern "C" {
         ctx: *mut core::ffi::c_void,
         append: unsafe extern "C" fn(*mut core::ffi::c_void, *const u8, usize),
     );
+    fn Bun__EncoderStringTable__ordinalForLatin1(
+        this: *mut EncoderStringTable,
+        bytes: *const u8,
+        len: usize,
+    ) -> u32;
+    fn Bun__EncoderStringTable__ordinalForUTF16(
+        this: *mut EncoderStringTable,
+        units: *const u16,
+        len: usize,
+    ) -> u32;
 
     fn generateCachedModuleByteCodeFromSourceCode(
         source_provider_url: &BunString,
@@ -195,6 +244,14 @@ pub(crate) fn __bun_jsc_encoder_string_table_take(table: NonNull<EncoderStringTa
     let bytes = EncoderStringTable::serialize(table).into_boxed_slice();
     EncoderStringTable::destroy(table);
     bytes
+}
+
+#[unsafe(no_mangle)]
+pub(crate) fn __bun_jsc_encoder_string_table_slot(
+    table: NonNull<EncoderStringTable>,
+    wtf8: &[u8],
+) -> u32 {
+    EncoderStringTable::slot_for_wtf8(table, wtf8)
 }
 
 #[unsafe(no_mangle)]

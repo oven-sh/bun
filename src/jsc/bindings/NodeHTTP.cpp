@@ -369,6 +369,21 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     return JSValue::encode(returnValue);
 }
 
+// https://fetch.spec.whatwg.org/#concept-header-value
+// Header values are ByteStrings: isomorphic-encode (1 code unit = 1 byte), not
+// UTF-8, so a 16-bit string must produce the same bytes as the equal 8-bit one.
+// isValidHTTPHeaderValue and node:http's checkInvalidHeaderChar already reject
+// code units > 0xFF; like String::latin1(), anything else becomes '?'.
+static WTF::CString latin1FromUTF16(std::span<const char16_t> characters)
+{
+    std::span<char> buffer;
+    WTF::CString result = WTF::CString::newUninitialized(characters.size(), buffer);
+    size_t i = 0;
+    for (auto character : characters)
+        buffer[i++] = isLatin1(character) ? static_cast<char>(character) : '?';
+    return result;
+}
+
 template<bool isSSL>
 static void writeResponseHeader(uWS::HttpResponse<isSSL>* res, const WTF::StringView& name, const WTF::StringView& value)
 {
@@ -391,7 +406,7 @@ static void writeResponseHeader(uWS::HttpResponse<isSSL>* res, const WTF::String
         const auto valueSpan = value.span8();
         valueView = std::string_view(reinterpret_cast<const char*>(valueSpan.data()), valueSpan.size());
     } else {
-        valueStr = value.utf8();
+        valueStr = latin1FromUTF16(value.span16());
         valueView = std::string_view(valueStr.data(), valueStr.length());
     }
 
@@ -426,7 +441,7 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
             const auto valueSpan = value.span8();
             res->writeHeader(std::string_view("set-cookie", 10), std::string_view(reinterpret_cast<const char*>(valueSpan.data()), valueSpan.size()));
         } else {
-            WTF::CString valueStr = value.utf8();
+            WTF::CString valueStr = latin1FromUTF16(value.span16());
             res->writeHeader(std::string_view("set-cookie", 10), std::string_view(valueStr.data(), valueStr.length()));
         }
     }
@@ -879,7 +894,7 @@ static void writeFetchHeadersToStreamResponse(WebCore::FetchHeaders& headers, Re
             const auto s = value.span8();
             valueView = std::string_view(reinterpret_cast<const char*>(s.data()), s.size());
         } else {
-            valueStr = value.utf8();
+            valueStr = latin1FromUTF16(value.span16());
             valueView = std::string_view(valueStr.data(), valueStr.length());
         }
         res->writeHeader(nameView, valueView);
@@ -890,7 +905,7 @@ static void writeFetchHeadersToStreamResponse(WebCore::FetchHeaders& headers, Re
             const auto s = value.span8();
             res->writeHeader(std::string_view("set-cookie", 10), std::string_view(reinterpret_cast<const char*>(s.data()), s.size()));
         } else {
-            WTF::CString v = value.utf8();
+            WTF::CString v = latin1FromUTF16(value.span16());
             res->writeHeader(std::string_view("set-cookie", 10), std::string_view(v.data(), v.length()));
         }
     }

@@ -4872,10 +4872,6 @@ pub enum SizeHint {
     UnknownSize,
 }
 
-/// Owned `KEY → VALUE` map of environment variables.
-/// Minimal real def (no hash-map semantics needed; callers iterate).
-pub type EnvMap = std::collections::HashMap<String, String>;
-
 /// `bun.sys.syslog` — debug-scoped log under `SYS`.
 /// `bun_core::scoped_log!` only accepts a bare `$scope:ident`, so we
 /// re-expand its body verbatim here with the qualified `$crate::fd::SYS` path

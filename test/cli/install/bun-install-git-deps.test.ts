@@ -5,8 +5,8 @@
 // a bare repo on disk (served over git's dumb HTTP protocol by Bun.serve
 // when an http URL is needed) or tarballs built in memory.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 import { pathToFileURL } from "url";
 
@@ -619,3 +619,69 @@ test.concurrent("bun install <git url> sorts the workspace dependency by its res
   };
   expect(Object.keys(lockfile.workspaces[""].dependencies)).toEqual(["hhh-first", "iii-middle", "jjj-last"]);
 });
+
+// The git commands of an install used to run on thread-pool threads through
+// the synchronous spawn helper, which installed the signal forwarder meant for
+// the foreground child of `bun run`: a SIGINT while clones ran was sent on to
+// one of the git processes instead of stopping the install, and concurrent
+// clones raced on the forwarder's process-wide state.
+test.concurrent.skipIf(isWindows)(
+  "SIGINT during git clones stops the install and is not forwarded to git",
+  async () => {
+    using dir = tempDir("git-dep-sigint", {});
+    const root = String(dir);
+    const bin = join(root, "bin");
+    mkdirSync(bin);
+    const running = join(root, "git-running");
+    const gotSigint = join(root, "git-got-sigint");
+    const quote = (path: string) => `'${path.replaceAll("'", "'\\''")}'`;
+    // A fake git. Each process appends a line to `running` when it starts and
+    // blocks until the test deletes that file. A SIGINT that bun forwards to
+    // one of them is recorded in `gotSigint`, which makes every other fake git
+    // (the concurrent clone, the retry over ssh) exit at once.
+    writeFileSync(
+      join(bin, "git"),
+      `#!/bin/sh
+trap ': > ${quote(gotSigint)}; exit 130' INT
+echo $$ >> ${quote(running)}
+i=0
+while [ -e ${quote(running)} ] && [ ! -e ${quote(gotSigint)} ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done
+exit 1
+`,
+      { mode: 0o755 },
+    );
+    // two repositories, so two clones run at the same time
+    const project = writeProject(root, {
+      [nameOf("a")]: "git+https://localhost/scope/pkg-a.git",
+      [nameOf("b")]: "git+https://localhost/scope/pkg-b.git",
+    });
+    const env = { ...gitEnv, BUN_INSTALL_CACHE_DIR: join(root, "cache"), PATH: `${bin}:${gitEnv.PATH}` };
+    delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: project,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    try {
+      const deadline = Date.now() + 20_000;
+      const runningGits = () => (existsSync(running) ? readFileSync(running, "utf8").split("\n").length - 1 : 0);
+      while (runningGits() < 2) {
+        if (proc.exitCode !== null || proc.signalCode !== null) {
+          throw new Error(`install exited before it ran git:\n${await proc.stderr.text()}`);
+        }
+        if (Date.now() > deadline) throw new Error(`install ran ${runningGits()} of 2 clones`);
+        await Bun.sleep(10);
+      }
+      proc.kill("SIGINT");
+      await proc.exited;
+      expect({ signalCode: proc.signalCode, gitGotSigint: existsSync(gotSigint) }).toEqual({
+        signalCode: "SIGINT",
+        gitGotSigint: false,
+      });
+    } finally {
+      rmSync(running, { force: true });
+    }
+  },
+);

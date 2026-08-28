@@ -1484,7 +1484,6 @@ dependencies = [
  "bun_spawn_sys",
  "bun_sys",
  "bun_threading",
- "bun_which",
  "libc",
  "scopeguard",
  "thiserror",

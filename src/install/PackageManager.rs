@@ -1,6 +1,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::collections::VecDeque;
 use std::io::Write as _;
 
 use crate::Error;
@@ -260,6 +261,10 @@ type PreallocatedNetworkTasks = HiveArrayFallback<NetworkTask, 128>;
 type ResolveTaskQueue = UnboundedQueue<Task::Task<'static> /* , .next */>;
 
 type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>;
+/// Git-commit task id (`Task::Id::for_git_commit`) -> the commit SHA the task
+/// resolved. Like `git_repositories`, it lets the dependencies that waited on
+/// the task re-enter the enqueue path and find the answer.
+type GitCommitMap = HashMap<Task::Id, Vec<u8> /* , IdentityContext<Task::Id>, 80 */>;
 /// Resolve-task id (git checkout / tarball extract) -> the package that task
 /// appended during the resolve phase. A task's callback queue is drained
 /// exactly once, so a dependency enqueued after that drain must resolve
@@ -350,6 +355,11 @@ pub struct PackageManager {
     pub manifests: PackageManifestMap,
     pub(crate) folders: FolderResolutionMap,
     pub(crate) git_repositories: RepositoryMap,
+    pub(crate) git_commits: GitCommitMap,
+    /// Git tasks queued by `enqueue_git_task` and not yet started.
+    pub(crate) git_tasks: VecDeque<NonNull<Task::Task<'static>>>,
+    /// Git tasks whose `git_runner::GitSubprocess` is alive.
+    pub(crate) running_git_tasks: u32,
     pub(crate) appended_task_packages: AppendedTaskPackageMap,
 
     pub(crate) network_dedupe_map: crate::network_task::DedupeMap,
@@ -2096,6 +2106,9 @@ pub fn init(
         wr!(manifests, PackageManifestMap::default());
         wr!(folders, Default::default());
         wr!(git_repositories, RepositoryMap::default());
+        wr!(git_commits, GitCommitMap::default());
+        wr!(git_tasks, VecDeque::new());
+        wr!(running_git_tasks, 0);
         wr!(appended_task_packages, AppendedTaskPackageMap::default());
         wr!(network_dedupe_map, Default::default());
         wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());
@@ -2554,6 +2567,9 @@ fn init_with_runtime_once(
         wr!(manifests, PackageManifestMap::default());
         wr!(folders, Default::default());
         wr!(git_repositories, RepositoryMap::default());
+        wr!(git_commits, GitCommitMap::default());
+        wr!(git_tasks, VecDeque::new());
+        wr!(running_git_tasks, 0);
         wr!(appended_task_packages, AppendedTaskPackageMap::default());
         wr!(network_dedupe_map, Default::default());
         wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());

@@ -5202,6 +5202,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Remember a legacy octal literal (`010`) for the strict-mode check in
+    /// the visit pass. The list stays sorted by location so `e_number` can
+    /// binary search it: a parse attempt that backtracks (TypeScript arrow
+    /// function detection) can lex a literal again, or reach an earlier one.
+    pub(crate) fn record_legacy_octal_literal(&mut self, range: bun_ast::Range) {
+        let list = &mut self.legacy_octal_literals;
+        match list.last() {
+            Some(last) if last.loc.start >= range.loc.start => {
+                let idx = list.partition_point(|r| r.loc.start < range.loc.start);
+                if list.get(idx).map(|r| r.loc.start) != Some(range.loc.start) {
+                    list.insert(idx, range);
+                }
+            }
+            _ => list.push(range),
+        }
+    }
+
     /// This is only allowed to be called if allow_runtime is true
     /// If --target=bun, this does nothing.
     pub(crate) fn record_usage_of_runtime_require(&mut self) {

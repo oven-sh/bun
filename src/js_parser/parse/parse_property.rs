@@ -262,7 +262,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 T::TNumericLiteral => {
                     key = p.new_expr(E::Number::new(p.lexer.number), p.lexer.loc());
                     if p.lexer.is_legacy_octal_literal {
-                        p.legacy_octal_literals.push(key_range);
+                        p.record_legacy_octal_literal(key_range);
                     }
                     p.lexer.next()?;
                 }

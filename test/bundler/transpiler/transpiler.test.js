@@ -4751,9 +4751,22 @@ class A {
     expect(() => new Bun.Transpiler().transformSync(`function f() { "use strict"; return 010 }`)).toThrow(
       "Legacy octal literals cannot be used in strict mode",
     );
+    // Object literal keys and destructuring keys are literals too
+    expect(() => new Bun.Transpiler().transformSync(`"use strict"; var o = { 010: 1 }`)).toThrow(
+      "Legacy octal literals cannot be used in strict mode",
+    );
+    expect(() => new Bun.Transpiler().transformSync(`"use strict"; var { 010: x } = o`)).toThrow(
+      "Legacy octal literals cannot be used in strict mode",
+    );
+    expect(() => new Bun.Transpiler().transformSync(`function f() { "use strict"; var { 010: x } = o }`)).toThrow(
+      "Legacy octal literals cannot be used in strict mode",
+    );
     expect(new Bun.Transpiler().transformSync(`function f() { return 010 }`)).toBe(`function f() {
   return 8;
 }
+`);
+    expect(new Bun.Transpiler().transformSync(`var { 010: x } = o, { 07: y } = o;`))
+      .toBe(`var { 8: x } = o, { 7: y } = o;
 `);
   });
 

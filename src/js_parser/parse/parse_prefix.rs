@@ -302,7 +302,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let loc = p.lexer.loc();
         let value = p.new_expr(E::Number::new(p.lexer.number), loc);
         if p.lexer.is_legacy_octal_literal {
-            p.legacy_octal_literals.push(p.lexer.range());
+            p.record_legacy_octal_literal(p.lexer.range());
         }
         p.lexer.next()?;
         Ok(value)

@@ -1167,7 +1167,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             T::TNumericLiteral => {
                 key = p.new_expr(E::Number::new(p.lexer.number), p.lexer.loc());
-                // check for legacy octal literal
+                if p.lexer.is_legacy_octal_literal {
+                    p.record_legacy_octal_literal(p.lexer.range());
+                }
                 p.lexer.next()?;
             }
             T::TStringLiteral => {

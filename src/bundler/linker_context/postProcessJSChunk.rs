@@ -415,8 +415,11 @@ pub(crate) fn post_process_js_chunk(
     if chunk.is_entry_point() {
         let directives = c.graph.ast.items_directives()[chunk.entry_point.source_index() as usize];
 
-        for directive in directives.slice() {
-            let directive = directive.slice();
+        for stmt in directives.slice() {
+            let js_ast::StmtData::SDirective(directive) = stmt.data else {
+                continue;
+            };
+            let directive = directive.value.slice();
             if directive == b"use strict" && output_format.is_always_strict_mode() {
                 continue;
             }

@@ -7680,11 +7680,10 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     printer.binary_expression_stack = Vec::new();
 
     // Add the top-level directives if present
-    for directive in tree.directives.slice() {
-        printer.print_indent();
-        printer.print_string_literal_utf8(directive.slice(), false);
-        printer.print(b";");
-        printer.print_newline();
+    for stmt in tree.directives.slice() {
+        printer.print_stmt(*stmt)?;
+        printer.writer.get_error()?;
+        printer.print_semicolon_if_needed();
     }
 
     if !printer.options.bundling

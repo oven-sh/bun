@@ -305,6 +305,32 @@ describe("bundler", () => {
     run: { stdout: "undefined" },
   });
 
+  // The directive inside the wrapper keeps its location, so it maps back to
+  // the source like any other statement.
+  itBundled("directive/WrappedDirectiveSourceMap", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./a.cjs"));
+      `,
+      "/a.cjs": /* js */ `
+        "use strict";
+        module.exports = (function () { return typeof this })();
+      `,
+    },
+    format: "cjs",
+    outdir: "/out",
+    sourceMap: "external",
+    snapshotSourceMap: {
+      "entry.js.map": {
+        files: ["../a.cjs", "../entry.js"],
+        mappings: [
+          ["a.cjs:1:'\"use strict\"'", '5:2:"use strict"'],
+          ["a.cjs:2:'module.exports'", "6:2:module2.exports"],
+        ],
+      },
+    },
+  });
+
   // All ES modules are strict, so the directive is redundant there.
   itBundled("directive/WrappedCJSFileInESMOutput", {
     files: {

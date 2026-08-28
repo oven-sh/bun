@@ -265,7 +265,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     if flags.wrap != WrapKind::None && !is_chunk_entry_point_file {
         for directive in ast.directives.slice() {
             // Every ES module is already in strict mode
-            if output_format.is_always_strict_mode() && directive.slice() == b"use strict" {
+            if output_format.is_always_strict_mode()
+                && matches!(directive.data, bun_ast::StmtData::SDirective(d) if d.value.slice() == b"use strict")
+            {
                 continue;
             }
             stmts.inside_wrapper_prefix.append_directive(*directive);

@@ -11,7 +11,7 @@ use bun_collections::{ArrayHashMap, StringArrayHashMap, StringHashMap};
 use crate::runtime;
 use crate::{
     CharFreq, ExportsKind, Expr, InlinedEnumValue, LocRef, NamedExport, NamedImport, Part, Range,
-    Ref, Scope, SlotCounts, StoreSlice, StoreStr, Target,
+    Ref, Scope, SlotCounts, Stmt, StoreSlice, StoreStr, Target,
 };
 
 use crate::part::List as PartList;
@@ -47,11 +47,11 @@ pub struct Ast<'a> {
     /// they can be manipulated efficiently without a full AST traversal
     pub import_records: ImportRecordList<'a>,
 
-    // `hashbang`/`directives` are slices into source text. `StoreStr` records
-    // them under the same lifetime-erased contract as `StoreRef`.
+    // `hashbang` is a slice into source text. `StoreStr` records it under the
+    // same lifetime-erased contract as `StoreRef`.
     pub hashbang: StoreStr,
-    /// Module-level directive prologue, in source order, stripped from `parts` so it prints first.
-    pub directives: StoreSlice<StoreStr>,
+    /// Module-level directive prologue (`S::Directive` statements), stripped from `parts` so it prints first.
+    pub directives: StoreSlice<Stmt>,
     pub parts: PartList<'a>,
     // This list may be mutated later, so we should store the capacity
     pub symbols: SymbolList<'a>,

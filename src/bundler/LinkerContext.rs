@@ -4283,10 +4283,9 @@ impl InsideWrapperPrefix {
     }
 
     /// Directives stay ahead of the `init_*()` calls that `append_sync_dependency` inserts.
-    pub(crate) fn append_directive(&mut self, directive: bun_ast::StoreStr) {
+    pub(crate) fn append_directive(&mut self, directive: Stmt) {
         debug_assert!(self.stmts.len() == self.sync_dependencies_end && !self.has_async_dependency);
-        self.stmts
-            .push(Stmt::alloc(S::Directive { value: directive }, Loc::EMPTY));
+        self.stmts.push(directive);
         self.sync_dependencies_end += 1;
     }
 

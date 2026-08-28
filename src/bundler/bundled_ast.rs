@@ -31,7 +31,9 @@ use bun_ast::import_record;
 use bun_core::strings;
 
 use bun_ast::ast_result::Ast;
-use bun_ast::{CharFreq, ExportsKind, Ref, Scope, SlotCounts, StoreSlice, StoreStr, TlaCheck};
+use bun_ast::{
+    CharFreq, ExportsKind, Ref, Scope, SlotCounts, Stmt, StoreSlice, StoreStr, TlaCheck,
+};
 use bun_ast::{part, symbol};
 
 pub(crate) type CommonJSNamedExports = bun_ast::ast_result::CommonJSNamedExports;
@@ -59,7 +61,7 @@ pub struct BundledAst<'arena> {
     // round-trip.
     pub(crate) hashbang: StoreStr,
     /// The file's directive prologue, in source order. See `Ast.directives`.
-    pub(crate) directives: StoreSlice<StoreStr>,
+    pub(crate) directives: StoreSlice<Stmt>,
     pub(crate) parts: part::List<'arena>,
     // See `CssAstRef` doc for the arena drop-order invariant that backs the
     // safe `Deref`.
@@ -107,7 +109,7 @@ bun_collections::multi_array_columns! {
         exports_kind: ExportsKind,
         import_records: import_record::List<'arena>,
         hashbang: StoreStr,
-        directives: StoreSlice<StoreStr>,
+        directives: StoreSlice<Stmt>,
         parts: part::List<'arena>,
         css: CssCol,
         url_for_css: &'arena [u8],

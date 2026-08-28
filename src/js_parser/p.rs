@@ -8296,16 +8296,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let char_freq: Option<js_ast::CharFreq> = self.compute_character_frequency();
 
-        let directives: bun_ast::StoreSlice<bun_ast::StoreStr> = if directives.is_empty() {
-            bun_ast::StoreSlice::EMPTY
-        } else {
-            bun_ast::StoreSlice::new(arena.alloc_slice_fill_with(directives.len(), |i| {
-                match directives[i].data {
-                    js_ast::StmtData::SDirective(directive) => directive.value,
-                    _ => unreachable!("module directives are S::Directive statements"),
-                }
-            }))
-        };
+        let directives = bun_ast::StoreSlice::new(directives);
 
         // Scope is not `Clone` (Vec/HashMap members), so move it out and leave
         // a default in `*self.module_scope`. `to_ast` is terminal — the parser

@@ -1350,6 +1350,59 @@ const server = serve({
     const result = await Bun.$`./app`.cwd(dir).env(bunEnv).nothrow();
     expect(result.stdout.toString().trim()).toBe("IT WORKS");
   }, 30_000);
+
+  // https://github.com/oven-sh/bun/issues/10100
+  // --compile always embeds the Bun runtime, so --target=node/--target=browser
+  // (without .html entrypoints) are silently overridden to --target=bun. That
+  // override should not be silent: tell the user what actually happened.
+  describe("--compile warns when --target is overridden", () => {
+    for (const [target, warning] of [
+      ["node", "--target=node has no effect with --compile"],
+      ["browser", "--target=browser with --compile requires all entrypoints to be .html"],
+    ] as const) {
+      test(`--target=${target}`, async () => {
+        using dir = tempDir("compile-target-override", {
+          "entry.js": `console.log("ran as", typeof Bun === "undefined" ? "?" : "bun");`,
+        });
+        const outfile = join(String(dir), isWindows ? "out.exe" : "out");
+        await using build = Bun.spawn({
+          cmd: [bunExe(), "build", "--compile", `--target=${target}`, "./entry.js", "--outfile", outfile],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+        expect(stderr).toContain("warn:");
+        expect(stderr).toContain(warning);
+        expect(stderr).toContain("Building as --target=bun");
+        expect(exitCode).toBe(0);
+
+        await using run = Bun.spawn({ cmd: [outfile], env: bunEnv, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+        const [stdout, , runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+        expect(stdout.trim()).toBe("ran as bun");
+        expect(runExit).toBe(0);
+      }, 30_000);
+    }
+
+    test("--target=bun does not warn", async () => {
+      using dir = tempDir("compile-target-bun-nowarn", {
+        "entry.js": `console.log("ok");`,
+      });
+      const outfile = join(String(dir), isWindows ? "out.exe" : "out");
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "--target=bun", "./entry.js", "--outfile", outfile],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect(stderr).not.toContain("warn:");
+      expect(stderr).not.toContain("has no effect");
+      expect(exitCode).toBe(0);
+    }, 30_000);
+  });
 });
 
 test("compile --compile-executable-path rejects a Mach-O template whose __BUN segment offsets exceed the file bounds", async () => {

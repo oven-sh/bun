@@ -69,6 +69,12 @@ impl BuildCommand {
         let user_requested_browser_target =
             ctx.args.target.is_some() && ctx.args.target.unwrap() == api::Target::Browser;
         if ctx.bundler_options.compile || ctx.bundler_options.bytecode {
+            if ctx.bundler_options.compile && ctx.args.target == Some(api::Target::Node) {
+                bun_core::warn!(
+                    "--target=node has no effect with --compile: the compiled executable always embeds and runs Bun's runtime. Building as --target=bun.",
+                );
+                Output::flush();
+            }
             // set this early so that externals are set up correctly and define is right
             ctx.args.target = Some(api::Target::Bun);
         }
@@ -303,6 +309,12 @@ impl BuildCommand {
                     !ctx.bundler_options.outdir.is_empty();
             } else {
                 // Standard --compile: produce standalone bun executable
+                if user_requested_browser_target {
+                    bun_core::warn!(
+                        "--target=browser with --compile requires all entrypoints to be .html files. Building as --target=bun.",
+                    );
+                    Output::flush();
+                }
                 if !ctx.bundler_options.outdir.is_empty() {
                     bun_core::pretty_errorln!(
                         "<r><red>error<r><d>:<r> cannot use --compile with --outdir"

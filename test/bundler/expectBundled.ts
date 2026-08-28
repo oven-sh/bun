@@ -968,7 +968,7 @@ function expectBundled(
                         "type": process.platform !== "win32" ? "lldb" : "cppvsdbg",
                         "request": "launch",
                         "name": "run compiled exe",
-                        "program": outfile,
+                        "program": outfileOnDisk,
                         "args": [],
                         "cwd": root,
                       },

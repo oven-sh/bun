@@ -2113,6 +2113,91 @@ it.concurrent("dev error page embeds the thrown error, its stack, and build/reso
   expect(exitCode).toBe(0);
 });
 
+it.concurrent("dev error page embeds the cause chain and AggregateError children of the thrown error", async () => {
+  using dir = tempDir("serve-dev-error-page-cause", {
+    "server.ts": `
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: true,
+        fetch(req) {
+          const { pathname } = new URL(req.url);
+          if (pathname === "/cause") {
+            const inner = new RangeError("inner cause");
+            const middle = new TypeError("middle cause", { cause: inner });
+            throw new Error("outer error", { cause: middle });
+          }
+          if (pathname === "/aggregate") {
+            throw new AggregateError([new Error("first child"), new RangeError("second child")], "aggregate");
+          }
+          if (pathname === "/aggregate-cause") {
+            const child = new Error("child", { cause: new TypeError("child cause") });
+            throw new AggregateError([child], "aggregate with cause");
+          }
+          return new Response("unreachable");
+        },
+      });
+      const out = {};
+      for (const path of ["/cause", "/aggregate", "/aggregate-cause"]) {
+        const res = await fetch(server.url + path.slice(1));
+        const html = await res.text();
+        const match = /<script id="__bunfallback" type="application\\/json">([^<]*)<\\/script>/.exec(html);
+        out[path] = {
+          status: res.status,
+          exceptions: JSON.parse(match[1]).problems.exceptions.map(e => ({
+            name: e.name,
+            message: e.message,
+            thrownIn: e.stack.frames[0].function_name,
+          })),
+        };
+      }
+      console.log(JSON.stringify(out));
+      server.stop(true);
+      // The thrown errors were reported through the unhandled-rejection path, which sets the exit code.
+      process.exit(0);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const out = JSON.parse(stdout.trim().split("\n").at(-1)!);
+
+  // The terminal output walks the whole chain. The page must carry the same errors, outermost first.
+  expect(out).toEqual({
+    "/cause": {
+      status: 500,
+      exceptions: [
+        { name: "Error", message: "outer error", thrownIn: "fetch" },
+        { name: "TypeError", message: "middle cause", thrownIn: "fetch" },
+        { name: "RangeError", message: "inner cause", thrownIn: "fetch" },
+      ],
+    },
+    "/aggregate": {
+      status: 500,
+      exceptions: [
+        { name: "Error", message: "first child", thrownIn: "fetch" },
+        { name: "RangeError", message: "second child", thrownIn: "fetch" },
+      ],
+    },
+    "/aggregate-cause": {
+      status: 500,
+      exceptions: [
+        { name: "Error", message: "child", thrownIn: "fetch" },
+        { name: "TypeError", message: "child cause", thrownIn: "fetch" },
+      ],
+    },
+  });
+  for (const message of ["outer error", "middle cause", "inner cause", "first child", "second child", "child cause"]) {
+    expect(stderr).toContain(message);
+  }
+  expect(exitCode).toBe(0);
+});
+
 it.concurrent("dev error page ships a bun-error bundle that evaluates and registers the renderer", async () => {
   using dir = tempDir("serve-dev-error-page-bundle", {
     "server.ts": `

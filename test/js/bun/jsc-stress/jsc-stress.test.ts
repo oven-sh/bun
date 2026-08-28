@@ -121,6 +121,8 @@ const jsFixtures = [
   "varargs-inlined-simple-exit.js",
   "loop-unrolling.js",
   "licm-no-pre-header.js",
+  // Bytecode generator
+  "tagged-templates-optional-chain-this.js",
 ];
 
 const wasmFixtures = [

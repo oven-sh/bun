@@ -346,12 +346,11 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     }
     // Was `inline for` over a heterogeneous-ish tuple; all elements are
     // (&'static [u8], &[Box<[u8]>]) so a const array + plain for suffices.
-    let multi_value_flags: [(&'static [u8], &[Box<[u8]>]); 6] = [
+    let multi_value_flags: [(&'static [u8], &[Box<[u8]>]); 5] = [
         (b"--conditions\0", &ctx.args.conditions),
         (b"--drop\0", &ctx.args.drop),
         (b"--main-fields\0", &ctx.args.main_fields),
         (b"--extension-order\0", &ctx.args.extension_order),
-        (b"--env-file\0", &ctx.args.env_files),
         (b"--feature\0", &ctx.args.feature_flags),
     ];
     for (flag, values) in multi_value_flags {
@@ -381,7 +380,10 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     if matches!(ctx.debug.macros, MacroOptions::Disable) {
         argv.push(lit(b"--no-macros\0"));
     }
-    if ctx.args.disable_default_env_files {
+    // The coordinator loaded the `--env-file` entries into the env map the
+    // workers inherit. A pipe or FIFO can be read once, so the workers do not
+    // open the files again. Explicit files disable default `.env` discovery.
+    if ctx.args.disable_default_env_files || !ctx.args.env_files.is_empty() {
         argv.push(lit(b"--no-env-file\0"));
     }
     if let Some(jsx) = &ctx.args.jsx {

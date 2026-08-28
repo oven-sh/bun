@@ -900,10 +900,7 @@ impl<'a> Parser<'a> {
             )));
         }
 
-        // Strip off all leading directives. They go on `Ast.directives` so
-        // that the printer and the linker can emit them ahead of hoisted
-        // imports and generated statements, where a directive prologue has
-        // to be for engines and tools to honor it.
+        // Strip the directive prologue into `Ast.directives`, which prints ahead of hoisted statements.
         let directives: &'a [Stmt];
         let stmts: &'a mut [Stmt] = {
             let mut directive_list = BumpVec::<Stmt>::new_in(p.arena);

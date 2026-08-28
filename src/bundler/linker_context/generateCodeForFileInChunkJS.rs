@@ -259,10 +259,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
     let output_format = c.options.output_format;
 
-    // The top-level directives must come first. The chunk generation code
-    // prints them at the top of the chunk for the chunk's own entry point.
-    // Every other wrapped file gets them inside its wrapper, including an
-    // entry point that another entry point's chunk pulls in as a dependency.
+    // The chunk's own entry point gets its directives from `post_process_js_chunk` instead.
     let is_chunk_entry_point_file =
         chunk.is_entry_point() && chunk.entry_point.source_index() as usize == source_index;
     if flags.wrap != WrapKind::None && !is_chunk_entry_point_file {

@@ -542,9 +542,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // with the guarantee that all will be found.
     pub(crate) relocated_top_level_vars: List<'a, js_ast::LocRef>,
 
-    // Source ranges of legacy octal literals (`010`), in source order. Whether
-    // one is an error depends on strict mode, which is only fully known in the
-    // visit pass (an `export` further down makes the whole file strict).
+    // Legacy octal literals (`010`), sorted by location. Strict mode is only final in the visit pass.
     pub(crate) legacy_octal_literals: List<'a, bun_ast::Range>,
 
     // ArrowFunction is a special case in the grammar. Although it appears to be
@@ -5202,10 +5200,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Remember a legacy octal literal (`010`) for the strict-mode check in
-    /// the visit pass. The list stays sorted by location so `e_number` can
-    /// binary search it: a parse attempt that backtracks (TypeScript arrow
-    /// function detection) can lex a literal again, or reach an earlier one.
+    /// Keeps `legacy_octal_literals` sorted: a backtracking parse attempt can lex a literal twice.
     pub(crate) fn record_legacy_octal_literal(&mut self, range: bun_ast::Range) {
         let list = &mut self.legacy_octal_literals;
         match list.last() {
@@ -7828,8 +7823,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         exports_kind: js_ast::ExportsKind,
         wrap_mode: WrapMode,
         hashbang: &'a [u8],
-        // The module-level directive prologue, as `S::Directive` statements in
-        // source order. `_parse` strips them out of the top-level statements.
+        // Module-level directives, stripped from the top-level statements by `_parse`.
         mut directives: &'a [Stmt],
     ) -> Result<Box<js_ast::Ast<'a>>, crate::Error> {
         use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
@@ -8148,8 +8142,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
             }
 
-            // The directive prologue moves inside the wrapper so that a
-            // "use strict" still governs the module's code.
+            // The directive prologue moves inside the wrapper.
             let mut total_stmts_count: usize = directives.len();
             for part in parts.iter() {
                 total_stmts_count += part.stmts.len();

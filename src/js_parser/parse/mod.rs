@@ -1483,13 +1483,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             is_directive_prologue = true;
 
                             if str_.eql_comptime(b"use asm") && !p.options.repl_mode {
-                                // Deliberately remove "use asm" directives. The asm.js
-                                // validator would reject the transformed output and
-                                // engines print a warning when validation fails.
-                                //
-                                // In the REPL the directive stays a string
-                                // statement so it evaluates as the result,
-                                // like node ('use asm' prints 'use asm').
+                                // Dropped: the output would fail asm.js validation. The REPL keeps it, like node.
                                 skip = true;
                                 stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
                             } else {
@@ -1509,14 +1503,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     scope.strict_mode = StrictModeKind::ExplicitStrictMode;
                                     scope.use_strict_loc = directive_loc;
 
-                                    // Inside a function, strict mode propagates from the
-                                    // body scope to the argument scope:
-                                    //
-                                    //   // This is a syntax error
-                                    //   function fn(arguments) {
-                                    //     "use strict";
-                                    //   }
-                                    //
+                                    // The body's directive governs the parameters too: `function fn(arguments) { "use strict" }` is an error.
                                     if scope.kind == js_ast::scope::Kind::FunctionBody {
                                         if let Some(mut parent) = scope.parent {
                                             if parent.kind == js_ast::scope::Kind::FunctionArgs

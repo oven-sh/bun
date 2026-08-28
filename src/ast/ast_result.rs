@@ -50,9 +50,7 @@ pub struct Ast<'a> {
     // `hashbang`/`directives` are slices into source text. `StoreStr` records
     // them under the same lifetime-erased contract as `StoreRef`.
     pub hashbang: StoreStr,
-    /// The module-level directive prologue (`"use strict"`, `"use client"`, ...)
-    /// in source order. The parser strips it out of `parts` so the printer and
-    /// the linker emit it first, ahead of hoisted or generated statements.
+    /// Module-level directive prologue, in source order, stripped from `parts` so it prints first.
     pub directives: StoreSlice<StoreStr>,
     pub parts: PartList<'a>,
     // This list may be mutated later, so we should store the capacity

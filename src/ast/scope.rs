@@ -45,8 +45,7 @@ pub struct Scope {
     pub forbid_arguments: bool,
 
     pub strict_mode: StrictModeKind,
-    /// The `"use strict"` directive that made this scope strict, when
-    /// `strict_mode` is `ExplicitStrictMode`. Used for error notes.
+    /// The `"use strict"` directive that made this scope strict, for error notes.
     pub use_strict_loc: Loc,
 
     pub is_after_const_local_prefix: bool,

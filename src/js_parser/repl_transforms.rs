@@ -21,13 +21,8 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// This transforms code for interactive evaluation:
     /// - Wraps the last expression in { value: expr } for result capture
     /// - Wraps code with await in async IIFE with variable hoisting
-    ///
-    /// `directives` is the module-level directive prologue that `_parse`
-    /// stripped from the top-level statements. Node's repl evaluates a
-    /// directive as a string expression, so the transform puts the directives
-    /// back in front of the statements. Returns `true` when it did so (the
-    /// caller then drops them from `Ast.directives`), `false` when it left the
-    /// parts untouched.
+    /// - Puts the module-level `directives` back in front (node's repl evaluates them);
+    ///   returns `false` when the parts were left untouched
     pub(crate) fn apply_repl_transforms<'bump>(
         &mut self,
         parts: &mut BumpVec<'bump, js_ast::Part>,

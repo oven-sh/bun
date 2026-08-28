@@ -525,6 +525,33 @@ describe("HTMLRewriter", () => {
       expect(settled).toEqual({ rejected: reason });
     });
 
+    // A `type: 'direct'` pull() ends the input through the sink controller's
+    // own `close(error?)`. The argument is optional: a falsy one is the same
+    // clean close as `close()` and the body resolves with the rewritten HTML.
+    // Only a truthy error fails the rewrite.
+    it.each([
+      ["close()", c => c.close(), { resolved: "<p>hello</p>" }],
+      ["close(undefined)", c => c.close(undefined), { resolved: "<p>hello</p>" }],
+      ["close(null)", c => c.close(null), { resolved: "<p>hello</p>" }],
+      ["close(false)", c => c.close(false), { resolved: "<p>hello</p>" }],
+      ['close("")', c => c.close(""), { resolved: "<p>hello</p>" }],
+      ["close(error)", c => c.close(new Error("source boom")), { rejected: "source boom" }],
+    ])("a direct ReadableStream input whose pull() ends with %s", async (_, close, expected) => {
+      const stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          controller.write("<p>hello</p>");
+          close(controller);
+        },
+      });
+      const res = new HTMLRewriter().on("p", { element() {} }).transform(new Response(stream));
+      const settled = await res.text().then(
+        text => ({ resolved: text }),
+        err => ({ rejected: err instanceof Error ? err.message : err }),
+      );
+      expect(settled).toEqual(expected);
+    });
+
     // A `type: 'direct'` source whose `pull()` throws synchronously leaves the
     // JS controller's `m_sinkPtr` set after `readDirectStream` returns with an
     // exception; `end_from_stream` must null it (via `JSSink::detach`) before

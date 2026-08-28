@@ -313,10 +313,10 @@ pub trait JsSinkType: Sized + JsSinkAbi {
     fn end_from_js(&mut self, global: &JSGlobalObject) -> sys::Result<JSValue>;
     fn flush(&mut self) -> sys::Result<()>;
     fn start(&mut self, config: streams::Start) -> sys::Result<()>;
-    /// `controller.close(reason)` with an argument: the pump's source failed,
-    /// so the bytes written so far are a truncated body. `reason` is the
-    /// source's error and may be nullish. The default keeps the clean end for
-    /// sinks whose owner handles the pump promise rejection.
+    /// The source failed, so the bytes written so far are a truncated body:
+    /// `controller.close(error)` with a truthy argument, or the pump's close
+    /// for an errored stream, whose `reason` may be nullish. The default keeps
+    /// the clean end for sinks whose owner handles the pump promise rejection.
     ///
     /// Raw pointer: failing can re-enter the sink through its owner and may
     /// free it.
@@ -635,10 +635,11 @@ impl<T: JsSinkType> JSSink<T> {
     }
 
     /// `${abi_name}__close` body — called from
-    /// `${controller}__close` and `${name}__doClose` in JSSink.cpp with a raw
-    /// `m_sinkPtr` (not a host-fn callframe), so exceptions become `.zero`.
-    /// `reason` is the `close(reason)` argument, or the empty value when
-    /// `close()` had no argument.
+    /// `${controller}__closeWithReason` and `${name}__doClose` in JSSink.cpp
+    /// with a raw `m_sinkPtr` (not a host-fn callframe), so exceptions become
+    /// `.zero`. `reason` is the empty value for a clean close (`close()`, a
+    /// falsy `close(reason)` argument, or the sink's own `close()`), otherwise
+    /// the failed source's reason, which the pump may pass as `undefined`.
     ///
     /// # Safety
     /// `this` is the cell's live sink.

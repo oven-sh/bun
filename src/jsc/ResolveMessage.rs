@@ -464,9 +464,4 @@ impl ResolveMessage {
             JSValue::NULL
         })
     }
-
-    pub fn finalize(self: Box<Self>) {
-        // Dropping the Box drops `msg` and the owned `referrer` buffer.
-        drop(self);
-    }
 }

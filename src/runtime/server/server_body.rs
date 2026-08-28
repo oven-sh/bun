@@ -891,6 +891,7 @@ pub struct ServerInitContext<'a> {
 
 // ─── ServePlugins ────────────────────────────────────────────────────────────
 /// State machine to handle loading plugins asynchronously. This structure is not thread-safe.
+#[derive(bun_ptr::CellRefCounted)]
 pub struct ServePlugins {
     state: ServePluginsState,
     ref_count: core::cell::Cell<u32>,
@@ -932,49 +933,11 @@ pub enum ServePluginsCallback<'a> {
 }
 
 impl ServePlugins {
-    pub(crate) fn init(plugins: Box<[Box<[u8]>]>) -> *mut ServePlugins {
-        bun_core::heap::into_raw(Box::new(ServePlugins {
+    pub(crate) fn init(plugins: Box<[Box<[u8]>]>) -> RefPtr<ServePlugins> {
+        RefPtr::new(ServePlugins {
             ref_count: core::cell::Cell::new(1),
             state: ServePluginsState::Unqueued(plugins),
-        }))
-    }
-
-    pub fn ref_(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
-    }
-
-    /// Bump the refcount and return an RAII guard that derefs on `Drop`.
-    ///
-    /// # Safety
-    /// `this` must originate from [`ServePlugins::init`] (carry `heap::alloc`
-    /// write provenance) so the eventual `deref_` can free it. Do **not** derive
-    /// `this` from a `&Self`/`&mut Self` reborrow — under Stacked Borrows that
-    /// pointer is invalidated by later writes through the reference and cannot
-    /// be used to deallocate.
-    #[inline]
-    unsafe fn guard_ref(this: *mut Self) -> ServePluginsRef {
-        // SAFETY: caller contract — `this` is live.
-        unsafe { (*this).ref_() };
-        ServePluginsRef(this)
-    }
-
-    /// Decrement the intrusive refcount, freeing the allocation when it hits zero.
-    ///
-    /// Takes the raw `*mut` (not `&self`) so the original `heap::alloc` provenance
-    /// from [`ServePlugins::init`] is preserved for the final `heap::take` — going
-    /// through `&self` would narrow provenance to read-only and make the drop UB.
-    ///
-    /// SAFETY: `this` must originate from [`ServePlugins::init`] and the caller must
-    /// hold a counted reference.
-    pub(crate) unsafe fn deref_(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live while refcount > 0
-        let rc = unsafe { &(*this).ref_count };
-        let n = rc.get() - 1;
-        rc.set(n);
-        if n == 0 {
-            // SAFETY: refcount hit zero; `this` carries the heap::alloc provenance from init()
-            unsafe { drop(bun_core::heap::take(this)) };
-        }
+        })
     }
 
     pub(crate) fn get_or_start_load(
@@ -1078,6 +1041,7 @@ impl ServePlugins {
                 match promise.status() {
                     // promise not fulfilled yet
                     jsc::js_promise::Status::Pending => {
+                        // The reaction's ref, adopted by `on_resolve_impl`/`on_reject_impl`.
                         self.ref_();
                         let promise_value = promise.as_value();
                         if let ServePluginsState::Pending {
@@ -1178,35 +1142,6 @@ impl ServePlugins {
     }
 }
 
-/// RAII owner of one counted reference to a [`ServePlugins`]. Drops the
-/// reference via [`ServePlugins::deref_`] on scope exit.
-///
-/// Holds the raw `*mut` from [`ServePlugins::init`] so the final `heap::take`
-/// has write/dealloc provenance over the whole allocation. Never construct this
-/// from a pointer derived through `&ServePlugins` — that yields a SharedReadOnly
-/// tag under Stacked Borrows and freeing through it is UB.
-struct ServePluginsRef(*mut ServePlugins);
-
-impl ServePluginsRef {
-    /// Adopt an existing +1 reference (no increment).
-    ///
-    /// # Safety
-    /// Caller must own one counted reference to `ptr`, and `ptr` must carry the
-    /// `heap::alloc` provenance from [`ServePlugins::init`].
-    #[inline]
-    unsafe fn adopt(ptr: *mut ServePlugins) -> Self {
-        Self(ptr)
-    }
-}
-
-impl Drop for ServePluginsRef {
-    #[inline]
-    fn drop(&mut self) {
-        // SAFETY: constructed via `adopt`/`guard_ref` with a live counted ref.
-        unsafe { ServePlugins::deref_(self.0) };
-    }
-}
-
 impl Drop for ServePlugins {
     fn drop(&mut self) {
         match &self.state {
@@ -1224,8 +1159,8 @@ fn on_resolve_impl(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
 
     let [plugins_result, plugins_js] = callframe.arguments_as_array::<2>();
     let plugins = plugins_js.as_promise_ptr::<ServePlugins>();
-    // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); deref pairs with that ref
-    let _guard = unsafe { ServePluginsRef::adopt(plugins) };
+    // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); this adopts that ref.
+    let _guard = unsafe { RefPtr::from_raw(plugins) };
     plugins_result.ensure_still_alive();
 
     // SAFETY: pointer was passed via .then() above
@@ -1240,8 +1175,8 @@ fn on_reject_impl(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
 
     let [error_js, plugin_js] = callframe.arguments_as_array::<2>();
     let plugins = plugin_js.as_promise_ptr::<ServePlugins>();
-    // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); deref pairs with that ref
-    let _guard = unsafe { ServePluginsRef::adopt(plugins) };
+    // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); this adopts that ref.
+    let _guard = unsafe { RefPtr::from_raw(plugins) };
     // SAFETY: pointer was passed via .then() above
     unsafe { &mut *plugins }.handle_on_reject(global, error_js);
 
@@ -1407,20 +1342,13 @@ where
         &mut self,
         callback: ServePluginsCallback<'_>,
     ) -> GetOrStartLoadResult<'_> {
-        if let Some(p) = self.plugins {
+        if let Some(p) = &self.plugins {
+            // Keep `*p` alive across re-entrant JS in `load_and_resolve_plugins`.
+            let p = p.clone();
             let global = self.global();
-            // Keep `*p` alive across re-entrant JS in `load_and_resolve_plugins`
-            // The guard is built from the
-            // heap-allocated `*mut` directly so its provenance survives the
-            // `&mut *p` reborrow below and remains valid for `heap::take` on drop.
-            //
-            // SAFETY: `p` was produced by `ServePlugins::init` (heap::alloc) and is
-            // live while held in `self.plugins`.
-            let _deref_guard = unsafe { ServePlugins::guard_ref(p.as_ptr()) };
-            // SAFETY: `plugins` holds a counted ref produced by
-            // `ServePlugins::init` (heap::alloc); intrusive refcount permits
-            // mutation through any owner. No other `&mut ServePlugins` is live
-            // on this (single-threaded) JS thread for the call's duration.
+            // SAFETY: intrusive refcount permits mutation through any owner. No
+            // other `&mut ServePlugins` is live on this (single-threaded) JS
+            // thread for the call's duration.
             return match unsafe { &mut *p.as_ptr() }.get_or_start_load(&global, callback) {
                 Ok(r) => r,
                 Err(JsError::Thrown | JsError::Terminated) => {
@@ -3085,10 +3013,8 @@ where
         // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
         bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
 
-        // Bump once for the Request's owned
-        // copy and adopt into RAII so it pairs with `Request::Drop`'s unref.
-        // SAFETY: `signal` is live; `ref_()` returns the same non-null ptr +1.
-        let signal_for_req = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
+        // The Request's own ref.
+        let signal_for_req = bun_opaque::opaque_deref_mut(signal).ref_();
         let request_object_box = Request::new(Request::init(
             ctx.ctx_method(),
             AnyRequestContext::init(std::ptr::from_ref::<Ctx>(ctx)),
@@ -3360,10 +3286,8 @@ where
         ctx.signal.set(NonNull::new(signal));
         // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
         bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
-        // Bump once for the Request's copy and
-        // adopt into RAII so it pairs with `Request::Drop`'s unref.
-        // SAFETY: `signal` is live; `ref_()` returns the same non-null ptr +1.
-        let signal_for_req = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
+        // The Request's own ref.
+        let signal_for_req = bun_opaque::opaque_deref_mut(signal).ref_();
         let request_object_box = Request::new(Request::init(
             ctx.method,
             AnyRequestContext::init(std::ptr::from_ref(ctx)),

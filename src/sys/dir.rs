@@ -140,15 +140,22 @@ impl Dir {
         });
 
         'process_stack: while let Some(top) = stack.last_mut() {
-            while let Some(entry) = top.iter.next()? {
+            loop {
+                let entry = match top.iter.next() {
+                    Ok(Some(e)) => e,
+                    Ok(None) => break,
+                    // A concurrent deleter removed the directory we iterate:
+                    // getdents on a dead dir reports ENOENT. The rmdir below
+                    // tolerates ENOENT.
+                    Err(e) if e.get_errno() == E::ENOENT => break,
+                    Err(e) => return Err(e),
+                };
                 let mut treat_as_dir = matches!(entry.kind, EntryKind::Directory);
                 'handle_entry: loop {
                     if treat_as_dir {
-                        let new_dir = match openat_a(
+                        let new_dir = match crate::openat_dir_for_delete_tree(
                             top.iter.dir(),
                             entry.name.slice_u8(),
-                            O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
-                            0,
                         ) {
                             Ok(fd) => fd,
                             Err(e) => match e.get_errno() {
@@ -209,12 +216,7 @@ impl Dir {
             if need_to_retry {
                 // Since we closed the handle that the previous iterator used, we
                 // need to re-open the dir and re-create the iterator.
-                let new_dir = match openat_a(
-                    parent_dir,
-                    &name,
-                    O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
-                    0,
-                ) {
+                let new_dir = match crate::openat_dir_for_delete_tree(parent_dir, &name) {
                     Ok(fd) => fd,
                     Err(e) => match e.get_errno() {
                         E::ENOTDIR => {
@@ -261,12 +263,7 @@ impl Dir {
                     },
                 }
             } else {
-                return match openat_a(
-                    self.fd,
-                    sub_path,
-                    O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
-                    0,
-                ) {
+                return match crate::openat_dir_for_delete_tree(self.fd, sub_path) {
                     Ok(fd) => Ok(Some(fd)),
                     Err(e) => match e.get_errno() {
                         E::ENOENT => Ok(None),

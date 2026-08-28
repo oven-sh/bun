@@ -9437,18 +9437,9 @@ fn dt_err(errno: E) -> crate::Error {
 
 #[inline]
 fn dt_open_dir(parent: &sys::Dir, name: &[u8]) -> Result<sys::Dir, E> {
-    let mut path_buf = PathBuffer::uninit();
-    let len = name.len().min(path_buf.len() - 1);
-    path_buf[..len].copy_from_slice(&name[..len]);
-    path_buf[len] = 0;
-    // SAFETY: NUL written at [len].
-    let z = ZStr::from_buf(&path_buf[..], len);
-    match Syscall::openat(
-        parent.fd,
-        z,
-        sys::O::DIRECTORY | sys::O::RDONLY | sys::O::NOFOLLOW,
-        0,
-    ) {
+    // On Windows a delete-pending directory reports ENOENT, like any other
+    // vanished entry (see `openat_dir_for_delete_tree`).
+    match sys::openat_dir_for_delete_tree(parent.fd, name) {
         Ok(fd) => Ok(sys::Dir::from_fd(fd)),
         Err(e) => Err(e.get_errno()),
     }
@@ -9483,10 +9474,12 @@ fn dt_delete_file(parent: &sys::Dir, name: &[u8]) -> Result<(), E> {
             if matches!(errno, E::EPERM | E::EACCES) {
                 // No-follow stat — don't follow symlinks, to match unlinkat.
                 // `z` (a `&ZStr`, `Copy`) is still valid — `unlinkat` only borrowed it.
-                if let Ok(st) = Syscall::lstatat(parent.fd, z) {
-                    if sys::S::ISDIR(st.st_mode as u32) {
-                        return Err(E::EISDIR);
-                    }
+                match Syscall::lstatat(parent.fd, z) {
+                    Ok(st) if sys::S::ISDIR(st.st_mode as u32) => return Err(E::EISDIR),
+                    // The entry vanished between unlinkat and lstat: a
+                    // concurrent deleter won, so the real answer is ENOENT.
+                    Err(e) if e.get_errno() == E::ENOENT => return Err(E::ENOENT),
+                    _ => {}
                 }
             }
             Err(errno)
@@ -9562,6 +9555,10 @@ pub(crate) fn zig_delete_tree(
             let entry = match stack[top_idx].iter.next() {
                 Ok(Some(e)) => e,
                 Ok(None) => break,
+                // A concurrent deleter removed the directory we iterate:
+                // getdents on a dead dir reports ENOENT. Nothing is left to
+                // enumerate, and the rmdir below tolerates ENOENT.
+                Err(err) if err.get_errno() == E::ENOENT => break,
                 Err(err) => return Err(dt_err(err.get_errno())),
             };
             // `entry.name` borrows the iterator's internal buffer and
@@ -9590,6 +9587,9 @@ pub(crate) fn zig_delete_tree(
                                 treat_as_dir = false;
                                 continue 'handle_entry;
                             }
+                            // The entry vanished between readdir and open: a
+                            // concurrent deleter won. Skip it.
+                            Err(E::ENOENT) => break 'handle_entry,
                             #[cfg(target_os = "macos")]
                             Err(e @ (E::EACCES | E::EPERM)) => {
                                 // Same as the pop-delete site below: node's rimraf
@@ -9616,17 +9616,24 @@ pub(crate) fn zig_delete_tree(
                         }
                     } else {
                         let top_fd = stack[top_idx].iter.iter.dir;
-                        zig_delete_tree_min_stack_size_with_kind_hint(
+                        match zig_delete_tree_min_stack_size_with_kind_hint(
                             sys::Dir::borrow(&top_fd),
                             &entry_name,
                             entry.kind,
-                        )?;
-                        break 'handle_entry;
+                        ) {
+                            Ok(()) => break 'handle_entry,
+                            // The entry vanished: skip it. FileNotFound only
+                            // matters to the top-level caller, not mid-tree.
+                            Err(crate::Error::FileNotFound) => break 'handle_entry,
+                            Err(e) => return Err(e),
+                        }
                     }
                 } else {
                     let top_fd = stack[top_idx].iter.iter.dir;
                     match dt_delete_file(sys::Dir::borrow(&top_fd), &entry_name) {
                         Ok(()) => break 'handle_entry,
+                        // A concurrent deleter already unlinked this entry.
+                        Err(E::ENOENT) => break 'handle_entry,
                         Err(E::EISDIR) => {
                             treat_as_dir = true;
                             continue 'handle_entry;
@@ -9825,6 +9832,8 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                 let entry = match dir_it.next() {
                     Ok(Some(e)) => e,
                     Ok(None) => break 'dir_it,
+                    // Same as the in-stack walk: the dir vanished mid-iteration.
+                    Err(err) if err.get_errno() == E::ENOENT => break 'dir_it,
                     Err(err) => break 'scan_dir Err(dt_err(err.get_errno())),
                 };
                 let entry_name: Vec<u8> = entry.name.slice().to_vec();

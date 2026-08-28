@@ -6224,6 +6224,9 @@ pub struct WindowsOpenDirOptions {
     pub iterable: bool,
     pub no_follow: bool,
     pub can_rename_or_delete: bool,
+    /// Report `STATUS_DELETE_PENDING`/`STATUS_FILE_DELETED` as ENOENT: a
+    /// directory in that state can never be opened again.
+    pub delete_pending_is_enoent: bool,
     pub op: WindowsOpenDirOp,
 }
 #[cfg(windows)]
@@ -6760,6 +6763,12 @@ pub(crate) fn open_dir_at_windows_nt_path(
             0,
         )
     };
+    if options.delete_pending_is_enoent
+        && (rc == bun_windows_sys::ntstatus::DELETE_PENDING
+            || rc == bun_windows_sys::ntstatus::FILE_DELETED)
+    {
+        return Err(Error::from_code(E::ENOENT, Tag::open));
+    }
     match windows::Win32Error::from_nt_status(rc) {
         windows::Win32Error::SUCCESS => Ok(Fd::from_system(fd)),
         code => Err(Error::from_code(code.to_e(), Tag::open)),
@@ -7005,6 +7014,35 @@ pub fn openat_windows(dir: Fd, path: &[u16], flags: i32, perm: Mode) -> Maybe<Fd
     let norm = normalize_path_windows(dir, path, &mut wbuf.0[..])?;
     openat_windows_impl(dir, norm, flags, perm)
 }
+/// Iterable directory open for the recursive delete-tree walks
+/// (`O_DIRECTORY | O_RDONLY | O_NOFOLLOW` semantics). On Windows
+/// `delete_pending_is_enoent` is set: a dir whose deletion already started
+/// reports ENOENT, like an entry that vanished between readdir and open.
+pub fn openat_dir_for_delete_tree(dir: impl AsFd, path: &[u8]) -> Maybe<Fd> {
+    #[cfg(windows)]
+    {
+        open_dir_at_windows_a(
+            dir,
+            path,
+            WindowsOpenDirOptions {
+                iterable: true,
+                no_follow: true,
+                delete_pending_is_enoent: true,
+                ..Default::default()
+            },
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        openat_a(
+            dir,
+            path,
+            O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
+            0,
+        )
+    }
+}
+
 /// `openatWindowsA` — UTF-8 input.
 #[cfg(windows)]
 #[inline(never)]

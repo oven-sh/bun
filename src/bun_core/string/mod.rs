@@ -113,6 +113,11 @@ unsafe extern "C" {
         len: usize,
         hash: u32,
     ) -> String;
+    fn BunString__createStaticExternalUTF16WithHash(
+        units: *const u16,
+        len: usize,
+        hash: u32,
+    ) -> String;
     fn BunString__createExternal(
         bytes: *const u8,
         len: usize,
@@ -376,6 +381,12 @@ impl String {
         // SAFETY: the C++ side takes the length in code units and stores
         // ptr/len without copying or freeing.
         unsafe { BunString__createStaticExternal(units.as_ptr().cast::<u8>(), units.len(), false) }
+    }
+    /// [`Self::create_static_external_utf16`] for units whose `WTF::StringImpl::hash()` is already known.
+    pub fn create_static_external_utf16_with_hash(units: &[u16], hash: u32) -> Self {
+        debug_assert!(!units.is_empty());
+        // SAFETY: as above; `hash` is StringImpl::hash() of `units`.
+        unsafe { BunString__createStaticExternalUTF16WithHash(units.as_ptr(), units.len(), hash) }
     }
     /// Formats `args` into a WTF-backed string; an argument-free ASCII
     /// literal is returned as `static_` without copying.

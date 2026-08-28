@@ -3793,7 +3793,7 @@ export default db;
             bytecode_cache: Bytecode::persistent(bytecode),
             source_code_hash: file.source_hash,
             module_info: if !module_info.is_empty() {
-                let decoded = bun_bundler::analyze_transpiled_module::ModuleInfoStringTable::parse(
+                let decoded = bun_bundler::analyze_transpiled_module::ModuleInfoSlotTable::parse(
                     module_info_strings,
                 )
                 .ok()

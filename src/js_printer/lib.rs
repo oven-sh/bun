@@ -227,85 +227,79 @@ pub mod analyze_transpiled_module {
         }
     }
 
-    /// Strings referenced by one or more serialized `ModuleInfo` bodies. A
-    /// `--compile` build shares one across every chunk (chunk specifiers and
-    /// export names repeat in most of them); the runtime transpiler cache
-    /// writes a module's own strings followed by its body.
+    /// A self-contained record's strings, as `WTF::StringImpl` bodies:
     ///
     /// ```text
-    /// u8   offset width O ∈ {1,2,4}, sized for the total byte length
-    /// u8   0, 0, 0
+    /// u8   offset width W ∈ {1,2,4}; u8 0, 0, 0
     /// u32  count
-    /// uO   × (count + 1): byte offset of each string, then the total
-    /// u8…  concatenated WTF-8
+    /// uW   × (count + 1): byte offset of each string's record within the blob, then the blob length
+    /// u8   0 if needed to start the blob at an even offset
+    /// blob: per string, u8 is8Bit then the characters: Latin-1 bytes, or UTF-16LE units starting at
+    ///       the next even blob offset
     /// ```
-    #[derive(Default)]
-    pub struct ModuleInfoStringTable {
-        map: HashMap<Box<[u8]>, u32>,
-        offsets: Vec<u32>,
-        buf: Vec<u8>,
-    }
-    impl ModuleInfoStringTable {
-        pub fn intern(&mut self, s: &[u8]) -> u32 {
-            if let Some(&id) = self.map.get(s) {
-                return id;
+    fn serialize_string_table<'a, W: std::io::Write>(
+        w: &mut W,
+        strings: impl ExactSizeIterator<Item = &'a [u8]>,
+    ) -> std::io::Result<()> {
+        let count = strings.len();
+        let mut offsets: Vec<u32> = Vec::with_capacity(count + 1);
+        let mut blob: Vec<u8> = Vec::new();
+        for wtf8 in strings {
+            offsets.push(blob.len() as u32);
+            match bun_core::strings::first_non_ascii(wtf8) {
+                None => {
+                    blob.push(1);
+                    blob.extend_from_slice(wtf8);
+                }
+                Some(first_non_ascii) => {
+                    blob.push(0);
+                    if !blob.len().is_multiple_of(2) {
+                        blob.push(0);
+                    }
+                    blob.reserve(2 * wtf8.len());
+                    // SAFETY: `2 * wtf8.len()` spare bytes reserved, the bound `write_wtf8_as_utf16le` requires.
+                    unsafe {
+                        let n = bun_core::strings::write_wtf8_as_utf16le(
+                            wtf8,
+                            first_non_ascii as usize,
+                            blob.as_mut_ptr().add(blob.len()),
+                        );
+                        blob.set_len(blob.len() + n);
+                    }
+                }
             }
-            let id = u32::try_from(self.offsets.len()).unwrap();
-            self.offsets.push(u32::try_from(self.buf.len()).unwrap());
-            self.buf.extend_from_slice(s);
-            self.map.insert(s.into(), id);
-            id
         }
-        /// Interns every string of `mi`; the result maps its local ids to table ids.
-        pub fn intern_all(&mut self, mi: &ModuleInfo) -> Vec<u32> {
-            let mut ids = Vec::with_capacity(mi.strings_lens.len());
-            let mut offset = 0usize;
-            for &len in &mi.strings_lens {
-                ids.push(self.intern(&mi.strings_buf[offset..offset + len as usize]));
-                offset += len as usize;
-            }
-            ids
+        offsets.push(blob.len() as u32);
+        let width = int_width(blob.len() as u32);
+        w.write_all(&[width, 0, 0, 0])?;
+        w.write_all(&(count as u32).to_le_bytes())?;
+        for offset in offsets {
+            put(w, width, offset)?;
         }
-        pub fn count(&self) -> u32 {
-            self.offsets.len() as u32
+        if !((count + 1) * width as usize).is_multiple_of(2) {
+            w.write_all(&[0])?;
         }
-        pub fn serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
-            Self::serialize_parts(w, self.offsets.iter().copied(), &self.buf)
-        }
-        fn serialize_parts<W: std::io::Write>(
-            w: &mut W,
-            offsets: impl ExactSizeIterator<Item = u32>,
-            buf: &[u8],
-        ) -> std::io::Result<()> {
-            let total = u32::try_from(buf.len()).unwrap();
-            let width = int_width(total);
-            w.write_all(&[width, 0, 0, 0])?;
-            w.write_all(&u32::try_from(offsets.len()).unwrap().to_le_bytes())?;
-            for offset in offsets {
-                put(w, width, offset)?;
-            }
-            put(w, width, total)?;
-            w.write_all(buf)
-        }
+        w.write_all(&blob)
     }
 
     impl<'a> ModuleInfoDeserialized<'a> {
         /// Self-contained form: this module's own string table, then its body.
         pub(crate) fn serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
-            let mut offset = 0u32;
-            ModuleInfoStringTable::serialize_parts(
-                w,
-                self.strings_lens.iter().map(|&len| {
-                    let at = offset;
-                    offset += len;
-                    at
-                }),
-                self.strings_buf,
-            )?;
+            let mut offset = 0usize;
+            let strings: Vec<&[u8]> = self
+                .strings_lens
+                .iter()
+                .map(|&len| {
+                    let s = &self.strings_buf[offset..offset + len as usize];
+                    offset += len as usize;
+                    s
+                })
+                .collect();
+            serialize_string_table(w, strings.into_iter())?;
             self.serialize_body(w, self.strings_lens.len() as u32, |id| id)
         }
 
-        /// Body wire format (little-endian), ids index a `ModuleInfoStringTable`
+        /// Body wire format (little-endian), ids index a string table
         /// of `table_count` strings through `table_id`:
         ///
         /// ```text
@@ -7996,7 +7990,7 @@ pub fn serialize_module_info(
 }
 
 /// Serializes only ModuleInfo's body, with its strings referenced through
-/// `table_ids` (from `ModuleInfoStringTable::intern_all`) into a table of
+/// `table_ids` (from `ModuleInfoSlotTableBuilder::intern_all`) into a table of
 /// `table_count` strings that is stored once for many modules.
 pub fn serialize_module_info_body(
     mi: &analyze_transpiled_module::ModuleInfo,

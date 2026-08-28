@@ -1440,6 +1440,11 @@ pub mod bv2_impl {
             safe fn __bun_jsc_encoder_string_table_take(
                 table: core::ptr::NonNull<EncoderStringTable>,
             ) -> Box<[u8]>;
+            /// The runtime-resolvable slot for one module-info string (`EncoderStringTable::slot_for_wtf8`).
+            safe fn __bun_jsc_encoder_string_table_slot(
+                table: core::ptr::NonNull<EncoderStringTable>,
+                wtf8: &[u8],
+            ) -> u32;
         }
 
         unsafe extern "Rust" {
@@ -1509,6 +1514,10 @@ pub mod bv2_impl {
             #[inline]
             pub(crate) fn take(mut self) -> Box<[u8]> {
                 __bun_jsc_encoder_string_table_take(self.0.take().expect("taken once"))
+            }
+            #[inline]
+            pub(crate) fn slot(&self, wtf8: &[u8]) -> u32 {
+                __bun_jsc_encoder_string_table_slot(self.0.expect("not yet taken"), wtf8)
             }
         }
 

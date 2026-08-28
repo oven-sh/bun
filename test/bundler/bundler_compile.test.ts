@@ -836,6 +836,43 @@ describe("bundler", () => {
     },
     compile: true,
   });
+  // A "./" specifier required or imported at runtime from an embedded module
+  // is joined onto the module's /$bunfs/ directory in a path buffer and looked
+  // up in the embedded graph. One that does not fit the buffer used to abort the
+  // executable; it is not found, like it would be outside the executable.
+  // Specifiers past 1.5 times the buffer are rejected before resolution starts,
+  // so the lengths sit between the two bounds.
+  itBundled("compile/RelativeSpecifierLongerThanPathBuffer", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        const req = (x) => require(x);
+        const imp = (x) => import(x);
+        const length = process.platform === "win32" ? 100_000 : process.platform === "linux" ? 5000 : 1200;
+        const tooLong = "./" + Buffer.alloc(length, "w").toString();
+        const out = [];
+        try { req(tooLong); out.push("require resolved"); } catch (e) { out.push("require: " + e.code); }
+        try { await imp(tooLong); out.push("import resolved"); } catch (e) { out.push("import: " + e.code); }
+        out.push(req("./embedded-sibling.js").value);
+        out.push((await imp("./embedded-sibling.js")).value);
+        console.log(out.join("\\n"));
+      `,
+      "/embedded-sibling.ts": /* js */ `
+        export const value = "embedded sibling resolved from the graph";
+      `,
+    },
+    entryPointsRaw: ["./entry.ts", "./embedded-sibling.ts"],
+    outfile: "dist/out",
+    run: {
+      file: "dist/out",
+      stdout: [
+        "require: MODULE_NOT_FOUND",
+        "import: ERR_MODULE_NOT_FOUND",
+        "embedded sibling resolved from the graph",
+        "embedded sibling resolved from the graph",
+      ].join("\n"),
+    },
+  });
   // see comment in `usePackageManager` for why this is a test
   itBundled("compile/NoAutoInstall", {
     files: {

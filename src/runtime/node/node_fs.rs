@@ -7450,8 +7450,7 @@ impl NodeFS {
             // SAFETY: instance() returns the leaked singleton; INSTANCE_LOADED checked above.
             let fs = FileSystem::get();
             let parts = [fs.top_level_dir, path_slice];
-            let inbuf_len = inbuf.len();
-            let Some(joined) = fs.abs_buf_checked(&parts, &mut inbuf[..inbuf_len - 1]) else {
+            let Some(joined) = fs.abs_buf_checked(&parts, &mut inbuf[..]) else {
                 return Err(sys::Error {
                     errno: E::ENAMETOOLONG as _,
                     syscall: sys::Tag::realpath,

@@ -90,29 +90,16 @@ mod bun_paths {
     pub(super) fn dirname_platform(p: &[u8], platform: Platform) -> &[u8] {
         dispatch_platform!(platform, |P| ::bun_paths::resolve_path::dirname::<P>(p))
     }
-    /// Port of `bun.path.joinAbsStringBuf` (value-dispatched).
-    pub(super) fn join_abs_string_buf<'b>(
+    /// `joinAbsStringBuf`, value-dispatched; `None` when the result does not fit `buf`.
+    pub(super) fn join_abs_string_buf_checked<'b>(
         cwd: &'b [u8],
         buf: &'b mut [u8],
         parts: &[&[u8]],
         platform: Platform,
-    ) -> &'b [u8] {
-        dispatch_platform!(
-            platform,
-            |P| ::bun_paths::resolve_path::join_abs_string_buf::<P>(cwd, buf, parts)
-        )
-    }
-    pub(super) fn join_abs(cwd: &[u8], platform: Platform, part: &[u8]) -> &'static [u8] {
-        // NOTE: `resolve_path::join_abs` ties the result lifetime to `cwd`, but the
-        // returned slice always points into the threadlocal `PARSER_JOIN_INPUT_BUFFER`
-        // (or is `cwd` itself when `parts.is_empty()`, which never happens here — we
-        // pass exactly one part). Re-erase to `'static` so the resolver can hold it
-        // across `&mut self` calls.
-        let s = dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join_abs::<P>(
-            cwd, part
-        ));
-        // SAFETY: see NOTE — slice borrows threadlocal storage, valid 'static per-thread.
-        unsafe { bun_ptr::detach_lifetime(s) }
+    ) -> Option<&'b [u8]> {
+        dispatch_platform!(platform, |P| {
+            ::bun_paths::resolve_path::join_abs_string_buf_checked::<P>(cwd, buf, parts)
+        })
     }
     pub(super) fn join(parts: &[&[u8]], platform: Platform) -> &'static [u8] {
         dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join::<P>(parts))
@@ -1318,7 +1305,8 @@ impl<'a> Resolver<'a> {
                 ) {
                     if import_path.len() > 2 && is_dot_slash(&import_path[0..2]) {
                         let buf = bufs!(import_path_for_standalone_module_graph);
-                        let joined = bun_paths::join_abs_string_buf(
+                        // A specifier that does not fit a path buffer is never in the graph.
+                        let joined = bun_paths::join_abs_string_buf_checked(
                             source_dir,
                             buf,
                             &[import_path],
@@ -1326,7 +1314,9 @@ impl<'a> Resolver<'a> {
                         );
 
                         // Support relative paths in the graph
-                        if let Some(file_name) = graph.find_assume_standalone_path(joined) {
+                        if let Some(file_name) =
+                            joined.and_then(|joined| graph.find_assume_standalone_path(joined))
+                        {
                             // Intern: trait borrows into the graph; `Path::init`
                             // needs `'static` (DirnameStore-backed).
                             let file_name = Fs::file_system::DirnameStore::instance()
@@ -1618,6 +1608,7 @@ impl<'a> Resolver<'a> {
                 // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                 // rewrite inside `symlink()` is serialized on the per-entry mutex.
                 let symlink_path = unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
+                let mut buf = bun_paths::PathBuffer::uninit();
                 if !symlink_path.is_empty() {
                     path.set_realpath(symlink_path);
                     if !result.file_fd.is_valid() {
@@ -1631,15 +1622,13 @@ impl<'a> Resolver<'a> {
                             bstr::BStr::new(symlink_path)
                         ));
                     }
-                } else if !dir.abs_real_path.is_empty() {
+                } else if !dir.abs_real_path.is_empty()
                     // When the directory is a symlink, we don't need to call getFdPath.
-                    let parts = [dir.abs_real_path, query.entry().base()];
-                    let mut buf = bun_paths::PathBuffer::uninit();
-
-                    // NOTE: `abs_buf` returns a borrow of `buf`; capture only the
-                    // length so `buf` can be re-borrowed for null-termination below.
-                    let out_len = self.fs_ref().abs_buf(&parts, &mut buf).len();
-
+                    && let Some(out_len) = self
+                        .fs_ref()
+                        .abs_buf_checked(&[dir.abs_real_path, query.entry().base()], &mut buf)
+                        .map(<[u8]>::len)
+                {
                     let store_fd = self.store_fd;
 
                     if !query.entry().cache().fd.is_valid() && store_fd {
@@ -2478,11 +2467,15 @@ impl<'a> Resolver<'a> {
             return false;
         }
 
-        let joined = bun_paths::join_abs(
+        let mut buf = ::bun_paths::path_buffer_pool::get();
+        let Some(joined) = bun_paths::join_abs_string_buf_checked(
             bun_paths::dirname_platform(import_source_file, bun_paths::Platform::AUTO),
+            &mut buf[..],
+            &[specifier],
             bun_paths::Platform::AUTO,
-            specifier,
-        );
+        ) else {
+            return false;
+        };
         let dir = bun_paths::dirname_platform(joined, bun_paths::Platform::AUTO);
 
         let a = self.bust_dir_cache(dir);
@@ -2633,15 +2626,18 @@ impl<'a> Resolver<'a> {
                     // NOTE: defer restore reshaped — restored at end of block
 
                     if let Some(ref esm) = esm_ {
-                        let abs_package_path: &[u8] = if is_self_reference {
-                            dir_info.abs_path
+                        // `<name>/..` can fit above while the bare name does not.
+                        let abs_package_path: Option<&[u8]> = if is_self_reference {
+                            Some(dir_info.abs_path)
                         } else {
                             let parts = [dir_info.abs_path, b"node_modules".as_slice(), esm.name];
                             self.fs_ref()
-                                .abs_buf(&parts, bufs!(esm_absolute_package_path))
+                                .abs_buf_checked(&parts, bufs!(esm_absolute_package_path))
                         };
 
-                        if let Ok(Some(pkg_dir_info)) = self.dir_info_cached(abs_package_path) {
+                        if let Some(abs_package_path) = abs_package_path
+                            && let Ok(Some(pkg_dir_info)) = self.dir_info_cached(abs_package_path)
+                        {
                             self.extension_order = match kind {
                                 ast::ImportKind::Url
                                 | ast::ImportKind::AtConditional
@@ -4071,15 +4067,14 @@ impl<'a> Resolver<'a> {
                 None => return Ok(None),
             };
 
+        // Only ever the base of checked joins, so an over-long value matches nothing.
+        let mut spill = Vec::new();
         if result.has_base_url() {
             // this might leak
             if !bun_paths::is_absolute(&result.base_url) {
-                // NOTE: `base_url: Box<[u8]>` owns its bytes, so
-                // copy `abs_buf`'s thread-local result directly instead of
-                // double-copying through the `dirname_store` arena.
                 let abs = self
                     .fs_ref()
-                    .abs_buf(&[file_dir, &result.base_url[..]], bufs!(tsconfig_base_url));
+                    .abs_spill(&mut spill, &[file_dir, &result.base_url[..]]);
                 result.base_url = Box::from(abs);
             }
         }
@@ -4091,7 +4086,7 @@ impl<'a> Resolver<'a> {
             // this might leak
             let abs = self
                 .fs_ref()
-                .abs_buf(&[file_dir, &result.base_url[..]], bufs!(tsconfig_base_url));
+                .abs_spill(&mut spill, &[file_dir, &result.base_url[..]]);
             result.base_url_for_paths = Box::from(abs);
         }
 
@@ -4820,8 +4815,13 @@ impl<'a> Resolver<'a> {
 
                         if !bun_paths::is_absolute(absolute_original_path) {
                             let parts: [&[u8]; 2] = [abs_base_url, original_path.as_ref()];
-                            absolute_original_path =
-                                self.fs_ref().abs_buf(&parts, bufs!(tsconfig_path_abs));
+                            absolute_original_path = match self
+                                .fs_ref()
+                                .abs_buf_checked(&parts, bufs!(tsconfig_path_abs))
+                            {
+                                Some(p) => p,
+                                None => continue,
+                            };
                         }
 
                         if self
@@ -5191,9 +5191,13 @@ impl<'a> Resolver<'a> {
             }};
         }
 
-        let mut field_abs_path: &[u8] = self
+        // The field value is package.json text of any length.
+        let Some(mut field_abs_path) = self
             .fs_ref()
-            .abs_buf(&[path, field_rel_path], bufs!(field_abs_path));
+            .abs_buf_checked(&[path, field_rel_path], bufs!(field_abs_path))
+        else {
+            dec_ret!(MatchStatus::NotFound);
+        };
 
         if self.care_about_browser_field {
             // Potentially remap using the "browser" field
@@ -5207,8 +5211,11 @@ impl<'a> Resolver<'a> {
                     {
                         // Is the path disabled?
                         if remap.is_empty() {
-                            let paths = [path, field_rel_path];
-                            let new_path = self.fs_ref().abs_alloc(&paths).expect("unreachable");
+                            let new_path = self
+                                .fs_ref()
+                                .dirname_store
+                                .append_slice(field_abs_path)
+                                .expect("unreachable");
                             let mut _path = Path::init(new_path);
                             _path.is_disabled = true;
                             *out = MatchResult {
@@ -5223,9 +5230,13 @@ impl<'a> Resolver<'a> {
                         }
 
                         // `remap` is relative to the package that owns the browser map.
-                        field_abs_path = self
-                            .fs_ref()
-                            .abs_buf(&[browser_scope.abs_path, remap], bufs!(field_abs_path));
+                        field_abs_path = match self.fs_ref().abs_buf_checked(
+                            &[browser_scope.abs_path, remap],
+                            bufs!(field_abs_path),
+                        ) {
+                            Some(remapped) => remapped,
+                            None => dec_ret!(MatchStatus::NotFound),
+                        };
                     }
                 }
             }
@@ -5437,6 +5448,10 @@ impl<'a> Resolver<'a> {
         // this fn (only `remap_path` is, via a separate `bufs!` raw-ptr projection).
         let path_buf = bufs!(remap_path_trailing_slash);
         if !strings::ends_with_char(path_, SEP) {
+            // Room for the separator and the NUL.
+            if path.len() + 2 > path_buf.len() {
+                return MatchStatus::NotFound;
+            }
             path_buf[..path.len()].copy_from_slice(path);
             path_buf[path.len()] = SEP;
             path_buf[path.len() + 1] = 0;
@@ -5449,7 +5464,12 @@ impl<'a> Resolver<'a> {
 
                 if let Some(browser_json) = browser_scope.package_json() {
                     let index_paths = [path, FIELD_REL_PATH];
-                    let index_abs_path = self.fs_ref().abs_buf(&index_paths, bufs!(remap_path));
+                    let Some(index_abs_path) = self
+                        .fs_ref()
+                        .abs_buf_checked(&index_paths, bufs!(remap_path))
+                    else {
+                        return MatchStatus::NotFound;
+                    };
                     if let Some(remap) = self
                         .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
                             &browser_scope,
@@ -5458,8 +5478,11 @@ impl<'a> Resolver<'a> {
                     {
                         // Is the path disabled?
                         if remap.is_empty() {
-                            let new_path =
-                                self.fs_ref().abs_alloc(&index_paths).expect("unreachable");
+                            let new_path = self
+                                .fs_ref()
+                                .dirname_store
+                                .append_slice(index_abs_path)
+                                .expect("unreachable");
                             let mut _path = Path::init(new_path);
                             _path.is_disabled = true;
                             *out = MatchResult {
@@ -5475,7 +5498,11 @@ impl<'a> Resolver<'a> {
 
                         // `remap` is relative to the browser scope, which may be an ancestor of `path`.
                         let new_paths = [browser_scope.abs_path, remap];
-                        let remapped_abs = self.fs_ref().abs_buf(&new_paths, bufs!(remap_path));
+                        let Some(remapped_abs) =
+                            self.fs_ref().abs_buf_checked(&new_paths, bufs!(remap_path))
+                        else {
+                            return MatchStatus::NotFound;
+                        };
 
                         // Is this a file
                         if let Some(file_result) = self.load_as_file(remapped_abs, extension_order)
@@ -5770,6 +5797,11 @@ impl<'a> Resolver<'a> {
         path: &[u8],
         extension_order: options::ExtOrder,
     ) -> Option<LoadResult> {
+        // The probes below build `path` plus an extension in `bufs!(load_as_file)`.
+        if path.len() >= MAX_PATH_BYTES {
+            return None;
+        }
+
         // SAFETY: RealFS is the global singleton. Derive provenance from the raw
         // `*mut FileSystem` field so intervening `unsafe { &mut *self.fs() }` calls in
         // `load_extension` / `dirname_store.append_slice` don't invalidate `rfs`
@@ -5941,6 +5973,9 @@ impl<'a> Resolver<'a> {
                 };
 
                 for ext_to_replace in exts {
+                    if path.len() - ext.len() + ext_to_replace.len() >= MAX_PATH_BYTES {
+                        continue;
+                    }
                     let buffer = &mut tail[0..segment.len() + ext_to_replace.len()];
                     buffer[segment.len()..].copy_from_slice(ext_to_replace);
 
@@ -6037,6 +6072,9 @@ impl<'a> Resolver<'a> {
         // field so `unsafe { &mut *self.fs() }` calls below (`filename_store.append_parts`) don't pop
         // its provenance under Stacked Borrows.
         let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
+        if path.len() + ext.len() >= MAX_PATH_BYTES {
+            return None;
+        }
         let buffer = &mut bufs!(load_as_file)[0..path.len() + ext.len()];
         buffer[path.len()..].copy_from_slice(ext);
         let file_name = &buffer[path.len() - base.len()..buffer.len()];
@@ -6318,14 +6356,13 @@ impl<'a> Resolver<'a> {
                                 logs.add_note(buf);
                             }
                             info.abs_real_path = symlink;
-                        } else if !parent_.abs_real_path.is_empty() {
+                        } else if !parent_.abs_real_path.is_empty()
+                            && let Some(joined) = self.fs_ref().abs_buf_checked(
+                                &[parent_.abs_real_path, base],
+                                bufs!(dir_info_uncached_filename),
+                            )
+                        {
                             // this might leak a little i'm not sure
-                            let parts = [parent_.abs_real_path, base];
-                            // NOTE: split into two statements so the two `&mut FileSystem`
-                            // borrows from `unsafe { &mut *self.fs() }` don't overlap (Stacked Borrows).
-                            let joined = self
-                                .fs_ref()
-                                .abs_buf(&parts, bufs!(dir_info_uncached_filename));
                             symlink = self
                                 .fs_ref()
                                 .dirname_store
@@ -6536,28 +6573,36 @@ impl<'a> Resolver<'a> {
                     );
                     while !current.extends.is_empty() {
                         let ts_dir_name = Dirname::dirname(&current.abs_path);
-                        let abs_path = ResolvePath::join_abs_string_buf(
+                        // The `extends` value is config text of any length.
+                        let parsed = match ResolvePath::join_abs_string_buf_checked(
                             ts_dir_name,
                             bufs!(tsconfig_path_abs),
                             &[ts_dir_name, &current.extends],
                             bun_paths::Platform::AUTO,
-                        );
-                        let parent_config_maybe: Option<*mut TSConfigJSON> =
-                            match self.parse_tsconfig(abs_path, FD::INVALID) {
-                                Ok(v) => v.map(bun_core::heap::into_raw),
-                                Err(err) => {
-                                    let _ = self.log_mut().add_debug_fmt(
-                                        None,
-                                        bun_ast::Loc::EMPTY,
-                                        format_args!(
-                                            "{} loading tsconfig.json extends {}",
-                                            bstr::BStr::new(err.name()),
-                                            bun_core::fmt::quote(abs_path)
-                                        ),
-                                    );
-                                    break;
-                                }
-                            };
+                        ) {
+                            Some(abs_path) => self
+                                .parse_tsconfig(abs_path, FD::INVALID)
+                                .map_err(|err| (err, abs_path)),
+                            None => Err((
+                                crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG),
+                                &current.extends[..],
+                            )),
+                        };
+                        let parent_config_maybe: Option<*mut TSConfigJSON> = match parsed {
+                            Ok(v) => v.map(bun_core::heap::into_raw),
+                            Err((err, shown_path)) => {
+                                let _ = self.log_mut().add_debug_fmt(
+                                    None,
+                                    bun_ast::Loc::EMPTY,
+                                    format_args!(
+                                        "{} loading tsconfig.json extends {}",
+                                        bstr::BStr::new(err.name()),
+                                        bun_core::fmt::quote(shown_path)
+                                    ),
+                                );
+                                break;
+                            }
+                        };
                         if let Some(parent_config) = parent_config_maybe {
                             parent_configs.append(parent_config)?;
                             current = bun_ptr::BackRef::from(

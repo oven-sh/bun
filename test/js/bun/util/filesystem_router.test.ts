@@ -1,7 +1,17 @@
 import { FileSystemRouter } from "bun";
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isMacOS,
+  isWindows,
+  MAX_PATH_BYTES,
+  normalizeBunSnapshot,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import path, { dirname } from "path";
 
 function createTree(basedir: string, paths: string[]) {
@@ -1068,3 +1078,77 @@ it.skipIf(isWindows || isMacOS)(
     expect(exitCode).toBe(0);
   },
 );
+
+// The scan joins each listed entry onto its directory in a path buffer. The
+// directories it lists always fit one (deeper ones cannot be read), but their
+// entries need not, and such an entry used to abort the process:
+//   panic: range end index 4196 out of range for slice of length 4095
+// Nothing under such an entry could be served, so it is skipped. Windows cannot
+// build these trees (its buffers hold far more than NTFS accepts).
+describe.skipIf(isWindows)("entries whose paths do not fit a path buffer", () => {
+  const deepDirectoryFixture = path.join(import.meta.dir, "..", "resolve", "fixtures", "deep-directory-fixture.cjs");
+
+  async function scan(routesDir: string, setup: string) {
+    const code = /* js */ `
+      const { makeDirectoryOfLength, writeFileIn, mkdirIn } = require(${JSON.stringify(deepDirectoryFixture)});
+      const MAX = ${MAX_PATH_BYTES};
+      // The lengths below count bytes of the spelling the router is given,
+      // so give it one without symlinks (macOS's temp dir is one).
+      const routesDir = require("fs").realpathSync(${JSON.stringify(routesDir)});
+      ${setup}
+      const router = new Bun.FileSystemRouter({ dir: routesDir, style: "nextjs" });
+      // Route names here are thousands of bytes long; keep their tails.
+      const names = () => Object.keys(router.routes).map(name => name.length > 20 ? "..." + name.slice(-2) : name).sort();
+      const before = names();
+      router.reload();
+      console.log(JSON.stringify({ before, afterReload: names() }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  it("a subdirectory", async () => {
+    using dir = tempDir("fsr-too-deep-dir", { "index.tsx": "export default 1;\n" });
+    expect(
+      await scan(
+        String(dir),
+        `
+        // The deepest directory that is listed still holds a route; the
+        // directory inside it is over the limit.
+        const deepest = makeDirectoryOfLength(routesDir, MAX - 100);
+        writeFileIn(deepest, "r.tsx", "export default 1;");
+        mkdirIn(deepest, Buffer.alloc(200, "s").toString());
+        `,
+      ),
+    ).toEqual({
+      stdout: JSON.stringify({ before: [".../r", "/"], afterReload: [".../r", "/"] }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("a route file", async () => {
+    using dir = tempDir("fsr-too-deep-file", { "index.tsx": "export default 1;\n", "1/.keep": "", "2/.keep": "" });
+    expect(
+      await scan(
+        String(dir),
+        `
+        // Each file name adds 6 bytes: the first route's path fits, the
+        // second one's fills the whole buffer and cannot be opened.
+        writeFileIn(makeDirectoryOfLength(routesDir + "/1", MAX - 10), "y.tsx", "export default 1;");
+        writeFileIn(makeDirectoryOfLength(routesDir + "/2", MAX - 6), "x.tsx", "export default 1;");
+        `,
+      ),
+    ).toEqual({
+      stdout: JSON.stringify({ before: [".../y", "/"], afterReload: [".../y", "/"] }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

@@ -25,7 +25,7 @@ use bun_libuv_sys as uv;
 //   [UV_X]         — no counterpart (EAI_* resolver codes, UNKNOWN, ERRNO_MAX)
 //
 // ORDER IS LOAD-BEARING: `enum_map::Enum` derives ordinals from declaration
-// order, and `SystemErrno::to_e` transmutes by discriminant, so the two enums
+// order, and `SystemErrno::to_e` maps by discriminant, so the two enums
 // MUST stay in lockstep. Editing this list updates both atomically.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -242,16 +242,16 @@ pub enum E {
 }} // ← UV_* tail appended by `for_each_uv_errno!`
 
 impl E {
+    /// Map a raw discriminant to its variant; an undeclared value becomes
+    /// `UNKNOWN`. `E` is sparse (dense 0..=137 plus isolated UV_* tags
+    /// ~3000–4095), so the lookup goes through the `strum::FromRepr` match
+    /// and not a range check.
     #[inline]
     pub(crate) const fn from_raw(n: u16) -> Self {
-        // `E` is sparse (dense 0..=137 plus isolated UV_* tags ~3000–4095), so
-        // `n < MAX` is NOT a sufficient validity check. `strum::FromRepr`
-        // generates a `const fn from_repr` matching every declared variant.
-        debug_assert!(Self::from_repr(n).is_some(), "invalid E discriminant");
-        // SAFETY: caller guarantees `n` is a declared `#[repr(u16)]` discriminant
-        // of `E`. Debug-asserted above; for
-        // untrusted input use `try_from_raw` instead.
-        unsafe { core::mem::transmute::<u16, E>(n) }
+        match Self::from_repr(n) {
+            Some(e) => e,
+            None => Self::UNKNOWN,
+        }
     }
 
     /// Checked discriminant lookup —

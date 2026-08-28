@@ -17,7 +17,10 @@ macro_rules! impl_get_errno_libc {
                 // against the type's own all-ones value instead (== -1 for
                 // signed, == MAX for unsigned — both are libc's failure rc).
                 if self == !(0 as $t) {
-                    $crate::E::from_raw($crate::posix::errno() as u16)
+                    // A code that does not fit the table is `EUNKNOWN`, never
+                    // a truncated cast that lands on another variant.
+                    u16::try_from($crate::posix::errno())
+                        .map_or($crate::E::EUNKNOWN, $crate::E::from_raw)
                 } else {
                     $crate::E::SUCCESS
                 }
@@ -256,9 +259,7 @@ pub fn get_errno<T: GetErrno>(rc: T) -> E {
 /// Decode a Node-style **negated** errno (`c_int`, as written by
 /// `Error::to_system_error`) back into an `E`. The input crosses FFI
 /// (BunObject.cpp `SystemError__*`) and is NOT trusted to be a declared
-/// discriminant: an out-of-range `#[repr(u16)]` enum value is immediate UB.
-/// Validate via the checked
-/// constructor and fall back to `SUCCESS` for unmapped values.
+/// discriminant. `0` is `SUCCESS`; an unmapped value is `EUNKNOWN`.
 #[inline]
 pub fn e_from_negated(errno: core::ffi::c_int) -> E {
     let n = errno.wrapping_neg();
@@ -267,31 +268,25 @@ pub fn e_from_negated(errno: core::ffi::c_int) -> E {
         u16::try_from(n)
             .ok()
             .and_then(E::try_from_raw)
-            .unwrap_or(E::SUCCESS)
+            .unwrap_or(E::EUNKNOWN)
     }
     #[cfg(not(windows))]
     {
-        SystemErrno::init(i64::from(n)).unwrap_or(SystemErrno::SUCCESS)
+        SystemErrno::init(i64::from(n)).unwrap_or(SystemErrno::EUNKNOWN)
     }
 }
 
 impl SystemErrno {
-    /// Unchecked discriminant cast.
-    ///
-    /// On POSIX the enum is dense `0..MAX`, so we debug-assert `n < MAX`.
-    /// On Windows the enum is **sparse** (dense `0..=137` plus isolated `UV_E*`
-    /// discriminants in the ~3000-4095 range — see windows_errno.rs), so the
-    /// `< MAX` bound does not hold for valid tags and the assert is skipped.
+    /// Map a raw errno to its variant. A code the enum does not declare
+    /// becomes `EUNKNOWN`: the kernel is not bound to the table (Linux FUSE
+    /// and driver-internal codes such as `ENOTSUPP` 524 reach userspace), so
+    /// the result is defined for every `u16`.
     #[inline]
     pub const fn from_raw(n: u16) -> SystemErrno {
-        // `as usize` on both sides papers over per-OS `MAX` typing (POSIX `u16`
-        // vs Windows `usize`) without normalizing the constant itself.
-        #[cfg(not(windows))]
-        debug_assert!((n as usize) < (Self::MAX as usize));
-        // SAFETY: caller guarantees `n` is a declared `#[repr(u16)]` discriminant
-        // of `SystemErrno`. The enum is NOT
-        // contiguous on Windows; do not assume `n < MAX` implies validity there.
-        unsafe { core::mem::transmute::<u16, SystemErrno>(n) }
+        match Self::from_repr(n) {
+            Some(e) => e,
+            None => Self::EUNKNOWN,
+        }
     }
 }
 
@@ -306,21 +301,16 @@ pub fn from_errno(errno: i32) -> SystemErrno {
 
 #[cfg(not(windows))]
 impl SystemErrno {
-    // `i64` covers every concrete call site (errno-range values).
+    // `i64` covers every concrete call site (errno-range values). The sign is
+    // ignored: Node-style negated codes decode the same as positive ones.
+    // `None` for a code the enum does not declare.
     //
     // Windows defines its own `init<C: SystemErrnoInit>` (typed dispatch over
     // DWORD/c_int/Win32Error) in windows_errno.rs, so this impl is POSIX-only.
     pub fn init(code: i64) -> Option<SystemErrno> {
-        if code < 0 {
-            if code <= -(Self::MAX as i64) {
-                return None;
-            }
-            return Some(Self::from_raw((-code) as u16));
-        }
-        if code >= Self::MAX as i64 {
-            return None;
-        }
-        Some(Self::from_raw(code as u16))
+        u16::try_from(code.unsigned_abs())
+            .ok()
+            .and_then(Self::from_repr)
     }
 }
 
@@ -463,9 +453,13 @@ mod errno_name_tests {
         #[cfg(not(windows))]
         assert_eq!(system_errno_name(max as i32), None);
 
-        // Spot-check the last entry on each platform.
+        // Spot-check the last kernel entry on each platform; `EUNKNOWN` sits
+        // one past it.
         #[cfg(any(target_os = "linux", target_os = "android", target_family = "wasm"))]
-        assert_eq!(system_errno_name(133), Some("EHWPOISON"));
+        {
+            assert_eq!(system_errno_name(133), Some("EHWPOISON"));
+            assert_eq!(system_errno_name(134), Some("EUNKNOWN"));
+        }
         #[cfg(windows)]
         {
             assert_eq!(system_errno_name(137), Some("EFTYPE"));
@@ -477,9 +471,55 @@ mod errno_name_tests {
             assert_eq!(system_errno_name(-5000), None);
         }
         #[cfg(target_os = "macos")]
-        assert_eq!(system_errno_name(106), Some("EQFULL"));
+        {
+            assert_eq!(system_errno_name(106), Some("EQFULL"));
+            assert_eq!(system_errno_name(107), Some("EUNKNOWN"));
+        }
         #[cfg(target_os = "freebsd")]
-        assert_eq!(system_errno_name(97), Some("EINTEGRITY"));
+        {
+            assert_eq!(system_errno_name(97), Some("EINTEGRITY"));
+            assert_eq!(system_errno_name(98), Some("EUNKNOWN"));
+        }
+    }
+
+    /// A code the enum does not declare is not UB: `from_raw` is total and
+    /// lands on `EUNKNOWN`, the checked decoders report `None`.
+    #[test]
+    fn unknown_errno_is_defined() {
+        // Linux `ENOTSUPP`, `ERESTARTSYS`, and the largest possible code.
+        for raw in [524u16, 512, u16::MAX] {
+            assert_eq!(SystemErrno::from_raw(raw), SystemErrno::EUNKNOWN);
+            #[cfg(not(windows))]
+            {
+                assert_eq!(SystemErrno::init(i64::from(raw)), None);
+                assert_eq!(SystemErrno::init(-i64::from(raw)), None);
+            }
+            assert_eq!(system_errno_name(i32::from(raw)), None);
+        }
+        assert_eq!(SystemErrno::from_raw(0), SystemErrno::SUCCESS);
+        assert_eq!(SystemErrno::from_raw(2), SystemErrno::ENOENT);
+        assert_eq!(
+            SystemErrno::from_raw(SystemErrno::EUNKNOWN as u16),
+            SystemErrno::EUNKNOWN
+        );
+
+        // Round trip: a stored `EUNKNOWN` decodes as itself, not as `SUCCESS`.
+        #[cfg(not(windows))]
+        assert_eq!(
+            SystemErrno::init(i64::from(SystemErrno::EUNKNOWN as u16)),
+            Some(SystemErrno::EUNKNOWN)
+        );
+        assert_eq!(e_from_negated(0), E::SUCCESS);
+        assert_eq!(e_from_negated(-524), E::EUNKNOWN);
+        assert_eq!(e_from_negated(-(E::EUNKNOWN as i32)), E::EUNKNOWN);
+
+        // Linux raw syscalls hand back `-errno` in the return register.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            assert_eq!((-524isize as usize).get_errno(), E::EUNKNOWN);
+            assert_eq!((-2isize as usize).get_errno(), E::ENOENT);
+            assert_eq!(7usize.get_errno(), E::SUCCESS);
+        }
     }
 
     /// `win32_errno_name` translation contract: known `GetLastError()` codes

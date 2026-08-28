@@ -667,4 +667,106 @@ describe("bundler", () => {
     cjs2esm: true,
     run: { stdout: "[1,2]" },
   });
+
+  // A non-entry CommonJS module that starts with "use strict" keeps that directive as the first
+  // statement of its __commonJS wrapper. The entry is ESM, so nothing else makes the output strict.
+  // Each module exports whether its own body ran in strict mode. The cjs and iife outputs run under
+  // node: bun runs a script with no CommonJS markers as an ES module, which is strict throughout.
+  const useStrictWrapperFiles = {
+    "/entry.mjs": /* js */ `
+      import strict from './strict.cjs';
+      import sloppy from './sloppy.cjs';
+      console.log(strict, sloppy);
+    `,
+    "/strict.cjs": /* js */ `
+      "use strict";
+      module.exports = (function() { return this === undefined; })();
+    `,
+    "/sloppy.cjs": /* js */ `
+      module.exports = (function() { return this === undefined; })();
+    `,
+  };
+  const strictWrapperDirective = /require_strict = __commonJS\(function\([^)]*\) \{\s*"use strict";/;
+  const sloppyWrapperDirective = /require_sloppy = __commonJS\(function\([^)]*\) \{\s*"use strict";/;
+  itBundled("cjs2esm/UseStrictInsideCommonJSWrapperCJS", {
+    files: useStrictWrapperFiles,
+    format: "cjs",
+    outfile: "/out.cjs",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.cjs");
+      expect(code).not.toStartWith('"use strict"');
+      expect(code).toMatch(strictWrapperDirective);
+      expect(code).not.toMatch(sloppyWrapperDirective);
+    },
+    run: { runtime: "node", stdout: "true false" },
+  });
+  itBundled("cjs2esm/UseStrictInsideCommonJSWrapperIIFE", {
+    files: useStrictWrapperFiles,
+    format: "iife",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).not.toStartWith('"use strict"');
+      expect(code).toMatch(strictWrapperDirective);
+      expect(code).not.toMatch(sloppyWrapperDirective);
+    },
+    run: { runtime: "node", stdout: "true false" },
+  });
+  // ESM output is strict everywhere, so the directive is redundant and not printed.
+  itBundled("cjs2esm/UseStrictInsideCommonJSWrapperESM", {
+    files: useStrictWrapperFiles,
+    format: "esm",
+    outfile: "/out.mjs",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.mjs")).not.toContain("use strict");
+    },
+    run: { stdout: "true true" },
+  });
+  // The directive of the entry point file is printed once at the top of the output, not inside its wrapper.
+  itBundled("cjs2esm/UseStrictEntryPointDirectiveStaysAtTop", {
+    files: {
+      "/entry.cjs": /* js */ `
+        "use strict";
+        const strict = require('./strict.cjs');
+        module.exports = { entry: (function() { return this === undefined; })(), strict };
+      `,
+      "/strict.cjs": /* js */ `
+        "use strict";
+        module.exports = (function() { return this === undefined; })();
+      `,
+    },
+    format: "iife",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toStartWith('"use strict";\n');
+      expect(code).toMatch(strictWrapperDirective);
+      expect(code).not.toMatch(/require_entry = __commonJS\(function\([^)]*\) \{\s*"use strict";/);
+      expect(code.split('"use strict"')).toHaveLength(3);
+    },
+  });
+  // An ESM file that a CommonJS file require()s is wrapped in __esm. Its "use strict" has to stay ahead of the
+  // init_*() calls for its own wrapped imports, or it stops being a directive.
+  itBundled("cjs2esm/UseStrictInsideESMWrapperBeforeInitCalls", {
+    files: {
+      "/entry.js": /* js */ `
+        const lib = require('./lib.mjs');
+        console.log(lib.strict, lib.dep);
+      `,
+      "/lib.mjs": /* js */ `
+        "use strict";
+        import { dep } from './dep.mjs';
+        export const strict = (function() { return this === undefined; })();
+        export { dep };
+      `,
+      "/dep.mjs": /* js */ `
+        console.log('dep');
+        export const dep = 1;
+      `,
+    },
+    format: "cjs",
+    outfile: "/out.cjs",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.cjs")).toMatch(/init_lib = __esm\(\(\) => \{\s*"use strict";\s*init_dep\(\);/);
+    },
+    run: { runtime: "node", stdout: "dep\ntrue 1" },
+  });
 });

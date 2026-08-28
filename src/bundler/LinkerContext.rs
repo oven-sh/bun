@@ -4277,6 +4277,16 @@ impl InsideWrapperPrefix {
 }
 
 impl InsideWrapperPrefix {
+    /// A directive is only a directive while it leads the function body, so
+    /// the dependency calls that `append_sync_dependency` and
+    /// `append_async_dependency` insert at `sync_dependencies_end` must land
+    /// after it.
+    pub(crate) fn append_directive(&mut self, stmt: Stmt) {
+        debug_assert!(self.stmts.is_empty());
+        self.stmts.push(stmt);
+        self.sync_dependencies_end += 1;
+    }
+
     pub(crate) fn append_non_dependency(&mut self, stmt: Stmt) -> Result<(), AllocError> {
         self.stmts.push(stmt);
         Ok(())

@@ -184,7 +184,9 @@ it("fd_prestat_get and fd_prestat_dir_name fail for fds that are not preopens", 
   const pathPtr = 1024;
   const fdPtr = 16384;
 
-  // The preopen has a prestat that names it "/".
+  // The preopen has a prestat that names it "/". Pre-fill the tag byte so the
+  // assertion fails if fd_prestat_get does not write it (the tag value is 0).
+  view.setUint8(prestatPtr, 0xff);
   expect(wasi.wasiImport.fd_prestat_get(preopenFd, prestatPtr)).toBe(WASI_ESUCCESS);
   expect(view.getUint8(prestatPtr)).toBe(WASI_PREOPENTYPE_DIR);
   const nameLen = view.getUint32(prestatPtr + 4, true);

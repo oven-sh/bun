@@ -3081,11 +3081,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// Whether a property name can be printed without quotes (`a.b`,
-        /// `{ b: 1 }`). The lexer accepts every identifier the current spec
-        /// allows, but a name is only unquoted here when it is valid in both
-        /// ES5 and ESNext, so the output stays parseable on an engine with an
-        /// older Unicode database.
+        /// A property name prints unquoted only when it is valid in both ES5 and ESNext.
         #[inline]
         pub(crate) fn can_print_identifier(&self, name: &[u8]) -> bool {
             lexer::is_identifier_es5_and_es_next(name)

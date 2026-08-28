@@ -745,8 +745,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
         let loc = p.lexer.loc();
 
-        // The alias may now be a string (see https://github.com/tc39/ecma262/pull/2154).
-        // It must be well-formed UTF-16: an unpaired surrogate is a syntax error.
+        // The alias may now be a utf-16 (not wtf-16) string (see https://github.com/tc39/ecma262/pull/2154)
         if p.lexer.token == T::TStringLiteral {
             let estr = p.lexer.to_e_string()?;
             if estr.is_utf8() {

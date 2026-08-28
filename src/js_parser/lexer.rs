@@ -241,10 +241,7 @@ pub struct Lexer<'a> {
     pub(crate) track_comments: bool,
     pub(crate) track_react_suppressions: bool,
     pub(crate) all_comments: Vec<Range>,
-    /// Range of the first `<!--` or line-start `-->` lexed as a legacy HTML
-    /// comment (Annex B). Stays `Range::NONE` when the file has none. The
-    /// parser reports an error at this range when the file turns out to be an
-    /// ECMAScript module, where these comments are not allowed.
+    /// The first `<!--` or line-start `-->` comment, for the parser's module-goal check.
     pub(crate) legacy_html_comment_range: Range,
 }
 
@@ -2023,10 +2020,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Handles a legacy HTML single-line comment (Annex B `<!--`, or `-->` at
-    /// the start of a line): records the range, emits the warning, and
-    /// consumes the rest of the line. Entered with `self.code_point` on the
-    /// last character of `opener`.
+    /// Lexes an Annex B HTML comment to the end of the line, from the last character of `opener`.
     ///
     /// PERF: this is essentially never taken in real code — keep it fully out of
     /// `next()`'s body so it never costs the hot arms any I-cache.

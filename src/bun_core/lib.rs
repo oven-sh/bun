@@ -1583,9 +1583,7 @@ pub(crate) mod strings_impl {
         (c0 as u32, 1)
     }
 
-    /// The first surrogate code unit in `input` that is not part of a
-    /// well-formed pair, or `None` when `input` is well-formed UTF-16
-    /// (`IsStringWellFormedUnicode` in the ECMAScript spec).
+    /// The first surrogate code unit that is not part of a pair, or `None` for well-formed UTF-16.
     pub fn first_unpaired_surrogate(input: &[u16]) -> Option<u16> {
         let mut i = 0;
         while i < input.len() {

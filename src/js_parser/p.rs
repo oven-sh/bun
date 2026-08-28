@@ -2605,10 +2605,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Annex B allows `<!--` and a line-start `-->` as single-line comments in
-    /// scripts only. The lexer accepts them with a warning and records the first
-    /// one. Once the parse pass has seen the whole file and knows whether it is
-    /// an ECMAScript module, that comment becomes an error.
+    /// Annex B allows HTML-like comments in scripts only, so one in a module is an error.
     pub(crate) fn check_legacy_html_comment_in_module(&mut self) {
         let r = self.lexer.legacy_html_comment_range;
         if r.len == 0 {

@@ -6665,9 +6665,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Lowers the `accessor` members of a TypeScript class under
-    /// `experimentalDecorators`. Runs in `visit_class`, before the
-    /// `useDefineForClassFields: false` pass moves field initializers.
+    /// `accessor` members under `experimentalDecorators`, before the useDefineForClassFields pass.
     pub(crate) fn lower_ts_auto_accessors(&mut self, class: &mut G::Class) {
         use js_ast::g::PropertyKind;
         if !class
@@ -6678,8 +6676,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
-        // A computed key temporary is a `var` of the scope around the class, and
-        // needs a statement list to be declared in.
+        // A computed key temporary is a `var` in the scope around the class.
         let can_declare_temps = self.nearest_stmt_list.is_some();
         let class_body_scope = self.current_scope;
         let mut enclosing_scope = class_body_scope;

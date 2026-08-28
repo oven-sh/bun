@@ -2945,8 +2945,7 @@ pub mod flags {
         IsStatic,
         WasShorthand,
         IsSpread,
-        /// The getter that a TypeScript `accessor` member was lowered to. It
-        /// carries the member's decorators and type metadata.
+        /// The getter a TypeScript `accessor` member was lowered to (keeps its decorators).
         IsAutoAccessorGetter,
     }
     pub type PropertySet = EnumSet<Property>;

@@ -9812,9 +9812,12 @@ describe.concurrent("bun-install", () => {
       });
 
       it("still refuses a name that joins to a URL outside the registry directory", async () => {
+        // A literal `..` is refused as a folder name before a URL is built; the
+        // percent-encoded spelling is a fine folder name, but the URL parser
+        // still treats it as a dot segment, so only the URL check can catch it.
         const { result, origin } = await installNoDeps(origin => ({
           "bunfig.toml": Bun.TOML.stringify({ install: { registry: { url: `${singleColon(origin)}/npm/`, token } } }),
-          "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "..": "1.0.0" } }),
+          "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "%2e%2e": "1.0.0" } }),
         }));
         expect(result).toEqual({
           requests: [],
@@ -10233,10 +10236,237 @@ it("does not extract a tarball for a dependency alias containing '..' path segme
     expect(await readdirSorted(zone)).toEqual(["a"]);
     expect(await readdirSorted(join(zone, "a"))).toEqual(["b"]);
     expect(await readdirSorted(join(zone, "a", "b"))).toEqual(["c"]);
-    // The unsafe alias is reported as an error and nothing is installed.
-    expect(err).toContain("Refusing to install package with invalid name");
+    // The unsafe alias is reported as an error before the tarball is even
+    // requested, and nothing is installed.
+    expect(err).toContain('Invalid dependency name "x/../../../.."');
+    expect(urls).toEqual([]);
     expect(out).not.toContain("1 package installed");
     expect(exitCode).not.toBe(0);
+  });
+});
+
+describe("dependency names containing terminal control characters", () => {
+  // OSC 52 (write to the clipboard) followed by CSI 2J (clear the screen). A
+  // registry serves it as an ordinary JSON string (`"ev\u001b]52;..."`), so it
+  // reaches bun like any other dependency name.
+  const controlName = "ev\x1b]52;c;aGkK\x07\x1b[2Jil";
+  // How bun reports it: with the control characters spelled out.
+  const escapedName = String.raw`ev\x1b]52;c;aGkK\x07\x1b[2Jil`;
+  // Forces the progress line, which echoes the name of every manifest being
+  // fetched, even though stderr is a pipe here.
+  const progressEnv = { ...env, BUN_INSTALL_PROGRESS: "1" };
+
+  /**
+   * The dummy registry, which has a manifest for every name asked of it, plus:
+   * the control-character package really is installable (its tarball is
+   * bar's) and `bar@0.0.2` declares `barDeps`.
+   */
+  function registry(ctx: TestContext, urls: string[], barDeps: object = {}) {
+    const dummy = dummyRegistryForContext(ctx, urls);
+    return async (req: Request) => {
+      const name = decodeURIComponent(new URL(req.url).pathname.slice(`/${ctx.id}/`.length));
+      if (name.endsWith(".tgz") && name.includes(controlName)) {
+        urls.push(req.url);
+        return new Response(file(join(import.meta.dir, "bar-0.0.2.tgz")));
+      }
+      const res = await dummy(req);
+      if (name !== "bar") return res;
+      const manifest = await res.json();
+      Object.assign(manifest.versions["0.0.2"], barDeps);
+      return Response.json(manifest);
+    };
+  }
+
+  function assertNameNeverLeaked(out: string, err: string, urls: string[]) {
+    expect(out).not.toContain(controlName);
+    expect(err).not.toContain(controlName);
+    expect(err).not.toContain("\x1b]52;");
+    expect(urls.filter(url => url.includes("%1B") || url.includes("\x1b"))).toEqual([]);
+  }
+
+  /** Entries of node_modules other than the cache this registry setup (`cache = false`) puts there. */
+  async function installed(ctx: TestContext) {
+    const entries = await readdirSorted(join(ctx.package_dir, "node_modules")).catch(() => []);
+    return entries.filter(entry => entry !== ".cache");
+  }
+
+  // A dependency whose key repeats its specifier is how `bun add <specifier>`
+  // records a dependency it has not named yet, so such a key is exempt from the
+  // folder name rules, but not from this one: git tasks put it on the progress
+  // line as-is.
+  const gitSpecifier = `git+https://127.0.0.1:9/${controlName}.git`;
+  const escapedGitSpecifier = `git+https://127.0.0.1:9/${escapedName}.git`;
+  const manifestCases: [string, object, string][] = [
+    ["a dependency name", { dependencies: { [controlName]: "0.0.2" } }, escapedName],
+    ["an unnamed git dependency", { dependencies: { [gitSpecifier]: gitSpecifier } }, escapedGitSpecifier],
+  ];
+  for (const [description, barDeps, expectedName] of manifestCases) {
+    it(`rejects ${description} declared by a package manifest before requesting or printing it`, async () => {
+      await withContext(defaultOpts, async ctx => {
+        const urls: string[] = [];
+        setContextHandler(ctx, registry(ctx, urls, barDeps));
+        await writeFile(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
+        );
+
+        const { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env: progressEnv,
+        });
+        const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+        expect(err).toContain(`error: Invalid dependency name "${expectedName}"`);
+        assertNameNeverLeaked(out, err, urls);
+        expect(urls).toContain(`${ctx.registry_url}bar`);
+        expect(await installed(ctx)).toEqual([]);
+        expect(exitCode).toBe(1);
+      });
+    });
+  }
+
+  it("keeps the unnamed form for specifiers without control characters", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(ctx, registry(ctx, urls));
+      await writeFile(join(ctx.package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+
+      // The alias of this dependency is the specifier until the tarball has
+      // been resolved: full of characters a folder name may not contain.
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "add", `${ctx.registry_url}bar-0.0.2.tgz`],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+      expect(err).not.toContain("Invalid dependency name");
+      expect(out).toContain("installed bar@");
+      expect(await installed(ctx)).toEqual(["bar"]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  it("only warns when the name is declared as an optional dependency", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(ctx, registry(ctx, urls, { optionalDependencies: { [controlName]: "0.0.2" } }));
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
+      );
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: progressEnv,
+      });
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+      expect(err).toContain(`warn: Invalid dependency name "${escapedName}"`);
+      assertNameNeverLeaked(out, err, urls);
+      expect(await installed(ctx)).toEqual(["bar"]);
+      expect(out).toContain("1 package installed");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // [description, root dependencies, how the unresolved dependency is summarized afterwards]
+  const aliasCases: [string, Record<string, string>, string[]][] = [
+    [
+      "as the alias of a dependency",
+      { [controlName]: "npm:bar@0.0.2" },
+      [`error: ${escapedName}@npm:bar@0.0.2 failed to resolve`],
+    ],
+    [
+      "as the target of an npm: alias",
+      { "safe-alias": `npm:${controlName}@0.0.2` },
+      [`error: safe-alias@npm:${escapedName}@0.0.2 failed to resolve`],
+    ],
+    [
+      "as the alias of a catalog dependency",
+      { [controlName]: "catalog:" },
+      [`error: ${escapedName}@catalog: is not in the catalog`, `bun add --catalog ${escapedName}`],
+    ],
+  ];
+  for (const [description, dependencies, summary] of aliasCases) {
+    it(`rejects a name used ${description}`, async () => {
+      await withContext(defaultOpts, async ctx => {
+        const urls: string[] = [];
+        setContextHandler(ctx, registry(ctx, urls));
+        await writeFile(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({ name: "foo", version: "0.0.1", dependencies }),
+        );
+
+        const { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+        expect(err).toContain(`error: Invalid dependency name "${escapedName}"`);
+        for (const line of summary) expect(err).toContain(line);
+        assertNameNeverLeaked(out, err, urls);
+        expect(await installed(ctx)).toEqual([]);
+        expect(exitCode).toBe(1);
+      });
+    });
+  }
+
+  it("rejects a package name found in bun.lock instead of installing or listing it", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(ctx, registry(ctx, urls));
+      await Promise.all([
+        writeFile(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { [controlName]: "0.0.2" } }),
+        ),
+        writeFile(
+          join(ctx.package_dir, "bun.lock"),
+          textLockfile(1, {
+            workspaces: { "": { name: "foo", dependencies: { [controlName]: "0.0.2" } } },
+            packages: { [controlName]: [`${controlName}@0.0.2`, `${ctx.registry_url}bar-0.0.2.tgz`, {}, ""] },
+          }),
+        ),
+      ]);
+
+      // `bun pm ls` prints straight from the lockfile, so it runs first, before
+      // `bun install` gets a chance to touch it.
+      const commands: [string[], string][] = [
+        [["pm", "ls", "--all"], "failed to parse lockfile: InvalidLockfile"],
+        [["install"], "Invalid package name"],
+      ];
+      for (const [args, expectedError] of commands) {
+        const { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), ...args],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+
+        expect(err).toContain(expectedError);
+        assertNameNeverLeaked(out, err, urls);
+        expect(exitCode).toBe(1);
+      }
+      // Ignoring the rejected lockfile must not make `bun install` fall back to
+      // resolving the same name from package.json either.
+      expect(urls).toEqual([]);
+      expect(await installed(ctx)).toEqual([]);
+    });
   });
 });
 

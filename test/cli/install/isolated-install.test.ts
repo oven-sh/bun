@@ -3574,7 +3574,8 @@ test("rejects dependency aliases that traverse outside node_modules", async () =
   // A (transitively) malicious package.json can use an arbitrary string as a
   // dependency alias. The alias becomes a `node_modules/<alias>` path
   // component in the isolated store layout, so a `..` segment lets it plant
-  // symlinks outside of node_modules.
+  // symlinks outside of node_modules. Such an alias is refused while resolving
+  // (the installer has its own check as well, see the next test).
   await write(
     packageJson,
     JSON.stringify({
@@ -3594,7 +3595,7 @@ test("rejects dependency aliases that traverse outside node_modules", async () =
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain("is not a valid install folder name");
+  expect(stderr).toContain('Invalid dependency name "../pwned-by-alias"');
   // Nothing may be created outside of node_modules. `lstatSync` instead of
   // `existsSync` because the escaped artifact would be a dangling symlink.
   expect(() => lstatSync(join(packageDir, "pwned-by-alias"))).toThrow();

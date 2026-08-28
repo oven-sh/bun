@@ -252,7 +252,7 @@ impl ExtractTarball {
                     bun_ast::Loc::EMPTY,
                     format_args!(
                         "Refusing to install package with invalid name \"{}\"",
-                        bun_fmt::s(name),
+                        bun_fmt::escape_control_chars(name),
                     ),
                 );
                 return Err(crate::Error::InstallFailed);
@@ -479,7 +479,7 @@ impl ExtractTarball {
                             bun_ast::Loc::EMPTY,
                             format_args!(
                                 "Refusing to install package with invalid name \"{}\"",
-                                bun_fmt::s(name),
+                                bun_fmt::escape_control_chars(name),
                             ),
                         );
                         return Err(crate::Error::InstallFailed);

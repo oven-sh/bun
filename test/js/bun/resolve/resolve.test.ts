@@ -1627,32 +1627,36 @@ describe("TypeScript extension rewrite matrix", () => {
 
   // Inside node_modules the `.mjs` → `.mts` and `.cjs` → `.cts` rewrites are
   // off (`DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES`); `.js` → `.ts` stays on.
-  test.concurrent("`.cjs` and `.mjs` targets are not rewritten inside node_modules", async () => {
-    using dir = tempDir("ts-rewrite-node-modules-gate", {
-      "node_modules/dep/package.json": JSON.stringify({
-        name: "dep",
-        exports: { "./c": "./c.cjs", "./m": "./m.mjs", "./j": "./j.js" },
-      }),
-      "node_modules/dep/c.cts": `export const c = "cts";`,
-      "node_modules/dep/m.mts": `export const m = "mts";`,
-      "node_modules/dep/j.ts": `export const j = "ts";`,
-      "index.ts": `
-        for (const specifier of ["dep/c", "dep/m", "dep/j"]) {
-          try {
-            console.log(specifier, Object.values(await import(specifier))[0]);
-          } catch (e) {
-            console.log(specifier, e.code);
-          }
-        }
-      `,
-    });
+  test.concurrent.each([
+    ["dep/c", null],
+    ["dep/m", null],
+    ["dep/j", "ts"],
+  ] as [specifier: string, resolved: string | null][])(
+    "`%s` inside node_modules resolves to %j",
+    async (specifier, resolved) => {
+      using dir = tempDir("ts-rewrite-node-modules-gate", {
+        "node_modules/dep/package.json": JSON.stringify({
+          name: "dep",
+          exports: { "./c": "./c.cjs", "./m": "./m.mjs", "./j": "./j.js" },
+        }),
+        "node_modules/dep/c.cts": `export const c = "cts";`,
+        "node_modules/dep/m.mts": `export const m = "mts";`,
+        "node_modules/dep/j.ts": `export const j = "ts";`,
+        "index.ts": `
+          import * as dep from "${specifier}";
+          console.log(Object.values(dep)[0]);
+        `,
+      });
 
-    expect(await runWildcardScript(String(dir), "index.ts")).toEqual({
-      stdout: ["dep/c ERR_MODULE_NOT_FOUND", "dep/m ERR_MODULE_NOT_FOUND", "dep/j ts"].join("\n"),
-      stderr: "",
-      exitCode: 0,
-    });
-  });
+      const result = await runWildcardScript(String(dir), "index.ts");
+      if (resolved === null) {
+        expect(result.stderr).toContain(`Cannot find module '${specifier}'`);
+        expect(result.exitCode).not.toBe(0);
+      } else {
+        expect(result).toEqual({ stdout: resolved, stderr: "", exitCode: 0 });
+      }
+    },
+  );
 });
 
 // A tsconfig `paths` substitution that names a declaration file (`.d.ts`,

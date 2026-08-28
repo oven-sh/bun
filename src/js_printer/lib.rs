@@ -1652,8 +1652,7 @@ pub(crate) mod __gated_printer {
         pub(crate) prev_op_end: i32,
         pub(crate) prev_num_end: i32,
         pub(crate) prev_reg_exp_end: i32,
-        /// The call target or template tag being printed, while the source did
-        /// not write it as a property access. See `is_unbound_call_target`.
+        /// The call target or template tag being printed, unless the source wrote it as `a.b`.
         pub(crate) unbound_call_target: Option<ExprData>,
         pub(crate) writer: W,
 
@@ -2617,10 +2616,8 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// `e` is a call target or template tag that the source did not write
-        /// as a property access, so `import_ns.fn` needs the `(0, ...)` wrap.
-        /// The ref compare is exact because the call and template arms clear
-        /// `unbound_call_target` before they print the arguments.
+        /// Whether `import_ns.fn` for `e` needs the `(0, ...)` wrap. Exact by ref: the
+        /// call and template arms clear `unbound_call_target` before the arguments print.
         fn is_unbound_call_target(&self, e: &E::ImportIdentifier) -> bool {
             matches!(
                 self.unbound_call_target,
@@ -3474,8 +3471,7 @@ pub(crate) mod __gated_printer {
                         && self.is_unbound_eval_identifier(e.target)
                         && e.optional_chain.is_none();
 
-                    // A target that a fold or inlining turned into "a.b" keeps
-                    // its undefined `this`: "(0, a.b)()", never "a.b()".
+                    // "(0, a.b)()" folded to "a.b()" would bind `this` to "a"; keep the wrap.
                     let target_was_originally_property_access =
                         e.target_was_originally_property_access;
                     let must_preserve_this = !target_was_originally_property_access

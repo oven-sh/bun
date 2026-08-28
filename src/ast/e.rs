@@ -274,8 +274,7 @@ pub struct Call {
     /// Used when printing to generate the source prop on the fly
     pub was_jsx_element: bool,
 
-    /// The source wrote the target as `a.b()` or `a[b]()`. Any other target
-    /// that is a property access by print time gets the `(0, a.b)()` wrap.
+    /// Set for `a.b()` / `a[b]()` in the source. Other property-access targets print as `(0, a.b)()`.
     pub target_was_originally_property_access: bool,
 }
 impl Default for Call {

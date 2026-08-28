@@ -242,12 +242,8 @@ impl Loader {
         None
     }
 
-    /// Bun's install cache: where `bun install` extracts packages and where `bun build --compile`
-    /// keeps the downloaded executables of other targets. The first one set wins:
-    /// `$BUN_INSTALL_CACHE_DIR`, `cache_directory` (`--cache-dir` or bunfig `install.cache.dir`),
-    /// `$BUN_INSTALL/install/cache`, `$XDG_CACHE_HOME/.bun/install/cache`, `$HOME/.bun/install/cache`,
-    /// and last `node_modules/.bun-cache`. Writes the absolute path into `buf` (a relative setting
-    /// resolves against the top-level directory) and returns it.
+    /// Bun's install cache directory, shared by `bun install` and the `bun build --compile` download
+    /// of another platform's executable. `cache_directory` is the `--cache-dir` / bunfig setting.
     pub fn install_cache_directory_path<'b>(
         &self,
         cache_directory: Option<&[u8]>,

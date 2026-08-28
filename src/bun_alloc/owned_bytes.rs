@@ -2,9 +2,7 @@ use core::ptr::NonNull;
 
 use crate::{Alignment, StdAllocator, basic};
 
-/// `Box<[u8]>` whose deallocator is a [`StdAllocator`]: the global allocator,
-/// or a foreign free callback (a native bundler plugin's) when the bytes were
-/// adopted from it instead of copied.
+/// `Box<[u8]>` freed through a [`StdAllocator`]: the global allocator or a foreign free callback.
 pub struct OwnedBytes {
     /// `None` ⇒ empty; nothing is freed on drop.
     ptr: Option<NonNull<u8>>,

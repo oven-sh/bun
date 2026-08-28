@@ -2117,8 +2117,7 @@ pub mod cache {
             }
         }
 
-        /// The callback as the `StdAllocator` of the buffer it frees, so the buffer
-        /// can move into an owner that carries its allocator (`bun_alloc::OwnedBytes`).
+        /// The callback as the `StdAllocator` that frees the buffer (see `bun_alloc::OwnedBytes`).
         pub fn into_allocator(self) -> bun_alloc::StdAllocator {
             debug_assert!(self.function.is_some());
             unsafe fn free(ctx: *mut c_void, _: &mut [u8], _: bun_alloc::Alignment, _: usize) {

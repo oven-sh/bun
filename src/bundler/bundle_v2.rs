@@ -118,8 +118,7 @@ pub struct BundleV2<'a> {
 
     /// Native `onBeforeParse` buffers to free at teardown.
     pub(crate) finalizers: Vec<ExternalFreeFunction>,
-    /// Native `onBeforeParse` buffers that are a copy-loader asset's `source.contents`,
-    /// by source index: `process_files_to_copy` hands them to the `OutputFile`.
+    /// Plugin-owned `source.contents` of copy-loader assets, by source index, for `process_files_to_copy`.
     pub(crate) asset_free_functions: ArrayHashMap<IndexInt, ExternalFreeFunction>,
 
     pub(crate) drain_defer_task: DeferredBatchTask,

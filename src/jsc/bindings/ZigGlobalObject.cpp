@@ -3853,7 +3853,7 @@ static void collectStandaloneClosure(Zig::GlobalObject* globalObject, JSModuleLo
 }
 
 // Register the collected modules as fetched. When the closure is complete, every module any of them can reach is in it,
-// so they are marked loaded outright — [[LoadedModules]] filled and loadPromise settled — and JSC's graph walk finishes
+// so they are marked loaded outright — [[LoadedModules]] filled and the entry marked loaded — and JSC's graph walk finishes
 // without a HostLoadImportedModule call or microtask per edge. Otherwise they are left the way JSC's own
 // fetch -> makeModule chain leaves them and JSC runs one load step per module to finish the job.
 static void registerStandaloneClosure(Zig::GlobalObject* globalObject, JSModuleLoader* loader, StandaloneClosure& closure)

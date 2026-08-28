@@ -243,7 +243,6 @@ describe("bundler", () => {
     },
   });
   itBundled("loader/JSONInvalidIdentifierES6", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         import * as ns from './test.json'
@@ -254,7 +253,7 @@ describe("bundler", () => {
       "/test2.json": `{"invalid-identifier": true}`,
     },
     run: {
-      stdout: 'true {"invalid-identifier":true}',
+      stdout: 'true {"default":{"invalid-identifier":true},"invalid-identifier":true}',
     },
   });
   itBundled("loader/JSONMissingES6", {

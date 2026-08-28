@@ -4107,6 +4107,16 @@ impl<'a> LinkerContext<'a> {
                 ..Default::default()
             },
         )?;
+
+        // `export * from "./data.json"` resolves against the AST's named exports,
+        // and the file's importers are processed after it, so record it there too.
+        self.graph.ast.items_named_exports_mut()[source_index as usize].put(
+            alias,
+            bun_ast::NamedExport {
+                ref_: r#ref,
+                alias_loc: Loc::EMPTY,
+            },
+        )?;
         Ok((r#ref, part_index))
     }
 

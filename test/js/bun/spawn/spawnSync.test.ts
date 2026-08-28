@@ -217,7 +217,9 @@ describe("uid/gid", () => {
 // same number, EPOLL_CTL_ADD fails with EEXIST, and the fd is closed twice:
 // once by FileSink::setup and once by the writer's Drop through the Closer.
 test.skipIf(!isLinux)("a writer finalized during spawnSync does not break the next writer on the same fd", async () => {
-  // A file, not `-e`: under `-e` the leaked writers stay reachable and are never finalized.
+  // A file, not `-e`: run through `-e`, the collection that `Bun.gc(false)`
+  // requests does not finalize the writers inside spawnSync (their dups stay
+  // open for the whole wait), and the test no longer reaches the bug.
   using dir = tempDir("spawnsync-writer-finalized", {
     "fixture.js": `
       import { fstatSync, readdirSync } from "node:fs";

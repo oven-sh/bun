@@ -196,11 +196,12 @@ describe.concurrent("spawnSync isolated event loop", () => {
   // BUN_JSC_slowPathAllocsBetweenGCs runs a full synchronous GC every few
   // slow-path allocations. A warmed-up spawnSync allocates nothing before it
   // installs the isolated loop, so the GC that frees the writers runs inside it.
-  // The fixture also reports how many writers were collected by the time that
-  // call returned, so a change that keeps them alive past the call, or stops
-  // the GC from running there, fails this test instead of passing it.
-  // (bun:internal-for-testing would give exact counts, but loading it under
-  // this GC setting takes a debug build 15s.)
+  // The fixture also reports how many writers were collected by the time the
+  // probe call returned. They are held by a global until the drop right before
+  // that call, so a change that keeps them alive past the call, or stops the
+  // GC from running in it, fails this test instead of passing it.
+  // (bun:internal-for-testing or node:fs would give fd and sink counts, but
+  // loading either module under this GC setting costs a debug build 5s to 15s.)
   test.skipIf(isWindows)("finalizers that run inside spawnSync do not stall the next spawnSync", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -208,18 +209,20 @@ describe.concurrent("spawnSync isolated event loop", () => {
         "-e",
         `
         // Three writers on stderr (a pipe here), each with a poll registered
-        // on the main loop.
-        let writers = [];
+        // on the main loop. They hang off globalThis: a binding that is only
+        // written after the await below is dead at the suspension, and the
+        // writers would already be collected in the warm-up call.
+        globalThis.writers = [];
         const refs = [];
         for (let i = 0; i < 3; i++) {
           const writer = Bun.stderr.writer();
           writer.write("");
           writer.flush();
-          writers.push(writer);
+          globalThis.writers.push(writer);
           refs.push(new WeakRef(writer));
         }
         // A WeakRef keeps its target alive until the end of the job that
-        // created it. Cross a job boundary so only \`writers\` holds them.
+        // created it.
         await Bun.sleep(0);
         const first = { cmd: ["echo", "first"], stdout: "pipe", stderr: "ignore", timeout: 2000 };
         // pidfd + stdout + stderr: three polls, the same count the three
@@ -230,12 +233,14 @@ describe.concurrent("spawnSync isolated event loop", () => {
         // Warm up while the writers are still reachable: lazy structures and
         // Bun.spawnSync itself are created here, on the main loop.
         Bun.spawnSync(first);
-        writers = null;
+        globalThis.writers = null;
         // The first allocations after the drop are this call's result, built
         // while the isolated loop is installed: the GC they trigger frees the
         // writers there. Nothing may run between the drop and the call.
         Bun.spawnSync(first);
-        const collectedDuringCall = refs.filter(ref => ref.deref() === undefined).length;
+        // Read the refs before anything allocates: a GC here would change the answer.
+        let collectedDuringCall = 0;
+        for (let i = 0; i < refs.length; i++) if (refs[i].deref() === undefined) collectedDuringCall++;
 
         const result = Bun.spawnSync(second);
         console.log(

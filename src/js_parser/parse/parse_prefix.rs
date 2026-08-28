@@ -51,10 +51,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> PResult<Expr> {
         let loc = p.lexer.loc();
 
-        // A parenthesized expression is not a valid binding pattern. Defer the
-        // error until we know whether the enclosing construct is an arrow
-        // function argument list: "([ (x) ]) => {}" is an error, "[ (x) ] = y"
-        // is not.
+        // "([ (x) ]) => {}" is an error, "[ (x) ] = y" is not
         if let Some(errors) = errors {
             errors.invalid_parens.push(p.lexer.range());
         }
@@ -787,9 +784,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Is this a binding pattern?
         if p.will_need_binding_pattern() {
-            // Parentheses are valid in an assignment pattern "[(x)] = y" but not
-            // in a binding pattern "([(x)] = y) => {}", which is only known once
-            // the enclosing parenthesized expression ends.
+            // "[(x)] = y" is valid, "([(x)] = y) => {}" is not
             if let Some(errors) = errors {
                 errors
                     .invalid_parens
@@ -881,7 +876,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Is this a binding pattern?
         if p.will_need_binding_pattern() {
-            // See the array literal case above
+            // "{ a: (x) } = y" is valid, "({ a: (x) } = y) => {}" is not
             if let Some(errors) = errors {
                 errors
                     .invalid_parens

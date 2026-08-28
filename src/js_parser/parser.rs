@@ -1293,8 +1293,7 @@ pub struct DeferredErrors {
     pub(crate) invalid_expr_default_value: Option<bun_ast::Range>,
     pub(crate) invalid_expr_after_question: Option<bun_ast::Range>,
 
-    /// These errors are for arrow functions: a parenthesized expression is not
-    /// a valid binding pattern, "([ (x) ]) => {}"
+    /// These errors are for arrow functions
     pub(crate) invalid_parens: smallvec::SmallVec<[bun_ast::Range; 2]>,
 }
 

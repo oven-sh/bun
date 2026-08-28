@@ -435,10 +435,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_allow_in = p.allow_in;
         p.allow_in = true;
 
-        // Forbid "await" and "yield", but only for arrow functions. The errors
-        // are recorded into `fn_or_arrow_data_parse.arrow_arg_errors` while the
-        // arguments are parsed and copied back out below, once we know whether
-        // this is an arrow function.
+        // Forbid "await" and "yield", but only for arrow functions
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
         p.fn_or_arrow_data_parse.arrow_arg_errors = DeferredArrowArgErrors::default();
         p.fn_or_arrow_data_parse.track_arrow_arg_errors = true;
@@ -554,8 +551,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // function. The ":" after the ")" may be a return type annotation, so we
             // attempt to convert the expressions to bindings first before deciding
             // whether this is an arrow function, and only pick an arrow function if
-            // there were no conversion errors. A parenthesized item such as
-            // "a ? ((b)) : c => d" is a conversion error too.
+            // there were no conversion errors.
             if p.lexer.token == T::TEqualsGreaterThan
                 || (Self::IS_TYPESCRIPT_ENABLED
                     && invalid_log.is_empty()
@@ -596,8 +592,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // parent scope as if the scope was never pushed in the first place.
         p.pop_and_flatten_scope(scope_index);
 
-        // A plain parenthesized expression is still part of the arguments of an
-        // enclosing arrow function candidate: "(x = (await y)) => {}"
+        // "(x = (await y)) => {}" is still an error
         if p.fn_or_arrow_data_parse.track_arrow_arg_errors {
             arrow_arg_errors.merge_into(&mut p.fn_or_arrow_data_parse.arrow_arg_errors);
         }
@@ -1222,8 +1217,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     loc,
                 );
 
-                // A shorthand property binds the key as an identifier, so a
-                // reserved word is only valid as a key: "{ if: x }" but not "{ if }"
+                // "{ if: x }" is valid but "{ if }" is not
                 if p.lexer.token != T::TColon
                     && p.lexer.token != T::TOpenParen
                     && crate::lexer::keyword(name).is_none()

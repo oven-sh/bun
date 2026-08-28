@@ -55,9 +55,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let name_loc = p.lexer.loc();
             name_text = p.lexer.identifier;
 
-            // The name binds in the enclosing scope, so it cannot be a keyword
-            // there. An async function named "await" is reported by
-            // validate_function_name instead.
+            // An async function named "await" is reported by validate_function_name
             if p.lexer.token == T::TIdentifier
                 && p.is_forbidden_await_or_yield_identifier(name_text)
                 && !(is_async && name_text == b"await")
@@ -114,8 +112,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )?;
         p.fn_or_arrow_data_parse.has_argument_decorators = false;
 
-        // Checked before the forward declaration early return so that
-        // TypeScript overload signatures are covered too
+        // Before the forward declaration early return, to cover overload signatures
         p.validate_function_name(&func, FnKind::Stmt);
 
         if Self::IS_TYPESCRIPT_ENABLED {

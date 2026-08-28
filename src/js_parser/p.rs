@@ -3436,8 +3436,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// "await" and "yield" cannot bind an identifier where the enclosing
-    /// function (or module) treats them as keywords.
     pub(crate) fn is_forbidden_await_or_yield_identifier(&self, name: &[u8]) -> bool {
         (self.fn_or_arrow_data_parse.allow_await != crate::AwaitOrYield::AllowIdent
             && name == b"await")
@@ -4541,10 +4539,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(ref_)
     }
 
-    /// Prevent the function name from being the same as a function-specific
-    /// keyword. A generator declaration may be named "yield" (the name binds
-    /// in the enclosing scope), a generator expression may not (the name binds
-    /// inside the generator itself).
+    /// A generator declaration may be named "yield", a generator expression
+    /// may not: only the expression's name binds inside the generator.
     pub(crate) fn validate_function_name(&mut self, func: &G::Fn, kind: FnKind) {
         if let Some(name) = &func.name {
             // SAFETY: Symbol.original_name is an arena/source-contents slice valid for 'a.

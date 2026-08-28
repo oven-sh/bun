@@ -58,7 +58,8 @@ const TRAILER = Buffer.from("\n---- Bun! ----\n", "latin1");
 
 function readAt(fd: number, offset: number, size: number): Buffer {
   const buf = Buffer.alloc(size);
-  readSync(fd, buf, 0, size, offset);
+  const read = readSync(fd, buf, 0, size, offset);
+  if (read !== size) throw new Error(`read ${read} of ${size} bytes at offset ${offset}`);
   return buf;
 }
 

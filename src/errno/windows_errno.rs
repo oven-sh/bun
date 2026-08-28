@@ -377,22 +377,16 @@ pub use bun_core::S as s;
 // getErrno
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `get_errno(rc)` — `rc` is ignored;
+/// `get_errno(rc)` — `rc` is ignored: the caller has already seen the call
+/// fail, and this reads `GetLastError()` (which is also `WSAGetLastError()`).
+/// A non-zero code with no row in the Win32→errno table is `UNKNOWN`, like
+/// libuv's `uv_translate_sys_error`, never `SUCCESS`.
 /// NTSTATUS callers use `windows::translate_ntstatus_to_errno` directly.
 pub fn get_errno<T>(_rc: T) -> E {
-    if let Some(sys) = Win32Error::get().to_system_errno() {
-        return sys.to_e();
+    match Win32Error::get() {
+        Win32Error::SUCCESS => E::SUCCESS,
+        err => err.to_e(),
     }
-
-    // `wsa_get_last_error()` returns `Option<SystemErrno>` (already routed
-    // through the Win32Error→errno switch). An unmapped non-zero WSA code
-    // yields `None` there and falls through to `SUCCESS` — it must NOT surface
-    // as `E::UNKNOWN` (which `Win32ErrorExt::to_e`'s `unwrap_or` would do).
-    if let Some(wsa) = windows::wsa_get_last_error() {
-        return wsa.to_e();
-    }
-
-    E::SUCCESS
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -844,19 +838,13 @@ pub mod windows {
     /// `NTSTATUS` — `enum(u32) { …, _ }`. Same provenance as `Win32Error`.
     pub use bun_windows_sys::NTSTATUS;
 
-    use bun_windows_sys::ws2_32::WSAGetLastError;
-
     /// Extension trait for `Win32Error` → `SystemErrno`/`E` mapping.
     /// `bun_windows_sys` is tier-0 and cannot name `SystemErrno`, so
     /// `to_system_errno()` surfaces here as an extension method instead.
     pub trait Win32ErrorExt: Copy {
         fn to_system_errno(self) -> Option<SystemErrno>;
-        /// Convenience: Win32 error → `E`, falling back to `E::UNKNOWN` for
-        /// codes not in the Win32→errno table.
-        ///
-        /// **Note:** NOT appropriate where unmapped codes must fall through
-        /// to `SUCCESS` (e.g. the WSA path of `get_errno`); those callers
-        /// must use `to_system_errno()` and choose their own fallback.
+        /// Win32 error → `E`, falling back to `E::UNKNOWN` for codes not in
+        /// the Win32→errno table (including `SUCCESS` — check for it first).
         #[inline]
         fn to_e(self) -> E {
             self.to_system_errno()
@@ -869,15 +857,6 @@ pub mod windows {
         fn to_system_errno(self) -> Option<SystemErrno> {
             SystemErrno::init_win32_error(self)
         }
-    }
-
-    /// Feeds the raw WSA code (`c_int`) through the Win32→errno switch.
-    /// Returns `Some(SUCCESS)` for `0` and `None` for any non-zero code with
-    /// no mapping (e.g. `WSANOTINITIALISED`/`WSAEDISCON`); callers that need
-    /// a success-on-unmapped fallthrough (`getErrno`) rely on that `None`.
-    #[inline]
-    pub(crate) fn wsa_get_last_error() -> Option<SystemErrno> {
-        SystemErrno::init_c_int(WSAGetLastError())
     }
 
     /// Moved DOWN so `bun_errno` owns the only NTSTATUS→`E` mapping (cycle-break).

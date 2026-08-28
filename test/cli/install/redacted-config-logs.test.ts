@@ -272,6 +272,14 @@ describe.concurrent("redact", async () => {
       secret: "::1",
     },
     {
+      // `:` typed for `=`: the parser splits at the base64 padding, so the credential
+      // bytes sit where an option name would; the warning must not name them.
+      title: "credential key with a colon and a padded base64 value",
+      npmrc: "//registry.npmjs.org/:_auth:dXNlcjpwdw==",
+      expected: "",
+      secret: "dXNlcjpwdw",
+    },
+    {
       // The most common .npmrc authoring mistake, and the value is always a live secret.
       // npm decodes _password with Buffer.from(v, "base64"), which never throws — it
       // skips invalid bytes — so there is no diagnostic and nothing may reach stderr.

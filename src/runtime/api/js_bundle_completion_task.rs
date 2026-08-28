@@ -1182,6 +1182,9 @@ impl CompletionStruct for JSBundleCompletionTask {
             },
             inject: Vec::new(),
             external: config.external.keys().to_vec(),
+            // `configure_bundler` sets `options.loaders` too; the copy here is
+            // what the macro VM is created from (`Macro::init`).
+            loaders: config.loaders.clone(),
             main_fields: Vec::new(),
             extension_order: Vec::new(),
             env_files: Vec::new(),

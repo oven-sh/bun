@@ -381,6 +381,27 @@ describe("event loop routing around macros", () => {
   });
 });
 
+// A module that is not the entry point is transpiled on a worker thread, where no VM exists yet. The
+// macro VM created there has to take the CLI's transform options, or the macro module never sees
+// `--define`.
+test("a macro in a module transpiled off the main thread sees --define", async () => {
+  using dir = tempDir("macro-off-thread-define", {
+    "m.ts": `export function mode() {\n  return process.env.MODE ?? "none";\n}\n`,
+    "lib.ts": `import { mode } from "./m.ts" with { type: "macro" };\nexport const x = mode();\n`,
+    "index.ts": `import { x } from "./lib.ts";\nconsole.log(x);\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--define", 'process.env.MODE:"prod"', "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({ lastLine: "prod", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
 describe("--no-macros", () => {
   const files = {
     "macro.ts": `

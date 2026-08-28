@@ -4308,7 +4308,11 @@ impl<'a> Resolver<'a> {
                     }
 
                     // The "tsconfig" field names the base a bare package name loads.
-                    if let Some(tsconfig_field) = package_json.tsconfig.as_deref() {
+                    if let Some(tsconfig_field) = package_json
+                        .tsconfig
+                        .as_deref()
+                        .filter(|_| package_subpath.is_empty())
+                    {
                         join = if bun_paths::is_absolute(tsconfig_field) {
                             self.fs_ref().abs_buf(&[tsconfig_field], &mut join_buf[..])
                         } else {

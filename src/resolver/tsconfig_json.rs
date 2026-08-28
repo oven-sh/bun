@@ -633,7 +633,9 @@ impl TSConfigJSON {
                         ImportsNotUsedAsValue::Preserve | ImportsNotUsedAsValue::Err => {
                             result.preserve_imports_not_used_as_values = Some(true);
                         }
-                        ImportsNotUsedAsValue::Remove => {}
+                        ImportsNotUsedAsValue::Remove => {
+                            result.preserve_imports_not_used_as_values = Some(false);
+                        }
                         _ => {
                             let _ = log.add_range_warning_fmt(
                                 Some(source),

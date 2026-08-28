@@ -299,6 +299,23 @@ describe("tsconfig extends", () => {
       expect(exitCode).toBe(0);
     });
 
+    test.concurrent('package.json "tsconfig" field does not apply to a subpath', async () => {
+      using dir = tempDir("tsconfig-extends-pkg-tsconfig-field-subpath", {
+        ...noAutoInstall,
+        "node_modules/expo/package.json": JSON.stringify({ name: "expo", tsconfig: "./configs/other.json" }),
+        "node_modules/expo/configs/other.json": JSON.stringify({
+          compilerOptions: { jsx: "react", jsxFactory: "WRONG", jsxFragmentFactory: "WRONG" },
+        }),
+        "node_modules/expo/tsconfig.base.json": JSON.stringify(jsxBase),
+        "tsconfig.json": JSON.stringify({ extends: "expo/tsconfig.base" }),
+        "app.tsx": jsxApp,
+      });
+      const { stdout, stderr, exitCode } = await runFile(String(dir), "app.tsx");
+      expect(stderr).toBe("");
+      expect(stdout).toBe(jsxExpected);
+      expect(exitCode).toBe(0);
+    });
+
     test.concurrent('package.json "exports" subpath', async () => {
       using dir = tempDir("tsconfig-extends-pkg-exports", {
         ...noAutoInstall,

@@ -7435,6 +7435,15 @@ impl WriterContext for BufferWriter {
 
 pub type BufferPrinter = Writer<BufferWriter>;
 
+impl BufferPrinter {
+    /// Clears the buffer for the next print. The byte counter resets with it,
+    /// so `written()` stays equal to the buffer length on a reused printer.
+    pub fn reset(&mut self) {
+        self.ctx.reset();
+        self.written = 0;
+    }
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Format / GenerateSourceMap
 // ───────────────────────────────────────────────────────────────────────────

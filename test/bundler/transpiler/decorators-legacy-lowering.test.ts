@@ -1,12 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, nodeExe, tempDir } from "harness";
 import { join } from "node:path";
-import ts from "typescript";
 
 // TypeScript "experimentalDecorators" lowering. Every fixture runs three ways:
-// with `bun <file>`, bundled and minified with `bun build --minify`, and as the
-// JavaScript tsc emits for it (run with node when available). All three must
-// print the same thing, so the expected output is tsc's behavior.
+// with `bun <file>`, bundled and minified with `Bun.build`, and as the
+// JavaScript tsc emits for it, run with node. All three must print the same
+// thing, so the expected output is tsc's behavior.
 
 interface Fixture {
   source: string;
@@ -149,6 +148,23 @@ const fixtures: Record<string, Fixture> = {
     expected:
       'dec z function function\ndec Symbol(s) function function\ndec s function function\n2 3 undefined 4 5\n20 30 s 40\n[] ["constructor","y","z","p"]\n',
   },
+  "accessor storage names stay unique and class expressions are lowered too": {
+    source: `
+      class A {
+        accessor x = 1;
+        static accessor x = 2;
+        accessor #x = 3;
+        #x_accessor_storage = 4;
+        get(): number[] { return [this.x, A.x, this.#x, this.#x_accessor_storage] }
+      }
+      const k = () => "k";
+      const B = class { accessor y = 5; accessor [k()] = 7 };
+      const b: any = new B();
+      b.y += 1;
+      console.log(JSON.stringify([new A().get(), b.y, b.k, Object.getOwnPropertyNames(b).length]));
+    `,
+    expected: "[[1,2,3,4],6,7,0]\n",
+  },
 };
 
 function tsconfig(useDefineForClassFields: boolean | undefined) {
@@ -166,16 +182,29 @@ async function run(cmd: string[], cwd: string) {
   return { stdout, stderr, exitCode };
 }
 
-function tscEmit(source: string, useDefineForClassFields: boolean | undefined) {
-  return ts.transpileModule(source, {
-    compilerOptions: {
-      experimentalDecorators: true,
-      useDefineForClassFields,
-      target: ts.ScriptTarget.ES2022,
-      module: ts.ModuleKind.ESNext,
-    },
-  }).outputText;
-}
+// Runs in node: transpiles every .ts file in the directory with the typescript
+// package, then imports index.mjs. Loading typescript in a debug build of bun
+// takes far longer than a test may.
+const tscEmitAndRun = `
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const ts = require(process.argv[2]);
+  const useDefineForClassFields = process.argv[3] === "" ? undefined : process.argv[3] === "true";
+  for (const file of fs.readdirSync(".")) {
+    if (!file.endsWith(".ts")) continue;
+    const out = ts.transpileModule(fs.readFileSync(file, "utf8"), {
+      compilerOptions: {
+        experimentalDecorators: true,
+        useDefineForClassFields,
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.ESNext,
+      },
+    }).outputText;
+    fs.writeFileSync(file.replace(/\\.ts$/, ".mjs"), out.replaceAll(/from "(\\.\\/[^"]+)"/g, 'from "$1.mjs"'));
+  }
+  import("file://" + path.resolve("index.mjs"));
+`;
+const typescriptPath = require.resolve("typescript");
 
 describe("experimentalDecorators lowering", () => {
   for (const [name, fixture] of Object.entries(fixtures)) {
@@ -185,65 +214,36 @@ describe("experimentalDecorators lowering", () => {
       ...fixture.files,
     };
 
-    // One test per fixture runs the three variants one after the other, so
-    // the file does not start every subprocess at once.
-    test.concurrent(
-      name,
-      async () => {
-        {
-          using dir = tempDir("legacy-dec-run", files);
-          const { stdout, stderr, exitCode } = await run([bunExe(), "index.ts"], String(dir));
-          expect({ mode: "bun", stdout, stderr, exitCode }).toEqual({
-            mode: "bun",
-            stdout: fixture.expected,
-            stderr: "",
-            exitCode: 0,
-          });
-        }
+    test(`${name} (bun)`, async () => {
+      using dir = tempDir("legacy-dec-run", files);
+      const { stdout, stderr, exitCode } = await run([bunExe(), "index.ts"], String(dir));
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: fixture.expected, stderr: "", exitCode: 0 });
+    });
 
-        {
-          using dir = tempDir("legacy-dec-build", files);
-          const build = await Bun.build({
-            entrypoints: [join(String(dir), "index.ts")],
-            outdir: join(String(dir), "out"),
-            minify: true,
-          });
-          expect(build.logs).toEqual([]);
-          const { stdout, stderr, exitCode } = await run([bunExe(), "out/index.js"], String(dir));
-          expect({ mode: "bundled and minified", stdout, stderr, exitCode }).toEqual({
-            mode: "bundled and minified",
-            stdout: fixture.expected,
-            stderr: "",
-            exitCode: 0,
-          });
-        }
+    test(`${name} (bundled and minified)`, async () => {
+      using dir = tempDir("legacy-dec-build", files);
+      const build = await Bun.build({
+        entrypoints: [join(String(dir), "index.ts")],
+        outdir: join(String(dir), "out"),
+        minify: true,
+      });
+      expect(build.logs).toEqual([]);
+      const { stdout, stderr, exitCode } = await run([bunExe(), "out/index.js"], String(dir));
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: fixture.expected, stderr: "", exitCode: 0 });
+    });
 
-        {
-          // The reference: tsc's own output for the same source, run as plain JavaScript.
-          const emitted: Record<string, string> = {};
-          for (const [file, source] of Object.entries(files)) {
-            if (file.endsWith(".ts")) {
-              emitted[file.replace(/\.ts$/, ".mjs")] = tscEmit(source, fixture.useDefineForClassFields).replaceAll(
-                /from "(\.\/[^"]+)"/g,
-                'from "$1.mjs"',
-              );
-            }
-          }
-          using dir = tempDir("legacy-dec-tsc", emitted);
-          const { stdout, stderr, exitCode } = await run([nodeExe() ?? bunExe(), "index.mjs"], String(dir));
-          expect({ mode: "tsc emit", stdout, stderr, exitCode }).toEqual({
-            mode: "tsc emit",
-            stdout: fixture.expected,
-            stderr: "",
-            exitCode: 0,
-          });
-        }
-      },
-      30_000,
-    );
+    test.skipIf(!nodeExe())(`${name} (tsc emit)`, async () => {
+      // The reference: tsc's own output for the same source, run as plain JavaScript.
+      using dir = tempDir("legacy-dec-tsc", { ...files, "tsc-emit-and-run.cjs": tscEmitAndRun });
+      const { stdout, stderr, exitCode } = await run(
+        [nodeExe()!, "tsc-emit-and-run.cjs", typescriptPath, String(fixture.useDefineForClassFields ?? "")],
+        String(dir),
+      );
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: fixture.expected, stderr: "", exitCode: 0 });
+    });
   }
 
-  test.concurrent("decorated auto-accessor and declare fields get design:type metadata", async () => {
+  test("decorated auto-accessor and declare fields get design:type metadata", async () => {
     using dir = tempDir("legacy-dec-metadata", {
       "tsconfig.json": JSON.stringify({
         compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true },
@@ -267,7 +267,7 @@ describe("experimentalDecorators lowering", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("decorators on a class expression are a syntax error", async () => {
+  test("decorators on a class expression are a syntax error", async () => {
     using dir = tempDir("legacy-dec-class-expr", {
       "tsconfig.json": tsconfig(undefined),
       "before.ts": `
@@ -296,7 +296,7 @@ describe("experimentalDecorators lowering", () => {
     expect(param.exitCode).not.toBe(0);
   });
 
-  test.concurrent("decorators on both sides of export default are rejected", async () => {
+  test("decorators on both sides of export default are rejected", async () => {
     using dir = tempDir("legacy-dec-double", {
       "tsconfig.json": tsconfig(undefined),
       "index.ts": `
@@ -309,7 +309,7 @@ describe("experimentalDecorators lowering", () => {
     expect(exitCode).not.toBe(0);
   });
 
-  test.concurrent("Bun.Transpiler output shape matches tsc", async () => {
+  test("Bun.Transpiler output shape matches tsc", async () => {
     const transpiler = new Bun.Transpiler({
       loader: "ts",
       tsconfig: { compilerOptions: { experimentalDecorators: true } },

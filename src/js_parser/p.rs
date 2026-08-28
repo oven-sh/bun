@@ -6389,7 +6389,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut class_properties = BumpVec::<G::Property>::new_in(self.arena);
 
                 let temp_refs_before = self.temp_refs_to_declare.len();
-                let mut accessor_storage_counter: usize = 0;
+                let mut accessor_storage_names = self.private_names_in_class(&s_class.class);
 
                 for prop in s_class.class.properties.slice_mut().iter_mut() {
                     if prop.kind == PropertyKind::ClassStaticBlock {
@@ -6451,28 +6451,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         continue;
                     }
 
-                    let key = prop.key.expect("infallible: prop has key");
-                    let key_loc = key.loc;
-
-                    // `[_key = expr]() {}` so the decorator call can reuse `_key`.
-                    let mut key_for_reuse = key;
-                    let mut captured_key: Option<Expr> = None;
-                    if prop.flags.contains(Flags::Property::IsComputed)
-                        && !matches!(
-                            key.data,
-                            js_ast::ExprData::EString(_) | js_ast::ExprData::ENumber(_)
-                        )
-                    {
-                        let temp_ref = self.generate_temp_ref(Some(b"_key"));
-                        self.record_declared_symbol(temp_ref);
-                        self.record_usage(temp_ref);
-                        let temp_ident = self.new_expr(E::Identifier::init(temp_ref), key_loc);
-                        let assign = Expr::assign(temp_ident, key);
-                        prop.key = Some(assign);
-                        captured_key = Some(assign);
-                        self.record_usage(temp_ref);
-                        key_for_reuse = self.new_expr(E::Identifier::init(temp_ref), key_loc);
-                    }
+                    let key_loc = prop.key.expect("infallible: prop has key").loc;
+                    let (key_for_reuse, captured_key) = self.capture_computed_key(prop);
 
                     if is_decorated {
                         // Only a field has no property descriptor to pass along.
@@ -6547,153 +6527,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     if is_auto_accessor {
-                        // `#x_accessor_storage = init; get x() {...} set x(v) {...}`
-                        let storage_name: &'a [u8] = 'storage_name: {
-                            let base: &'a [u8] = match key.data {
-                                js_ast::ExprData::EString(s)
-                                    if s.is_utf8()
-                                        && !prop.flags.contains(Flags::Property::IsComputed)
-                                        && js_lexer::is_identifier(s.slice8()) =>
-                                {
-                                    s.string(self.arena).expect("oom")
-                                }
-                                js_ast::ExprData::EPrivateIdentifier(private) => {
-                                    &self.load_name_from_ref(private.ref_)[1..]
-                                }
-                                _ => {
-                                    let name = bun_alloc::arena_format!(
-                                        in self.arena,
-                                        "#accessor_storage_{}",
-                                        accessor_storage_counter
-                                    )
-                                    .into_bump_str()
-                                    .as_bytes();
-                                    accessor_storage_counter += 1;
-                                    break 'storage_name name;
-                                }
-                            };
-                            bun_alloc::arena_format!(
-                                in self.arena,
-                                "#{}_accessor_storage",
-                                bstr::BStr::new(base)
-                            )
-                            .into_bump_str()
-                            .as_bytes()
-                        };
-                        let storage_kind = if is_static {
-                            js_ast::symbol::Kind::PrivateStaticField
-                        } else {
-                            js_ast::symbol::Kind::PrivateField
-                        };
-                        let storage_ref = self.new_symbol(storage_kind, storage_name);
-                        let storage_key =
-                            self.new_expr(E::PrivateIdentifier { ref_: storage_ref }, key_loc);
-
-                        let mut storage_flags = Flags::PropertySet::empty();
-                        if is_static {
-                            storage_flags.insert(Flags::Property::IsStatic);
-                        }
-                        class_properties.push(G::Property {
-                            kind: PropertyKind::Normal,
-                            flags: storage_flags,
-                            key: Some(storage_key),
-                            initializer: prop.initializer.take(),
-                            ..Default::default()
-                        });
-
-                        // get x() { return this.#x_accessor_storage; }
-                        let this_expr = self.new_expr(E::This {}, key_loc);
-                        let storage_index =
-                            self.new_expr(E::PrivateIdentifier { ref_: storage_ref }, key_loc);
-                        let get_value = self.new_expr(
-                            E::Index {
-                                target: this_expr,
-                                index: storage_index,
-                                optional_chain: None,
-                            },
-                            key_loc,
+                        self.lower_ts_auto_accessor(
+                            prop,
+                            key_for_reuse,
+                            &mut accessor_storage_names,
+                            &mut class_properties,
                         );
-                        let get_body = self.arena.alloc_slice_copy(&[self.s(
-                            S::Return {
-                                value: Some(get_value),
-                            },
-                            key_loc,
-                        )]);
-                        let get_fn = self.new_expr(
-                            E::Function {
-                                func: G::Fn {
-                                    body: G::FnBody {
-                                        stmts: bun_ast::StoreSlice::new_mut(get_body),
-                                        loc: key_loc,
-                                    },
-                                    open_parens_loc: key_loc,
-                                    ..Default::default()
-                                },
-                            },
-                            key_loc,
-                        );
-
-                        // set x(v) { this.#x_accessor_storage = v; }
-                        let setter_arg_ref = self.new_symbol(js_ast::symbol::Kind::Other, b"v");
-                        let this_expr = self.new_expr(E::This {}, key_loc);
-                        let storage_index =
-                            self.new_expr(E::PrivateIdentifier { ref_: storage_ref }, key_loc);
-                        let set_target = self.new_expr(
-                            E::Index {
-                                target: this_expr,
-                                index: storage_index,
-                                optional_chain: None,
-                            },
-                            key_loc,
-                        );
-                        self.record_usage(setter_arg_ref);
-                        let set_value = self.new_expr(E::Identifier::init(setter_arg_ref), key_loc);
-                        let set_body = self
-                            .arena
-                            .alloc_slice_copy(&[Stmt::assign(set_target, set_value)]);
-                        let setter_binding = self.b(
-                            B::Identifier {
-                                r#ref: setter_arg_ref,
-                            },
-                            key_loc,
-                        );
-                        let setter_args = self.arena.alloc(G::Arg {
-                            binding: setter_binding,
-                            ..Default::default()
-                        });
-                        let set_fn = self.new_expr(
-                            E::Function {
-                                func: G::Fn {
-                                    args: bun_ast::StoreSlice::new_mut(core::slice::from_mut(
-                                        setter_args,
-                                    )),
-                                    body: G::FnBody {
-                                        stmts: bun_ast::StoreSlice::new_mut(set_body),
-                                        loc: key_loc,
-                                    },
-                                    open_parens_loc: key_loc,
-                                    ..Default::default()
-                                },
-                            },
-                            key_loc,
-                        );
-
-                        let mut accessor_flags = prop.flags;
-                        accessor_flags.insert(Flags::Property::IsMethod);
-                        class_properties.push(G::Property {
-                            kind: PropertyKind::Get,
-                            flags: accessor_flags,
-                            key: prop.key,
-                            value: Some(get_fn),
-                            ..Default::default()
-                        });
-                        class_properties.push(G::Property {
-                            kind: PropertyKind::Set,
-                            flags: accessor_flags,
-                            key: Some(key_for_reuse),
-                            value: Some(set_fn),
-                            ..Default::default()
-                        });
                         continue;
                     }
 
@@ -6821,6 +6660,233 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 expr.loc,
             )]),
         }
+    }
+
+    /// `accessor` members of a TypeScript class expression under
+    /// `experimentalDecorators`. A class statement goes through `lower_class`.
+    pub(crate) fn lower_class_expr_auto_accessors(&mut self, class: &mut G::Class) {
+        use js_ast::g::PropertyKind;
+        if !class
+            .properties
+            .iter()
+            .any(|p| p.kind == PropertyKind::AutoAccessor)
+        {
+            return;
+        }
+
+        let temp_refs_before = self.temp_refs_to_declare.len();
+        let mut storage_names = self.private_names_in_class(class);
+        let mut properties =
+            BumpVec::<G::Property>::with_capacity_in(class.properties.len() + 2, self.arena);
+        for prop in class.properties.slice_mut().iter_mut() {
+            if prop.kind != PropertyKind::AutoAccessor {
+                properties.push(core::mem::take(prop));
+                continue;
+            }
+            let (key_for_reuse, _) = self.capture_computed_key(prop);
+            self.lower_ts_auto_accessor(prop, key_for_reuse, &mut storage_names, &mut properties);
+        }
+        class.properties = bun_ast::StoreSlice::new_mut(properties.into_bump_slice_mut());
+
+        if let Some(temp_decls) = self.drain_capture_temp_decls(temp_refs_before, class.body_loc)
+            && let Some(stmt_list) = self.nearest_stmt_list_mut()
+        {
+            stmt_list.push(temp_decls);
+        }
+    }
+
+    /// The `#names` a class body declares, so generated storage names stay unique.
+    fn private_names_in_class(&self, class: &G::Class) -> BumpVec<'a, &'a [u8]> {
+        let mut names = BumpVec::<&'a [u8]>::new_in(self.arena);
+        for prop in class.properties.iter() {
+            if let Some(js_ast::ExprData::EPrivateIdentifier(private)) = prop.key.map(|k| k.data) {
+                names.push(self.load_name_from_ref(private.ref_));
+            }
+        }
+        names
+    }
+
+    /// Rewrites a computed key to `[_key = expr]` and returns `_key` for the
+    /// other uses of the key, plus the assignment itself. A key that is a
+    /// literal, or not computed, is returned as is.
+    fn capture_computed_key(&mut self, prop: &mut G::Property) -> (Expr, Option<Expr>) {
+        let key = prop.key.expect("infallible: prop has key");
+        if !prop.flags.contains(Flags::Property::IsComputed)
+            || matches!(
+                key.data,
+                js_ast::ExprData::EString(_) | js_ast::ExprData::ENumber(_)
+            )
+        {
+            return (key, None);
+        }
+        let temp_ref = self.generate_temp_ref(Some(b"_key"));
+        self.record_declared_symbol(temp_ref);
+        self.record_usage(temp_ref);
+        self.record_usage(temp_ref);
+        let temp_ident = self.new_expr(E::Identifier::init(temp_ref), key.loc);
+        let assign = Expr::assign(temp_ident, key);
+        prop.key = Some(assign);
+        (
+            self.new_expr(E::Identifier::init(temp_ref), key.loc),
+            Some(assign),
+        )
+    }
+
+    /// `accessor x = init` becomes `#x_accessor_storage = init` plus a getter
+    /// and a setter. `key_for_reuse` is the key the setter uses.
+    fn lower_ts_auto_accessor(
+        &mut self,
+        prop: &mut G::Property,
+        key_for_reuse: Expr,
+        storage_names: &mut BumpVec<'a, &'a [u8]>,
+        out: &mut BumpVec<'a, G::Property>,
+    ) {
+        use js_ast::g::PropertyKind;
+
+        let key = prop.key.expect("infallible: prop has key");
+        let key_loc = key.loc;
+        let is_static = prop.flags.contains(Flags::Property::IsStatic);
+
+        let base: &'a [u8] = match key.data {
+            js_ast::ExprData::EString(s)
+                if s.is_utf8()
+                    && !prop.flags.contains(Flags::Property::IsComputed)
+                    && js_lexer::is_identifier(s.slice8()) =>
+            {
+                s.string(self.arena).expect("oom")
+            }
+            js_ast::ExprData::EPrivateIdentifier(private) => {
+                &self.load_name_from_ref(private.ref_)[1..]
+            }
+            _ => b"",
+        };
+        let mut storage_name: &'a [u8] =
+            bun_alloc::arena_format!(in self.arena, "#{}_accessor_storage", bstr::BStr::new(base))
+                .into_bump_str()
+                .as_bytes();
+        let mut suffix = 1;
+        while storage_names.iter().any(|name| *name == storage_name) {
+            storage_name = bun_alloc::arena_format!(
+                in self.arena,
+                "#{}_accessor_storage_{}",
+                bstr::BStr::new(base),
+                suffix
+            )
+            .into_bump_str()
+            .as_bytes();
+            suffix += 1;
+        }
+        storage_names.push(storage_name);
+
+        let storage_kind = if is_static {
+            js_ast::symbol::Kind::PrivateStaticField
+        } else {
+            js_ast::symbol::Kind::PrivateField
+        };
+        let storage_ref = self.new_symbol(storage_kind, storage_name);
+        let storage_key = self.new_expr(E::PrivateIdentifier { ref_: storage_ref }, key_loc);
+
+        let mut storage_flags = Flags::PropertySet::empty();
+        if is_static {
+            storage_flags.insert(Flags::Property::IsStatic);
+        }
+        out.push(G::Property {
+            kind: PropertyKind::Normal,
+            flags: storage_flags,
+            key: Some(storage_key),
+            initializer: prop.initializer.take(),
+            ..Default::default()
+        });
+
+        // get x() { return this.#x_accessor_storage; }
+        let this_expr = self.new_expr(E::This {}, key_loc);
+        let storage_index = self.new_expr(E::PrivateIdentifier { ref_: storage_ref }, key_loc);
+        let get_value = self.new_expr(
+            E::Index {
+                target: this_expr,
+                index: storage_index,
+                optional_chain: None,
+            },
+            key_loc,
+        );
+        let get_body = self.arena.alloc_slice_copy(&[self.s(
+            S::Return {
+                value: Some(get_value),
+            },
+            key_loc,
+        )]);
+        let get_fn = self.new_expr(
+            E::Function {
+                func: G::Fn {
+                    body: G::FnBody {
+                        stmts: bun_ast::StoreSlice::new_mut(get_body),
+                        loc: key_loc,
+                    },
+                    open_parens_loc: key_loc,
+                    ..Default::default()
+                },
+            },
+            key_loc,
+        );
+
+        // set x(v) { this.#x_accessor_storage = v; }
+        let setter_arg_ref = self.new_symbol(js_ast::symbol::Kind::Other, b"v");
+        let this_expr = self.new_expr(E::This {}, key_loc);
+        let storage_index = self.new_expr(E::PrivateIdentifier { ref_: storage_ref }, key_loc);
+        let set_target = self.new_expr(
+            E::Index {
+                target: this_expr,
+                index: storage_index,
+                optional_chain: None,
+            },
+            key_loc,
+        );
+        self.record_usage(setter_arg_ref);
+        let set_value = self.new_expr(E::Identifier::init(setter_arg_ref), key_loc);
+        let set_body = self
+            .arena
+            .alloc_slice_copy(&[Stmt::assign(set_target, set_value)]);
+        let setter_binding = self.b(
+            B::Identifier {
+                r#ref: setter_arg_ref,
+            },
+            key_loc,
+        );
+        let setter_args = self.arena.alloc(G::Arg {
+            binding: setter_binding,
+            ..Default::default()
+        });
+        let set_fn = self.new_expr(
+            E::Function {
+                func: G::Fn {
+                    args: bun_ast::StoreSlice::new_mut(core::slice::from_mut(setter_args)),
+                    body: G::FnBody {
+                        stmts: bun_ast::StoreSlice::new_mut(set_body),
+                        loc: key_loc,
+                    },
+                    open_parens_loc: key_loc,
+                    ..Default::default()
+                },
+            },
+            key_loc,
+        );
+
+        let mut accessor_flags = prop.flags;
+        accessor_flags.insert(Flags::Property::IsMethod);
+        out.push(G::Property {
+            kind: PropertyKind::Get,
+            flags: accessor_flags,
+            key: prop.key,
+            value: Some(get_fn),
+            ..Default::default()
+        });
+        out.push(G::Property {
+            kind: PropertyKind::Set,
+            flags: accessor_flags,
+            key: Some(key_for_reuse),
+            value: Some(set_fn),
+            ..Default::default()
+        });
     }
 
     // Helper extracted from lower_class to keep that fn readable; condenses

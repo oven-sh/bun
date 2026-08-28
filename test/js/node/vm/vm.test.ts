@@ -1974,3 +1974,112 @@ describe("node:vm lineOffset/columnOffset at the edge of int32", () => {
     expect(position).toBeLessThanOrEqual(INT32_MAX);
   });
 });
+
+// FinalizationRegistry cleanup and Atomics.waitAsync wake-ups reach script through JSC's DeferredWorkTimer,
+// which Bun drives from its own event loop. The end of the collection that kills a context cancels the
+// context's pending work. Bun's tickets used to be kept where that cancellation could not see them, so the
+// work still ran once the context was dead: the cleanup job read a destructed registry (BUN-4NCK) or called
+// into the dead context (BUN-4M46), and a notify resolved a destructed promise. The context has to die
+// without its destructor running first (that cancels the work too), so the fixtures keep it out of the
+// eagerly swept cells. In a child because the failure mode is a segfault.
+describe("deferred work of a context that is collected while the work is pending", () => {
+  // `body` declares setup(), which creates the context and queues the work, afterCollection(), and
+  // afterRound(collected), which says whether this round's context died.
+  function fixture(body: string) {
+    return `
+      const vm = require("node:vm");
+      const { fullGC, releaseWeakRefs } = require("bun:jsc");
+
+      // The first 8 cells of a subspace are swept, and so destructed, as soon as the collection that kills
+      // them ends. With 8 contexts kept alive, every context below lands in a block, which is swept lazily.
+      // The registry inside a context is among the first 8 cells of its own subspace, so it is destructed
+      // by the time fullGC() returns.
+      const keep = [];
+      for (let i = 0; i < 8; i++) keep.push(vm.createContext({}));
+
+      // Which rounds' sandboxes have died, so that a round only looks at its own context.
+      const collectedRounds = new Set();
+      const observer = new FinalizationRegistry(round => collectedRounds.add(round));
+
+      let round = 0;
+      function createContext(sandbox) {
+        observer.register(sandbox, round);
+        return vm.createContext(sandbox);
+      }
+
+      // Runs fn at the bottom of a deep stack. The slots that held pointers to what fn created then lie
+      // below everything the collections scan, so they cannot keep the context alive. Not a tail call.
+      function deep(depth, fn) {
+        if (depth === 0) return fn();
+        const r = deep(depth - 1, fn);
+        return r;
+      }
+
+      ${body}
+
+      for (round = 0; round < 5; round++) {
+        deep(500, setup);
+        // The structure shared by every context roots the most recently created one.
+        vm.createContext({});
+        // createContext() also tracks the sandbox in a WeakRef, which roots it until the end of the turn.
+        releaseWeakRefs();
+        // The context dies here. Nothing is swept synchronously, so its destructor does not run yet.
+        fullGC();
+        afterCollection();
+        // The next tick runs whatever was queued, then the observer's job for this round's sandbox.
+        for (let i = 0; !collectedRounds.has(round) && i < 50; i++) await Bun.sleep(1);
+        afterRound(collectedRounds.has(round));
+      }
+      // A round whose context survived the collection exercised nothing.
+      if (collectedRounds.size === 0) throw new Error("no round collected its context");
+      console.log("done");
+    `;
+  }
+
+  async function run(code: string) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
+  }
+
+  test.concurrent("a FinalizationRegistry cleanup job queued before the collection does not run", async () => {
+    await run(
+      fixture(`
+        function setup() {
+          const context = createContext({});
+          vm.runInContext(
+            "globalThis.registry = new FinalizationRegistry(() => {}); for (let i = 0; i < 4; i++) registry.register({}, i);",
+            context,
+          );
+          // The targets are dead and the registry is alive: this queues the registry's cleanup job.
+          Bun.gc(true);
+        }
+        function afterCollection() {}
+        function afterRound() {}
+      `),
+    );
+  });
+
+  test.concurrent("a notify for the collected context's Atomics.waitAsync does not run its wake-up", async () => {
+    await run(
+      fixture(`
+        const i32 = new Int32Array(new SharedArrayBuffer(4));
+        let wakeUps = 0;
+        const wake = () => wakeUps++;
+        function setup() {
+          const context = createContext({ i32, wake });
+          vm.runInContext("Atomics.waitAsync(i32, 0, 0).value.then(wake)", context);
+        }
+        let wakeUpsBefore = 0;
+        function afterCollection() {
+          wakeUpsBefore = wakeUps;
+          // The wake-up resolves the context's promise on the next tick, if the waiter is still there.
+          Atomics.notify(i32, 0);
+        }
+        function afterRound(collected) {
+          if (collected && wakeUps !== wakeUpsBefore) throw new Error("the wake-up ran in a collected context");
+        }
+      `),
+    );
+  });
+});

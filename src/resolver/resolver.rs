@@ -4039,7 +4039,8 @@ impl<'a> Resolver<'a> {
         dirname_fd: FD,
         chain: &mut TSConfigChain,
     ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
-        if chain.visiting.iter().any(|visiting| *visiting == file) {
+        let visiting: &[&[u8]] = &chain.visiting;
+        if visiting.contains(&file) {
             return Err(crate::Error::ParseErrorImportCycle);
         }
 

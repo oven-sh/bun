@@ -1241,10 +1241,8 @@ impl<'a> LinkerContext<'a> {
             write!(&mut buf, "{}", DebugIDFormatter { id: isolated_hash })
                 .expect("infallible: in-memory write");
             j.push_owned(buf.into_boxed_slice());
-            j.push_static(b"\",\n  \"names\": [");
-        } else {
-            j.push_static(b"\",\n  \"names\": [");
         }
+        j.push_static(b"\",\n  \"names\": [");
 
         let mut is_first_name = true;
         for chunk in source_map_chunks {

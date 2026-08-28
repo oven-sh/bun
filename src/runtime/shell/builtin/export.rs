@@ -29,8 +29,11 @@ impl Export {
         let mut errors: Vec<u8> = Vec::new();
         for i in 0..argc {
             let s = Builtin::of(interp, cmd).arg_bytes(i);
-            let eq = bun_core::strings::index_of_char_usize(s, b'=');
-            if eq.is_none() && !is_valid_var_name(s) {
+            let (name, value) = match bun_core::strings::index_of_char_usize(s, b'=') {
+                Some(eq) => (&s[..eq], &s[eq + 1..]),
+                None => (s, &b""[..]),
+            };
+            if !is_valid_var_name(name) {
                 use std::io::Write as _;
                 let _ = writeln!(
                     &mut errors,
@@ -40,10 +43,6 @@ impl Export {
                 );
                 continue;
             }
-            let (name, value) = match eq {
-                Some(eq) => (&s[..eq], &s[eq + 1..]),
-                None => (s, &b""[..]),
-            };
             // The argv backing is freed when the Cmd retires,
             // so the key/value MUST be duplicated into ref-counted storage —
             // `init_slice` here would leave dangling EnvStr in `export_env`.

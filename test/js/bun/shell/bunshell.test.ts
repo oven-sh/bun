@@ -1414,6 +1414,11 @@ describe("deno_task", () => {
       .exitCode(1)
       .runAsTest("export rejects empty identifier");
 
+    TestBuilder.command`export a-b=5 1FOO=bar OK=1 || echo "failed OK=$OK"`
+      .stdout("failed OK=1\n")
+      .stderr("export: `a-b=5`: not a valid identifier\nexport: `1FOO=bar`: not a valid identifier\n")
+      .runAsTest("export rejects invalid identifier in an assignment");
+
     TestBuilder.command`export FOO`.stderr("").exitCode(0).runAsTest("export accepts bare valid identifier");
   });
 

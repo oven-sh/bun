@@ -2447,10 +2447,7 @@ pub fn err_generic(fmt: &str, args: impl FmtTuple) {
 }
 
 /// What `err()` needs from a failed syscall without naming `bun_sys::Error`:
-/// the `SystemErrno` tag (`"ENOENT"`, or `"UNKNOWN"` when the code has no
-/// tag) and the syscall. bun_sys's `ErrName` impl projects its `Error` onto
-/// this; code in bun_core that holds only a raw OS error code (`reload_process`)
-/// builds one from the `ErrnoNames` hook.
+/// the `SystemErrno` tag (`"ENOENT"`, or `"UNKNOWN"`) and the syscall name.
 #[derive(Clone, Copy)]
 pub struct SysErrInfo {
     pub tag_name: &'static str,

@@ -4470,15 +4470,14 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     }
 }
 
-/// `EACCES: Permission denied: Failed to reload process (execve)`. Flushed
-/// here: the `may_return` caller is the crash handler, which re-raises the
-/// fatal signal without a flush, so a buffered line would never be seen.
+/// `EACCES: Permission denied: Failed to reload process (execve)`
 fn report_reload_failure(tag_name: &'static str, syscall: &'static str) {
     crate::output::err(
         crate::output::SysErrInfo { tag_name, syscall },
         "Failed to reload process",
         (),
     );
+    // The crash handler re-raises the fatal signal right after this returns, without a flush.
     crate::output::flush();
 }
 

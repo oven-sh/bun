@@ -1449,10 +1449,9 @@ pub trait InsertionHandler {
     ) -> Result<(), AllocError>;
 }
 
-/// Where a route file or directory name sorts in the scan, from the Next.js
-/// bracket syntax: a static name first, then `[param]`, `[...catchAll]`, and
-/// `[[...optionalCatchAll]]`. `match_slow` takes the first dynamic pattern
-/// that matches, so a more specific name has to be scanned first.
+/// Static names scan before `[param]`, then `[...catchAll]`, then
+/// `[[...optionalCatchAll]]`: `match_slow` takes the first dynamic route
+/// that matches, so the more specific name has to be inserted first.
 fn scan_precedence(name: &[u8]) -> u8 {
     if name.starts_with(b"[[") {
         3
@@ -1500,9 +1499,8 @@ impl FrameworkRouter {
         let fs_impl = unsafe { core::ptr::addr_of_mut!((*fs).fs) };
 
         {
-            // Snapshot the cached `DirEntry`'s entry pointers under `entries_mutex`
-            // (other threads rewrite the map in place under that lock), then drop
-            // the guard: the `read_dir_info_ignore_error` recursion below re-locks it.
+            // Snapshot under `entries_mutex` (other threads rewrite the map in place),
+            // then drop the guard: the `read_dir_info_ignore_error` recursion re-locks it.
             let mut entry_ptrs: Vec<*mut bun_resolver::fs::Entry> = {
                 let _entries_lock = fs_ref.fs.entries_mutex.lock_guard();
                 match dir_info.get_entries_const() {
@@ -1510,11 +1508,8 @@ impl FrameworkRouter {
                     None => return Ok(()),
                 }
             };
-            // The scan order is the insertion order, which `insert` turns into
-            // the sibling order of the route tree and the precedence of
-            // `dynamic_routes` in `match_slow`. Sort by precedence class, then
-            // by basename, so neither depends on the hash table layout or on
-            // the readdir order.
+            // Insertion order is the sibling order in the route tree and the match
+            // precedence, so it must not depend on the hash layout or readdir order.
             bun_collections::index_sort::sort_slice_unstable_by(&mut entry_ptrs, |&a, &b| {
                 // SAFETY: EntryStore-owned pointers, valid for the process lifetime.
                 let (a, b) = unsafe { ((*a).base(), (*b).base()) };

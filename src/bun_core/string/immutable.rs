@@ -19,8 +19,6 @@ pub use self::unicode::{
 // Sub-modules (peer files under `src/string/immutable/`).
 #[path = "immutable/escapeHTML.rs"]
 pub mod escape_html;
-#[path = "immutable/exact_size_matcher.rs"]
-pub mod exact_size_matcher;
 pub use escape_html::{html_escape_entity, xml_escape_entity};
 #[path = "immutable/unicode.rs"]
 mod unicode_draft;
@@ -1995,8 +1993,6 @@ pub fn to_ascii_hex_value(character: u8) -> u8 {
     debug_assert!(character.is_ascii_hexdigit());
     crate::fmt::hex_digit_value(character).expect("ascii hex digit")
 }
-
-pub use exact_size_matcher::ExactSizeMatcher;
 
 pub const UNICODE_REPLACEMENT: u32 = 0xFFFD;
 

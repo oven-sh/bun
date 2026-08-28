@@ -116,7 +116,7 @@ describe("panics through panic_impl and through the std panic hook print the sam
     await using proc = Bun.spawn({
       cmd: [bunExe(), fixture, approach, "--debug-crash-handler-use-trace-string"],
       env: noReportEnv,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "ignore", "pipe"],
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
@@ -183,7 +183,7 @@ describe("the panic hook caps the reported message at 1024 bytes", () => {
         "--debug-crash-handler-use-trace-string",
       ],
       env: noReportEnv,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "ignore", "pipe"],
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
@@ -257,7 +257,7 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), fixture, approach, "--debug-crash-handler-use-trace-string"],
       env: noReportEnv,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "ignore", "pipe"],
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 

@@ -230,9 +230,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if opts.allow_ts_decorators {
                 // Parameter decorators are evaluated outside the method, with the class.
                 let inner_allow_await = p.fn_or_arrow_data_parse.allow_await;
+                let inner_allow_yield = p.fn_or_arrow_data_parse.allow_yield;
                 let inner_needs_async_loc = p.fn_or_arrow_data_parse.needs_async_loc;
                 let inner_scope = p.current_scope;
                 p.fn_or_arrow_data_parse.allow_await = old_fn_or_arrow_data.allow_await;
+                p.fn_or_arrow_data_parse.allow_yield = old_fn_or_arrow_data.allow_yield;
                 p.fn_or_arrow_data_parse.needs_async_loc = old_fn_or_arrow_data.needs_async_loc;
                 if let Some(decorator_scope) = opts.decorator_scope {
                     p.current_scope = decorator_scope;
@@ -240,6 +242,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let decorators = p.parse_type_script_decorators();
                 p.current_scope = inner_scope;
                 p.fn_or_arrow_data_parse.allow_await = inner_allow_await;
+                p.fn_or_arrow_data_parse.allow_yield = inner_allow_yield;
                 p.fn_or_arrow_data_parse.needs_async_loc = inner_needs_async_loc;
                 ts_decorators = decorators?;
                 if ts_decorators.len_u32() > 0 {

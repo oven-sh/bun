@@ -90,14 +90,16 @@ const fixtures: Record<string, Fixture> = {
     `,
     expected: "dec arg = 1\n2\n",
   },
-  "a parameter decorator can await in an enclosing async function": {
+  "a parameter decorator can await or yield in the enclosing function": {
     source: `
       function pd(v: any) { console.log("dec arg =", v); return (...a: any[]) => {} }
       async function f(foo: Promise<number>) { class C { m(@pd(await foo) a: any) {} } return new C() }
       await f(Promise.resolve(42));
+      function* g() { class D { *m(@pd(yield 1) a: any) {} } return new D() }
+      const it = g(); console.log(it.next().value, it.next(43).done);
       console.log("done");
     `,
-    expected: "dec arg = 42\ndone\n",
+    expected: "dec arg = 42\ndec arg = 43\n1 true\ndone\n",
   },
   "decorators that read a static #private name run inside the class": {
     source: `

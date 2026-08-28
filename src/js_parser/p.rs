@@ -1505,9 +1505,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Expr {
         let ref_ = ident.ref_;
 
-        // A direct eval in this scope can declare a new binding with the same
-        // name (sloppy `eval("var x = ...")`), so the constant must stay a
-        // reference.
+        // A sloppy direct eval can declare a binding that shadows the const.
         if self.options.features.inlining && !self.current_scope().contains_direct_eval {
             if let Some(replacement) = self.const_values.get(&ref_) {
                 let replacement = *replacement;
@@ -8031,17 +8029,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // A direct eval at module scope can reach every top-level name. Nested
-        // scopes are pinned in `pop_scope`; the module scope never pops, so pin
-        // it here. Without bundling the file is printed on its own and every
-        // top-level name, import bindings included, must keep its name. When
-        // the bundler wraps this file in a CommonJS closure those names stay
-        // private to it, so pin them too. A flat ESM file's top-level names
-        // share the chunk's scope with other files', so they stay renameable
-        // (as in esbuild) and eval may not see them. When bundling, import
-        // bindings are left out: the linker merges them into the exporting
-        // file's symbol, which would pin that name in every chunk that
-        // references it.
+        // The module scope never goes through `pop_scope`, so its direct-eval
+        // pinning happens here. Exempt, as in esbuild: the top level of a
+        // bundled ESM file (it shares the chunk scope with other files) and,
+        // when bundling, import bindings (the linker merges them into the
+        // exporting file's symbol, which would pin that name in every chunk).
         if self.module_scope().contains_direct_eval
             && (!bundling || exports_kind == js_ast::ExportsKind::Cjs)
         {

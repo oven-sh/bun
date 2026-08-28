@@ -252,8 +252,6 @@ impl OutputFile {
     }
 
     pub(crate) fn copy_to(&self, rel_path: &[u8], dir: Fd) -> Result<(), Error> {
-        // Both `File`s close on Drop. The source is opened first so a missing
-        // source does not leave an empty destination behind.
         let src = bun_sys::File::openat(Fd::cwd(), self.src_path.text, bun_sys::O::RDONLY, 0)?;
         let dest = bun_sys::File::openat(
             dir,

@@ -1,9 +1,10 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
+import { constants as osConstants } from "node:os";
 import { join } from "node:path";
 
 const skip = !fault.available() || isWindows;
@@ -398,5 +399,159 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
       new Promise<void>(resolve => h.req.once("close", () => resolve())),
     ]);
     expect(h.client.closed || h.client.destroyed).toBe(true);
+  });
+});
+
+// The error Bun.connect() reports for a dial that fails. handle_connect_error
+// builds it from one table (bun_errno::connect_errno_code), whether the dial
+// failed inside connect(2) or later: the codes a unix path or a local bind
+// can produce, and ECONNRESET, keep their name, every other errno is reported
+// as ECONNREFUSED. The errno itself comes from connect(2);
+// bsd_create_connect_socket hands it back through its error out-param before
+// it closes the failed socket, so what that close leaves in errno is never
+// read. The rows with a close rule check that.
+describe.skipIf(skip)("connect() reports the errno the failed dial left", () => {
+  type ErrnoName = keyof typeof osConstants.errno;
+  // [dial, errno connect(2) fails with (null: the real connect(2) runs, and the
+  //  path does not exist), errno the close of the failed socket leaves behind,
+  //  code Bun.connect() reports]
+  type Case = ["unix" | "tcp", ErrnoName | null, ErrnoName | null, ErrnoName];
+
+  function reported(code: ErrnoName) {
+    return { code, errno: -osConstants.errno[code], syscall: "connect", message: "Failed to connect", callback: code };
+  }
+
+  // One child per table: a fault rule is process wide, and the test runner's
+  // own sockets would consume it. The unix dial uses a relative path in an
+  // empty directory, so it is short on every platform and never exists.
+  async function dial(cases: readonly Case[]) {
+    using dir = tempDir("connect-errno", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+        const { errno } = require("node:os").constants;
+        // Gives the tcp dials a port. No dial reaches it: connect(2) fails first.
+        const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+        const dials = {
+          unix: { unix: "missing.sock" },
+          tcp: { hostname: "127.0.0.1", port: listener.port },
+        };
+        const results = [];
+        for (const [dial, connectErrno, closeErrno] of ${JSON.stringify(cases)}) {
+          let callback = "connectError not called";
+          try {
+            if (connectErrno !== null) fault.set({ syscall: "connect", action: "errno", errno: errno[connectErrno] });
+            if (closeErrno !== null) fault.set({ syscall: "close", action: "errno", errno: errno[closeErrno] });
+            await Bun.connect({ ...dials[dial], socket: { data() {}, connectError(_s, e) { callback = e.code; } } });
+            results.push("connected");
+          } catch (e) {
+            results.push({ code: e.code, errno: e.errno, syscall: e.syscall, message: e.message, callback });
+          } finally {
+            fault.clear();
+          }
+        }
+        listener.stop(true);
+        console.log(JSON.stringify(results));
+        `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    return JSON.parse(stdout);
+  }
+
+  test.concurrent("a code in the table keeps its name, any other errno is reported as ECONNREFUSED", async () => {
+    const cases: Case[] = [
+      ["unix", "ENOENT", null, "ENOENT"],
+      ["unix", "ENOTSOCK", null, "ENOTSOCK"],
+      ["unix", "EACCES", null, "EACCES"],
+      // libuv reports a pipe path it cannot express as EINVAL.
+      ["unix", "ENAMETOOLONG", null, "EINVAL"],
+      ["unix", "EPERM", null, "ECONNREFUSED"],
+      ["tcp", "EADDRINUSE", null, "EADDRINUSE"],
+      ["tcp", "EADDRNOTAVAIL", null, "EADDRNOTAVAIL"],
+      // Kept by the table; before, a dial that failed inside connect(2) went
+      // through a narrower list and reported ECONNREFUSED for it.
+      ["tcp", "ECONNRESET", null, "ECONNRESET"],
+      ["tcp", "ENETUNREACH", null, "ECONNREFUSED"],
+      ["tcp", "ETIMEDOUT", null, "ECONNREFUSED"],
+    ];
+    expect(await dial(cases)).toEqual(cases.map(([, , , code]) => reported(code)));
+  });
+
+  test.concurrent("the errno of connect(2) survives a close that fails", async () => {
+    const cases: Case[] = [
+      ["unix", null, "EINTR", "ENOENT"],
+      ["tcp", "EADDRNOTAVAIL", "EINTR", "EADDRNOTAVAIL"],
+    ];
+    expect(await dial(cases)).toEqual(cases.map(([, , , code]) => reported(code)));
+  });
+
+  // A hostname is resolved from the event loop, and its addresses are dialed
+  // one after the other. When none connects, the error reported is the last
+  // address's own, not a blanket ECONNREFUSED. The rule fires for every
+  // address; EINVAL is one of the codes the table keeps.
+  test.concurrent("a hostname whose every address fails reports the last address's error", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+        const { errno } = require("node:os").constants;
+        const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+        fault.set({ syscall: "connect", action: "errno", errno: errno.EINVAL, repeat: 8 });
+        let callback = "connectError not called";
+        try {
+          await Bun.connect({ hostname: "localhost", port: listener.port, socket: { data() {}, connectError(_s, e) { callback = e.code; } } });
+          console.log("connected");
+        } catch (e) {
+          console.log(JSON.stringify({ code: e.code, errno: e.errno, syscall: e.syscall, message: e.message, callback }));
+        } finally {
+          fault.clear();
+          listener.stop(true);
+        }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(JSON.parse(stdout)).toEqual(reported("EINVAL"));
+  });
+
+  // A real refusal, no rule. The kernel reports it either from connect(2) or
+  // later through SO_ERROR (on_connect_error); both end in the same table.
+  test.concurrent("a refused connect is reported with the platform's ECONNREFUSED errno", async () => {
+    const probe = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const port = probe.port;
+    probe.stop(true);
+
+    let callback = "connectError not called";
+    const e: any = await Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      socket: {
+        data() {},
+        connectError(_s, err: any) {
+          callback = err.code;
+        },
+      },
+    }).then(
+      () => new Error("connected"),
+      err => err,
+    );
+    expect({ code: e.code, errno: e.errno, syscall: e.syscall, message: e.message, callback }).toEqual(
+      reported("ECONNREFUSED"),
+    );
   });
 });

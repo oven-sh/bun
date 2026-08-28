@@ -591,6 +591,7 @@ export type SocketFaultSyscall =
   | "recvmsg"
   | "connect"
   | "accept"
+  | "close"
   | "ssl_loop_buffer"
   | "poll_start"
   | "session_buffer";

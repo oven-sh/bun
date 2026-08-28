@@ -7,6 +7,7 @@
 //! read/written directly by C (loop.c walks `head_sockets`/`iterator`,
 //! context.c flips `linked`).
 
+use bun_errno::SystemErrno;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
@@ -84,7 +85,14 @@ impl Default for SocketGroup {
 pub enum ConnectResult {
     Socket(*mut us_socket_t),
     Connecting(*mut ConnectingSocket),
-    Failed,
+    /// The dial failed before there was a socket to report on; `errno` is the
+    /// error of the call that failed (`socket`, `bind`, `connect`, or building
+    /// the unix address), mapped from the OS code with
+    /// [`bun_errno::connect_errno`] like the code the connect error callback
+    /// receives, so both exits report in one numbering.
+    Failed {
+        errno: SystemErrno,
+    },
 }
 
 impl SocketGroup {
@@ -229,6 +237,7 @@ impl SocketGroup {
         // `us_connecting_socket_t*` placeholder. Named to match the C side so
         // the branches read the right way round — see PR review #3161005603.
         let mut has_dns_resolved: c_int = 0;
+        let mut errno: c_int = 0;
         // SAFETY: forwarding to C; `host` is a valid NUL-terminated C string.
         let ptr = unsafe {
             us_socket_group_connect(
@@ -242,10 +251,13 @@ impl SocketGroup {
                 options,
                 socket_ext_size,
                 &raw mut has_dns_resolved,
+                &raw mut errno,
             )
         };
         if ptr.is_null() {
-            return ConnectResult::Failed;
+            return ConnectResult::Failed {
+                errno: bun_errno::connect_errno(errno),
+            };
         }
         if has_dns_resolved != 0 {
             ConnectResult::Socket(ptr.cast::<us_socket_t>())
@@ -254,6 +266,8 @@ impl SocketGroup {
         }
     }
 
+    /// `Err` is the error of a dial that failed outright, as for
+    /// [`ConnectResult::Failed`].
     pub fn connect_unix(
         &mut self,
         kind: SocketKind,
@@ -261,9 +275,10 @@ impl SocketGroup {
         path: &[u8],
         options: c_int,
         socket_ext_size: c_int,
-    ) -> *mut us_socket_t {
+    ) -> Result<*mut us_socket_t, SystemErrno> {
+        let mut errno: c_int = 0;
         // SAFETY: forwarding to C; `path` ptr+len derived from a valid slice.
-        unsafe {
+        let s = unsafe {
             us_socket_group_connect_unix(
                 self,
                 kind as u8,
@@ -272,7 +287,13 @@ impl SocketGroup {
                 path.len(),
                 options,
                 socket_ext_size,
+                &raw mut errno,
             )
+        };
+        if s.is_null() {
+            Err(bun_errno::connect_errno(errno))
+        } else {
+            Ok(s)
         }
     }
 
@@ -367,6 +388,7 @@ unsafe extern "C" {
         options: c_int,
         socket_ext_size: c_int,
         is_connecting: *mut c_int,
+        error: *mut c_int,
     ) -> *mut c_void;
     fn us_socket_group_connect_unix(
         group: *mut SocketGroup,
@@ -376,6 +398,7 @@ unsafe extern "C" {
         pathlen: usize,
         options: c_int,
         socket_ext_size: c_int,
+        error: *mut c_int,
     ) -> *mut us_socket_t;
     fn us_socket_from_fd(
         group: *mut SocketGroup,

@@ -30,8 +30,10 @@ pub enum Error {
     ERR_TLS_CERT_ALTNAME_INVALID,
     #[error("ConnectionClosed")]
     ConnectionClosed,
+    /// A dial that failed before there was a socket; `errno` is its error
+    /// (see `bun_uws::ConnectResult::Failed`).
     #[error("FailedToOpenSocket")]
-    FailedToOpenSocket,
+    FailedToOpenSocket { errno: bun_errno::SystemErrno },
     #[error("MissingCredentials")]
     MissingCredentials,
     #[error("InvalidMethod")]
@@ -297,8 +299,9 @@ impl From<bun_sys::Error> for Error {
 
 impl From<bun_uws::ConnectError> for Error {
     #[inline]
-    fn from(_: bun_uws::ConnectError) -> Self {
-        Self::FailedToOpenSocket
+    fn from(err: bun_uws::ConnectError) -> Self {
+        let bun_uws::ConnectError::FailedToOpenSocket { errno } = err;
+        Self::FailedToOpenSocket { errno }
     }
 }
 
@@ -407,7 +410,7 @@ impl Error {
             Self::JSError => "JSError",
             Self::ERR_TLS_CERT_ALTNAME_INVALID => "ERR_TLS_CERT_ALTNAME_INVALID",
             Self::ConnectionClosed => "ConnectionClosed",
-            Self::FailedToOpenSocket => "FailedToOpenSocket",
+            Self::FailedToOpenSocket { .. } => "FailedToOpenSocket",
             Self::MissingCredentials => "MissingCredentials",
             Self::InvalidMethod => "InvalidMethod",
             Self::InvalidPath => "InvalidPath",

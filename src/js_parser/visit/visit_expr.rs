@@ -917,7 +917,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let name = p.load_name_from_ref(private.ref_);
                 let result = p.find_symbol(e_.index.loc, name).expect("unreachable");
                 private.ref_ = result.r#ref;
-                p.private_name_use_count += 1;
+                p.note_private_name_use(name, result.r#ref);
 
                 // Unlike regular identifiers, there are no unbound private identifiers
                 let kind: js_ast::symbol::Kind =

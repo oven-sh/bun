@@ -536,9 +536,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) temp_refs_to_declare: List<'a, TempRef>,
     pub(crate) temp_ref_count: i32,
 
-    /// Every `obj.#name` and `#name in obj` the visit pass resolves.
-    pub(crate) private_name_use_count: u32,
-    /// Set by `visit_ts_decorators` when a decorator read a `#private` name.
+    /// The class body scope while its TypeScript decorators are visited.
+    pub(crate) ts_decorator_class_scope: Option<js_ast::StoreRef<Scope>>,
+    /// Set when a decorator read a `#private` name of `ts_decorator_class_scope`.
     pub(crate) ts_decorators_use_private_names: bool,
 
     // When bundling, hoisted top-level local variables declared with "var" in
@@ -6662,6 +6662,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Called for every resolved `obj.#name` and `#name in obj`.
+    pub(crate) fn note_private_name_use(&mut self, name: &[u8], resolved: Ref) {
+        if let Some(class_scope) = self.ts_decorator_class_scope
+            && class_scope
+                .members
+                .get(name)
+                .is_some_and(|member| member.ref_ == resolved)
+        {
+            self.ts_decorators_use_private_names = true;
+        }
+    }
+
     /// `accessor` members of a class expression (a class statement uses `lower_class`).
     pub(crate) fn lower_class_expr_auto_accessors(&mut self, class: &mut G::Class) {
         use js_ast::g::PropertyKind;
@@ -8851,7 +8863,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             await_target: None,
             temp_refs_to_declare: BumpVec::new_in(arena),
             temp_ref_count: 0,
-            private_name_use_count: 0,
+            ts_decorator_class_scope: None,
             ts_decorators_use_private_names: false,
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,

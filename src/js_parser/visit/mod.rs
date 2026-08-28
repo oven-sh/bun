@@ -240,13 +240,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // `Vec<Expr>` is not `Copy`; mutate in place.
     pub(crate) fn visit_ts_decorators(&mut self, decs: &mut ExprNodeList) {
-        let private_name_uses_before = self.private_name_use_count;
+        let outer_class_scope = self.ts_decorator_class_scope.replace(self.current_scope);
         for dec in decs.slice_mut() {
             self.visit_expr(dec);
         }
-        if self.private_name_use_count != private_name_uses_before {
-            self.ts_decorators_use_private_names = true;
-        }
+        self.ts_decorator_class_scope = outer_class_scope;
     }
 
     pub(crate) fn visit_decls<const IS_POSSIBLY_DECL_TO_REMOVE: bool>(

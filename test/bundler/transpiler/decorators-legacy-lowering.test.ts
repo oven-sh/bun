@@ -115,6 +115,18 @@ const fixtures: Record<string, Fixture> = {
     `,
     expected: "static block\nstatic field\ndec arg = 1\ndec arg = 2\nconstructor,m\n",
   },
+  "a private name of another class in a decorator keeps the calls outside": {
+    source: `
+      function dec(...a: any[]) { return (...b: any[]) => {} }
+      class Other { static #p = 1; static read() { return Other.#p } }
+      class C {
+        @dec(class { #id = 7; get() { return this.#id } }) x = 1;
+        @dec(Other.read()) y = 2;
+      }
+      console.log(Object.keys(new C()).join(","));
+    `,
+    expected: "x,y\n",
+  },
   "export default @dec class keeps the binding and applies the decorator": {
     files: {
       "mod.ts": `
@@ -316,6 +328,16 @@ describe("experimentalDecorators lowering", () => {
       loader: "ts",
       tsconfig: { compilerOptions: { experimentalDecorators: true } },
     });
+    // A private name of another class does not move the calls into a static
+    // block, so `await` in a sibling decorator keeps working.
+    expect(
+      transpiler.transformSync(`
+        class C {
+          @dec(class { #id = 7; get() { return this.#id } }) x = 1;
+          @dec(await p) y = 2;
+        }
+      `),
+    ).not.toContain("static {");
     const out = transpiler.transformSync(`
       function dec(t: any, k?: any, d?: any) {}
       let n = 0; const key = () => "k" + ++n;

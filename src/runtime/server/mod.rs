@@ -2039,8 +2039,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
             server_config::Address::Unix(unix) => {
                 let unix = unix.as_bytes();
-                match bun_sys::get_errno(-1i32) {
-                    bun_sys::E::SUCCESS => jsc::SystemError {
+                match bun_sys::GetErrno::raw_errno(-1i32) {
+                    0 => jsc::SystemError {
                         message: bun_core::String::create_format(format_args!(
                             "Failed to listen on unix socket {}",
                             bun_core::fmt::QuotedFormatter { text: unix }
@@ -2050,8 +2050,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         ..Default::default()
                     }
                     .to_error_instance(global),
-                    e => jsc::SystemError::from(
-                        bun_sys::Error::from_code(e, bun_sys::Tag::listen)
+                    errno => jsc::SystemError::from(
+                        bun_sys::Error::new(errno, bun_sys::Tag::listen)
                             .with_path(unix)
                             .to_system_error(),
                     )

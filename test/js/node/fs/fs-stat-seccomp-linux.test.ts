@@ -205,56 +205,83 @@ describe.skipIf(!isLinux)("fs.stat seccomp statx fallback", () => {
   }
 });
 
-// The kernel is not bound to the errno table bun knows: FUSE filesystems and
-// some drivers return codes above EHWPOISON (133). Such a code must reach JS
-// as node reports it, `errno` = the negated kernel number, with the `code`
-// string bun uses for an unmapped errno (EUNKNOWN), on both native error
-// paths: the node:fs helpers that decode a return value through `GetErrno`
-// (fsync) and the `bun_sys` wrappers that read the thread-local errno
-// (ftruncate).
+// The kernel is not bound to the errno table bun knows: a FUSE daemon can reply
+// with any code below 512, and in-kernel drivers leak codes above that
+// (ENOTSUPP, 524, from copy_file_range for one). Such a code must reach JS as
+// node reports it, `errno` = the negated kernel number, with the `code` string
+// bun uses for an unmapped errno (EUNKNOWN), on every native error path: the
+// node:fs helpers that decode a return value through `GetErrno` (fsync,
+// copyFile), the `bun_sys` wrappers that read the thread-local errno
+// (ftruncate), and the Bun.write file-to-file copy loop.
 describe.skipIf(!isLinux)("node:fs errno outside the SystemErrno table", () => {
+  // One helper binary per blocked syscall; a case names the syscall it blocks.
+  const helpers = new Map<string, string | null>();
+  const helperFor = (blocked: string) => {
+    if (!helpers.has(blocked)) helpers.set(blocked, tryBuildHelper(blocked));
+    return helpers.get(blocked)!;
+  };
+
+  // Each snippet runs `bun -e` with argv[1] = an existing file; the copy cases
+  // write argv[1] + ".copy". The result line is one JSON object.
+  const report = `console.log(JSON.stringify({ threw: true, errno: e.errno, code: e.code, syscall: e.syscall, message: e.message }))`;
   const cases = [
     {
+      name: "fs.fsyncSync",
+      blocked: "__NR_fsync",
       syscall: "fsync",
-      helperBin: tryBuildHelper("__NR_fsync"),
+      message: (_src: string) => "",
       snippet: `
         import * as fs from "node:fs";
         const fd = fs.openSync(process.argv[1], "r+");
-        try {
-          fs.fsyncSync(fd);
-          console.log(JSON.stringify({ threw: false }));
-        } catch (e) {
-          console.log(JSON.stringify({ threw: true, errno: e.errno, code: e.code, syscall: e.syscall, message: e.message }));
-        }
+        try { fs.fsyncSync(fd); console.log(JSON.stringify({ threw: false })); } catch (e) { ${report}; }
       `,
     },
     {
+      name: "fs.ftruncateSync",
+      blocked: "__NR_ftruncate",
       syscall: "ftruncate",
-      helperBin: tryBuildHelper("__NR_ftruncate"),
+      message: (_src: string) => "",
       snippet: `
         import * as fs from "node:fs";
         const fd = fs.openSync(process.argv[1], "r+");
-        try {
-          fs.ftruncateSync(fd, 0);
-          console.log(JSON.stringify({ threw: false }));
-        } catch (e) {
-          console.log(JSON.stringify({ threw: true, errno: e.errno, code: e.code, syscall: e.syscall, message: e.message }));
-        }
+        try { fs.ftruncateSync(fd, 0); console.log(JSON.stringify({ threw: false })); } catch (e) { ${report}; }
+      `,
+    },
+    {
+      name: "fs.copyFileSync",
+      blocked: "__NR_copy_file_range",
+      syscall: "copyfile",
+      message: (src: string) => ` '${src}' -> '${src}.copy'`,
+      snippet: `
+        import * as fs from "node:fs";
+        try { fs.copyFileSync(process.argv[1], process.argv[1] + ".copy"); console.log(JSON.stringify({ threw: false })); } catch (e) { ${report}; }
+      `,
+    },
+    {
+      name: "Bun.write(Bun.file, Bun.file)",
+      blocked: "__NR_copy_file_range",
+      syscall: "copy_file_range",
+      message: (_src: string) => "",
+      snippet: `
+        try { await Bun.write(Bun.file(process.argv[1] + ".copy"), Bun.file(process.argv[1])); console.log(JSON.stringify({ threw: false })); } catch (e) { ${report}; }
       `,
     },
   ];
 
-  // Runs the case's node:fs call in a bun subprocess whose syscall fails with
-  // `errno`. Returns the parsed result line, or null on an environment skip.
+  // Runs the case in a bun subprocess whose blocked syscall fails with `errno`.
+  // Returns the parsed result line and the source path, or null on an
+  // environment skip.
   async function callWithErrno(c: (typeof cases)[number], errno: number) {
-    if (c.helperBin == null) {
-      console.warn(`SKIP ${c.syscall} seccomp: cc or seccomp headers not available`);
+    const helperBin = helperFor(c.blocked);
+    if (helperBin == null) {
+      console.warn(`SKIP ${c.name} seccomp: cc or seccomp headers not available`);
       return null;
     }
-    using dir = tempDir(`${c.syscall}-seccomp-target`, { "file.txt": "hello" });
-    const out = await runUnderSeccomp(c.helperBin, errno, c.snippet, [join(String(dir), "file.txt")]);
+    using dir = tempDir("errno-seccomp-target", { "file.txt": "hello" });
+    const src = join(String(dir), "file.txt");
+    const out = await runUnderSeccomp(helperBin, errno, c.snippet, [src]);
     if (out == null) {
-      console.warn(`SKIP ${c.syscall} seccomp: seccomp not permitted in this environment`);
+      console.warn(`SKIP ${c.name} seccomp: seccomp not permitted in this environment`);
       return null;
     }
     // Don't assert empty stderr — ASAN builds emit a startup warning there.
@@ -262,31 +289,31 @@ describe.skipIf(!isLinux)("node:fs errno outside the SystemErrno table", () => {
       stdout: expect.stringContaining('{"threw":true'),
       exitCode: 0,
     });
-    return JSON.parse(out.stdout.trim());
+    return { result: JSON.parse(out.stdout.trim()), src };
   }
 
-  describe.each(cases)("$syscall", c => {
+  describe.each(cases)("$name", c => {
     test.concurrent("a code above the table keeps its number and reports EUNKNOWN", async () => {
-      const result = await callWithErrno(c, ENOTSUPP);
-      if (result == null) return;
-      expect(result).toEqual({
+      const out = await callWithErrno(c, ENOTSUPP);
+      if (out == null) return;
+      expect(out.result).toEqual({
         threw: true,
         errno: -ENOTSUPP,
         code: "EUNKNOWN",
         syscall: c.syscall,
-        message: `EUNKNOWN: unknown error, ${c.syscall}`,
+        message: `EUNKNOWN: unknown error, ${c.syscall}${c.message(out.src)}`,
       });
     });
 
     test.concurrent("a code in the table keeps its name", async () => {
-      const result = await callWithErrno(c, EACCES);
-      if (result == null) return;
-      expect(result).toEqual({
+      const out = await callWithErrno(c, EACCES);
+      if (out == null) return;
+      expect(out.result).toEqual({
         threw: true,
         errno: -EACCES,
         code: "EACCES",
         syscall: c.syscall,
-        message: `EACCES: permission denied, ${c.syscall}`,
+        message: `EACCES: permission denied, ${c.syscall}${c.message(out.src)}`,
       });
     });
   });

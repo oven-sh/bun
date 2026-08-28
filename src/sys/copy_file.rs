@@ -105,12 +105,13 @@ pub fn copy_file_with_state(
         }
         let rc = fcopyfile(in_.native(), out.native(), None, libc::COPYFILE_DATA);
 
-        match crate::get_errno(rc) {
+        let errno = crate::GetErrno::raw_errno(rc);
+        match E::from_raw(errno) {
             E::SUCCESS => return Ok(()),
             // The source file is not a directory, symbolic link, or regular file.
             // Try with the fallback path before giving up.
             E::EOPNOTSUPP => {}
-            e => return Err(crate::Error::from_code(e, Tag::copyfile)),
+            _ => return Err(crate::Error::new(errno, Tag::copyfile)),
         }
     }
 
@@ -196,7 +197,8 @@ pub fn copy_file_with_state(
                 out.native(),
                 rc
             );
-            match crate::get_errno(rc) {
+            let errno = crate::GetErrno::raw_errno(rc);
+            match E::from_raw(errno) {
                 E::SUCCESS => {
                     if rc == 0 {
                         return Ok(());
@@ -205,7 +207,7 @@ pub fn copy_file_with_state(
                 // Cross-filesystem or unsupported fd type — fall back to r/w loop.
                 E::EXDEV | E::EINVAL | E::EOPNOTSUPP | E::EBADF => break,
                 E::EINTR => continue,
-                e => return Err(crate::Error::from_code(e, Tag::copy_file_range)),
+                _ => return Err(crate::Error::new(errno, Tag::copy_file_range)),
             }
         }
     }

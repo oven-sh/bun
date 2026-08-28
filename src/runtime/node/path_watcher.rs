@@ -907,13 +907,14 @@ impl Linux {
         while running.load(Ordering::Acquire) {
             // SAFETY: buf is valid for buf.0.len() bytes; fd is a plain c_int.
             let rc = unsafe { sys::linux::read(fd.native(), buf.0.as_mut_ptr(), buf.0.len()) };
-            match sys::get_errno(rc) {
+            let errno = sys::GetErrno::raw_errno(rc);
+            match E::from_raw(errno) {
                 E::SUCCESS => {}
                 E::EAGAIN | E::EINTR => continue,
-                errno => {
+                _ => {
                     // Fatal: surface to every watcher, then exit the thread.
                     let err = sys::Error {
-                        errno: errno as u16,
+                        errno,
                         syscall: Tag::read,
                         ..Default::default()
                     };
@@ -1510,10 +1511,10 @@ impl Kqueue {
         if krc < 0 {
             // Registration failed (ENOMEM/EINVAL on a bad fd, etc.). Don't leave a
             // dead entry in the map that will never deliver events.
-            let errno = sys::get_errno(krc);
+            let errno = sys::GetErrno::raw_errno(krc);
             fd.close();
             return Err(sys::Error {
-                errno: errno as u16,
+                errno,
                 syscall: Tag::watch,
                 ..Default::default()
             }

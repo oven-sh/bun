@@ -418,7 +418,8 @@ impl CopyFile {
                 }
             };
 
-            match bun_sys::get_errno(written) {
+            let errno = bun_sys::GetErrno::raw_errno(written);
+            match bun_sys::E::from_raw(errno) {
                 bun_sys::E::SUCCESS => {}
 
                 // XDEV: cross-device copy not supported
@@ -466,7 +467,6 @@ impl CopyFile {
 
                     self.system_error = Some(
                         bun_sys::Error {
-                            // bare `as` is lossless here (E repr == Error.Int).
                             errno: bun_sys::E::EINVAL as bun_sys::ErrorInt,
                             syscall: USE.tag(),
                             ..Default::default()
@@ -475,17 +475,16 @@ impl CopyFile {
                     );
                     return Err(bun_errno::from_errno(bun_sys::E::EINVAL as i32).into());
                 }
-                errno => {
+                e => {
                     self.system_error = Some(
                         bun_sys::Error {
-                            // bare `as` is lossless here (E repr == Error.Int).
-                            errno: errno as bun_sys::ErrorInt,
+                            errno,
                             syscall: USE.tag(),
                             ..Default::default()
                         }
                         .to_system_error(),
                     );
-                    return Err(bun_errno::from_errno(errno as i32).into());
+                    return Err(e.into());
                 }
             }
 

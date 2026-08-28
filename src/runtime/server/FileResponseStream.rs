@@ -429,7 +429,7 @@ impl FileResponseStream {
                         adjusted as usize,
                     )
                 };
-                let errno = sys::get_errno(rc);
+                let errno = sys::GetErrno::raw_errno(rc);
                 let sent: u64 =
                     u64::try_from((off - i64::try_from(sf.offset).expect("int cast")).max(0))
                         .unwrap();
@@ -438,7 +438,7 @@ impl FileResponseStream {
                 (errno, sent, sf.remain)
             });
 
-            match errno {
+            match sys::E::from_raw(errno) {
                 sys::E::SUCCESS => {
                     if remain == 0 || sent == 0 {
                         self.end_sendfile();
@@ -450,7 +450,7 @@ impl FileResponseStream {
                 sys::E::EAGAIN => return self.arm_sendfile_writable(),
                 _ => {
                     self.fail_with(
-                        sys::Error::from_code(errno, sys::Tag::sendfile).with_fd(self.fd.get()),
+                        sys::Error::new(errno, sys::Tag::sendfile).with_fd(self.fd.get()),
                     );
                     return false;
                 }

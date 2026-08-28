@@ -170,7 +170,7 @@ impl<'a> Transpiler<'a> {
     /// so free `BundleOptions` here. `log`/`fs`/`env` are aliased/singletons; left alone.
     /// `resolver` is a value field whose caches alias process-global BSSMaps, so the
     /// resolver itself stays put — only its owned `opts` projection (cloned in
-    /// `resolver_bundle_options_subset`) is released.
+    /// `resolver_bundle_options_subset`) and parsed tsconfig override are released.
     ///
     /// # Safety
     /// Calls `drop_in_place` on `options` / `result` / `resolver.opts` /
@@ -190,6 +190,7 @@ impl<'a> Transpiler<'a> {
         if let Some(ctx) = self.macro_context.take() {
             ctx.deinit();
         }
+        drop(self.resolver.tsconfig_override_json.take());
         // SAFETY: `options`, `result`, and `resolver.opts` are init'd and never
         // read past `destroy()` / the `--changed` scan teardown. Caller upholds
         // the no-auto-drop contract above.
@@ -704,7 +705,7 @@ fn merge_tsconfig_jsx_into(tsconfig: &TSConfigJSON, out: &mut crate::options_imp
 
 impl<'a> Transpiler<'a> {
     /// Initialize `self.linker` with back-pointers into this `Transpiler`,
-    /// optionally auto-configuring JSX from the nearest `tsconfig.json`.
+    /// optionally auto-configuring JSX from the tsconfig override or the cwd's `tsconfig.json`.
     pub fn configure_linker_with_auto_jsx(&mut self, auto_jsx: bool) {
         // Raw back-pointers into `self`; the linker never outlives this `Transpiler`.
         self.linker = crate::linker::Linker::init(
@@ -719,7 +720,7 @@ impl<'a> Transpiler<'a> {
             // Most of the time, this will already be cached
             let top_level_dir = self.fs().top_level_dir;
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
-                if let Some(tsconfig) = root_dir.tsconfig_json() {
+                if let Some(tsconfig) = self.resolver.tsconfig_in(&root_dir) {
                     // If we don't explicitly pass JSX, try to get it from the root tsconfig
                     if self.options.transform_options.jsx.is_none() {
                         self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
@@ -780,7 +781,7 @@ impl<'a> Transpiler<'a> {
                     _ => return Ok(()),
                 };
 
-                if let Some(tsconfig) = dir_info.tsconfig_json() {
+                if let Some(tsconfig) = self.resolver.tsconfig_in(&dir_info) {
                     merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
                 }
 

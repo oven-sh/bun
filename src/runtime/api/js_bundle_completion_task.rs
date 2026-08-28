@@ -1188,6 +1188,7 @@ impl CompletionStruct for JSBundleCompletionTask {
             extension_order: Vec::new(),
             env_files: Vec::new(),
             conditions: config.conditions.keys().to_vec(),
+            tsconfig_override: config.tsconfig_override.clone(),
             // Use the config value, which `configure_bundler` reapplies anyway.
             ignore_dce_annotations: config.ignore_dce_annotations,
             drop: config.drop.keys().to_vec(),

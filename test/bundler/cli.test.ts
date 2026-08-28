@@ -132,6 +132,7 @@ console.log(utils());`,
         cwd: baseDir,
         stderr: "pipe",
       });
+      expect(await successResult.stderr.text()).toBe("");
       expect(await successResult.exited).toBe(0);
 
       const outputFile = path.join(baseDir, "out-success", "index.js");
@@ -169,13 +170,37 @@ console.log(utils());`,
         cmd: [bunExe(), "build", "index.ts", "--tsconfig-override", "../../custom-tsconfig.json", "--outdir", "out"],
         env: bunEnv,
         cwd: nestedDir,
+        stderr: "pipe",
       });
+      expect(await result.stderr.text()).toBe("");
       expect(await result.exited).toBe(0);
 
       const outputFile = path.join(nestedDir, "out", "index.js");
       expect(fs.existsSync(outputFile)).toBe(true);
       const output = fs.readFileSync(outputFile, "utf8");
       expect(output).toContain("Hello from nested!");
+    });
+
+    test("--tsconfig-override replaces the cwd tsconfig.json's compilerOptions as well", async () => {
+      using dir = tempDir("tsconfig-override-compiler-options", {
+        "index.tsx": `export const element = <main />;`,
+        "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react", jsxFactory: "fromTsconfigJson" } }),
+        // Says nothing about the factory, so the cwd file's factory must not fill it in.
+        "custom-tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react" } }),
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "index.tsx", "--tsconfig-override", "custom-tsconfig.json"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toContain('React.createElement("main", null)');
+      expect(stdout).not.toContain("fromTsconfigJson");
+      expect(exitCode).toBe(0);
     });
 
     test("__dirname and __filename are printed correctly", async () => {

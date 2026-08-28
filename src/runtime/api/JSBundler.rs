@@ -132,6 +132,8 @@ pub mod js_bundler {
         pub(crate) source_map: options::SourceMapOption,
         pub(crate) public_path: OwnedString,
         pub(crate) conditions: StringSet,
+        /// Absolute path of the `tsconfig` option.
+        pub(crate) tsconfig_override: Option<Box<[u8]>>,
         pub(crate) packages: options::PackagesOption,
         pub(crate) format: options::Format,
         pub(crate) bytecode: bool,
@@ -198,6 +200,7 @@ pub mod js_bundler {
                 source_map: options::SourceMapOption::None,
                 public_path: OwnedString::default(),
                 conditions: StringSet::default(),
+                tsconfig_override: None,
                 packages: options::PackagesOption::Bundle,
                 format: options::Format::Esm,
                 bytecode: false,
@@ -958,6 +961,21 @@ pub mod js_bundler {
                 };
                 this.rootdir.append_slice_exact(rootdir)?;
                 drop(path);
+            }
+
+            if let Some(slice) = config.get_optional_slice(global_this, b"tsconfig")? {
+                if !slice.slice().is_empty() {
+                    // Relative to the cwd, like entrypoints and outdir (and `--tsconfig-override`).
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let Some(abs) = bun_resolver::fs::FileSystem::get()
+                        .abs_buf_checked(&[slice.slice()], &mut buf[..])
+                    else {
+                        return Err(global_this
+                            .throw_invalid_arguments(format_args!("tsconfig path is too long")));
+                    };
+                    this.tsconfig_override = Some(Box::from(abs));
+                }
+                drop(slice);
             }
 
             if let Some(externals) = config.get_own_array(global_this, "external")? {

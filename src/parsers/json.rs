@@ -1463,16 +1463,23 @@ mod tests {
                 );
             }
         }
-        // The error range covers the whole number token.
-        {
+        // The error range covers the number token and stops at an operator.
+        for (src, range) in [
+            ("{\"a\": 0x10}", (6, 4)),
+            ("{\"a\": 0x10+1}", (6, 4)),
+            ("{\"a\": 5.+2}", (6, 2)),
+            ("{\"a\": 1_000+1}", (6, 5)),
+            ("{\"a\": 1e+5_0}", (6, 6)),
+            ("{\"a\": - 1}", (6, 1)),
+        ] {
             bun_ast::initialize_store_or_reset();
             let _scope = js_ast::StoreResetGuard::new();
             let mut log = bun_ast::Log::init();
             let bump = Bump::new();
-            let source = bun_ast::Source::init_path_string("fixture.json", b"{\"a\": 0x10}");
-            assert!(parse_utf8(&source, &mut log, &bump).is_err());
+            let source = bun_ast::Source::init_path_string("fixture.json", src.as_bytes());
+            assert!(parse_utf8(&source, &mut log, &bump).is_err(), "{src}");
             let loc = log.msgs[0].data.location.as_ref().unwrap();
-            assert_eq!((loc.offset, loc.length), (6, 4));
+            assert_eq!((loc.offset, loc.length), range, "{src}");
         }
         // Every number form that JSON does define still parses.
         for (src, want) in [

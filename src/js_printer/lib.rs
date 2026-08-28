@@ -7060,8 +7060,7 @@ impl<'a, W: WriterTrait + ?Sized> Write for StdWriterAdapter<'a, W> {
 
 pub struct Writer<C: WriterContext> {
     pub ctx: C,
-    /// Count of bytes written. The printer's `*_start` / `*_end` position
-    /// fields snapshot this value and use `-1` for "none", so it starts at 0.
+    /// Bytes written so far. The printer's position fields use -1 for "none".
     pub(crate) written: i32,
     pub(crate) err: Option<crate::Error>,
     pub(crate) orig_err: Option<crate::Error>,
@@ -7436,8 +7435,7 @@ impl WriterContext for BufferWriter {
 pub type BufferPrinter = Writer<BufferWriter>;
 
 impl BufferPrinter {
-    /// Clears the buffer for the next print. The byte counter resets with it,
-    /// so `written()` stays equal to the buffer length on a reused printer.
+    /// Clears the buffer and the byte counter for the next print.
     pub fn reset(&mut self) {
         self.ctx.reset();
         self.written = 0;

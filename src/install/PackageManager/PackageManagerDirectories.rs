@@ -7,7 +7,7 @@ use crate::bun_fs::FileSystem;
 use crate::lockfile_real::package::PackageColumns;
 use crate::repository::Repository;
 use bun_core::ZStr;
-use bun_core::{Global, Output, ZBox, env_var, fmt as bun_fmt};
+use bun_core::{Global, Output, ZBox, fmt as bun_fmt};
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::lockfile::{Format as LockfileFormat, LoadResult, Lockfile};
 use bun_install::resolution::Tag as ResolutionTag;
@@ -377,44 +377,12 @@ pub struct CacheDir {
 }
 
 pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Options>) -> CacheDir {
-    if let Some(dir) = env.get(b"BUN_INSTALL_CACHE_DIR") {
-        return CacheDir {
-            path: FileSystem::instance().abs(&[dir]).to_vec(),
-        };
-    }
-
-    if let Some(opts) = options {
-        if !opts.cache_directory.is_empty() {
-            return CacheDir {
-                path: FileSystem::instance().abs(&[opts.cache_directory]).to_vec(),
-            };
-        }
-    }
-
-    if let Some(dir) = env.get(b"BUN_INSTALL") {
-        let parts: [&[u8]; 3] = [dir, b"install/", b"cache/"];
-        return CacheDir {
-            path: FileSystem::instance().abs(&parts).to_vec(),
-        };
-    }
-
-    if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
-        let parts: [&[u8]; 4] = [dir, b".bun/", b"install/", b"cache/"];
-        return CacheDir {
-            path: FileSystem::instance().abs(&parts).to_vec(),
-        };
-    }
-
-    if let Some(dir) = env_var::HOME.get() {
-        let parts: [&[u8]; 4] = [dir, b".bun/", b"install/", b"cache/"];
-        return CacheDir {
-            path: FileSystem::instance().abs(&parts).to_vec(),
-        };
-    }
-
-    let fallback_parts: [&[u8]; 1] = [b"node_modules/.bun-cache"];
     CacheDir {
-        path: FileSystem::instance().abs(&fallback_parts).to_vec(),
+        path: bun_options_types::install_cache_dir::fetch_cache_directory_path(
+            FileSystem::instance().top_level_dir(),
+            env,
+            options.map(|opts| opts.cache_directory),
+        ),
     }
 }
 

@@ -54,7 +54,7 @@ impl InstallCompletionsCommand {
         }
 
         'outer: {
-            if let Some(install_dir) = env_var::BUN_INSTALL.get() {
+            if let Some(install_dir) = env_var::BUN_INSTALL.get_not_empty() {
                 let link_path = buf_print_z(
                     &mut link_buf,
                     format_args!("{}/bin/{}", bstr::BStr::new(install_dir), Self::BUNX_NAME),
@@ -68,7 +68,7 @@ impl InstallCompletionsCommand {
 
         // if that fails, try $HOME/.bun/bin
         'outer: {
-            if let Some(home_dir) = env_var::HOME.get() {
+            if let Some(home_dir) = env_var::HOME.get_not_empty() {
                 let link_path = buf_print_z(
                     &mut link_buf,
                     format_args!("{}/.bun/bin/{}", bstr::BStr::new(home_dir), Self::BUNX_NAME),
@@ -82,7 +82,7 @@ impl InstallCompletionsCommand {
 
         // if that fails, try $HOME/.local/bin
         'outer: {
-            if let Some(home_dir) = env_var::HOME.get() {
+            if let Some(home_dir) = env_var::HOME.get_not_empty() {
                 let link_path = buf_print_z(
                     &mut link_buf,
                     format_args!(

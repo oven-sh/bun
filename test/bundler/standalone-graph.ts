@@ -27,6 +27,8 @@ export interface EmbeddedModule {
   contents: Span;
   bytecode: Span;
   moduleInfo: Span;
+  /** Header of the ES module record a `--bytecode` chunk carries (`serialize_body` in src/js_printer/lib.rs). */
+  moduleRecord: { requestedModules: number; records: number } | null;
 }
 
 export interface ModuleGraph {
@@ -39,7 +41,8 @@ export interface ModuleGraph {
   /** Ahead-of-time bytecode of the internal modules the bundle imports, by InternalModuleRegistry id. */
   builtinBytecode: (Span & { id: number })[];
   bytecodeStringTable: Span | null;
-  moduleInfoStringTable: (Span & { text: string }) | null;
+  /** Slots of the bytecode string table that the module records' names resolve through. */
+  moduleInfoStringTable: Span | null;
 }
 
 /** `Flags` in src/standalone_graph/StandaloneModuleGraph.rs */
@@ -162,12 +165,21 @@ export function readModuleGraph(outfile: string): ModuleGraph {
   const modules: EmbeddedModule[] = [];
   for (let record = table.offset; record < table.offset + table.length; record += RECORD) {
     const contents = span(record + 8);
+    const moduleInfo = span(record + 32);
     modules.push({
       name: text(span(record)),
       source: text(contents),
       contents,
       bytecode: span(record + 24),
-      moduleInfo: span(record + 32),
+      moduleInfo,
+      // u8 flags, u8 id width, u8 0, u8 0, u32 requested-module count, u32 record count, ...
+      moduleRecord:
+        moduleInfo.length >= 12
+          ? {
+              requestedModules: payload.readUInt32LE(moduleInfo.offset + 4),
+              records: payload.readUInt32LE(moduleInfo.offset + 8),
+            }
+          : null,
     });
   }
 
@@ -193,10 +205,9 @@ export function readModuleGraph(outfile: string): ModuleGraph {
     startupCount = payload.readUInt32LE(at);
     at += 4;
   }
-  let moduleInfoStringTable: ModuleGraph["moduleInfoStringTable"] = null;
+  let moduleInfoStringTable: Span | null = null;
   if (flags & Flags.HAS_MODULE_INFO_STRING_TABLE) {
-    const strings = span(at);
-    moduleInfoStringTable = { ...strings, text: text(strings) };
+    moduleInfoStringTable = span(at);
   }
 
   // JSC reads the bytecode in place and expects it 128-byte aligned once

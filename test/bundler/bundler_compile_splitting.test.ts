@@ -401,12 +401,12 @@ describe("bundler", () => {
             },
             onAfterBundle(api) {
               const graph = readModuleGraph(api.outfile);
-              // The dead import is in no printed chunk and, with --bytecode, in
-              // no module record (every record's strings live in one table).
+              // The dead import is in no printed chunk and, with --bytecode, not
+              // in the record of the chunk that holds wrapped.js: that chunk
+              // requests no module at all.
               for (const module of graph.modules) expect(module.source).not.toContain("fs/promises");
               if (bytecode) {
-                expect(graph.moduleInfoStringTable).not.toBeNull();
-                expect(graph.moduleInfoStringTable!.text).not.toContain("fs/promises");
+                expect(moduleContaining(graph, "42;").moduleRecord?.requestedModules).toBe(0);
               }
               for (const module of graph.modules) {
                 expect(module.bytecode.length > 0, `${module.name} bytecode`).toBe(bytecode);

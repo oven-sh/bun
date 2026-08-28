@@ -1,8 +1,6 @@
-import { file } from "bun";
 import { expect, test } from "bun:test";
-import { realpathSync } from "fs";
-import path from "path";
-import { globAllSources } from "../../../scripts/glob-sources.ts";
+import { metaItemPaths, parseRust, type Fn, type RustFile } from "../../../scripts/rust-parser/index.ts";
+import { rustSources } from "./rust-sources.ts";
 
 // Rust-implemented refcount entry points exported to C++ (`#[unsafe(no_mangle)]`
 // fns named `*__ref`, `*__deref`, `*__unref`, `*__release`) must be `unsafe fn`.
@@ -30,60 +28,80 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //
 // Sibling guards: unsound-erased-box.test.ts, frozen-nonnull-reborrow.test.ts.
 
-const root = path.resolve(import.meta.dir, "..", "..", "..");
-const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));
+const REFCOUNT_SUFFIX = /__(?:ref|deref|unref|release)$/;
 
-// Only scan files tracked in HEAD (a `git stash` round-trip can leave stray
-// `.rs` files in the working tree; CI runs on a clean checkout). Same guard as
-// dead-code-escapes.test.ts.
-const tracked: Set<string> | null = (() => {
-  const r = Bun.spawnSync({
-    cmd: ["git", "-C", root, "ls-tree", "-r", "--name-only", "-z", "HEAD"],
-    stdout: "pipe",
-    stderr: "ignore",
-  });
-  if (!r.success) return null;
-  return new Set(r.stdout.toString().split("\0").filter(Boolean));
-})();
+/**
+ * Every `fn` definition carrying `#[unsafe(no_mangle)]`, with a `"C"` or
+ * `"C-unwind"` ABI, whose name ends in a refcount suffix. Declarations inside
+ * `extern "C" { .. }` blocks have no body (and the ABI sits on the block, not
+ * the fn), so they never match. An offender is one without `unsafe`.
+ */
+function findRefcountExports(file: RustFile): Fn[] {
+  return file
+    .find("Fn")
+    .filter(
+      fn =>
+        fn.body !== null &&
+        (fn.abi === "C" || fn.abi === "C-unwind") &&
+        REFCOUNT_SUFFIX.test(fn.name) &&
+        fn.attrs.some(
+          a => a.name === "unsafe" && a.meta.kind === "MetaList" && metaItemPaths(a.meta).includes("no_mangle"),
+        ),
+    );
+}
 
-// `#[unsafe(no_mangle)]`, any further attributes, then the fn header. Group 1 is
-// the `unsafe` qualifier (absent on an offender), group 2 the exported name.
-// Doc comments between the attribute and the header are stripped below.
-const REFCOUNT_EXPORT =
-  /#\[unsafe\(no_mangle\)\]\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?(unsafe\s+)?extern\s+"C(?:-unwind)?"\s+fn\s+(\w+__(?:ref|deref|unref|release))\s*\(/g;
-
+const sources = rustSources();
 const found: string[] = [];
 const offenders: string[] = [];
-let scanned = 0;
-for (const abs of rustSources) {
-  const source = path.relative(root, abs).replaceAll(path.sep, "/");
-  // `src/cli` is a symlink into `src/runtime/cli`; count each file once under
-  // its canonical path.
-  if (path.relative(root, realpathSync(abs)).replaceAll(path.sep, "/") !== source) continue;
-  if (tracked !== null && !tracked.has(source)) continue;
-  scanned++;
-  const content = await file(abs).text();
-  // Strip full-line comments (including `///` docs) so prose mentions don't
-  // count and the attribute -> header match is not interrupted by a doc block.
-  // `[ \t]*`, not `\s*`, so blank lines survive and line numbers stay right.
-  const stripped = content.replace(/^[ \t]*\/\/.*$/gm, "");
-  for (const m of stripped.matchAll(REFCOUNT_EXPORT)) {
-    const line = stripped.slice(0, m.index + m[0].lastIndexOf(m[2])).split("\n").length;
-    const entry = `${source}:${line}: ${m[2]}`;
+for (const src of sources) {
+  for (const fn of findRefcountExports(src.file)) {
+    // The fn's span starts at its first qualifier (`pub`, `unsafe`, `extern`),
+    // which rustfmt keeps on the same line as the name.
+    const entry = `${src.file.location(fn)}: ${fn.name}`;
     found.push(entry);
-    if (m[1] === undefined) offenders.push(entry);
+    if (!fn.unsafe) offenders.push(entry);
   }
 }
 
 test("scans a non-empty set of tracked Rust sources", () => {
-  // Guards against the tracked/realpath filters above over-firing and leaving
-  // nothing to scan, which would make the assertions below pass vacuously.
-  expect(scanned).toBeGreaterThan(0);
+  // Guards against the corpus filters over-firing and leaving nothing to
+  // scan, which would make the assertions below pass vacuously.
+  expect(sources.length).toBeGreaterThan(0);
+});
+
+test("the query recognizes the shapes it claims to", () => {
+  const exports = (snippet: string) =>
+    findRefcountExports(parseRust(snippet)).map(fn => ({ name: fn.name, unsafe: fn.unsafe }));
+  // The required shape.
+  expect(exports('#[unsafe(no_mangle)]\npub unsafe extern "C" fn Foo__ref(this: *mut Foo) {}')).toEqual([
+    { name: "Foo__ref", unsafe: true },
+  ]);
+  // Other attributes, doc comments, restricted visibility, and the unwinding ABI do not hide the export.
+  expect(
+    exports(
+      '/// Docs.\n#[unsafe(no_mangle)]\n#[inline(never)]\n/// More docs.\npub(crate) unsafe extern "C-unwind" fn Foo__unref(this: *mut Foo) {}',
+    ),
+  ).toEqual([{ name: "Foo__unref", unsafe: true }]);
+  // The offending shape: a safe export.
+  expect(exports('#[unsafe(no_mangle)]\npub extern "C" fn Foo__deref(this: &mut Foo) {}')).toEqual([
+    { name: "Foo__deref", unsafe: false },
+  ]);
+  expect(exports('#[unsafe(no_mangle)]\nextern "C" fn Foo__release(this: *mut Foo) {}')).toEqual([
+    { name: "Foo__release", unsafe: false },
+  ]);
+  // Out of scope: declarations of C++-implemented functions, `*__destroy`
+  // shims, non-exported fns, and prose.
+  expect(
+    exports('unsafe extern "C" {\n    safe fn Bar__ref(this: *mut Bar);\n    fn Bar__deref(this: *mut Bar);\n}'),
+  ).toEqual([]);
+  expect(exports('#[unsafe(no_mangle)]\npub extern "C" fn Foo__destroy(this: *mut Foo) {}')).toEqual([]);
+  expect(exports('pub extern "C" fn Foo__ref(this: *mut Foo) {}')).toEqual([]);
+  expect(exports('// #[unsafe(no_mangle)] pub extern "C" fn Foo__ref(this: *mut Foo) {}\nfn f() {}')).toEqual([]);
 });
 
 test("the pattern still recognizes the tree's refcount exports", () => {
   // If this goes empty, the exports were renamed or restructured and the
-  // suffix list / regex above needs updating, not the assertion below.
+  // suffix list / query above needs updating, not the assertion below.
   expect(found).not.toBeEmpty();
 });
 

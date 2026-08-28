@@ -3452,13 +3452,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     #[cold]
     #[inline(never)]
-    pub(crate) fn forbid_using_in_switch(&mut self, loc: bun_ast::Loc) {
-        let r = js_lexer::range_of_identifier(self.source, loc);
-        self.log().add_range_error(
-            Some(self.source),
-            r,
-            b"Cannot use a \"using\" declaration directly inside a switch case",
-        );
+    pub(crate) fn forbid_using_in_switch(
+        &mut self,
+        keywords: bun_ast::Range,
+        kind: js_ast::s::Kind,
+    ) {
+        let message: &[u8] = match kind {
+            js_ast::s::Kind::KAwaitUsing => {
+                b"\"await using\" declarations are not allowed in \"case\" or \"default\" clauses unless wrapped in a block"
+            }
+            _ => {
+                b"\"using\" declarations are not allowed in \"case\" or \"default\" clauses unless wrapped in a block"
+            }
+        };
+        self.log()
+            .add_range_error(Some(self.source), keywords, message);
     }
 
     /// If we attempt to parse TypeScript syntax outside of a TypeScript file

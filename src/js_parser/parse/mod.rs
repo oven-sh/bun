@@ -839,7 +839,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }))
             {
                 if opts.is_case_body {
-                    p.forbid_using_in_switch(token_range.loc);
+                    p.forbid_using_in_switch(token_range, js_ast::LocalKind::KUsing);
                 } else if opts.lexical_decl != LexicalDecl::AllowAll {
                     p.forbid_lexical_decl(token_range.loc);
                 }
@@ -892,7 +892,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
 
             let raw2 = p.lexer.raw();
-            let mut value = if p.lexer.token == T::TIdentifier && raw2 == b"using" {
+            // "await\nusing x" awaits the identifier "using"; only a same-line "using" can start the declaration
+            let mut value = if p.lexer.token == T::TIdentifier
+                && raw2 == b"using"
+                && !p.lexer.has_newline_before
+            {
                 'value: {
                     // const using_loc = p.saveExprCommentsHere();
                     let using_range = p.lexer.range();
@@ -900,7 +904,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if p.lexer.token == T::TIdentifier && !p.lexer.has_newline_before {
                         // It's an "await using" declaration if we get here
                         if opts.is_case_body {
-                            p.forbid_using_in_switch(using_range.loc);
+                            let keywords = bun_ast::Range {
+                                loc: token_range.loc,
+                                len: using_range.end().start - token_range.loc.start,
+                            };
+                            p.forbid_using_in_switch(keywords, js_ast::LocalKind::KAwaitUsing);
                         } else if opts.lexical_decl != LexicalDecl::AllowAll {
                             p.forbid_lexical_decl(using_range.loc);
                         }

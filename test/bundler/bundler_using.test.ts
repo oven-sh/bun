@@ -123,19 +123,23 @@ describe("bundler", () => {
   const invalidPlacements = {
     UsingInSwitchCase: {
       source: "switch (k) { case 0: using a = r(); break; }",
-      errors: ['Cannot use a "using" declaration directly inside a switch case'],
+      errors: ['"using" declarations are not allowed in "case" or "default" clauses unless wrapped in a block'],
+    },
+    UsingInDefaultClause: {
+      source: "switch (k) { default: using a = r(); }",
+      errors: ['"using" declarations are not allowed in "case" or "default" clauses unless wrapped in a block'],
     },
     AwaitUsingInSwitchCase: {
       source: "async function f(k) { switch (k) { case 0: await using a = r(); break; } }",
-      errors: ['Cannot use a "using" declaration directly inside a switch case'],
+      errors: ['"await using" declarations are not allowed in "case" or "default" clauses unless wrapped in a block'],
     },
     UsingInForIn: {
       source: "for (using b in o) ;",
-      errors: ['"using" declarations are not allowed here'],
+      errors: ['Cannot use a "using" declaration in a for-in loop'],
     },
     AwaitUsingInForIn: {
       source: "async function h() { for (await using e in o) ; }",
-      errors: ['"await using" declarations are not allowed here'],
+      errors: ['Cannot use an "await using" declaration in a for-in loop'],
     },
     UsingInClassicForWithoutInitializer: {
       source: "for (using c;;) break;",
@@ -148,6 +152,11 @@ describe("bundler", () => {
     UsingOfOfIdentifier: {
       source: "for (using of of xs) ;",
       errors: ['Expected ")" but found "xs"', "Unexpected )"],
+    },
+    // `await` then a newline awaits the identifier `using`; `a` on the same line as `using` is a syntax error.
+    AwaitNewlineUsing: {
+      source: "async function f() {\n  await\n  using a = r();\n}",
+      errors: ['Expected ";" but found "a"', "Unexpected ="],
     },
   };
 

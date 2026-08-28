@@ -1745,9 +1745,9 @@ export default class {
       exp("for (using c: T = x;;) break", "for (using c = x;; )\n  break;\n");
       err(
         "switch (k) { case 0: using a: T = r(); break; }",
-        'Cannot use a "using" declaration directly inside a switch case',
+        '"using" declarations are not allowed in "case" or "default" clauses unless wrapped in a block',
       );
-      err("for (using b: T in o) ;", '"using" declarations are not allowed here');
+      err("for (using b: T in o) ;", 'Cannot use a "using" declaration in a for-in loop');
       err("for (using c: T;;) break", 'The declaration "c" must be initialized');
     });
   });
@@ -4752,6 +4752,16 @@ console.log("boop");
       "async function f() {\n  for (await using instanceof o;; )\n    ;\n}",
     );
     expectBunPrinted_("await using instanceof o", "await using instanceof o");
+
+    // A newline between "await" and "using" also makes it an "await" expression of the identifier "using".
+    expectPrinted_("async function f() { await\nusing }", "async function f() {\n  await using;\n}");
+    expectPrinted_("async function f() { await\nusing\nx = 1 }", "async function f() {\n  await using;\n  x = 1;\n}");
+    expectPrinted_("async function f() { await\nusing.foo() }", "async function f() {\n  await using.foo();\n}");
+    expectPrinted_(
+      "async function f() { await\nusing instanceof o }",
+      "async function f() {\n  await using instanceof o;\n}",
+    );
+    expectBunPrinted_("await\nusing\nx = 1", "await using;\nx = 1;\n");
   });
 
   it("'using' followed by 'of' in a for-loop head is the identifier 'using'", () => {
@@ -4797,14 +4807,17 @@ console.log("boop");
       }
       throw new Error("Expected parse error for code\n\t" + code);
     };
-    const inSwitch = 'Cannot use a "using" declaration directly inside a switch case';
+    const inSwitch = '"using" declarations are not allowed in "case" or "default" clauses unless wrapped in a block';
     expectParseError("switch (k) { case 0: using a = r(); break; }", inSwitch);
     expectParseError("switch (k) { default: using a = r(); break; }", inSwitch);
-    expectParseError("async function f() { switch (k) { case 0: await using a = r(); break; } }", inSwitch);
-    expectParseError("for (using b in o) ;", '"using" declarations are not allowed here');
+    expectParseError(
+      "async function f() { switch (k) { case 0: await using a = r(); break; } }",
+      '"await using" declarations are not allowed in "case" or "default" clauses unless wrapped in a block',
+    );
+    expectParseError("for (using b in o) ;", 'Cannot use a "using" declaration in a for-in loop');
     expectParseError(
       "async function h() { for (await using e in o) ; }",
-      '"await using" declarations are not allowed here',
+      'Cannot use an "await using" declaration in a for-in loop',
     );
     expectParseError("for (using c;;) break", 'The declaration "c" must be initialized');
     expectParseError("for (using c = x, d;;) break", 'The declaration "d" must be initialized');
@@ -4816,6 +4829,10 @@ console.log("boop");
     expect(firstParseError("async function h() { for (await using of o) ; }")).toBe(
       'The declaration "of" must be initialized',
     );
+    // A newline after `await` makes `await using` an expression, so a binding name after it is a syntax error.
+    expect(firstParseError("async function f() { await\nusing a = b }")).toBe('Expected ";" but found "a"');
+    expect(firstParseError("async function f() { for (await\nusing a of b); }")).toBe('Expected ";" but found "a"');
+    expect(firstParseError("await\nusing a = b")).toBe('Expected ";" but found "a"');
   });
 
   it("using top level", () => {
@@ -5333,7 +5350,9 @@ describe("export of a block-scoped function declaration", () => {
 });
 
 describe("using declarations in switch statements", () => {
-  const message = 'Cannot use a "using" declaration directly inside a switch case';
+  const message = '"using" declarations are not allowed in "case" or "default" clauses unless wrapped in a block';
+  const awaitMessage =
+    '"await using" declarations are not allowed in "case" or "default" clauses unless wrapped in a block';
   const parseErrors = (transpiler, code) => {
     try {
       transpiler.transformSync(code);
@@ -5367,7 +5386,25 @@ describe("using declarations in switch statements", () => {
           await using b = z();
       }
     }`;
-    expect(parseErrors(new Bun.Transpiler({ loader: "js", target: "node" }), input)).toEqual([message, message]);
+    expect(parseErrors(new Bun.Transpiler({ loader: "js", target: "node" }), input)).toEqual([
+      awaitMessage,
+      awaitMessage,
+    ]);
+  });
+
+  it("underlines the declaration keywords", () => {
+    const underlined = code => {
+      try {
+        new Bun.Transpiler({ loader: "js" }).transformSync(code);
+      } catch (e) {
+        // `column` is 1-based.
+        const start = e.position.column - 1;
+        return e.position.lineText.slice(start, start + e.position.length);
+      }
+      throw new Error("Expected parse error for code\n\t" + code);
+    };
+    expect(underlined("switch (k) {\n  case 0:\n    using a = r();\n}")).toBe("using");
+    expect(underlined("switch (k) {\n  case 0:\n    await using a = r();\n}")).toBe("await using");
   });
 
   it("lowers each block-wrapped case body on its own and disposes at block exit", async () => {

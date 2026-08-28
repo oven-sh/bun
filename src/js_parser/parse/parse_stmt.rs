@@ -677,10 +677,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if let js_ast::StmtData::SLocal(local) = &init_stmt.data {
                         let message: Option<&'static [u8]> = match local.kind {
                             js_ast::s::Kind::KUsing => {
-                                Some(b"\"using\" declarations are not allowed here")
+                                Some(b"Cannot use a \"using\" declaration in a for-in loop")
                             }
                             js_ast::s::Kind::KAwaitUsing => {
-                                Some(b"\"await using\" declarations are not allowed here")
+                                Some(b"Cannot use an \"await using\" declaration in a for-in loop")
                             }
                             _ => None,
                         };

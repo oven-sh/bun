@@ -369,11 +369,8 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     return JSValue::encode(returnValue);
 }
 
-// https://fetch.spec.whatwg.org/#concept-header-value
-// Header values are ByteStrings: isomorphic-encode (1 code unit = 1 byte), not
-// UTF-8, so a 16-bit string must produce the same bytes as the equal 8-bit one.
-// isValidHTTPHeaderValue and node:http's checkInvalidHeaderChar already reject
-// code units > 0xFF; like String::latin1(), anything else becomes '?'.
+// Header values are ByteStrings (https://fetch.spec.whatwg.org/#concept-header-value):
+// one byte per code unit on the wire, not UTF-8. Same '?' fallback as String::latin1().
 static WTF::CString latin1FromUTF16(std::span<const char16_t> characters)
 {
     std::span<char> buffer;

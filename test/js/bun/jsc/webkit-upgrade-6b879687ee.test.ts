@@ -18,10 +18,16 @@ async function run(dir: string, file: string, env: Record<string, string> = {}) 
 }
 
 describe.concurrent("WebKit 6b879687ee upgrade", () => {
-  test("a destructuring pattern nested too deep throws a RangeError instead of crashing (752ab90072)", async () => {
+  test("a destructuring pattern nested too deep does not crash bytecode generation (752ab90072)", async () => {
     // ArrayPatternNode::bindValue and ObjectPatternNode::bindValue check
     // isSafeToRecurse. Before, a pattern that passed the parser's recursion
-    // guard overflowed the native stack during bytecode generation.
+    // guard overflowed the native stack during bytecode generation and the
+    // process died with SIGSEGV (Linux x64, debug and release).
+    //
+    // Two outcomes are correct: the guard throws a RangeError, or the native
+    // frames are small enough for the pattern to compile and destructuring
+    // undefined at the second level throws a TypeError. Which one wins depends
+    // on the frame size of the build and platform, so the test accepts both.
     using dir = tempDir("webkit-6b879687ee-destructuring", {
       "index.js": `
         const depth = 12000;
@@ -39,7 +45,7 @@ describe.concurrent("WebKit 6b879687ee upgrade", () => {
             (0, eval)(script);
             results.push("no error");
           } catch (e) {
-            results.push(e instanceof RangeError ? "RangeError" : String(e));
+            results.push(e.constructor.name);
           }
         }
         let [[[a]]] = [[[42]]];
@@ -49,8 +55,13 @@ describe.concurrent("WebKit 6b879687ee upgrade", () => {
       `,
     });
     const { stdout, stderr, exitCode } = await run(String(dir), "index.js");
-    expect(stdout).toBe(JSON.stringify(["RangeError", "RangeError", "RangeError", 42, 7]));
     expect(stderr).toBe("");
+    const results = stdout ? JSON.parse(stdout) : stdout;
+    expect(results).toBeArrayOfSize(5);
+    for (const outcome of results.slice(0, 3)) {
+      expect(["RangeError", "TypeError"]).toContain(outcome);
+    }
+    expect(results.slice(3)).toEqual([42, 7]);
     expect(exitCode).toBe(0);
   });
 

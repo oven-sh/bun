@@ -634,6 +634,7 @@ export interface MatchArm extends Span {
   body: Expr;
 }
 
+/** `attrs` also holds the inner attributes written at the start of the body. */
 export interface Match extends ExprBase {
   kind: "Match";
   expr: Expr;

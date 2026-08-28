@@ -354,7 +354,7 @@ export abstract class ExprParser extends PatParser {
     if (this.isChar("#") && this.isOpen("[", 1)) {
       const attrs = this.parseOuterAttrs();
       const expr = this.parseExpr();
-      expr.attrs = attrs;
+      expr.attrs = attrs.concat(expr.attrs ?? []);
       return expr;
     }
     return this.parseExpr();
@@ -402,7 +402,7 @@ export abstract class ExprParser extends PatParser {
         if (t.text === "#" && this.isOpen("[", 1)) {
           const attrs = this.parseOuterAttrs();
           const expr = this.parsePrefix();
-          expr.attrs = attrs;
+          expr.attrs = attrs.concat(expr.attrs ?? []);
           return expr;
         }
         break;
@@ -668,7 +668,9 @@ export abstract class ExprParser extends PatParser {
     this.expectOpen("{");
     const saved = this.noStruct;
     this.noStruct = false;
-    this.parseInnerAttrs();
+    // Inner attributes of the body live on the `Match` node, after any outer
+    // attributes written before `match`.
+    const inner = this.parseInnerAttrs();
     const arms: ast.MatchArm[] = [];
     while (!this.isClose("}")) {
       const attrs = this.parseOuterAttrs();
@@ -684,7 +686,9 @@ export abstract class ExprParser extends PatParser {
     }
     this.noStruct = saved;
     const close = this.expectClose("}");
-    return { kind: "Match", expr, arms, start, end: close.end };
+    const match: ast.Match = { kind: "Match", expr, arms, start, end: close.end };
+    if (inner.length > 0) match.attrs = inner;
+    return match;
   }
 
   private parseLoop(label: string | null, start: number): ast.Loop {

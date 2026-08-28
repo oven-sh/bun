@@ -2,7 +2,7 @@
 
 import type * as ast from "./ast.ts";
 import { flattenTokenTrees, lex, RustLexError, type Token, type TokenTree } from "./lexer.ts";
-import { RustParseError } from "./parser-base.ts";
+import { RustParseError, STRICT_KEYWORDS } from "./parser-base.ts";
 import { ExprParser } from "./parser-exprs.ts";
 
 /** Keywords a `default`/`const`/`async`/`unsafe`/`safe` qualifier may be followed by in item position. */
@@ -472,11 +472,9 @@ export class Parser extends ExprParser {
 
   private parseImpl(attrs: ast.Attribute[], unsafe: boolean, isDefault: boolean, start: number): ast.Impl {
     this.expectKw("impl");
-    // `impl<T>` generics, but not `impl <T as Trait>::X` (a qualified self type).
-    const generics =
-      this.isChar("<") && !(this.peek(1).kind === "ident" && this.isKw("as", 2))
-        ? this.parseGenerics()
-        : ({ kind: "Generics", params: [], where: [], start: this.tok.start, end: this.tok.start } as ast.Generics);
+    const generics = this.implHasGenerics()
+      ? this.parseGenerics()
+      : ({ kind: "Generics", params: [], where: [], start: this.tok.start, end: this.tok.start } as ast.Generics);
     let isConst = false;
     if (this.isKw("const") && !this.isOpen("{", 1)) {
       this.pos++;
@@ -509,6 +507,22 @@ export class Parser extends ExprParser {
       start,
       end: this.prevEnd(),
     };
+  }
+
+  /**
+   * After `impl`, a `<` opens generic parameters (`impl<T: Tr, 'a, const N: usize>`)
+   * unless it opens a qualified self type (`impl <Vec<T> as Tr>::Out`). A
+   * parameter list starts with a lifetime, `const`, an attribute, `>` (empty),
+   * or an identifier followed by `:`, `,`, `=`, or `>`.
+   */
+  private implHasGenerics(): boolean {
+    if (!this.isChar("<")) return false;
+    const t1 = this.peek(1);
+    if (t1.kind === "lifetime" || this.isKw("const", 1) || this.isChar("#", 1) || this.isChar(">", 1)) return true;
+    if (t1.kind !== "ident" || STRICT_KEYWORDS.has(t1.text)) return false;
+    // `peekOp` sees `::` whole, so `impl <a::B as Tr>::Out` is a self type.
+    const op = this.peekOp(2);
+    return op === ":" || op === "," || op === "=" || op === ">";
   }
 
   // -- modules, use, extern -------------------------------------------------

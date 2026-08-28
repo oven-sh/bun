@@ -465,6 +465,47 @@ test("ancestors on items with a where clause", () => {
   expect(file.parent(p.attrs[0] ?? p)).toBe(p.attrs[0] ? p : file.ast);
 });
 
+test("impl generics versus a qualified self type", () => {
+  const file = parseRust(`
+    impl<'a, T: Clone, const N: usize> Tr for S<'a, T, N> {}
+    impl<T> S<T> {}
+    impl <Vec<u8> as Tr>::Out { fn f() {} }
+    impl <a::B as Tr>::Out { fn g() {} }
+    impl Tr for <T as Other>::Assoc {}
+  `);
+  const impls = file.find("Impl");
+  expect(impls.map(i => [i.generics.params.length, file.text(i.selfTy), i.trait && pathString(i.trait)])).toEqual([
+    [3, "S<'a, T, N>", "Tr"],
+    [1, "S<T>", null],
+    [0, "<Vec<u8> as Tr>::Out", null],
+    [0, "<a::B as Tr>::Out", null],
+    [0, "<T as Other>::Assoc", "Tr"],
+  ]);
+});
+
+test("a match body's inner attributes are kept", () => {
+  const file = parseRust(`
+    fn f() {
+        #[cfg(x)]
+        match y {
+            #![allow(unused)]
+            _ => (),
+        }
+    }
+  `);
+  // The outer attribute belongs to the statement, the inner one to the match.
+  const m = file.find("Match")[0];
+  expect(m.attrs?.map(a => sexpr(a))).toEqual(["#![allow(unused)]"]);
+  expect(file.find("ExprStmt")[0].attrs.map(a => sexpr(a))).toEqual(["#[cfg(x)]"]);
+  expect(file.find("Attribute").map(a => sexpr(a))).toEqual(["#[cfg(x)]", "#![allow(unused)]"]);
+  // In expression position the outer attribute sits on the expression itself.
+  const inline = parseRustExpr("f(#[cfg(x)] match y { #![allow(unused)] _ => 1 })");
+  expect(inline.kind === "Call" && inline.args[0].attrs?.map(a => sexpr(a))).toEqual([
+    "#[cfg(x)]",
+    "#![allow(unused)]",
+  ]);
+});
+
 test("visibility spellings", () => {
   const file = parseRust(`
     pub struct A;

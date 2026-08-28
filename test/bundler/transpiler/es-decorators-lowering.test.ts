@@ -954,6 +954,41 @@ describe("ES decorators lowering", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("an update in a parameter default gets its temporaries per call", async () => {
+    // A default runs in the parameter scope, where a `var` of the body is not
+    // visible; the setter re-enters the same method on another receiver.
+    const { stdout, stderr, exitCode } = await runInline(`
+      const dec = (v, ctx) => {};
+      class B {
+        _v = 10;
+        get x() { return this._v }
+        set x(v) { this._v = v; if (this.hook) { const h = this.hook; this.hook = null; h() } }
+      }
+      class C extends B {
+        @dec a = 1;
+        #m(n = super.x++) { return n }
+        run() { return this.#m() }
+      }
+      class D {
+        @dec a = 1;
+        _w = 10;
+        get #p() { return this._w }
+        set #p(v) { this._w = v; if (this.hook) { const h = this.hook; this.hook = null; h() } }
+        q(n = this.#p++) { return n }
+      }
+      const c1 = new C(), c2 = new C();
+      c2._v = 100;
+      c1.hook = () => c2.run();
+      const d1 = new D(), d2 = new D();
+      d2._w = 100;
+      d1.hook = () => d2.q();
+      console.log(c1.run(), c1._v, c2._v, d1.q(), d1._w, d2._w);
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("10 11 101 10 11 101\n");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent(
     "TypeScript useDefineForClassFields: false installs private methods before parameter properties",
     async () => {
@@ -1225,7 +1260,7 @@ describe("ES decorators lowering output", () => {
 
   test("`super` in extracted private methods uses the class or its prototype as home", () => {
     const out = js.transformSync(
-      `const dec = () => {}; class A extends B { @dec m() {} #pm() { return super.greet(); } static #spm() { return super.sm(); } #inc() { return super.n++ } static g = () => super.n++; }`,
+      `const dec = () => {}; class A extends B { @dec m() {} #pm() { return super.greet(); } static #spm() { return super.sm(); } #inc() { return super.n++ } static g = () => super.n++; #def(v = super.n++) {} }`,
     );
     expect(out).toMatch(
       /_pm_fn\$\d+ = function\(\) \{\n  return __superGet\w*\(A\.prototype, this, "greet"\)\.call\(this\);\n\};/,
@@ -1238,6 +1273,11 @@ describe("ES decorators lowering output", () => {
     );
     expect(out).toMatch(
       /__publicField\w*\(A, "g", \(\) => \{\n  var _tmp\$\d+, _old\$\d+;\n  return __superSet\w*\(A, A, "n", /,
+    );
+    // A default parameter cannot see a `var` of the body: its temporaries live
+    // in an arrow that evaluates the default.
+    expect(out).toMatch(
+      /_def_fn\$\d+ = function\(v = \(\(\) => \{\n  var _tmp\$\d+, _old\$\d+;\n  return __superSet\w*\(A\.prototype, this, "n", [^\n]*;\n\}\)\(\)\) \{\};/,
     );
     expect(out).not.toMatch(/^var [^\n]*_tmp\$/m);
     expect(out).not.toContain("super.");

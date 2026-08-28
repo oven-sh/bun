@@ -625,6 +625,46 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Rewrites every expression in a parameter list and keeps the temporaries
+    /// a rewrite creates with that expression. A parameter default runs once
+    /// per call, and a `var` of the body is not visible to it, so an expression
+    /// that needs temporaries becomes `(() => { var _tmp; return expr; })()`.
+    fn rewrite_arg_exprs(
+        &mut self,
+        args: &mut [G::Arg],
+        visit: &mut dyn FnMut(&mut Self, &mut Expr),
+    ) {
+        self.for_each_arg_expr(args, &mut |p, e| {
+            let temps_before = p.temp_refs_to_declare.len();
+            visit(p, e);
+            let loc = e.loc;
+            let Some(decl) = p.drain_capture_temp_decls(temps_before, loc) else {
+                return;
+            };
+            let ret = p.s(S::Return { value: Some(*e) }, loc);
+            let stmts = p.arena.alloc_slice_copy(&[decl, ret]);
+            let arrow = p.new_expr(
+                E::Arrow {
+                    body: G::FnBody {
+                        loc,
+                        stmts: bun_ast::StoreSlice::new_mut(stmts),
+                    },
+                    is_async: false,
+                    ..Default::default()
+                },
+                loc,
+            );
+            *e = p.new_expr(
+                E::Call {
+                    target: arrow,
+                    args: bun_alloc::AstAlloc::vec(),
+                    ..Default::default()
+                },
+                loc,
+            );
+        });
+    }
+
     /// The parts of a nested class that evaluate in the enclosing context:
     /// the `extends` clause and computed keys. The body has its own `this`.
     fn for_each_class_outer_expr(
@@ -918,7 +958,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.rewrite_expr(&mut e.options, kind);
             }
             js_ast::ExprData::EArrow(e) => {
-                self.for_each_arg_expr(e.args.slice_mut(), &mut |p, a| p.rewrite_expr(a, kind));
+                self.rewrite_arg_exprs(e.args.slice_mut(), &mut |p, a| p.rewrite_expr(a, kind));
                 // A `super` rewrite in the body gets its temporaries per call.
                 let temps_before = self.temp_refs_to_declare.len();
                 let stmts = e.body.stmts.slice_mut();
@@ -1580,9 +1620,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             js_ast::ExprData::EFunction(e) => {
-                // Parameter defaults run in the caller's frame: their temps are
-                // declared with the enclosing code, not inside the body.
-                self.for_each_arg_expr(e.func.args.slice_mut(), &mut |p, a| {
+                self.rewrite_arg_exprs(e.func.args.slice_mut(), &mut |p, a| {
                     p.rewrite_private_accesses_in_expr(a, map)
                 });
                 let temps_before = self.temp_refs_to_declare.len();
@@ -1595,7 +1633,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
             }
             js_ast::ExprData::EArrow(e) => {
-                self.for_each_arg_expr(e.args.slice_mut(), &mut |p, a| {
+                self.rewrite_arg_exprs(e.args.slice_mut(), &mut |p, a| {
                     p.rewrite_private_accesses_in_expr(a, map)
                 });
                 let temps_before = self.temp_refs_to_declare.len();
@@ -1704,7 +1742,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     );
                 }
                 js_ast::StmtData::SFunction(data) => {
-                    self.for_each_arg_expr(data.func.args.slice_mut(), &mut |p, a| {
+                    self.rewrite_arg_exprs(data.func.args.slice_mut(), &mut |p, a| {
                         p.rewrite_private_accesses_in_expr(a, map)
                     });
                     let temps_before = self.temp_refs_to_declare.len();
@@ -1920,7 +1958,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             home,
             loc: class_name_loc,
         };
-        self.for_each_arg_expr(f.func.args.slice_mut(), &mut |p, a| p.rewrite_expr(a, kind));
+        self.rewrite_arg_exprs(f.func.args.slice_mut(), &mut |p, a| p.rewrite_expr(a, kind));
         // The temporaries of a rewritten `super` update belong to the method's
         // own frame, like the receiver captures of lowered private accesses.
         let temps_before = self.temp_refs_to_declare.len();

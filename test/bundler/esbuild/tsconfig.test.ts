@@ -787,13 +787,11 @@ describe("bundler", () => {
       api.expectFile("/Users/user/project/out.js").toContain(`React.createElement`);
     },
   });
-  return;
   itBundled("tsconfig/PathsTypeOnly", {
-    // GENERATED
     files: {
       "/Users/user/project/entry.ts": /* ts */ `
         import { fib } from "fib";
-  
+
         console.log(fib(10));
       `,
       "/Users/user/project/node_modules/fib/index.js": /* js */ `
@@ -816,7 +814,79 @@ describe("bundler", () => {
         }
       `,
     },
+    run: {
+      stdout: "55",
+    },
   });
+  // A `paths` substitution that ends in `.d.ts` (any case) is skipped, for an
+  // exact key and after `*` substitution. The import falls through to the next
+  // substitution or to node_modules, like esbuild's `matchTSConfigPaths`.
+  itBundled("tsconfig/PathsSkipDeclarationFiles", {
+    files: {
+      "/Users/user/project/entry.ts": /* ts */ `
+        import { x } from "foo";
+        import { y } from "bar/lib";
+        import { u } from "upper";
+        import { v } from "upper-star/up";
+        import { f } from "fallback";
+        console.log(x, y, u, v, f);
+      `,
+      "/Users/user/project/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "baseUrl": ".",
+            "paths": {
+              "foo": ["./types/foo.d.ts"],
+              "bar/*": ["./types/*.d.ts"],
+              "upper": ["./types/upper.D.TS"],
+              "upper-star/*": ["./types/*.D.TS"],
+              "fallback": ["./types/fallback.d.ts", "./src/fallback.ts"]
+            }
+          }
+        }
+      `,
+      "/Users/user/project/types/foo.d.ts": `export declare const x: number;`,
+      "/Users/user/project/types/lib.d.ts": `export declare const y: number;`,
+      "/Users/user/project/types/upper.D.TS": `export declare const u: number;`,
+      "/Users/user/project/types/up.D.TS": `export declare const v: number;`,
+      "/Users/user/project/types/fallback.d.ts": `export declare const f: string;`,
+      "/Users/user/project/src/fallback.ts": `export const f = "fallback.ts";`,
+      "/Users/user/project/node_modules/foo/package.json": `{ "name": "foo", "type": "module", "main": "index.js" }`,
+      "/Users/user/project/node_modules/foo/index.js": `export const x = 123;`,
+      "/Users/user/project/node_modules/bar/package.json": `{ "name": "bar", "type": "module" }`,
+      "/Users/user/project/node_modules/bar/lib.js": `export const y = 456;`,
+      "/Users/user/project/node_modules/upper/package.json": `{ "name": "upper", "type": "module", "main": "index.js" }`,
+      "/Users/user/project/node_modules/upper/index.js": `export const u = 7;`,
+      "/Users/user/project/node_modules/upper-star/package.json": `{ "name": "upper-star", "type": "module" }`,
+      "/Users/user/project/node_modules/upper-star/up.js": `export const v = 8;`,
+    },
+    run: {
+      stdout: "123 456 7 8 fallback.ts",
+    },
+  });
+  itBundled("tsconfig/PathsSkipDeclarationFilesNoFallback", {
+    files: {
+      "/Users/user/project/entry.ts": /* ts */ `
+        import { z } from "types-only";
+        console.log(z);
+      `,
+      "/Users/user/project/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "baseUrl": ".",
+            "paths": {
+              "types-only": ["./types/types-only.d.ts"]
+            }
+          }
+        }
+      `,
+      "/Users/user/project/types/types-only.d.ts": `export declare const z: number;`,
+    },
+    bundleErrors: {
+      "/Users/user/project/entry.ts": [`Could not resolve: "types-only". Maybe you need to "bun install"?`],
+    },
+  });
+  return;
   itBundled("tsconfig/NestedJSX", {
     // GENERATED
     files: {

@@ -799,6 +799,63 @@ describe.concurrent("--no-bundle with --outdir", () => {
   });
 });
 
+// Entry points with the `file` loader are copied verbatim (OutputFile::copy_to).
+// The copy is written with the default create mode, so the umask applies, and
+// it keeps the source's executable bit. The copy is currently named
+// `<source>-<hash>.<ext>`, so the tests locate it by glob.
+describe.concurrent.skipIf(isWindows)("--no-bundle copies file loader entry points", () => {
+  function findCopy(dir: string, name: string): string {
+    const ext = path.extname(name);
+    const matches = Array.from(new Bun.Glob(`**/${name}-*${ext}`).scanSync({ cwd: dir, absolute: true }));
+    expect(matches).toHaveLength(1);
+    return matches[0];
+  }
+
+  async function buildWithUmask(dir: string, umask: string, entry: string) {
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `umask ${umask} && exec "$0" "$@"`, bunExe(), "build", "--no-bundle", entry, "--outdir=dist"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return stdout;
+  }
+
+  test("creates the copy with mode 0666 masked by the umask", async () => {
+    using dir = tempDir("no-bundle-copy-umask", {
+      "src/asset.bin": "binary payload\n",
+    });
+
+    await buildWithUmask(String(dir), "002", "./src/asset.bin");
+
+    const copy = findCopy(String(dir), "asset.bin");
+    expect(fs.readFileSync(copy, "utf8")).toBe("binary payload\n");
+    expect((fs.statSync(copy).mode & 0o777).toString(8)).toBe("664");
+  });
+
+  test("keeps the executable bit of the source", async () => {
+    using dir = tempDir("no-bundle-copy-exec", {
+      "src/tool.bin": "#!/bin/sh\necho hi\n",
+      "src/data.bin": "not a program\n",
+    });
+    fs.chmodSync(path.join(String(dir), "src", "tool.bin"), 0o755);
+    fs.chmodSync(path.join(String(dir), "src", "data.bin"), 0o644);
+
+    await buildWithUmask(String(dir), "022", "./src/tool.bin");
+    await buildWithUmask(String(dir), "022", "./src/data.bin");
+
+    const tool = findCopy(String(dir), "tool.bin");
+    const data = findCopy(String(dir), "data.bin");
+    expect(fs.readFileSync(tool, "utf8")).toBe("#!/bin/sh\necho hi\n");
+    expect((fs.statSync(tool).mode & 0o777).toString(8)).toBe("755");
+    expect((fs.statSync(data).mode & 0o777).toString(8)).toBe("644");
+  });
+});
+
 describe("CLI argument error messages", () => {
   test("--format with an unrecognized value echoes the value back", async () => {
     using dir = tempDir("build-format-err", { "in.js": "console.log(1)" });

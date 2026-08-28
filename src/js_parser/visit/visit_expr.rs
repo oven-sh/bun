@@ -885,8 +885,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let is_delete_target = matches!(p.delete_target, Data::EIndex(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
 
         // Check user-specified defines and known globals: `a["b"]` matches the
-        // same define as `a.b`.
-        if let Some(mut s) = e_.index.data.e_string() {
+        // same define as `a.b`. See `is_dot_define_match` for the UTF-8 gate.
+        if let Some(mut s) = e_.index.data.e_string().filter(|s| s.is_utf8()) {
             let defines = p.define;
             if let Some(dot_defines) = defines.dots.get(s.slice(p.arena)) {
                 for define in dot_defines.as_slice() {

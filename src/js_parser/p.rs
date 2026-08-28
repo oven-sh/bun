@@ -6354,14 +6354,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return parts.len() == 1 && &*parts[0] == b"this";
                 }
             }
-            // `a["b"]` matches the same define as `a.b`
+            // `a["b"]` matches the same define as `a.b`. A UTF-16 literal
+            // (non-ASCII text) is skipped: comparing it would allocate a UTF-8
+            // copy on every visit, and define parts are ASCII in practice.
             js_ast::ExprData::EIndex(index) => {
                 if parts.len() > 1 {
                     if let js_ast::ExprData::EString(mut s) = index.index.data {
-                        let last = parts.len() - 1;
-                        let is_tail_match = strings::eql(&parts[last], s.slice(self.arena));
-                        return is_tail_match
-                            && self.is_dot_define_match(index.target, &parts[..last]);
+                        if s.is_utf8() {
+                            let last = parts.len() - 1;
+                            // `slice` flattens a rope left by a folded `"b" + "c"`
+                            let is_tail_match = strings::eql(&parts[last], s.slice(self.arena));
+                            return is_tail_match
+                                && self.is_dot_define_match(index.target, &parts[..last]);
+                        }
                     }
                 }
             }

@@ -1679,6 +1679,37 @@ impl JSValue {
             unsafe { Bun__JSValue__call(global, self, this_value, args.len(), args.as_ptr()) }
         })
     }
+
+    /// [`call`](Self::call) plus the microtask checkpoint after it, under a wall-clock limit of `seconds`.
+    /// `Ok(None)`: the limit cut them short at a safepoint, nothing is pending. A stop of the whole VM is `Err`.
+    #[track_caller]
+    pub fn call_with_deadline(
+        self,
+        global: &JSGlobalObject,
+        this_value: JSValue,
+        args: &[JSValue],
+        seconds: f64,
+    ) -> JsResult<Option<JSValue>> {
+        let mut timed_out = false;
+        let result = host_fn::from_js_host_call(global, || {
+            // SAFETY: as in `call`; `timed_out` outlives the call.
+            unsafe {
+                Bun__JSValue__callWithDeadline(
+                    global,
+                    self,
+                    this_value,
+                    args.len(),
+                    args.as_ptr(),
+                    seconds,
+                    &raw mut timed_out,
+                )
+            }
+        });
+        if timed_out {
+            return Ok(None);
+        }
+        result.map(Some)
+    }
 }
 
 /// RAII guard returned by [`JSValue::protected`]. Calls [`JSValue::unprotect`]
@@ -2133,6 +2164,15 @@ unsafe extern "C" {
         this_value: JSValue,
         args_len: usize,
         args_ptr: *const JSValue,
+    ) -> JSValue;
+    fn Bun__JSValue__callWithDeadline(
+        global: *const JSGlobalObject,
+        function: JSValue,
+        this_value: JSValue,
+        args_len: usize,
+        args_ptr: *const JSValue,
+        seconds: f64,
+        timed_out: *mut bool,
     ) -> JSValue;
     safe fn Bun__JSValue__protect(this: JSValue);
     safe fn Bun__JSValue__unprotect(this: JSValue);

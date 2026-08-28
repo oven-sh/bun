@@ -1210,6 +1210,12 @@ describe("spyOn", () => {
     test("spyOn works with a missing indexed property", () => {
       const obj = {};
       const fn = spyOn(obj, 7);
+      expect(Object.getOwnPropertyDescriptor(obj, 7)).toEqual({
+        get: fn,
+        set: fn,
+        enumerable: true,
+        configurable: true,
+      });
       expect(obj[7]).toBeUndefined();
       expect(fn).toHaveBeenCalledTimes(1);
 
@@ -1218,7 +1224,15 @@ describe("spyOn", () => {
       expect(fn.mock.calls[1]).toEqual([1]);
 
       fn.mockRestore();
+      // Same as a missing named key: restore writes the original `undefined` back as a data property.
+      expect(Object.getOwnPropertyDescriptor(obj, 7)).toEqual({
+        value: undefined,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
       expect(obj[7]).toBeUndefined();
+      expect(fn).not.toHaveBeenCalled();
     });
 
     // The engine serves a function's `prototype` property specially, so it cannot be

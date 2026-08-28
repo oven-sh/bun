@@ -357,6 +357,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
+    /// A `super` property key that is read and then written: a literal can be
+    /// repeated, anything else is captured in a temporary on its first use.
+    /// Returns `(first use, later use)`.
+    fn super_key_once(&mut self, key: Expr, l: bun_ast::Loc) -> (Expr, Expr) {
+        if matches!(
+            key.data,
+            js_ast::ExprData::EString(_) | js_ast::ExprData::ENumber(_)
+        ) {
+            return (key, key);
+        }
+        let key_ref = self.generate_temp_ref(Some(b"_key"));
+        let write = self.assign_to(key_ref, key, l);
+        let read = self.use_ref(key_ref, l);
+        (write, read)
+    }
+
+    /// `super.key = value` as an expression: `Reflect.set` returns a boolean,
+    /// so the value goes through a temporary: `(Reflect.set(..., _v = value, C), _v)`.
+    fn super_set_value(&mut self, class_ref: Ref, key: Expr, value: Expr, l: bun_ast::Loc) -> Expr {
+        let value_ref = self.generate_temp_ref(Some(b"_v"));
+        let stored = self.assign_to(value_ref, value, l);
+        let set = self.super_set(class_ref, key, stored, l);
+        let result = self.use_ref(value_ref, l);
+        set.join_with_comma(result)
+    }
+
     /// `super.key = value` moved out of the class: `Reflect.set(Object.getPrototypeOf(C), key, value, C)`.
     fn super_set(&mut self, class_ref: Ref, key: Expr, value: Expr, l: bun_ast::Loc) -> Expr {
         let set = self.global_method(b"Reflect", b"set", l);
@@ -465,6 +491,90 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // ── Generic tree rewriter ────────────────────────────
 
+    /// Every expression nested in a binding pattern: default values and
+    /// computed keys.
+    fn for_each_binding_expr(
+        &mut self,
+        binding: &mut js_ast::Binding,
+        visit: &mut dyn FnMut(&mut Self, &mut Expr),
+    ) {
+        match &mut binding.data {
+            js_ast::b::B::BArray(arr) => {
+                for item in arr.items.slice_mut() {
+                    if let Some(d) = &mut item.default_value {
+                        visit(self, d);
+                    }
+                    self.for_each_binding_expr(&mut item.binding, visit);
+                }
+            }
+            js_ast::b::B::BObject(obj) => {
+                for prop in obj.properties.slice_mut() {
+                    if prop.flags.contains(Flags::Property::IsComputed) {
+                        visit(self, &mut prop.key);
+                    }
+                    if let Some(d) = &mut prop.default_value {
+                        visit(self, d);
+                    }
+                    self.for_each_binding_expr(&mut prop.value, visit);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Every expression in a parameter list: patterns and default values.
+    fn for_each_arg_expr(
+        &mut self,
+        args: &mut [G::Arg],
+        visit: &mut dyn FnMut(&mut Self, &mut Expr),
+    ) {
+        for arg in args.iter_mut() {
+            self.for_each_binding_expr(&mut arg.binding, visit);
+            if let Some(d) = &mut arg.default {
+                visit(self, d);
+            }
+        }
+    }
+
+    /// The parts of a nested class that evaluate in the enclosing context:
+    /// the `extends` clause and computed keys. The body has its own `this`.
+    fn for_each_class_outer_expr(
+        &mut self,
+        class: &mut G::Class,
+        visit: &mut dyn FnMut(&mut Self, &mut Expr),
+    ) {
+        if let Some(e) = &mut class.extends {
+            visit(self, e);
+        }
+        for prop in class.properties.slice_mut() {
+            if prop.flags.contains(Flags::Property::IsComputed)
+                && let Some(k) = &mut prop.key
+            {
+                visit(self, k);
+            }
+        }
+    }
+
+    /// The body of a nested class: methods, initializers and static blocks.
+    fn for_each_class_body(
+        &mut self,
+        class: &mut G::Class,
+        visit: &mut dyn FnMut(&mut Self, &mut Expr),
+        visit_stmts: &mut dyn FnMut(&mut Self, &mut [Stmt]),
+    ) {
+        for prop in class.properties.slice_mut() {
+            if let Some(v) = &mut prop.value {
+                visit(self, v);
+            }
+            if let Some(i) = &mut prop.initializer {
+                visit(self, i);
+            }
+            if let Some(sb) = prop.class_static_block_mut() {
+                visit_stmts(self, sb.stmts.slice_mut());
+            }
+        }
+    }
+
     fn rewrite_expr(&mut self, expr: &mut Expr, kind: RewriteKind) {
         match kind {
             RewriteKind::ReplaceRef { old, new } => {
@@ -518,13 +628,89 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return;
                 }
                 if let js_ast::ExprData::EBinary(bin) = &mut expr.data
-                    && bin.op == js_ast::OpCode::BinAssign
+                    && (bin.op == js_ast::OpCode::BinAssign
+                        || compound_assign_base_op(bin.op).is_some())
                     && let Some(mut key) = self.super_property_key(&bin.left)
                 {
                     self.rewrite_expr(&mut key, kind);
                     let mut value = bin.right;
                     self.rewrite_expr(&mut value, kind);
-                    *expr = self.super_set(ref_, key, value, loc);
+                    *expr = match compound_assign_base_op(bin.op) {
+                        // `super.x = v` => `(Reflect.set(proto, "x", _v = v, C), _v)`
+                        None => self.super_set_value(ref_, key, value, loc),
+                        Some(base_op) => {
+                            // The key use that is evaluated first carries the capture.
+                            let (first_key, second_key) = self.super_key_once(key, loc);
+                            if is_logical_op(base_op) {
+                                // `super.x ??= v` => `Reflect.get(...) ?? (Reflect.set(..., _v = v, C), _v)`
+                                let current = self.super_get(ref_, first_key, loc);
+                                let set = self.super_set_value(ref_, second_key, value, loc);
+                                self.new_expr(
+                                    E::Binary {
+                                        op: base_op,
+                                        left: current,
+                                        right: set,
+                                    },
+                                    loc,
+                                )
+                            } else {
+                                // `super.x += v` => `(Reflect.set(..., _v = Reflect.get(...) + v, C), _v)`
+                                // `Reflect.set` evaluates its key before the value.
+                                let current = self.super_get(ref_, second_key, loc);
+                                let new_value = self.new_expr(
+                                    E::Binary {
+                                        op: base_op,
+                                        left: current,
+                                        right: value,
+                                    },
+                                    loc,
+                                );
+                                self.super_set_value(ref_, first_key, new_value, loc)
+                            }
+                        }
+                    };
+                    return;
+                }
+                if let js_ast::ExprData::EUnary(un) = &mut expr.data
+                    && is_update_op(un.op)
+                    && let Some(mut key) = self.super_property_key(&un.value)
+                {
+                    // Same shape as the private-member update: the operator runs on
+                    // a temporary, so ToNumeric applies to the read value.
+                    self.rewrite_expr(&mut key, kind);
+                    // `Reflect.set` evaluates its key before the value, so the set
+                    // carries the capture and the inner get reuses it.
+                    let (set_key, get_key) = self.super_key_once(key, loc);
+                    let tmp_ref = self.generate_temp_ref(Some(b"_tmp"));
+                    let current = self.super_get(ref_, get_key, loc);
+                    let read_into_tmp = self.assign_to(tmp_ref, current, loc);
+                    let tmp = self.use_ref(tmp_ref, loc);
+                    let update = self.new_expr(
+                        E::Unary {
+                            op: un.op,
+                            value: tmp,
+                            flags: Default::default(),
+                        },
+                        loc,
+                    );
+                    *expr = if js_ast::OpCode::is_prefix(un.op) {
+                        // `++super.x` => `(Reflect.set(proto, "x", (_tmp = Reflect.get(...), ++_tmp), C), _tmp)`
+                        let value = read_into_tmp.join_with_comma(update);
+                        let set = self.super_set(ref_, set_key, value, loc);
+                        let result = self.use_ref(tmp_ref, loc);
+                        set.join_with_comma(result)
+                    } else {
+                        // `super.x++` => `(Reflect.set(proto, "x", (_tmp = Reflect.get(...), _old = _tmp++, _tmp), C), _old)`
+                        let old_ref = self.generate_temp_ref(Some(b"_old"));
+                        let save_old = self.assign_to(old_ref, update, loc);
+                        let tmp_again = self.use_ref(tmp_ref, loc);
+                        let value = read_into_tmp
+                            .join_with_comma(save_old)
+                            .join_with_comma(tmp_again);
+                        let set = self.super_set(ref_, set_key, value, loc);
+                        let old = self.use_ref(old_ref, loc);
+                        set.join_with_comma(old)
+                    };
                     return;
                 }
             }
@@ -569,6 +755,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             js_ast::ExprData::EObject(e) => {
                 for prop in e.properties.slice_mut() {
+                    if prop.flags.contains(Flags::Property::IsComputed)
+                        && let Some(k) = &mut prop.key
+                    {
+                        self.rewrite_expr(k, kind);
+                    }
                     if let Some(v) = &mut prop.value {
                         self.rewrite_expr(v, kind);
                     }
@@ -586,21 +777,48 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.rewrite_expr(&mut part.value, kind);
                 }
             }
+            js_ast::ExprData::EAwait(e) => self.rewrite_expr(&mut e.value, kind),
+            js_ast::ExprData::EYield(e) => {
+                if let Some(v) = &mut e.value {
+                    self.rewrite_expr(v, kind);
+                }
+            }
+            js_ast::ExprData::EImport(e) => {
+                self.rewrite_expr(&mut e.expr, kind);
+                self.rewrite_expr(&mut e.options, kind);
+            }
             js_ast::ExprData::EArrow(e) => {
+                self.for_each_arg_expr(e.args.slice_mut(), &mut |p, a| p.rewrite_expr(a, kind));
                 let stmts = e.body.stmts.slice_mut();
                 self.rewrite_stmts(stmts, kind);
             }
+            // A function and a class body bind their own `this` and `super`;
+            // only a renamed class reference reaches into them.
             js_ast::ExprData::EFunction(e) => match kind {
                 RewriteKind::ReplaceThis { .. } | RewriteKind::ReplaceSuper { .. } => {}
                 RewriteKind::ReplaceRef { .. } => {
+                    self.for_each_arg_expr(e.func.args.slice_mut(), &mut |p, a| {
+                        p.rewrite_expr(a, kind)
+                    });
                     let stmts = e.func.body.stmts.slice_mut();
                     if !stmts.is_empty() {
                         self.rewrite_stmts(stmts, kind);
                     }
                 }
             },
-            js_ast::ExprData::EClass(_) => {}
+            js_ast::ExprData::EClass(c) => self.rewrite_class(c, kind),
             _ => {}
+        }
+    }
+
+    fn rewrite_class(&mut self, class: &mut G::Class, kind: RewriteKind) {
+        self.for_each_class_outer_expr(class, &mut |p, e| p.rewrite_expr(e, kind));
+        if matches!(kind, RewriteKind::ReplaceRef { .. }) {
+            self.for_each_class_body(
+                class,
+                &mut |p, e| p.rewrite_expr(e, kind),
+                &mut |p, stmts| p.rewrite_stmts(stmts, kind),
+            );
         }
     }
 
@@ -621,6 +839,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::StmtData::SLocal(local) => {
                     for decl in local.decls.slice_mut() {
+                        self.for_each_binding_expr(&mut decl.binding, &mut |p, e| {
+                            p.rewrite_expr(e, kind)
+                        });
                         if let Some(v) = &mut decl.value {
                             self.rewrite_expr(v, kind);
                         }
@@ -632,6 +853,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::StmtData::SThrow(data) => self.rewrite_expr(&mut data.value, kind),
+                js_ast::StmtData::SClass(data) => self.rewrite_class(&mut data.class, kind),
+                js_ast::StmtData::SFunction(data) => {
+                    if matches!(kind, RewriteKind::ReplaceRef { .. }) {
+                        self.for_each_arg_expr(data.func.args.slice_mut(), &mut |p, a| {
+                            p.rewrite_expr(a, kind)
+                        });
+                        self.rewrite_stmts(data.func.body.stmts.slice_mut(), kind);
+                    }
+                }
                 js_ast::StmtData::SIf(data) => {
                     let mut t = data.test;
                     self.rewrite_expr(&mut t, kind);
@@ -662,6 +892,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     data.body = body;
                 }
                 js_ast::StmtData::SForIn(data) => {
+                    let mut init = data.init;
+                    self.rewrite_stmts(core::slice::from_mut(&mut init), kind);
+                    data.init = init;
                     let mut v = data.value;
                     self.rewrite_expr(&mut v, kind);
                     data.value = v;
@@ -670,6 +903,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     data.body = body;
                 }
                 js_ast::StmtData::SForOf(data) => {
+                    let mut init = data.init;
+                    self.rewrite_stmts(core::slice::from_mut(&mut init), kind);
+                    data.init = init;
                     let mut v = data.value;
                     self.rewrite_expr(&mut v, kind);
                     data.value = v;
@@ -710,6 +946,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let body = data.body.slice_mut();
                     self.rewrite_stmts(body, kind);
                     if let Some(c) = &mut data.catch {
+                        if let Some(b) = &mut c.binding {
+                            self.for_each_binding_expr(b, &mut |p, e| p.rewrite_expr(e, kind));
+                        }
                         let cb = c.body.slice_mut();
                         self.rewrite_stmts(cb, kind);
                     }
@@ -876,12 +1115,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let (first_obj, second_obj) = self.capture_private_receiver(obj, expr_loc);
                     let mut rt = e.right;
                     self.rewrite_private_accesses_in_expr(&mut rt, map);
-                    *expr = if matches!(
-                        base_op,
-                        js_ast::OpCode::BinLogicalAnd
-                            | js_ast::OpCode::BinLogicalOr
-                            | js_ast::OpCode::BinNullishCoalescing
-                    ) {
+                    *expr = if is_logical_op(base_op) {
                         // `o.#x ??= v` => `__privateGet(o, _x) ?? __privateSet(o, _x, v)`
                         let current = self.private_get_expr(first_obj, &info, expr_loc);
                         let set = self.private_set_expr(second_obj, &info, rt, expr_loc);
@@ -967,14 +1201,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             js_ast::ExprData::EUnary(e) => {
-                let is_update = matches!(
-                    e.op,
-                    js_ast::OpCode::UnPreInc
-                        | js_ast::OpCode::UnPreDec
-                        | js_ast::OpCode::UnPostInc
-                        | js_ast::OpCode::UnPostDec
-                );
-                if is_update && let Some((obj, info)) = Self::lowered_private_member(&e.value, map)
+                if is_update_op(e.op)
+                    && let Some((obj, info)) = Self::lowered_private_member(&e.value, map)
                 {
                     let mut obj = obj;
                     self.rewrite_private_accesses_in_expr(&mut obj, map);
@@ -1052,6 +1280,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             js_ast::ExprData::EObject(e) => {
                 for prop in e.properties.slice_mut() {
+                    if prop.flags.contains(Flags::Property::IsComputed)
+                        && let Some(k) = &mut prop.key
+                    {
+                        self.rewrite_private_accesses_in_expr(k, map);
+                    }
                     if let Some(v) = &mut prop.value {
                         self.rewrite_private_accesses_in_expr(v, map);
                     }
@@ -1059,6 +1292,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         self.rewrite_private_accesses_in_expr(ini, map);
                     }
                 }
+            }
+            js_ast::ExprData::EImport(e) => {
+                self.rewrite_private_accesses_in_expr(&mut e.expr, map);
+                self.rewrite_private_accesses_in_expr(&mut e.options, map);
+            }
+            js_ast::ExprData::EClass(c) => {
+                self.for_each_class_outer_expr(c, &mut |p, e| {
+                    p.rewrite_private_accesses_in_expr(e, map)
+                });
+                self.for_each_class_body(
+                    c,
+                    &mut |p, e| p.rewrite_private_accesses_in_expr(e, map),
+                    &mut |p, stmts| p.rewrite_private_accesses_in_stmts(stmts, map),
+                );
             }
             js_ast::ExprData::ETemplate(e) => {
                 if let Some(t) = &mut e.tag {
@@ -1070,6 +1317,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             js_ast::ExprData::EFunction(e) => {
+                // Parameter defaults run in the caller's frame: their temps are
+                // declared with the enclosing code, not inside the body.
+                self.for_each_arg_expr(e.func.args.slice_mut(), &mut |p, a| {
+                    p.rewrite_private_accesses_in_expr(a, map)
+                });
                 let temps_before = self.temp_refs_to_declare.len();
                 let stmts = e.func.body.stmts.slice_mut();
                 self.rewrite_private_accesses_in_stmts(stmts, map);
@@ -1080,6 +1332,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
             }
             js_ast::ExprData::EArrow(e) => {
+                self.for_each_arg_expr(e.args.slice_mut(), &mut |p, a| {
+                    p.rewrite_private_accesses_in_expr(a, map)
+                });
                 let temps_before = self.temp_refs_to_declare.len();
                 let stmts = e.body.stmts.slice_mut();
                 self.rewrite_private_accesses_in_stmts(stmts, map);
@@ -1155,10 +1410,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::StmtData::SLocal(data) => {
                     for decl in data.decls.slice_mut() {
+                        self.for_each_binding_expr(&mut decl.binding, &mut |p, e| {
+                            p.rewrite_private_accesses_in_expr(e, map)
+                        });
                         if let Some(v) = &mut decl.value {
                             self.rewrite_private_accesses_in_expr(v, map);
                         }
                     }
+                }
+                js_ast::StmtData::SClass(data) => {
+                    self.for_each_class_outer_expr(&mut data.class, &mut |p, e| {
+                        p.rewrite_private_accesses_in_expr(e, map)
+                    });
+                    self.for_each_class_body(
+                        &mut data.class,
+                        &mut |p, e| p.rewrite_private_accesses_in_expr(e, map),
+                        &mut |p, stmts| p.rewrite_private_accesses_in_stmts(stmts, map),
+                    );
+                }
+                js_ast::StmtData::SFunction(data) => {
+                    self.for_each_arg_expr(data.func.args.slice_mut(), &mut |p, a| {
+                        p.rewrite_private_accesses_in_expr(a, map)
+                    });
+                    let temps_before = self.temp_refs_to_declare.len();
+                    self.rewrite_private_accesses_in_stmts(data.func.body.stmts.slice_mut(), map);
+                    data.func.body.stmts = self.declare_capture_temps_in_fn_body(
+                        data.func.body.stmts,
+                        temps_before,
+                        data.func.body.loc,
+                    );
                 }
                 js_ast::StmtData::SIf(data) => {
                     let mut t = data.test;
@@ -1190,6 +1470,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     data.body = body;
                 }
                 js_ast::StmtData::SForIn(data) => {
+                    let mut init = data.init;
+                    self.rewrite_private_accesses_in_stmts(core::slice::from_mut(&mut init), map);
+                    data.init = init;
                     let mut v = data.value;
                     self.rewrite_private_accesses_in_expr(&mut v, map);
                     data.value = v;
@@ -1198,6 +1481,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     data.body = body;
                 }
                 js_ast::StmtData::SForOf(data) => {
+                    let mut init = data.init;
+                    self.rewrite_private_accesses_in_stmts(core::slice::from_mut(&mut init), map);
+                    data.init = init;
                     let mut v = data.value;
                     self.rewrite_private_accesses_in_expr(&mut v, map);
                     data.value = v;
@@ -1238,6 +1524,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let body = data.body.slice_mut();
                     self.rewrite_private_accesses_in_stmts(body, map);
                     if let Some(c) = &mut data.catch {
+                        if let Some(b) = &mut c.binding {
+                            self.for_each_binding_expr(b, &mut |p, e| {
+                                p.rewrite_private_accesses_in_expr(e, map)
+                            });
+                        }
                         let cb = c.body.slice_mut();
                         self.rewrite_private_accesses_in_stmts(cb, map);
                     }
@@ -2465,7 +2756,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
 
-            if omit_field_init {
+            // TypeScript's [[Set]] mode: a field without an initializer is a
+            // declaration only, tsc emits nothing for it.
+            if omit_field_init || (!use_define && prop.initializer.is_none()) {
                 continue;
             }
 
@@ -3010,6 +3303,28 @@ fn is_param_prop_assignment(stmt: &Stmt, args: &[G::Arg]) -> bool {
         arg.is_typescript_ctor_field
             && matches!(arg.binding.data, js_ast::b::B::BIdentifier(b) if b.r#ref.eql(id.ref_))
     })
+}
+
+#[inline]
+fn is_update_op(op: js_ast::OpCode) -> bool {
+    matches!(
+        op,
+        js_ast::OpCode::UnPreInc
+            | js_ast::OpCode::UnPreDec
+            | js_ast::OpCode::UnPostInc
+            | js_ast::OpCode::UnPostDec
+    )
+}
+
+/// `&&`, `||`, `??`: the right side runs only when the left side says so.
+#[inline]
+fn is_logical_op(op: js_ast::OpCode) -> bool {
+    matches!(
+        op,
+        js_ast::OpCode::BinLogicalAnd
+            | js_ast::OpCode::BinLogicalOr
+            | js_ast::OpCode::BinNullishCoalescing
+    )
 }
 
 /// The operator behind a compound assignment: `+=` is `+`.

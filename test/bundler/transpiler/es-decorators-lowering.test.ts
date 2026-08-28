@@ -140,11 +140,13 @@ const dec = (value, ctx) => {
   decCtx = { kind: ctx.kind, name: ctx.name, static: ctx.static, private: ctx.private };
 };
 const out = {};
+const pending = [];
 `;
 
 // Fields keep [[Define]] semantics after lowering: a setter on the base class
 // is not invoked, and the instance gets an own data property. TypeScript's
-// \`useDefineForClassFields: false\` switches to [[Set]] for every field.
+// \`useDefineForClassFields: false\` switches to [[Set]] for every field and
+// emits nothing for a field without an initializer, as tsc does.
 const installSection = `
 {
   const calls = [];
@@ -179,7 +181,7 @@ const installExpectedDefine = {
 };
 const installExpectedAssign = {
   calls: ["sf:3", "sg:4", "f:1", "g:2"],
-  own: [false, false, true],
+  own: [false, false, false],
   staticOwn: [false, false],
   values: [null, null, null, null, null],
 };
@@ -319,22 +321,53 @@ const extraSections = `
   out.privateUpdates = U.run(new U());
 }
 
-// \`super\` in static initializers and blocks that leave the class body.
+// \`super\`, \`this\` and nested scopes in static code that leaves the class
+// body. The expected values are what node prints for the same class without
+// the decorator.
 {
+  let n = 0;
   class SBase {
+    static count = 10;
     static get y() { return "by"; }
-    static m(a) { return "bm:" + a + ":" + (this === SDer); }
+    static m(a) { return "bm:" + a + ":" + this.name; }
     static set z(v) { SBase.z_ = v; }
   }
   class SDer extends SBase {
     @dec static q = 1;
     static a = super.y;
     static b = super.m("arg");
-    static c = (super.z = 5, SBase.z_);
+    static c = (super.z = 5);
     static d = () => super["y"];
     static { SDer.e = super.m("blk"); }
+    static f = (super.count += 5);
+    static g = ++super.count;
+    static h = super.count++;
+    static i = (super.z ??= 7);
+    static j = super[(n++, "y")];
+    static k = (super[(n++, "count")] -= 1);
+    static l = (super[(n++, "count")]--, SDer.count);
+    static obj = { [this.q]: this.q, m() { return super.toString === Object.prototype.toString; } };
+    static fn = (a = this.q, { b = this.q } = {}) => [a, b];
+    static nested = class Inner extends (this.q, SBase) { static [this.q] = 2; static w = SDer.q; };
+    static asyncFn = async () => { await null; return this.q; };
+    static { const { x = this.q } = {}; const [y = this.q] = []; SDer.destructured = [x, y]; }
   }
-  out.superStatic = [SDer.a, SDer.b, SDer.c, SDer.d(), SDer.e];
+  out.superStatic = [SDer.a, SDer.b, SDer.c, SDer.d(), SDer.e, SDer.f, SDer.g, SDer.h, SDer.i, SDer.j, SDer.k, SDer.l, SDer.count, SBase.count, SBase.z_, n];
+  out.relocated = [SDer.obj[1], SDer.obj.m(), SDer.fn(), SDer.nested[1], SDer.nested.w, SDer.destructured];
+  pending.push(SDer.asyncFn().then((v) => { out.relocatedAsync = v; }));
+}
+
+// The inner name of a class expression, in nested scopes of relocated code.
+{
+  const E = class Named {
+    @dec m() {}
+    static #p = 3;
+    static inner = class { static w = Named.#p; static [Named.#p] = "k"; m() { return Named; } };
+    static obj = { [Named.#p]: Named.#p, get g() { return Named.#p; } };
+    static fn = (a = Named.#p, { b = Named.#p } = {}) => [a, b, Named];
+    static { const { x = Named.#p } = {}; for (const y of [Named.#p]) Named.z = x + y; }
+  };
+  out.namedExprNested = [E.inner.w, E.inner[3], new E.inner().m() === E, E.obj[3], E.obj.g, E.fn().slice(0, 2), E.fn()[2] === E, E.z];
 }
 
 // https://github.com/oven-sh/bun/issues/28118
@@ -415,7 +448,10 @@ const extraExpected = {
   derived: ["dec:b", "pre", "base", "a", "b", "post"],
   privateAccessor: ["acc", 7, 16],
   privateUpdates: [6, 6, 12, "2n", 3, 2],
-  superStatic: ["by", "bm:arg:true", 5, "by", "bm:blk:true"],
+  superStatic: ["by", "bm:arg:SDer", 5, "by", "bm:blk:SDer", 15, 11, 10, 7, "by", 9, 9, 9, 10, 7, 3],
+  relocated: [1, true, [1, 1], 2, 1, [1, 1]],
+  relocatedAsync: 1,
+  namedExprNested: [3, "k", true, 3, 3, [3, 3], true, 6],
   issue28118: "hello",
   issue31917: ["s", "t"],
   issue31929: ["function", true],
@@ -439,7 +475,7 @@ function buildFixture(cjs: boolean) {
   }
   src += installSection;
   src += extraSections;
-  src += `\nconsole.log(JSON.stringify(out));\n`;
+  src += `\nPromise.all(pending).then(() => console.log(JSON.stringify(out)));\n`;
   if (cjs) src += `module.exports = out;\n`;
   return src;
 }
@@ -580,7 +616,7 @@ describe("ES decorators lowering", () => {
     });
     const { stdout, stderr, exitCode } = await run(String(dir), ["test.ts"]);
     expect(stderr).toBe("");
-    expect(stdout).toBe('SET field\nctor 1 5\n[ "x", "a", "bar" ] true false\n');
+    expect(stdout).toBe('SET field\nctor 1 5\n[ "x", "a" ] false false\n');
     expect(exitCode).toBe(0);
   });
 
@@ -609,7 +645,7 @@ describe("ES decorators lowering", () => {
     `);
     expect(assign).toContain("this.a = __runInitializers");
     expect(assign).toContain("this.b = 2");
-    expect(assign).toMatch(/this\.bar = (void 0|undefined)/);
+    expect(assign).not.toContain("bar");
     expect(assign).toContain("A.d = 3");
     expect(assign).not.toContain("__publicField");
   });

@@ -271,8 +271,12 @@ pub(crate) fn project<'a>(
             .map(|n| loose(n.text))
             .collect();
         let ok = |side: &Side, line0: usize, text: &[u8], others: &[Vec<u8>]| {
-            if side.no_image(line0) {
-                trivial(text) || others.contains(&loose(text))
+            // Punctuation-only lines are layout even when the source map gives
+            // them a position (the `}` that closes a body has one).
+            if trivial(text) {
+                true
+            } else if side.no_image(line0) {
+                others.contains(&loose(text))
             } else {
                 side.keyed_equal(line0)
             }

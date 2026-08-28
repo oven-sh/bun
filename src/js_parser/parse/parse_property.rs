@@ -513,6 +513,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.pop_scope();
 
                             p.fn_or_arrow_data_parse = old_fn_or_arrow_data_parse;
+                            let close_brace_loc = p.lexer.loc();
                             p.lexer.expect(T::TCloseBrace)?;
 
                             // Vec::from_slice copies the bump-backed StmtList into a heap-backed list.
@@ -521,6 +522,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let block = p.arena.alloc(G::ClassStaticBlock {
                                 stmts: stmt_list,
                                 loc,
+                                close_brace_loc,
                             });
 
                             return Ok(Some(G::Property {

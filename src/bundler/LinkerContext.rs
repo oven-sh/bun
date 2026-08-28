@@ -1060,14 +1060,28 @@ impl<'a> LinkerContext<'a> {
 
     /// The relative path from the chunk directory to a file source, as written
     /// into the source map's `sources` array. `sources` entries are URLs, so the
-    /// host separator is normalized to `/` (the invariant `Path::pretty` holds).
+    /// host separator is normalized to `/` and the path is percent-encoded.
+    /// Like esbuild, a space stays a literal space for readability (every URL
+    /// parser accepts it in a path), while `#`, `?`, `%` and non-ASCII bytes
+    /// are encoded because they change how the URL is parsed.
     fn source_map_relative_path(
         chunk_abs_dir: &[u8],
         source_abs_path: &[u8],
-    ) -> Result<Box<[u8]>, AllocError> {
+    ) -> Result<Vec<u8>, AllocError> {
         let mut rel = bun_paths::resolve_path::relative_alloc(chunk_abs_dir, source_abs_path)?;
         bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut rel);
-        Ok(rel)
+        let mut url = Vec::with_capacity(rel.len() + 2);
+        // A relative URL whose first segment contains ":" would parse as a
+        // scheme, so it needs a "./" prefix (RFC 3986 4.2).
+        let first_segment = match strings::index_of_char_usize(&rel, b'/') {
+            Some(i) => &rel[..i],
+            None => &rel[..],
+        };
+        if strings::contains_char(first_segment, b':') {
+            url.extend_from_slice(b"./");
+        }
+        SourceMap::append_url_escaped_path(&mut url, &rel, false);
+        Ok(url)
     }
 
     pub(crate) fn generate_source_map_for_chunk(
@@ -1097,56 +1111,44 @@ impl<'a> LinkerContext<'a> {
         let mut source_id_map: ArrayHashMap<u32, i32> = ArrayHashMap::new();
 
         let source_indices = results.items_source_index();
+        let null_entries = results.items_is_null_entry();
 
         j.push_static(b"{\n  \"version\": 3,\n  \"sources\": [");
-        if !source_indices.is_empty() {
-            {
-                let index = source_indices[0];
-                let path = &sources[index as usize].path;
-                source_id_map.put_no_clobber(index, 0)?;
-
-                // Note: the relative path lives in a local owned buffer
-                // (drops at scope exit).
-                let rel_path_storage;
-                let pretty: &[u8] = if path.is_file() {
-                    rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text)?;
-                    &rel_path_storage
-                } else {
-                    path.pretty
-                };
-
-                let mut quote_buf = MutableString::init(pretty.len() + 2)?;
-                js_printer::quote_for_json(pretty, &mut quote_buf, false)?;
-                // `to_default_owned` moves the buffer into the joiner
-                // (joiner owns it until `done`).
-                j.push_owned(quote_buf.to_default_owned());
+        let mut next_mapping_source_index: i32 = 0;
+        for (&index, &is_null_entry) in source_indices.iter().zip(null_entries) {
+            // A null entry has no original position, so its file gets a
+            // `sources` entry only through a chunk that has mappings.
+            if is_null_entry {
+                continue;
+            }
+            let gop = source_id_map.get_or_put(index)?;
+            if gop.found_existing {
+                continue;
             }
 
-            let mut next_mapping_source_index: i32 = 1;
-            for &index in &source_indices[1..] {
-                let gop = source_id_map.get_or_put(index)?;
-                if gop.found_existing {
-                    continue;
-                }
+            *gop.value_ptr = next_mapping_source_index;
+            next_mapping_source_index += 1;
 
-                *gop.value_ptr = next_mapping_source_index;
-                next_mapping_source_index += 1;
+            let path = &sources[index as usize].path;
 
-                let path = &sources[index as usize].path;
+            // Note: the relative path lives in a local owned buffer
+            // (drops at scope exit).
+            let rel_path_storage;
+            let pretty: &[u8] = if path.is_file() {
+                rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text)?;
+                &rel_path_storage
+            } else {
+                path.pretty
+            };
 
-                let rel_path_storage;
-                let pretty: &[u8] = if path.is_file() {
-                    rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text)?;
-                    &rel_path_storage
-                } else {
-                    path.pretty
-                };
-
-                let mut quote_buf = MutableString::init(pretty.len() + ", ".len() + 2)?;
+            let mut quote_buf = MutableString::init(pretty.len() + ", ".len() + 2)?;
+            if *gop.value_ptr != 0 {
                 quote_buf.append_assume_capacity(b", ");
-                js_printer::quote_for_json(pretty, &mut quote_buf, false)?;
-                j.push_owned(quote_buf.to_default_owned());
             }
+            js_printer::quote_for_json(pretty, &mut quote_buf, false)?;
+            // `to_default_owned` moves the buffer into the joiner
+            // (joiner owns it until `done`).
+            j.push_owned(quote_buf.to_default_owned());
         }
 
         j.push_static(b"],\n  \"sourcesContent\": [");
@@ -1174,23 +1176,35 @@ impl<'a> LinkerContext<'a> {
         let mapping_start = j.len;
         let mut prev_end_state = SourceMapState::default();
         let mut prev_column_offset: i32 = 0;
+        // Name indices in each chunk start at 0; this is the count of names the
+        // previous chunks contributed, the base for this chunk's indices.
+        let mut total_names: i32 = 0;
         let source_map_chunks = results.items_source_map_chunk();
         let offsets = results.items_generated_offset();
         debug_assert_eq!(source_map_chunks.len(), offsets.len());
         debug_assert_eq!(source_map_chunks.len(), source_indices.len());
-        for ((chunk, offset), &current_source_index) in source_map_chunks
+        for (((chunk, offset), &current_source_index), &is_null_entry) in source_map_chunks
             .iter()
             .zip(offsets.iter())
             .zip(source_indices.iter())
+            .zip(null_entries.iter())
         {
-            let mapping_source_index = *source_id_map
-                .get(&current_source_index)
-                .expect("unreachable"); // the pass above during printing of "sources" must add the index
+            // The pass above during printing of "sources" adds every index that
+            // has mappings. A null entry has no original position, so its
+            // source index does not matter.
+            let mapping_source_index = match source_id_map.get(&current_source_index) {
+                Some(&index) => index,
+                None => {
+                    debug_assert!(is_null_entry);
+                    0
+                }
+            };
 
             let mut start_state = SourceMapState {
                 source_index: mapping_source_index,
                 generated_line: offset.lines.zero_based(),
                 generated_column: offset.columns.zero_based(),
+                original_name: total_names,
                 ..Default::default()
             };
 
@@ -1198,16 +1212,37 @@ impl<'a> LinkerContext<'a> {
                 start_state.generated_column += prev_column_offset;
             }
 
+            if is_null_entry {
+                // `generated_offset` is zero for a null entry, so this lands
+                // where the previous mapped file's code ends. Only the
+                // generated position advances.
+                SourceMap::append_null_source_map_segment(&mut j, prev_end_state, start_state)?;
+                prev_end_state.generated_line = start_state.generated_line;
+                prev_end_state.generated_column = start_state.generated_column;
+                prev_column_offset = start_state.generated_column;
+                continue;
+            }
+
             SourceMap::append_source_map_chunk(
                 &mut j,
                 prev_end_state,
                 start_state,
                 &chunk.buffer.list,
+                chunk.first_name_offset,
             )?;
 
+            let prev_original_name = prev_end_state.original_name;
             prev_end_state = chunk.end_state;
             prev_end_state.source_index = mapping_source_index;
+            if chunk.first_name_offset.is_some() {
+                prev_end_state.original_name += total_names;
+            } else {
+                // No mapping in this chunk has a name, so the name delta base
+                // is still the last name of the chunks before it.
+                prev_end_state.original_name = prev_original_name;
+            }
             prev_column_offset = chunk.final_generated_column;
+            total_names += i32::try_from(chunk.names_count).expect("int cast");
 
             if prev_end_state.generated_line == 0 {
                 prev_end_state.generated_column += start_state.generated_column;
@@ -1223,10 +1258,23 @@ impl<'a> LinkerContext<'a> {
             write!(&mut buf, "{}", DebugIDFormatter { id: isolated_hash })
                 .expect("infallible: in-memory write");
             j.push_owned(buf.into_boxed_slice());
-            j.push_static(b"\",\n  \"names\": []\n}");
+            j.push_static(b"\",\n  \"names\": [");
         } else {
-            j.push_static(b"\",\n  \"names\": []\n}");
+            j.push_static(b"\",\n  \"names\": [");
         }
+
+        let mut is_first_name = true;
+        for chunk in source_map_chunks {
+            if chunk.quoted_names.is_empty() {
+                continue;
+            }
+            if !is_first_name {
+                j.push_static(b", ");
+            }
+            is_first_name = false;
+            j.push_static(&chunk.quoted_names);
+        }
+        j.push_static(b"]\n}");
 
         let done = j.done()?;
         debug_assert!(done[0] == b'{');

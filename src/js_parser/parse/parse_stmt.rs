@@ -389,11 +389,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     loc: bun_ast::Loc::EMPTY,
                 });
             }
+            let close_brace_loc = p.lexer.loc();
             p.lexer.expect(T::TCloseBrace)?;
             Ok(p.s(
                 S::Switch {
                     test,
                     body_loc,
+                    close_brace_loc,
                     cases: bun_ast::StoreSlice::from_bump(cases),
                 },
                 loc,
@@ -412,6 +414,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut stmt_opts = ParseStatementOptions::default();
         let body = p.parse_stmts_up_to(T::TCloseBrace, &mut stmt_opts)?;
         p.pop_scope();
+        let close_brace_loc = p.lexer.loc();
         p.lexer.next()?;
 
         let mut catch: Option<js_ast::Catch> = None;
@@ -451,12 +454,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, catch_body_loc)?;
             let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut stmt_opts)?;
             p.pop_scope();
+            let catch_close_brace_loc = p.lexer.loc();
             p.lexer.next()?;
             catch = Some(js_ast::Catch {
                 loc: catch_loc,
                 binding,
                 body: bun_ast::StoreSlice::from_bump(stmts),
                 body_loc: catch_body_loc,
+                close_brace_loc: catch_close_brace_loc,
             });
             p.pop_scope();
         }
@@ -467,10 +472,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.expect(T::TFinally)?;
             p.lexer.expect(T::TOpenBrace)?;
             let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut stmt_opts)?;
+            let finally_close_brace_loc = p.lexer.loc();
             p.lexer.next()?;
             finally = Some(js_ast::Finally {
                 loc: finally_loc,
                 stmts: bun_ast::StoreSlice::from_bump(stmts),
+                close_brace_loc: finally_close_brace_loc,
             });
             p.pop_scope();
         }
@@ -478,6 +485,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.s(
             S::Try {
                 body_loc,
+                close_brace_loc,
                 body: bun_ast::StoreSlice::from_bump(body),
                 catch,
                 finally,

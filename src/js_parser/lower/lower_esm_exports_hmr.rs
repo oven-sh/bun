@@ -610,6 +610,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                             body: G::FnBody {
                                 stmts: bun_ast::StoreSlice::new_mut(body_stmts),
                                 loc,
+                                close_brace_loc: bun_ast::Loc::EMPTY,
                             },
                             ..Default::default()
                         },

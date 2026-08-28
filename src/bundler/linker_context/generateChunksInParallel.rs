@@ -757,15 +757,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             )
                         };
 
-                        let source_map_start = b"//# sourceMappingURL=";
-                        let total_len =
-                            buffer.len() + source_map_start.len() + a.len() + b.len() + b"\n".len();
-                        let mut buf: Vec<u8> = Vec::with_capacity(total_len);
+                        let mut buf: Vec<u8> =
+                            Vec::with_capacity(buffer.len() + 32 + a.len() + b.len());
                         buf.extend_from_slice(&buffer);
-                        buf.extend_from_slice(source_map_start);
-                        buf.extend_from_slice(a);
-                        buf.extend_from_slice(b);
-                        buf.push(b'\n');
+                        crate::append_source_mapping_url_comment(&mut buf, a, b);
                         buffer = buf.into_boxed_slice();
                     }
 
@@ -974,18 +969,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             [b"", path::basename(&source_map_final_rel_path)]
                         };
 
-                        let source_map_start = b"//# sourceMappingURL=";
-                        let total_len = code_result.buffer.len()
-                            + source_map_start.len()
-                            + a.len()
-                            + b.len()
-                            + b"\n".len();
-                        let mut buf: Vec<u8> = Vec::with_capacity(total_len);
+                        let mut buf: Vec<u8> =
+                            Vec::with_capacity(code_result.buffer.len() + 32 + a.len() + b.len());
                         buf.extend_from_slice(&code_result.buffer);
-                        buf.extend_from_slice(source_map_start);
-                        buf.extend_from_slice(a);
-                        buf.extend_from_slice(b);
-                        buf.push(b'\n');
+                        crate::append_source_mapping_url_comment(&mut buf, a, b);
 
                         code_result.buffer = buf.into_boxed_slice();
                     }

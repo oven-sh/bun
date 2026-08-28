@@ -2403,18 +2403,52 @@ pub(crate) mod __gated_printer {
                 .add_source_mapping(location, self.writer.slice());
         }
 
+        /// Like `add_source_mapping`, but records the symbol's original name
+        /// in the source map `names` table when the printed `name` differs
+        /// from it (a minified or deconflicted symbol).
         #[inline]
         pub(crate) fn add_source_mapping_for_name(
             &mut self,
             location: bun_ast::Loc,
-            _name: &[u8],
-            _ref: Ref,
+            name: &[u8],
+            ref_: Ref,
         ) {
             if !GENERATE_SOURCE_MAP {
                 return;
             }
-            // TODO: esbuild does this to make the source map more accurate with E.NameOfSymbol
-            self.add_source_mapping(location);
+            let original_name: &'a [u8] = if self.source_map_builder.record_names {
+                self.original_name_for_symbol(ref_)
+                    .filter(|original| *original != name)
+                    .unwrap_or(&[])
+            } else {
+                &[]
+            };
+            self.source_map_builder.add_source_mapping_for_name(
+                location,
+                original_name,
+                self.writer.slice(),
+            );
+        }
+
+        /// The name a symbol had in the source. `None` for a ref with no
+        /// symbol (generated refs, source-contents-slice refs).
+        #[inline]
+        fn original_name_for_symbol(&self, ref_: Ref) -> Option<&'a [u8]> {
+            if ref_.is_source_contents_slice() {
+                return None;
+            }
+            let symbols = self.symbols();
+            let original_name = symbols.get_const(symbols.follow(ref_))?.original_name;
+            Some(original_name.slice())
+        }
+
+        /// `print_symbol` plus a `names` entry when the symbol was renamed.
+        #[inline]
+        pub(crate) fn print_symbol_with_mapping(&mut self, loc: bun_ast::Loc, ref_: Ref) {
+            debug_assert!(!ref_.is_empty());
+            let name = self.name_for_symbol(ref_);
+            self.add_source_mapping_for_name(loc, name, ref_);
+            self.print_identifier(name);
         }
 
         pub(crate) fn print_symbol(&mut self, ref_: Ref) {
@@ -2480,7 +2514,11 @@ pub(crate) mod __gated_printer {
                 false,
             );
             self.print_space();
-            self.print_block(func.body.loc, slice_of(func.body.stmts), None);
+            self.print_block(
+                func.body.loc,
+                slice_of(func.body.stmts),
+                Some(func.body.close_brace_loc),
+            );
         }
 
         pub(crate) fn print_class(&mut self, class: &G::Class) {
@@ -2505,7 +2543,7 @@ pub(crate) mod __gated_printer {
                     self.print(b"static");
                     self.print_space();
                     let csb = item.class_static_block_ref().unwrap();
-                    self.print_block(csb.loc, csb.stmts.slice(), None);
+                    self.print_block(csb.loc, csb.stmts.slice(), Some(csb.close_brace_loc));
                     self.print_newline();
                     continue;
                 }
@@ -3039,7 +3077,7 @@ pub(crate) mod __gated_printer {
                     } else {
                         self.print_clause_alias(item.alias.slice());
                         self.print(b" as ");
-                        self.add_source_mapping(item.alias_loc);
+                        self.add_source_mapping_for_name(item.name.loc, name, item.name.ref_);
                         self.print_identifier(name);
                     }
                 }
@@ -3052,6 +3090,7 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ClauseItemAs::Export => {
+                    self.add_source_mapping_for_name(item.name.loc, name, item.name.ref_);
                     self.print_identifier(name);
                     if name != item.alias.slice() {
                         self.print(b" as ");
@@ -3704,8 +3743,7 @@ pub(crate) mod __gated_printer {
                             if !is_optional_chain_start {
                                 self.print(b".");
                             }
-                            self.add_source_mapping(e.index.loc);
-                            self.print_symbol(priv_.ref_);
+                            self.print_symbol_with_mapping(e.index.loc, priv_.ref_);
                         }
                         _ => {
                             self.print(b"[");
@@ -3773,7 +3811,11 @@ pub(crate) mod __gated_printer {
                     }
 
                     if !was_printed {
-                        self.print_block(e.body.loc, slice_of(e.body.stmts), None);
+                        self.print_block(
+                            e.body.loc,
+                            slice_of(e.body.stmts),
+                            Some(e.body.close_brace_loc),
+                        );
                     }
 
                     if wrap {
@@ -3801,8 +3843,7 @@ pub(crate) mod __gated_printer {
 
                     if let Some(sym) = &e.func.name {
                         self.print_space_before_identifier();
-                        self.add_source_mapping(sym.loc);
-                        self.print_symbol(sym.ref_);
+                        self.print_symbol_with_mapping(sym.loc, sym.ref_);
                     }
 
                     self.print_func(&e.func);
@@ -3822,8 +3863,7 @@ pub(crate) mod __gated_printer {
                     self.print(b"class");
                     if let Some(name) = &e.class_name {
                         self.print(b" ");
-                        self.add_source_mapping(name.loc);
-                        self.print_symbol(name.ref_);
+                        self.print_symbol_with_mapping(name.loc, name.ref_);
                     }
                     self.print_class(e);
                     if wrap {
@@ -4200,7 +4240,7 @@ pub(crate) mod __gated_printer {
                     }
 
                     self.print_space_before_identifier();
-                    self.add_source_mapping(expr.loc);
+                    self.add_source_mapping_for_name(expr.loc, name, e.ref_);
                     self.print_identifier(name);
 
                     if wrap {
@@ -4287,11 +4327,11 @@ pub(crate) mod __gated_printer {
                             let alias = namespace.alias.slice();
                             if lexer::is_identifier(alias) {
                                 self.print(b".");
-                                // TODO: addSourceMappingForName
+                                self.add_source_mapping_for_name(expr.loc, alias, e.ref_);
                                 self.print_identifier(alias);
                             } else {
                                 self.print(b"[");
-                                // TODO: addSourceMappingForName
+                                self.add_source_mapping_for_name(expr.loc, alias, e.ref_);
                                 self.print_string_literal_utf8(alias, false);
                                 self.print(b"]");
                             }
@@ -4304,8 +4344,7 @@ pub(crate) mod __gated_printer {
 
                     if !did_print {
                         self.print_space_before_identifier();
-                        self.add_source_mapping(expr.loc);
-                        self.print_symbol(e.ref_);
+                        self.print_symbol_with_mapping(expr.loc, e.ref_);
                     }
                 }
                 ExprData::EAwait(e) => {
@@ -4863,8 +4902,7 @@ pub(crate) mod __gated_printer {
                     if IS_JSON {
                         unreachable!();
                     }
-                    self.add_source_mapping(key.loc);
-                    self.print_symbol(priv_.ref_);
+                    self.print_symbol_with_mapping(key.loc, priv_.ref_);
                 }
                 ExprData::EString(key_str) => {
                     let key_str = key_str.flattened(self.bump);
@@ -5022,8 +5060,7 @@ pub(crate) mod __gated_printer {
                 BindingData::BIdentifier(b) => {
                     let b = b.get();
                     self.print_space_before_identifier();
-                    self.add_source_mapping(binding.loc);
-                    self.print_symbol(b.r#ref);
+                    self.print_symbol_with_mapping(binding.loc, b.r#ref);
                     if Self::MAY_HAVE_MODULE_INFO && tlm.is_export {
                         // reshaped for borrowck — fetch name before borrowing module_info.
                         let local_name = self.name_for_symbol(b.r#ref);
@@ -5282,8 +5319,8 @@ pub(crate) mod __gated_printer {
                         self.print_space_before_identifier();
                     }
 
-                    self.add_source_mapping(name.loc);
                     let local_name = self.name_for_symbol(name_ref);
+                    self.add_source_mapping_for_name(name.loc, local_name, name_ref);
                     self.print_identifier(local_name);
                     self.print_func(&s.func);
 
@@ -5311,8 +5348,12 @@ pub(crate) mod __gated_printer {
                     }
 
                     self.print(b"class ");
-                    self.add_source_mapping(s.class.class_name.as_ref().unwrap().loc);
                     let name_str = self.name_for_symbol(name_ref);
+                    self.add_source_mapping_for_name(
+                        s.class.class_name.as_ref().unwrap().loc,
+                        name_str,
+                        name_ref,
+                    );
                     self.print_identifier(name_str);
                     self.print_class(&s.class);
 
@@ -5360,83 +5401,85 @@ pub(crate) mod __gated_printer {
                             self.prev_stmt_tag = new_tag;
                             return Ok(());
                         }
-                        js_ast::StmtOrExpr::Stmt(s2) => {
-                            match &s2.data {
-                                StmtData::SFunction(func) => {
-                                    self.print_space_before_identifier();
+                        js_ast::StmtOrExpr::Stmt(s2) => match &s2.data {
+                            StmtData::SFunction(func) => {
+                                self.print_space_before_identifier();
 
-                                    if func.func.flags.contains(G::FnFlags::IsAsync) {
-                                        self.print(b"async ");
-                                    }
-                                    self.print(b"function");
-
-                                    if func.func.flags.contains(G::FnFlags::IsGenerator) {
-                                        self.print(b"*");
-                                        self.print_space();
-                                    } else {
-                                        self.maybe_print_space();
-                                    }
-
-                                    let func_name: Option<&[u8]> = func
-                                        .func
-                                        .name
-                                        .as_ref()
-                                        .map(|name| self.name_for_symbol(name.ref_));
-                                    if let Some(fn_name) = func_name {
-                                        self.print_identifier(fn_name);
-                                    }
-
-                                    self.print_func(&func.func);
-
-                                    if Self::MAY_HAVE_MODULE_INFO {
-                                        if let Some(mi) = self.module_info() {
-                                            let local_name = match func_name {
-                                            Some(f) => mi.str(f),
-                                            None => analyze_transpiled_module::StringID::STAR_DEFAULT,
-                                        };
-                                            let default_id = mi.str(b"default");
-                                            mi.add_export_info_local(default_id, local_name);
-                                        }
-                                    }
-
-                                    self.print_newline();
+                                if func.func.flags.contains(G::FnFlags::IsAsync) {
+                                    self.print(b"async ");
                                 }
-                                StmtData::SClass(class) => {
-                                    self.print_space_before_identifier();
+                                self.print(b"function");
 
-                                    let class_name: Option<&[u8]> = class
-                                        .class
-                                        .class_name
-                                        .as_ref()
-                                        .map(|name| self.name_for_symbol(name.ref_));
-                                    if let Some(name) = &class.class.class_name {
-                                        self.print(b"class ");
-                                        let n = self.name_for_symbol(name.ref_);
-                                        self.print_identifier(n);
-                                    } else {
-                                        self.print(b"class");
-                                    }
-
-                                    self.print_class(&class.class);
-
-                                    if Self::MAY_HAVE_MODULE_INFO {
-                                        if let Some(mi) = self.module_info() {
-                                            let local_name = match class_name {
-                                            Some(f) => mi.str(f),
-                                            None => analyze_transpiled_module::StringID::STAR_DEFAULT,
-                                        };
-                                            let default_id = mi.str(b"default");
-                                            mi.add_export_info_local(default_id, local_name);
-                                        }
-                                    }
-
-                                    self.print_newline();
+                                if func.func.flags.contains(G::FnFlags::IsGenerator) {
+                                    self.print(b"*");
+                                    self.print_space();
+                                } else {
+                                    self.maybe_print_space();
                                 }
-                                _ => Output::panic(format_args!(
-                                    "Internal error: unexpected export default stmt data"
-                                )),
+
+                                let func_name: Option<&[u8]> = func
+                                    .func
+                                    .name
+                                    .as_ref()
+                                    .map(|name| self.name_for_symbol(name.ref_));
+                                if let (Some(fn_name), Some(name)) = (func_name, &func.func.name) {
+                                    self.add_source_mapping_for_name(name.loc, fn_name, name.ref_);
+                                    self.print_identifier(fn_name);
+                                }
+
+                                self.print_func(&func.func);
+
+                                if Self::MAY_HAVE_MODULE_INFO {
+                                    if let Some(mi) = self.module_info() {
+                                        let local_name = match func_name {
+                                            Some(f) => mi.str(f),
+                                            None => {
+                                                analyze_transpiled_module::StringID::STAR_DEFAULT
+                                            }
+                                        };
+                                        let default_id = mi.str(b"default");
+                                        mi.add_export_info_local(default_id, local_name);
+                                    }
+                                }
+
+                                self.print_newline();
                             }
-                        }
+                            StmtData::SClass(class) => {
+                                self.print_space_before_identifier();
+
+                                let class_name: Option<&[u8]> = class
+                                    .class
+                                    .class_name
+                                    .as_ref()
+                                    .map(|name| self.name_for_symbol(name.ref_));
+                                if let Some(name) = &class.class.class_name {
+                                    self.print(b"class ");
+                                    self.print_symbol_with_mapping(name.loc, name.ref_);
+                                } else {
+                                    self.print(b"class");
+                                }
+
+                                self.print_class(&class.class);
+
+                                if Self::MAY_HAVE_MODULE_INFO {
+                                    if let Some(mi) = self.module_info() {
+                                        let local_name = match class_name {
+                                            Some(f) => mi.str(f),
+                                            None => {
+                                                analyze_transpiled_module::StringID::STAR_DEFAULT
+                                            }
+                                        };
+                                        let default_id = mi.str(b"default");
+                                        mi.add_export_info_local(default_id, local_name);
+                                    }
+                                }
+
+                                self.print_newline();
+                            }
+                            _ => Output::panic(format_args!(
+                                "Internal error: unexpected export default stmt data"
+                            )),
+                        },
                     }
                 }
                 StmtData::SExportStar(s) => {
@@ -5781,7 +5824,7 @@ pub(crate) mod __gated_printer {
                     }
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
-                    self.print_symbol(s.name.ref_);
+                    self.print_symbol_with_mapping(s.name.loc, s.name.ref_);
                     self.print(b":");
                     self.print_body(s.stmt);
                 }
@@ -5791,7 +5834,7 @@ pub(crate) mod __gated_printer {
                     self.add_source_mapping(stmt.loc);
                     self.print(b"try");
                     self.print_space();
-                    self.print_block(s.body_loc, slice_of(s.body), None);
+                    self.print_block(s.body_loc, slice_of(s.body), Some(s.close_brace_loc));
 
                     if let Some(catch) = &s.catch {
                         self.print_space();
@@ -5804,14 +5847,22 @@ pub(crate) mod __gated_printer {
                             self.print(b")");
                         }
                         self.print_space();
-                        self.print_block(catch.body_loc, slice_of(catch.body), None);
+                        self.print_block(
+                            catch.body_loc,
+                            slice_of(catch.body),
+                            Some(catch.close_brace_loc),
+                        );
                     }
 
                     if let Some(finally) = &s.finally {
                         self.print_space();
                         self.print(b"finally");
                         self.print_space();
-                        self.print_block(finally.loc, slice_of(finally.stmts), None);
+                        self.print_block(
+                            finally.loc,
+                            slice_of(finally.stmts),
+                            Some(finally.close_brace_loc),
+                        );
                     }
 
                     self.print_newline();
@@ -5896,6 +5947,9 @@ pub(crate) mod __gated_printer {
 
                     self.unindent();
                     self.print_indent();
+                    if s.close_brace_loc.start > s.body_loc.start {
+                        self.add_source_mapping(s.close_brace_loc);
+                    }
                     self.print(b"}");
                     self.print_newline();
                     self.needs_semicolon = false;
@@ -6011,7 +6065,7 @@ pub(crate) mod __gated_printer {
 
                     if let Some(name) = &s.default_name {
                         self.print(b" ");
-                        self.print_symbol(name.ref_);
+                        self.print_symbol_with_mapping(name.loc, name.ref_);
                         item_count += 1;
                     }
 
@@ -6063,7 +6117,7 @@ pub(crate) mod __gated_printer {
                         self.print_space();
                         self.print_whitespacer(ws!(b"* as"));
                         self.print(b" ");
-                        self.print_symbol(s.namespace_ref);
+                        self.print_symbol_with_mapping(s.star_name_loc, s.namespace_ref);
                         item_count += 1;
                     }
 
@@ -6286,7 +6340,7 @@ pub(crate) mod __gated_printer {
                     self.print(b"break");
                     if let Some(label) = &s.label {
                         self.print(b" ");
-                        self.print_symbol(label.ref_);
+                        self.print_symbol_with_mapping(label.loc, label.ref_);
                     }
                     self.print_semicolon_after_statement();
                 }
@@ -6297,7 +6351,7 @@ pub(crate) mod __gated_printer {
                     self.print(b"continue");
                     if let Some(label) = &s.label {
                         self.print(b" ");
-                        self.print_symbol(label.ref_);
+                        self.print_symbol_with_mapping(label.loc, label.ref_);
                     }
                     self.print_semicolon_after_statement();
                 }
@@ -6461,7 +6515,11 @@ pub(crate) mod __gated_printer {
                 match &no_block.data {
                     StmtData::SBlock(block) => {
                         self.print_space();
-                        self.print_block(no_block.loc, slice_of(block.stmts), None);
+                        self.print_block(
+                            no_block.loc,
+                            slice_of(block.stmts),
+                            Some(block.close_brace_loc),
+                        );
                         self.print_newline();
                     }
                     StmtData::SIf(s_if) => {
@@ -7506,6 +7564,11 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
         cover_lines_without_mappings: true,
         approximate_input_line_count: tree.approximate_newline_count,
         prepend_count: IS_BUN_PLATFORM && generate_source_map == GenerateSourceMap::Lazy,
+        // Only the bundler's output source maps carry a `names` table. The
+        // dev server joins chunk buffers under a fixed `"names":[]`, and the
+        // runtime (Lazy) path stores positions only.
+        record_names: generate_source_map == GenerateSourceMap::Eager
+            && opts.module_type != bundle_opts::Format::InternalBakeDev,
         line_offset_tables: match opts.line_offset_tables.take() {
             Some(table) => LineOffsetTables::Borrowed(table),
             None if generate_source_map == GenerateSourceMap::Lazy => LineOffsetTables::Deferred {

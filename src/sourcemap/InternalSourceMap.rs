@@ -778,9 +778,10 @@ fn emit_vlq(
         source_index: state.source_index,
         original_line: state.original_line,
         original_column: state.original_column,
+        ..Default::default()
     };
     let last_byte: u8 = out.list.last().copied().unwrap_or(0);
-    append_mapping_to_buffer(out, last_byte, *prev, current);
+    let _ = append_mapping_to_buffer(out, last_byte, *prev, current);
     *prev = current;
 }
 

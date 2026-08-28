@@ -64,6 +64,10 @@ pub struct SourceMapState {
     pub source_index: i32,
     pub original_line: i32,
     pub original_column: i32,
+    /// Index into the `names` array. Only written when `has_original_name` is
+    /// set; the optional fifth VLQ field of a mapping.
+    pub original_name: i32,
+    pub has_original_name: bool,
 }
 
 /// For some sourcemap loading code, this enum is used as a hint if it should
@@ -258,12 +262,16 @@ pub struct SourceMapPieces {
 }
 
 /// This function is extremely hot.
+///
+/// Returns the byte offset in `buffer` of the name field when
+/// `current_state.has_original_name` is set. The bundler needs the offset of
+/// the first name in a chunk to rebase it when it joins chunks.
 pub(crate) fn append_mapping_to_buffer(
     buffer: &mut bun_core::MutableString,
     last_byte: u8,
     prev_state: SourceMapState,
     current_state: SourceMapState,
-) {
+) -> Option<u32> {
     let needs_comma = last_byte != 0 && last_byte != b';' && last_byte != b'"';
 
     let vlqs: [VLQ; 4] = [
@@ -312,6 +320,89 @@ pub(crate) fn append_mapping_to_buffer(
         let n = item.len as usize;
         writable[..n].copy_from_slice(item.slice());
         writable = &mut writable[n..];
+    }
+
+    if !current_state.has_original_name {
+        return None;
+    }
+
+    // Record the optional original name
+    let name_offset = u32::try_from(buffer.list.len()).expect("int cast");
+    let name = VLQ::encode(
+        current_state
+            .original_name
+            .saturating_sub(prev_state.original_name),
+    );
+    buffer.append(name.slice()).expect("unreachable");
+    Some(name_offset)
+}
+
+/// Appends a 1-field ("null") segment: a generated position with no original
+/// location. The bundler emits one at the start of a file that contributes
+/// code but no mappings, so that the previous file's last mapping does not
+/// extend over that code.
+pub fn append_null_source_map_segment<'a>(
+    j: &mut bun_core::string_joiner::StringJoiner<'a>,
+    prev_end_state: SourceMapState,
+    start_state: SourceMapState,
+) -> crate::Result<()> {
+    let mut prev_generated_column = prev_end_state.generated_column;
+    if start_state.generated_line != 0 {
+        j.push_owned(bun_core::strings::repeating_alloc(
+            usize::try_from(start_state.generated_line).expect("int cast"),
+            b';',
+        )?);
+        prev_generated_column = 0;
+    }
+
+    let last_byte = j.last_byte();
+    let needs_comma = last_byte != 0 && last_byte != b';' && last_byte != b'"';
+    let vlq = VLQ::encode(
+        start_state
+            .generated_column
+            .saturating_sub(prev_generated_column),
+    );
+    let mut buf: Vec<u8> = Vec::with_capacity(vlq.len as usize + 1);
+    if needs_comma {
+        buf.push(b',');
+    }
+    buf.extend_from_slice(vlq.slice());
+    j.push_owned(buf.into_boxed_slice());
+    Ok(())
+}
+
+/// Percent-encodes `path` as the path component of a URL, the way esbuild
+/// does for `sourceMappingURL` comments and `sources` entries (Go's
+/// `url.URL{Path: path}.EscapedPath()`): ASCII alphanumerics, `-_.~` and
+/// `$&+,/:;=@` pass through, every other byte (including each byte of a
+/// non-ASCII code point) becomes `%XX`. With `escape_spaces == false` a space
+/// stays a literal space, which esbuild does in `sources` for readability.
+pub fn append_url_escaped_path(out: &mut Vec<u8>, path: &[u8], escape_spaces: bool) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    out.reserve(path.len());
+    for &c in path {
+        let pass = c.is_ascii_alphanumeric()
+            || matches!(
+                c,
+                b'-' | b'_'
+                    | b'.'
+                    | b'~'
+                    | b'$'
+                    | b'&'
+                    | b'+'
+                    | b','
+                    | b'/'
+                    | b':'
+                    | b';'
+                    | b'='
+                    | b'@'
+            )
+            || (c == b' ' && !escape_spaces);
+        if pass {
+            out.push(c);
+        } else {
+            out.extend_from_slice(&[b'%', HEX[(c >> 4) as usize], HEX[(c & 0xF) as usize]]);
+        }
     }
 }
 
@@ -749,13 +840,17 @@ impl SourceMapPieces {
 
             let potential_start_of_run = current;
 
-            current = decode_vlq_assume_valid(mappings, current).start;
-            current = decode_vlq_assume_valid(mappings, current).start;
-            current = decode_vlq_assume_valid(mappings, current).start;
+            // A segment has 1 field (generated position only), 4 fields, or
+            // 5 fields (with a name).
+            let at_segment_end = |current: usize| {
+                current >= mappings.len() || matches!(mappings[current], b',' | b';')
+            };
+            if !at_segment_end(current) {
+                current = decode_vlq_assume_valid(mappings, current).start;
+                current = decode_vlq_assume_valid(mappings, current).start;
+                current = decode_vlq_assume_valid(mappings, current).start;
 
-            if current < mappings.len() {
-                let c = mappings[current];
-                if c != b',' && c != b';' {
+                if !at_segment_end(current) {
                     current = decode_vlq_assume_valid(mappings, current).start;
                 }
             }
@@ -1052,11 +1147,19 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
 // After all chunks are computed, they are joined together in a second pass.
 // This rewrites the first mapping in each chunk to be relative to the end
 // state of the previous chunk.
+///
+/// `first_name_offset` is `Chunk::first_name_offset`: the byte offset in
+/// `source_map` of the first mapping's name field, if any mapping in the chunk
+/// has one. Name indices inside a chunk start at 0. `start_state.original_name`
+/// is this chunk's base index into the joined `names` array and
+/// `prev_end_state.original_name` is the last name index the previous chunks
+/// emitted, so the first name field is rewritten to the right delta.
 pub fn append_source_map_chunk<'a>(
     j: &mut bun_core::string_joiner::StringJoiner<'a>,
     prev_end_state_: SourceMapState,
     start_state_: SourceMapState,
-    source_map_: &'a [u8],
+    source_map: &'a [u8],
+    first_name_offset: Option<u32>,
 ) -> crate::Result<()> {
     let mut prev_end_state = prev_end_state_;
     let mut start_state = start_state_;
@@ -1070,21 +1173,22 @@ pub fn append_source_map_chunk<'a>(
     }
 
     // Skip past any leading semicolons, which indicate line breaks
-    let mut source_map = source_map_;
-    if let Some(semicolons) = bun_core::strings::index_of_not_char(source_map, b';') {
-        let semicolons = semicolons as usize;
-        if semicolons > 0 {
-            j.push_static(&source_map[..semicolons]);
-            source_map = &source_map[semicolons..];
-            prev_end_state.generated_column = 0;
-            start_state.generated_column = 0;
-        }
+    let semicolons = bun_core::strings::index_of_not_char(source_map, b';')
+        .map_or(source_map.len(), |i| i as usize);
+    if semicolons > 0 {
+        j.push_static(&source_map[..semicolons]);
+        prev_end_state.generated_column = 0;
+        start_state.generated_column = 0;
     }
 
     // Strip off the first mapping from the buffer. The first mapping should be
     // for the start of the original file (the printer always generates one for
     // the start of the file).
-    let mut i: usize = 0;
+    //
+    // The first mapping's name field, if it has one, is not stripped here. It
+    // is rewritten below through `first_name_offset`, which handles the name
+    // the same way whether it belongs to the first mapping or a later one.
+    let mut i: usize = semicolons;
     let generated_column = decode_vlq_assume_valid(source_map, i);
     i = generated_column.start;
     let source_index = decode_vlq_assume_valid(source_map, i);
@@ -1094,8 +1198,6 @@ pub fn append_source_map_chunk<'a>(
     let original_column = decode_vlq_assume_valid(source_map, i);
     i = original_column.start;
 
-    source_map = &source_map[i..];
-
     // Rewrite the first mapping to be relative to the end state of the previous
     // chunk. We now know what the end state is because we're in the second pass
     // where all chunks have already been generated.
@@ -1103,13 +1205,29 @@ pub fn append_source_map_chunk<'a>(
     start_state.generated_column += generated_column.value;
     start_state.original_line += original_line.value;
     start_state.original_column += original_column.value;
+    start_state.has_original_name = false;
 
     let mut str = bun_core::MutableString::init_empty();
-    append_mapping_to_buffer(&mut str, j.last_byte(), prev_end_state, start_state);
+    let _ = append_mapping_to_buffer(&mut str, j.last_byte(), prev_end_state, start_state);
     j.push_owned(str.to_owned_slice());
 
-    // Then append everything after that without modification.
-    j.push_static(source_map);
+    // Next, if there's an original name, rewrite it to be relative to the
+    // last name of the previous chunk.
+    if let Some(before) = first_name_offset {
+        let before = before as usize;
+        debug_assert!(before >= i);
+        let original_name = decode_vlq_assume_valid(source_map, before);
+        let after = original_name.start;
+        let rebased =
+            original_name.value + (start_state.original_name - prev_end_state.original_name);
+        j.push_static(&source_map[i..before]);
+        j.push_owned(VLQ::encode(rebased).slice().to_vec().into_boxed_slice());
+        j.push_static(&source_map[after..]);
+        return Ok(());
+    }
+
+    // Otherwise, append everything after that without modification.
+    j.push_static(&source_map[i..]);
     Ok(())
 }
 

@@ -1,4 +1,5 @@
 use bun_ast::{Loc, Source};
+use bun_collections::StringHashMap;
 use bun_core::{MutableString, strings};
 use bun_paths::{PathBuffer, fs::FileSystem};
 use bun_ptr::RawSlice;
@@ -11,6 +12,18 @@ use crate::{
 #[derive(Clone)]
 pub struct Chunk {
     pub buffer: MutableString,
+
+    /// The `names` entries this chunk's mappings refer to, JSON-quoted and
+    /// joined with `, ` in index order. Name indices in `buffer` are relative
+    /// to this chunk (the first name is 0). The bundler rebases them when it
+    /// joins chunks.
+    pub quoted_names: Box<[u8]>,
+    pub names_count: u32,
+
+    /// Byte offset in `buffer` of the first mapping name field, if any mapping
+    /// has one. `append_source_map_chunk` rewrites that field when it joins
+    /// chunks.
+    pub first_name_offset: Option<u32>,
 
     /// This end state will be used to rewrite the start of the following source
     /// map chunk so that the delta-encoded VLQ numbers are preserved.
@@ -29,6 +42,9 @@ impl Chunk {
     pub fn init_empty() -> Chunk {
         Chunk {
             buffer: MutableString::init_empty(),
+            quoted_names: Box::default(),
+            names_count: 0,
+            first_name_offset: None,
             end_state: SourceMapState::default(),
             final_generated_column: 0,
             should_ignore: true,
@@ -132,11 +148,13 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
 pub trait SourceMapFormatCtx: Sized {
     fn init(prepend_count: bool) -> Self;
     fn append_line_separator(&mut self) -> Result<(), crate::Error>;
+    /// Returns the byte offset of the name field when one was written (see
+    /// `append_mapping_to_buffer`).
     fn append(
         &mut self,
         current_state: SourceMapState,
         prev_state: SourceMapState,
-    ) -> Result<(), crate::Error>;
+    ) -> Result<Option<u32>, crate::Error>;
     fn should_ignore(&self) -> bool;
     fn get_buffer(&mut self) -> &mut MutableString;
     fn take_buffer(&mut self) -> MutableString;
@@ -164,7 +182,7 @@ impl<T: SourceMapFormatCtx> SourceMapFormat<T> {
         &mut self,
         current_state: SourceMapState,
         prev_state: SourceMapState,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<Option<u32>, crate::Error> {
         self.ctx.append(current_state, prev_state)
     }
 
@@ -244,11 +262,13 @@ impl SourceMapFormatCtx for VLQSourceMap {
         &mut self,
         current_state: SourceMapState,
         prev_state: SourceMapState,
-    ) -> Result<(), crate::Error> {
+    ) -> Result<Option<u32>, crate::Error> {
         if let Some(b) = &mut self.internal {
+            // The internal format has no names column; the runtime only remaps
+            // positions.
             b.append_mapping(&current_state);
             self.count += 1;
-            return Ok(());
+            return Ok(None);
         }
 
         let last_byte: u8 = if self.data.list.len() > self.offset {
@@ -257,9 +277,10 @@ impl SourceMapFormatCtx for VLQSourceMap {
             0
         };
 
-        append_mapping_to_buffer(&mut self.data, last_byte, prev_state, current_state);
+        let name_offset =
+            append_mapping_to_buffer(&mut self.data, last_byte, prev_state, current_state);
         self.count += 1;
-        Ok(())
+        Ok(name_offset)
     }
 
     fn should_ignore(&self) -> bool {
@@ -384,6 +405,21 @@ pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
 
     /// When generating sourcemappings for bun, we store a count of how many mappings there were
     pub prepend_count: bool,
+
+    /// Record the original name of renamed symbols in the mappings (the fifth
+    /// VLQ field) and collect the `names` table. Only the bundler's output
+    /// path consumes them; the dev server and the runtime join chunk buffers
+    /// with no `names` array, so they leave this off.
+    pub record_names: bool,
+    /// `names` entries so far, JSON-quoted and joined with `, `.
+    pub quoted_names: MutableString,
+    pub names_count: u32,
+    pub names_map: StringHashMap<u32>,
+    pub first_name_offset: Option<u32>,
+    /// The previous mapping's original name and generated length, for the
+    /// duplicate-mapping check in `add_source_mapping_for_name`.
+    pub prev_original_name: &'a [u8],
+    pub prev_generated_len: u32,
 }
 
 impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<'_, T> {
@@ -404,6 +440,13 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<'_, T> {
             cover_lines_without_mappings: false,
             approximate_input_line_count: 0,
             prepend_count: false,
+            record_names: false,
+            quoted_names: MutableString::init_empty(),
+            names_count: 0,
+            names_map: StringHashMap::new(),
+            first_name_offset: None,
+            prev_original_name: &[],
+            prev_generated_len: 0,
         }
     }
 }
@@ -455,7 +498,7 @@ impl Drop for OwnedLineOffsetTables {
 // `update_generated_line_and_column_slow`, which is `#[inline(never)] #[cold]`
 // and lives once in this crate, adjacent to `flush_window`. The concrete
 // (non-generic) impl is what pins one copy per CGU.
-impl NewBuilder<'_, VLQSourceMap> {
+impl<'a> NewBuilder<'a, VLQSourceMap> {
     #[inline(never)]
     pub fn generate_chunk(&mut self, output: &[u8]) -> Chunk {
         self.update_generated_line_and_column(output);
@@ -476,6 +519,9 @@ impl NewBuilder<'_, VLQSourceMap> {
         }
         Chunk {
             buffer: self.source_map.take_buffer(),
+            quoted_names: self.quoted_names.take_slice().into_boxed_slice(),
+            names_count: self.names_count,
+            first_name_offset: self.first_name_offset,
             end_state: self.prev_state,
             final_generated_column: self.generated_column,
             should_ignore: self.source_map.should_ignore(),
@@ -579,6 +625,7 @@ impl NewBuilder<'_, VLQSourceMap> {
                             source_index: self.prev_state.source_index,
                             original_line: self.prev_state.original_line,
                             original_column: self.prev_state.original_column,
+                            ..Default::default()
                         });
                     }
 
@@ -608,31 +655,84 @@ impl NewBuilder<'_, VLQSourceMap> {
     }
 
     #[inline(always)]
-    pub(crate) fn append_mapping(&mut self, current_state: SourceMapState) {
+    pub(crate) fn append_mapping(
+        &mut self,
+        original_name: &[u8],
+        mut current_state: SourceMapState,
+    ) {
+        if self.record_names && !original_name.is_empty() {
+            current_state.original_name = self.name_index(original_name) as i32;
+            current_state.has_original_name = true;
+        }
         self.append_mapping_without_remapping(current_state);
+    }
+
+    /// The index of `original_name` in this chunk's `names` table, adding it
+    /// when it is new.
+    #[inline(never)]
+    fn name_index(&mut self, original_name: &[u8]) -> u32 {
+        let gop = bun_core::handle_oom(self.names_map.get_or_put(original_name));
+        if !gop.found_existing {
+            *gop.value_ptr = self.names_count;
+            self.names_count += 1;
+            if !self.quoted_names.is_empty() {
+                self.quoted_names.append(b", ").expect("unreachable");
+            }
+            bun_core::quote_for_json(original_name, &mut self.quoted_names, false)
+                .expect("unreachable");
+        }
+        *gop.value_ptr
     }
 
     #[inline(always)]
     pub(crate) fn append_mapping_without_remapping(&mut self, current_state: SourceMapState) {
-        self.source_map
+        let name_offset = self
+            .source_map
             .append(current_state, self.prev_state)
             .expect("unreachable");
+        let prev_original_name = self.prev_state.original_name;
         self.prev_state = current_state;
+        if !current_state.has_original_name {
+            // A mapping with no name leaves the name delta base unchanged.
+            self.prev_state.original_name = prev_original_name;
+        } else if self.first_name_offset.is_none() {
+            self.first_name_offset = name_offset;
+        }
         self.has_prev_state = true;
     }
 
-    #[inline(never)]
+    #[inline]
     pub fn add_source_mapping(&mut self, loc: Loc, output: &[u8]) {
-        if
-        // don't insert mappings for same location twice
-        self.prev_loc.eql(loc) ||
-            // exclude generated code from source
-            loc.start == Loc::EMPTY.start
+        self.add_source_mapping_for_name(loc, &[], output);
+    }
+
+    /// `original_name` is the name the symbol had in the source when the
+    /// printed name differs from it (empty otherwise). It is recorded in the
+    /// `names` table when `record_names` is on.
+    #[inline(never)]
+    pub fn add_source_mapping_for_name(
+        &mut self,
+        loc: Loc,
+        original_name: &'a [u8],
+        output: &[u8],
+    ) {
+        // exclude generated code from source
+        if loc.start == Loc::EMPTY.start {
+            return;
+        }
+
+        // don't insert mappings for same location twice, unless the generated
+        // position moved and this one carries a different original name
+        if self.prev_loc.eql(loc)
+            && (self.prev_generated_len as usize == output.len()
+                || self.prev_original_name == original_name)
         {
             return;
         }
 
         self.prev_loc = loc;
+        self.prev_generated_len = output.len() as u32;
+        self.prev_original_name = original_name;
 
         if let LineOffsetTables::Deferred {
             contents,
@@ -713,16 +813,21 @@ impl NewBuilder<'_, VLQSourceMap> {
                 source_index: self.prev_state.source_index,
                 original_line: self.prev_state.original_line,
                 original_column: self.prev_state.original_column,
+                ..Default::default()
             });
         }
 
-        self.append_mapping(SourceMapState {
-            generated_line: self.prev_state.generated_line,
-            generated_column: self.generated_column.max(0),
-            source_index: self.prev_state.source_index,
-            original_line: original_line.max(0),
-            original_column: original_column.max(0),
-        });
+        self.append_mapping(
+            original_name,
+            SourceMapState {
+                generated_line: self.prev_state.generated_line,
+                generated_column: self.generated_column.max(0),
+                source_index: self.prev_state.source_index,
+                original_line: original_line.max(0),
+                original_column: original_column.max(0),
+                ..Default::default()
+            },
+        );
 
         // This line now has a mapping on it, so don't insert another one
         self.line_starts_with_mapping = true;

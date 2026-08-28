@@ -999,6 +999,7 @@ fn codegen_terminal(
                 S::Switch {
                     test: test_expr,
                     body_loc: stmt_loc,
+                    close_brace_loc: Loc::EMPTY,
                     cases: StoreSlice::new_mut(switch_cases.leak()),
                 },
                 stmt_loc,
@@ -1103,12 +1104,14 @@ fn codegen_terminal(
             Ok(Some(Stmt::alloc(
                 S::Try {
                     body_loc: stmt_loc,
+                    close_brace_loc: Loc::EMPTY,
                     body: leak_stmts(try_block),
                     catch: Some(Catch {
                         loc: stmt_loc,
                         binding: catch_param,
                         body: leak_stmts(handler_block),
                         body_loc: stmt_loc,
+                        close_brace_loc: Loc::EMPTY,
                     }),
                     finally: None,
                 },
@@ -1549,6 +1552,7 @@ fn emit_store(
                         args: func_expr.func.args,
                         body: G::FnBody {
                             loc: func_expr.func.body.loc,
+                            close_brace_loc: func_expr.func.body.close_brace_loc,
                             stmts: func_expr.func.body.stmts,
                         },
                         flags: func_expr.func.flags,
@@ -2296,6 +2300,7 @@ fn codegen_function_expression(
 
     let body = G::FnBody {
         loc,
+        close_brace_loc: Loc::EMPTY,
         stmts: leak_stmts(fn_result.body),
     };
     let args = leak_args(fn_result.params);
@@ -2457,6 +2462,7 @@ fn codegen_object_expression(
                                     args: leak_args(fn_result.params),
                                     body: G::FnBody {
                                         loc,
+                                        close_brace_loc: Loc::EMPTY,
                                         stmts: leak_stmts(fn_result.body),
                                     },
                                     flags: fn_flags,
@@ -3486,6 +3492,7 @@ fn wrap_hook_call_with_guard(guard_ref: Ref, call_expr: Expr, before: u32, after
     let try_stmt = Stmt::alloc(
         S::Try {
             body_loc: loc,
+            close_brace_loc: Loc::EMPTY,
             body: leak_stmts(vec![
                 guard_call(before),
                 Stmt::alloc(
@@ -3499,6 +3506,7 @@ fn wrap_hook_call_with_guard(guard_ref: Ref, call_expr: Expr, before: u32, after
             finally: Some(Finally {
                 loc,
                 stmts: leak_stmts(vec![guard_call(after)]),
+                close_brace_loc: Loc::EMPTY,
             }),
         },
         loc,
@@ -3509,6 +3517,7 @@ fn wrap_hook_call_with_guard(guard_ref: Ref, call_expr: Expr, before: u32, after
             func: G::Fn {
                 body: G::FnBody {
                     loc,
+                    close_brace_loc: Loc::EMPTY,
                     stmts: leak_stmts(vec![try_stmt]),
                 },
                 ..Default::default()
@@ -3554,11 +3563,13 @@ fn create_function_body_hook_guard(
     Stmt::alloc(
         S::Try {
             body_loc: loc,
+            close_brace_loc: Loc::EMPTY,
             body: leak_stmts(try_body),
             catch: None,
             finally: Some(Finally {
                 loc,
                 stmts: leak_stmts(vec![guard_call(after)]),
+                close_brace_loc: Loc::EMPTY,
             }),
         },
         loc,

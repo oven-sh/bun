@@ -1071,6 +1071,7 @@ fn build_outlined_decl(outlined: CodegenFunction) -> Stmt {
                 args: leak_args(outlined.params),
                 body: G::FnBody {
                     loc: Loc::EMPTY,
+                    close_brace_loc: Loc::EMPTY,
                     stmts: leak_stmts(outlined.body),
                 },
                 flags: fn_flags,
@@ -1214,6 +1215,7 @@ pub fn maybe_compile_pending(
         args: pending.args,
         body: G::FnBody {
             loc: pending.body_loc,
+            close_brace_loc: Loc::EMPTY,
             stmts: StoreSlice::new_mut(body),
         },
         flags: pending.flags,

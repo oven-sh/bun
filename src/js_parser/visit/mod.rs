@@ -168,10 +168,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        func.body = G::FnBody {
-            stmts: bun_ast::StoreSlice::new_mut(stmts.into_bump_slice_mut()),
-            loc: body_loc,
-        };
+        func.body.stmts = bun_ast::StoreSlice::new_mut(stmts.into_bump_slice_mut());
 
         self.pop_scope();
         self.pop_scope();
@@ -1210,6 +1207,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     args: bun_ast::StoreSlice::EMPTY,
                                     body: G::FnBody {
                                         loc,
+                                        close_brace_loc: bun_ast::Loc::EMPTY,
                                         stmts: bun_ast::StoreSlice::from_bump(ctor_stmts),
                                     },
                                     flags: flags::FUNCTION_NONE,

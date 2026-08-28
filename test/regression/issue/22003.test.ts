@@ -28,8 +28,9 @@ test.skipIf(isWindows)("tab character in filename should be escaped in sourcemap
     sourcemap = JSON.parse(sourcemapContent);
   }).not.toThrow();
 
-  // The filename in sources should have the tab properly escaped
-  expect(sourcemap.sources).toContain("file\ttab.js");
+  // `sources` entries are URLs, so the tab is percent-encoded
+  expect(sourcemap.sources).toEqual(["file%09tab.js"]);
+  expect(decodeURIComponent(sourcemap.sources[0])).toBe("file\ttab.js");
 
   // Verify no literal tab bytes (0x09) in the raw JSON
   const hasLiteralTab = sourcemapContent.includes("\t");

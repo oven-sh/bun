@@ -493,6 +493,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             E::Arrow {
                 body: G::FnBody {
                     loc: bun_ast::Loc::EMPTY,
+                    close_brace_loc: bun_ast::Loc::EMPTY,
                     stmts: bun_ast::StoreSlice::new_mut(inner_slice),
                 },
                 is_async,

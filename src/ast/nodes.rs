@@ -713,11 +713,13 @@ pub struct Catch {
     pub binding: Option<BindingNodeIndex>,
     pub body: StmtNodeList,
     pub body_loc: crate::Loc,
+    pub close_brace_loc: crate::Loc,
 }
 
 pub struct Finally {
     pub loc: crate::Loc,
     pub stmts: StmtNodeList,
+    pub close_brace_loc: crate::Loc,
 }
 
 pub struct Case {

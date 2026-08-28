@@ -482,6 +482,7 @@ impl LinkerContext<'_> {
             let fn_body = G::FnBody {
                 stmts: stmts_eat1!(Stmt::allocate(arena, S::Return { value: Some(value) }, loc,)),
                 loc,
+                close_brace_loc: Loc::EMPTY,
             };
             properties.push(G::Property {
                 key: Some(Expr::allocate(

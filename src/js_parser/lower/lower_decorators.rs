@@ -286,6 +286,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let stmts_list = bun_alloc::AstVec::<Stmt>::from_arena_slice(stmts);
         let sb = bump.alloc(G::ClassStaticBlock {
             loc: l,
+            close_brace_loc: bun_ast::Loc::EMPTY,
             stmts: stmts_list,
         });
         Property {
@@ -1572,6 +1573,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         body: G::FnBody {
                             stmts: bun_ast::StoreSlice::new_mut(get_body),
                             loc,
+                            close_brace_loc: bun_ast::Loc::EMPTY,
                         },
                         ..Default::default()
                     };
@@ -1604,6 +1606,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         body: G::FnBody {
                             stmts: bun_ast::StoreSlice::new_mut(set_body),
                             loc,
+                            close_brace_loc: bun_ast::Loc::EMPTY,
                         },
                         ..Default::default()
                     };
@@ -2133,6 +2136,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 E::Arrow {
                                     body: G::FnBody {
                                         loc,
+                                        close_brace_loc: bun_ast::Loc::EMPTY,
                                         stmts: stmts_ptr,
                                     },
                                     is_async: false,
@@ -2383,6 +2387,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     args: bun_ast::StoreSlice::EMPTY,
                     body: G::FnBody {
                         loc,
+                        close_brace_loc: bun_ast::Loc::EMPTY,
                         stmts: ctor_body_ptr,
                     },
                     ..Default::default()

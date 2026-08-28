@@ -2621,14 +2621,11 @@ impl RunCommand {
             let fs = unsafe { &mut *this_transpiler.fs };
             let top_level_dir = fs.top_level_dir;
             let path = env_loader.get(b"PATH").unwrap_or(b"");
-            let mut path_for_which = path;
-            if bin_dirs_only {
-                if original_path.len() < path.len() {
-                    path_for_which = &path[..path.len() - (original_path.len() + 1)];
-                } else {
-                    path_for_which = b"";
-                }
-            }
+            let path_for_which = if bin_dirs_only {
+                Self::prepended_bin_dirs(path, &original_path)
+            } else {
+                path
+            };
 
             if !path_for_which.is_empty() {
                 let mut path_buf = PathBuffer::uninit();
@@ -2691,15 +2688,10 @@ impl RunCommand {
                         bstr::BStr::new(target_name),
                     );
                     let path = env_loader.get(b"PATH").unwrap_or(b"");
-                    let bin_dirs = if original_path.len() < path.len() {
-                        &path[..path.len() - (original_path.len() + 1)]
-                    } else {
-                        b""
-                    };
                     Self::print_did_you_mean(
                         target_name,
                         root_dir.enclosing_package_json,
-                        bin_dirs,
+                        Self::prepended_bin_dirs(path, &original_path),
                         !explicit_run,
                     );
                 }
@@ -2708,6 +2700,16 @@ impl RunCommand {
         }
 
         Ok(false)
+    }
+
+    /// The `node_modules/.bin` directories `configure_path_for_run` prepended
+    /// to PATH: everything before the original PATH and its delimiter.
+    fn prepended_bin_dirs<'a>(path: &'a [u8], original_path: &[u8]) -> &'a [u8] {
+        if original_path.len() < path.len() {
+            &path[..path.len() - (original_path.len() + 1)]
+        } else {
+            b""
+        }
     }
 
     /// After `Script not found "<typed>"`: point at the package.json scripts,

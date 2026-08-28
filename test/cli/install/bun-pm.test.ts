@@ -1085,13 +1085,17 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(exitCode).toBe(0);
 });
 
-test("bun pm points an unknown subcommand at the closest ones", async () => {
+// `lsit` is a typo of the alias `list`; the suggestion is the subcommand's name.
+test.each([
+  ["lsit", '\nerror: "lsit" unknown command\nnote: did you mean "bun pm ls"?\n'],
+  ["frobnicate", '\nerror: "frobnicate" unknown command\n'],
+])("bun pm %s prints the help, the error and the closest subcommand", async (subcommand, expectedStderr) => {
   using dir = tempDir("pm-did-you-mean", {
     "package.json": JSON.stringify({ name: "pm-did-you-mean", version: "1.0.0" }),
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "pm", "lsit"],
+    cmd: [bunExe(), "pm", subcommand],
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
@@ -1099,18 +1103,6 @@ test("bun pm points an unknown subcommand at the closest ones", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toContain("bun pm ls");
-  // `lsit` is a typo of the alias `list`; the suggestion is the subcommand's name.
-  expect(stderr).toBe('\nerror: "lsit" unknown command\nnote: did you mean "bun pm ls"?\n');
+  expect(stderr).toBe(expectedStderr);
   expect(exitCode).toBe(1);
-
-  await using far = Bun.spawn({
-    cmd: [bunExe(), "pm", "frobnicate"],
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-    env: bunEnv,
-  });
-  const [, farStderr, farExitCode] = await Promise.all([far.stdout.text(), far.stderr.text(), far.exited]);
-  expect(farStderr).toBe('\nerror: "frobnicate" unknown command\n');
-  expect(farExitCode).toBe(1);
 });

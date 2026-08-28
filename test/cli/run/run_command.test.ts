@@ -80,6 +80,7 @@ describe.concurrent("did you mean", () => {
 
     const dev = await run(String(dir), "run", "dev");
     expect(dev.stderr).toBe('error: Script not found "dev"\n');
+    expect(dev.exitCode).toBe(1);
   });
 
   test("suggests a node_modules/.bin entry, from a subdirectory too", async () => {
@@ -117,6 +118,7 @@ describe.concurrent("did you mean", () => {
     // Reserved words (`deploy`) are not commands yet and are not suggested.
     const reserved = await run(String(dir), "depoy");
     expect(reserved.stderr).toBe('error: Script not found "depoy"\n');
+    expect(reserved.exitCode).toBe(1);
   });
 
   test("says nothing when no name is close", async () => {

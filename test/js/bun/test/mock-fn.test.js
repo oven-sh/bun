@@ -1249,6 +1249,30 @@ describe("spyOn", () => {
       expect(fn).not.toHaveBeenCalled();
     });
 
+    // Making one index an accessor moves the whole array out of contiguous storage.
+    // The other elements and the length must survive that move.
+    test("spyOn on one array element keeps the other elements and the length", () => {
+      const arr = [1, 2, 3];
+
+      const fn = spyOn(arr, 1);
+      expect(arr[1]).toBe(2);
+      arr[1] = 20;
+      expect(arr[1]).toBe(2);
+      expect(fn.mock.calls).toEqual([[], [20], []]);
+      expect(arr.length).toBe(3);
+      expect([arr[0], arr[2]]).toEqual([1, 3]);
+
+      fn.mockRestore();
+      expect(arr).toEqual([1, 2, 3]);
+      expect(Object.getOwnPropertyDescriptor(arr, 1)).toEqual({
+        value: 2,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      expect(fn).not.toHaveBeenCalled();
+    });
+
     test("spyOn works with missing indexed properties", () => {
       const arr = [];
 
@@ -1281,6 +1305,13 @@ describe("spyOn", () => {
       expect(fn.mock.calls).toEqual([[], ["x"], []]);
 
       fn.mockRestore();
+      // Same as a missing named key: restore writes the original `undefined` back as a data property.
+      expect(Object.getOwnPropertyDescriptor(obj, 169)).toEqual({
+        value: undefined,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
       expect(obj[169]).toBeUndefined();
       expect(fn).not.toHaveBeenCalled();
     });

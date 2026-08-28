@@ -1,9 +1,7 @@
 //! The Linux system certificate store, read from the same places as Node's `--use-system-ca`
-//! (`GetOpenSSLSystemCertificates` in Node's `src/crypto/crypto_context.cc`): `$SSL_CERT_FILE` or
-//! `/etc/ssl/cert.pem`, plus every regular file in `$SSL_CERT_DIR` or `/etc/ssl/certs`.
-//!
-//! Distros link every root several times under `/etc/ssl/certs` next to the bundle, so a file is read once
-//! per inode and a certificate is handed out once per DER encoding. `root_certs_linux.cpp` parses the DER.
+//! (`GetOpenSSLSystemCertificates`): `$SSL_CERT_FILE` or `/etc/ssl/cert.pem`, plus every regular file in
+//! `$SSL_CERT_DIR` or `/etc/ssl/certs`. Each file is read once per inode and each certificate is handed to
+//! `root_certs_linux.cpp` once per DER encoding, because distros link every root several times there.
 
 use core::ffi::{c_char, c_void};
 
@@ -73,8 +71,7 @@ impl Loader {
         }
     }
 
-    /// Follows BoringSSL's `PEM_read_bio_X509`: other block names are skipped, and the file ends at the
-    /// first block that would not parse (bad END line, headers, bad base64, rejected DER).
+    /// As `PEM_read_bio_X509`: other block names are skipped, the file ends at the first block that fails.
     fn load_pem(&mut self, bytes: &[u8]) {
         let mut lines = strings::split(bytes, b"\n").map(trim_trailing_space);
         loop {
@@ -149,8 +146,7 @@ fn trim_trailing_space(mut line: &[u8]) -> &[u8] {
     line
 }
 
-/// # Safety
-/// `default_cert_file` and `default_cert_dir` must be valid NUL-terminated C strings.
+/// Safety: `default_cert_file` and `default_cert_dir` must be valid NUL-terminated C strings.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__forEachSystemCertificate(
     default_cert_file: *const c_char,
@@ -176,8 +172,7 @@ unsafe extern "C" fn Bun__forEachSystemCertificate(
         None => {
             #[cfg(target_os = "android")]
             {
-                // Android has no OpenSSL layout: the mainline store (API 30+), the base store, then the
-                // user-installed store.
+                // Android has no OpenSSL layout: mainline store (API 30+), base store, user-installed store.
                 let _ = default_cert_dir;
                 for dir in [
                     &b"/apex/com.android.conscrypt/cacerts"[..],

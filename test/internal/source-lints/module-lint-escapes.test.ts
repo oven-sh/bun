@@ -87,12 +87,12 @@ describe("module-level #![allow(dead_code)] / #![allow(unreachable_pub)] escapes
         throw new Error(
           `${source} has ${count} module-level dead_code/unreachable_pub escapes, up from ${limit}.\n` +
             `A module-level escape hides every dead item in the file from the compiler. Delete the dead items or use pub(crate) instead.\n` +
-            `If the escape is justified, update the inventory with \`bun ./test/internal/source-lints/module-lint-escapes.test.ts\`.`,
+            `If the escape is justified, update the inventory with \`bun ./test/internal/source-lints/module-lint-escapes.test.ts --write\`.`,
         );
       } else if (count < limit) {
         throw new Error(
           `${source} has ${count} module-level dead_code/unreachable_pub escapes, down from ${limit}.\n` +
-            `Update the inventory with \`bun ./test/internal/source-lints/module-lint-escapes.test.ts\`.`,
+            `Update the inventory with \`bun ./test/internal/source-lints/module-lint-escapes.test.ts --write\`.`,
         );
       }
     });

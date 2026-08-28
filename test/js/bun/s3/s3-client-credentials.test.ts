@@ -1,12 +1,12 @@
-import { S3Client, type S3Options } from "bun";
+import { S3Client, type S3File, type S3Options } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // `S3Client.file()` and the other per-key methods share the client's
 // credentials with the returned S3 file when the call passes no credential
 // override. These tests check that the shared credentials sign correctly,
-// that an override only applies to its own file, and that a file outlives
-// the client it came from.
+// that a file() call does not copy them, that an override only applies to
+// its own file, and that a file outlives the client it came from.
 describe("S3Client credentials", () => {
   const clientOptions: S3Options = {
     accessKeyId: "client-key",
@@ -34,6 +34,23 @@ describe("S3Client credentials", () => {
       expect(signer(client.file("dir/file.txt").presign())).toEqual(clientSigner);
     }
     expect(signer(client.presign("dir/file.txt"))).toEqual(clientSigner);
+  });
+
+  test("file() without overrides does not copy the client's credentials", () => {
+    // Two 64 KiB strings make one copy of the credentials cost 128 KiB.
+    const big = Buffer.alloc(64 * 1024, "s").toString();
+    const client = new S3Client({ ...clientOptions, secretAccessKey: big, sessionToken: big });
+    const count = 500;
+    const copyCost = count * 128 * 1024;
+
+    const files: S3File[] = [];
+    Bun.gc(true);
+    const rssBefore = process.memoryUsage.rss();
+    for (let i = 0; i < count; i++) files.push(client.file(`dir/file-${i}.txt`));
+    const rssGrowth = process.memoryUsage.rss() - rssBefore;
+
+    expect(files).toHaveLength(count);
+    expect(rssGrowth).toBeLessThan(copyCost / 4);
   });
 
   test("non-credential options keep the client's credentials", () => {

@@ -220,6 +220,11 @@ extern "C" void Bun__EncoderStringTable__serialize(JSC::EncoderStringTable* tabl
     append(ctx, bytes.span().data(), bytes.size());
 }
 
+extern "C" void JSC__Heap__setInitialAllocationBudget(JSC::VM* vm, size_t bytes)
+{
+    vm->heap.setInitialAllocationBudget(bytes);
+}
+
 extern "C" void Bun__DecoderStringTable__install(JSC::VM* vm, const uint8_t* bytes, size_t len)
 {
     ASSERT(vm->clientData);

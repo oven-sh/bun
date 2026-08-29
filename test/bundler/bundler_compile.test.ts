@@ -1579,3 +1579,37 @@ test("compile --compile-executable-path rejects a template shorter than the exec
     expect(exitCode).toBe(1);
   }
 }, 60_000);
+
+// The startup path used to release weak refs, drop every unlinked code block and run a synchronous full collection right
+// after a standalone executable's entry module finished evaluating, i.e. before its first turn of the event loop.
+test("a standalone executable does not run a synchronous full GC after loading its entry point", async () => {
+  using dir = tempDir("compile-no-postload-gc", {
+    "app.js": `setTimeout(() => console.log("done"), 1);`,
+  });
+  const cwd = String(dir);
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "app.js", "--outfile", "app"],
+    env: bunEnv,
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect(buildStderr).not.toContain("error");
+  expect(buildExit).toBe(0);
+  await using proc = Bun.spawn({
+    cmd: [join(cwd, isWindows ? "app.exe" : "app")],
+    // BUN_DESTRUCT_VM_ON_EXIT would add an exit-time full collection to the log.
+    env: { ...bunEnv, BUN_JSC_logGC: "1", BUN_DESTRUCT_VM_ON_EXIT: undefined },
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("done\n");
+  // Heap::notifyIsSafeToCollect logs this at VM creation whenever logGC is on, collection or not, so it proves the
+  // option reached the compiled binary without depending on any GC happening.
+  expect(stderr).toMatch(/\[GC<(0x)?[0-9a-fA-F]+>: starting /); // %p: "0x7f…" on POSIX, "00007FF6…" on Windows
+  expect(stderr).not.toContain("FullCollection");
+  expect(exitCode).toBe(0);
+});

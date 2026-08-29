@@ -40,4 +40,9 @@ pub trait StandaloneModuleGraph: Send + Sync {
     fn bytecode_string_table(&self) -> &'static [u8] {
         &[]
     }
+    /// Bytes the VM reads to load the module graph: each module's bytecode (or its source when it has none), module
+    /// records, builtin bytecode and the shared string table — not source maps or embedded assets.
+    fn module_graph_load_bytes(&self) -> usize {
+        0
+    }
 }

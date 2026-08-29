@@ -507,6 +507,22 @@ describe("a hostile macro", () => {
     );
   });
 
+  // The value-to-AST walk recurses once per nesting level on a bundler pool thread's stack. Before: a
+  // stack overflow, SIGSEGV with nothing printed.
+  test.concurrent.each([
+    ["objects", `v = { v }`],
+    ["arrays", `v = [v]`],
+  ])("a return value nested 100000 %s deep is a located error", async (_name, wrap) => {
+    const { stderr, exitCode, signalCode } = await build({
+      "m.ts": `export function m() { let v: unknown = 1; for (let i = 0; i < 100000; i++) ${wrap}; return v; }`,
+    });
+    expect({ exitCode, signalCode, stderr }).toEqual({
+      exitCode: 1,
+      signalCode: null,
+      stderr: expect.stringContaining("error: macro return value is too deeply nested\n    at [dir]/index.ts:2:18"),
+    });
+  });
+
   // Before: the parse spun on the promise forever (100% CPU). A program in the same state, a pending await
   // with nothing keeping the event loop alive, would have exited; the macro fails the same way.
   test.concurrent("a returned promise that can never settle is a located error", async () => {

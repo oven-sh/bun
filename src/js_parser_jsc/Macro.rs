@@ -563,6 +563,8 @@ pub(crate) struct Run<'a> {
     pub(crate) source: &'a Source,
     pub(crate) visited: VisitMap,
     pub(crate) is_top_level: bool,
+    /// `run` recurses once per nesting level of the returned value, on a bundler pool thread's stack.
+    pub(crate) stack_check: bun_core::StackCheck,
 }
 
 impl<'a> Run<'a> {
@@ -603,6 +605,7 @@ impl<'a> Run<'a> {
             source,
             visited: VisitMap::default(),
             is_top_level: false,
+            stack_check: bun_core::StackCheck::init(),
         };
 
         // `runner.visited` dropped at scope exit (was `defer runner.visited.deinit(allocator)`)
@@ -620,6 +623,14 @@ impl<'a> Run<'a> {
 
     pub(crate) fn run(&mut self, value: JSValue) -> Result<Expr, MacroError> {
         use ConsoleObject::formatter::Tag as T;
+        if !self.stack_check.is_safe_to_recurse() {
+            self.log.add_error_fmt(
+                Some(self.source),
+                self.caller.loc,
+                format_args!("macro return value is too deeply nested"),
+            );
+            return Err(MacroError::MacroFailed);
+        }
         // `Tag::get` returns `TagResult { tag: TagPayload, .. }`;
         // collapse the payload to its discriminant via `.tag()`.
         match T::get(value, self.global)?.tag.tag() {

@@ -72,7 +72,7 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
     // elements; the lists do not reallocate during this function. Read-only
     // columns are deref'd to `&[T]`; the two written columns
     // (`module_scope`, `parts`) are deref'd to `&mut [T]` — see CONCURRENCY
-    // note above re: code-splitting overlap. All ten derefs share the same
+    // note above re: code-splitting overlap. All eleven derefs share the same
     // invariant, so they are grouped under one `unsafe` block.
     let (
         all_module_scopes,
@@ -85,7 +85,8 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         exports_ref_col,
         module_ref_col,
         nested_slot_counts_col,
-    ): (_, &[js_meta::Flags], _, _, _, _, _, _, _, _) = unsafe {
+        module_exports_ref_col,
+    ): (_, &[js_meta::Flags], _, _, _, _, _, _, _, _, _) = unsafe {
         (
             &mut *ast.module_scope,
             &*meta.flags,
@@ -97,7 +98,16 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
             &*ast.exports_ref,
             &*ast.module_ref,
             &*ast.nested_scope_slot_counts,
+            &*meta.module_exports_ref,
         )
+    };
+
+    // Named with the chunk-level symbols: the per-file loops below would name it inside the
+    // entry's CommonJS closure, or not at all when splitting puts the entry file in another chunk.
+    let entry_module_exports_ref: bun_ast::Ref = if chunk.is_entry_point() {
+        module_exports_ref_col[chunk.entry_point.source_index() as usize]
+    } else {
+        bun_ast::Ref::NONE
     };
 
     // `symbol::Map` is not `Clone`/`Copy`. Build a non-owning shallow view via
@@ -260,6 +270,14 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
                 stable_source_indices,
             )?;
         }
+        if entry_module_exports_ref.is_valid() {
+            minify_renamer.accumulate_symbol_use_count(
+                &mut top_level_symbols,
+                entry_module_exports_ref,
+                1,
+                stable_source_indices,
+            )?;
+        }
         top_level_symbols_all.extend_from_slice(&top_level_symbols);
         minify_renamer.allocate_top_level_symbol_slots(&top_level_symbols_all)?;
 
@@ -292,6 +310,9 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
     for stable_ref in &sorted_imports_from_other_chunks {
         // `StableRef` is `repr(packed)`; copy the field to avoid an unaligned ref.
         r.add_top_level_symbol(stable_ref.r#ref);
+    }
+    if entry_module_exports_ref.is_valid() {
+        r.add_top_level_symbol(entry_module_exports_ref);
     }
 
     let mut sorted: Vec<u32> = Vec::new();

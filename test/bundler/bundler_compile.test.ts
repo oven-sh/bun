@@ -497,6 +497,67 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "mod mod\nmod mod\nmod mod\nmod mod\nResolveMessage\n", file: "dist/out", setCwd: true },
   });
+  // A CommonJS entry point reached only through a run-time require()/import() is embedded as an ESM chunk. require()
+  // must still return `module.exports` (not a namespace around it) and import() must have it as `default`, as when the
+  // same files run from disk: for `module.exports = value` (an object, a function) and for `exports.x = ...`, which the
+  // bundler turns into named exports. The main entry also imports one of them statically, so under --splitting that
+  // entry point's own chunk is only the tail that re-exports the shared code. A module that already exports the
+  // `module.exports` name keeps its own export (a second one would be a syntax error).
+  for (const [suffix, options] of [
+    ["", {}],
+    ["+bytecode", { bytecode: true }],
+    ["+minify", { minifyIdentifiers: true, minifySyntax: true, minifyWhitespace: true }],
+    ["+splitting", { splitting: true }],
+  ] as const) {
+    itBundled("compile/RuntimeRequireEmbeddedCJSExportsShape" + suffix, {
+      backend: "cli",
+      compile: true,
+      format: "esm",
+      ...options,
+      files: {
+        "/entry.ts": /* js */ `
+          import { rmSync } from "fs";
+          import { tmpdir } from "os";
+          import staticObject from "./object.cjs";
+          rmSync("./object.cjs", { force: true });
+          rmSync("./fn.cjs", { force: true });
+          rmSync("./named.cjs", { force: true });
+          rmSync("./taken.cjs", { force: true });
+          process.chdir(tmpdir());
+          const s = (x: string) => x; // keeps the bundler from resolving the specifier at build time
+          const obj = require(s("./object.cjs"));
+          console.log(JSON.stringify(obj), obj === require(s("./object.cjs")), JSON.stringify(staticObject));
+          const fn = require(s("./fn.cjs"));
+          console.log(typeof fn, fn(), fn.extra);
+          const named = require(s("./named.cjs"));
+          console.log(JSON.stringify(named), named.fn());
+          const ns = await import(s("./named.cjs"));
+          console.log(ns.default === named, ns.kind, typeof ns.fn, JSON.stringify(ns.default));
+          console.log((await import(s("./object.cjs"))).default === obj, (await import(s("./fn.cjs"))).default === fn);
+          console.log(Object.keys(await import(s("./taken.cjs"))).join(","));
+        `,
+        "/object.cjs": `module.exports = { hello: "world", nested: { n: 1 } };`,
+        "/fn.cjs": `module.exports = function hello() { return "called"; }; module.exports.extra = 2;`,
+        "/named.cjs": `exports.kind = "named"; module.exports.fn = function () { return "fn"; };`,
+        "/taken.cjs": `exports["module.exports"] = 1; exports.a = 2;`,
+      },
+      entryPointsRaw: ["./entry.ts", "./object.cjs", "./fn.cjs", "./named.cjs", "./taken.cjs"],
+      outfile: "dist/out",
+      run: {
+        stdout: [
+          '{"hello":"world","nested":{"n":1}} true {"hello":"world","nested":{"n":1}}',
+          "function called 2",
+          '{"kind":"named"} fn',
+          'true named function {"kind":"named"}',
+          "true true",
+          "a,module.exports",
+          "",
+        ].join("\n"),
+        file: "dist/out",
+        setCwd: true,
+      },
+    });
+  }
   // Nested embedded entry points, from the entry and from inside the subdirectory (`../`), by every spelling.
   itBundled("compile/EmbeddedResolveNested", {
     backend: "cli",

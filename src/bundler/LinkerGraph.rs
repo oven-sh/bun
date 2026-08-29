@@ -126,6 +126,8 @@ pub mod js_meta {
         pub sorted_and_filtered_export_aliases: SortedAndFilteredExportAliases,
         pub top_level_symbol_to_parts_overlay: TopLevelSymbolToParts,
         pub cjs_export_copies: CjsExportCopies,
+        /// Compile builds: the entry point tail's `module.exports` binding, else `Ref::NONE`.
+        pub module_exports_ref: Ref,
         pub wrapper_part_index: Index,
         pub flags: Flags,
     }
@@ -140,6 +142,7 @@ pub mod js_meta {
                 sorted_and_filtered_export_aliases: AstAlloc::vec(),
                 top_level_symbol_to_parts_overlay: TopLevelSymbolToParts::default(),
                 cjs_export_copies: AstAlloc::vec(),
+                module_exports_ref: Ref::NONE,
                 wrapper_part_index: Index::default(),
                 flags: Flags::default(),
             }
@@ -155,6 +158,7 @@ pub mod js_meta {
             sorted_and_filtered_export_aliases: SortedAndFilteredExportAliases,
             top_level_symbol_to_parts_overlay: TopLevelSymbolToParts,
             cjs_export_copies: CjsExportCopies,
+            module_exports_ref: Ref,
             wrapper_part_index: Index,
             flags: Flags,
         }

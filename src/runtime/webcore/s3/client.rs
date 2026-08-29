@@ -440,7 +440,6 @@ pub(crate) fn writable_stream(
     storage_class: Option<StorageClass>,
     request_payer: bool,
 ) -> JsResult<JSValue> {
-    let part_size = options.part_size;
     let upload = new_upload(
         credentials,
         path,
@@ -777,7 +776,6 @@ pub(crate) fn upload_stream(
         _ => {}
     }
 
-    let part_size = options.part_size;
     let upload = new_upload(
         credentials,
         path,

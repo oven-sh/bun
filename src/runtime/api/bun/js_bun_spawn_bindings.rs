@@ -1654,7 +1654,7 @@ fn spawn_maybe_sync(
             if proc.has_exited() {
                 // process has already exited, we called wait4(), but we did not call onProcessExit()
                 // SAFETY: all-zero is a valid Rusage (POD).
-                let status = proc.status();
+                let status = proc.status.clone();
                 proc.on_exit(status, &bun_core::ffi::zeroed::<Rusage>());
             } else {
                 // process has already exited, but we haven't called wait4() yet
@@ -1738,7 +1738,7 @@ fn spawn_maybe_sync(
     if !is_sync {
         if !subprocess.has_exited() {
             // SAFETY: jsc_vm_ptr points to the live thread VM.
-            unsafe { (*jsc_vm_ptr).on_subprocess_spawn(subprocess.process().as_ptr()) };
+            unsafe { (*jsc_vm_ptr).on_subprocess_spawn(subprocess.process().as_non_null()) };
         }
         return Ok(out);
     }
@@ -1775,7 +1775,7 @@ fn spawn_maybe_sync(
 
     if !subprocess.has_exited() {
         // SAFETY: jsc_vm_ptr points to the live thread VM.
-        unsafe { (*jsc_vm_ptr).on_subprocess_spawn(subprocess.process().as_ptr()) };
+        unsafe { (*jsc_vm_ptr).on_subprocess_spawn(subprocess.process().as_non_null()) };
     }
 
     let mut did_timeout = false;

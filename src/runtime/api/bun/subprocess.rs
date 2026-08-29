@@ -749,7 +749,7 @@ impl Subprocess<'_> {
     }
 
     pub(crate) fn pid(&self) -> i32 {
-        self.process().pid()
+        self.process().pid
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -866,7 +866,9 @@ impl Subprocess<'_> {
         }
         this.set_event_loop_timer_refd(false);
 
-        jsc_vm.as_mut().on_subprocess_exit(this.process.as_ptr());
+        jsc_vm
+            .as_mut()
+            .on_subprocess_exit(this.process.as_non_null());
 
         if this.flags.get().contains(Flags::OWNS_TERMINAL) {
             // Deliver EOF to the terminal reader without closing the Terminal.
@@ -1211,13 +1213,15 @@ impl Subprocess<'_> {
             return promise;
         }
 
-        match self.process().status() {
+        match &self.process().status {
             Status::Exited(exit) => {
                 JSPromise::resolved_promise_value(global_this, JSValue::js_number(exit.code as f64))
             }
             Status::Signaled(signal) => JSPromise::resolved_promise_value(
                 global_this,
-                JSValue::js_number(bun_sys::SignalCode(signal).to_exit_code().unwrap_or(254) as f64),
+                JSValue::js_number(
+                    bun_sys::SignalCode(*signal).to_exit_code().unwrap_or(254) as f64
+                ),
             ),
             Status::Err(err) => {
                 let js_err = err.to_js(global_this);
@@ -1236,7 +1240,7 @@ impl Subprocess<'_> {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_exit_code(&self, _global: &JSGlobalObject) -> JSValue {
-        if let Status::Exited(exited) = self.process().status() {
+        if let Status::Exited(exited) = &self.process().status {
             return JSValue::js_number(exited.code as f64);
         }
         JSValue::NULL

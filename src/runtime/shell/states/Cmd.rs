@@ -642,7 +642,7 @@ impl Cmd {
             // `watch()` failed → process already gone.
             let process = subproc.get().proc();
             if process.has_exited() {
-                let status = process.status();
+                let status = process.status.clone();
                 process.on_exit(status, &crate::api::bun::process::rusage_zeroed());
             } else {
                 process.wait(false);

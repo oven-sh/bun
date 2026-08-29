@@ -343,7 +343,7 @@ impl<'a> Writable<'a> {
                     // refs, so no `&mut FileSink` is materialized across it.
                     FileSink::on_attached_process_exit(
                         pipe.this_ptr(),
-                        &subprocess.process().status(),
+                        &subprocess.process().status,
                     );
                     // The wrapper takes its own ref; `pipe` drops after.
                     FileSink::to_js(pipe.this_ptr(), global_this)

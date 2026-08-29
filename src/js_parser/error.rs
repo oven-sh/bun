@@ -38,10 +38,4 @@ impl From<bun_ast::SourceTooLarge> for Error {
     }
 }
 
-impl bun_core::output::ErrName for Error {
-    fn name(&self) -> &[u8] {
-        (*self).name().as_bytes()
-    }
-}
-
 pub type Result<T, E = Error> = core::result::Result<T, E>;

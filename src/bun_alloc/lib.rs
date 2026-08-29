@@ -568,26 +568,6 @@ unsafe impl core::alloc::GlobalAlloc for Mimalloc {
     }
 }
 
-/// Resize a mimalloc-owned buffer, taking a raw pointer for callers that
-/// cannot soundly materialize a `&mut [u8]` over their buffer (e.g. it contains
-/// uninitialized or padding bytes). Returns the new base pointer;
-/// `min(old_size, new_size)` prefix bytes are preserved.
-///
-/// # Safety
-/// `ptr` must be a live allocation from the default (mimalloc) allocator with
-/// alignment ≤ `MI_MAX_ALIGN_SIZE`. After return, `ptr` is invalidated.
-pub unsafe fn realloc_raw(
-    ptr: *mut u8,
-    new_size: usize,
-) -> core::result::Result<*mut u8, AllocError> {
-    // SAFETY: caller guarantees `ptr` is a mimalloc-owned block.
-    let new_ptr = unsafe { mimalloc::mi_realloc(ptr.cast(), new_size) };
-    if new_ptr.is_null() {
-        return Err(AllocError);
-    }
-    Ok(new_ptr.cast::<u8>())
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Symbols hoisted DOWN into T0 so higher tiers can re-import without cycles.
 // ──────────────────────────────────────────────────────────────────────────

@@ -1,5 +1,4 @@
 use core::ffi::c_int;
-use core::fmt;
 
 use bun_core::String;
 
@@ -151,45 +150,4 @@ pub fn verify_error_to_js(
     };
 
     fallback.to_error_instance(global)
-}
-
-impl fmt::Display for SystemError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Note: `bun_core::pretty_fmt!` expands color tags in the format
-        // string at compile time for both the colored and uncolored variants;
-        // the runtime ANSI-support check selects between them via if/else.
-        if !self.path.is_empty() {
-            // TODO: remove this hardcoding
-            if bun_core::Output::enable_ansi_colors_stderr() {
-                write!(
-                    f,
-                    // bun.Output.prettyFmt("<r><red>{f}<r><d>:<r> <b>{f}<r>: {f} <d>({f}())<r>", true)
-                    bun_core::pretty_fmt!("<r><red>{}<r><d>:<r> <b>{}<r>: {} <d>({}())<r>", true),
-                    self.code, self.path, self.message, self.syscall,
-                )
-            } else {
-                write!(
-                    f,
-                    bun_core::pretty_fmt!("<r><red>{}<r><d>:<r> <b>{}<r>: {} <d>({}())<r>", false),
-                    self.code, self.path, self.message, self.syscall,
-                )
-            }
-        } else {
-            // TODO: remove this hardcoding
-            if bun_core::Output::enable_ansi_colors_stderr() {
-                write!(
-                    f,
-                    // bun.Output.prettyFmt("<r><red>{f}<r><d>:<r> {f} <d>({f}())<r>", true)
-                    bun_core::pretty_fmt!("<r><red>{}<r><d>:<r> {} <d>({}())<r>", true),
-                    self.code, self.message, self.syscall,
-                )
-            } else {
-                write!(
-                    f,
-                    bun_core::pretty_fmt!("<r><red>{}<r><d>:<r> {} <d>({}())<r>", false),
-                    self.code, self.message, self.syscall,
-                )
-            }
-        }
-    }
 }

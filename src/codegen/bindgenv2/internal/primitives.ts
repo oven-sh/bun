@@ -1,6 +1,6 @@
 import assert from "node:assert";
 import util from "node:util";
-import { CodeStyle, Type } from "./base";
+import { Type } from "./base";
 
 export const bool = new (class extends Type {
   /** Converts to a boolean, as if by calling `Boolean`. */
@@ -11,12 +11,6 @@ export const bool = new (class extends Type {
   get idlType() {
     return "::Bun::IDLStrictBoolean";
   }
-  get bindgenType() {
-    return `bindgen.BindgenBool`;
-  }
-  zigType(style?: CodeStyle) {
-    return "bool";
-  }
   toCpp(value: boolean): string {
     assert(typeof value === "boolean");
     return value ? "true" : "false";
@@ -26,12 +20,6 @@ export const bool = new (class extends Type {
 export const LooseBool = new (class extends Type {
   get idlType() {
     return "::WebCore::IDLBoolean";
-  }
-  get bindgenType() {
-    return bool.bindgenType;
-  }
-  zigType(style?: CodeStyle) {
-    return bool.zigType(style);
   }
   toCpp(value: boolean): string {
     return bool.toCpp(value);
@@ -53,12 +41,6 @@ function makeUnsignedType(width: number): IntegerType {
 
     get idlType() {
       return `::Bun::IDLStrictInteger<${this.cppType}>`;
-    }
-    get bindgenType() {
-      return `bindgen.BindgenU${width}`;
-    }
-    zigType(style?: CodeStyle) {
-      return `u${width}`;
     }
     get cppType() {
       return `::std::uint${width}_t`;
@@ -84,12 +66,6 @@ function makeSignedType(width: number): IntegerType {
 
     get idlType() {
       return `::Bun::IDLStrictInteger<${this.cppType}>`;
-    }
-    get bindgenType() {
-      return `bindgen.BindgenI${width}`;
-    }
-    zigType(style?: CodeStyle) {
-      return `i${width}`;
     }
     get cppType() {
       return `::std::int${width}_t`;
@@ -126,12 +102,6 @@ function makeLooseIntegerType(strict: IntegerType): LooseIntegerType {
   return new (class extends LooseIntegerType {
     get idlType() {
       return `::Bun::IDLLooseInteger<${strict.cppType}>`;
-    }
-    get bindgenType() {
-      return strict.bindgenType;
-    }
-    zigType(style?: CodeStyle) {
-      return strict.zigType(style);
     }
     toCpp(value: number | bigint): string {
       return strict.toCpp(value);
@@ -176,12 +146,6 @@ export const f64 = new (class extends Type {
   get idlType() {
     return "::Bun::IDLStrictDouble";
   }
-  get bindgenType() {
-    return `bindgen.BindgenF64`;
-  }
-  zigType(style?: CodeStyle) {
-    return `f64`;
-  }
   toCpp(value: number): string {
     assert(typeof value === "number");
     if (Number.isNaN(value)) {
@@ -200,12 +164,6 @@ export const FiniteF64 = new (class extends Type {
   get idlType() {
     return "::Bun::IDLFiniteDouble";
   }
-  get bindgenType() {
-    return f64.bindgenType;
-  }
-  zigType(style?: CodeStyle) {
-    return f64.zigType(style);
-  }
   toCpp(value: number): string {
     assert(typeof value === "number");
     if (!Number.isFinite(value)) throw RangeError("number must be finite");
@@ -216,12 +174,6 @@ export const FiniteF64 = new (class extends Type {
 export const LooseF64 = new (class extends Type {
   get idlType() {
     return "::WebCore::IDLUnrestrictedDouble";
-  }
-  get bindgenType() {
-    return f64.bindgenType;
-  }
-  zigType(style?: CodeStyle) {
-    return f64.zigType(style);
   }
   toCpp(value: number): string {
     return f64.toCpp(value);

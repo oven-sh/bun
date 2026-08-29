@@ -1,14 +1,5 @@
 import assert from "node:assert";
-import {
-  CodeStyle,
-  dedent,
-  headersForTypes,
-  joinIndented,
-  NamedType,
-  reindent,
-  Type,
-  validateName,
-} from "./base";
+import { headersForTypes, NamedType, reindent, Type, validateName } from "./base";
 
 export interface NamedAlternatives {
   readonly [name: string]: Type;
@@ -66,20 +57,6 @@ export function union(
       get idlType() {
         return getUnionType();
       }
-      get bindgenType() {
-        return `bindgen.BindgenUnion(&.{ ${alternatives.map(a => a.bindgenType).join(", ")} })`;
-      }
-      zigType(style?: CodeStyle) {
-        if (style !== "pretty") {
-          return `bun.meta.TaggedUnion(&.{ ${alternatives.map(a => a.zigType()).join(", ")} })`;
-        }
-        return dedent(`bun.meta.TaggedUnion(&.{
-          ${joinIndented(
-            10,
-            alternatives.map(a => a.zigType("pretty") + ","),
-          )}
-        })`);
-      }
       get dependencies() {
         return Object.freeze(alternatives);
       }
@@ -102,12 +79,6 @@ export function union(
     }
     get idlType() {
       return `::Bun::Bindgen::Generated::IDL${name}`;
-    }
-    get bindgenType() {
-      return `bindgen_generated.internal.${name}`;
-    }
-    zigType(style?: CodeStyle) {
-      return `bindgen_generated.${name}`;
     }
     get dependencies() {
       return Object.freeze(alternatives);

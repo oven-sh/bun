@@ -1,13 +1,6 @@
 import assert from "node:assert";
 import util from "node:util";
-import {
-  CodeStyle,
-  joinIndented,
-  NamedType,
-  reindent,
-  toASCIILiteral,
-  toQuotedLiteral,
-} from "./base";
+import { joinIndented, NamedType, reindent, toASCIILiteral, toQuotedLiteral } from "./base";
 
 abstract class EnumType extends NamedType {}
 
@@ -60,12 +53,6 @@ export function enumeration(
     }
     get idlType() {
       return `::Bun::Bindgen::Generated::IDL${name}`;
-    }
-    get bindgenType() {
-      return `bindgen_generated.internal.${name}`;
-    }
-    zigType(style?: CodeStyle) {
-      return `bindgen_generated.${name}`;
     }
     toCpp(value: string): string {
       const index = valueMap.get(value);

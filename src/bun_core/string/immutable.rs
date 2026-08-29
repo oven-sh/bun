@@ -873,10 +873,9 @@ impl StringOrTinyString {
     }
 }
 
-/// Trait for the `Appender` parameter on `StringOrTinyString::init*_append_if_needed`.
+/// Trait for the `Appender` parameter on `StringOrTinyString::init_append_if_needed`.
 pub trait Appender {
     fn append(&mut self, s: &[u8]) -> Result<&[u8], AllocError>;
-    fn append_lower_case(&mut self, s: &[u8]) -> Result<&[u8], AllocError>;
 }
 
 pub use crate::strings_impl::{ascii_lowercase_buf, copy_lowercase};

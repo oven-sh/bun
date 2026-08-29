@@ -1,9 +1,5 @@
 import { isAny } from "./any";
-import { CodeStyle, Type } from "./base";
-
-function bindgenOptional(payload: Type): string {
-  return `bindgen.BindgenOptional(${payload.bindgenType})`;
-}
+import { Type } from "./base";
 
 export abstract class OptionalType extends Type {}
 
@@ -15,12 +11,6 @@ export function optional(payload: Type): OptionalType {
   return new (class extends OptionalType {
     get idlType() {
       return `::WebCore::IDLOptional<${payload.idlType}>`;
-    }
-    get bindgenType() {
-      return bindgenOptional(payload);
-    }
-    zigType(style?: CodeStyle) {
-      return payload.optionalZigType(style);
     }
     toCpp(value: any): string {
       if (value === undefined) {
@@ -46,12 +36,6 @@ export function nullable(payload: Type): NullableType {
     get idlType() {
       return `::WebCore::IDLNullable<${payload.idlType}>`;
     }
-    get bindgenType() {
-      return bindgenOptional(payload);
-    }
-    zigType(style?: CodeStyle) {
-      return payload.optionalZigType(style);
-    }
     toCpp(value: any): string {
       if (value == null) {
         return `::WebCore::IDLNullable<${payload.idlType}>::nullValue()`;
@@ -69,12 +53,6 @@ export function looseNullable(payload: Type): LooseNullableType {
     get idlType() {
       return `::Bun::IDLLooseNullable<${payload.idlType}>`;
     }
-    get bindgenType() {
-      return bindgenOptional(payload);
-    }
-    zigType(style?: CodeStyle) {
-      return payload.optionalZigType(style);
-    }
     toCpp(value: any): string {
       if (!value) {
         return `::Bun::IDLLooseNullable<${payload.idlType}>::nullValue()`;
@@ -89,12 +67,6 @@ const Undefined = new (class extends Type {
   get idlType() {
     return `::Bun::IDLStrictUndefined`;
   }
-  get bindgenType() {
-    return `bindgen.BindgenNull`;
-  }
-  zigType(style?: CodeStyle) {
-    return "void";
-  }
   toCpp(value: undefined): string {
     return `{}`;
   }
@@ -104,12 +76,6 @@ const Undefined = new (class extends Type {
 const Null = new (class extends Type {
   get idlType() {
     return `::Bun::IDLStrictNull`;
-  }
-  get bindgenType() {
-    return `bindgen.BindgenNull`;
-  }
-  zigType(style?: CodeStyle) {
-    return "void";
   }
   toCpp(value: null): string {
     return `nullptr`;

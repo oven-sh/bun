@@ -1,7 +1,6 @@
 import { hasRawAny, isAny } from "./any";
 import {
   addIndent,
-  CodeStyle,
   dedent,
   headersForTypes,
   joinIndented,
@@ -69,12 +68,6 @@ export function dictionary(
     }
     get idlType() {
       return `::Bun::Bindgen::Generated::IDL${name}`;
-    }
-    get bindgenType() {
-      return `bindgen_generated.internal.${name}`;
-    }
-    zigType(style?: CodeStyle) {
-      return `bindgen_generated.${name}`;
     }
     get dependencies() {
       return fullMembers.map(m => m.type);

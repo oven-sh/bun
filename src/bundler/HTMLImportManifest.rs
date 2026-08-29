@@ -59,22 +59,6 @@ pub struct HTMLImportManifest<'a> {
     pub(crate) linker_graph: &'a LinkerGraph<'a>,
 }
 
-impl<'a> fmt::Display for HTMLImportManifest<'a> {
-    fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut adapter = FmtAdapter::new(writer);
-        match write(
-            self.index,
-            self.graph,
-            self.linker_graph,
-            self.chunks,
-            &mut adapter,
-        ) {
-            Ok(()) => Ok(()),
-            Err(_) => Err(fmt::Error),
-        }
-    }
-}
-
 fn write_entry_item<W: Write + ?Sized>(
     writer: &mut W,
     input: &[u8],

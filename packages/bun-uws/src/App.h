@@ -737,12 +737,6 @@ public:
         return std::move(*this);
     }
 
-    /* Port, callback */
-    TemplatedApp &&listen(int port, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
-        handler(httpContext ? trackListenSocket(httpContext->listen(sslCtxOrNull(), nullptr, port, 0)) : nullptr);
-        return std::move(*this);
-    }
-
     /* Port, options, callback */
     TemplatedApp &&listen(int port, int options, MoveOnlyFunction<void(us_listen_socket_t *)> &&handler) {
         handler(httpContext ? trackListenSocket(httpContext->listen(sslCtxOrNull(), nullptr, port, options)) : nullptr);
@@ -776,11 +770,6 @@ public:
     /* Switch this app into node:http compat mode (see HttpContext::enableNodeHttpCompat). */
     void enableNodeHttpCompat() {
         httpContext->enableNodeHttpCompat();
-    }
-
-    TemplatedApp &&run() {
-        uWS::run();
-        return std::move(*this);
     }
 
     TemplatedApp &&setUsingCustomExpectHandler(bool value) {

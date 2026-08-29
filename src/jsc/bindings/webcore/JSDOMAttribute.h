@@ -65,8 +65,6 @@ public:
             if (!thisObject) [[unlikely]] {
                 if constexpr (shouldThrow == CastedThisErrorBehavior::Throw)
                     return JSC::throwVMDOMAttributeGetterTypeError(&lexicalGlobalObject, throwScope, JSClass::info(), attributeName);
-                else if constexpr (shouldThrow == CastedThisErrorBehavior::RejectPromise)
-                    RELEASE_AND_RETURN(throwScope, rejectPromiseWithGetterTypeError(lexicalGlobalObject, JSClass::info(), attributeName));
                 else
                     return JSC::JSValue::encode(JSC::jsUndefined());
             }

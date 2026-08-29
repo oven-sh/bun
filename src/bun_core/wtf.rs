@@ -56,5 +56,5 @@ pub fn parse_es5_date(buf: &[u8]) -> Result<f64, InvalidDate> {
 // `bun_core::wtf::parse_double` (formerly `bun_core::wtf::parse_double`)
 // resolves unchanged.
 pub use crate::string::wtf::{
-    InvalidCharacter, WTFString, WTFStringImpl, WTFStringImplExt, WTFStringImplStruct, parse_double,
+    InvalidCharacter, WTFStringImpl, WTFStringImplExt, WTFStringImplStruct, parse_double,
 };

@@ -44,24 +44,10 @@ impl MaxHeapAllocator {
     }
 }
 
-/// RAII guard returned by [`MaxHeapAllocator::scope`]. Derefs to the underlying
-/// allocator so callers can hand out `&mut MaxHeapAllocator` (or a derived
-/// `&dyn Allocator`) for the duration of the scope, and resets it on drop.
+/// RAII guard returned by [`MaxHeapAllocator::scope`]. Holds the allocator
+/// for the duration of the scope and resets it on drop.
 pub struct MaxHeapScope<'a> {
     inner: &'a mut MaxHeapAllocator,
-}
-
-impl core::ops::Deref for MaxHeapScope<'_> {
-    type Target = MaxHeapAllocator;
-    fn deref(&self) -> &Self::Target {
-        self.inner
-    }
-}
-
-impl core::ops::DerefMut for MaxHeapScope<'_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.inner
-    }
 }
 
 impl Drop for MaxHeapScope<'_> {

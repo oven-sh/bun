@@ -2309,7 +2309,6 @@ pub struct ExpectAnything {
 }
 
 impl ExpectAnything {
-    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         let anything_js_value = ExpectAnything { flags: Cell::new(Flags::default()) }.to_js(global_this);
         anything_js_value.ensure_still_alive();
@@ -2326,7 +2325,6 @@ pub struct ExpectStringMatching {
 }
 
 impl ExpectStringMatching {
-    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments();
 
@@ -2353,7 +2351,6 @@ pub struct ExpectCloseTo {
 }
 
 impl ExpectCloseTo {
-    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments();
 
@@ -2393,7 +2390,6 @@ pub struct ExpectObjectContaining {
 }
 
 impl ExpectObjectContaining {
-    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments();
 
@@ -2420,7 +2416,6 @@ pub struct ExpectStringContaining {
 }
 
 impl ExpectStringContaining {
-    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments();
 
@@ -2447,7 +2442,6 @@ pub struct ExpectAny {
 }
 
 impl ExpectAny {
-    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let arguments = call_frame.arguments();
 
@@ -2489,7 +2483,6 @@ pub struct ExpectArrayContaining {
 }
 
 impl ExpectArrayContaining {
-    // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn call(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let args = call_frame.arguments();
 

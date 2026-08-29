@@ -294,7 +294,6 @@ pub fn remove_source_provider_source_map(
         .remove_source_provider(opaque_source_provider, slice.slice());
 }
 
-#[crate::host_fn(export = "Bun__setSyntheticAllocationLimitForTesting")]
 pub fn Bun__setSyntheticAllocationLimitForTesting(
     global: &JSGlobalObject,
     frame: &CallFrame,

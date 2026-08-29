@@ -843,11 +843,6 @@ impl bun_core::strings::Appender for BumpAppender<'_> {
     fn append(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
         Ok(self.0.alloc_slice_copy(s))
     }
-    fn append_lower_case(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
-        let out = self.0.alloc_slice_copy(s);
-        out.make_ascii_lowercase();
-        Ok(out)
-    }
 }
 
 fn registry_get(

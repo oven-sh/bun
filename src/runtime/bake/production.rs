@@ -591,8 +591,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     )?;
 
     // `bake_body::Framework` is the runtime-side superset; the bundler reads only
-    // `built_in_modules` / `server_components` / `react_fast_refresh` /
-    // `is_built_in_react` via its lower-tier `bake_types::Framework` view.
+    // `built_in_modules` / `server_components` / `react_fast_refresh`
+    // via its lower-tier `bake_types::Framework` view.
     // Project once here via the shared helper so the field-shape (e.g.
     // `BuiltInModule` `&'static [u8]` → `Box<[u8]>`) stays in one place.
     // (The two Framework types could only merge if `FileSystemRouterType` /

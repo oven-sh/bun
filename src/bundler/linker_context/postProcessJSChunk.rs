@@ -771,13 +771,8 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                     let module_exports_ref =
                         c.graph.meta.items_module_exports_ref()[source_index as usize];
                     if module_exports_ref.is_valid() {
-                        // A compiled executable evaluates this chunk as ESM. Its
-                        // `require()` returns the `"module.exports"` export when
-                        // there is one, so a run-time `require()` of this entry
-                        // point gets `module.exports` instead of the namespace.
-                        //
-                        //   var foo_default = require_foo();
-                        //   export { foo_default as default, foo_default as "module.exports" };
+                        // "var foo_default = require_foo();"
+                        // "export { foo_default as default, foo_default as "module.exports" };"
                         stmts.push(Stmt::alloc(
                             S::Local {
                                 decls: G::DeclList::from_slice(&[G::Decl {
@@ -1022,11 +1017,6 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
 
                         let own_len = items.len();
 
-                        // A CommonJS module that the bundler converted to ESM exports
-                        // has no `module.exports` object. Code that `import()`s or
-                        // `require()`s it may expect one, so build an object with a
-                        // getter per statically known export. This is kind of similar
-                        // to what Node.js does.
                         let module_exports_ref =
                             c.graph.meta.items_module_exports_ref()[source_index as usize];
                         let mut synthetic_default: Option<Expr> = (!had_default_export
@@ -1036,13 +1026,8 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                             .then(|| synthetic_default_export_object(arena, &items[..own_len]));
 
                         if module_exports_ref.is_valid() {
-                            // In a compiled executable, `require()` of this chunk
-                            // returns the `"module.exports"` export and `import()`
-                            // reads `default`, so the object gets a binding that is
-                            // exported under both names.
-                            //
-                            //   var foo_default = { get a() { return a; } };
-                            //   export { a, foo_default as default, foo_default as "module.exports" };
+                            // "var foo_default = { get a() { return a; } };"
+                            // "export { a, foo_default as default, foo_default as "module.exports" };"
                             debug_assert!(synthetic_default.is_some());
                             if let Some(value) = synthetic_default.take() {
                                 stmts.push(Stmt::alloc(
@@ -1222,9 +1207,8 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
     }
 }
 
-/// `foo_default as default, foo_default as "module.exports"`: the two export
-/// names under which a compiled executable's entry point tail exposes the
-/// `module.exports` value of a CommonJS entry point (`js_meta.module_exports_ref`).
+/// `foo_default as default, foo_default as "module.exports"`. Bun's `require()`
+/// of an ES module returns its `"module.exports"` export when there is one.
 fn module_exports_clause_items(module_exports_ref: Ref) -> [bun_ast::ClauseItem; 2] {
     let aliases: [&[u8]; 2] = [b"default", b"module.exports"];
     aliases.map(|alias| bun_ast::ClauseItem {
@@ -1238,9 +1222,8 @@ fn module_exports_clause_items(module_exports_ref: Ref) -> [bun_ast::ClauseItem;
     })
 }
 
-/// `{ get a() { return a; }, ... }`: one getter per export clause item, the shape
-/// `module.exports` would have had for a CommonJS module that the bundler
-/// converted to ESM exports.
+/// `{ get a() { return a; }, ... }`, one getter per export clause item: what
+/// `module.exports` would have been for a CommonJS module converted to ESM.
 fn synthetic_default_export_object(arena: &Arena, items: &[bun_ast::ClauseItem]) -> Expr {
     let mut properties = G::PropertyList::init_capacity(items.len());
     let getter_fn_body: &mut [Stmt] = arena.alloc_slice_fill_default(items.len());

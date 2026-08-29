@@ -530,14 +530,9 @@ pub(crate) fn scan_imports_and_exports(
             let exports_ref = col_ref!(exports_refs)[id];
             let module_ref = col_ref!(module_refs)[id];
 
-            // A compiled executable evaluates every embedded chunk as ESM, and a
-            // run-time `require()` of one returns its `"module.exports"` export
-            // when there is one. So the `module.exports` value of a CommonJS
-            // entry point gets a top-level binding that the entry point tail
-            // exports as `default` and `"module.exports"`
-            // (`generate_entry_point_tail_js`). For a CommonJS module converted
-            // to ESM exports that value is an object of getters, built only when
-            // there are exports and none of them is already `default`.
+            // A compiled executable `require()`s this entry point as an ES module, so
+            // its `module.exports` value gets a top-level binding that the entry point
+            // tail exports as `default` and `"module.exports"` (`generate_entry_point_tail_js`).
             let binds_module_exports = is_entry_point
                 && output_format == Format::Esm
                 && this.options.compile_mode.is_executable()

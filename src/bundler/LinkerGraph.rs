@@ -126,10 +126,8 @@ pub mod js_meta {
         pub sorted_and_filtered_export_aliases: SortedAndFilteredExportAliases,
         pub top_level_symbol_to_parts_overlay: TopLevelSymbolToParts,
         pub cjs_export_copies: CjsExportCopies,
-        /// A CommonJS entry point of a `--compile` ESM build binds its
-        /// `module.exports` value to this top-level symbol so the chunk can
-        /// export it as both `default` and `"module.exports"`
-        /// (`generate_entry_point_tail_js`). `Ref::NONE` otherwise.
+        /// In a compile build, the top-level binding of a CommonJS entry point's
+        /// `module.exports` value (see `generate_entry_point_tail_js`), else `Ref::NONE`.
         pub module_exports_ref: Ref,
         pub wrapper_part_index: Index,
         pub flags: Flags,

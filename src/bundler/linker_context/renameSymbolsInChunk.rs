@@ -102,13 +102,10 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         )
     };
 
-    // In a compiled executable the entry point tail declares the entry point's
-    // `module.exports` binding at the top level of the chunk
-    // (`generate_entry_point_tail_js`). The per-file loops below never name it
-    // there: a CommonJS closure's generated symbols are named inside the
-    // closure's scope, a plain ESM entry's are not walked at all, and under
-    // code splitting the entry file may not even be in this chunk. So it is
-    // registered with the other chunk-level names.
+    // Declared by the entry point tail at chunk top level, so it is named with the
+    // chunk-level symbols: the per-file loops below name a CommonJS closure's
+    // generated symbols inside the closure, and with code splitting the entry
+    // file may not be in this chunk at all.
     let entry_module_exports_ref: bun_ast::Ref = if chunk.is_entry_point() {
         module_exports_ref_col[chunk.entry_point.source_index() as usize]
     } else {

@@ -1973,14 +1973,22 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         if let Some(prom) = self.pending_flush.take() {
             bun_core::scoped_log!(HTTPServerWritableLog, "flushPromise()");
 
+            let global_this = self.global_this();
             // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `* → &`/`&mut` deref.
             JSPromise::opaque_ref(prom).to_js().unprotect();
-            // Close this flush's window, then hand its count to JS.
-            let flushed = self.wrote.saturating_sub(self.wrote_at_start_of_flush);
-            self.wrote_at_start_of_flush = self.wrote;
-            let global_this = self.global_this();
-            let result = JSPromise::opaque_mut(prom)
-                .resolve(global_this, JSValue::js_number(flushed as f64));
+            let result = JSPromise::opaque_mut(prom).resolve(
+                global_this,
+                JSValue::js_number(self.wrote.saturating_sub(self.wrote_at_start_of_flush) as f64),
+            );
+            // The next window starts at `wrote` as it is AFTER the reaction ran
+            // (it may re-enter and write more); bytes written inside the
+            // reaction belong to no flush count. `&mut self` is noalias and
+            // `resolve()` gets nothing derived from it, so launder the pointer
+            // to keep LLVM from reusing the pre-resolve read (R-2).
+            let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+            // SAFETY: `this` is the live heap payload (its JS wrapper holds a
+            // ref across the reaction); momentary field access only.
+            unsafe { (*this).wrote_at_start_of_flush = (*this).wrote };
             crate::dispatch::fold(result);
         }
     }

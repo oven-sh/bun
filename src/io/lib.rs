@@ -1054,9 +1054,9 @@ impl IoRequestLoop {
                         Action::Close(mut close) => {
                             let fd = close.fd;
                             log!(
-                                "close({}, registered={})",
+                                "close({}, was_ever_registered={})",
                                 fd,
-                                close.poll().flags.contains(Flags::Registered)
+                                close.poll().flags.contains(Flags::WasEverRegistered)
                             );
                             // Only remove from the interest list if it was previously registered.
                             // Otherwise, epoll gets confused.

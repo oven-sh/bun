@@ -2510,8 +2510,9 @@ impl NetworkSink {
         bun_sys::Result::Ok(JSValue::js_number(0.0))
     }
 
-    pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        NetworkSinkJSSink::create_object(global_this, core::ptr::NonNull::from(&mut *self), 0)
+    /// `this` is the allocation root; the wrapper's `finalize` releases it.
+    pub fn to_js(this: core::ptr::NonNull<Self>, global_this: &JSGlobalObject) -> JSValue {
+        NetworkSinkJSSink::create_object(global_this, this, 0)
     }
 
     pub(crate) fn memory_cost(&self) -> usize {

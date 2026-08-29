@@ -2050,13 +2050,17 @@ impl fs_t {
     }
     /// `req.path` — the request's (UTF-8, NUL-terminated) path; for
     /// `uv_fs_mkdtemp`/`uv_fs_mkstemp` libuv rewrites it to the created name.
+    ///
+    /// # Safety
+    /// The path passed to the originating `uv_fs_*` call must still be alive:
+    /// synchronous requests (`cb == NULL`) borrow it instead of copying.
     #[inline]
-    pub fn path_c_str(&self) -> Option<&core::ffi::CStr> {
+    pub unsafe fn path_c_str(&self) -> Option<&core::ffi::CStr> {
         if !self.is_initialized() || self.path.is_null() {
             return None;
         }
-        // SAFETY: libuv keeps `path` pointing at a NUL-terminated copy it owns
-        // until `uv_fs_req_cleanup` nulls it.
+        // SAFETY: NUL-terminated; either libuv's owned copy (until
+        // `uv_fs_req_cleanup` nulls it) or the caller's input per the contract.
         Some(unsafe { core::ffi::CStr::from_ptr(self.path) })
     }
     /// `req.file.fd` union arm. The union is private

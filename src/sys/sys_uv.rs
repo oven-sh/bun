@@ -378,7 +378,10 @@ pub fn mkdtemp(template: &mut [u8]) -> Result<usize> {
     if let Some(err) = rc.to_error(Tag::mkdtemp) {
         return Result::Err(err);
     }
-    let created = req.path_c_str().map(|p| p.to_bytes()).unwrap_or(&[]);
+    // SAFETY: `template` (the path passed to `uv_fs_mkdtemp`) is still alive.
+    let created = unsafe { req.path_c_str() }
+        .map(|p| p.to_bytes())
+        .unwrap_or(&[]);
     let len = created.len().min(template.len());
     template[..len].copy_from_slice(&created[..len]);
     Result::Ok(len)

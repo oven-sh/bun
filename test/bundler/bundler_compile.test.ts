@@ -1607,7 +1607,9 @@ test("a standalone executable does not run a synchronous full GC after loading i
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toBe("done\n");
-  expect(stderr).toContain("[GC<"); // logGC is live
+  // Heap::notifyIsSafeToCollect logs this at VM creation whenever logGC is on, collection or not, so it proves the
+  // option reached the compiled binary without depending on any GC happening.
+  expect(stderr).toMatch(/\[GC<0x[0-9a-f]+>: starting /);
   expect(stderr).not.toContain("FullCollection");
   expect(exitCode).toBe(0);
 });

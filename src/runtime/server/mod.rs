@@ -1562,6 +1562,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     // Raw 'upgrade'/'connect' handoff: the exchange left HTTP, so
                     // release the pending-request accounting now - a half-open
                     // tunnel never closes, which stranded `pending_requests`.
+                    // The request span covers the HTTP exchange, not the tunnel.
+                    nhr.otel_end();
                     nhr.mark_request_as_done_if_necessary();
                 }
             } else if nhr_flags.contains(NhrFlags::IS_REQUEST_PENDING) {

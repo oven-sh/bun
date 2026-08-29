@@ -62,6 +62,7 @@ pub fn begin(
         match resp {
             bun_uws::AnyResponse::TCP(_) => !https,
             bun_uws::AnyResponse::SSL(_) | bun_uws::AnyResponse::H3(_) => https,
+            // over TLS (ALPN) or cleartext (prior knowledge): the listener knows
             bun_uws::AnyResponse::H2(_) => true,
         },
         "url.scheme disagrees with the transport"

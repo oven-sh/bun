@@ -875,6 +875,34 @@ describe("node:http", () => {
     expect(Bun.otel.stats().spansPending).toBe(0);
   });
 
+  test("node:http server: a raw 'upgrade' handoff ends the SERVER span at the handoff, not as an aborted request when the tunnel closes", async () => {
+    asExternalClient();
+    const srv = http.createServer((req, res) => res.end("plain"));
+    srv.on("upgrade", (req, socket) => {
+      socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n");
+      socket.on("data", d => socket.write(d)); // echo tunnel
+    });
+    await new Promise<void>(r => srv.listen(0, r));
+    const port = (srv.address() as any).port;
+    const echoed = await new Promise<string>((resolve, reject) => {
+      const req = http.request({ host: "127.0.0.1", port, headers: { Connection: "Upgrade", Upgrade: "raw" } });
+      req.on("upgrade", (res, socket) => {
+        socket.write("ping");
+        socket.once("data", d => {
+          socket.destroy();
+          resolve(String(d));
+        });
+      });
+      req.on("error", reject);
+      req.end();
+    });
+    expect(echoed).toBe("ping");
+    const [server] = byName(await collect(1), "bun.http.server");
+    await new Promise<void>(r => srv.close(() => r()));
+    // ended at the handoff: not an error, no "aborted"
+    expect([server.name, server.status.code, server.attributes["error.type"]]).toEqual(["GET", 0, undefined]);
+  });
+
   test("node:http and fetch describe an unknown method the same way", async () => {
     using server = Bun.serve({ port: 0, fetch: () => new Response("x") });
     await (await fetch(server.url, { method: "PROPFIND" })).text();
@@ -1387,6 +1415,33 @@ describe("limits", () => {
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(stdout.trim()).toBe(JSON.stringify(["01234567"]));
     expect(exitCode).toBe(0);
+  });
+
+  test("attributeValueLengthLimit never splits a UTF-8 sequence and never over-runs on non-UTF-8 input", async () => {
+    Bun.otel.start({ exporters: [{ export: (b: any[]) => spans.push(...b) }], limits: { attributeValueLengthLimit: 4 } });
+    const s = Bun.otel.tracer("t").startSpan("lim");
+    // 4-byte, 2-byte and 3-byte code points straddling the 4-byte limit, and a JS-owned span too
+    s.setAttributes({ a: "a\u{1F600}b", b: "aaaé", c: "aa値", d: "abcd", e: "abcde" });
+    s.end();
+    const fs = require("node:fs");
+    Bun.otel.span("native", () => {
+      // a request-independent native span: fs under an active parent; the path is not UTF-8
+      try {
+        fs.statSync(Buffer.from([0x2f, 0x80, 0x80, 0x80, 0x80, 0x80, 0x41]));
+      } catch {}
+    });
+    const got = await collect();
+    const lim = got.find(x => x.name === "lim");
+    expect([lim.attributes.a, lim.attributes.b, lim.attributes.c, lim.attributes.d, lim.attributes.e]).toEqual([
+      "a",
+      "aaa",
+      "aa",
+      "abcd",
+      "abcd",
+    ]);
+    const stat = got.find(x => x.name === "fs.statSync");
+    // cut at 4 bytes, then each stray continuation byte becomes U+FFFD: never empty, never longer than the input cut
+    expect(stat.attributes["file.path"]).toBe("/\uFFFD\uFFFD\uFFFD");
   });
 
   test("attributeValueLengthLimit applies to leaf spans too (fetch url.full)", async () => {

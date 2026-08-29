@@ -372,8 +372,13 @@ pub(crate) fn drain_send_body_for(
     }
 }
 
+/// Push every stream's request body, round-robin. `busy` is the stream whose
+/// request the caller is already working on, with that request's client.
 /// True if it stopped at `WRITE_BUFFER_HIGH_WATER` with body bytes still sendable.
-pub(crate) fn drain_send_bodies(session: &ClientSession) -> bool {
+pub(crate) fn drain_send_bodies(
+    session: &ClientSession,
+    mut busy: Option<(&Stream, &mut HTTPClient)>,
+) -> bool {
     // Round-robin: each pass gives every uploader at most one
     // remote_max_frame_size slice before the next stream gets a turn, so
     // the lowest-index stream can't monopolise conn_send_window.
@@ -396,7 +401,12 @@ pub(crate) fn drain_send_bodies(session: &ClientSession) -> bool {
                 continue;
             }
             let before = session.conn_send_window.get();
-            drain_send_body(session, &stream, slice);
+            match &mut busy {
+                Some((busy_stream, client)) if busy_stream.id == stream.id => {
+                    drain_send_body_for(session, &stream, client, slice)
+                }
+                _ => drain_send_body(session, &stream, slice),
+            }
             if session.conn_send_window.get() != before || stream.local_closed() {
                 progressed = true;
             }

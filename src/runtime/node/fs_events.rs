@@ -185,6 +185,14 @@ impl FSEventsLoop {
 
         cf::RunLoop::run_current();
 
+        // The stream was created and scheduled on this thread and must be
+        // stopped and released here too; `shutdown()` runs on another thread.
+        if let Some((stream, paths)) = self.state.lock().stream.take() {
+            stream.stop();
+            drop(stream);
+            drop(paths);
+        }
+
         let handles = self.handles.lock();
         if let (Some(run_loop), Some(source)) = (&handles.run_loop, &handles.source) {
             run_loop.remove_source(source);

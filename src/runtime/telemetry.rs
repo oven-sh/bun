@@ -486,6 +486,9 @@ static __BUN_TELEMETRY_HOOKS: bun_telemetry::rt::Hooks = bun_telemetry::rt::Hook
     active_trace_state: |g, f| {
         span::with_active_trace_state(JSGlobalObject::opaque_ref(g.cast::<JSGlobalObject>()), f)
     },
+    active_propagation: |g, f| {
+        span::with_active_propagation(JSGlobalObject::opaque_ref(g.cast::<JSGlobalObject>()), |ts, bg| f(ts, bg))
+    },
 };
 
 // ─────────────────────────── span helpers for integrations ───────────────────────────

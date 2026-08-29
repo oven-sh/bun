@@ -28,6 +28,10 @@ pub struct Hooks {
     /// `f(tracestate)` once, with the active span's W3C `tracestate` (empty if
     /// none); `f` may call [`with_local`]. Used by [`begin_pooled`].
     pub active_trace_state: fn(global: *mut c_void, f: &mut dyn FnMut(&[u8])),
+    /// `f(tracestate, baggage)` once: what an outgoing request made now should
+    /// forward (the api Context's baggage wins over the span's inherited one).
+    /// Used by [`propagation_headers`].
+    pub active_propagation: fn(global: *mut c_void, f: &mut dyn FnMut(&[u8], &[u8])),
 }
 
 unsafe extern "Rust" {
@@ -210,5 +214,45 @@ pub fn end_leaf_at(
     });
     if recorded.is_some() {
         (hooks().after_record)(global);
+    }
+}
+
+/// The W3C headers an outgoing request made under `stub` carries, as raw
+/// `name: value\r\n` lines appended to `out`: `traceparent` naming `stub`
+/// (when trace-context propagation is on), the active `tracestate` with it,
+/// and the active `baggage` (its own switch). Nothing when `stub` is none.
+/// The HTTP/1 seams that build their own request head (WebSocket upgrade)
+/// use this; fetch and node:http write through their header maps instead.
+pub fn propagation_headers(global: *mut c_void, stub: &SpanStub, out: &mut Vec<u8>) {
+    if !stub.is_some() {
+        return;
+    }
+    let st = crate::state();
+    if st.propagate_trace_context {
+        let mut tp = [0u8; crate::propagation::TRACEPARENT_LEN];
+        crate::propagation::format_traceparent(&stub.ctx, &mut tp);
+        out.extend_from_slice(b"traceparent: ");
+        out.extend_from_slice(&tp);
+        out.extend_from_slice(b"\r\n");
+    }
+    if st.propagate_trace_context || st.propagate_baggage {
+        (hooks().active_propagation)(global, &mut |trace_state: &[u8], baggage: &[u8]| {
+            if st.propagate_trace_context
+                && !trace_state.is_empty()
+                && crate::propagation::tracestate_is_reasonable(trace_state)
+            {
+                out.extend_from_slice(b"tracestate: ");
+                out.extend_from_slice(trace_state);
+                out.extend_from_slice(b"\r\n");
+            }
+            if st.propagate_baggage
+                && !baggage.is_empty()
+                && crate::propagation::baggage_is_reasonable(baggage)
+            {
+                out.extend_from_slice(b"baggage: ");
+                out.extend_from_slice(baggage);
+                out.extend_from_slice(b"\r\n");
+            }
+        });
     }
 }

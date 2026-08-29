@@ -299,6 +299,8 @@ describe("WebSocket", () => {
       },
     });
     expect(upgrade.attributes["http.response.status_code"]).toBe(101);
+    // the handshake carried the connect span's traceparent: one trace, client → server
+    expect([upgrade.traceId, upgrade.parentSpanId]).toEqual([connect.traceId, connect.spanId]);
     expect(message).toMatchObject({
       kind: 1,
       attributes: { "websocket.message.type": "text", "websocket.message.length": 2, "in.handler": true },
@@ -306,6 +308,29 @@ describe("WebSocket", () => {
     // linked, not parented, to the upgrade request
     expect(message.parentSpanId).toBeUndefined();
     expect(message.links).toEqual([expect.objectContaining({ traceId: upgrade.traceId, spanId: upgrade.spanId })]);
+  });
+
+  test("a traceparent the caller puts on the WebSocket handshake is sent as is", async () => {
+    let seen: string | null = null;
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, srv) {
+        seen = req.headers.get("traceparent");
+        if (srv.upgrade(req)) return;
+        return new Response("no");
+      },
+      websocket: { message() {} },
+    });
+    const tp = "00-11111111111111111111111111111111-2222222222222222-01";
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`, { headers: { traceparent: tp } } as any);
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    ws.onopen = () => resolve();
+    ws.onerror = () => reject(new Error("ws error"));
+    await promise;
+    ws.close();
+    expect(seen).toBe(tp);
+    const got = await collect();
+    expect(got.find(s => s.scope.name === "bun.http.server").traceId).toBe("11111111111111111111111111111111");
   });
 
   test("a message handler still pending when the socket closes is ended then, not leaked", async () => {

@@ -281,6 +281,26 @@ where
             }
         }
 
+        // The `websocket.connect` CLIENT span starts here so the handshake can
+        // carry its `traceparent` (the server's upgrade span joins this trace),
+        // unless the caller set one.
+        let otel_stub = bun_telemetry::rt::start_leaf(
+            global.as_ptr().cast(),
+            bun_telemetry::Instrument::WebSocket,
+        );
+        let mut otel_headers: Vec<u8> = Vec::new();
+        if otel_stub.is_some()
+            && !extra_headers
+                .iter()
+                .any(|(name, _)| strings::eql_case_insensitive_ascii(name, b"traceparent", true))
+        {
+            bun_telemetry::rt::propagation_headers(
+                global.as_ptr().cast(),
+                &otel_stub,
+                &mut otel_headers,
+            );
+        }
+
         let request_result = match build_request_body(
             vm,
             pathname_slice.slice(),
@@ -291,6 +311,7 @@ where
             &extra_headers,
             target_authorization_slice.as_ref().map(|s| s.slice()),
             offer_permessage_deflate,
+            &otel_headers,
         ) {
             Ok(r) => r,
             Err(_) => return None,
@@ -421,13 +442,9 @@ where
             None
         };
 
-        let otel = bun_telemetry::rt::start_leaf(
-            global.as_ptr().cast(),
-            bun_telemetry::Instrument::WebSocket,
-        );
-        let otel = otel.is_recording().then(|| {
+        let otel = otel_stub.is_recording().then(|| {
             Box::new(ConnectSpan {
-                stub: otel,
+                stub: otel_stub,
                 host: host_slice.slice().into(),
                 port,
                 path: pathname_slice.slice().into(),
@@ -1715,6 +1732,8 @@ fn build_request_body(
     // `perMessageDeflate: false`). When true, send the default extension
     // offer `permessage-deflate; client_max_window_bits`.
     offer_permessage_deflate: bool,
+    // W3C trace-context lines (`traceparent: ..\r\n` ...), possibly empty.
+    propagation_lines: &[u8],
 ) -> Result<BuildRequestResult, bun_alloc::AllocError> {
     // Check for user overrides
     let mut user_host: Option<&[u8]> = None;
@@ -1780,6 +1799,7 @@ fn build_request_body(
 
     // Build extra headers string, skipping the ones we handle
     let mut extra_headers_buf: Vec<u8> = Vec::new();
+    extra_headers_buf.extend_from_slice(propagation_lines);
 
     // Add Authorization header from URL credentials if user didn't provide one
     if !user_authorization {

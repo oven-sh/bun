@@ -130,6 +130,26 @@ describe.concurrent("run-cjs", () => {
       expect(result).toEqual({ stdout: "object object object object object 8\n", stderr: "", exitCode: 0 });
     });
 
+    // tsc keeps the directive in the IIFE it lowers a namespace body to.
+    test("a 'use strict' at the start of a TypeScript namespace body makes the namespace strict", async () => {
+      const result = await run(
+        {
+          "entry.cts": `
+            namespace N {
+              "use strict";
+              export const strict = (function () { return this === undefined })();
+            }
+            namespace M {
+              export const strict = (function () { return this === undefined })();
+            }
+            console.log(N.strict, M.strict);
+          `,
+        },
+        "entry.cts",
+      );
+      expect(result).toEqual({ stdout: "true false\n", stderr: "", exitCode: 0 });
+    });
+
     test("'use strict' in a function with a non-simple parameter list is a SyntaxError", async () => {
       const result = await run({ "entry.cjs": `function f(a = 1) { "use strict"; return a }` }, "entry.cjs");
       expect(result.stderr).toContain(

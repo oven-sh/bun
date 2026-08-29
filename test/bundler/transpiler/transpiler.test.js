@@ -4750,6 +4750,14 @@ class A {
   function i(a = 1) { ("first"); "use strict"; var package = 4 }
   ("use strict"); var package = 5;`),
     ).not.toContain("use strict");
+    // A namespace body is lowered to a function body and keeps its prologue, as in tsc
+    expect(new Bun.Transpiler({ loader: "ts" }).transformSync(`namespace N { "use strict"; export const x = 1 }`))
+      .toBe(`var N;
+((N) => {
+  "use strict";
+  N.x = 1;
+})(N ||= {});
+`);
     // A directive prologue applies to the parameters as well
     expect(() => new Bun.Transpiler().transformSync(`function f(arguments) { "use strict" }`)).toThrow(
       'Declarations with the name "arguments" cannot be used in strict mode',

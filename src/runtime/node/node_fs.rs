@@ -912,7 +912,6 @@ mod _async_tasks {
             // `this: &mut Self` is live, re-deriving through the raw `req` would create a
             // second overlapping `&mut` (Stacked-Borrows UB). Go through `this.req` instead.
             this.result = NodeFS::uv_dispatch::<R, A, F>(&mut node_fs, &this.args, this.req.result);
-            // `sys::Error::path` is owned, so `node_fs` may drop.
             let this_ptr: *mut Self = this;
             this.global_object()
                 .bun_vm()
@@ -934,7 +933,6 @@ mod _async_tasks {
             let rc = this.req.result;
             this.result =
                 NodeFS::uv_dispatch_req::<R, A, F>(&mut node_fs, &this.args, &mut this.req, rc);
-            // No `err.clone()` needed — see `uv_callback` above.
             let this_ptr: *mut Self = this;
             this.global_object()
                 .bun_vm()
@@ -1244,8 +1242,6 @@ mod _async_tasks {
         ) -> Option<bun_jsc::Completion<Self>> {
             let mut node_fs = NodeFS::default();
             this.result = NodeFS::dispatch::<R, A, F>(&mut node_fs, &this.args, Flavor::Async);
-            // `sys::Error::path` is `Box<[u8]>` boxed at the `errno_sys_p`
-            // construction site, so no clone is needed — `node_fs` may drop.
             Some(done)
         }
 
@@ -7533,8 +7529,6 @@ impl NodeFS {
         }
 
         let dest = args.path.slice_z(&mut self.sync_error_buf);
-        // Route the raw errno through `map_rm_errno_narrow` so e.g. `EISDIR`
-        // with `recursive=false` surfaces as `EFAULT` (Node parity).
         if let Err(err1) = sys::unlink(dest) {
             let e1 = err1.get_errno();
             if e1 == E::ENOENT {

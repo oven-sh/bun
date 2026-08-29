@@ -1620,11 +1620,7 @@ fn connect_finish<const IS_SSL: bool>(
             // `last_errno()` reads.
             #[cfg(windows)]
             let os_errno = {
-                use bun_sys::windows::{Win32Error, Win32ErrorExt as _};
-                let mut e = match Win32Error::get() {
-                    Win32Error::SUCCESS => 0,
-                    code => code.to_system_errno() as c_int,
-                };
+                let mut e = bun_sys::last_error() as c_int;
                 // Node reports ENOENT for a missing pipe path; Winsock's AF_UNIX
                 // connect error does not, so probe.
                 if port.is_none() {

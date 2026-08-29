@@ -541,8 +541,8 @@ pub enum SystemErrno {
 /// Type-dispatch shim for `SystemErrno::init`.
 /// Covers every concrete type the codebase actually passes — `i64`
 /// (POSIX-shaped shared call sites), `u32`/`DWORD` (a Win32/WSA code carried
-/// as an integer), and `c_int` (libuv rc). A typed `Win32Error` uses
-/// `Win32ErrorExt` instead.
+/// as an integer), and `c_int` (`Bun__errnoName`, which may receive a libuv
+/// code). A typed `Win32Error` uses `Win32ErrorExt` instead.
 pub trait SystemErrnoInit {
     fn into_system_errno(self) -> Option<SystemErrno>;
 }

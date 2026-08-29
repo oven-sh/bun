@@ -25,7 +25,7 @@ pub use error::ReturnCodeExt;
 impl From<Error> for bun_errno::SystemErrno {
     #[inline]
     fn from(e: Error) -> Self {
-        bun_errno::SystemErrno::from_repr(e.errno).unwrap_or(bun_errno::SystemErrno::EIO)
+        e.to_zig_err()
     }
 }
 /// The JS-facing rich error
@@ -6751,9 +6751,12 @@ pub(crate) fn open_dir_at_windows_nt_path(
             0,
         )
     };
+    // Not `Error::new(rc)`: the curated NTSTATUS table maps
+    // `OBJECT_NAME_INVALID` to EINVAL, and `open` of a bad name is ENOENT
+    // (libuv/Node), which `RtlNtStatusToDosError` gives.
     match windows::Win32Error::from_nt_status(rc) {
         windows::Win32Error::SUCCESS => Ok(Fd::from_system(fd)),
-        code => Err(Error::from_code(code.to_e(), Tag::open)),
+        code => Err(Error::from_win32(code, Tag::open)),
     }
 }
 
@@ -6854,7 +6857,8 @@ pub(crate) fn open_file_at_windows_nt_path(
                 }
                 Ok(Fd::from_system(result))
             }
-            code => Err(Error::from_code(code.to_e(), Tag::open)),
+            // See `open_dir_at_windows_nt_path`: Rtl mapping, not the curated table.
+            code => Err(Error::from_win32(code, Tag::open)),
         };
     }
 }

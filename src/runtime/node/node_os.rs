@@ -1380,20 +1380,12 @@ mod _impl {
         if errno == bun_sys::E::SUCCESS {
             return Ok(());
         }
-        let (code, label) = bun_sys::Error::from_code(errno, bun_sys::Tag::uv_os_setpriority)
-            .uv_code_label()
-            .unwrap_or(("EUNKNOWN", "unknown error"));
-        let err = SystemError {
-            message: BunString::static_(label),
-            code: BunString::static_(code),
-            #[cfg(not(windows))]
-            errno: -(errno as c_int),
-            #[cfg(windows)]
-            errno: libuv::e_discriminant_to_uv(errno as u16).unwrap_or(libuv::UV_UNKNOWN),
-            syscall: BunString::static_("uv_os_setpriority"),
-            ..Default::default()
-        };
-        Err(global.throw_value(err.to_error_instance_with_info_object(global)))
+        let err = bun_sys::Error::from_code(errno, bun_sys::Tag::uv_os_setpriority);
+        let mut sys_err: SystemError = err.to_system_error().into();
+        // Node's message here is the bare libuv label, not "ESRCH: …, uv_os_setpriority".
+        sys_err.message =
+            BunString::static_(err.uv_code_label().map_or("unknown error", |(_, l)| l));
+        Err(global.throw_value(sys_err.to_error_instance_with_info_object(global)))
     }
 
     pub(crate) fn set_priority2(global: &JSGlobalObject, priority: i32) -> JsResult<()> {

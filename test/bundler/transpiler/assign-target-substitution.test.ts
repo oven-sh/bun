@@ -190,6 +190,28 @@ describe("bun build", () => {
     expect(exitCode).toBe(0);
   });
 
+  // With `--format=cjs`, a read of `import.meta.dir`, `.file`, `.path` or `.url`
+  // inlines to a string. A write keeps the property reference. (`import.meta`
+  // is not valid in a CommonJS script either way; this pins the guard only.)
+  test.concurrent("--format=cjs keeps import.meta.dir, .file, .path and .url as assignment targets", async () => {
+    const { source, printed } = join(
+      unchanged([
+        ["dir", `import.meta.dir = 1;`],
+        ["file", `import.meta.file = 1;`],
+        ["path", `import.meta.path = 1;`],
+        ["url", `import.meta.url = 1;`],
+        ["read", `console.log(import.meta.file);`, `console.log("entry.js");`],
+      ]),
+    );
+    using dir = tempDir("import-meta-cjs-target-build", { "entry.js": source });
+
+    const { stdout, stderr, exitCode } = await run([bunExe(), "build", "--format=cjs", "entry.js"], String(dir));
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`// entry.js\n${printed}`);
+    expect(exitCode).toBe(0);
+  });
+
   // In a bundle, a read of `module.id`, `module.filename` or `module.path`
   // inlines to a string. A delete keeps the property reference.
   test.concurrent("keeps module.id, module.filename and module.path as delete targets in a bundle", async () => {

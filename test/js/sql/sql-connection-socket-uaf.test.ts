@@ -63,7 +63,7 @@ const drivers = [
 
 // The failure is a 1-byte heap-use-after-free; it is only observable under
 // ASAN (debug builds enable ASAN).
-test.skipIf(!isDebug && !isASAN).each(drivers)(
+test.concurrent.skipIf(!isDebug && !isASAN).each(drivers)(
   "$name: touching the native connection after the socket is freed does not read freed memory",
   async ({ name, touch, server }) => {
     using dir = tempDir(`sql-conn-socket-uaf-${name}`, {
@@ -109,17 +109,20 @@ test.skipIf(!isDebug && !isASAN).each(drivers)(
         while (runCount === 0) await new Promise(r => setImmediate(r));
 
         // Replace the pool's JS onclose so it does not pre-emptively drop
-        // our reference; we want the native connection to outlive the
-        // socket by at least one tick.
-        nativeConnection.onclose = () => {};
+        // our reference (we want the native connection to outlive the
+        // socket), and use it to observe the native on_close dispatch.
+        const { promise: closed, resolve: onNativeClose } = Promise.withResolvers();
+        nativeConnection.onclose = onNativeClose;
 
         // Server drops the socket -> native on_close -> status=Failed. The
         // us_socket_t goes onto closed_head and is freed at the end of the
         // current usockets tick.
         socketRef.destroy();
+        await closed;
 
-        // Yield past us_internal_free_closed_sockets.
-        for (let i = 0; i < 5; i++) await new Promise(r => setImmediate(r));
+        // One more tick: us_internal_free_closed_sockets runs at the end of
+        // the loop iteration that dispatched on_close.
+        await new Promise(r => setImmediate(r));
 
         // Without the fix this reads s->flags.is_closed on a freed
         // us_socket_t and ASAN aborts with heap-use-after-free.

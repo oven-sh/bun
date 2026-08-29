@@ -437,9 +437,7 @@ test("mysql: a connection killed in the same read that established it is not han
   const onconnect = mock();
   const onclose = mock();
   const { port, server } = await mysqlServerUpToAuthOk(socket => {
-    socket.write(
-      Buffer.concat([mysqlOkPacket(1), mysqlErrPacket(0, 1053, "08S01", "Server shutdown in progress")]),
-    );
+    socket.write(Buffer.concat([mysqlOkPacket(1), mysqlErrPacket(0, 1053, "08S01", "Server shutdown in progress")]));
     socket.end();
   });
   const db = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1, connectionTimeout: 0.25, onconnect, onclose });

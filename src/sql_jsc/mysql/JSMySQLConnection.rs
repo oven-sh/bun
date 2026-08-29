@@ -714,7 +714,12 @@ impl JSMySQLConnection {
     /// fails later in the same read reports `onclose` alone, never `onclose`
     /// followed by a stale `onconnect` for an already-dead connection.
     fn notify_connected(&self) {
-        if !self.connection.get().flags.contains(ConnectionFlags::ON_CONNECT_PENDING) {
+        if !self
+            .connection
+            .get()
+            .flags
+            .contains(ConnectionFlags::ON_CONNECT_PENDING)
+        {
             return;
         }
         self.connection_mut()

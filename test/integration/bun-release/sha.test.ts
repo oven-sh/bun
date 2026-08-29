@@ -2,41 +2,24 @@
  * The npm canary publish (packages/bun-release/scripts/upload-npm.ts) stamps a
  * commit sha into each package version. That sha must describe the binaries it
  * packages, which come from the assets of the rolling GitHub "canary" release.
- * The record of what those assets were built from is the release notes line
- * that .buildkite/scripts/upload-release.sh writes after every upload.
+ * The release's tag never moves, so the binaries themselves are the only
+ * record of the commit they were built from: Bun embeds it as Bun.revision.
  *
- * These tests pin the parser in packages/bun-release/src/sha.ts to the exact
- * template in the upload script, and cover the byte check that upload-npm.ts
- * runs on every downloaded binary before it is packaged.
+ * These tests cover the helpers in packages/bun-release/src/sha.ts that read
+ * and verify that embedded commit, and pin getSemver to stamp the sha of the
+ * assets instead of heads/main.
  */
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { cpSync, readFileSync } from "node:fs";
+import { cpSync } from "node:fs";
 import { join } from "node:path";
-import { binaryIncludesSha, getShaFromReleaseBody } from "../../../packages/bun-release/src/sha";
+import { binaryIncludesSha, binaryRevision } from "../../../packages/bun-release/src/sha";
 
 const SHA = "d578a8c70d103dd11c75cf3c8b681d4a015a66df";
 
-test("getShaFromReleaseBody parses the notes template in upload-release.sh", () => {
-  const script = readFileSync(join(import.meta.dir, "../../../.buildkite/scripts/upload-release.sh"), "utf8");
-  const template = /--notes "([^"]*corresponds to the commit[^"]*)"/.exec(script)?.[1];
-  expect(template).toBeDefined();
-  const body = template!.replace("$BUILDKITE_COMMIT", SHA);
-  expect(getShaFromReleaseBody(body)).toBe(SHA);
-});
-
-test("getShaFromReleaseBody parses the live canary release body format", () => {
-  expect(getShaFromReleaseBody(`This release of Bun corresponds to the commit: ${SHA}`)).toBe(SHA);
-  expect(getShaFromReleaseBody(`This release of Bun corresponds to the commit: ${SHA}\n\nmore notes`)).toBe(SHA);
-});
-
-test("getShaFromReleaseBody rejects bodies without a full commit sha", () => {
-  expect(getShaFromReleaseBody(undefined)).toBeUndefined();
-  expect(getShaFromReleaseBody(null)).toBeUndefined();
-  expect(getShaFromReleaseBody("")).toBeUndefined();
-  expect(getShaFromReleaseBody("Bun is a fast all-in-one JavaScript runtime.")).toBeUndefined();
-  // A short sha is not enough to identify the build.
-  expect(getShaFromReleaseBody("This release of Bun corresponds to the commit: d578a8c")).toBeUndefined();
+test("binaryRevision reads the embedded build commit out of a binary", () => {
+  expect(binaryRevision(bunExe())).toBe(Bun.revision);
+  expect(() => binaryRevision("/does/not/exist")).toThrow();
 });
 
 test("binaryIncludesSha finds the embedded revision among binary bytes", () => {
@@ -52,11 +35,12 @@ test("binaryIncludesSha finds the embedded revision among binary bytes", () => {
   expect(binaryIncludesSha(junk, SHA)).toBe(false);
 });
 
-test("getSemver stamps the canary version with the sha from the release notes, not heads/main", async () => {
+test("getSemver stamps the canary version with the sha of the assets, not heads/main", async () => {
   // The shas from oven-sh/bun#40880: the rolling release held binaries built
-  // from ASSET_SHA while heads/main had moved on to MAIN_SHA. The version
-  // must carry the sha of the assets, so the mocked GitHub API answers with a
-  // canary release whose notes name ASSET_SHA and a main ref at MAIN_SHA.
+  // from ASSET_SHA while heads/main had moved on to MAIN_SHA. The publish
+  // scripts read ASSET_SHA out of a downloaded binary and pass it in, and the
+  // version must carry it. The mocked GitHub API serves a main ref at
+  // MAIN_SHA, which is what the version must not fall back to.
   const ASSET_SHA = "731aa92dad3777448920b40a4c2d3efe7e776c4e";
   const MAIN_SHA = SHA;
   using dir = tempDir("bun-release-semver", {
@@ -69,13 +53,7 @@ test("getSemver stamps the canary version with the sha from the release notes, n
             case "GET /repos/{owner}/{repo}/releases/latest":
               return { data: { tag_name: "bun-v1.4.1" } };
             case "GET /repos/{owner}/{repo}/releases/tags/{tag}":
-              return {
-                data: {
-                  tag_name: params.tag,
-                  body: "This release of Bun corresponds to the commit: ${ASSET_SHA}",
-                  assets: [],
-                },
-              };
+              return { data: { tag_name: params.tag, assets: [] } };
             case "GET /repos/{owner}/{repo}/git/ref/{ref}":
               return { data: { object: { sha: "${MAIN_SHA}" } } };
             default:
@@ -87,7 +65,7 @@ test("getSemver stamps the canary version with the sha from the release notes, n
     // Passing the build number skips getBuild's npm registry request.
     "run-semver.fixture.ts": `
       import { getSemver } from "./src/github";
-      console.log(await getSemver("canary", 1));
+      console.log(await getSemver("canary", 1, "${ASSET_SHA}"));
     `,
   });
   // Copy the sources at test time, so this runs whatever state the release

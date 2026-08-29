@@ -10,8 +10,7 @@ use bun_io::max_buf::MaxBuf;
 use bun_io::pipe_reader::PosixFlags;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
-use bun_ptr::ScopedRef;
-use bun_ptr::{IntrusiveRc, ParentRef, RefCount};
+use bun_ptr::{ParentRef, RefCount, RefPtr};
 use bun_sys;
 
 use super::readable::Readable;
@@ -29,7 +28,7 @@ pub enum State {
 
 // Intrusive, single-thread ref-count; `deinit` runs when the last ref drops.
 #[derive(bun_ptr::RefCounted)]
-#[ref_count(destroy = PipeReader::deinit, debug_name = "PipeReader")]
+#[ref_count(debug_name = "PipeReader")]
 pub struct PipeReader {
     pub(crate) reader: IOReader,
     // Backref to owning Subprocess; cleared in detach()/onReaderDone()/onReaderError().
@@ -45,7 +44,6 @@ pub struct PipeReader {
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     pub(crate) event_loop_handle: bun_jsc::EventLoopHandle,
-    /// Intrusive refcount field for `bun_ptr::IntrusiveRc<PipeReader>`.
     pub(crate) ref_count: RefCount<PipeReader>,
     pub(crate) state: State,
     pub(crate) stdio_result: StdioResult,
@@ -107,7 +105,7 @@ impl PipeReader {
         process: NonNull<Subprocess<'static>>,
         result: StdioResult,
         limit: Option<NonNull<MaxBuf>>,
-    ) -> IntrusiveRc<PipeReader> {
+    ) -> RefPtr<PipeReader> {
         let mut this = Box::new(PipeReader {
             ref_count: RefCount::init(),
             process: Some(ParentRef::from(process)),
@@ -132,7 +130,7 @@ impl PipeReader {
         // SAFETY: `raw` is a valid, freshly-boxed PipeReader.
         unsafe {
             (*raw).reader.set_parent(raw.cast::<core::ffi::c_void>());
-            IntrusiveRc::from_raw(raw)
+            RefPtr::from_raw(raw)
         }
     }
 
@@ -172,10 +170,10 @@ impl PipeReader {
             // Hold one more ref so `self` survives the on_reader_error() teardown
             // below long enough to return; matches the POSIX keepalive.
             //
-            // SAFETY: `self` is live; ScopedRef bumps the intrusive refcount and
+            // SAFETY: `self` is live; RefPtr bumps the intrusive refcount and
             // derefs on Drop. The deref may free `*self`, but no borrow of `self`
             // outlives the guard's drop on return.
-            let _keepalive = unsafe { ScopedRef::new(std::ptr::from_mut::<PipeReader>(self)) };
+            let _guard = unsafe { RefPtr::init_ref(std::ptr::from_mut::<PipeReader>(self)) };
             if let bun_sys::Result::Err(err) = self.reader.start_with_current_pipe() {
                 // Route through the same teardown as a read-callback error
                 // (matches POSIX's register_poll failure path): state=Err,
@@ -201,17 +199,17 @@ impl PipeReader {
             // just took above. Hold one more ref so `this` survives long enough to
             // check state after start() returns.
             //
-            // SAFETY: `self` is live; ScopedRef bumps the intrusive refcount and
+            // SAFETY: `self` is live; RefPtr bumps the intrusive refcount and
             // derefs on Drop. The deref may free `*self`, but no borrow of `self`
             // outlives the guard's drop on return.
-            let _keepalive = unsafe { ScopedRef::new(std::ptr::from_mut::<PipeReader>(self)) };
+            let _guard = unsafe { RefPtr::init_ref(std::ptr::from_mut::<PipeReader>(self)) };
 
             let _ = self.reader.start(self.stdio_result.unwrap(), true);
 
             #[cfg(unix)]
             {
                 if matches!(self.state, State::Err(_)) {
-                    // onReaderError already ran; `_keepalive`'s Drop on return
+                    // onReaderError already ran; `_guard`'s Drop on return
                     // will drop the last ref and deinit() closes the handle.
                     return;
                 }
@@ -246,13 +244,13 @@ impl PipeReader {
 
     fn kind(&self, process: &Subprocess<'_>) -> StdioKind {
         if let Readable::Pipe(pipe) = process.stdout.get() {
-            if core::ptr::eq(pipe.data.as_ptr(), self) {
+            if core::ptr::eq(pipe.as_ptr(), self) {
                 return StdioKind::Stdout;
             }
         }
 
         if let Readable::Pipe(pipe) = process.stderr.get() {
-            if core::ptr::eq(pipe.data.as_ptr(), self) {
+            if core::ptr::eq(pipe.as_ptr(), self) {
                 return StdioKind::Stderr;
             }
         }
@@ -382,23 +380,12 @@ impl PipeReader {
             uws.cast()
         }
     }
+}
 
-    /// Called when ref_count hits zero. Consumes the Box allocation.
-    ///
-    /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-    /// whose generated trait `destructor` upholds the sole-owner contract.
-    fn deinit(this: *mut PipeReader) {
+impl Drop for PipeReader {
+    fn drop(&mut self) {
         #[cfg(unix)]
-        {
-            // SAFETY: refcount == 0 ⇒ `this` is the unique owner.
-            let this_ref = unsafe { &*this };
-            debug_assert!(this_ref.reader.is_done() || matches!(this_ref.state, State::Err(_)));
-        }
-
-        // The `state` buffer and `reader` are freed by Drop when the Box drops.
-
-        // SAFETY: `this` was created via heap::alloc in `create()`.
-        drop(unsafe { bun_core::heap::take(this) });
+        debug_assert!(self.reader.is_done() || matches!(self.state, State::Err(_)));
     }
 }
 

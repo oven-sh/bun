@@ -4025,6 +4025,7 @@ function emitListeningNextTick(self) {
   self.emit("listening");
 }
 
+const { isPrimary } = require("internal/cluster/isPrimary");
 let cluster;
 function listenInCluster(
   server,
@@ -4048,10 +4049,12 @@ function listenInCluster(
 ) {
   exclusive = !!exclusive;
 
-  if (cluster === undefined) cluster = require("node:cluster");
+  // A worker's first require of node:cluster runs its bootstrap (IPC handlers, 'online'); listen() has always been one
+  // of the places that happens, exclusive or not.
+  if (!isPrimary && cluster === undefined) cluster = require("node:cluster");
 
   if (
-    !cluster.isPrimary &&
+    !isPrimary &&
     !exclusive &&
     typeof address === "string" &&
     address.length > 0 &&
@@ -4092,7 +4095,7 @@ function listenInCluster(
     return;
   }
 
-  if (cluster.isPrimary || exclusive) {
+  if (isPrimary || exclusive) {
     server[kRealListen](
       path,
       port,

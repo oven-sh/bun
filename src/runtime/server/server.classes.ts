@@ -233,10 +233,6 @@ export default [
       upgraded: {
         getter: "getUpgraded",
       },
-      // ontimeout: {
-      //   getter: "getOnTimeout",
-      //   setter: "setOnTimeout",
-      // },
       onwritable: {
         getter: "getOnWritable",
         setter: "setOnWritable",
@@ -244,7 +240,7 @@ export default [
       },
     },
     klass: {},
-    finalize: true,
+    refCounted: true,
     noConstructor: true,
     values: ["onAborted", "onWritable", "onData", "pendingWriteBuffer"],
   }),
@@ -419,7 +415,7 @@ export default [
   define({
     name: "HTMLBundle",
     noConstructor: true,
-    finalize: true,
+    refCounted: true,
     proto: {
       index: {
         getter: "getIndex",

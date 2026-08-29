@@ -1179,14 +1179,10 @@ pub mod O {
     pub const PATH: i32 = 0o10000000;
     #[cfg(windows)]
     pub const NOATIME: i32 = 0o1000000;
-    #[cfg(windows)]
-    pub(crate) const TMPFILE: i32 = 0o20200000;
     #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
     pub const PATH: i32 = 0;
     #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
     pub const NOATIME: i32 = 0;
-    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
-    pub(crate) const TMPFILE: i32 = 0;
     // Defined for every platform; Darwin-only flags map to 0
     // elsewhere so `flags & O.EVTONLY` etc. compile and are no-ops.
     #[cfg(unix)]
@@ -2682,7 +2678,6 @@ mod posix_impl {
     /// Materialize an `O_TMPFILE` fd. Fast path
     /// uses `linkat(tmpfd, "", dirfd, name, AT_EMPTY_PATH)` (requires
     /// CAP_DAC_READ_SEARCH); falls back to `/proc/self/fd/N` + AT_SYMLINK_FOLLOW.
-    /// Linux-only; on other unix this errors with EOPNOTSUPP.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn linkat_tmpfile(tmpfd: Fd, dirfd: Fd, name: &ZStr) -> Maybe<()> {
         // 0=unknown, 1=have CAP_DAC_READ_SEARCH, -1=no cap → use /proc fallback.
@@ -2739,11 +2734,6 @@ mod posix_impl {
             }
             return Ok(());
         }
-    }
-    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
-    pub(crate) fn linkat_tmpfile(_tmpfd: Fd, _dirfd: Fd, name: &ZStr) -> Maybe<()> {
-        // Tags as `.link` (matches Linux arm).
-        Err(Error::from_code_int(libc::EOPNOTSUPP, Tag::link).with_path(name.as_bytes()))
     }
     pub fn symlinkat(target: &ZStr, dirfd: impl AsFd, dest: &ZStr) -> Maybe<()> {
         let dirfd = dirfd.as_fd();
@@ -4148,9 +4138,6 @@ mod windows_impl {
                 Err(e) => Err(e),
             }
         })
-    }
-    pub(crate) fn linkat_tmpfile(_tmpfd: Fd, _dirfd: Fd, _name: &ZStr) -> Maybe<()> {
-        Err(Error::new(E::ENOTSUP, Tag::link))
     }
     pub fn symlinkat(target: &ZStr, dirfd: impl AsFd, dest: &ZStr) -> Maybe<()> {
         let dirfd = dirfd.as_fd();
@@ -9409,8 +9396,6 @@ bun_core::link_impl_OutputSink! {
             core::ptr::write((&raw mut out).cast::<SysQuietWriterAdapter>(), concrete);
             out
         },
-        // QuietWriter itself is unbuffered (buffering lives in the Adapter).
-        quiet_writer_flush(_qw) => (),
         quiet_writer_write_all(qw, bytes) => fd_write_all_quiet(qw_fd(qw), bytes),
         quiet_writer_fd(qw) => qw_fd(qw),
         tty_winsize(fd) => sink_tty_winsize(fd),

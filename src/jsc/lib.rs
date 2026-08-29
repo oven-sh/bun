@@ -188,7 +188,7 @@ pub use self::js_value::{
 // and is wired into `event_loop::tick` directly at link time. No fn-pointer
 // hook is re-exported from the crate root.
 pub use self::array_buffer::{
-    ArrayBuffer, BinaryType, JSCArrayBuffer, MarkedArrayBuffer, TypedArrayType,
+    ArrayBuffer, BinaryType, JSCArrayBuffer, MarkedArrayBuffer, PinnedArrayBuffer, TypedArrayType,
 };
 pub use self::console_object as ConsoleObject;
 pub use self::console_object::Formatter;
@@ -876,6 +876,17 @@ pub mod resolved_source_tag {
         "/generated_resolved_source_tag.rs"
     ));
 }
+
+/// Index into the codegen'd `BuiltinModuleKeys.h` table for a canonical builtin key (`node:fs`, `bun:sqlite`, `bun`...).
+pub mod builtin_module_key_index {
+    include!(concat!(
+        env!("BUN_CODEGEN_DIR"),
+        "/generated_builtin_module_key_index.rs"
+    ));
+    pub fn get(name: &[u8]) -> Option<u16> {
+        BUILTIN_MODULE_KEY_INDEX.get(name).copied()
+    }
+}
 pub use self::resolved_source_tag::ResolvedSourceTag;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -965,11 +976,6 @@ pub use self::js_promise::Strong as JSPromiseStrong;
 /// `PromiseStatus` for downstream callers (web_worker.rs / fetch.rs reference
 /// it via `jsc::PromiseStatus::{Pending,Fulfilled,Rejected}`).
 pub use self::js_promise::Status as PromiseStatus;
-
-/// `bun_ptr::RefPtr` — intrusive refcounted smart pointer. Re-exported here so
-/// `crate::RefPtr<SourceProvider>` (ZigStackTrace.rs) resolves without every
-/// submodule taking a direct `bun_ptr` dep.
-pub use bun_ptr::RefPtr;
 
 /// `bun.String` — refcounted WTF-backed string. Re-exported at the crate root
 /// so submodules can write `crate::String`.
@@ -1256,9 +1262,6 @@ pub use self::array_buffer::JSTypedArrayBytesDeallocator;
 pub mod node_path;
 #[path = "webcore_types.rs"]
 pub mod webcore_types;
-// RAII pair for `to_thread_safe()`/`unprotect()` — re-exported at crate root
-// so `bun_runtime` callers don't reach through `node_path`.
-pub use self::node_path::{ThreadSafe, Unprotect};
 
 /// `jsc.WebCore` (deprecated alias) — only the data-shape subset
 /// that was hoisted to this tier. Reach for `bun_runtime::webcore` for the
@@ -1476,18 +1479,19 @@ pub trait JsClass: Sized {
     }
 }
 
-/// GC-finalize hook resolved by the generated `${T}Class__finalize` thunk
-/// (generate-classes.ts:2893-2902). The thunk body is
+/// GC-finalize hook resolved by the generated `${T}Class__finalize` thunk for
+/// `finalize: true` classes. The thunk body is
 /// `host_fn::host_fn_finalize(this, |b| ${T}::finalize(b))` — Rust path
 /// resolution on `${T}::finalize` picks an *inherent* `fn finalize(self:
-/// Box<Self>)` first when one exists (refcounted / leak-on-pending types),
-/// otherwise falls through to this trait's default: drop the `Box`, running
-/// `T`'s `Drop` glue and freeing the allocation.
+/// Box<Self>)` first when one exists (leak-on-pending types), otherwise falls
+/// through to this trait's default: drop the `Box`, running `T`'s `Drop` glue
+/// and freeing the allocation. Refcounted payloads are `refCounted: true` classes
+/// ([`JsFinalizeRefCounted`]) instead.
 ///
 /// **Override by defining an inherent `pub fn finalize(self: Box<Self>)` on
 /// the concrete type** — do *not* `impl JsFinalize for MyType`; the blanket
 /// impl below already covers every `Sized` type and a second impl would
-/// conflict. The generated thunk file imports `JsFinalize as _` so the trait
+/// conflict. The generated thunk imports `JsFinalize as _` so the trait
 /// is in scope for path resolution without polluting any per-type module.
 pub trait JsFinalize: Sized {
     #[inline]
@@ -1496,6 +1500,14 @@ pub trait JsFinalize: Sized {
     }
 }
 impl<T: Sized> JsFinalize for T {}
+
+/// [`JsFinalize`] for `refCounted: true` classes: the hook that runs before the
+/// wrapper's ref is dropped. Override with an inherent `pub fn finalize(&self)`.
+pub trait JsFinalizeRefCounted {
+    #[inline]
+    fn finalize(&self) {}
+}
+impl<T: bun_ptr::AnyRefCounted> JsFinalizeRefCounted for T {}
 
 /// Track whether an object should keep the event loop alive
 #[derive(Default)]

@@ -3081,6 +3081,139 @@ it("http2 server resets streams whose request headers contain CR, LF, or NUL oct
   }
 });
 
+// node:http2 hands header values to JS as one-byte strings (node_http2.cc):
+// each wire byte is one latin-1 code unit. Bytes 0x80-0xFF are legal obs-text
+// in a field value and are not UTF-8 decoded, so a peer that sends UTF-8 is
+// read as mojibake and a peer that sends latin-1 is read as is. Decoding as
+// UTF-8 instead would turn the latin-1 bytes into U+FFFD and lose them.
+describe("http2 header values are latin-1 byte strings", () => {
+  const codeUnits = str => [...str].map(c => c.charCodeAt(0));
+  // HPACK string literal: 7-bit length prefix, no Huffman coding.
+  const literal = bytes => Buffer.concat([Buffer.from([bytes.length]), Buffer.from(bytes)]);
+  // Literal header field without indexing, new name.
+  const field = (name, valueBytes) => Buffer.concat([Buffer.from([0x00]), literal(name), literal(valueBytes)]);
+  const obsText = [0x63, 0x61, 0x66, 0xe9, 0x2d, 0x80, 0xff]; // "caf\xe9-\x80\xff"
+  const utf8Bytes = [0x63, 0x61, 0x66, 0xc3, 0xa9]; // "caf\xc3\xa9", stays two code units
+
+  it("client reads response headers and trailers as latin-1", async () => {
+    const responseBlock = Buffer.concat([
+      Buffer.from([0x88]), // :status: 200 (static table index 8)
+      field("x-latin1", obsText),
+      field("x-utf8", utf8Bytes),
+    ]);
+    const trailerBlock = field("x-trailer", obsText);
+
+    // Raw-socket h2 server: preface handshake, then answer the first HEADERS
+    // with a response header block and a trailer block.
+    const server = net.createServer(socket => {
+      let buf = Buffer.alloc(0);
+      let sawPreface = false;
+      socket.on("error", () => {});
+      socket.on("data", chunk => {
+        buf = Buffer.concat([buf, chunk]);
+        if (!sawPreface) {
+          if (buf.length < http2utils.kClientMagic.length) return;
+          buf = buf.subarray(http2utils.kClientMagic.length);
+          sawPreface = true;
+          socket.write(new http2utils.SettingsFrame(false).data);
+        }
+        while (buf.length >= 9) {
+          const length = buf.readUIntBE(0, 3);
+          if (buf.length < 9 + length) break;
+          const type = buf[3];
+          const flags = buf[4];
+          const streamId = buf.readUInt32BE(5) & 0x7fffffff;
+          buf = buf.subarray(9 + length);
+          if (type === 4 && (flags & 1) === 0) {
+            socket.write(new http2utils.SettingsFrame(true).data);
+          } else if (type === 1) {
+            socket.write(new http2utils.HeadersFrame(streamId, responseBlock, 0, true, false).data);
+            socket.write(new http2utils.HeadersFrame(streamId, trailerBlock, 0, true, true).data);
+          }
+        }
+      });
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    try {
+      const response = Promise.withResolvers();
+      const trailers = Promise.withResolvers();
+      const fail = err => {
+        response.reject(err);
+        trailers.reject(err);
+      };
+      client.on("error", fail);
+      const req = client.request({ ":path": "/" }, { endStream: true });
+      req.on("error", fail);
+      req.on("response", (headers, _flags, rawHeaders) => response.resolve({ headers, rawHeaders }));
+      req.on("trailers", headers => trailers.resolve(headers));
+      // A settled promise ignores this, so it only fires when trailers never arrived.
+      req.on("close", () => fail(new Error(`stream closed without trailers (rstCode ${req.rstCode})`)));
+      req.resume();
+
+      const { headers, rawHeaders } = await response.promise;
+      expect(headers[":status"]).toBe(200);
+      expect(codeUnits(headers["x-latin1"])).toEqual(obsText);
+      expect(codeUnits(headers["x-utf8"])).toEqual(utf8Bytes);
+      expect(rawHeaders.map(codeUnits)).toEqual([
+        codeUnits(":status"),
+        codeUnits("200"),
+        codeUnits("x-latin1"),
+        obsText,
+        codeUnits("x-utf8"),
+        utf8Bytes,
+      ]);
+      expect(codeUnits((await trailers.promise)["x-trailer"])).toEqual(obsText);
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+
+  it("server reads request headers as latin-1", async () => {
+    const requestBlock = Buffer.concat([
+      Buffer.from([0x82]), // :method: GET   (static table index 2)
+      Buffer.from([0x86]), // :scheme: http  (static table index 6)
+      Buffer.from([0x84]), // :path: /       (static table index 4)
+      Buffer.from([0x01]), // :authority     (literal without indexing, name index 1)
+      literal(Buffer.from("localhost")),
+      field("x-latin1", obsText),
+      field("x-utf8", utf8Bytes),
+    ]);
+
+    const delivered = Promise.withResolvers();
+    const server = http2.createServer();
+    server.on("error", delivered.reject);
+    server.on("stream", (stream, headers, _flags, rawHeaders) => {
+      delivered.resolve({ headers, rawHeaders });
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+    const socket = net.connect(server.address().port, "127.0.0.1", () => {
+      socket.write(http2utils.kClientMagic);
+      socket.write(new http2utils.SettingsFrame(false).data);
+      socket.write(new http2utils.HeadersFrame(1, requestBlock, 0, true, true).data);
+    });
+    socket.on("error", delivered.reject);
+    try {
+      const { headers, rawHeaders } = await delivered.promise;
+      expect(codeUnits(headers["x-latin1"])).toEqual(obsText);
+      expect(codeUnits(headers["x-utf8"])).toEqual(utf8Bytes);
+      expect(rawHeaders.slice(-4).map(codeUnits)).toEqual([
+        codeUnits("x-latin1"),
+        obsText,
+        codeUnits("x-utf8"),
+        utf8Bytes,
+      ]);
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  });
+});
+
 it("http2 server rejects requests carrying connection-specific or repeated pseudo-headers", async () => {
   // RFC 9113 Section 8.2.2: connection-specific fields (transfer-encoding,
   // connection, keep-alive, ...) make an HTTP/2 request malformed, and

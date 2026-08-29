@@ -64,6 +64,7 @@ pub struct ServerConfig {
     pub(crate) allow_hot: bool,
     pub(crate) ipv6_only: bool,
     pub(crate) http3: bool,
+    pub(crate) http2: bool,
     pub(crate) http1: bool,
     /// Decides the SETTINGS the HTTP/3 listener advertises, which lsquic reads
     /// once at engine creation — so it cannot be turned on later.
@@ -103,6 +104,7 @@ impl Default for ServerConfig {
             ipv6_only: false,
             http3: false,
             webtransport: false,
+            http2: false,
             http1: true,
             had_routes_object: false,
             static_routes: Vec::new(),
@@ -215,13 +217,6 @@ impl StaticRouteEntry {
     }
 }
 
-impl Drop for StaticRouteEntry {
-    fn drop(&mut self) {
-        // path: Box<[u8]> drops automatically
-        self.route.deref_();
-    }
-}
-
 impl ServerConfig {
     fn normalize_static_routes_list(&mut self) -> Result<(), crate::Error> {
         fn hash(route: &StaticRouteEntry) -> u64 {
@@ -302,6 +297,7 @@ impl ServerConfig {
             allow_hot: self.allow_hot,
             ipv6_only: self.ipv6_only,
             http3: self.http3,
+            http2: self.http2,
             http1: self.http1,
             webtransport: self.webtransport,
             had_routes_object: self.had_routes_object,
@@ -370,9 +366,43 @@ fn serves_head(method: &http_method::Optional) -> bool {
     }
 }
 
-pub(crate) fn apply_static_route_h3<T: StaticRouteLike>(
+/// The route-registration surface shared by `uws::h2::App` and
+/// `uws::h3::App`; both hand the handler type-erased `AnyRequest`/`AnyResponse`.
+pub(crate) trait MuxApp {
+    fn method_this<U: 'static, H>(&mut self, m: Method, p: &[u8], h: H, this: ThisPtr<U>)
+    where
+        H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
+    fn any_this<U: 'static, H>(&mut self, p: &[u8], h: H, this: ThisPtr<U>)
+    where
+        H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
+}
+
+macro_rules! impl_mux_app {
+    ($app:ty) => {
+        impl MuxApp for $app {
+            #[inline]
+            fn method_this<U: 'static, H>(&mut self, m: Method, p: &[u8], h: H, this: ThisPtr<U>)
+            where
+                H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static,
+            {
+                <$app>::method_this(self, m, p, h, this)
+            }
+            #[inline]
+            fn any_this<U: 'static, H>(&mut self, p: &[u8], h: H, this: ThisPtr<U>)
+            where
+                H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static,
+            {
+                <$app>::any_this(self, p, h, this)
+            }
+        }
+    };
+}
+impl_mux_app!(uws::h2::App);
+impl_mux_app!(uws::h3::App);
+
+pub(crate) fn apply_static_route_mux<T: StaticRouteLike, A: MuxApp>(
     server: AnyServer,
-    app: &mut uws::h3::App,
+    app: &mut A,
     entry: ThisPtr<T>,
     path: &[u8],
     method: http_method::Optional,
@@ -394,7 +424,7 @@ pub(crate) fn apply_static_route_h3<T: StaticRouteLike>(
     }
 }
 
-/// Per-route trait that `apply_static_route{,_h3}` monomorphizes over
+/// Per-route trait that `apply_static_route{,_mux}` monomorphizes over
 /// (`StaticRoute`/`FileRoute`/`DirectoryRoute`/`HTMLBundle.Route`). The route
 /// is the uWS route userdata; the route table holds a ref on it for as long as
 /// it is registered.
@@ -1167,6 +1197,10 @@ impl ServerConfig {
             args.http3 = v.to_boolean();
         }
 
+        if let Some(v) = arg.get(global, "http2")? {
+            args.http2 = v.to_boolean();
+        }
+
         if let Some(v) = arg.get(global, "http1")? {
             args.http1 = v.to_boolean();
         }
@@ -1275,13 +1309,12 @@ impl ServerConfig {
             }
         }
 
-        if args.http3 {
-            if args.ssl_config.is_none() {
-                return Err(
-                    global.throw_invalid_arguments(format_args!("HTTP/3 requires 'tls' to be set"))
-                );
-            }
-        } else if args.webtransport && !opts.is_reload {
+        if args.http3 && args.ssl_config.is_none() {
+            return Err(
+                global.throw_invalid_arguments(format_args!("HTTP/3 requires 'tls' to be set"))
+            );
+        }
+        if args.webtransport && !args.http3 && !opts.is_reload {
             // A session arrives over HTTP/3 or not at all, so these handlers
             // could never fire and the listener would look healthy. Not on a
             // reload: `http3` belongs to the bound listener and is not
@@ -1289,12 +1322,13 @@ impl ServerConfig {
             return Err(global.throw_invalid_arguments(format_args!(
                 "'webtransport' requires 'http3' to be set"
             )));
-        } else if !args.http1 {
+        }
+        if !args.http1 && !args.http2 && !args.http3 {
             return Err(global.throw_invalid_arguments(format_args!(
-                "Cannot disable http1 without enabling http3"
+                "Cannot disable http1 without enabling http2 or http3"
             )));
         }
-        if !args.http1 && matches!(args.address, Address::Unix(_)) {
+        if !args.http1 && !args.http2 && matches!(args.address, Address::Unix(_)) {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Cannot disable http1 with a unix socket — HTTP/3 over AF_UNIX is not supported",
             )));

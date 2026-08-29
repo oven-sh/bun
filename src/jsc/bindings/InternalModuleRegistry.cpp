@@ -15,6 +15,8 @@
 
 #include "NativeModuleImpl.h"
 #include "BunBuiltinNames.h"
+#include "JSBuffer.h"
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/CachedBytecode.h>
 #include <JavaScriptCore/CachedTypes.h>
 #include <JavaScriptCore/CodeCache.h>
@@ -43,9 +45,9 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
 #endif
 }
 
-// The `INTERNAL_MODULE_REGISTRY_GENERATE` macro handles inlining code to compile and run a
-// JS builtin that acts as a module. In debug mode, we use a different implementation that reads
-// from the developer's filesystem. This allows reloading code without recompiling bindings.
+// JS internal modules are compiled from the sources linked into the executable's builtins section (see
+// InternalModuleRegistryConstants.h). In debug mode the sources are read from the developer's filesystem instead,
+// which allows reloading code without recompiling bindings.
 
 static std::atomic<unsigned> s_internalModulesFromBytecode { 0 };
 
@@ -65,10 +67,47 @@ static UnlinkedFunctionExecutable* createInternalModuleExecutable(JSC::VM& vm, c
     return createBuiltinExecutable(vm, source, Identifier::fromString(vm, moduleName), ImplementationVisibility::Public, ConstructorKind::None, ConstructAbility::CannotConstruct, InlineAttribute::None);
 }
 
-JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, const String& SOURCE, const String& moduleName, const String& urlString, uint32_t id)
+static const InternalModuleRegistryConstants::ModuleRecord& internalModuleRecord(uint32_t id)
+{
+    ASSERT(id < bun_internal_modules_header.moduleCount);
+    auto* records = reinterpret_cast<const InternalModuleRegistryConstants::ModuleRecord*>(reinterpret_cast<const char*>(&bun_internal_modules_header) + bun_internal_modules_header.modulesOffset);
+    return records[id];
+}
+
+static String internalModuleString(uint32_t offset, uint32_t length)
+{
+    return WTF::StringImpl::createWithoutCopying(std::span<const char>(bun_internal_modules_data + offset, length));
+}
+
+#ifdef BUN_DYNAMIC_JS_LOAD_PATH
+static String internalModuleSource(uint32_t id)
+{
+    const auto& m = internalModuleRecord(id);
+    String moduleName = internalModuleString(m.nameOffset, m.nameLength);
+    WTF::String file = makeString(ASCIILiteral::fromLiteralUnsafe(BUN_DYNAMIC_JS_LOAD_PATH), "/"_s, ASCIILiteral::fromLiteralUnsafe(InternalModuleRegistryConstants::fileNames[id]));
+    auto contents = WTF::FileSystemImpl::readEntireFile(file);
+    if (!contents) {
+        printf("\nFATAL: bun-debug failed to load bundled version of \"%s\" at \"%s\" (was it deleted?)\n"
+               "Please re-compile Bun to continue.\n\n",
+            moduleName.utf8().span().data(), file.utf8().span().data());
+        CRASH();
+    }
+    return WTF::String::fromUTF8(contents.value());
+}
+#else
+static String internalModuleSource(uint32_t id)
+{
+    const auto& m = internalModuleRecord(id);
+    return internalModuleString(m.codeOffset, m.codeLength);
+}
+#endif
+
+JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, uint32_t id)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    SourceCode source = makeInternalModuleSource(SOURCE, moduleName, urlString);
+    const auto& m = internalModuleRecord(id);
+    String moduleName = internalModuleString(m.nameOffset, m.nameLength);
+    SourceCode source = makeInternalModuleSource(internalModuleSource(id), moduleName, internalModuleString(m.urlOffset, m.urlLength));
     maybeAddCodeCoverage(vm, source);
 
     UnlinkedFunctionExecutable* executable = nullptr;
@@ -77,7 +116,7 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
     if (Bun__standaloneInternalModuleBytecode(::bunVM(globalObject), id, &cachedBytes, &cachedSize)) {
         Ref<JSC::CachedBytecode> cached = JSC::CachedBytecode::create(std::span<uint8_t> { const_cast<uint8_t*>(cachedBytes), cachedSize }, [](const void*) {}, {});
         cached->setPayloadIsPersistent();
-        executable = JSC::decodeBuiltinFunction(vm, WTF::move(cached), *source.provider(), InternalModuleRegistryConstants::sourceStamp);
+        executable = JSC::decodeBuiltinFunction(vm, WTF::move(cached), *source.provider(), bun_internal_modules_header.sourceStamp);
         if (executable)
             s_internalModulesFromBytecode.fetch_add(1, std::memory_order_relaxed);
     }
@@ -133,40 +172,6 @@ ALWAYS_INLINE JSC::JSValue generateNativeModule(
     ASSERT(defaultValue);
     return defaultValue;
 }
-
-#ifdef BUN_DYNAMIC_JS_LOAD_PATH
-static WTF::String internalModuleSourceFromDisk(const WTF::String& moduleName, WTF::String fileBase)
-{
-    WTF::String file = makeString(ASCIILiteral::fromLiteralUnsafe(BUN_DYNAMIC_JS_LOAD_PATH), "/"_s, WTF::move(fileBase));
-    auto contents = WTF::FileSystemImpl::readEntireFile(file);
-    if (!contents) {
-        printf("\nFATAL: bun-debug failed to load bundled version of \"%s\" at \"%s\" (was it deleted?)\n"
-               "Please re-compile Bun to continue.\n\n",
-            moduleName.utf8().span().data(), file.utf8().span().data());
-        CRASH();
-    }
-    return WTF::String::fromUTF8(contents.value());
-}
-
-JSValue initializeInternalModuleFromDisk(JSGlobalObject* globalObject, VM& vm, const WTF::String& moduleName, WTF::String fileBase, const WTF::String& urlString, uint32_t id)
-{
-    return generateModule(globalObject, vm, internalModuleSourceFromDisk(moduleName, WTF::move(fileBase)), moduleName, urlString, id);
-}
-#define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, OFFSET, LENGTH, urlString, ID) \
-    return initializeInternalModuleFromDisk(globalObject, vm, moduleId, filename, urlString, ID)
-#define INTERNAL_MODULE_SOURCE(m) internalModuleSourceFromDisk(m.moduleId, m.fileName)
-#else
-
-// The module sources are linked as one read-only blob (bun_internal_modules_data,
-// see the generated InternalModuleRegistryConstants.S); each module is a span at
-// a known offset/length. createWithoutCopying is the same path the old
-// ASCIILiteral → String conversion took.
-#define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, OFFSET, LENGTH, urlString, ID)                     \
-    return generateModule(globalObject, vm,                                                                                        \
-        WTF::String(WTF::StringImpl::createWithoutCopying(std::span<const char>(bun_internal_modules_data + (OFFSET), (LENGTH)))), \
-        moduleId, urlString, ID)
-#define INTERNAL_MODULE_SOURCE(m) WTF::String(WTF::StringImpl::createWithoutCopying(std::span<const char>(bun_internal_modules_data + m.codeOffset, m.codeLength)))
-#endif
 
 const ClassInfo InternalModuleRegistry::s_info = { "InternalModuleRegistry"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(InternalModuleRegistry) };
 
@@ -243,31 +248,23 @@ JSC_DEFINE_HOST_FUNCTION(InternalModuleRegistry::jsCreateInternalModuleById, (JS
 
 namespace Zig {
 JSC::VM& vmForBytecodeCache();
+void ensureBuiltinNamesForBytecodeCache(JSC::VM&);
 }
+extern "C" void Bun__destroyBytecodeCacheVM();
 
-// bun build --compile: bytecode for internal JS module `id` (an index below BUN_NATIVE_MODULE_START_INDEX), generated the
-// way generateModule() will consume it. The caller owns *handle and releases it with CachedBytecode__deref.
-// `depth`: how many levels of nested functions get code blocks too (UINT32_MAX = all; 0 = only the module wrapper's own).
-extern "C" bool Bun__generateInternalModuleBytecode(uint32_t id, uint32_t depth, const uint8_t** bytes, size_t* size, JSC::CachedBytecode** handle, JSC::EncoderStringTable* externalStrings)
+static bool encodeInternalModule(const String& text, const String& moduleName, const String& url, uint32_t sourceStamp, uint32_t depth, const uint8_t** bytes, size_t* size, JSC::CachedBytecode** handle, JSC::EncoderStringTable* externalStrings)
 {
     using namespace Bun;
-    if (id >= std::size(internalJSModules))
-        return false;
-    const InternalJSModule& m = internalJSModules[id];
     JSC::VM& vm = Zig::vmForBytecodeCache();
     JSC::JSLockHolder locker(vm);
-    // The builtins parse with private @names; register Bun's on this throwaway VM (its own VM gets them from JSVMClientData).
-    static thread_local std::unique_ptr<BunBuiltinNames> builtinNames;
-    if (!vm.clientData && !builtinNames)
-        builtinNames = BunBuiltinNames::createStandalone(vm);
-    String text = INTERNAL_MODULE_SOURCE(m);
-    SourceCode source = makeInternalModuleSource(text, m.moduleId, m.url);
-    UnlinkedFunctionExecutable* executable = createInternalModuleExecutable(vm, source, m.moduleId);
+    Zig::ensureBuiltinNamesForBytecodeCache(vm);
+    SourceCode source = makeInternalModuleSource(text, moduleName, url);
+    UnlinkedFunctionExecutable* executable = createInternalModuleExecutable(vm, source, moduleName);
     ParserError error;
     JSC::recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, executable, source, error, depth);
     if (error.isValid())
         return false;
-    RefPtr<JSC::CachedBytecode> result = JSC::encodeBuiltinFunction(vm, executable, source.length(), InternalModuleRegistryConstants::sourceStamp, externalStrings);
+    RefPtr<JSC::CachedBytecode> result = JSC::encodeBuiltinFunction(vm, executable, source.length(), sourceStamp, externalStrings, JSC::BytecodeCacheChecksums::No, JSC::BytecodeCacheUpdatable::No);
     if (!result)
         return false;
     result->ref();
@@ -277,15 +274,86 @@ extern "C" bool Bun__generateInternalModuleBytecode(uint32_t id, uint32_t depth,
     return true;
 }
 
-// The internal JS modules `id` statically requires (so an ahead-of-time build can include them too).
-extern "C" size_t Bun__internalModuleDependencies(uint32_t id, const uint16_t** out)
+// bun build --compile: bytecode for this executable's internal JS module `id` (an index below
+// BUN_NATIVE_MODULE_START_INDEX), generated the way generateInternalModule() will consume it. The caller owns *handle and
+// releases it with CachedBytecode__deref. `depth`: how many levels of nested functions get code blocks too
+// (UINT32_MAX = all; 0 = only the module wrapper's own).
+extern "C" bool Bun__generateInternalModuleBytecode(uint32_t id, uint32_t depth, const uint8_t** bytes, size_t* size, JSC::CachedBytecode** handle, JSC::EncoderStringTable* externalStrings)
 {
-    using namespace Bun::InternalModuleRegistryConstants;
-    if (id >= std::size(dependencyOffsets) - 1)
-        return 0;
-    *out = dependencies + dependencyOffsets[id];
-    return dependencyOffsets[id + 1] - dependencyOffsets[id];
+    using namespace Bun;
+    if (id >= bun_internal_modules_header.moduleCount)
+        return false;
+    const auto& m = internalModuleRecord(id);
+    return encodeInternalModule(internalModuleSource(id), internalModuleString(m.nameOffset, m.nameLength), internalModuleString(m.urlOffset, m.urlLength), bun_internal_modules_header.sourceStamp, depth, bytes, size, handle, externalStrings);
 }
 
-#undef INTERNAL_MODULE_REGISTRY_GENERATE
-#undef INTERNAL_MODULE_SOURCE
+// Same, for an internal module of another bun executable (cross-compiling): its source, name, url and source stamp as
+// read from that executable's builtins section.
+extern "C" bool Bun__generateInternalModuleBytecodeFromSource(const Latin1Character* text, size_t textLength, const Latin1Character* name, size_t nameLength, const Latin1Character* url, size_t urlLength, uint32_t sourceStamp, uint32_t depth, const uint8_t** bytes, size_t* size, JSC::CachedBytecode** handle, JSC::EncoderStringTable* externalStrings)
+{
+    using namespace Bun;
+    return encodeInternalModule(String({ text, textLength }), String({ name, nameLength }), String({ url, urlLength }), sourceStamp, depth, bytes, size, handle, externalStrings);
+}
+
+namespace Bun {
+
+// bun:internal-for-testing: the bytecode `bun build --compile --bytecode` would embed for a builtin module, and the
+// external string table it would embed beside it -- either for internal module number `index` (null past the last
+// one), or for `source` written in builtin syntax under `name`.
+JSC_DEFINE_HOST_FUNCTION(jsInternalModuleBytecode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String text, name, url;
+    uint32_t stamp = 0;
+    if (callFrame->argument(0).isString()) {
+        text = callFrame->argument(0).toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!callFrame->argument(1).isString())
+            return throwVMTypeError(globalObject, scope, "internalModuleBytecode(source, name): name must be a string"_s);
+        name = callFrame->argument(1).toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!text.is8Bit() || !text.startsWith("(function ("_s))
+            return throwVMTypeError(globalObject, scope, "internalModuleBytecode(source, name): source must be Latin-1 and start with \"(function (\""_s);
+        url = makeString("builtin://"_s, name);
+    } else {
+        uint32_t index = callFrame->argument(0).toUInt32(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (index >= bun_internal_modules_header.moduleCount)
+            return JSValue::encode(jsNull());
+        const auto& m = internalModuleRecord(index);
+        text = internalModuleSource(index);
+        name = internalModuleString(m.nameOffset, m.nameLength);
+        url = internalModuleString(m.urlOffset, m.urlLength);
+        stamp = bun_internal_modules_header.sourceStamp;
+    }
+    JSC::EncoderStringTable externalStrings;
+    const uint8_t* bytes = nullptr;
+    size_t size = 0;
+    JSC::CachedBytecode* handle = nullptr;
+    bool encoded = encodeInternalModule(text, name, url, stamp, std::numeric_limits<uint32_t>::max(), &bytes, &size, &handle, &externalStrings);
+    // The encoder runs in this thread's bytecode-cache VM; `bun build` tears it down after a build, and so does this.
+    Bun__destroyBytecodeCacheVM();
+    if (!encoded)
+        return throwVMError(globalObject, scope, makeString("could not generate bytecode for "_s, name));
+    RefPtr<JSC::CachedBytecode> bytecode = adoptRef(handle);
+    JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, bytecode->span());
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::JSUint8Array* strings = WebCore::createBuffer(globalObject, externalStrings.serialize().span());
+    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* result = constructEmptyObject(globalObject);
+    result->putDirect(vm, vm.propertyNames->name, jsString(vm, name));
+    result->putDirect(vm, Identifier::fromString(vm, "bytecode"_s), buffer);
+    result->putDirect(vm, Identifier::fromString(vm, "strings"_s), strings);
+    return JSValue::encode(result);
+}
+
+} // namespace Bun
+
+// This executable's whole builtins section (header, index, sources), for the bundler's section reader.
+extern "C" const uint8_t* Bun__builtinsSection(size_t* length)
+{
+    const auto& h = bun_internal_modules_header;
+    *length = h.dataOffset + h.dataLength;
+    return reinterpret_cast<const uint8_t*>(&h);
+}

@@ -89,12 +89,6 @@ pub mod js {
 /// 2. Reader (released in onReaderDone/onReaderError)
 /// 3. Writer (released in onWriterClose)
 ///
-// `bun.ptr.RefCount` is intrusive single-thread → `bun_ptr::IntrusiveRc<Terminal>`.
-// Never `Rc`/`Arc` here: `*mut Terminal` crosses FFI as the `.classes.ts` m_ctx
-// payload and is recovered by raw pointer in finalize/host fns. (LIFETIMES.tsv
-// marks CreateResult.terminal as SHARED, but the RefCount→IntrusiveRc rule wins;
-// the TSV row is for plain `*T` fields, not intrusive mixins.)
-//
 // `no_construct, no_finalize`: this class uses `constructNeedsThis: true` (3-arg
 // constructor) and intrusive refcounting (finalize → deref, not heap::take),
 // neither of which the macro's default hooks support. The C-ABI shims live in
@@ -107,7 +101,6 @@ pub mod js {
 // `&*this` (shared); all field mutation routes through the cells.
 #[bun_jsc::JsClass(no_construct, no_finalize)]
 #[derive(bun_ptr::RefCounted)]
-#[ref_count(destroy = deinit_and_destroy)]
 pub struct Terminal {
     ref_count: bun_ptr::RefCount<Terminal>,
 
@@ -301,9 +294,9 @@ impl Options {
 
 /// Result from creating a Terminal
 pub(crate) struct CreateResult {
-    // Intrusive single-thread refcount that crosses FFI as `*mut Terminal`; see
-    // ref_count comment on `Terminal` for why this is not `Arc`.
-    pub terminal: bun_ptr::IntrusiveRc<Terminal>,
+    /// The new terminal; its initial ref belongs to the JS wrapper (`js_value`),
+    /// which holds itself strong until the terminal closes.
+    pub terminal: bun_ptr::BackRef<Terminal, bun_ptr::Mut>,
     pub js_value: JSValue,
 }
 
@@ -392,12 +385,18 @@ impl Terminal {
         unsafe { bun_ptr::RefCount::<Terminal>::ref_(self.as_ctx_ptr()) };
     }
 
+    /// Hold a ref on `self` for the guard's lifetime (across re-entrant JS).
+    #[cfg(unix)]
+    fn ref_guard(&self) -> bun_ptr::RefPtr<Self> {
+        // SAFETY: `self` is the live heap allocation.
+        unsafe { bun_ptr::RefPtr::init_ref(self.as_ctx_ptr()) }
+    }
+
     fn deref_(&self) {
         // SAFETY: `self` derived from a heap-allocated allocation; the RefCount
-        // mixin's `deref` reads/writes `ref_count` via Cell and runs
-        // `destructor()` (→ deinit_and_destroy) iff the count hits zero.
-        // Callers must treat `self` as potentially-freed on return (always
-        // tail-position in this file).
+        // mixin's `deref` reads/writes `ref_count` via Cell and drops the Box
+        // iff the count hits zero. Callers must treat `self` as
+        // potentially-freed on return (always tail-position in this file).
         unsafe { bun_ptr::RefCount::<Terminal>::deref(self.as_ctx_ptr()) };
     }
 
@@ -411,8 +410,7 @@ impl Terminal {
         // Create PTY
         let pty_result = create_pty(options.cols, options.rows)?;
 
-        // Heap-allocate the Terminal; the intrusive ref_count
-        // field starts at 1 (JS side's ref). Wrapped as IntrusiveRc on success.
+        // The intrusive ref_count starts at 1: the JS wrapper's ref.
         let terminal: *mut Terminal = bun_core::heap::into_raw(Box::new(Terminal {
             ref_count: bun_ptr::RefCount::init(),
             master_fd: Cell::new(pty_result.master),
@@ -443,13 +441,13 @@ impl Terminal {
             #[cfg(unix)]
             tty_state: Cell::new(bun_core::tty::State::new()),
         }));
+        let parent_ptr = terminal;
         // SAFETY: just allocated, non-null, exclusively owned here. R-2: `&`
         // (not `&mut`) — every method below takes `&self`; field writes go
         // through `Cell`/`JsCell`.
         let terminal = unsafe { &*terminal };
 
         // Set reader parent
-        let parent_ptr = terminal.as_ctx_ptr();
         terminal
             .reader
             .with_mut(|r| r.set_parent(parent_ptr.cast::<c_void>()));
@@ -544,9 +542,8 @@ impl Terminal {
         }
 
         Ok(CreateResult {
-            // SAFETY: `parent_ptr` is the heap-allocated allocation above with
-            // ref_count >= 1; IntrusiveRc::from_raw adopts one existing ref.
-            terminal: unsafe { bun_ptr::IntrusiveRc::from_raw(parent_ptr) },
+            // SAFETY: `parent_ptr` is the live `heap::into_raw` pointer above.
+            terminal: unsafe { bun_ptr::BackRef::from_raw_mut(parent_ptr) },
             js_value: this_value,
         })
     }
@@ -576,7 +573,7 @@ impl Terminal {
             Ok(result) => {
                 // Hand the intrusive ref to the JS wrapper as m_ctx; finalize()
                 // releases it via deref_().
-                Ok(bun_ptr::IntrusiveRc::into_raw(result.terminal))
+                Ok(result.terminal.as_ptr())
             }
             Err(err) => Err(match err {
                 InitError::OpenPtyFailed => global_object.throw(format_args!("Failed to open PTY")),
@@ -672,8 +669,7 @@ impl Terminal {
         }
         // Both reader callbacks below re-enter user JS and may deref; hold a
         // +1 so `self` stays live for the trailing field accesses.
-        self.ref_();
-        let guard = scopeguard::guard((), |()| self.deref_());
+        let guard = self.ref_guard();
         if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
             // SAFETY: single JS thread; re-entrant user JS (data callback may
             // call `terminal.close()`) is handled by `read`'s raw dispatch.
@@ -1954,40 +1950,25 @@ impl Terminal {
         }
     }
 
-    /// Finalize - called by GC when object is collected
-    pub(crate) fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(&self) {
         bun_output::scoped_log!(Terminal, "finalize");
         jsc::mark_binding();
-        bun_ptr::finalize_js_box(self, |this| {
-            this.this_value.with_mut(|v| v.finalize());
-            this.update_flags(|f| f.insert(Flags::FINALIZED));
-            this.close_internal();
-        });
+        self.this_value.with_mut(|v| v.finalize());
+        self.update_flags(|f| f.insert(Flags::FINALIZED));
+        self.close_internal();
     }
 }
 
-/// `deinit` — NOT mapped to `impl Drop` because Terminal is an intrusive-refcounted
-/// `.classes.ts` m_ctx payload: destruction is driven by `deref_()` reaching zero,
-/// and the body calls `bun.destroy(this)` (frees its own allocation). Drop cannot
-/// express that. Kept as a free fn called from `deref_()`.
-///
-/// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-/// whose generated trait `destructor` upholds the sole-owner contract.
-fn deinit_and_destroy(this: *mut Terminal) {
-    bun_output::scoped_log!(Terminal, "deinit");
-    // SAFETY: caller is `deref_()` with ref_count == 0; `this` was heap-allocated.
-    // R-2: deref as shared — `close_internal` takes `&self` and all field
-    // mutation routes through `Cell`/`JsCell`.
-    let t = unsafe { &*this };
-    // Set reader/writer done flags to prevent extra deref calls in closeInternal
-    t.update_flags(|f| f.insert(Flags::READER_DONE | Flags::WRITER_DONE));
-    // Close all FDs if not already closed (handles constructor error paths)
-    // closeInternal() checks flags.closed and returns early on subsequent calls,
-    // so this is safe even if finalize() already called it
-    t.close_internal();
-    // SAFETY: `this` was heap-allocated in init_terminal and ref_count == 0, so
-    // no other live references exist.
-    drop(unsafe { bun_core::heap::take(this) });
+impl Drop for Terminal {
+    fn drop(&mut self) {
+        bun_output::scoped_log!(Terminal, "deinit");
+        // Set reader/writer done flags to prevent extra deref calls in closeInternal
+        self.update_flags(|f| f.insert(Flags::READER_DONE | Flags::WRITER_DONE));
+        // Close all FDs if not already closed (handles constructor error paths)
+        // closeInternal() checks flags.closed and returns early on subsequent calls,
+        // so this is safe even if finalize() already called it
+        self.close_internal();
+    }
 }
 
 // BufferedReader vtable parent: Terminal declares
@@ -2030,7 +2011,6 @@ impl BufferedReaderParent for Terminal {
 #[cfg(unix)]
 impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
     const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::TERMINAL_POLL;
-    const HAS_ON_READY: bool = true;
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
         Self::from_parent_ptr(this).on_write(amount, status);
     }

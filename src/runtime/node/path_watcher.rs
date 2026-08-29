@@ -91,7 +91,9 @@ pub(crate) struct PathWatcherManager {
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     fd: Fd,
 
-    /// Reader-thread loop flag. Initialized `true`, never cleared (no teardown).
+    /// Reader-thread loop flag. Initialized `true`; cleared only by the reader
+    /// thread itself when it exits on a fatal read error, after which
+    /// `watch()` refuses new registrations (no teardown otherwise).
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     running: AtomicBool,
 }
@@ -400,6 +402,12 @@ pub(crate) fn watch(path: &ZStr, recursive: bool, sink: EventSink) -> sys::Resul
     let key = PathWatcherManager::make_key(key_buf.as_mut_slice(), resolved.as_bytes(), recursive);
 
     let mut state = manager.state.lock();
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    if !manager.running.load(Ordering::Acquire) {
+        // The reader thread hit a fatal error and exited; nothing would ever
+        // deliver events for a new registration.
+        return Err(sys::Error::from_code(E::EBADF, Tag::watch));
+    }
     let handler = state.next_handler_id();
 
     if let Some(&existing) = state.by_key.get(key) {
@@ -882,6 +890,10 @@ impl Linux {
                                 w.handlers.flush();
                             }
                         }
+                        // Under the state lock, so a concurrent `watch()` either
+                        // registered before this (and got the error above) or
+                        // sees the reader gone.
+                        manager.running.store(false, Ordering::Release);
                         return;
                     }
                 },

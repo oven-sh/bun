@@ -210,9 +210,9 @@ impl StatWatcherScheduler {
 
         // Wait for any in-flight work-pool task to finish touching `watchers`.
         // The task is bounded (one stat per queued watcher) so this is a short
-        // spin in the rare case it overlaps.
+        // wait in the rare case it overlaps.
         while this.work_pool_in_flight.load(Ordering::Acquire) {
-            core::hint::spin_loop();
+            thread::yield_now();
         }
 
         let batch = core::mem::take(&mut *this.watchers.lock());

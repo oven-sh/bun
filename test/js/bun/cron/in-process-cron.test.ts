@@ -424,8 +424,9 @@ describe.concurrent("Bun.cron (in-process) — subprocess", () => {
     // When the VMEntryScope unwinds, JSC clears hasTerminationRequest but
     // leaves the exception pending; cron's catch block must not hand that to
     // uncaughtException(), or the lazy process-object init asserts in
-    // VMTraps::deferTerminationSlow. Fake timers make the fire deterministic
-    // so a handful of workers is enough.
+    // VMTraps::deferTerminationSlow. Fake timers make the fire deterministic,
+    // so one worker is enough. It also has to be one: the fake clock is
+    // process-wide, so several workers driving it race each other.
     using dir = tempDir("cron-worker-term", {
       "worker.ts":
         mockClock +
@@ -437,7 +438,7 @@ describe.concurrent("Bun.cron (in-process) — subprocess", () => {
         jest.advanceTimersByTime(60_000);
       `,
       "main.ts": `
-        const N = 4;
+        const N = 1;
         let closed = 0, errors = 0;
         for (let i = 0; i < N; i++) {
           const w = new Worker("./worker.ts");
@@ -491,8 +492,10 @@ describe.concurrent("Bun.cron (in-process) — subprocess", () => {
     const stderrP = proc.stderr.text();
     const waitFor = async (file: string) => {
       while (!(await Bun.file(m(file)).exists())) {
-        if (proc.exitCode !== null)
-          throw new Error(`subprocess exited ${proc.exitCode} before ${file}: ${await stderrP}`);
+        // A crashed child (SIGABRT from a panic) has exitCode null and only
+        // signalCode set; without this check the loop spins to the test timeout.
+        if (proc.exitCode !== null || proc.signalCode !== null)
+          throw new Error(`subprocess exited ${proc.exitCode ?? proc.signalCode} before ${file}: ${await stderrP}`);
         await Bun.sleep(10);
       }
     };

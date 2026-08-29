@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { X509Certificate } from "node:crypto";
+import { X509Certificate, createPrivateKey, createPublicKey, generateKeyPairSync } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { rootCertificates } from "node:tls";
 import path from "node:path";
 
 // Self-signed, valid until 2126. Subject CN=wildcard-san.example.com,
@@ -207,8 +208,7 @@ describe("PEM base64 for public objects", () => {
     expect(new X509Certificate(der).toString()).toBe(canonical);
   });
 
-  test("a body that is an exact multiple of 64 columns ends with exactly one newline", async () => {
-    const { rootCertificates } = await import("node:tls");
+  test("a body that is an exact multiple of 64 columns ends with exactly one newline", () => {
     const certs = rootCertificates.map(p => new X509Certificate(p));
     const exact = certs.find(c => c.raw.length % 48 === 0);
     expect(exact).toBeDefined();
@@ -239,11 +239,10 @@ describe("PEM base64 for public objects", () => {
     ["data after padding", "-----BEGIN CERTIFICATE-----\n" + b64 + "AAAA\n-----END CERTIFICATE-----\n"],
     ["an empty body", "-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n"],
   ])("rejects a body with %s", (_, pem) => {
-    expect(() => new X509Certificate(pem)).toThrow();
+    expect(() => new X509Certificate(pem)).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_INVALID_STATE" }));
   });
 
-  test("PUBLIC KEY PEM round-trips, and PRIVATE KEY PEM (constant-time path) is unaffected", async () => {
-    const { createPublicKey, createPrivateKey, generateKeyPairSync } = await import("node:crypto");
+  test("PUBLIC KEY PEM round-trips, and PRIVATE KEY PEM (constant-time path) is unaffected", () => {
     const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
     const spkiDer = publicKey.export({ type: "spki", format: "der" });
     const spkiPem = publicKey.export({ type: "spki", format: "pem" }) as string;

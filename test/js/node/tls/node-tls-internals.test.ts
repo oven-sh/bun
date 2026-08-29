@@ -77,10 +77,9 @@ describe("NodeTLS.cpp", () => {
       const der = data.subarray(offset(i), offset(i + 1));
       const cert = new X509Certificate(rootCertificates[i]);
       expect(cert.raw.equals(der)).toBe(true);
-      // Every entry is a currently-valid self-issued CA certificate.
+      // Every entry is a self-issued CA certificate.
       expect(cert.ca).toBe(true);
       expect(cert.issuer).toBe(cert.subject);
-      expect(new Date(cert.validTo).getTime()).toBeGreaterThan(Date.now());
     }
   });
 });

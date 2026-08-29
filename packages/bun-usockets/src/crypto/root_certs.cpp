@@ -225,12 +225,16 @@ static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
       long len = 0;
       if (!PEM_read_bio(in, &name, &header, &data, &len)) {
         // Running out of blocks is the normal end; anything else fails the whole file, as PEM_X509_INFO_read_bio does.
-        ok = ERR_GET_REASON(ERR_peek_last_error()) == PEM_R_NO_START_LINE;
+        uint32_t pem_err = ERR_peek_last_error();
+        ok = ERR_GET_LIB(pem_err) == ERR_LIB_PEM && ERR_GET_REASON(pem_err) == PEM_R_NO_START_LINE;
         break;
       }
       const uint8_t *p = data;
-      if (header[0] != '\0') {
-        // An encrypted block cannot be decrypted without a passphrase.
+      bool recognized = strcmp(name, PEM_STRING_X509) == 0 || strcmp(name, PEM_STRING_X509_OLD) == 0 ||
+                        strcmp(name, PEM_STRING_X509_TRUSTED) == 0 || strcmp(name, PEM_STRING_X509_CRL) == 0;
+      if (recognized && header[0] != '\0') {
+        // An encrypted certificate/CRL block cannot be decrypted without a passphrase; other block types (e.g. an
+        // encrypted private key sharing the file) are skipped, headers and all, as PEM_X509_INFO_read_bio does.
         ok = false;
       } else if (strcmp(name, PEM_STRING_X509) == 0 || strcmp(name, PEM_STRING_X509_OLD) == 0) {
         if (!bundled.count(std::string_view(reinterpret_cast<const char *>(data), len))) {
@@ -324,9 +328,7 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   STACK_OF(X509) *root_extra_cert_instances = us_get_root_extra_cert_instances();
   if (root_extra_cert_instances) {
     for (int i = 0; i < sk_X509_num(root_extra_cert_instances); i++) {
-      X509 *cert = sk_X509_value(root_extra_cert_instances, i);
-      X509_up_ref(cert);
-      X509_STORE_add_cert(store, cert);
+      X509_STORE_add_cert(store, sk_X509_value(root_extra_cert_instances, i));
     }
   }
 

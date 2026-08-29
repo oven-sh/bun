@@ -2,6 +2,7 @@ import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { X509Certificate } from "node:crypto";
+import { rootCertificates } from "node:tls";
 import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -165,7 +166,10 @@ describe.skipIf(!isLinux)("tls.getCACertificates('system')", () => {
     const withDefaultDir = await systemFingerprints({ SSL_CERT_FILE: bundle });
     const withExplicitDir = await systemFingerprints({ SSL_CERT_FILE: bundle, SSL_CERT_DIR: "/etc/ssl/certs" });
     expect(withDefaultDir[0]).toBe(fingerprint(fixtureCert("ca1")));
-    expect(withDefaultDir).toEqual(withExplicitDir);
+    // The default also walks the well-known distro directories, so it is a superset (in order) of the explicit one.
+    let j = 0;
+    for (const fp of withDefaultDir) if (fp === withExplicitDir[j]) j++;
+    expect(j).toBe(withExplicitDir.length);
   });
 });
 
@@ -213,7 +217,6 @@ describe.skipIf(isWindows)("default store and OpenSSL's default paths", () => {
     ["mixed", "authorized"],
     ["bad", "UNABLE_TO_VERIFY_LEAF_SIGNATURE"],
   ] as const)("a CA in $SSL_CERT_FILE (%s.pem) -> %s", async (file, expected) => {
-    const { rootCertificates } = await import("node:tls");
     using dir = tempDir("default-ca-file", {
       "only.pem": ca1,
       "mixed.pem": rootCertificates.slice(0, 3).join("\n") + "\n" + ca1 + rootCertificates[3] + "\n",

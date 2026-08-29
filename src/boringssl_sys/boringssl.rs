@@ -558,8 +558,6 @@ unsafe extern "C" fn call_general_name_free(free_func: OPENSSL_sk_free_func, ptr
 unsafe extern "C" {
     fn sk_num(sk: *const OPENSSL_STACK) -> usize;
     fn sk_value(sk: *const OPENSSL_STACK, i: usize) -> *mut c_void;
-    fn OPENSSL_sk_new_null() -> *mut OPENSSL_STACK;
-    fn OPENSSL_sk_push(sk: *mut OPENSSL_STACK, p: *mut c_void) -> usize;
     fn sk_pop_free_ex(
         sk: *mut OPENSSL_STACK,
         call_free_func: OPENSSL_sk_call_free_func,
@@ -716,20 +714,6 @@ pub unsafe fn sk_X509_pop_free(sk: *mut struct_stack_st_X509) {
             >(X509_free)),
         );
     }
-}
-
-/// `sk_X509_new_null()`.
-#[inline]
-pub fn sk_X509_new_null() -> *mut struct_stack_st_X509 {
-    // SAFETY: no preconditions.
-    unsafe { OPENSSL_sk_new_null().cast() }
-}
-
-/// `sk_X509_push(sk, x509)`: on success (non-zero) the stack owns `x509`.
-#[inline]
-pub unsafe fn sk_X509_push(sk: *mut struct_stack_st_X509, x509: *mut X509) -> usize {
-    // SAFETY: caller guarantees `sk` is a live X509 stack and `x509` a live X509.
-    unsafe { OPENSSL_sk_push(sk.cast::<OPENSSL_STACK>(), x509.cast()) }
 }
 
 #[inline]

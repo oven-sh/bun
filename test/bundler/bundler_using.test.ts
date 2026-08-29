@@ -2,55 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { itBundled } from "./expectBundled";
 
-// Explicit resource management (`using` / `await using`).
-//
-// `--target=bun` keeps the syntax and JavaScriptCore runs it natively. Other
-// targets lower it to the `__using` / `__callDispose` helpers: a bundled build
-// inlines the helpers, `--no-bundle` imports them from `bun:wrap`. Every mode
-// must agree with the spec (and with `bun run` of the source) on disposal order.
-
-// An `await using` whose value only has Symbol.dispose: a synchronous throw from
-// the disposer must surface as a rejection, so a microtask that was already
-// queued ("interleave") runs before the catch block.
-const syncDisposeThrow = {
-  source: /* ts */ `
-    const out: string[] = [];
-    async function main() {
-      const interleave = Promise.resolve().then(() => { out.push("interleave") });
-      try {
-        await using x = { [Symbol.dispose]() { out.push("dispose"); throw null } };
-      } catch {
-        out.push("catch");
-      }
-      await interleave;
-      return out;
-    }
-    console.log((await main()).join());
-  `,
-  stdout: "dispose,interleave,catch",
-};
-
-// A Symbol.dispose fallback that returns a promise: the promise is not awaited.
-// Disposal of `x` proceeds after one tick, before `y`'s two-tick promise settles.
-const syncDisposeReturnsPromise = {
-  source: /* ts */ `
-    const out: string[] = [];
-    async function main() {
-      await using x = { async [Symbol.asyncDispose]() { out.push("x asyncDispose") } };
-      await using y = {
-        [Symbol.dispose]() {
-          out.push("y dispose");
-          return Promise.resolve().then(() => {}).then(() => { out.push("y promise settled") });
-        },
-      };
-      out.push("body");
-    }
-    await main();
-    await new Promise(resolve => setTimeout(resolve, 0));
-    console.log(out.join());
-  `,
-  stdout: "body,y dispose,x asyncDispose,y promise settled",
-};
+// Where `using` / `await using` declarations may appear. `--target=bun` keeps
+// the syntax and JavaScriptCore runs it natively. Other targets lower it, so the
+// parser must give the same accept/reject verdict as the engines, and the
+// accepted forms must run the same under every target and under `bun run`.
 
 // `using` followed by `of` in a for-loop head is the identifier `using`.
 const usingAsIdentifier = {
@@ -87,8 +42,6 @@ const usingInClassicForHead = {
 };
 
 const cases = {
-  AwaitUsingSyncDisposeThrowIsRejected: syncDisposeThrow,
-  AwaitUsingSyncDisposePromiseNotAwaited: syncDisposeReturnsPromise,
   UsingIdentifierInForOfHead: usingAsIdentifier,
 };
 

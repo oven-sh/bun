@@ -175,17 +175,6 @@ impl BunSocketContextOptions {
         unsafe { OwnedSslCtx::from_raw(c::us_ssl_ctx_from_options(self, err)) }
     }
 
-    /// [`create_ssl_context`](Self::create_ssl_context), owning the one
-    /// reference the new `SSL_CTX` carries.
-    pub fn create_owned_ssl_context(
-        self,
-        err: &mut create_bun_socket_error_t,
-    ) -> Option<bun_boringssl_sys::OwnedSslCtx> {
-        // SAFETY: `us_ssl_ctx_from_options` returns a +1 `SSL_CTX*` (or null).
-        self.create_ssl_context(err)
-            .and_then(|ctx| unsafe { bun_boringssl_sys::OwnedSslCtx::from_raw(ctx) })
-    }
-
     /// SHA-256 over every field this struct carries, dereferencing string
     /// pointers so the digest is content-addressed (not pointer-addressed).
     /// Two option structs that build the same `SSL_CTX*` produce the same

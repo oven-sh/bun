@@ -545,7 +545,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
     ) -> Result<(), InitError> {
         debug_assert!(SSL, "ssl only");
         let mut err = uws::create_bun_socket_error_t::none;
-        let Some(ctx) = opts.create_owned_ssl_context(&mut err) else {
+        let Some(ctx) = opts.create_ssl_context(&mut err) else {
             return Err(match err {
                 uws::create_bun_socket_error_t::load_ca_file => InitError::LoadCAFile,
                 uws::create_bun_socket_error_t::invalid_ca_file => InitError::InvalidCAFile,
@@ -607,7 +607,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 reject_unauthorized: 0,
                 ..Default::default()
             }
-            .create_owned_ssl_context(&mut err)
+            .create_ssl_context(&mut err)
             .unwrap();
             bun_boringssl::ssl_ctx_setup_owned(&ctx);
             *self.secure.borrow_mut() = Some(ctx);

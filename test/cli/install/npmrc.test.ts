@@ -2110,6 +2110,10 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     // A raw backslash: the request keeps it, the key would read it as `/` and resolve
     // `team-b\..\team-a` back into team-a's line.
     "/npm/team-b\\..\\team-a/x.tgz",
+    // A tab inside a dot segment: the WHATWG parser drops it and reads `..`; the
+    // request keeps it.
+    "/npm/team-a/.\t./team-b/x.tgz",
+    "/npm/team-a/%2e\t%2e/team-b/x.tgz",
   ])("a line scoped to another host's path is not applied to its tarball at %s", async tarballPath => {
     using cdn = mockRegistry("Bearer cdn-a", { secure: true, tarballPath });
     using registry = mockRegistry("Bearer registry-token", { tarballOrigin: () => cdn.origin, tarballPath });

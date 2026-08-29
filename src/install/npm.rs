@@ -701,12 +701,17 @@ pub mod registry {
         &pathname[..strings::index_of_char_usize(pathname, b'?').unwrap_or(pathname.len())]
     }
 
-    /// No dot segment (plain, `%2e`-spelled, or after a backslash), no `%5c`, and no
-    /// `%2f` that splits a segment into pieces one of which is a dot segment: a path
-    /// the request sends exactly as the key reads it. A plain `%2f` inside a name,
-    /// the `@scope%2fpkg` form manifests are requested with, is fine.
+    /// No control byte, no dot segment (plain, `%2e`-spelled, or after a backslash),
+    /// no `%5c`, and no `%2f` that splits a segment into pieces one of which is a dot
+    /// segment: a path the request sends exactly as the key reads it. A plain `%2f`
+    /// inside a name, the `@scope%2fpkg` form manifests are requested with, is fine.
     pub(crate) fn path_is_canonical(path: &[u8]) -> bool {
-        if strings::contains_char(path, b'\\') || contains_percent_encoded(path, b'5', b'c') {
+        // The WHATWG parser drops tab, CR and LF before parsing, so `.\t.` reads as
+        // `..` in the key while the wire path keeps the byte: any control byte is out.
+        if path.iter().any(|b| b.is_ascii_control())
+            || strings::contains_char(path, b'\\')
+            || contains_percent_encoded(path, b'5', b'c')
+        {
             return false;
         }
         strings::split(path, b"/").all(|segment| !is_unsafe_segment(segment))

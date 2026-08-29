@@ -83,6 +83,8 @@ impl<T: HeapNode, Context: HeapContext<T>> Intrusive<T, Context> {
     /// live at that address until it leaves this heap again (via
     /// [`delete_min`](Self::delete_min) or [`remove`](Self::remove)).
     pub unsafe fn insert(&self, v: *mut T) {
+        // SAFETY: `v` is live per fn contract.
+        debug_assert!(!unsafe { Self::node(v) }.heap().is_linked() && !self.is_root(v));
         let root = self.root.get();
         self.root.set(if !root.is_null() {
             // SAFETY: `v` per fn contract; `root` per struct invariant.

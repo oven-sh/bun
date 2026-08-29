@@ -412,6 +412,10 @@ pub trait TimerObject: bun_ptr::RefCounted + TimerOwner + Sized + 'static {
                 // Node doesn't drain microtasks after each timer callback.
                 if kind == KindBig::SetInterval {
                     if !this.should_reschedule_timer(repeat, idle_timeout) {
+                        // Stopped Node-style (`_repeat = null` / `_idleTimeout = -1`)
+                        // rather than through `cancel()`, so nothing has let go of
+                        // the wrapper yet.
+                        s.this_value.with_mut(|r| r.downgrade());
                         break 'is_timer_done true;
                     }
                     match this.event_loop_timer_state() {

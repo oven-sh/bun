@@ -33,7 +33,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
 import { BuildError } from "./error.ts";
-import { satisfiesRange } from "./tools.ts";
+import { satisfiesRange, toolchainOverride } from "./tools.ts";
 
 /** Read a crate's locked version out of the repo's Cargo.lock. */
 function lockedCrateVersion(cfg: Config, name: string): string | undefined {
@@ -233,6 +233,10 @@ export const workarounds: Workaround[] = [
  * Call from configure.ts after Config is fully resolved.
  */
 export function checkWorkarounds(cfg: Config): void {
+  // Expiry thresholds are written against the pinned toolchain; an explicitly
+  // supplied one (BUN_TOOLCHAIN_LLVM) may be newer without the tree having
+  // dropped the workaround yet.
+  if (toolchainOverride.llvm !== undefined) return;
   for (const w of workarounds) {
     if (!w.applies(cfg)) continue;
     if (!w.expectedToBeFixed(cfg)) continue;

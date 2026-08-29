@@ -38,8 +38,7 @@ pub struct DirectoryRoute {
     stat_cache: Box<[Cell<StatCacheEntry>]>,
     /// Sum of `StatCacheEntry.path` capacities, for `memory_cost()`.
     stat_cache_path_bytes: Cell<usize>,
-    /// Registered for every method (a plain `{ dir }` route value), so
-    /// `on_request` gates non-GET/HEAD. Method-scoped values serve as-is.
+    /// Registered via `any_this` (plain `{ dir }`): `on_request` gates non-GET/HEAD.
     any_method: Cell<bool>,
 }
 

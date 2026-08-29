@@ -973,9 +973,8 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Replace `opts` wholesale (the bundler re-projects its subset after mutating its own
-    /// options). The parsed tsconfig override is carried over when the path is unchanged,
-    /// else re-loaded from the new path.
+    /// Replace `opts` wholesale. The parsed tsconfig override carries over when the
+    /// path is unchanged, else it is re-loaded.
     pub fn set_opts(&mut self, opts: options::BundleOptions) {
         let same_override = self.opts.tsconfig_override == opts.tsconfig_override;
         let parsed = self.opts.tsconfig_override_json.take();

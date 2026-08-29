@@ -234,8 +234,8 @@ pub struct BundleOptions {
     pub preserve_symlinks: bool,
     pub rewrite_jest_for_tests: bool,
     pub tsconfig_override: Option<Box<[u8]>>,
-    /// Parsed from `tsconfig_override` by `Resolver::load_tsconfig_override`. Lives here rather
-    /// than on `Resolver` so `Transpiler::deinit`'s `drop_in_place(resolver.opts)` releases it.
+    /// Parsed from `tsconfig_override`; kept in `opts` so `Transpiler::deinit`'s
+    /// `drop_in_place(resolver.opts)` releases it.
     pub tsconfig_override_json: Option<std::sync::Arc<crate::TSConfigJSON>>,
     pub production: bool,
     pub force_node_env: ForceNodeEnv,

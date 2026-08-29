@@ -65,7 +65,6 @@ use crate::webcore::{
 use crate::webcore::{blob, readable_stream, response};
 use bun_http_jsc as _;
 use bun_http_jsc::headers_jsc::from_fetch_headers;
-use bun_jsc::AbortSignalRef;
 #[cfg(windows)]
 use bun_paths::resolve_path::PosixToWinNormalizer;
 use bun_picohttp as picohttp;

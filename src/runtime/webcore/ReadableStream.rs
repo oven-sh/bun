@@ -821,6 +821,7 @@ pub trait SourceContext: Sized {
 // adjacent fields as the loader, returning empty bodies.
 #[repr(C)]
 #[derive(bun_ptr::CellRefCounted)]
+#[ref_count(destroy = Self::destroy)]
 pub struct NewSource<C: SourceContext> {
     pub context: C,
     pub cancelled: bool,
@@ -1049,12 +1050,6 @@ const _: () = assert!(core::mem::offset_of!(NewSource<ByteBlobLoader>, context) 
 const _: () = assert!(core::mem::offset_of!(NewSource<ByteStream>, context) == 0);
 const _: () = assert!(core::mem::offset_of!(NewSource<FileReader>, context) == 0);
 
-impl<C: SourceContext> Drop for NewSource<C> {
-    fn drop(&mut self) {
-        self.context.deinit_fn();
-    }
-}
-
 impl<C: SourceContext> NewSource<C> {
     /// Point the `owner` slot at the GC cell of the peer producing into this
     /// source (its `producer` backref), so rooting the source roots the
@@ -1237,6 +1232,17 @@ impl<C: SourceContext> NewSource<C> {
             self.this_jsvalue.with_mut(jsc::JsRef::downgrade);
         }
         rc - 1
+    }
+
+    /// `CellRefCounted` destroy: context teardown, then free.
+    ///
+    /// # Safety
+    /// Only for the `#[ref_count(destroy = …)]` derive: `this` is the sole
+    /// live owner of the `Box` from [`Self::new`].
+    unsafe fn destroy(this: *mut Self) {
+        // SAFETY: fn contract.
+        let mut source = unsafe { Box::from_raw(this) };
+        source.context.deinit_fn();
     }
 
     /// Release one reference. If the count hits zero, runs context teardown and

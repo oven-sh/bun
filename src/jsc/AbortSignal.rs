@@ -125,7 +125,7 @@ impl AbortSignal {
             C::on_abort(unsafe { bun_ptr::ThisPtr::new(ptr.cast::<C>()) }, reason);
         }
         let ctx = listener.this_ptr().as_ptr().cast::<c_void>();
-        let signal = self.retain();
+        let signal = self.ref_();
         self.pending_activity_ref();
         self.add_listener(ctx, callback::<C>);
         AbortListenerRegistration { signal, ctx }
@@ -209,13 +209,6 @@ impl AbortSignal {
         // SAFETY: `WebCore__AbortSignal__ref` bumps the intrusive refcount and
         // returns `self` with that +1.
         unsafe { AbortSignalRef::adopt(WebCore__AbortSignal__ref(self)) }
-    }
-
-    /// Take a counted reference on this signal.
-    pub fn retain(&self) -> AbortSignalRef {
-        // SAFETY: `&AbortSignal` only exists for a live C++ `WebCore::AbortSignal`
-        // (opaque FFI handle); `ref_()` returns it with the count bumped.
-        unsafe { AbortSignalRef::adopt(self.ref_()) }
     }
 
     pub fn unref(&self) {

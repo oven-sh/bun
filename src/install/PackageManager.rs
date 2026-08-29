@@ -357,7 +357,7 @@ pub struct PackageManager {
     /// Git tasks queued by `enqueue_git_task` and not yet started.
     pub(crate) git_tasks: VecDeque<NonNull<Task::Task<'static>>>,
     /// Git tasks whose `git_runner::GitSubprocess` is alive.
-    pub(crate) running_git_tasks: u32,
+    pub(crate) running_git_tasks: AtomicU32,
     pub(crate) appended_task_packages: AppendedTaskPackageMap,
 
     pub(crate) network_dedupe_map: crate::network_task::DedupeMap,
@@ -2105,7 +2105,7 @@ pub fn init(
         wr!(git_repositories, RepositoryMap::default());
         wr!(git_commits, GitCommitMap::default());
         wr!(git_tasks, VecDeque::new());
-        wr!(running_git_tasks, 0);
+        wr!(running_git_tasks, AtomicU32::new(0));
         wr!(appended_task_packages, AppendedTaskPackageMap::default());
         wr!(network_dedupe_map, Default::default());
         wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());
@@ -2566,7 +2566,7 @@ fn init_with_runtime_once(
         wr!(git_repositories, RepositoryMap::default());
         wr!(git_commits, GitCommitMap::default());
         wr!(git_tasks, VecDeque::new());
-        wr!(running_git_tasks, 0);
+        wr!(running_git_tasks, AtomicU32::new(0));
         wr!(appended_task_packages, AppendedTaskPackageMap::default());
         wr!(network_dedupe_map, Default::default());
         wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());

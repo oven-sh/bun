@@ -701,6 +701,14 @@ export const memoryPressureWatcherHasOsBackend: () => boolean = $newRustFunction
 // null where there is no PSI backend (everything except Linux).
 export const memoryPressurePsiTrigger: () => Buffer | null = $newRustFunction("memory_pressure.rs", "jsPsiTrigger", 0);
 
+// Whether an H2FrameParser (a session's `Symbol.for("::bunhttp2native::")`) still has its
+// end-of-tick auto-flush task registered.
+export const h2AutoFlushRegistered: (parser: unknown) => boolean = $newRustFunction(
+  "h2_frame_parser.rs",
+  "jsAutoFlushRegistered",
+  1,
+);
+
 export const getEventLoopStats: () => {
   activeTasks: number;
   tasks: number;

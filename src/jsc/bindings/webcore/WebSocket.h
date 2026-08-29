@@ -39,6 +39,7 @@
 #include <wtf/Lock.h>
 #include "FetchHeaders.h"
 #include "WebSocketErrorCode.h"
+#include "FfiSlice.h"
 
 namespace WebCore {
 class JSBlob;
@@ -210,12 +211,7 @@ public:
 
     void didReceiveMessage(String&& message);
     void didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData);
-    /// `bun_core::ffi::FfiSlice` — a borrowed `&[u8]` passed by value.
-    struct FfiSlice {
-        const uint8_t* ptr;
-        size_t len;
-        std::span<const uint8_t> span() const { return { ptr, len }; }
-    };
+    using FfiSlice = Bun::FfiSlice<uint8_t>;
     struct HandshakeRawHeader {
         FfiSlice name;
         FfiSlice value;

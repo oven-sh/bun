@@ -610,6 +610,13 @@ impl Expansion {
                 .buffered_stdout_mut()
         }
         .clone();
+        // Like bash, drop NUL bytes from command-substitution output: the words
+        // become NUL-terminated argv entries.
+        let stdout = if stdout.contains(&0) {
+            stdout.into_iter().filter(|&b| b != 0).collect()
+        } else {
+            stdout
+        };
 
         // Propagate the exit code if the *whole* atom was a single `$(...)`
         // (so `$(false)` as argv0 fails the command).

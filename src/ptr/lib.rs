@@ -661,12 +661,15 @@ impl<T> core::ops::Deref for ThisPtr<T> {
 /// The unique owner of a heap-allocated `T` that is otherwise reached through
 /// [`ThisPtr`] copies. Dropping it drops and frees the `T`; every `ThisPtr`
 /// lent from it must be dead by then (the usual back-reference obligation).
-pub struct OwnedThis<T>(core::ptr::NonNull<T>);
+pub struct OwnedThis<T>(core::ptr::NonNull<T>, core::marker::PhantomData<T>);
 
 impl<T> OwnedThis<T> {
     #[inline]
     pub fn new(value: T) -> Self {
-        OwnedThis(core::ptr::NonNull::from(Box::leak(Box::new(value))))
+        OwnedThis(
+            core::ptr::NonNull::from(Box::leak(Box::new(value))),
+            core::marker::PhantomData,
+        )
     }
 
     /// A dispatch handle to the pointee (root provenance).

@@ -269,8 +269,15 @@ pub struct AbortListenerHandle {
 }
 
 impl AbortListenerHandle {
-    /// May synchronously call `C::on_abort` (already-aborted signal).
-    pub fn new<C: AbortListenerRef>(signal: AbortSignalRef, listener: bun_ptr::ThisPtr<C>) -> Self {
+    /// Hands the new handle to `store` (which puts it in `C`'s slot) and then
+    /// registers the listener. An already-aborted signal calls `C::on_abort`
+    /// synchronously from here instead, after `store`, so `C` may drop the
+    /// stored handle from inside that call.
+    pub fn install<C: AbortListenerRef>(
+        signal: AbortSignalRef,
+        listener: bun_ptr::ThisPtr<C>,
+        store: impl FnOnce(Self),
+    ) {
         extern "C" fn callback<C: AbortListenerRef>(ptr: *mut c_void, reason: JSValue) {
             // SAFETY: `ptr` was registered below from a live `ThisPtr<C>`; the
             // handle `C` holds unregisters this callback before `C` is freed.
@@ -278,8 +285,11 @@ impl AbortListenerHandle {
         }
         let ctx = listener.as_ptr().cast::<c_void>();
         signal.pending_activity_ref();
-        signal.add_listener(ctx, callback::<C>);
-        Self { signal, ctx }
+        // Keeps the signal alive across `add_listener` even if `on_abort`
+        // drops the stored handle.
+        let signal_for_call = signal.clone();
+        store(Self { signal, ctx });
+        signal_for_call.add_listener(ctx, callback::<C>);
     }
 
     #[inline]

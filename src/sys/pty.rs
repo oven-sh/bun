@@ -33,29 +33,17 @@ mod posix {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn openpty_fn() -> Option<OpenPtyFn> {
         use core::ffi::c_void;
-        use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering::Relaxed};
 
-        static HANDLE: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
-        static LOADED: AtomicBool = AtomicBool::new(false);
-
+        /// Evaluated once, inside `dlsym_with_handle!`'s `Once`.
         fn handle() -> Option<*mut c_void> {
-            if LOADED.load(Relaxed) {
-                let h = HANDLE.load(Relaxed);
-                return if h.is_null() { None } else { Some(h) };
-            }
-            LOADED.store(true, Relaxed);
             const LIB_NAMES: [&bun_core::ZStr; 3] = [
                 bun_core::zstr!("libutil.so"),
                 bun_core::zstr!("libutil.so.1"),
                 bun_core::zstr!("libc.so.6"),
             ];
-            for lib_name in LIB_NAMES {
-                if let Some(h) = crate::dlopen(lib_name, crate::RTLD::LAZY) {
-                    HANDLE.store(h, Relaxed);
-                    return Some(h);
-                }
-            }
-            None
+            LIB_NAMES
+                .into_iter()
+                .find_map(|lib_name| crate::dlopen(lib_name, crate::RTLD::LAZY))
         }
 
         crate::dlsym_with_handle!(OpenPtyFn, "openpty", handle())
@@ -267,6 +255,7 @@ mod win {
         let mut name_utf8_buf = [0u8; 96];
         let name = {
             use std::io::Write;
+            let capacity = name_utf8_buf.len();
             let mut cursor = &mut name_utf8_buf[..];
             // An AppContainer may only create server pipes under
             // `\\.\pipe\LOCAL\`; insert the segment only then so the name is
@@ -279,7 +268,7 @@ mod win {
             if write!(cursor, r"\\.\pipe\{local}bun-conpty-{pid}-{counter}").is_err() {
                 return Err(CreatePtyError::OpenPtyFailed);
             }
-            let written = 96 - cursor.len();
+            let written = capacity - cursor.len();
             &name_utf8_buf[..written]
         };
         let mut name_w_buf = [0u16; 97];

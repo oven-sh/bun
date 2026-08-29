@@ -630,8 +630,10 @@ function expectBundled(
     stdin,
     targetFromAPI,
   })) {
-    if (!ESBUILD && value !== undefined) {
-      throw new UnsupportedOptionError(`${name} not implemented in bun build`);
+    // The esbuild backend does not forward these options either, so a test
+    // that sets one must not run with a configuration it did not ask for.
+    if (value !== undefined) {
+      throw new UnsupportedOptionError(`${name} not implemented in this harness`);
     }
   }
   if (mode !== undefined) {

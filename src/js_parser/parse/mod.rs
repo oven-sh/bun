@@ -335,8 +335,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(expr)
     }
 
-    /// Whether the string literal at `loc` is spelled `"use strict"` or `'use strict'`
-    /// in the source. Only an unescaped spelling is a Use Strict Directive.
+    /// Only an unescaped `"use strict"` or `'use strict'` token is a Use Strict Directive.
     fn source_has_use_strict_token(&self, loc: bun_ast::Loc) -> bool {
         const RAW: &[u8] = b"use strict";
         let contents = self.source.contents();
@@ -1500,8 +1499,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             } else if str_.eql_comptime(b"use strict")
                                 && !p.source_has_use_strict_token(expr.value.loc)
                             {
-                                // `"use\x20strict"` cooks to the same value, but a Use Strict
-                                // Directive has no escape sequence. It stays a string statement.
+                                // `"use\x20strict"` cooks to the same value but stays a string statement.
                             } else {
                                 let directive_loc = expr.value.loc;
                                 let is_use_strict = str_.eql_comptime(b"use strict");

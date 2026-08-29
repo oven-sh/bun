@@ -411,9 +411,8 @@ pub(crate) fn post_process_js_chunk(
     }
 
     // Add the top-level directives if present (but omit "use strict" in ES
-    // modules because all ES modules are automatically in strict mode). The dev
-    // server output is a registry of module closures, each with its own prologue,
-    // so a chunk-level directive would apply to every module in it.
+    // modules because all ES modules are automatically in strict mode)
+    // The dev server wraps every module in its own closure, which gets the prologue instead.
     if chunk.is_entry_point() && output_format != options::OutputFormat::InternalBakeDev {
         let directives = c.graph.ast.items_directives()[chunk.entry_point.source_index() as usize];
 

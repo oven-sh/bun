@@ -240,21 +240,23 @@ describe("Bun.serve() directory routes", () => {
   });
 
   describe("method handling", () => {
-    it.each(["DELETE", "POST", "PUT", "PATCH", "PROPFIND"])("%s gets 405 with Allow", async method => {
-      using dir = tempDir("serve-dir-405", {
-        "public/app.js": "console.log(1)",
-      });
+    describe.each(["DELETE", "POST", "PUT", "PATCH", "PROPFIND"])("%s", method => {
+      it("gets 405 with Allow", async () => {
+        using dir = tempDir("serve-dir-405", {
+          "public/app.js": "console.log(1)",
+        });
 
-      server = serve({
-        port: 0,
-        routes: { "/assets/*": { dir: join(String(dir), "public") } },
-        fetch: () => new Response("fallback"),
-      });
+        server = serve({
+          port: 0,
+          routes: { "/assets/*": { dir: join(String(dir), "public") } },
+          fetch: () => new Response("fallback"),
+        });
 
-      const res = await fetch(`${server.url}assets/app.js`, { method });
-      expect(res.headers.get("allow")).toBe("GET, HEAD, OPTIONS");
-      expect(await res.text()).toBe("");
-      expect(res.status).toBe(405);
+        const res = await fetch(`${server.url}assets/app.js`, { method });
+        expect(res.headers.get("allow")).toBe("GET, HEAD, OPTIONS");
+        expect(await res.text()).toBe("");
+        expect(res.status).toBe(405);
+      });
     });
 
     it("OPTIONS gets 204 with Allow and no body", async () => {

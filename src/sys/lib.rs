@@ -2612,20 +2612,11 @@ mod posix_impl {
     /// `fcntl(F_DUPFD_CLOEXEC, 0)` so the dup'd fd doesn't leak
     /// to children. NOT `dup(2)` (which lacks CLOEXEC).
     pub fn dup(fd: Fd) -> Maybe<Fd> {
-        // Attach the fd on error.
-        loop {
-            // SAFETY: `fd` is a live descriptor; `F_DUPFD_CLOEXEC` with arg `0`
-            // takes no pointer arguments.
-            let rc = unsafe { libc::fcntl(fd.native(), libc::F_DUPFD_CLOEXEC, 0) };
-            if rc < 0 {
-                let e = last_errno();
-                if e == libc::EINTR {
-                    continue;
-                }
-                return Err(Error::from_code_int(e, Tag::fcntl).with_fd(fd));
-            }
-            return Ok(Fd::from_native(rc));
-        }
+        dup_at_least(fd, 0)
+    }
+    /// `fcntl(F_DUPFD_CLOEXEC, min)`: the new descriptor is the lowest free one >= `min`.
+    pub fn dup_at_least(fd: Fd, min: i32) -> Maybe<Fd> {
+        fcntl(fd, libc::F_DUPFD_CLOEXEC, min as isize).map(|rc| Fd::from_native(rc as i32))
     }
     pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> {
         check!(

@@ -154,9 +154,6 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     //    for the entire process.
     unsafe { bun_core::init_argv(argc, argv) };
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pregrow_fd_table();
-
     // 1. Crash handler first so anything below gets a usable trace.
     bun_crash_handler::init();
 
@@ -190,6 +187,9 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     //    wires stdout/stderr `Source`s.
     output::stdio::init();
     let _flush = output::flush_guard();
+    // After stdio::init (fd 0 is open even if we were exec'd with it closed), before any thread.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pregrow_fd_table();
 
     // 5. Per-thread stack-limit cache for the JS recursion guard.
     StackCheck::configure_thread();
@@ -201,34 +201,14 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     Global::exit(0)
 }
 
-/// Linux's `expand_fdtable()` calls `synchronize_rcu()` every time the fd table
-/// doubles (64 → 128 → 256 …) once the process has a second thread, and one RCU
-/// grace period is tens of milliseconds on a many-core machine — a thread that
-/// happens to allocate fd 64 during `bun install` or a burst of `Bun.spawn`
-/// stalls for ~100ms. While we are still single-threaded the same growth is a
-/// memcpy, and the table never shrinks, so size it once here.
+/// Linux's `expand_fdtable()` waits for an RCU grace period (tens of ms on a
+/// many-core machine) each time the fd table doubles past 64 once a second
+/// thread exists. Single-threaded it is a memcpy and the table never shrinks,
+/// so grow it to 1024 now. Fails with EINVAL (and does nothing) past RLIMIT_NOFILE.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn pregrow_fd_table() {
-    // SAFETY: plain fcntl/close on our own descriptors; no other thread exists yet.
-    unsafe {
-        let mut lim: libc::rlimit = bun_core::ffi::zeroed();
-        if libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut lim) != 0 {
-            return;
-        }
-        let want = core::cmp::min(lim.rlim_cur, 1024) as c_int;
-        if want <= 64 {
-            return;
-        }
-        for src in [2, 1, 0] {
-            let fd = libc::fcntl(src, libc::F_DUPFD_CLOEXEC, want - 1);
-            if fd >= 0 {
-                libc::close(fd);
-                return;
-            }
-            if std::io::Error::last_os_error().raw_os_error() != Some(libc::EBADF) {
-                return;
-            }
-        }
+    if let Ok(fd) = bun_sys::dup_at_least(bun_sys::Fd::stdin(), 1023) {
+        let _ = bun_sys::close(fd);
     }
 }
 

@@ -417,10 +417,15 @@ impl Rm {
         if let Some(s) = errstr {
             let stderr_needs_io = Builtin::of(interp, cmd).stderr.needs_io();
             if let Some(safeguard) = stderr_needs_io {
-                if let RmState::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                    exec.output_count.fetch_add(1, Ordering::SeqCst);
-                }
-                let child = ChildPtr::new(cmd, WriterTag::Builtin);
+                let seq = match &mut Self::state_mut(interp, cmd).state {
+                    RmState::Exec(exec) => {
+                        exec.output_count.fetch_add(1, Ordering::SeqCst);
+                        exec.verbose_seq += 1;
+                        exec.verbose_seq
+                    }
+                    _ => 1,
+                };
+                let child = ChildPtr::builtin_task(cmd, seq);
                 Builtin::write_out(interp, cmd, IoKind::Stderr, child, &s, safeguard).run(interp);
                 return;
             }

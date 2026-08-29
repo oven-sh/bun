@@ -506,3 +506,27 @@ test("rm error with stderr redirected to a file", async () => {
   expect(await Bun.file(errPath).text()).toBe("rm: does_not_exist_456: No such file or directory\n");
   expect(res.exitCode).toBe(1);
 });
+
+// Each failing operand queues its own error chunk on stderr; once the reader
+// side of the pipe is gone the remaining chunks must each still be called back.
+test("rm errors for several operands into a closed pipe finish", async () => {
+  using dir = tempDir("rm-epipe", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const r = await Bun.$\`rm nope1 nope2 nope3 nope4 2>&1 | true\`.nothrow(); console.log(r.exitCode);`,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "0\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});

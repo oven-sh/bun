@@ -209,10 +209,8 @@ pub fn is_builtin(str: &[u8]) -> bool {
 
 /// Module loader resolve hook: index into the codegen'd `Bun::builtinModuleKeys` of the canonical key a builtin alias
 /// (`"path"`, `"node:path"`, `"bun:sqlite"`) resolves to, or -1.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn ModuleLoader__builtinAliasIndex(data: *const u8, len: usize) -> i32 {
-    // SAFETY: C++ guarantees `data[..len]` is a live 8-bit specifier slice.
-    let str = unsafe { bun_core::ffi::slice(data, len) };
+// HOST_EXPORT(ModuleLoader__builtinAliasIndex, c)
+pub fn builtin_alias_index(str: &[u8]) -> i32 {
     HardcodedModule::Alias::get(str, bun_ast::Target::Bun, Default::default())
         .and_then(|alias| crate::builtin_module_key_index::get(alias.path.as_bytes()))
         .map_or(-1, i32::from)

@@ -438,6 +438,14 @@ describe("Bun.serve", () => {
     await collect();
   });
 
+  test("a routes-only server's built-in 404 is a span too", async () => {
+    asExternalClient();
+    using server = Bun.serve({ port: 0, routes: { "/ok": () => new Response("ok") } });
+    await (await fetch(`http://127.0.0.1:${server.port}/missing?x=1`)).text();
+    const [srv] = byName(await collect(1), "bun.http.server");
+    expect([srv.name, srv.kind, srv.attributes["http.response.status_code"], srv.attributes["url.path"], srv.status.code]).toEqual(["GET", 1, 404, "/missing", 0]);
+  });
+
   test("malformed traceparent is ignored (new root)", async () => {
     asExternalClient();
     using server = Bun.serve({ port: 0, fetch: () => new Response("x") });

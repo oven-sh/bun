@@ -2686,12 +2686,41 @@ where
     }
 
     pub(super) fn on_mux_404<R: RespLike>(
-        _this: &mut Self,
-        _req: &mut uws::H3::Request,
+        this: &mut Self,
+        req: &mut uws::H3::Request,
         resp: &mut R,
     ) {
+        let span = Self::otel_fallback_begin(
+            this,
+            &uws::AnyRequest::H3(std::ptr::from_mut(req)),
+            resp.to_any_response(),
+        );
         resp.write_status(b"404 Not Found");
         resp.end_without_body(false);
+        if let Some(span) = span {
+            crate::telemetry::server::end(
+                this.global_this(),
+                span,
+                404,
+                bun_telemetry::http_record::Termination::Completed,
+            );
+        }
+    }
+
+    /// A request no route and no `fetch` handler takes (Bun answers 404 itself):
+    /// it still gets a `bun.http.server` span, named by method only.
+    #[inline]
+    pub(super) fn otel_fallback_begin(
+        this: &Self,
+        req: &uws::AnyRequest,
+        resp: uws::AnyResponse,
+    ) -> Option<bun_telemetry::NativeSpan> {
+        if !bun_telemetry::enabled(bun_telemetry::Instrument::HttpServer) {
+            return None;
+        }
+        let (span, entered) = crate::telemetry::server::begin(this.global_this(), req, resp, SSL)?;
+        drop(entered);
+        Some(span)
     }
 
     #[bun_jsc::host_fn(method)]

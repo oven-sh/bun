@@ -3450,13 +3450,24 @@ mod trampoline {
 
     pub(super) extern "C" fn on_404<const SSL: bool, const DEBUG: bool>(
         res: *mut uws_res,
-        _req: *mut UwsRequest,
-        _user_data: *mut c_void,
+        req: *mut UwsRequest,
+        user_data: *mut c_void,
     ) {
+        // user_data is the `*mut NewServer<..>` every `on_404` registration passes.
+        // SAFETY: the server outlives its uws app and this callback.
+        let server = unsafe { &*user_data.cast::<NewServer<SSL, DEBUG>>() };
+        let span = NewServer::<SSL, DEBUG>::otel_fallback_begin(
+            server,
+            &uws::AnyRequest::H1(req),
+            any_response_from::<SSL>(res.cast()),
+        );
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         let resp = bun_opaque::opaque_deref_mut(res.cast::<uws_sys::NewAppResponse<SSL>>());
         resp.write_status(b"404 Not Found");
         resp.end(b"", false);
+        if let Some(span) = span {
+            crate::telemetry::server::end(server.global_this(), span, 404, Termination::Completed);
+        }
     }
 
     pub(super) extern "C" fn on_request<const SSL: bool, const DEBUG: bool>(

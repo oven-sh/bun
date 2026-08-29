@@ -319,14 +319,15 @@ describe("Bun.QR", () => {
       expect(webp.subarray(0, 4)).toEqual(new Uint8Array([0x52, 0x49, 0x46, 0x46])); // RIFF
     });
 
-    test("delivered pixels are exactly the two colors, laid out like the matrix", async () => {
-      const qr = Bun.QR.generate("https://bun.com");
-      const cases: [Bun.QR.GenerateOptions, number[], number[]][] = [
-        [{}, [255, 255, 255, 255], [0, 0, 0, 255]],
-        [{ dark: "rebeccapurple" }, [255, 255, 255, 255], [102, 51, 153, 255]],
-        [{ light: "transparent", dark: "#336699" }, [0, 0, 0, 0], [51, 102, 153, 255]],
-      ];
-      for (const [colors, light, dark] of cases) {
+    const colorCases: [string, Bun.QR.GenerateOptions, number[], number[]][] = [
+      ["defaults", {}, [255, 255, 255, 255], [0, 0, 0, 255]],
+      ["named dark color", { dark: "rebeccapurple" }, [255, 255, 255, 255], [102, 51, 153, 255]],
+      ["transparent light color", { light: "transparent", dark: "#336699" }, [0, 0, 0, 0], [51, 102, 153, 255]],
+    ];
+    test.each(colorCases)(
+      "delivered pixels are exactly the two colors, laid out like the matrix (%s)",
+      async (_name, colors, light, dark) => {
+        const qr = Bun.QR.generate("https://bun.com");
         const scale = 3;
         const border = 2;
         const img = Bun.QR.generate("https://bun.com", { format: "image", scale, border, ...colors });
@@ -349,8 +350,8 @@ describe("Bun.QR", () => {
           }
         }
         expect(Buffer.from(png.data).equals(Buffer.from(expected))).toBe(true);
-      }
-    });
+      },
+    );
 
     test("scale option validation", () => {
       expect(() => Bun.QR.generate("x", { format: "image", scale: 0 })).toThrow(RangeError);
@@ -407,9 +408,12 @@ describe("Bun.QR", () => {
       }
     });
 
-    test("accepts bare Uint8Array", () => {
+    test("accepts a bare Uint8Array, ArrayBuffer or DataView", () => {
       const { matrix } = Bun.QR.generate("bare");
       expect(Bun.QR.parse(matrix).text).toBe("bare");
+      expect(Bun.QR.parse(matrix.buffer).text).toBe("bare");
+      expect(Bun.QR.parse(new DataView(matrix.buffer)).text).toBe("bare");
+      expect(Bun.QR.parse({ matrix: new DataView(matrix.buffer), size: 21 }).text).toBe("bare");
     });
 
     test("round-trips binary bytes", () => {

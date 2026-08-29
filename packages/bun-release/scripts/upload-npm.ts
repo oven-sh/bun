@@ -10,7 +10,7 @@ import { dirname } from "path";
 import { debug, error, log } from "../src/console";
 import { fetch } from "../src/fetch";
 import { chmod, copy, exists, join, write, writeJson } from "../src/fs";
-import { getRelease, getSemver, getShaForRelease } from "../src/github";
+import { getRelease, getSemverForRelease, getShaForRelease } from "../src/github";
 import type { Platform } from "../src/platform";
 import { platforms } from "../src/platform";
 import { binaryIncludesSha } from "../src/sha";
@@ -23,7 +23,7 @@ const [tag, action] = process.argv.slice(2);
 
 const release = await getRelease(tag);
 const revision = await getShaForRelease(release, "long");
-const version = await getSemver(release.tag_name);
+const version = await getSemverForRelease(release);
 
 if (action !== "test-only") await build();
 

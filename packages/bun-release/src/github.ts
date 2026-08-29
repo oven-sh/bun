@@ -117,9 +117,18 @@ export async function getBuild(): Promise<number> {
 }
 
 export async function getSemver(tag?: string, build?: number): Promise<string> {
+  return getSemverForRelease(await getRelease(tag), build);
+}
+
+// Takes the release object instead of a tag so that the caller and the
+// version share one snapshot of the rolling canary release: a re-fetch could
+// see different assets and notes if an upload replaces them in between.
+export async function getSemverForRelease(
+  release: { tag_name: string; body?: string | null },
+  build?: number,
+): Promise<string> {
   const { tag_name: latest_tag_name } = await getRelease();
   const version = latest_tag_name.replace("bun-v", "");
-  const release = await getRelease(tag);
   if (release.tag_name !== "canary") {
     return release.tag_name.replace("bun-v", "");
   }

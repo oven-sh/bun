@@ -47,6 +47,6 @@ test("binaryIncludesSha finds the embedded revision among binary bytes", () => {
   for (let i = 0; i < junk.length; i++) junk[i] = i * 31;
   const binary = Buffer.concat([junk, Buffer.from(SHA, "utf8"), junk]);
   expect(binaryIncludesSha(binary, SHA)).toBe(true);
-  expect(binaryIncludesSha(binary, "f".repeat(40))).toBe(false);
+  expect(binaryIncludesSha(binary, Buffer.alloc(40, "f").toString())).toBe(false);
   expect(binaryIncludesSha(junk, SHA)).toBe(false);
 });

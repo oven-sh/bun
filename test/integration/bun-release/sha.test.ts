@@ -10,7 +10,8 @@
  * runs on every downloaded binary before it is packaged.
  */
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { cpSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { binaryIncludesSha, getShaFromReleaseBody } from "../../../packages/bun-release/src/sha";
 
@@ -49,4 +50,60 @@ test("binaryIncludesSha finds the embedded revision among binary bytes", () => {
   expect(binaryIncludesSha(binary, SHA)).toBe(true);
   expect(binaryIncludesSha(binary, Buffer.alloc(40, "f").toString())).toBe(false);
   expect(binaryIncludesSha(junk, SHA)).toBe(false);
+});
+
+test("getSemver stamps the canary version with the sha from the release notes, not heads/main", async () => {
+  // The shas from oven-sh/bun#40880: the rolling release held binaries built
+  // from ASSET_SHA while heads/main had moved on to MAIN_SHA. The version
+  // must carry the sha of the assets, so the mocked GitHub API answers with a
+  // canary release whose notes name ASSET_SHA and a main ref at MAIN_SHA.
+  const ASSET_SHA = "731aa92dad3777448920b40a4c2d3efe7e776c4e";
+  const MAIN_SHA = SHA;
+  using dir = tempDir("bun-release-semver", {
+    "node_modules/octokit/package.json": `{ "name": "octokit", "version": "0.0.0", "main": "index.js" }`,
+    "node_modules/octokit/index.js": `
+      exports.Octokit = class Octokit {
+        constructor() {}
+        async request(route, params = {}) {
+          switch (route) {
+            case "GET /repos/{owner}/{repo}/releases/latest":
+              return { data: { tag_name: "bun-v1.4.1" } };
+            case "GET /repos/{owner}/{repo}/releases/tags/{tag}":
+              return {
+                data: {
+                  tag_name: params.tag,
+                  body: "This release of Bun corresponds to the commit: ${ASSET_SHA}",
+                  assets: [],
+                },
+              };
+            case "GET /repos/{owner}/{repo}/git/ref/{ref}":
+              return { data: { object: { sha: "${MAIN_SHA}" } } };
+            default:
+              throw new Error("Unexpected request: " + route);
+          }
+        }
+      };
+    `,
+    // Passing the build number skips getBuild's npm registry request.
+    "run-semver.fixture.ts": `
+      import { getSemver } from "./src/github";
+      console.log(await getSemver("canary", 1));
+    `,
+  });
+  // Copy the sources at test time, so this runs whatever state the release
+  // scripts are in, with only the octokit dependency mocked.
+  cpSync(join(import.meta.dir, "../../../packages/bun-release/src"), join(String(dir), "src"), { recursive: true });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run-semver.fixture.ts"],
+    env: { ...bunEnv, GITHUB_REPOSITORY: "oven-sh/bun" },
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ version: stdout.trim(), stderr }).toEqual({
+    version: expect.stringMatching(new RegExp(`^1\\.4\\.1-canary\\.\\d{8}\\.1\\+${ASSET_SHA.substring(0, 7)}$`)),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
 });

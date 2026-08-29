@@ -1,10 +1,8 @@
 import { describe } from "bun:test";
-import { isWindows } from "harness";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   itBundled("npm/ReactSSR", {
-    todo: isWindows, // TODO
     install: ["react@18.3.1", "react-dom@18.3.1"],
     files: {
       "/entry.tsx": /* tsx */ `

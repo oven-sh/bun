@@ -1194,24 +1194,8 @@ fn encode_text_module(
 }
 
 /// The embedded bunfs key for an output file, relative to the prefix.
-///
-/// Windows: store the key with `/`. The template printer emits native
-/// `\` into `dest_path`, but `find_assume_standalone_path` normalizes
-/// lookups to `/`, so a `\` key would miss (ENOENT). `src/bundler/Chunk.rs`
-/// only normalizes a scratch copy, so we re-normalize here.
-fn module_dest_path(output_file: &OutputFile) -> std::borrow::Cow<'_, [u8]> {
-    let dest_path = bun_core::strings::remove_leading_dot_slash(&output_file.dest_path);
-    #[cfg(windows)]
-    {
-        let mut buf = bun_paths::path_buffer_pool::get();
-        std::borrow::Cow::Owned(
-            path::resolve_path::platform_to_posix_buf::<u8>(dest_path, &mut buf).to_vec(),
-        )
-    }
-    #[cfg(not(windows))]
-    {
-        std::borrow::Cow::Borrowed(dest_path)
-    }
+fn module_dest_path(output_file: &OutputFile) -> &[u8] {
+    bun_core::strings::remove_leading_dot_slash(&output_file.dest_path)
 }
 
 pub(crate) fn to_bytes(
@@ -1295,7 +1279,7 @@ pub(crate) fn to_bytes(
 
         // Same `[name]` and `[hash]` means the same bytes: keep the first copy.
         if seen_paths
-            .get_or_put(&module_dest_path(output_file))?
+            .get_or_put(module_dest_path(output_file))?
             .found_existing
         {
             continue;
@@ -1388,7 +1372,7 @@ pub(crate) fn to_bytes(
 
         if Environment::IS_CANARY || Environment::IS_DEBUG {
             if let Some(dump_code_dir) = bun_core::env_var::BUN_FEATURE_FLAG_DUMP_CODE.get() {
-                let dest_path = &*module_dest_path(output_file);
+                let dest_path = module_dest_path(output_file);
                 // `dest_path` keeps `..` for the embedded bunfs key below; neutralize
                 // every `..` segment here so the on-disk dump can't escape
                 // `dump_code_dir` (the join would otherwise normalize `..` above it).
@@ -1501,7 +1485,7 @@ pub(crate) fn to_bytes(
         module.name = string_builder.fmt_append_count_z(format_args!(
             "{}{}",
             bstr::BStr::new(prefix),
-            bstr::BStr::new(&*module_dest_path(output_file))
+            bstr::BStr::new(module_dest_path(output_file))
         ));
         // The bytecode cache was generated under the bytecode output file's
         // path; the runtime must present exactly the same path to hit it.

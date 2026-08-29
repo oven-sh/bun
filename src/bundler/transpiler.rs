@@ -3071,7 +3071,7 @@ impl<'a> Transpiler<'a> {
         output: &[u8],
     ) -> Box<[u8]> {
         let rel_to_root = bun_paths::resolve_path::relative_platform::<
-            bun_paths::resolve_path::platform::Loose,
+            bun_paths::resolve_path::platform::Auto,
             false,
         >(&self.options.root_dir, file_path_text);
         let pathname = Fs::PathName::init(rel_to_root);

@@ -236,7 +236,7 @@ impl Snapshots {
         let mut temp_log = bun_ast::Log::init();
 
         let test_file_path = Jest::runner()
-            .expect("Jest runner not set")
+            .ok_or(Error::SnapshotFailed)?
             .file_path(file.id);
         let name = test_file_path.name();
         let test_filename = name.filename;
@@ -405,9 +405,11 @@ impl Snapshots {
             });
 
             // 2. load file text
-            let test_file_path = Jest::runner()
-                .expect("Jest runner not set")
-                .file_path(file_id);
+            let Some(runner) = Jest::runner() else {
+                success.set(false);
+                continue;
+            };
+            let test_file_path = runner.file_path(file_id);
             let test_filename: Box<[u8]> = {
                 let mut v = test_file_path.text.to_vec();
                 v.push(0);
@@ -788,7 +790,7 @@ impl Snapshots {
             self.write_snapshot_file()?;
 
             let test_file_path = Jest::runner()
-                .expect("Jest runner not set")
+                .ok_or(Error::SnapshotFailed)?
                 .file_path(file_id);
             let name = test_file_path.name();
             let test_filename = name.filename;

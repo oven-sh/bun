@@ -94,7 +94,9 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
 /// `bun_bundler_jsc::analyze_jsc`) because `DiffFormatter` is a `bun_runtime`
 /// type and `bun_bundler_jsc` is a lower-tier crate that cannot depend on it;
 /// the `extern "C"` symbol resolves the same at link time regardless of which
-/// crate defines it. C++ passes `(ptr, len)` pairs for the two buffers.
+/// crate defines it. The `HOST_EXPORT` marker below makes codegen emit the
+/// `zig__renderDiff` thunk, which turns C++'s `(ptr, len)` pairs into the two
+/// slices and calls this.
 // HOST_EXPORT(zig__renderDiff, c)
 pub fn render_diff(expected: &[u8], received: &[u8]) {
     let formatter = DiffFormatter::from_strings(received, expected, false);

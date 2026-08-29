@@ -992,10 +992,11 @@ static X509_STORE *us_ssl_ctx_get_own_cert_store(SSL_CTX *ctx) {
   return store;
 }
 
-/* The `ca` option: every CERTIFICATE block of `content` as DER into `certs`, nothing parsed. Returns the number
- * appended, or -1 for content that is not PEM or whose first certificate block does not decode. As with a
- * PEM_read_bio_X509 loop, a PEM document with no certificates (Node's tests pass a private key) counts as zero, and
- * blocks after one that fails to decode are ignored. */
+/* The `ca` option: every CERTIFICATE block of `content` as DER into `certs`. User-supplied certificates are validated
+ * with a full parse here so a bad one fails the context rather than a later handshake; the parsed object is dropped and
+ * the store keeps the DER lazily. Returns the number appended, or -1 for content that is not PEM or whose first
+ * certificate block does not decode or parse. As with a PEM_read_bio_X509 loop, a PEM document with no certificates
+ * (Node's tests pass a private key) counts as zero, and blocks after one that fails are ignored. */
 static int us_collect_ca_pem(SSL_CTX *ctx, const char *content, STACK_OF(CRYPTO_BUFFER) *certs) {
   if (content == NULL) return 0;
   ERR_clear_error();
@@ -1011,8 +1012,14 @@ static int us_collect_ca_pem(SSL_CTX *ctx, const char *content, STACK_OF(CRYPTO_
       break;
     }
     OPENSSL_free(name);
-    CRYPTO_BUFFER *buf = X509_LAZY_CERT_SET_can_index(der, der_len) ? CRYPTO_BUFFER_new(der, der_len, NULL) : NULL;
+    CRYPTO_BUFFER *buf = CRYPTO_BUFFER_new(der, der_len, NULL);
     OPENSSL_free(der);
+    X509 *parsed = buf != NULL ? X509_parse_from_buffer(buf) : NULL;
+    if (parsed == NULL) {
+      CRYPTO_BUFFER_free(buf);
+      buf = NULL;
+    }
+    X509_free(parsed);
     if (buf == NULL || !sk_CRYPTO_BUFFER_push(certs, buf)) {
       CRYPTO_BUFFER_free(buf);
       if (count == 0) count = -1;

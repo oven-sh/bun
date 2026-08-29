@@ -711,8 +711,9 @@ describe.concurrent("Should be compatible with node.js", () => {
       exitCode: 0,
     });
   });
-  // A whole `bun test` run of the shared suite in a debug build is the one test
-  // here that does not fit the default timeout.
+  // A whole `bun test` run of the shared suite takes about 5s in a debug build,
+  // so this one test does not fit the default timeout. A per-test value also
+  // replaces the CI --timeout, so it is generous.
   test("tests should run on bun", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", nodeSuite],
@@ -739,7 +740,7 @@ describe.concurrent("Should be compatible with node.js", () => {
       `);
     expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"bun test <version> (<revision>)"`);
     expect(exitCode).toBe(0);
-  }, 30_000);
+  }, 60_000);
 });
 
 // Windows: after FIN on a CONNECT-tunnel socket, AFD's level-triggered

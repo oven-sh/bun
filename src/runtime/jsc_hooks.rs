@@ -866,6 +866,12 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                 // SAFETY: `el` is the live per-thread event loop.
                 let el = unsafe { &*vm }.event_loop();
                 loop {
+                    // A watch exit leaves the preload promise pending forever;
+                    // stop spinning and let the watcher loop take over.
+                    // SAFETY: per fn contract — `vm` is the live per-thread VM.
+                    if unsafe { &*vm }.watch_exit_requested {
+                        break;
+                    }
                     // SAFETY: `pending_internal_promise` was set just above (or
                     // swapped by HMR to another live cell); `status()` is a
                     // read-only FFI call on a live JSC heap cell.
@@ -898,10 +904,11 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         if unsafe { &*promise }.status() == PromiseStatus::Rejected {
             return Ok(promise);
         }
-        // A stop was requested (worker terminate()/exit) while it loaded: the
-        // caller checks the same and shuts down; load nothing more.
+        // A stop was requested (worker terminate()/exit) or a `--watch`
+        // process.exit() unwound this preload while it loaded: the caller
+        // checks the same and shuts down; load nothing more.
         // SAFETY: per fn contract.
-        if !unsafe { &*vm }.script_allowed() {
+        if !unsafe { &*vm }.script_allowed() || unsafe { &*vm }.watch_exit_requested {
             return Ok(core::ptr::null_mut());
         }
         // `_protected` drops here → unprotect.
@@ -1370,8 +1377,9 @@ fn body_mixin_get_blob(
     Ok(None)
 }
 
-/// `process.exit(code)`. Main-thread is `noreturn`; in a
-/// worker it returns and the caller `panic!`s.
+/// `process.exit(code)`. `noreturn` on the main thread except under
+/// `bun run --watch` and in a worker, where it returns after requesting
+/// termination.
 ///
 /// # Safety
 /// `global` is the live VM global.

@@ -1397,6 +1397,8 @@ impl Run<'_> {
                 }
             }
             cli::command::HotReload::Watch => {
+                // `--watch` only; see the field doc for why `--hot` opts out.
+                vm.watch_exit_keepalive = true;
                 // SAFETY: `vm` is the boxed-and-leaked main-thread VM
                 // (process-lifetime); it outlives the leaked reloader.
                 unsafe {
@@ -1422,6 +1424,9 @@ impl Run<'_> {
         }
 
         match vm.load_entry_point(entry) {
+            // A watch exit already unwound the run; fall through to the
+            // watcher loop.
+            _ if vm.watch_exit_requested => {}
             Ok(promise) => {
                 // SAFETY: `promise` is a live GC cell returned by the module loader.
                 let promise = unsafe { &mut *promise };
@@ -1463,8 +1468,11 @@ impl Run<'_> {
             Err(err) => entry_point_load_failed(vm, &err.into()),
         }
 
-        // don't run the GC if we don't actually need to
-        if vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0 {
+        // don't run the GC if we don't actually need to. On a watch exit the
+        // termination exception is still pending, so don't tick here.
+        if !vm.watch_exit_requested
+            && (vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0)
+        {
             vm.global().vm().release_weak_refs();
             // `bun_alloc::Arena` has no per-heap collect to run alongside this
             // GC; it would only be a memory-usage hint, not correctness.
@@ -1486,10 +1494,23 @@ impl Run<'_> {
             loop {
                 while vm.is_event_loop_alive() {
                     vm.tick();
+                    // Watch exit during this tick: its termination exception
+                    // is pending, so run no more JS.
+                    if vm.watch_exit_requested {
+                        break;
+                    }
                     vm.report_exception_in_hot_reloaded_module_if_needed();
                     vm.auto_tick_active();
                 }
-                vm.on_before_exit();
+                // Node does not fire `beforeExit` after `process.exit()`.
+                if !vm.watch_exit_requested {
+                    vm.on_before_exit();
+                }
+                // Re-checked after `on_before_exit`: a `beforeExit` handler
+                // may itself call `process.exit()`.
+                if vm.watch_exit_requested {
+                    vm.clear_watch_exit_termination();
+                }
                 vm.report_exception_in_hot_reloaded_module_if_needed();
                 // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
                 // accessed here. Watcher arm keeps the process alive across

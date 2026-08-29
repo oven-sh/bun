@@ -1,8 +1,9 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
-import { afterEach, expect, it } from "bun:test";
+import { afterEach, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { readdirSync, rmSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 let watchee: Subprocess;
@@ -12,15 +13,18 @@ function stdoutWaiter(proc: Subprocess<"ignore", "pipe", any>) {
   const decoder = new TextDecoder();
   let output = "";
   return {
-    waitFor: async (needle: string) => {
+    waitFor: async (needle: string, closedMessage?: (output: string) => string) => {
       while (!output.includes(needle)) {
         const { value, done } = await reader.read();
-        if (done) throw new Error(`stream closed, output so far: ${JSON.stringify(output)}`);
+        if (done) {
+          throw new Error(closedMessage?.(output) ?? `stream closed, output so far: ${JSON.stringify(output)}`);
+        }
         output += decoder.decode(value, { stream: true });
       }
     },
-    release: () => reader.releaseLock(),
     output: () => output,
+    release: () => reader.releaseLock(),
+    cancel: () => reader.cancel(),
   };
 }
 
@@ -128,6 +132,223 @@ setInterval(() => {}, 1000);
   },
   10000,
 );
+
+// process.exit() used to tear down the whole process in --watch mode, killing
+// the watcher itself. It should instead end the current run (like a thrown
+// error does) and keep the watcher waiting for the next change.
+// https://github.com/oven-sh/bun/issues/32648
+const exitScenarios = {
+  // process.exit() during top-level evaluation.
+  direct: (n: number) => `console.log("MARK:${n}");\nprocess.exit(1);\nconsole.log("AFTER_EXIT_SHOULD_NOT_PRINT");\n`,
+  // Callbacks queued before process.exit() must not resume while the watcher
+  // waits for the next change.
+  "pending callbacks": (n: number) =>
+    `console.log("MARK:${n}");\nprocess.nextTick(() => console.log("AFTER_EXIT_SHOULD_NOT_PRINT"));\nsetImmediate(() => console.log("AFTER_EXIT_SHOULD_NOT_PRINT"));\nsetTimeout(() => console.log("AFTER_EXIT_SHOULD_NOT_PRINT"), 0);\nprocess.exit(1);\n`,
+  // process.exit() from a beforeExit handler: the run ends normally, then the
+  // handler calls process.exit() while the watcher loop is dispatching
+  // beforeExit.
+  "beforeExit handler": (n: number) =>
+    `console.log("MARK:${n}");\nprocess.on("beforeExit", () => { process.exit(1); console.log("AFTER_EXIT_SHOULD_NOT_PRINT"); });\n`,
+  // A beforeExit handler that defers process.exit() to a timer: the exit fires
+  // inside on_before_exit's own drain loop, which must not re-dispatch
+  // beforeExit or run more JS.
+  "deferred exit in beforeExit": (n: number) =>
+    `console.log("MARK:${n}");\nprocess.on("beforeExit", () => setTimeout(() => { process.exit(1); console.log("AFTER_EXIT_SHOULD_NOT_PRINT"); }, 0));\n`,
+  // process.exit() inside a node:vm script: node:vm converts terminations to
+  // SIGINT/timeout errors (and aborts on any other source), so the watch-exit
+  // termination must propagate through it instead.
+  "node:vm script": (n: number) =>
+    `console.log("MARK:${n}");\nrequire("node:vm").runInThisContext("process.exit(1)");\nconsole.log("AFTER_EXIT_SHOULD_NOT_PRINT");\n`,
+  // process.exit() inside an uncaughtExceptionCaptureCallback: the termination
+  // unwinding the callback must not be logged as if the callback threw.
+  "capture callback": (n: number) =>
+    `console.log("MARK:${n}");\nprocess.setUncaughtExceptionCaptureCallback(() => { process.exit(1); console.log("AFTER_EXIT_SHOULD_NOT_PRINT"); });\nthrow new Error("handled by capture callback");\n`,
+} as const;
+
+for (const [scenario, fixture] of Object.entries(exitScenarios)) {
+  test(`--watch: process.exit() (${scenario}) keeps the watcher alive`, async () => {
+    using dir = tempDir("watch-process-exit", { "index.ts": fixture(0) });
+    const path = join(String(dir), "index.ts");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "index.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    // Drain stderr so a full pipe never blocks the child.
+    const stderrText = proc.stderr.text();
+
+    const waiter = stdoutWaiter(proc);
+    const waitForMark = (n: number) =>
+      waiter.waitFor(
+        `MARK:${n}`,
+        out => `watcher exited before reload ${n} (process.exit() killed it). stdout so far: ${JSON.stringify(out)}`,
+      );
+
+    // First run executes and calls process.exit().
+    await waitForMark(0);
+
+    // Each edit must reload, proving the watcher survived the previous
+    // process.exit().
+    for (let n = 1; n <= 2; n++) {
+      await writeFile(path, fixture(n));
+      await waitForMark(n);
+    }
+
+    // process.exit() stops execution: the statement after it never runs.
+    expect(waiter.output()).not.toContain("AFTER_EXIT_SHOULD_NOT_PRINT");
+    // The watcher is still running (we reloaded twice after process.exit()).
+    expect(proc.exitCode).toBeNull();
+
+    await waiter.cancel();
+    proc.kill();
+    // Every scenario's error is consumed before it becomes unhandled, so
+    // nothing (like a rendering of the internal termination exception) may
+    // reach stderr.
+    expect(await stderrText).toBe("");
+  });
+}
+
+// process.exit() in a --preload script unwinds inside load_preloads' own
+// promise-spin loop, which must bail like load_entry_point's does, and must
+// not go on to load the remaining preloads or the entry point.
+test("--watch: process.exit() in a --preload script keeps the watcher alive", async () => {
+  const fixture = (n: number) =>
+    `console.log("MARK:${n}");\nprocess.exit(1);\nconsole.log("AFTER_EXIT_SHOULD_NOT_PRINT");\n`;
+  using dir = tempDir("watch-preload-exit", {
+    "preload.ts": fixture(0),
+    "preload2.ts": `console.log("AFTER_EXIT_SHOULD_NOT_PRINT");\n`,
+    "index.ts": `console.log("AFTER_EXIT_SHOULD_NOT_PRINT");\n`,
+  });
+  const path = join(String(dir), "preload.ts");
+
+  await using proc = spawn({
+    cmd: [bunExe(), "--watch", "--no-clear-screen", "--preload=./preload.ts", "--preload=./preload2.ts", "index.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+
+  const stderrText = proc.stderr.text();
+  const waiter = stdoutWaiter(proc);
+  const waitForMark = (n: number) =>
+    waiter.waitFor(
+      `MARK:${n}`,
+      out => `watcher exited before reload ${n} (process.exit() killed it). stdout so far: ${JSON.stringify(out)}`,
+    );
+
+  await waitForMark(0);
+  for (let n = 1; n <= 2; n++) {
+    await writeFile(path, fixture(n));
+    await waitForMark(n);
+  }
+
+  // Neither the statement after exit nor the entry point may run.
+  expect(waiter.output()).not.toContain("AFTER_EXIT_SHOULD_NOT_PRINT");
+  expect(proc.exitCode).toBeNull();
+
+  await waiter.cancel();
+  proc.kill();
+  expect(await stderrText).toBe("");
+});
+
+// The keepalive is scoped to --watch (it re-execs on change). --hot
+// re-evaluates in place, so process.exit() there still exits the process.
+test("--hot: process.exit() exits the process (no keepalive)", async () => {
+  using dir = tempDir("hot-process-exit", {
+    "index.ts": `console.log("HOT_RAN");\nprocess.exit(3);\nconsole.log("AFTER_EXIT_SHOULD_NOT_PRINT");\n`,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "index.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain("HOT_RAN");
+  expect(stdout).not.toContain("AFTER_EXIT_SHOULD_NOT_PRINT");
+  expect(stderr).toBe("");
+  // Exited on its own with the given code instead of staying alive as a watcher.
+  expect(exitCode).toBe(3);
+});
+
+// Ctrl+C must still stop the watcher: once a kill signal is delivered,
+// process.exit() is a real exit, not a keepalive unwind, even when the
+// handler defers the exit past the synchronous emit.
+for (const [variant, handler] of [
+  ["direct", `process.exit(7);`],
+  ["deferred", `setTimeout(() => process.exit(7), 10);`],
+] as const) {
+  it.skipIf(isWindows)(`--watch: process.exit() in a SIGINT handler exits the watcher (${variant})`, async () => {
+    using dir = tempDir("watch-sigint-exit", {
+      "index.ts": `process.on("SIGINT", () => { ${handler} });\nconsole.log("READY");\nsetInterval(() => {}, 1000);\n`,
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "--watch", "--no-clear-screen", "index.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    const stderrText = proc.stderr.text();
+    const waiter = stdoutWaiter(proc);
+    await waiter.waitFor("READY", out => `watcher exited before READY. stdout so far: ${JSON.stringify(out)}`);
+
+    proc.kill("SIGINT");
+    // The handler's exit code is honored and the watcher is gone.
+    expect(await proc.exited).toBe(7);
+    await waiter.cancel();
+    expect(await stderrText).toBe("");
+  });
+}
+
+// SIGINT while the watcher is parked after a watch exit: the handler's
+// run's handlers can never run there (the run is over and its script gate is
+// closed), so the watcher ends like the no-handler case instead of trapping
+// Ctrl+C forever.
+it.skipIf(isWindows)("--watch: SIGINT after a watch exit ends the parked watcher", async () => {
+  using dir = tempDir("watch-sigint-parked", {
+    "index.ts": `process.on("SIGINT", () => { setTimeout(() => process.exit(7), 10); });\nconsole.log("READY");\nprocess.exit(3);\n`,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "--watch", "--no-clear-screen", "index.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+
+  const stderrText = proc.stderr.text();
+  const waiter = stdoutWaiter(proc);
+  await waiter.waitFor("READY", out => `watcher exited before READY. stdout so far: ${JSON.stringify(out)}`);
+
+  // Sit through at least one of the parked loop's ~1s idle wakeups: those
+  // tick with the watch exit's termination already cleared, which used to
+  // trip a debug assert. The time itself is the condition here.
+  await Bun.sleep(1500);
+  expect(proc.exitCode).toBeNull();
+
+  proc.kill("SIGINT");
+  expect(await proc.exited).toBe(0);
+  await waiter.cancel();
+  expect(await stderrText).toBe("");
+});
 
 // Watcher::start() must propagate a failed thread spawn as an Err through its
 // Result return instead of aborting inside start() with `.expect()`. An

@@ -397,6 +397,9 @@ extern "C" bool Bun__resolveAndFetchBuiltinModule(
     const BunString* specifier,
     ErrorableResolvedSource* result);
 extern "C" bool Bun__VM__useIsolationSourceProviderCache(void* bunVM);
+extern "C" bool Bun__VM__isWatchExitRequested(void* bunVM);
+extern "C" void Bun__noteUserSignalDelivered(int signalNumber);
+extern "C" void Bun__endParkedWatcherOnKillSignal(JSC::JSGlobalObject* globalObject);
 
 // Used in process.version
 extern "C" const char* Bun__version;

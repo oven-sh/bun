@@ -1278,7 +1278,10 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
     // uv_signal_t callbacks fire on the uv_run thread (JS thread), but defer to avoid
     // re-entering JS from inside the libuv poll loop
     context->postTaskConcurrently([signalNumber](ScriptExecutionContext& context) {
-        Bun__onSignalForJS(signalNumber, uncheckedDowncast<Zig::GlobalObject>(context.jsGlobalObject()));
+        auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(context.jsGlobalObject());
+        Bun__noteUserSignalDelivered(signalNumber);
+        Bun__onSignalForJS(signalNumber, globalObject);
+        Bun__endParkedWatcherOnKillSignal(globalObject);
     });
 #else
 
@@ -1310,8 +1313,9 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
                 return true;
         } else if (!fatalException.isCallable()) {
             Bun__Process__exit(globalObject, 6);
-            // Bun__Process__exit returns in a worker (only requests termination); don't
-            // fall through to the emit logic and report handled so exit code is preserved.
+            // Bun__Process__exit returns in a worker and under `bun run --watch` (only
+            // requests termination); don't fall through to the emit logic and report
+            // handled so exit code is preserved.
             return true;
         }
     }
@@ -1340,6 +1344,9 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
         (void)call(lexicalGlobalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
         if (auto ex = scope.exception()) {
             (void)scope.tryClearException();
+            // A termination (a `--watch` process.exit() in the callback, a
+            // worker being stopped) is not a throw: it stays pending and
+            // keeps unwinding; we fall through to `return true`.
             if (vm.hasPendingTerminationException()) [[unlikely]]
                 return true;
             // if an exception is thrown in the uncaughtException handler, we abort
@@ -3711,9 +3718,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     // while native shutdown (profiles, cleanup hooks, SQLite close) still runs.
     zigGlobal->processObject()->m_isExiting = true;
     Bun__Process__exit(zigGlobal, exitCode);
-    // Main-thread Bun__Process__exit is noreturn. In a worker it returns; the
-    // WebWorker exit path it called requests JSC termination (guarded so it's a
-    // no-op when re-entered from a process.on('exit') handler).
+    // Main-thread Bun__Process__exit is noreturn, except under
+    // `bun run --watch` and in a worker, where it returns after requesting
+    // JSC termination (which then unwinds JS at the next safepoint).
     throwScope.release();
     return JSC::JSValue::encode(jsUndefined());
 }

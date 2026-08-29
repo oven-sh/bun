@@ -73,6 +73,19 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
         // @190n: we may need to use requestTerminate or throwTerminationException
         // instead to terminate the worker sooner
         worker.exit();
+    } else if vm.watch_exit_keepalive
+        && !bun_jsc::posix_signal_handle::is_emitting_watch_kill_signal()
+        && !bun_jsc::posix_signal_handle::user_kill_signal_delivered()
+    {
+        // `bun run --watch`: a real exit would kill the in-process watcher.
+        // Unwind the run via a JSC termination instead, like a thrown error
+        // does. JS `process.exit()` already ran `exit` handlers in
+        // `Process_functionExit`; the internal error-exit callers skip them
+        // here, matching an uncaught error under `--watch`. Exceptions: during
+        // a kill-signal emit a reload is already underway (the replace-process
+        // path below applies), and any exit after the user delivered a kill
+        // signal must really exit: node's watcher dies with the child.
+        vm.request_watch_exit_termination();
     } else {
         // A watch-reload kill-signal handler may call process.exit; node restarts the child
         // regardless. `process.exit()` must never return control to JS, so replace the process

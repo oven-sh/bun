@@ -239,6 +239,49 @@ pub fn is_emitting_watch_kill_signal() -> bool {
     IS_EMITTING_WATCH_KILL_SIGNAL.load(Ordering::Relaxed)
 }
 
+/// Whether a kill-intent signal (Ctrl+C and friends) has reached JS
+/// handlers. Latched, never cleared, and the sender is indistinguishable
+/// (a self-sent `process.kill` counts too): any later `process.exit()`
+/// under `--watch` is a real exit however the handler defers it (node's
+/// watcher dies with the child on such signals).
+pub fn user_kill_signal_delivered() -> bool {
+    USER_KILL_SIGNAL_DELIVERED.load(Ordering::Relaxed)
+}
+
+static USER_KILL_SIGNAL_DELIVERED: AtomicBool = AtomicBool::new(false);
+
+/// SIGHUP/SIGINT/SIGQUIT/SIGTERM on every supported platform, plus the
+/// Windows CRT's SIGBREAK (21 is SIGTTIN on POSIX, which is job control,
+/// not kill intent).
+fn is_kill_intent_signal(number: i32) -> bool {
+    matches!(number, 1 | 2 | 3 | 15) || (cfg!(windows) && number == 21)
+}
+
+/// Both signal-delivery paths note the signal before emitting: POSIX in
+/// [`PosixSignalTask::run_from_js_thread`], Windows in `signalHandler`'s
+/// posted task (BunProcess.cpp).
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__noteUserSignalDelivered(number: i32) {
+    if is_kill_intent_signal(number) {
+        USER_KILL_SIGNAL_DELIVERED.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Shared tail of both signal-delivery paths (same pair as above): a kill
+/// signal while the watcher is parked after a watch exit ends the watcher,
+/// since nothing deferred from the handler may fire there.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__endParkedWatcherOnKillSignal(global_object: &JSGlobalObject) {
+    if user_kill_signal_delivered() {
+        let vm = global_object.bun_vm().as_mut();
+        if vm.watch_exit_requested {
+            bun_core::Output::flush();
+            vm.on_exit();
+            vm.global_exit();
+        }
+    }
+}
+
 /// Runs the JS handlers of the configured `--watch-kill-signal` synchronously,
 /// mirroring node delivering that signal to the watched child before restart.
 /// SIGKILL/SIGSTOP are uncatchable in node, so nothing is emitted for them.
@@ -256,6 +299,7 @@ pub(crate) fn emit_watch_kill_signal_before_reload(global_object: &JSGlobalObjec
 
 impl PosixSignalTask {
     pub fn run_from_js_thread(number: u8, global_object: &JSGlobalObject) {
+        Bun__noteUserSignalDelivered(i32::from(number));
         let fired = Bun__onSignalForJS(i32::from(number), global_object);
         // Node parity: in watch mode the watcher exits 0 on SIGINT when the
         // script has no handler for it (see `enable_watch_mode_signals`).
@@ -264,6 +308,7 @@ impl PosixSignalTask {
             bun_core::Output::flush();
             bun_core::Global::exit(0);
         }
+        Bun__endParkedWatcherOnKillSignal(global_object);
     }
 }
 

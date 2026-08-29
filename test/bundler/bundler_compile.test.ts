@@ -674,7 +674,6 @@ describe("bundler", () => {
     },
   });
   itBundled("compile/VariousBunAPIs", {
-    todo: isWindows, // TODO
     compile: true,
     files: {
       "/entry.ts": `

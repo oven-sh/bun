@@ -282,7 +282,7 @@ trait FileSystemPackageJsonExt {
 }
 impl FileSystemPackageJsonExt for crate::fs::FileSystem {
     fn join(&self, parts: &[&[u8]]) -> &'static [u8] {
-        resolve_path::resolve_path::join::<resolve_path::platform::Auto>(parts)
+        resolve_path::resolve_path::join::<resolve_path::resolve_path::platform::Auto>(parts)
     }
 }
 

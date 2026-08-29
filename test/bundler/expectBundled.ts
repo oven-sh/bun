@@ -1717,10 +1717,10 @@ for (const [key, blob] of build.outputs) {
             const map_tests = snapshotSourceMap?.[path.basename(file)];
             if (map_tests) {
               expect(parsed.sources.map((a: string) => a.replaceAll("\\", "/"))).toEqual(map_tests.files);
-              for (let i = 0; i < parsed.sources; i++) {
+              for (let i = 0; i < parsed.sources.length; i++) {
                 const source = parsed.sources[i];
-                const sourcemap_content = parsed.sourceContent[i];
-                const actual_content = readFileSync(path.resolve(path.join(outdir!, file), source), "utf-8");
+                const sourcemap_content = parsed.sourcesContent[i];
+                const actual_content = readFileSync(path.resolve(path.dirname(path.join(outdir!, file)), source), "utf-8");
                 expect(sourcemap_content).toBe(actual_content);
               }
 
@@ -1739,8 +1739,8 @@ for (const [key, blob] of build.outputs) {
                     expect(`${pos.line}:${pos.column}:${real_generated}`).toBe(mapping[1]);
                     throw new Error("Not matched");
                   }
-                  expect(pos.line === dest.line);
-                  expect(pos.column === dest.column);
+                  expect(pos.line).toBe(dest.line);
+                  expect(pos.column).toBe(dest.column);
                 }
               if (map_tests.mappingsExactMatch) {
                 expect(parsed.mappings).toBe(map_tests.mappingsExactMatch);

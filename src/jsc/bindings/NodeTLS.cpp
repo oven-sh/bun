@@ -28,7 +28,8 @@ using namespace JSC;
 
 // tls.rootCertificates has always been 72-column base64 with no trailing newline; everything that went through
 // PEM_write_bio_X509 (getCACertificates('system' | 'extra')) is 64-column with one.
-enum class PEMStyle { RootCertificates, OpenSSL };
+enum class PEMStyle { RootCertificates,
+    OpenSSL };
 static WTF::String pemFromDER(std::span<const uint8_t> der, PEMStyle style)
 {
     static constexpr auto header = "-----BEGIN CERTIFICATE-----\n"_s;

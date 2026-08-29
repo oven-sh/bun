@@ -228,12 +228,14 @@ static napi_value define_properties_method(napi_env env,
   return result;
 }
 
-// define_properties(target, kind, name, isClass)
+// define_properties(target, kind, name, isClass, duplicate, isStatic)
 // kind: "value" | "getter" | "setter" | "accessor" | "method"
 // name: if undefined, utf8name "k" is used; otherwise the napi_value itself is
 //       passed as the descriptor's name (any type).
 // isClass: if true, passes the descriptor to napi_define_class instead of
 //          napi_define_properties (target is ignored).
+// duplicate: if true, passes the descriptor twice.
+// isStatic: if true, adds napi_static to the descriptor attributes.
 // Returns { status, pending } where status is the napi_status returned and
 // pending is whether an exception was left pending.
 static napi_value define_properties(const Napi::CallbackInfo &info) {
@@ -247,6 +249,9 @@ static napi_value define_properties(const Napi::CallbackInfo &info) {
 
   napi_property_descriptor desc = {};
   desc.attributes = napi_default;
+  if (info.Length() > 5 && info[5].As<Napi::Boolean>()) {
+    desc.attributes = static_cast<napi_property_attributes>(napi_static);
+  }
   if (name_arg.IsUndefined()) {
     desc.utf8name = "k";
   } else if (name_arg.IsNull()) {
@@ -274,10 +279,12 @@ static napi_value define_properties(const Napi::CallbackInfo &info) {
   bool is_class = false;
   napi_get_value_bool(env, info[3], &is_class);
   if (is_class) {
+    bool duplicate = info.Length() > 4 && info[4].As<Napi::Boolean>();
+    napi_property_descriptor properties[] = {desc, desc};
     napi_value cls = nullptr;
     status = napi_define_class(env, "C", NAPI_AUTO_LENGTH,
-                               define_properties_method, nullptr, 1, &desc,
-                               &cls);
+                               define_properties_method, nullptr,
+                               duplicate ? 2 : 1, properties, &cls);
   } else {
     status = napi_define_properties(env, target, 1, &desc);
   }

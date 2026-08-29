@@ -1252,6 +1252,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   });
 
   describe("napi_define_class", () => {
+    it("accepts duplicate instance descriptors like Node", async () => {
+      await checkSameOutput("test_define_class_duplicate_properties", []);
+    });
+
     it("handles edge cases in the constructor", async () => {
       await Promise.all([
         checkSameOutput("test_napi_class", []),

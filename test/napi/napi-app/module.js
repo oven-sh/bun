@@ -561,6 +561,31 @@ nativeTests.test_define_properties = () => {
   }
 };
 
+nativeTests.test_define_class_duplicate_properties = () => {
+  const statusNames = [
+    "napi_ok",
+    "napi_invalid_arg",
+    "napi_object_expected",
+    "napi_string_expected",
+    "napi_name_expected",
+    "napi_function_expected",
+    "napi_number_expected",
+    "napi_boolean_expected",
+    "napi_array_expected",
+    "napi_generic_failure",
+    "napi_pending_exception",
+  ];
+  const fmtStatus = status => statusNames[status] ?? String(status);
+
+  for (const kind of ["getter", "setter", "accessor", "method"]) {
+    const result = nativeTests.define_properties({}, kind, undefined, true, true, false);
+    console.log(`${kind}: status=${fmtStatus(result.status)} pending=${result.pending}`);
+  }
+
+  const staticResult = nativeTests.define_properties({}, "method", undefined, true, true, true);
+  console.log(`static method: status=${fmtStatus(staticResult.status)} pending=${staticResult.pending}`);
+};
+
 nativeTests.test_property_names_cache_poisoning = () => {
   // napi_key_include_prototypes = 0, napi_key_own_only = 1
   // napi_key_all_properties = 0, napi_key_skip_symbols = 16

@@ -337,7 +337,7 @@ void NAPICallFrame::extract(size_t* argc, napi_value* argv, napi_value* this_arg
     }
 }
 
-napi_status Napi::defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, JSC::ExceptionScope& scope)
+napi_status Napi::defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, JSC::ExceptionScope& scope, PropertyDefinitionMode mode)
 {
     Zig::GlobalObject* globalObject = env->globalObject();
     JSC::VM& vm = JSC::getVM(globalObject);
@@ -405,6 +405,11 @@ napi_status Napi::defineProperty(napi_env env, JSC::JSObject* to, const napi_pro
     bool success = to->methodTable()->defineOwnProperty(to, globalObject, propertyName, descriptor, false);
     RETURN_IF_EXCEPTION(scope, napi_pending_exception);
     if (!success) {
+        // Node stages instance descriptors on a PrototypeTemplate, where duplicates do not fail napi_define_class.
+        if (mode == PropertyDefinitionMode::ClassInstance && to->hasOwnProperty(globalObject, propertyName)) {
+            RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+            return napi_ok;
+        }
         return failureStatus;
     }
     return napi_ok;

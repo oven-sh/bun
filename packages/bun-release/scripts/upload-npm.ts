@@ -10,9 +10,10 @@ import { dirname } from "path";
 import { debug, error, log } from "../src/console";
 import { fetch } from "../src/fetch";
 import { chmod, copy, exists, join, write, writeJson } from "../src/fs";
-import { getRelease, getSemver } from "../src/github";
+import { getRelease, getSemver, getShaForRelease } from "../src/github";
 import type { Platform } from "../src/platform";
 import { platforms } from "../src/platform";
+import { binaryIncludesSha } from "../src/sha";
 import { spawn } from "../src/spawn";
 
 const module = "bun";
@@ -21,6 +22,7 @@ const owner = "@oven";
 const [tag, action] = process.argv.slice(2);
 
 const release = await getRelease(tag);
+const revision = await getShaForRelease(release, "long");
 const version = await getSemver(release.tag_name);
 
 if (action !== "test-only") await build();
@@ -152,9 +154,16 @@ async function buildModule(
     return;
   }
   const bun = await extractFromZip(asset.browser_download_url, `${bin}/bun`);
+  const buffer = await bun.async("nodebuffer");
+  // Abort the whole publish on a mismatch: stamping `version` (which carries
+  // `revision`) onto a binary built from another commit publishes metadata
+  // that lies about the binary (#40880).
+  if (!binaryIncludesSha(buffer, revision)) {
+    throw new Error(`Binary in ${bin}.zip was not built from the expected commit: ${revision}`);
+  }
   const cwd = join("npm", module);
   mkdirSync(dirname(join(cwd, exe)), { recursive: true });
-  write(join(cwd, exe), await bun.async("arraybuffer"));
+  write(join(cwd, exe), buffer);
   chmod(join(cwd, exe), 0o755);
   writeJson(join(cwd, "package.json"), {
     name: module,

@@ -2,6 +2,7 @@ import type { Endpoints, RequestParameters, Route } from "@octokit/types";
 import { Octokit } from "octokit";
 import { debug, error, log, warn } from "./console";
 import { fetch } from "./fetch";
+import { getShaFromReleaseBody } from "./sha";
 
 const [owner, repo] = process.env["GITHUB_REPOSITORY"]?.split("/") ?? ["oven-sh", "bun"];
 
@@ -85,6 +86,25 @@ export async function getSha(tag: string, format?: "short" | "long") {
   return format === "short" ? sha.substring(0, 7) : sha;
 }
 
+// The sha of the commit that a release's assets were built from. For the
+// rolling canary release this comes from the release notes, which the upload
+// step rewrites whenever it replaces the assets. heads/main is only a
+// fallback: it can be ahead of the assets when a canary upload fails or lags.
+export async function getShaForRelease(
+  release: { tag_name: string; body?: string | null },
+  format?: "short" | "long",
+): Promise<string> {
+  let sha: string | undefined;
+  if (release.tag_name === "canary") {
+    sha = getShaFromReleaseBody(release.body);
+    if (!sha) {
+      warn("Canary release notes do not record the built commit, falling back to heads/main");
+    }
+  }
+  sha ??= await getSha(release.tag_name, "long");
+  return format === "short" ? sha.substring(0, 7) : sha;
+}
+
 export async function getBuild(): Promise<number> {
   const date = new Date().toISOString().split("T")[0].replace(/-/g, "");
   const response = await fetch("https://registry.npmjs.org/-/package/bun/dist-tags");
@@ -99,14 +119,14 @@ export async function getBuild(): Promise<number> {
 export async function getSemver(tag?: string, build?: number): Promise<string> {
   const { tag_name: latest_tag_name } = await getRelease();
   const version = latest_tag_name.replace("bun-v", "");
-  const { tag_name } = await getRelease(tag);
-  if (tag_name !== "canary") {
-    return tag_name.replace("bun-v", "");
+  const release = await getRelease(tag);
+  if (release.tag_name !== "canary") {
+    return release.tag_name.replace("bun-v", "");
   }
   if (build === undefined) {
     build = await getBuild();
   }
-  const sha = await getSha(tag_name, "short");
+  const sha = await getShaForRelease(release, "short");
   const date = new Date().toISOString().split("T")[0].replace(/-/g, "");
   return `${version}-canary.${date}.${build}+${sha}`;
 }

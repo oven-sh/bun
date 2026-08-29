@@ -694,10 +694,8 @@ export async function prerender(meta: any) {
       .env({ ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1" })
       .throws(false);
 
-    expect({ exitCode, stderr: stderr.toString() }).toMatchObject({ exitCode: 0 });
-
     const htmlPage = path.join(dir, "dist", "index.html");
-    expect(existsSync(htmlPage)).toBe(true);
+    expect(existsSync(htmlPage), stderr.toString()).toBe(true);
 
     const htmlContent = await Bun.file(htmlPage).text();
     expect(htmlContent).toContain("homepage");
@@ -711,5 +709,7 @@ export async function prerender(meta: any) {
     // The referenced client bundle was written to disk.
     const scriptSrc = scriptMatch![1].replace(/^\//, "");
     expect(existsSync(path.join(dir, "dist", scriptSrc))).toBe(true);
+
+    expect(exitCode).toBe(0);
   });
 });

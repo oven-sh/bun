@@ -1,21 +1,20 @@
-//! Where the Linux system certificate store lives, for `--use-system-ca` and
-//! `tls.getCACertificates('system')`. This module only finds and reads the files; `root_certs_linux.cpp` does the
-//! PEM and X.509 work in BoringSSL.
+//! The Linux system certificate store, for `--use-system-ca` and `tls.getCACertificates('system')`:
+//! `us_load_system_certificates_linux`, called once per process from `root_certs.cpp`.
 //!
 //! Sources are the union of what Node's `GetOpenSSLSystemCertificates` reads — `$SSL_CERT_FILE` else OpenSSL's
 //! default file, and every regular file in `$SSL_CERT_DIR` else OpenSSL's default directory, where a variable that is
 //! set but empty turns its source off — and the well-known distro bundles and directories earlier Bun releases read,
 //! so no layout trusts fewer CAs than before. Distros alias these heavily (Debian links every root two or three times
 //! under /etc/ssl/certs and repeats them in the bundle; Fedora points four bundle paths at one file), so each file is
-//! read once per inode, each directory walked once per inode, and the C++ side keeps one copy of each certificate.
+//! read once per inode, each directory walked once per inode, and each certificate kept once per DER encoding. PEM
+//! framing and X.509 parsing stay in BoringSSL.
 
-use core::ffi::{c_char, c_void};
+use core::ffi::{c_char, c_long, c_void};
+use core::ptr;
 
+use bun_boringssl_sys as boringssl;
 use bun_core::{ZBox, ZStr, env_var, strings};
 use bun_sys::O;
-
-/// Receives the contents of one candidate file.
-type OnFile = unsafe extern "C" fn(ctx: *mut c_void, data: *const u8, len: usize);
 
 #[cfg(not(target_os = "android"))]
 const WELL_KNOWN_BUNDLES: &[&[u8]] = &[
@@ -52,14 +51,72 @@ const WELL_KNOWN_DIRS: &[&[u8]] = &[
 ];
 
 struct Loader {
-    ctx: *mut c_void,
-    on_file: OnFile,
+    certs: *mut boringssl::struct_stack_st_X509,
     /// `(st_dev, st_ino)` of every file already read and every directory already walked.
     seen: bun_collections::HashMap<(u64, u64), ()>,
+    /// Every DER encoding already on `certs`.
+    ders: bun_collections::HashMap<Box<[u8]>, ()>,
     buf: Vec<u8>,
 }
 
 impl Loader {
+    /// As a `PEM_read_bio_X509` loop would: blocks of other types are skipped, and a block that does not decode or a
+    /// CERTIFICATE that does not parse ends the file. `PEM_bytes_read_bio` is that loop minus the ASN.1 parse, so a
+    /// certificate seen before costs a hash lookup rather than a parse.
+    fn load_pem(&mut self, pem: &[u8]) {
+        // SAFETY: `pem` outlives `bio`; BoringSSL only reads from it.
+        let bio = unsafe { boringssl::BIO_new_mem_buf(pem.as_ptr().cast(), pem.len() as isize) };
+        if bio.is_null() {
+            return;
+        }
+        loop {
+            let mut der: *mut u8 = ptr::null_mut();
+            let mut der_len: c_long = 0;
+            let mut name: *mut c_char = ptr::null_mut();
+            // SAFETY: out-pointers are valid; `bio` is live; no password callback data.
+            let ok = unsafe {
+                boringssl::PEM_bytes_read_bio(
+                    &mut der,
+                    &mut der_len,
+                    &mut name,
+                    c"CERTIFICATE".as_ptr(),
+                    bio,
+                    Some(no_password),
+                    ptr::null_mut(),
+                )
+            };
+            if ok == 0 {
+                break;
+            }
+            // SAFETY: on success BoringSSL hands us ownership of `name` and `der` (`der_len` bytes).
+            unsafe { boringssl::OPENSSL_free(name.cast()) };
+            let bytes = unsafe { core::slice::from_raw_parts(der, der_len as usize) };
+            let mut pushed = true;
+            if !self.ders.contains_key(bytes) {
+                let mut p = der.cast_const();
+                // SAFETY: `p` points at `der_len` readable bytes.
+                let x509 = unsafe { boringssl::d2i_X509(ptr::null_mut(), &mut p, der_len) };
+                // SAFETY: `self.certs` is the live stack we allocated; on success it owns `x509`.
+                pushed =
+                    !x509.is_null() && unsafe { boringssl::sk_X509_push(self.certs, x509) } != 0;
+                if pushed {
+                    self.ders.insert(Box::from(bytes), ());
+                } else if !x509.is_null() {
+                    // SAFETY: not adopted by the stack.
+                    unsafe { boringssl::X509_free(x509) };
+                }
+            }
+            // SAFETY: ours to free (see above).
+            unsafe { boringssl::OPENSSL_free(der.cast()) };
+            if !pushed {
+                break;
+            }
+        }
+        // SAFETY: `bio` came from BIO_new_mem_buf above.
+        unsafe { boringssl::BIO_free(bio) };
+        boringssl::ERR_clear_error();
+    }
+
     fn first_visit(&mut self, st: &bun_sys::Stat) -> bool {
         self.seen
             .insert((st.st_dev as u64, st.st_ino as u64), ())
@@ -80,8 +137,9 @@ impl Loader {
         if file.read_to_end_into(&mut self.buf).is_err() {
             return;
         }
-        // SAFETY: `on_file` and `ctx` come from the C++ caller, which keeps `ctx` alive for the whole call.
-        unsafe { (self.on_file)(self.ctx, self.buf.as_ptr(), self.buf.len()) };
+        let buf = core::mem::take(&mut self.buf);
+        self.load_pem(&buf);
+        self.buf = buf;
     }
 
     /// Every regular file (after following links) directly in `dir_path`, in name order.
@@ -122,19 +180,32 @@ impl Loader {
     }
 }
 
-/// Safety: `default_cert_file` and `default_cert_dir` must be valid NUL-terminated C strings, and `ctx` whatever
-/// `on_file` expects for the duration of the call.
+/// Never answers, so an encrypted PEM block fails instead of prompting the terminal.
+unsafe extern "C" fn no_password(
+    _buf: *mut c_char,
+    _size: core::ffi::c_int,
+    _rwflag: core::ffi::c_int,
+    _u: *mut c_void,
+) -> core::ffi::c_int {
+    0
+}
+
+/// # Safety
+/// `out` must be valid for a write of one pointer. The caller owns the returned `STACK_OF(X509)`.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__loadSystemCertificateFiles(
-    default_cert_file: *const c_char,
-    default_cert_dir: *const c_char,
-    ctx: *mut c_void,
-    on_file: OnFile,
+unsafe extern "C" fn us_load_system_certificates_linux(
+    out: *mut *mut boringssl::struct_stack_st_X509,
 ) {
+    let certs = boringssl::sk_X509_new_null();
+    // SAFETY: caller contract.
+    unsafe { *out = certs };
+    if certs.is_null() {
+        return;
+    }
     let mut loader = Loader {
-        ctx,
-        on_file,
+        certs,
         seen: bun_collections::HashMap::new(),
+        ders: bun_collections::HashMap::new(),
         buf: Vec::new(),
     };
 
@@ -142,8 +213,8 @@ unsafe extern "C" fn Bun__loadSystemCertificateFiles(
         Some(b"") => {}
         Some(path) => loader.load_file(ZBox::from_bytes(path).as_zstr()),
         None => {
-            // SAFETY: caller contract.
-            loader.load_file(unsafe { ZStr::from_c_ptr(default_cert_file) });
+            // SAFETY: BoringSSL returns a static NUL-terminated string.
+            loader.load_file(unsafe { ZStr::from_c_ptr(boringssl::X509_get_default_cert_file()) });
             for path in WELL_KNOWN_BUNDLES {
                 loader.load_file(ZBox::from_bytes(path).as_zstr());
             }
@@ -158,11 +229,11 @@ unsafe extern "C" fn Bun__loadSystemCertificateFiles(
             }
         }
         None => {
-            #[cfg(target_os = "android")]
-            let _ = default_cert_dir;
             #[cfg(not(target_os = "android"))]
-            // SAFETY: caller contract.
-            loader.load_directory(unsafe { ZStr::from_c_ptr(default_cert_dir) }.as_bytes());
+            // SAFETY: BoringSSL returns a static NUL-terminated string.
+            loader.load_directory(
+                unsafe { ZStr::from_c_ptr(boringssl::X509_get_default_cert_dir()) }.as_bytes(),
+            );
             for dir in WELL_KNOWN_DIRS {
                 loader.load_directory(dir);
             }

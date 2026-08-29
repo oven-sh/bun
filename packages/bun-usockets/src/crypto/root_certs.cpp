@@ -368,6 +368,6 @@ void us_load_system_certificates_windows(STACK_OF(X509) **system_certs) {
 }
 
 #else
-// Linux and other Unix-like systems - implementation is in root_certs_linux.cpp
+// Linux and other Unix-like systems: src/runtime/socket/system_certs.rs
 extern "C" void us_load_system_certificates_linux(STACK_OF(X509) **system_certs);
 #endif

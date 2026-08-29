@@ -550,6 +550,8 @@ unsafe extern "C" fn call_general_name_free(free_func: OPENSSL_sk_free_func, ptr
 unsafe extern "C" {
     fn sk_num(sk: *const OPENSSL_STACK) -> usize;
     fn sk_value(sk: *const OPENSSL_STACK, i: usize) -> *mut c_void;
+    fn OPENSSL_sk_new_null() -> *mut OPENSSL_STACK;
+    fn OPENSSL_sk_push(sk: *mut OPENSSL_STACK, p: *mut c_void) -> usize;
     fn sk_pop_free_ex(
         sk: *mut OPENSSL_STACK,
         call_free_func: OPENSSL_sk_call_free_func,
@@ -708,6 +710,20 @@ pub unsafe fn sk_X509_pop_free(sk: *mut struct_stack_st_X509) {
     }
 }
 
+/// `sk_X509_new_null()`.
+#[inline]
+pub fn sk_X509_new_null() -> *mut struct_stack_st_X509 {
+    // SAFETY: no preconditions.
+    unsafe { OPENSSL_sk_new_null().cast() }
+}
+
+/// `sk_X509_push(sk, x509)`: on success (non-zero) the stack owns `x509`.
+#[inline]
+pub unsafe fn sk_X509_push(sk: *mut struct_stack_st_X509, x509: *mut X509) -> usize {
+    // SAFETY: caller guarantees `sk` is a live X509 stack and `x509` a live X509.
+    unsafe { OPENSSL_sk_push(sk.cast::<OPENSSL_STACK>(), x509.cast()) }
+}
+
 #[inline]
 pub unsafe fn sk_X509_value(sk: *const struct_stack_st_X509, i: usize) -> *mut X509 {
     // SAFETY: Two independent type casts, not a const→mut provenance laundering:
@@ -835,8 +851,7 @@ opaque!(
 pub type SSL_verify_cb = Option<unsafe extern "C" fn(c_int, *mut X509_STORE_CTX) -> c_int>;
 
 /// `int pem_password_cb(char *buf, int size, int rwflag, void *userdata)`.
-pub(crate) type pem_password_cb =
-    unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut c_void) -> c_int;
+pub type pem_password_cb = unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut c_void) -> c_int;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Extern functions — SSL / BIO / ERR / HMAC / RSA / PBKDF2
@@ -1073,6 +1088,19 @@ unsafe extern "C" {
 
     pub fn SSL_get_verify_result(ssl: *const SSL) -> c_long;
 
+    /// Reads the next PEM block whose type is `expected_name` (e.g. `c"CERTIFICATE"`), skipping others, and
+    /// returns its decoded (and, with `cb`, decrypted) payload without parsing it.
+    pub fn PEM_bytes_read_bio(
+        out_data: *mut *mut u8,
+        out_len: *mut c_long,
+        out_name: *mut *mut c_char,
+        expected_name: *const c_char,
+        bio: *mut BIO,
+        cb: Option<pem_password_cb>,
+        userdata: *mut c_void,
+    ) -> c_int;
+    pub safe fn X509_get_default_cert_file() -> *const c_char;
+    pub safe fn X509_get_default_cert_dir() -> *const c_char;
     pub fn PEM_read_bio_X509(
         bp: *mut BIO,
         x: *mut *mut X509,

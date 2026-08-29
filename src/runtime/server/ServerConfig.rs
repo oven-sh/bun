@@ -424,8 +424,7 @@ pub(crate) fn apply_static_route_mux<T: StaticRouteLike, A: MuxApp>(
 /// it is registered.
 pub(crate) trait StaticRouteLike: Sized + 'static {
     fn set_server(&self, server: AnyServer);
-    /// Registration reports whether the route answers every method
-    /// (`any_this`) or an explicit method set. Only `DirectoryRoute` cares.
+    /// Whether the route registers via `any_this` or an explicit method set.
     fn set_registered_for_any_method(&self, _any: bool) {}
     fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse);
     fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse);

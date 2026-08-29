@@ -38,10 +38,8 @@ pub struct DirectoryRoute {
     stat_cache: Box<[Cell<StatCacheEntry>]>,
     /// Sum of `StatCacheEntry.path` capacities, for `memory_cost()`.
     stat_cache_path_bytes: Cell<usize>,
-    /// True when registered for every method (a plain `{ dir }` route value):
-    /// only GET and HEAD serve the file; OPTIONS answers 204 and the rest 405,
-    /// both with an `Allow` list. A method-scoped value (`{ POST: { dir } }`)
-    /// registers only its methods and serves them as-is.
+    /// Registered for every method (a plain `{ dir }` route value), so
+    /// `on_request` gates non-GET/HEAD. Method-scoped values serve as-is.
     any_method: Cell<bool>,
 }
 
@@ -119,8 +117,7 @@ impl DirectoryRoute {
         Self::on(this, req, resp, method.unwrap_or(Method::GET));
     }
 
-    /// A directory tree implements GET and HEAD only (nginx and Caddy do the
-    /// same): 405 with `Allow`, and 204 with `Allow` for OPTIONS.
+    /// 405 (204 for OPTIONS) with `Allow: GET, HEAD, OPTIONS`, like nginx.
     fn on_method_not_allowed(
         this: ThisPtr<DirectoryRoute>,
         mut req: AnyRequest,

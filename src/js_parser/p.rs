@@ -4795,8 +4795,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(value)
     }
 
-    /// `last_link_opts` applies to the final property access only: in `a.b.c = 1` the
-    /// assignment target is `c`, and `a.b` is read.
+    /// `last_link_opts` applies to the final property access only: in `a.b.c = 1` only `c` is the target.
     fn member_expression(
         &mut self,
         loc: bun_ast::Loc,
@@ -6324,8 +6323,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if rest.is_empty() {
             return value;
         }
-        // The last link is the assignment or delete target, as `a.b.c = 1` written in source
-        // would be: an import namespace member is rejected and a CommonJS export is converted.
+        // The last link is the assignment or delete target, as the literal `a.b.c = 1` would be
         self.member_expression(
             loc,
             value,

@@ -26,7 +26,6 @@ use js_ast::OpCode as Op;
 // `visit_expr_in_out` are surfaced.
 
 /// A define value that can replace an assignment target: `FOO = 1` must not become `0 = 1`.
-/// A member chain value resolves to an import item or a CommonJS export when its last part is one.
 fn define_value_can_be_assign_target(value: &Expr) -> bool {
     matches!(
         value.data.tag(),

@@ -241,6 +241,8 @@ pub struct Lexer<'a> {
     pub(crate) track_comments: bool,
     pub(crate) track_react_suppressions: bool,
     pub(crate) all_comments: Vec<Range>,
+    /// The first `<!--` or line-start `-->` comment, for the parser's module-goal check.
+    pub(crate) legacy_html_comment_range: Range,
 }
 
 impl<'a> LexerLog<'a> for Lexer<'a> {
@@ -974,16 +976,6 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
-    #[cold]
-    #[inline(never)]
-    pub(crate) fn add_unsupported_syntax_error(&mut self, msg: &[u8]) -> Result<(), Error> {
-        self.add_error(
-            self.end,
-            format_args!("Unsupported syntax: {}", bstr::BStr::new(msg)),
-        );
-        Err(Error::SyntaxError)
-    }
-
     // This is an edge case that doesn't really exist in the wild, so it doesn't
     // need to be as fast as possible — keep it fully out of line so it never
     // bloats `next()` (which dispatches here from the identifier arm).
@@ -1522,7 +1514,7 @@ impl<'a> Lexer<'a> {
                             if self.code_point == 0x3E && self.has_newline_before {
                                 // Genuinely almost-never taken — kept out of `next()`'s
                                 // body so it doesn't share I-cache with the hot arms.
-                                self.scan_legacy_html_close_comment();
+                                self.scan_legacy_html_comment(b"-->");
                                 continue;
                             }
 
@@ -1638,10 +1630,10 @@ impl<'a> Lexer<'a> {
                         // Handle legacy HTML-style comments
                         0x21 => {
                             if self.peek("--".len()) == b"--" {
-                                self.add_unsupported_syntax_error(
-                                    b"Legacy HTML comments not implemented yet!",
-                                )?;
-                                return Ok(());
+                                self.step_with(contents);
+                                self.step_with(contents);
+                                self.scan_legacy_html_comment(b"<!--");
+                                continue;
                             }
 
                             self.token = T::TLessThan;
@@ -2028,21 +2020,26 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Handles the legacy `-->` HTML single-line close comment: emits the
-    /// warning and consumes the rest of the line. Entered with `self.code_point`
-    /// on the `>` of `-->`.
+    /// Lexes an Annex B HTML comment to the end of the line, from the last character of `opener`.
     ///
     /// PERF: this is essentially never taken in real code — keep it fully out of
     /// `next()`'s body so it never costs the hot arms any I-cache.
     #[cold]
     #[inline(never)]
-    fn scan_legacy_html_close_comment(&mut self) {
-        // Consume the `>` of `-->`.
+    fn scan_legacy_html_comment(&mut self, opener: &[u8]) {
+        // Consume the last character of the opener.
         self.step();
-        self.log().add_range_warning(
+        let range = self.range();
+        if self.legacy_html_comment_range.len == 0 {
+            self.legacy_html_comment_range = range;
+        }
+        self.log().add_range_warning_fmt(
             Some(self.source),
-            self.range(),
-            b"Treating \"-->\" as the start of a legacy HTML single-line comment",
+            range,
+            format_args!(
+                "Treating \"{}\" as the start of a legacy HTML single-line comment",
+                bstr::BStr::new(opener)
+            ),
         );
 
         loop {
@@ -2249,6 +2246,7 @@ impl<'a> Lexer<'a> {
             track_comments: false,
             track_react_suppressions: false,
             all_comments: Vec::new(),
+            legacy_html_comment_range: Range::NONE,
         }
     }
 

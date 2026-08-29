@@ -3081,12 +3081,18 @@ pub(crate) mod __gated_printer {
             }
         }
 
+        /// A property name prints unquoted only when it is valid in both ES5 and ESNext.
+        #[inline]
+        pub(crate) fn can_print_identifier(&self, name: &[u8]) -> bool {
+            lexer::is_identifier_es5_and_es_next(name)
+        }
+
         #[inline]
         pub(crate) fn can_print_identifier_utf16(&self, name: &[u16]) -> bool {
             if ASCII_ONLY || ASCII_ONLY_ALWAYS_ON_UNLESS_MINIFYING {
                 lexer::is_latin1_identifier_u16(name)
             } else {
-                lexer::is_identifier_utf16(name)
+                lexer::is_identifier_es5_and_es_next_utf16(name)
             }
         }
 
@@ -3374,7 +3380,7 @@ pub(crate) mod __gated_printer {
                             }
 
                             let key: &[u8] = key.get();
-                            if lexer::is_identifier(key) {
+                            if self.can_print_identifier(key) {
                                 self.print(b".");
                                 self.print(key);
                             } else {
@@ -3638,7 +3644,7 @@ pub(crate) mod __gated_printer {
 
                     self.print_expr(e.target, Level::Postfix, flags);
 
-                    if lexer::is_identifier(&e.name) {
+                    if self.can_print_identifier(&e.name) {
                         if is_optional_chain {
                             self.print(b"?.");
                         } else {
@@ -4285,7 +4291,7 @@ pub(crate) mod __gated_printer {
                             self.add_source_mapping(expr.loc);
                             self.print_symbol(namespace.namespace_ref);
                             let alias = namespace.alias.slice();
-                            if lexer::is_identifier(alias) {
+                            if self.can_print_identifier(alias) {
                                 self.print(b".");
                                 // TODO: addSourceMappingForName
                                 self.print_identifier(alias);
@@ -4543,7 +4549,7 @@ pub(crate) mod __gated_printer {
                 return;
             }
 
-            if lexer::is_identifier(namespace.alias.slice()) {
+            if self.can_print_identifier(namespace.alias.slice()) {
                 self.print(b".");
                 self.print_identifier(namespace.alias.slice());
             } else {
@@ -4871,47 +4877,41 @@ pub(crate) mod __gated_printer {
                     self.add_source_mapping(key.loc);
                     if key_str.is_utf8() {
                         self.print_space_before_identifier();
-                        let mut allow_shorthand = true;
-                        if !IS_JSON && lexer::is_identifier(key_str.slice8()) {
+                        if !IS_JSON && self.can_print_identifier(key_str.slice8()) {
                             self.print_identifier(key_str.slice8());
-                        } else {
-                            allow_shorthand = false;
-                            self.print_string_literal_e_string(&key_str, false);
-                        }
 
-                        // Use a shorthand property if the names are the same
-                        if let Some(val) = &item.value {
-                            match &val.data {
-                                ExprData::EIdentifier(e) => {
-                                    if key_str.slice8() == self.name_for_symbol(e.ref_) {
-                                        if let Some(initial) = &item.initializer {
-                                            self.print_initializer(*initial);
-                                        }
-                                        if allow_shorthand {
-                                            return;
-                                        }
-                                    }
-                                }
-                                ExprData::EImportIdentifier(e) => 'inner: {
-                                    let ref_ = self.symbols().follow(e.ref_);
-                                    if self.options.input_files_for_dev_server.is_some() {
-                                        break 'inner;
-                                    }
-                                    if let Some(symbol) = self.symbols().get_const(ref_) {
-                                        if symbol.namespace_alias.is_none()
-                                            && key_str.slice8() == self.name_for_symbol(e.ref_)
-                                        {
+                            // Use a shorthand property if the names are the same
+                            if let Some(val) = &item.value {
+                                match &val.data {
+                                    ExprData::EIdentifier(e) => {
+                                        if key_str.slice8() == self.name_for_symbol(e.ref_) {
                                             if let Some(initial) = &item.initializer {
                                                 self.print_initializer(*initial);
                                             }
-                                            if allow_shorthand {
+                                            return;
+                                        }
+                                    }
+                                    ExprData::EImportIdentifier(e) => 'inner: {
+                                        let ref_ = self.symbols().follow(e.ref_);
+                                        if self.options.input_files_for_dev_server.is_some() {
+                                            break 'inner;
+                                        }
+                                        if let Some(symbol) = self.symbols().get_const(ref_) {
+                                            if symbol.namespace_alias.is_none()
+                                                && key_str.slice8() == self.name_for_symbol(e.ref_)
+                                            {
+                                                if let Some(initial) = &item.initializer {
+                                                    self.print_initializer(*initial);
+                                                }
                                                 return;
                                             }
                                         }
                                     }
+                                    _ => {}
                                 }
-                                _ => {}
                             }
+                        } else {
+                            self.print_string_literal_e_string(&key_str, false);
                         }
                     } else if !IS_JSON && self.can_print_identifier_utf16(key_str.slice16()) {
                         self.print_space_before_identifier();
@@ -5127,7 +5127,7 @@ pub(crate) mod __gated_printer {
 
                                         if str.is_utf8() {
                                             self.print_space_before_identifier();
-                                            if lexer::is_identifier(str.slice8()) {
+                                            if self.can_print_identifier(str.slice8()) {
                                                 self.print_identifier(str.slice8());
 
                                                 // Use a shorthand property if the names are the same

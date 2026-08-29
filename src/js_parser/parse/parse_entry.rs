@@ -855,6 +855,8 @@ impl<'a> Parser<'a> {
 
         parse_tracer.end();
 
+        p.check_legacy_html_comment_in_module();
+
         // Halt parsing right here if there were any errors
         // This fixes various conditions that would cause crashes due to the AST being in an invalid state while visiting
         // In a number of situations, we continue to parsing despite errors so that we can report more errors to the user

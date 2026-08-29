@@ -31,7 +31,7 @@ mod visible_impl;
 // tier-0 `crate::strings_impl`; re-exported here as part of `bun.strings`.
 pub use crate::strings_impl::{
     U16_SURROGATE_OFFSET, decode_surrogate_pair, decode_utf16_with_fffd, decode_wtf16_raw,
-    u16_get_supplementary,
+    first_unpaired_surrogate, u16_get_supplementary,
 };
 // Transcoding helpers from `unicode_draft` — re-exported so downstream
 // `bun_core::strings::*` callers (e.g. runtime/webcore/encoding.rs) resolve.

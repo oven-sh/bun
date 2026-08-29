@@ -1,7 +1,9 @@
 import { canonicalizeIP } from "bun:internal-for-testing";
 import { createTest } from "node-harness";
 import { X509Certificate } from "node:crypto";
-import { rootCertificates } from "tls";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { getCACertificates, rootCertificates } from "tls";
 const { describe, expect } = createTest(import.meta.path);
 
 describe("NodeTLS.cpp", () => {
@@ -53,5 +55,32 @@ describe("NodeTLS.cpp", () => {
       expect(body.join("")).toBe(der.toString("base64"));
     }
     expect(new Set(rootCertificates).size).toBe(rootCertificates.length);
+  });
+
+  // The binary under test must embed exactly the packages/bun-usockets/root_certs.der in this checkout (format:
+  // u32 count, u32 offsets[count + 1], DER certificates back to back; little-endian), listed by root_certs.txt.
+  test("rootCertificates are this checkout's root_certs.der, in order", () => {
+    const usockets = join(import.meta.dir, "../../../../packages/bun-usockets");
+    const blob = readFileSync(join(usockets, "root_certs.der"));
+    const names = readFileSync(join(usockets, "root_certs.txt"), "utf8")
+      .split("\n")
+      .filter(line => line && !line.startsWith("#"));
+    const count = blob.readUInt32LE(0);
+    const offset = (i: number) => blob.readUInt32LE(4 + 4 * i);
+    const data = blob.subarray(4 + 4 * (count + 1));
+    expect(data.length).toBe(offset(count));
+    expect(names.length).toBe(count);
+
+    expect(rootCertificates.length).toBe(count);
+    expect(getCACertificates("bundled")).toEqual(rootCertificates);
+    for (let i = 0; i < count; i++) {
+      const der = data.subarray(offset(i), offset(i + 1));
+      const cert = new X509Certificate(rootCertificates[i]);
+      expect(cert.raw.equals(der)).toBe(true);
+      // Every entry is a currently-valid self-issued CA certificate.
+      expect(cert.ca).toBe(true);
+      expect(cert.issuer).toBe(cert.subject);
+      expect(new Date(cert.validTo).getTime()).toBeGreaterThan(Date.now());
+    }
   });
 });

@@ -20,6 +20,7 @@ test.skipIf(!isWindows)("translateUVErrorToE falls back to UNKNOWN for unmapped 
   expect(translateUVErrorToE(-4021)).toBe("EUNKNOWN"); // one past UV_ENOEXEC (-4022)
   expect(translateUVErrorToE(-4097)).toBe("EUNKNOWN"); // one past UV_ERRNO_MAX (-4096)
   expect(translateUVErrorToE(-4000)).toBe("EUNKNOWN"); // gap no UV_E* constant occupies
+  expect(translateUVErrorToE(-2)).toBe("EUNKNOWN"); // a negated errno is not a libuv code
   expect(translateUVErrorToE(-123456)).toBe("EUNKNOWN"); // negation outside u16 range
   expect(translateUVErrorToE(-2147483648)).toBe("EUNKNOWN"); // INT_MIN: wrapping negation, no overflow
 });

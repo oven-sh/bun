@@ -349,6 +349,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             });
                         } else if p.options.bundle
                             && name == b"id"
+                            && !identifier_opts.is_delete_target()
                             && identifier_opts.assign_target() == js_ast::AssignTarget::None
                         {
                             // inline module.id
@@ -356,6 +357,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return Some(p.new_expr(e_string_init(p.source.path.pretty), name_loc));
                         } else if p.options.bundle
                             && name == b"filename"
+                            && !identifier_opts.is_delete_target()
                             && identifier_opts.assign_target() == js_ast::AssignTarget::None
                         {
                             // inline module.filename
@@ -365,6 +367,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             );
                         } else if p.options.bundle
                             && name == b"path"
+                            && !identifier_opts.is_delete_target()
                             && identifier_opts.assign_target() == js_ast::AssignTarget::None
                         {
                             // inline module.path

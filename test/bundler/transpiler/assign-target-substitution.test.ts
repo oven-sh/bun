@@ -164,25 +164,59 @@ describe("bun build", () => {
     expect(exitCode).toBe(0);
   });
 
-  // With `--format=cjs`, a read of `import.meta.main`, `.dir` or `.url` inlines
-  // to a constant. A write keeps the property reference.
-  test.concurrent("--format=cjs keeps import.meta as an assignment target", async () => {
-    const { source, printed } = join(
+  // In a bundle, a read of `import.meta.main` in a non-entry module inlines to
+  // `false` and a read of `import.meta.hot` inlines to `undefined`. A write or
+  // delete keeps the property reference.
+  test.concurrent("keeps import.meta as an assignment or delete target in a bundle", async () => {
+    const lib = join(
       unchanged([
         ["assignment", `import.meta.main = 1;`],
         ["postfix increment", `import.meta.main++;`],
         ["array destructuring", `[import.meta.main] = [1];`],
-        ["dir", `import.meta.dir = 1;`],
-        ["url", `import.meta.url = 1;`],
-        ["read", `console.log(import.meta.main);`, `console.log(require.main == module);`],
+        ["delete", `delete import.meta.main;`],
+        ["hot", `import.meta.hot = 1;`],
+        ["read", `console.log(import.meta.main, import.meta.hot);`, `console.log(false, undefined);`],
       ]),
     );
-    using dir = tempDir("import-meta-target-build", { "entry.js": source });
+    using dir = tempDir("import-meta-target-build", {
+      "entry.js": `import "./lib.js";\nimport.meta.hot = 2;\nconsole.log(import.meta.hot);\n`,
+      "lib.js": lib.source,
+    });
 
-    const { stdout, stderr, exitCode } = await run([bunExe(), "build", "--format=cjs", "entry.js"], String(dir));
+    const { stdout, stderr, exitCode } = await run([bunExe(), "build", "entry.js"], String(dir));
 
     expect(stderr).toBe("");
-    expect(stdout).toBe(`// entry.js\n${printed}`);
+    expect(stdout).toBe(`// lib.js\n${lib.printed}\n// entry.js\nimport.meta.hot = 2;\nconsole.log(undefined);\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  // In a bundle, a read of `module.id`, `module.filename` or `module.path`
+  // inlines to a string. A delete keeps the property reference.
+  test.concurrent("keeps module.id, module.filename and module.path as delete targets in a bundle", async () => {
+    using dir = tempDir("module-id-target-build", {
+      "entry.js": `import "./lib.cjs";\n`,
+      "lib.cjs": `
+        delete module.id;
+        delete module.filename;
+        delete module.path;
+        module.id = 1;
+        console.log(module.id, module.filename, module.path);
+      `,
+    });
+
+    const { stdout, stderr, exitCode } = await run([bunExe(), "build", "entry.js"], String(dir));
+
+    expect(stderr).toBe("");
+    // The module body is printed inside the CommonJS wrapper.
+    expect(stdout).toContain(
+      [
+        `  delete module.id;`,
+        `  delete module.filename;`,
+        `  delete module.path;`,
+        `  module.id = 1;`,
+        `  console.log("lib.cjs", "lib.cjs", "lib.cjs");`,
+      ].join("\n"),
+    );
     expect(exitCode).toBe(0);
   });
 });

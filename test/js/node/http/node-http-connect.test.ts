@@ -119,7 +119,10 @@ describe.concurrent("HTTP server CONNECT", () => {
     });
   });
 
-  test("should handle data, drain, end and close events", async () => {
+  // The 'connect' handler writes 1 MiB chunks until write() returns false, ends
+  // the socket from the 'drain' listener and reports what both ends saw.
+  // `drainListener` picks whether every 'drain' is recorded or only the first.
+  async function writeUntilDrain(drainListener: "on" | "once") {
     // One write of this size is not enough to back up loopback, so the loop
     // below runs a few times before write() returns false.
     const chunk = Buffer.alloc(1024 * 1024, "bun");
@@ -155,7 +158,7 @@ describe.concurrent("HTTP server CONNECT", () => {
         proxyEvents.push("close");
         resolveProxyClosed();
       });
-      socket.once("drain", () => {
+      socket[drainListener]("drain", () => {
         proxyEvents.push("drain");
         socket.end();
       });
@@ -170,17 +173,33 @@ describe.concurrent("HTTP server CONNECT", () => {
     await Promise.all([proxyClosed, clientEnded]);
     const expected = Buffer.concat(Array.from({ length: writes }, () => chunk));
     const received = Buffer.concat(clientReceived);
-    expect({
+    return {
       connectRequest,
       proxyReceived: Buffer.concat(proxyReceived).toString(),
       proxyEvents,
       clientReceived: { length: received.length, equalsExpected: received.equals(expected) },
-    }).toEqual({
+      expectedLength: expected.length,
+    };
+  }
+
+  test("should handle data, drain, end and close events", async () => {
+    const { expectedLength, ...result } = await writeUntilDrain("once");
+    expect(result).toEqual({
       connectRequest: { url: "localhost:80", head: Buffer.alloc(0) },
       proxyReceived: "Hello World",
       proxyEvents: ["drain", "end", "close"],
-      clientReceived: { length: expected.length, equalsExpected: true },
+      clientReceived: { length: expectedLength, equalsExpected: true },
     });
+  });
+
+  // Node emits one 'drain' per write() that returned false. The socket handed to
+  // 'connect' emits it twice: NodeHTTPServerSocket.#onDrain in
+  // src/js/node/_http_server.ts runs the pending write callback, whose afterWrite
+  // already emitted 'drain', then emits 'drain' again. This test starts to fail
+  // once that second emit is gone: drop the `.failing` and the test above's `once`.
+  test.failing("should emit 'drain' once per write() that returned false, like Node", async () => {
+    const { proxyEvents } = await writeUntilDrain("on");
+    expect(proxyEvents).toEqual(["drain", "end", "close"]);
   });
 
   test("should handle CONNECT with invalid target", async () => {
@@ -208,15 +227,17 @@ describe.concurrent("HTTP server CONNECT", () => {
     await once(proxyServer.listen(0, "127.0.0.1"), "listening");
     const proxyAddress = proxyServer.address() as AddressInfo;
 
-    // A loopback port nothing listens on: the upstream connect fails with
-    // ECONNREFUSED and no DNS is involved.
-    const closed = net.createServer();
-    await once(closed.listen(0, "127.0.0.1"), "listening");
-    const target = `127.0.0.1:${(closed.address() as AddressInfo).port}`;
-    closed.close();
-    await once(closed, "close");
+    // A loopback port nothing listens on, so the upstream connect is refused
+    // without DNS. The established connection keeps the port bound, so no
+    // concurrent listen(0) can take it while the test runs.
+    await using sink = net.createServer();
+    await once(sink.listen(0, "127.0.0.1"), "listening");
+    const holder = net.connect((sink.address() as AddressInfo).port, "127.0.0.1");
+    await once(holder, "connect");
+    const target = `127.0.0.1:${holder.localPort}`;
 
     const result = await rawRequest(proxyAddress, `CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n\r\n`);
+    holder.destroy();
     expect(result).toEqual({ response: "HTTP/1.1 502 Bad Gateway\r\n\r\n", events: ["end"] });
   });
 
@@ -687,6 +708,8 @@ describe.concurrent("Should be compatible with node.js", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // TAP: one "ok N - name" line per test and per suite, then "# key value" totals.
+    // A failure's message and stack are YAML lines on stdout, so keep the whole
+    // output in the diff when the run did not pass.
     const lines = stdout.split("\n").map(line => line.trim());
     expect({
       results: lines.filter(line => /^(not )?ok \d+ - /.test(line)),
@@ -695,6 +718,7 @@ describe.concurrent("Should be compatible with node.js", () => {
       ),
       stderr,
       exitCode,
+      ...(exitCode !== 0 && { stdout }),
     }).toEqual({
       results: [
         "ok 1 - should work with proxy package",

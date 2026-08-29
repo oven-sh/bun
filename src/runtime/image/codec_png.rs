@@ -380,9 +380,7 @@ pub(crate) fn encode_indexed(
     })
 }
 
-/// 1-bit indexed (colour-type 3) PNG. `bits` is `h` rows of `w.div_ceil(8)`
-/// bytes, MSB first; a set bit selects `palette[1]`. tRNS only when an entry
-/// is not opaque.
+/// 1-bit indexed PNG: `bits` is `h` rows of `w.div_ceil(8)` bytes, MSB first; a set bit selects `palette[1]`.
 pub(crate) fn encode_bilevel(
     bits: &[u8],
     w: u32,

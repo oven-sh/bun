@@ -991,8 +991,7 @@ pub fn to_svg(qr: &QrCode, border: u32, light: [u8; 4], dark: [u8; 4]) -> Vec<u8
     out
 }
 
-/// 1 bit per pixel at `scale` px/module: `dim` rows of `dim.div_ceil(8)` bytes,
-/// MSB first, 1 = dark. Returns the bitmap and `dim`.
+/// 1 bit per pixel at `scale` px/module: `dim` rows of `dim.div_ceil(8)` bytes, MSB first, 1 = dark.
 pub fn to_bitmap(qr: &QrCode, border: u32, scale: u32) -> (Vec<u8>, u32) {
     let s = i32::from(qr.size());
     let b = border as i32;

@@ -523,6 +523,13 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     stmts.inside_wrapper_prefix.reset();
     stmts.inside_wrapper_suffix.clear();
 
+    // `--optimize-module-scopes`: this file's statements print inside their own block (see optimizeModuleScopes.rs).
+    if flags.wrap == WrapKind::None {
+        if let Some(block) = c.module_scope_blocks.get(source_index).and_then(|b| b.as_deref()) {
+            wrap_file_in_block(block, &mut stmts.all_stmts, temp_arena, c.options.minify_syntax);
+        }
+    }
+
     if c.options.minify_syntax {
         merge_adjacent_local_stmts(&mut stmts.all_stmts, temp_arena);
     }
@@ -997,3 +1004,113 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
 // Type aliases / re-imports for readability of match arms.
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
+
+/// Splits a file's top-level statements into the `import`/`export` statements that must stay at chunk top level and a
+/// single block holding everything else. Bindings in `block.hoisted` are the ones other code references: their
+/// `let`/`const`/`class` declarations become `var` in place, and their `function` declarations become
+/// `var f = function f() {}` at the top of the block (initialised before any statement of the block runs, as hoisting
+/// would have done). Everything else keeps its declaration and becomes block-scoped.
+fn wrap_file_in_block(
+    block: &crate::linker_context::optimize_module_scopes::ModuleScopeBlock,
+    all_stmts: &mut Vec<Stmt>,
+    temp_arena: &Bump,
+    minify_syntax: bool,
+) {
+    use bun_ast::StmtData;
+    let mut outside: Vec<Stmt> = Vec::new();
+    let mut hoisted_functions: Vec<Stmt> = Vec::new();
+    let mut inner: Vec<Stmt> = Vec::with_capacity(all_stmts.len() + 1);
+    inner.push(Stmt::empty()); // placeholder for the hoisted-function `var`, filled below
+    let is_hoisted = |ref_: Ref| block.hoisted.contains(&ref_);
+    for stmt in all_stmts.drain(..) {
+        match stmt.data {
+            StmtData::SImport(_)
+            | StmtData::SExportClause(_)
+            | StmtData::SExportFrom(_)
+            | StmtData::SExportStar(_)
+            | StmtData::SExportDefault(_)
+            | StmtData::SExportEquals(_) => outside.push(stmt),
+            StmtData::SFunction(f) if f.func.name.is_some_and(|n| is_hoisted(n.ref_)) => {
+                let name = f.func.name.unwrap();
+                // SAFETY: `f` is an arena-owned S::Function no other statement aliases; its G::Fn moves into the
+                // expression and the statement is dropped.
+                let func = unsafe { core::ptr::read(&raw const f.func) };
+                hoisted_functions.push(Stmt::allocate(
+                    temp_arena,
+                    S::Local {
+                        decls: G::DeclList::from_slice(&[G::Decl {
+                            binding: Binding::alloc(temp_arena, B::Identifier { r#ref: name.ref_ }, name.loc),
+                            value: Some(Expr::init(E::Function { func }, stmt.loc)),
+                        }]),
+                        ..Default::default()
+                    },
+                    stmt.loc,
+                ));
+            }
+            StmtData::SClass(mut class) if class.class.class_name.is_some_and(|n| is_hoisted(n.ref_)) => {
+                let name = class.class.class_name.unwrap();
+                let class_ref: StoreRef<E::Class> = StoreRef::from_bump(&mut class.class);
+                inner.push(Stmt::allocate(
+                    temp_arena,
+                    S::Local {
+                        decls: G::DeclList::from_slice(&[G::Decl {
+                            binding: Binding::alloc(temp_arena, B::Identifier { r#ref: name.ref_ }, name.loc),
+                            value: Some(Expr { data: bun_ast::ExprData::EClass(class_ref), loc: stmt.loc }),
+                        }]),
+                        ..Default::default()
+                    },
+                    stmt.loc,
+                ));
+            }
+            StmtData::SLocal(mut local) if !local.kind.is_using() => {
+                // Top-level `let`/`const` arrive here as `var` (select_local_kind). One that no other file references
+                // and that declared no real `var` goes back to being lexical, now scoped to the block.
+                let hoisted = local.decls.slice().iter().any(|d| binding_has_hoisted(&d.binding, block));
+                local.kind = if hoisted || !block.internal_stmt(&local) { S::Kind::KVar } else { S::Kind::KLet };
+                inner.push(stmt);
+            }
+            _ => inner.push(stmt),
+        }
+    }
+    if hoisted_functions.is_empty() {
+        inner.remove(0);
+    } else if hoisted_functions.len() == 1 {
+        inner[0] = hoisted_functions[0];
+    } else {
+        // One `var a = function a(){}, b = function b(){};`.
+        let mut decls: Vec<G::Decl> = Vec::with_capacity(hoisted_functions.len());
+        for stmt in &hoisted_functions {
+            if let StmtData::SLocal(local) = stmt.data {
+                for d in local.decls.slice() {
+                    decls.push(G::Decl { binding: d.binding, value: d.value });
+                }
+            }
+        }
+        inner[0] = Stmt::allocate(
+            temp_arena,
+            S::Local { decls: G::DeclList::move_from_list(decls), ..Default::default() },
+            bun_ast::Loc::EMPTY,
+        );
+    }
+    if minify_syntax {
+        // all_stmts is just the block after this, so adjacent declarations are merged here instead.
+        merge_adjacent_local_stmts(&mut inner, temp_arena);
+    }
+    let inner_stmts = bun_ast::StoreSlice::new_mut(temp_arena.alloc_slice_copy(&inner));
+    outside.push(Stmt::allocate(
+        temp_arena,
+        S::Block { stmts: inner_stmts, close_brace_loc: bun_ast::Loc::EMPTY },
+        bun_ast::Loc::EMPTY,
+    ));
+    *all_stmts = outside;
+}
+
+fn binding_has_hoisted(binding: &Binding, block: &crate::linker_context::optimize_module_scopes::ModuleScopeBlock) -> bool {
+    use bun_ast::b::B as Data;
+    match &binding.data {
+        Data::BIdentifier(id) => block.hoisted.contains(&id.r#ref),
+        Data::BArray(array) => array.items.slice().iter().any(|item| binding_has_hoisted(&item.binding, block)),
+        Data::BObject(object) => object.properties.slice().iter().any(|p| binding_has_hoisted(&p.value, block)),
+        Data::BMissing(_) => false,
+    }
+}

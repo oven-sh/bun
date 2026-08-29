@@ -473,6 +473,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--min-chunk-size <INT>           With --splitting, also fold side-effect-free chunks smaller than this many source bytes into a chunk more entry points load"
         ),
         parse_param!(
+            "--optimize-module-scopes         With --format=esm: emit each module's internal bindings in their own block scope (shorter minified names, smaller engine scopes)"
+        ),
+        parse_param!(
             "--public-path <STR>              A prefix to be appended to any import paths in bundled code"
         ),
         parse_param!(
@@ -2553,6 +2556,9 @@ fn parse_build_command_options(
         ctx.bundler_options.split_require = false;
     }
 
+    if args.flag(b"--optimize-module-scopes") {
+        ctx.bundler_options.optimize_module_scopes = true;
+    }
     if let Some(size_str) = args.option(b"--min-chunk-size") {
         let min_chunk_size = match strings::parse_int::<u64>(size_str, 10) {
             Ok(v) => v,

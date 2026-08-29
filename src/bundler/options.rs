@@ -1301,6 +1301,10 @@ pub struct BundleOptions<'a> {
     /// smaller than this many bytes into a chunk more entry points load.
     /// 0 disables that; chunks with identical load conditions always fold.
     pub min_chunk_size: u64,
+    /// ESM output: give each module's internal top-level bindings their own block scope in the emitted chunk (bindings
+    /// other modules reference stay at chunk scope), so the minifier can reuse short names per module and the engine
+    /// sees small per-module scopes instead of one with every binding in the chunk.
+    pub optimize_module_scopes: bool,
 
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
@@ -1498,6 +1502,7 @@ impl<'a> BundleOptions<'a> {
             repl_mode: self.repl_mode,
             css_chunking: self.css_chunking,
             min_chunk_size: self.min_chunk_size,
+            optimize_module_scopes: self.optimize_module_scopes,
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
             bytecode: self.bytecode,
@@ -1679,6 +1684,7 @@ impl<'a> BundleOptions<'a> {
             transform_options: std::sync::Arc::clone(&transform),
             css_chunking: false,
             min_chunk_size: 0,
+            optimize_module_scopes: false,
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
 

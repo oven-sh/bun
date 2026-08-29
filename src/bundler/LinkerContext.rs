@@ -127,6 +127,8 @@ pub struct LinkerContext<'a> {
     /// chunk that exports it and every chunk that imports it
     /// (`assign_cross_chunk_names`). Values live in the linker arena.
     pub(crate) cross_chunk_names: bun_collections::HashMap<bun_ast::Ref, &'static [u8]>,
+    /// `--optimize-module-scopes`: per source index, set for files whose statements print inside their own block.
+    pub(crate) module_scope_blocks: Vec<Option<Box<crate::linker_context::optimize_module_scopes::ModuleScopeBlock>>>,
 }
 
 // SAFETY: `LinkerContext` is shared across the worker pool via `each_ptr` /
@@ -161,6 +163,7 @@ impl<'a> Default for LinkerContext<'a> {
             framework: None,
             mangled_props: Default::default(),
             cross_chunk_names: Default::default(),
+            module_scope_blocks: Vec::new(),
         }
     }
 }
@@ -827,6 +830,7 @@ impl<'a> LinkerContext<'a> {
         }
 
         compute_cross_chunk_dependencies(self, &mut chunks)?;
+        self.compute_module_scope_blocks(&mut chunks)?;
 
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
             self.check_for_memory_corruption();
@@ -1302,6 +1306,8 @@ pub struct LinkerOptions {
     /// below this also fold into a chunk more entry points load (0 = off).
     /// See `merge_small_chunks`.
     pub(crate) min_chunk_size: u64,
+    /// See `BundleOptions::optimize_module_scopes`.
+    pub(crate) optimize_module_scopes: bool,
     pub(crate) source_maps: SourceMapOption,
     pub(crate) target: Target,
     pub(crate) compile_mode: CompileMode,
@@ -1345,6 +1351,7 @@ impl Default for LinkerOptions {
             footer: b"",
             css_chunking: false,
             min_chunk_size: 0,
+            optimize_module_scopes: false,
             source_maps: SourceMapOption::None,
             target: Target::Browser,
             compile_mode: CompileMode::None,

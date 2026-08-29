@@ -906,6 +906,11 @@ impl DeclaredSymbolList {
         self.entries.items::<"ref_", Ref>()
     }
 
+    /// Parallel to `refs()`: whether each was declared directly in the module scope.
+    pub fn is_top_level(&self) -> &[bool] {
+        self.entries.items::<"is_top_level", bool>()
+    }
+
     pub fn to_owned_slice(&mut self) -> DeclaredSymbolList {
         core::mem::take(self)
     }

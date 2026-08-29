@@ -145,6 +145,8 @@ pub mod js_bundler {
         pub(crate) css_chunking: bool,
         /// `minChunkSize`: see `BundleOptions::min_chunk_size`.
         pub(crate) min_chunk_size: u64,
+        /// `optimizeModuleScopes`: see `BundleOptions::optimize_module_scopes`.
+        pub(crate) optimize_module_scopes: bool,
         pub(crate) drop: StringSet,
         pub(crate) features: StringSet,
         pub(crate) throw_on_error: bool,
@@ -208,6 +210,7 @@ pub mod js_bundler {
                 metafile_markdown_path: OwnedString::default(),
                 css_chunking: false,
                 min_chunk_size: 0,
+                optimize_module_scopes: false,
                 drop: StringSet::default(),
                 features: StringSet::default(),
                 throw_on_error: true,
@@ -813,6 +816,10 @@ pub mod js_bundler {
                     )));
                 }
                 this.min_chunk_size = min_chunk_size;
+            }
+
+            if let Some(value) = config.get_boolean_loose(global_this, "optimizeModuleScopes")? {
+                this.optimize_module_scopes = value;
             }
 
             if let Some(minify) = config.get_truthy(global_this, "minify")? {

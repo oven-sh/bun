@@ -123,6 +123,9 @@ pub mod linker_context {
     #[path = "mergeSmallChunks.rs"]
     pub mod merge_small_chunks;
 
+    #[path = "optimizeModuleScopes.rs"]
+    pub mod optimize_module_scopes;
+
     #[path = "crossChunkNames.rs"]
     pub mod cross_chunk_names;
 

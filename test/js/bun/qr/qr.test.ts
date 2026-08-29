@@ -243,6 +243,10 @@ describe("Bun.QR", () => {
 
       const svg3 = Bun.QR.generate("x", { format: "svg", dark: 0x336699 });
       expect(svg3).toContain('fill="#336699"');
+
+      // An explicit a: 0 is fully transparent, not an unset alpha.
+      const svg4 = Bun.QR.generate("x", { format: "svg", light: { r: 255, g: 255, b: 255, a: 0 } });
+      expect(svg4).toContain('fill="#ffffff" fill-opacity="0.000"');
     });
 
     test("unparseable color throws", () => {
@@ -473,11 +477,13 @@ describe("Bun.QR", () => {
       expect(() => Bun.QR.generate("x", { scale: 2.5 })).toThrow(TypeError);
       expect(() => Bun.QR.generate("x", { mask: "3" as any })).toThrow(TypeError);
       expect(() => Bun.QR.parse({ matrix: new Uint8Array(21 * 21), size: "21" as any })).toThrow(TypeError);
-      // null is rejected like any other non-number.
-      expect(() => Bun.QR.generate("x", { minVersion: null as any })).toThrow(TypeError);
-      expect(() => Bun.QR.generate("x", { mask: null as any })).toThrow(TypeError);
-      // undefined is the same as absent.
-      expect(Bun.QR.generate("x", { minVersion: undefined, mask: undefined }).version).toBe(1);
+    });
+
+    test("null and undefined integer options mean the defaults", () => {
+      const auto = Bun.QR.generate("x");
+      expect(Bun.QR.generate("x", { minVersion: null as any, mask: null as any, border: null as any })).toEqual(auto);
+      expect(Bun.QR.generate("x", { minVersion: undefined, mask: undefined, border: undefined })).toEqual(auto);
+      expect(Bun.QR.parse({ matrix: auto.matrix, size: null as any }).text).toBe("x");
     });
 
     test("only the documented format and errorCorrection names are accepted", () => {

@@ -107,8 +107,18 @@ fn ecc_name(ecc: Ecc) -> &'static str {
     }
 }
 
-/// Reads an integer option. Absent, `undefined` or `NaN` yields `default`; a
-/// non-number or non-integer throws a TypeError; out of range throws a
+/// The value of an option that is set. Absent, `undefined` and `null` all
+/// mean "keep the default".
+fn option_value(
+    global: &JSGlobalObject,
+    object: JSValue,
+    name: &'static str,
+) -> JsResult<Option<JSValue>> {
+    Ok(object.get(global, name)?.filter(|v| !v.is_null()))
+}
+
+/// Reads an integer option. Unset or `NaN` yields `default`; any other
+/// non-number or a non-integer throws a TypeError; out of range throws a
 /// RangeError.
 fn int_option<T: bun_core::Integer>(
     global: &JSGlobalObject,
@@ -119,7 +129,7 @@ fn int_option<T: bun_core::Integer>(
     min: i128,
     max: i128,
 ) -> JsResult<T> {
-    let value = object.get(global, name)?.unwrap_or_default();
+    let value = option_value(global, object, name)?.unwrap_or_default();
     global.validate_integer_range::<T>(
         value,
         default,
@@ -142,7 +152,7 @@ fn optional_int_option<T: bun_core::Integer>(
     min: i128,
     max: i128,
 ) -> JsResult<Option<T>> {
-    let Some(value) = object.get(global, name)? else {
+    let Some(value) = option_value(global, object, name)? else {
         return Ok(None);
     };
     if value.get_number().is_some_and(f64::is_nan) {
@@ -160,16 +170,13 @@ fn optional_int_option<T: bun_core::Integer>(
     )?))
 }
 
-/// Absent, `undefined` and `null` keep the default; anything else is truthy-coerced.
+/// A set value is truthy-coerced.
 fn bool_option(
     global: &JSGlobalObject,
     value: JSValue,
     name: &'static str,
 ) -> JsResult<Option<bool>> {
-    Ok(value
-        .get(global, name)?
-        .filter(|v| !v.is_null())
-        .map(JSValue::to_boolean))
+    Ok(option_value(global, value, name)?.map(JSValue::to_boolean))
 }
 
 fn color_option(
@@ -177,12 +184,9 @@ fn color_option(
     value: JSValue,
     name: &'static str,
 ) -> JsResult<Option<RGBA>> {
-    let Some(v) = value.get(global, name)? else {
+    let Some(v) = option_value(global, value, name)? else {
         return Ok(None);
     };
-    if v.is_null() {
-        return Ok(None);
-    }
     let Some(color) = js_color_input_to_css_color(global, v)? else {
         return Err(global.throw_type_error(format_args!(
             "options.{name} must be a color accepted by Bun.color"

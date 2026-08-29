@@ -167,8 +167,8 @@ pub trait Taskable {
 
 /// A task whose queued pointer is a [`ThisPtr`](bun_ptr::ThisPtr) to
 /// `Target`, which keeps itself alive for the task; the dispatcher runs it or
-/// releases it through here. A zero-sized hop type per tag, declared with
-/// [`task_hop!`] next to `Target` so the ref protocol lives there.
+/// releases it through here. A zero-sized hop type per tag, declared next to
+/// `Target` with its own `unsafe impl` stating the ref protocol.
 ///
 /// # Safety
 /// `TAG` is dispatched (in `bun_runtime::dispatch`) to this impl and no other
@@ -190,34 +190,9 @@ pub unsafe trait TaskHop {
     }
 }
 
-/// Declares `$hop`, the [`TaskHop`] that `task_tag::$tag` dispatches to for
-/// `$target`, forwarding to `$run` / `$release`. The doc comment on the
-/// invocation is where `$target`'s liveness protocol for the queued task is
-/// stated.
-#[macro_export]
-macro_rules! task_hop {
-    ($(#[$m:meta])* $v:vis $hop:ident for $target:ty => $tag:ident; run = $run:expr; release_unrun = $release:expr $(;)?) => {
-        $(#[$m])*
-        $v struct $hop;
-        // SAFETY: see macro doc — one hop per tag; the invoker documents the liveness protocol.
-        unsafe impl $crate::TaskHop for $hop {
-            type Target = $target;
-            const TAG: $crate::TaskTag = $crate::task_tag::$tag;
-            #[inline]
-            fn run(this: ::bun_ptr::ThisPtr<$target>) -> $crate::JsResult<()> {
-                ($run)(this)
-            }
-            #[inline]
-            fn release_unrun(this: ::bun_ptr::ThisPtr<$target>) {
-                ($release)(this)
-            }
-        }
-    };
-}
-
 /// A task that owns its payload: queued as the `Box<Self>` leaked into
 /// [`Task::ptr`], handed back as that box when the dispatcher runs or
-/// releases it. Implement via [`boxed_task!`].
+/// releases it.
 ///
 /// # Safety
 /// `TAG` is dispatched (in `bun_runtime::dispatch`) to this impl and no other
@@ -240,30 +215,6 @@ pub unsafe trait BoxedTask: Sized {
     fn into_task(self: Box<Self>) -> Task {
         Task::new(Self::TAG, Box::into_raw(self).cast::<()>())
     }
-}
-
-/// Implements [`BoxedTask`] for `$ty` as the task `task_tag::$tag` dispatches
-/// to, forwarding to `$run` / `$release` / `$refused` (each `fn(Box<$ty>)`).
-#[macro_export]
-macro_rules! boxed_task {
-    ($ty:ty => $tag:ident; run = $run:expr; release_unrun = $release:expr; refused = $refused:expr $(;)?) => {
-        // SAFETY: see macro doc — one boxed task type per tag.
-        unsafe impl $crate::BoxedTask for $ty {
-            const TAG: $crate::TaskTag = $crate::task_tag::$tag;
-            #[inline]
-            fn run(self: ::std::boxed::Box<Self>) -> $crate::JsResult<()> {
-                ($run)(self)
-            }
-            #[inline]
-            fn release_unrun(self: ::std::boxed::Box<Self>) {
-                ($release)(self)
-            }
-            #[inline]
-            fn refused(self: ::std::boxed::Box<Self>) {
-                ($refused)(self)
-            }
-        }
-    };
 }
 
 impl TaskTag {
@@ -521,11 +472,16 @@ mod tests {
             DROPPED.fetch_add(1, Ordering::SeqCst);
         }
     }
-    crate::boxed_task! {
-        Payload => NapiFinalizerTask;
-        run = |_task: Box<Payload>| Ok(());
-        release_unrun = |_task: Box<Payload>| {};
-        refused = |_task: Box<Payload>| { REFUSED.fetch_add(1, Ordering::SeqCst); };
+    // SAFETY: test-only; never dispatched, so the borrowed tag cannot collide.
+    unsafe impl BoxedTask for Payload {
+        const TAG: TaskTag = task_tag::NapiFinalizerTask;
+        fn run(self: Box<Self>) -> crate::JsResult<()> {
+            Ok(())
+        }
+        fn release_unrun(self: Box<Self>) {}
+        fn refused(self: Box<Self>) {
+            REFUSED.fetch_add(1, Ordering::SeqCst);
+        }
     }
 
     #[test]

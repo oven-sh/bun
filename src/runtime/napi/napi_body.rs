@@ -1175,16 +1175,21 @@ pub struct napi_async_work {
     poll_ref: Cell<KeepAlive>,
 }
 
-// Pool side / JS side split as documented on the struct; the pool's reference
-// is dropped on the JS thread (`run_from_js` / `release_unrun`).
-bun_threading::shared_work_task!(napi_async_work, task);
+bun_core::intrusive_field!(napi_async_work, task: bun_threading::SharedWorkNode);
 
-bun_event_loop::task_hop! {
-    /// `task_tag::NapiAsyncWork`: the pool is done with a queued work; run its
-    /// `complete` on the JS thread. The queued task holds `completion_ref`.
-    pub(crate) AsyncWorkCompletion for napi_async_work => NapiAsyncWork;
-    run = napi_async_work::run_from_js;
-    release_unrun = napi_async_work::release_unrun;
+/// `task_tag::NapiAsyncWork`: the pool is done with a queued work; run its
+/// `complete` on the JS thread.
+pub(crate) struct AsyncWorkCompletion;
+// SAFETY: the only hop for `NapiAsyncWork`; the queued task holds `completion_ref`.
+unsafe impl TaskHop for AsyncWorkCompletion {
+    type Target = napi_async_work;
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::NapiAsyncWork;
+    fn run(this: ThisPtr<napi_async_work>) -> JsResult<()> {
+        napi_async_work::run_from_js(this)
+    }
+    fn release_unrun(this: ThisPtr<napi_async_work>) {
+        napi_async_work::release_unrun(this)
+    }
 }
 
 impl napi_async_work {
@@ -1269,7 +1274,14 @@ impl napi_async_work {
         complete(env.get(), status as napi_status, data);
         env.surface_exception(env.to_js())
     }
+}
 
+// SAFETY: the pool/JS split documented on the struct: `run_work_task` takes
+// `ticket`, races `status` atomically, reads `env`/`execute`/`data`, and sets
+// `concurrent_task`/`completion_ref`, which the JS thread leaves alone until the
+// completion arrives; the pool's reference rides that completion and is dropped
+// on the JS thread (`run_from_js` / `release_unrun`).
+unsafe impl bun_threading::SharedWorkTask for napi_async_work {
     /// Pool thread: run `execute` (unless the VM is already stopping, which
     /// cancels work it has not started, as Node's environment cleanup does
     /// with `uv_cancel`) and post the work back to the JS thread for
@@ -1700,21 +1712,33 @@ pub(crate) enum DispatchState {
     Pending,
 }
 
-bun_event_loop::task_hop! {
-    /// `task_tag::ThreadSafeFunction`: drain the queued calls on the JS thread.
-    /// The queued task holds `TsfnShared::dispatch_ref`.
-    pub(crate) TsfnDispatch for ThreadSafeFunction => ThreadSafeFunction;
-    run = ThreadSafeFunction::run_dispatch_task;
-    release_unrun = ThreadSafeFunction::release_dispatch_task;
+/// `task_tag::ThreadSafeFunction`: drain the queued calls on the JS thread.
+pub(crate) struct TsfnDispatch;
+// SAFETY: the only hop for `ThreadSafeFunction`; the queued task holds `TsfnShared::dispatch_ref`.
+unsafe impl TaskHop for TsfnDispatch {
+    type Target = ThreadSafeFunction;
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ThreadSafeFunction;
+    fn run(this: ThisPtr<ThreadSafeFunction>) -> JsResult<()> {
+        ThreadSafeFunction::run_dispatch_task(this)
+    }
+    fn release_unrun(this: ThisPtr<ThreadSafeFunction>) {
+        ThreadSafeFunction::release_dispatch_task(this)
+    }
 }
 
-bun_event_loop::task_hop! {
-    /// `task_tag::ThreadSafeFunctionFinalize`: the last thread reference is gone
-    /// and the queue drained; run the addon's finalizer and let the JS side go.
-    /// The queued task holds `TsfnJs::finalize_ref`.
-    pub(crate) TsfnFinalize for ThreadSafeFunction => ThreadSafeFunctionFinalize;
-    run = ThreadSafeFunction::run_finalize_task;
-    release_unrun = ThreadSafeFunction::release_finalize_task;
+/// `task_tag::ThreadSafeFunctionFinalize`: the last thread reference is gone
+/// and the queue drained; run the addon's finalizer and let the JS side go.
+pub(crate) struct TsfnFinalize;
+// SAFETY: the only hop for `ThreadSafeFunctionFinalize`; the queued task holds `TsfnJs::finalize_ref`.
+unsafe impl TaskHop for TsfnFinalize {
+    type Target = ThreadSafeFunction;
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ThreadSafeFunctionFinalize;
+    fn run(this: ThisPtr<ThreadSafeFunction>) -> JsResult<()> {
+        ThreadSafeFunction::run_finalize_task(this)
+    }
+    fn release_unrun(this: ThisPtr<ThreadSafeFunction>) {
+        ThreadSafeFunction::release_finalize_task(this)
+    }
 }
 
 /// Live `ThreadSafeFunction` allocations, process-wide.
@@ -2589,16 +2613,23 @@ pub(crate) struct NapiFinalizerTask {
     pub(crate) finalizer: Finalizer,
 }
 
-// `task_tag::NapiFinalizerTask`: run one deferred addon finalizer. One released
-// unrun (the loop stopped first) runs too: Node runs an addon's finalizers
-// during environment cleanup (script already forbidden), and an addon counts
-// on them (external buffers freed when a Worker exits). `Err` is left pending
-// for the release dispatcher's fold.
-bun_event_loop::boxed_task! {
-    NapiFinalizerTask => NapiFinalizerTask;
-    run = |task: Box<NapiFinalizerTask>| (*task).run_finalizer();
-    release_unrun = |task: Box<NapiFinalizerTask>| { let _ = (*task).run_finalizer(); };
-    refused = |task: Box<NapiFinalizerTask>| (*task).refused();
+// SAFETY: the only task type for `task_tag::NapiFinalizerTask`.
+unsafe impl BoxedTask for NapiFinalizerTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::NapiFinalizerTask;
+    /// Run one deferred addon finalizer.
+    fn run(self: Box<Self>) -> JsResult<()> {
+        (*self).run_finalizer()
+    }
+    /// One released unrun (the loop stopped first) runs too: Node runs an
+    /// addon's finalizers during environment cleanup (script already
+    /// forbidden), and an addon counts on them (external buffers freed when a
+    /// Worker exits). `Err` is left pending for the release dispatcher's fold.
+    fn release_unrun(self: Box<Self>) {
+        let _ = (*self).run_finalizer();
+    }
+    fn refused(self: Box<Self>) {
+        (*self).refused()
+    }
 }
 
 impl OwnedCleanupHook for NapiFinalizerTask {

@@ -42,8 +42,9 @@ pub unsafe trait IntrusiveWorkTask: bun_core::IntrusiveField<Task> {
 /// [`SharedWorkNode`]: [`WorkPool::schedule_shared`] moves one reference into
 /// the pool, and the pool hands that reference to
 /// [`run_work_task`](Self::run_work_task) on a pool thread, concurrently with
-/// whatever other holders still do to `T`. Implement via [`shared_work_task!`],
-/// which carries the contract.
+/// whatever other holders still do to `T`. Name the node's field with
+/// `bun_core::intrusive_field!(T, field: SharedWorkNode)` and write the
+/// `unsafe impl` yourself, stating the confinement below next to it.
 ///
 /// # Safety
 /// Every field of `T` is either confined to one side (the pool's
@@ -117,25 +118,6 @@ impl SharedWorkNode {
             )))
         }
     }
-}
-
-/// Implements [`SharedWorkTask`] for a refcounted struct that embeds a
-/// `$field: SharedWorkNode` and has an inherent
-/// `fn run_work_task(this: RefPtr<Self>)` (pool thread). The invocation is
-/// where the trait's contract is vouched for: say next to it which fields the
-/// pool side touches and where the pool's reference is dropped.
-#[macro_export]
-macro_rules! shared_work_task {
-    ($ty:ty, $field:ident) => {
-        ::bun_core::intrusive_field!($ty, $field: $crate::work_pool::SharedWorkNode);
-        // SAFETY: see macro doc — the invoker states the confinement at the call site.
-        unsafe impl $crate::work_pool::SharedWorkTask for $ty {
-            #[inline]
-            fn run_work_task(this: ::bun_ptr::RefPtr<Self>) {
-                <$ty>::run_work_task(this)
-            }
-        }
-    };
 }
 
 /// An [`IntrusiveWorkTask`] that the [`WorkPool`] takes ownership of by value
@@ -334,8 +316,10 @@ mod tests {
         task: SharedWorkNode,
         after: Cell<u32>,
     }
-    crate::shared_work_task!(Work, task);
-    impl Work {
+    bun_core::intrusive_field!(Work, task: SharedWorkNode);
+    // SAFETY: single-threaded test; `run_work_task` touches only `Cell`s the
+    // holder is not touching at that moment, and `Work` may drop anywhere.
+    unsafe impl SharedWorkTask for Work {
         fn run_work_task(this: bun_ptr::RefPtr<Self>) {
             this.after.set(this.before.get() + this.after.get());
             RUNS.fetch_add(1, Ordering::SeqCst);

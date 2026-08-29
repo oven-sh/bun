@@ -5003,10 +5003,7 @@ pub(crate) fn write_file_internal(
                         };
                         locked.readable.has()
                             || locked.on_start_streaming.is_some()
-                            || matches!(
-                                locked.producer,
-                                crate::webcore::streams::SourceHandle::FetchResponseBody(_)
-                            )
+                            || locked.producer.can_start_streaming()
                     };
                     if streamable {
                         // SAFETY: exclusive borrow scoped to the call (may run JS).

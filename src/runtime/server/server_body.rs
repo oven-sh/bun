@@ -632,16 +632,8 @@ impl AnyRoute {
         let Some(headers_js) = argument.get(init_ctx.global, b"headers")? else {
             return Ok(None);
         };
-        let fetch_headers = FetchHeaders::create_from_js(init_ctx.global, headers_js)?;
-        let _fh_guard = scopeguard::guard(fetch_headers, |fh| {
-            // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-            if let Some(h) = fh {
-                bun_opaque::opaque_deref_mut(h.as_ptr()).deref();
-            }
-        });
-
-        // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-        let headers_ref = fetch_headers.map(|p| bun_opaque::opaque_deref(p.as_ptr().cast_const()));
+        let fetch_headers = HeadersRef::create_from_js(init_ctx.global, headers_js)?;
+        let headers_ref = fetch_headers.as_deref();
         let route = Self::from_options(init_ctx.global, headers_ref, &mut path)?;
 
         if is_index_route {
@@ -1687,15 +1679,8 @@ where
 
             let mut data_value = JSValue::ZERO;
 
-            // if we converted a HeadersInit to a Headers object, we need to free it
-            let fetch_headers_to_deref: core::cell::Cell<Option<*mut FetchHeaders>> =
-                core::cell::Cell::new(None);
-            let _fh_guard = scopeguard::guard(&fetch_headers_to_deref, |cell| {
-                if let Some(fh) = cell.get() {
-                    // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-                    bun_opaque::opaque_deref_mut(fh).deref();
-                }
-            });
+            // Holds a Headers object converted from a HeadersInit until this returns.
+            let mut created_headers: Option<HeadersRef> = None;
 
             // Copied out of `options.headers` because `fast_remove` frees the
             // entry they would otherwise borrow.
@@ -1729,11 +1714,11 @@ where
                                 None => 'brk: {
                                     if headers_value.is_object() {
                                         if let Some(fetch_headers) =
-                                            FetchHeaders::create_from_js(global, headers_value)?
+                                            HeadersRef::create_from_js(global, headers_value)?
                                         {
-                                            fetch_headers_to_deref
-                                                .set(Some(fetch_headers.as_ptr()));
-                                            break 'brk fetch_headers.as_ptr();
+                                            break 'brk created_headers
+                                                .insert(fetch_headers)
+                                                .as_ptr();
                                         }
                                     }
                                     return Err(global.throw_invalid_arguments(format_args!(
@@ -1905,14 +1890,8 @@ where
             return Ok(JSValue::FALSE);
         }
         let mut data_value = JSValue::ZERO;
-        // Non-unit guard state: holds the temporarily-created FetchHeaders (if
-        // any) and derefs it on scope exit. Populated below via DerefMut.
-        let mut fetch_headers_to_deref = scopeguard::guard(None::<*mut FetchHeaders>, |fh| {
-            // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-            if let Some(h) = fh {
-                bun_opaque::opaque_deref_mut(h).deref()
-            }
-        });
+        // Holds a Headers object converted from a HeadersInit until this returns.
+        let mut created_headers: Option<HeadersRef> = None;
         let mut fetch_headers_to_use: Option<*mut FetchHeaders> = None;
 
         if let Some(opts) = optional {
@@ -1939,10 +1918,9 @@ where
                         None => 'brk: {
                             if headers_value.is_object() {
                                 if let Some(created) =
-                                    FetchHeaders::create_from_js(global, headers_value)?
+                                    HeadersRef::create_from_js(global, headers_value)?
                                 {
-                                    *fetch_headers_to_deref = Some(created.as_ptr());
-                                    break 'brk created.as_ptr();
+                                    break 'brk created_headers.insert(created).as_ptr();
                                 }
                             }
                             return Err(global.throw_invalid_arguments(format_args!(

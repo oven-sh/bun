@@ -293,10 +293,6 @@ impl FetchHeaders {
         })
     }
 
-    pub fn deref(&mut self) {
-        WebCore__FetchHeaders__deref(self)
-    }
-
     pub fn copy_to(&mut self, names: *mut StringPointer, values: *mut StringPointer, buf: *mut u8) {
         // SAFETY: caller guarantees names/values/buf are sized per a prior `count()` call
         unsafe { WebCore__FetchHeaders__copyTo(self, names, values, buf) }
@@ -397,9 +393,8 @@ impl core::ops::DerefMut for HeadersRef {
 impl Drop for HeadersRef {
     #[inline]
     fn drop(&mut self) {
-        // `self.0` is live; releasing our +1 ref via WebCore__FetchHeaders__deref.
-        // Explicit UFCS to avoid `core::ops::Deref::deref` resolution ambiguity.
-        // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-        FetchHeaders::deref(bun_opaque::opaque_deref_mut(self.0.as_ptr()));
+        // `FetchHeaders` is an opaque ZST FFI handle (S008); `self.0` is live and
+        // this is the release of our +1.
+        WebCore__FetchHeaders__deref(bun_opaque::opaque_deref_mut(self.0.as_ptr()));
     }
 }

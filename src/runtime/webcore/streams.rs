@@ -981,6 +981,12 @@ impl SourceHandle {
         }
     }
 
+    /// Whether [`start_streaming`](Self::start_streaming) would hand over a
+    /// buffer, i.e. the body can be realised as a stream right now.
+    pub fn can_start_streaming(&self) -> bool {
+        matches!(self, SourceHandle::FetchResponseBody(_))
+    }
+
     /// `Body::PendingValue` producer hook: the body is being realised as a
     /// `ByteStream`; hand over whatever is already buffered.
     pub fn start_streaming(&self) -> Option<crate::webcore::DrainResult> {

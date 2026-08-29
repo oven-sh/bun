@@ -2076,6 +2076,10 @@ mod tests {
         assert_eq!(Win32Error::FILE_NOT_FOUND.to_e(), E::NOENT);
         assert_eq!(UNMAPPED.to_e(), E::UNKNOWN);
         assert_eq!(Win32Error::SUCCESS.to_e(), E::UNKNOWN);
+        // `HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED)` unwraps; other HRESULTs do not.
+        assert_eq!(Win32Error::from_u32(0x8007_0005).to_e(), E::PERM);
+        assert_eq!(Win32Error::from_u32(0x8000_4005).to_e(), E::UNKNOWN);
+        assert_eq!(Win32Error::from_u32(5), Win32Error::ACCESS_DENIED);
         assert_eq!(
             Error::from_win32(UNMAPPED, Tag::open).get_errno(),
             E::UNKNOWN

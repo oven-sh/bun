@@ -1273,11 +1273,22 @@ impl Win32Error {
     pub const WSANO_DATA: Win32Error = Win32Error(11004);
     pub const WSA_QOS_RESERVED_PETYPE: Win32Error = Win32Error(11031);
 
-    /// `GetLastError()`. Win32 error codes fit in 16 bits; a larger
-    /// (HRESULT-shaped) value saturates to `0xFFFF`, which no code uses.
+    /// `GetLastError()` (see [`from_u32`](Self::from_u32)).
     #[inline]
     pub fn get() -> Win32Error {
-        Win32Error(u16::try_from(kernel32::GetLastError()).unwrap_or(u16::MAX))
+        Self::from_u32(kernel32::GetLastError() as u32)
+    }
+
+    /// Win32 error codes fit in 16 bits. An `HRESULT` that wraps one
+    /// (`FACILITY_WIN32`, `0x8007xxxx`) is unwrapped to it; any other larger
+    /// value saturates to `0xFFFF`, which no code uses.
+    #[inline]
+    pub const fn from_u32(code: u32) -> Win32Error {
+        if code <= u16::MAX as u32 || code & 0xFFFF_0000 == 0x8007_0000 {
+            Win32Error(code as u16)
+        } else {
+            Win32Error(u16::MAX)
+        }
     }
 
     #[inline]
@@ -1292,7 +1303,7 @@ impl Win32Error {
 
     #[inline]
     pub fn from_ntstatus(status: NTSTATUS) -> Win32Error {
-        Win32Error(u16::try_from(RtlNtStatusToDosError(status)).unwrap_or(u16::MAX))
+        Self::from_u32(RtlNtStatusToDosError(status) as u32)
     }
     /// Snake-cased alias for [`from_ntstatus`] (matches `bun_sys::windows`
     /// callers — `from_nt_status`).

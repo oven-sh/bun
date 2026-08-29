@@ -45,10 +45,9 @@ impl PackageManager {
 }
 
 /// The command the running child is.
-#[derive(Clone, Copy, PartialEq, Eq)]
 enum Step {
-    /// `git fetch` in the cached bare repository (clone task).
-    Fetch,
+    /// `git fetch` in this cached bare repository (clone task).
+    Fetch(bun_sys::Dir),
     /// `git clone --bare <url> <tmp>` (clone task).
     Clone,
     /// `git log -1 <committish>` (commit task).
@@ -347,8 +346,6 @@ pub(crate) struct GitSubprocess {
     step: Step,
     /// Clone URLs still to try, last first (https before ssh).
     urls: Vec<Vec<u8>>,
-    /// The cached bare repository that `Step::Fetch` refreshes.
-    repo_dir: Option<bun_sys::Dir>,
     /// Moves into the task's `Finalize`; `Drop` discards it otherwise.
     staging: Option<CacheStaging>,
     read_error: Option<bun_sys::Error>,
@@ -368,7 +365,6 @@ impl GitSubprocess {
             task,
             step: Step::Clone,
             urls: Vec::new(),
-            repo_dir: None,
             staging: None,
             read_error: None,
             process: None,
@@ -436,8 +432,7 @@ impl GitSubprocess {
                         &[&folder_name],
                     )
                     .to_vec();
-                    (*this).repo_dir = Some(dir);
-                    (*this).step = Step::Fetch;
+                    (*this).step = Step::Fetch(dir);
                     Self::spawn(this, &[b"-C", &path, b"fetch", b"--quiet"])
                 }
                 Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
@@ -821,7 +816,7 @@ impl GitSubprocess {
                 && (*this).read_error.is_none();
             // "remote: Repository not found." / "fatal: repository '<url>' does not exist"
             let not_found = !ok
-                && (*this).step == Step::Clone
+                && matches!((*this).step, Step::Clone)
                 && ((strings::contains(stderr, b"remote:")
                     && strings::contains(stderr, b"not")
                     && strings::contains(stderr, b"found"))
@@ -831,13 +826,9 @@ impl GitSubprocess {
             }
             let task = (*this).task.as_ptr();
             let name = Self::task_name(task);
-            match (*this).step {
-                Step::Fetch => {
+            match core::mem::replace(&mut (*this).step, Step::Clone) {
+                Step::Fetch(dir) => {
                     if ok {
-                        let dir = (*this)
-                            .repo_dir
-                            .take()
-                            .expect("fetch refreshed an open repo");
                         Self::finish_on_pool(this, Finalize::Repo(dir.into_raw()));
                     } else {
                         (*task).log.add_error_fmt(

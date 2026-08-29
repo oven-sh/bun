@@ -1,6 +1,6 @@
 import { AwsClient } from "aws4fetch";
 import { join, tmp } from "../src/fs";
-import { getBuild, getRelease, getSemver, getSha } from "../src/github";
+import { getBuild, getRelease, getSemver, getShaForRelease } from "../src/github";
 
 // The source of truth for the git sha is what's in the local build, extracted from features.json
 // NOT the git tag revision.
@@ -45,7 +45,10 @@ try {
 
 const latest = await getRelease();
 const release = await getRelease(tag);
-const full_commit_hash = await getSha(tag, "long");
+// For canary this is the commit the release's assets were built from, not
+// heads/main, so the bun.report purge-cache call below names the commit that
+// was actually uploaded.
+const full_commit_hash = await getShaForRelease(release, "long");
 console.log("Found release:", release.tag_name, "with commit hash:", full_commit_hash);
 
 console.log("Found build:", full_commit_hash);

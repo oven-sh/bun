@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { X509Certificate } from "node:crypto";
 import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
@@ -165,5 +165,68 @@ describe.skipIf(!isLinux)("tls.getCACertificates('system')", () => {
     const withExplicitDir = await systemFingerprints({ SSL_CERT_FILE: bundle, SSL_CERT_DIR: "/etc/ssl/certs" });
     expect(withDefaultDir[0]).toBe(fingerprint(fixtureCert("ca1")));
     expect(withDefaultDir).toEqual(withExplicitDir);
+  });
+});
+
+// The default store also trusts what X509_STORE_set_default_paths would: $SSL_CERT_FILE (else /etc/ssl/cert.pem) and
+// the $SSL_CERT_DIR (else /etc/ssl/certs) hash directory. The file is read lazily and deduplicated against the bundled
+// roots, so these pin that the same certificates are still trusted.
+describe.skipIf(isWindows)("default store and OpenSSL's default paths", () => {
+  const keys = join(import.meta.dir, "../test/fixtures/keys");
+  const ca1 = readFileSync(join(keys, "ca1-cert.pem"), "utf8");
+
+  async function connectWith(env: Record<string, string | undefined>) {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const tls = require("tls"), fs = require("fs");
+         const server = tls.createServer({ key: fs.readFileSync(${JSON.stringify(join(keys, "agent1-key.pem"))}), cert: fs.readFileSync(${JSON.stringify(join(keys, "agent1-cert.pem"))}) }, s => s.end());
+         server.listen(0, () => {
+           const socket = tls.connect({ port: server.address().port, host: "127.0.0.1", checkServerIdentity: () => undefined }, () => {
+             console.log("authorized");
+             socket.destroy();
+             server.close();
+           });
+           socket.on("error", e => { console.log(e.code); server.close(); });
+         });`,
+      ],
+      env: { ...bunEnv, SSL_CERT_FILE: "", SSL_CERT_DIR: "", NODE_USE_SYSTEM_CA: undefined, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return stdout.trim();
+  }
+
+  test("a private CA is not trusted without them", async () => {
+    expect(await connectWith({})).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+  });
+
+  // only: the CA alone. mixed: after and before bundled roots, which the loader skips as already trusted.
+  // bad: X509_load_cert_crl_file rejects the whole file when any block is bad, so nothing in it is trusted.
+  test.each([
+    ["only", "authorized"],
+    ["mixed", "authorized"],
+    ["bad", "UNABLE_TO_VERIFY_LEAF_SIGNATURE"],
+  ] as const)("a CA in $SSL_CERT_FILE (%s.pem) -> %s", async (file, expected) => {
+    const { rootCertificates } = await import("node:tls");
+    using dir = tempDir("default-ca-file", {
+      "only.pem": ca1,
+      "mixed.pem": rootCertificates.slice(0, 3).join("\n") + "\n" + ca1 + rootCertificates[3] + "\n",
+      "bad.pem": ca1 + "-----BEGIN CERTIFICATE-----\n!!!!\n-----END CERTIFICATE-----\n",
+    });
+    expect(await connectWith({ SSL_CERT_FILE: join(String(dir), `${file}.pem`) })).toBe(expected);
+  });
+
+  // `openssl x509 -subject_hash -in ca1-cert.pem` is 468820ba; the hash-dir lookup only opens <hash>.<n> names.
+  test.each([
+    ["468820ba.0", "authorized"],
+    ["ca1.pem", "UNABLE_TO_VERIFY_LEAF_SIGNATURE"],
+  ] as const)("a CA in the $SSL_CERT_DIR hash directory as %s -> %s", async (name, expected) => {
+    using dir = tempDir("default-ca-dir", { [name]: ca1 });
+    expect(await connectWith({ SSL_CERT_DIR: String(dir) })).toBe(expected);
   });
 });

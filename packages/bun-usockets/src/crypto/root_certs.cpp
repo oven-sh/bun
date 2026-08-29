@@ -3,6 +3,9 @@
 #include "./internal/internal.h"
 #include <mutex>
 #include <string.h>
+#include <string_view>
+#include <unordered_set>
+#include <vector>
 #include "./default_ciphers.h"
 
 // System-specific includes for certificate loading
@@ -142,6 +145,87 @@ STACK_OF(X509) *us_get_root_extra_cert_instances() {
   return root_extra_cert_instances;
 }
 
+// The file half of X509_STORE_set_default_paths ($SSL_CERT_FILE, else X509_get_default_cert_file(), usually
+// /etc/ssl/cert.pem), trusting exactly what X509_load_cert_crl_file would, but read once per process into a lazy set
+// (parsed per certificate on first use, shared by every store) rather than parsed whole into each store, and without
+// the certificates the bundled set already holds byte-for-byte — on most distros that is most of the file.
+struct us_openssl_default_cert_file {
+  X509_LAZY_CERT_SET *certs = nullptr;
+  STACK_OF(X509) *trusted = nullptr; // TRUSTED CERTIFICATE blocks carry auxiliary data the lazy set does not model
+  STACK_OF(X509_CRL) *crls = nullptr;
+};
+
+static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
+  static us_openssl_default_cert_file result;
+  static std::once_flag once;
+  std::call_once(once, []() {
+    const char *path = getenv(X509_get_default_cert_file_env());
+    if (path == nullptr) path = X509_get_default_cert_file();
+    BIO *in = BIO_new_file(path, "rb");
+    if (in == nullptr) {
+      ERR_clear_error();
+      return;
+    }
+
+    std::unordered_set<std::string_view> bundled;
+    bundled.reserve(BUNDLED_ROOT_CERT_COUNT);
+    for (size_t i = 0; i < BUNDLED_ROOT_CERT_COUNT; i++) {
+      bundled.emplace(reinterpret_cast<const char *>(kBundledRootCerts[i]), kBundledRootCertLens[i]);
+    }
+
+    std::vector<CRYPTO_BUFFER *> certs;
+    STACK_OF(X509) *trusted = sk_X509_new_null();
+    STACK_OF(X509_CRL) *crls = sk_X509_CRL_new_null();
+    bool ok = trusted != nullptr && crls != nullptr;
+    while (ok) {
+      char *name = nullptr, *header = nullptr;
+      uint8_t *data = nullptr;
+      long len = 0;
+      if (!PEM_read_bio(in, &name, &header, &data, &len)) {
+        // Running out of blocks is the normal end; anything else fails the whole file, as PEM_X509_INFO_read_bio does.
+        ok = ERR_GET_REASON(ERR_peek_last_error()) == PEM_R_NO_START_LINE;
+        break;
+      }
+      const uint8_t *p = data;
+      if (header[0] != '\0') {
+        // An encrypted block cannot be decrypted without a passphrase.
+        ok = false;
+      } else if (strcmp(name, PEM_STRING_X509) == 0 || strcmp(name, PEM_STRING_X509_OLD) == 0) {
+        if (!bundled.count(std::string_view(reinterpret_cast<const char *>(data), len))) {
+          CRYPTO_BUFFER *buf = CRYPTO_BUFFER_new(data, len, nullptr);
+          ok = buf != nullptr;
+          if (ok) certs.push_back(buf);
+        }
+      } else if (strcmp(name, PEM_STRING_X509_TRUSTED) == 0) {
+        X509 *cert = d2i_X509_AUX(nullptr, &p, len);
+        ok = cert != nullptr && (sk_X509_push(trusted, cert) || (X509_free(cert), false));
+      } else if (strcmp(name, PEM_STRING_X509_CRL) == 0) {
+        X509_CRL *crl = d2i_X509_CRL(nullptr, &p, len);
+        ok = crl != nullptr && (sk_X509_CRL_push(crls, crl) || (X509_CRL_free(crl), false));
+      }
+      OPENSSL_free(name);
+      OPENSSL_free(header);
+      OPENSSL_free(data);
+    }
+    BIO_free(in);
+    ERR_clear_error();
+
+    if (ok && !certs.empty()) {
+      result.certs = X509_LAZY_CERT_SET_new(certs.data(), certs.size());
+      ok = result.certs != nullptr;
+    }
+    for (CRYPTO_BUFFER *buf : certs) CRYPTO_BUFFER_free(buf);
+    if (!ok) {
+      sk_X509_pop_free(trusted, X509_free);
+      sk_X509_CRL_pop_free(crls, X509_CRL_free);
+      return;
+    }
+    result.trusted = trusted;
+    result.crls = crls;
+  });
+  return result;
+}
+
 // Single source of truth for the OS trust store. Loaded on first demand,
 // independent of --use-system-ca / NODE_USE_SYSTEM_CA, so that
 // tls.getCACertificates('system') matches Node.js (which always reads the
@@ -168,16 +252,32 @@ extern "C" X509_STORE *us_get_default_ca_store() {
     return NULL;
   }
 
-  if (!X509_STORE_set_default_paths(store)) {
-    X509_STORE_free(store);
-    return NULL;
-  }
-
   X509_LAZY_CERT_SET *bundled = us_get_bundled_root_cert_set();
   if (bundled == NULL || !X509_STORE_add_lazy_cert_set(store, bundled)) {
     X509_STORE_free(store);
     return NULL;
   }
+
+  // What X509_STORE_set_default_paths(store) trusts: the default certificate file (above) and the default hashed
+  // certificate directory, which BoringSSL already consults lazily per lookup.
+  const us_openssl_default_cert_file &file = us_get_openssl_default_cert_file();
+  if (file.certs != nullptr && !X509_STORE_add_lazy_cert_set(store, file.certs)) {
+    X509_STORE_free(store);
+    return NULL;
+  }
+  for (size_t i = 0; file.trusted != nullptr && i < sk_X509_num(file.trusted); i++) {
+    X509_STORE_add_cert(store, sk_X509_value(file.trusted, i));
+  }
+  for (size_t i = 0; file.crls != nullptr && i < sk_X509_CRL_num(file.crls); i++) {
+    X509_STORE_add_crl(store, sk_X509_CRL_value(file.crls, i));
+  }
+  X509_LOOKUP *hash_dir = X509_STORE_add_lookup(store, X509_LOOKUP_hash_dir());
+  if (hash_dir == NULL) {
+    X509_STORE_free(store);
+    return NULL;
+  }
+  X509_LOOKUP_add_dir(hash_dir, NULL, X509_FILETYPE_DEFAULT);
+  ERR_clear_error();
 
   STACK_OF(X509) *root_extra_cert_instances = us_get_root_extra_cert_instances();
   if (root_extra_cert_instances) {

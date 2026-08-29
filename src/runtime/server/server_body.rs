@@ -833,9 +833,7 @@ impl AnyRoute {
                         }
                     });
                     if let Some(h) = fetch_headers {
-                        // The route computes framing and range serving per
-                        // file, so a fixed user value is always wrong (same
-                        // strip as the static-route Response path).
+                        // The route computes framing and ranges per file.
                         use bun_jsc::HTTPHeaderName;
                         // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
                         let h = bun_opaque::opaque_deref_mut(h.as_ptr());

@@ -41,11 +41,8 @@ pub struct DirectoryRoute {
     /// Sum of `StatCacheEntry.path` capacities, for `memory_cost()`.
     stat_cache_path_bytes: Cell<usize>,
     /// User headers from `{ dir, headers }`, written onto every file response.
-    /// Framing and range headers were stripped at parse time; the route
-    /// computes those per file.
     headers: Headers,
-    /// A user `last-modified` header, parsed once at create time, replaces the
-    /// stat-derived time in precondition checks (mirrors `FileRoute`).
+    /// A user `last-modified` header, parsed once, for precondition checks.
     user_last_modified_ms: Option<u64>,
     has_content_type_header: bool,
     has_last_modified_header: bool,
@@ -103,8 +100,7 @@ impl DirectoryRoute {
         let user_last_modified_ms = match headers.get(b"last-modified") {
             Some(lm) => {
                 let date = bun_string_jsc::parse_date(&BunString::borrow_utf8(lm), global)?;
-                // Same rule as `FileRoute::last_modified_date`; `as u64`
-                // saturates a pre-1970 date to 0.
+                // Same rule as `FileRoute::last_modified_date`.
                 date.is_finite().then(|| date as u64)
             }
             None => None,
@@ -188,8 +184,7 @@ impl DirectoryRoute {
 
         let mut etag_buf = [0u8; 40];
         let weak_etag = format_weak_etag(&mut etag_buf, size, last_modified_ms);
-        // A user `etag` / `last-modified` header replaces the generated one,
-        // so preconditions must compare against the value the client saw.
+        // Preconditions compare against the validators the client saw.
         let etag: Option<&[u8]> = if this.has_etag_header {
             this.headers.get(b"etag").filter(|v| !v.is_empty())
         } else {
@@ -307,9 +302,7 @@ impl DirectoryRoute {
         });
     }
 
-    /// Write the user-supplied `{ headers }` onto a file response. Not called
-    /// for the 404 and 301 paths: those responses are routing outcomes, not
-    /// the served files the headers describe.
+    /// Write the user `{ headers }` onto a file response (404/301 skip them).
     fn write_user_headers(&self, resp: AnyResponse) {
         use bun_http_types::ETag::HeaderEntryColumns;
         let entries = self.headers.entries.slice();

@@ -467,7 +467,10 @@ impl<'h, T, const CAPACITY: usize> HiveSlot<'h, T, CAPACITY> {
         // SAFETY: `p` is the just-initialized slot; its only ref is the one
         // adopted here (checked), so the `RefPtr`'s release returns the slot.
         unsafe {
-            assert!(T::rc_has_one_ref(p.as_ptr()), "write_ref: value must start with one ref");
+            assert!(
+                T::rc_has_one_ref(p.as_ptr()),
+                "write_ref: value must start with one ref"
+            );
             bun_ptr::RefPtr::from_raw(p.as_ptr())
         }
     }

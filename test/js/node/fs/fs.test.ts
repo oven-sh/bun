@@ -4488,7 +4488,10 @@ describe("fs/promises", () => {
   const oracleRoot = resolve(import.meta.dir, "../");
   const oracleNode = nodeExe();
   type NodeDirent = { path: string; name: string };
-  const direntKey = (parentPath: string, name: string) => parentPath + path.sep + name;
+  // NUL cannot occur in a file name, so the key keeps the parentPath/name
+  // split visible: a wrong split would still join to the same path.
+  const direntKey = (parentPath: string, name: string) => parentPath + "\0" + name;
+  const thisFileKey = direntKey(import.meta.dir, path.basename(import.meta.path));
 
   async function nodeReaddir<T extends string | NodeDirent>(options: string): Promise<T[]> {
     await using proc = Bun.spawn({
@@ -4557,7 +4560,7 @@ describe("fs/promises", () => {
         nodeReaddir<NodeDirent>("{ withFileTypes: true, recursive: true }"),
       ]);
       const nodeKeys = node.map(v => direntKey(v.path, v.name));
-      expect(nodeKeys).toContain(import.meta.path);
+      expect(nodeKeys).toContain(thisFileKey);
       expectSameEntries(
         bun.map(v => direntKey(v.parentPath, v.name)),
         nodeKeys,
@@ -4573,7 +4576,7 @@ describe("fs/promises", () => {
       const bun = readdirSync(oracleRoot, { withFileTypes: true, recursive: true });
       const node = await pending;
       const nodeKeys = node.map(v => direntKey(v.path, v.name));
-      expect(nodeKeys).toContain(import.meta.path);
+      expect(nodeKeys).toContain(thisFileKey);
       expectSameEntries(
         bun.map(v => direntKey(v.parentPath, v.name)),
         nodeKeys,
@@ -5153,19 +5156,29 @@ it("createReadStream on a large file emits readable event correctly", async () =
   const stream = createReadStream(join(String(dir), "large.txt"));
   const { promise, resolve, reject } = Promise.withResolvers<void>();
   let bytes = 0;
-  let readableAfterEnd = 0;
   let ended = false;
+  let sawEof = false;
+  let readableAfterEof = 0;
   stream.on("readable", () => {
-    if (ended) readableAfterEnd++;
-    for (let chunk; (chunk = stream.read()) !== null; ) bytes += chunk.length;
+    // read() with no size returns everything buffered, so a null read is the
+    // end of the file. No 'readable' may follow it.
+    if (sawEof) readableAfterEof++;
+    const chunk = stream.read();
+    if (chunk === null) sawEof = true;
+    else bytes += chunk.length;
   });
   stream.on("end", () => (ended = true));
   stream.on("error", reject);
-  // 'close' follows 'end' (autoClose), so a 'readable' emitted after 'end'
-  // has fired by the time the stream closes.
+  // 'close' follows 'end' (autoClose), so any late 'readable' has fired by
+  // the time the stream closes.
   stream.on("close", resolve);
   await promise;
-  expect({ bytes, ended, readableAfterEnd }).toEqual({ bytes: 10 * 1024 * 1024, ended: true, readableAfterEnd: 0 });
+  expect({ bytes, ended, sawEof, readableAfterEof }).toEqual({
+    bytes: 10 * 1024 * 1024,
+    ended: true,
+    sawEof: true,
+    readableAfterEof: 0,
+  });
 });
 
 describe("fs.write", () => {
@@ -6986,14 +6999,16 @@ describe.concurrent("a throw from a node-style callback is an uncaughtException"
   });
 
   it("keeps a non-throwing callback in the same place in the event loop", async () => {
+    // Both are scheduled from inside the callback. A setImmediate scheduled
+    // from the main script races the thread pool (node loses that race too).
     const result = await runScript(`
       const fs = require("fs");
       const log = [];
       fs.stat(${file}, (err, st) => {
         log.push("fs-cb:" + (err === null) + ":" + st.isFile());
+        setImmediate(() => log.push("setImmediate"));
         process.nextTick(() => log.push("tick-from-fs-cb"));
       });
-      setImmediate(() => log.push("setImmediate"));
       process.on("exit", () => console.log(log.join(",")));
     `);
     expect(result).toEqual({ stdout: "fs-cb:true:true,tick-from-fs-cb,setImmediate", stderr: "", exitCode: 0 });

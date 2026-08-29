@@ -1452,16 +1452,10 @@ impl PostgresSQLConnection {
         self.requests.get().get(offset).map(RefPtr::this_ptr)
     }
 
-    /// Append `request`, taking the queue's ref on it. `false` on allocation
-    /// failure.
-    pub(crate) fn enqueue_request(&self, request: ThisPtr<PostgresSQLQuery>) -> bool {
-        self.requests.with_mut(|q| {
-            if q.try_reserve(1).is_err() {
-                return false;
-            }
-            q.push_back(RefPtr::from_this(request));
-            true
-        })
+    /// Append `request`, taking the queue's ref on it.
+    pub(crate) fn enqueue_request(&self, request: ThisPtr<PostgresSQLQuery>) {
+        self.requests
+            .with_mut(|q| q.push_back(RefPtr::from_this(request)));
     }
 
     /// If `request` is the FIFO head, pop it and drop the queue's ref on it

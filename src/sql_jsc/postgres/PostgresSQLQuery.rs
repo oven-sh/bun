@@ -499,10 +499,7 @@ impl PostgresSQLQuery {
             } else {
                 this.status.set(Status::Pending);
             }
-            if !connection.enqueue_request(this.this_ptr()) {
-                release_query_ref();
-                return Err(global_object.throw_out_of_memory());
-            }
+            connection.enqueue_request(this.this_ptr());
             if this.status.get() == Status::Pending {
                 connection.note_request_pending();
             }
@@ -755,10 +752,7 @@ impl PostgresSQLQuery {
             }
         }
 
-        if !connection.enqueue_request(this.this_ptr()) {
-            release_query_ref();
-            return Err(global_object.throw_out_of_memory());
-        }
+        connection.enqueue_request(this.this_ptr());
         if this.status.get() == Status::Pending {
             connection.note_request_pending();
         }

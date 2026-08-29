@@ -1,4 +1,4 @@
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_char, c_int, c_ulong, c_void};
 use core::ptr::NonNull;
 
 use bun_core::ZStr;
@@ -10,6 +10,16 @@ pub type TCCErrorFunc = Option<unsafe extern "C" fn(opaque: *mut c_void, msg: *c
 
 /// Typed error callback signature for a given context type.
 pub type ErrorFunc<Ctx> = unsafe extern "C" fn(ctx: *mut Ctx, msg: *const c_char);
+
+/// Raw C open callback signature; the contract is documented at `TCCOpenFunc` in libtcc.h.
+pub type TCCOpenFunc = Option<
+    unsafe extern "C" fn(
+        opaque: *mut c_void,
+        filename: *const c_char,
+        buf: *mut *const c_char,
+        len: *mut c_ulong,
+    ) -> c_int,
+>;
 
 // `libtcc.a` is only built where `cfg.tinycc` is true (`scripts/build/config.ts`):
 // not Android, not FreeBSD (the vendored fork doesn't support those targets).
@@ -49,6 +59,7 @@ tcc_externs! {
     fn tcc_new() -> *mut TCCState;
     fn tcc_delete(s: *mut TCCState);
     fn tcc_set_error_func(s: *mut TCCState, error_opaque: *mut c_void, error_func: TCCErrorFunc);
+    fn tcc_set_open_func(s: *mut TCCState, open_opaque: *mut c_void, open_func: TCCOpenFunc);
     // NOTE: tcc_get_error_func / tcc_get_error_opaque were removed from the libtcc public API
     // (not present in vendor/tinycc/libtcc.h). Do not declare them here —
     // referencing them would fail to link.
@@ -236,6 +247,12 @@ impl State {
         let opaque = error_opaque.map_or(core::ptr::null_mut(), |p| p.cast::<c_void>());
         // SAFETY: self is a valid *mut TCCState.
         unsafe { tcc_set_error_func(self, opaque, erased) }
+    }
+
+    /// Set the callback that serves source files and headers from memory (no opaque context).
+    pub fn set_open_func(&mut self, open_func: TCCOpenFunc) {
+        // SAFETY: self is a valid *mut TCCState.
+        unsafe { tcc_set_open_func(self, core::ptr::null_mut(), open_func) }
     }
 
     // NOTE: get_error_func / get_error_opaque wrappers removed — the underlying

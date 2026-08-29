@@ -1,7 +1,7 @@
 #![allow(unexpected_cfgs)] // `feature = "tinycc"` is a Phase-C placeholder; `bun_codegen_embed` is set via RUSTFLAGS in scripts/build/rust.ts.
 
 use core::cell::Cell;
-use core::ffi::{c_char, c_int, c_long, c_void};
+use core::ffi::{c_char, c_int, c_long, c_ulong, c_void};
 use core::ptr::NonNull;
 use std::io::Write as _;
 use std::sync::{Once, OnceLock};
@@ -308,6 +308,50 @@ impl Source {
         }
         Ok(())
     }
+}
+
+/// `TCCOpenFunc` that serves `/$bunfs/` sources and headers from the standalone module graph.
+unsafe extern "C" fn open_embedded_file(
+    _opaque: *mut c_void,
+    filename: *const c_char,
+    buf: *mut *const c_char,
+    len: *mut c_ulong,
+) -> c_int {
+    // SAFETY: TinyCC passes a NUL-terminated path.
+    let path = unsafe { ZStr::from_c_ptr(filename) }.as_bytes();
+    if !bun_standalone_graph::is_bun_standalone_file_path(path) {
+        return -1;
+    }
+    let Some(graph) = bun_standalone_graph::Graph::get_ref() else {
+        return -1;
+    };
+    // An embedded key can keep `..` verbatim (#32728), so the exact path goes first.
+    let mut normalized = bun_paths::path_buffer_pool::get();
+    let file = match graph.find_ref(path) {
+        Some(file) => file,
+        None => {
+            // TinyCC builds `/$bunfs/root/dir/../x.h` for `#include "../x.h"`.
+            let key = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+                b"/",
+                &mut normalized[..],
+                &[path],
+            );
+            match graph.find_ref(key) {
+                Some(file) => file,
+                None => return -1,
+            }
+        }
+    };
+    let contents = file.utf8_contents();
+    let Ok(contents_len) = c_ulong::try_from(contents.len()) else {
+        return -1;
+    };
+    // SAFETY: TinyCC passes valid out-pointers.
+    unsafe {
+        *buf = contents.as_ptr().cast::<c_char>();
+        *len = contents_len;
+    }
+    0
 }
 
 // ─── stdarg ─────────────────────────────────────────────────────────────────
@@ -646,6 +690,10 @@ impl CompileC {
         // SAFETY: `state_ptr` was just returned non-null by `TCC::State::init`;
         // we hold the only reference for the rest of this function.
         let state: &mut TCC::State = unsafe { &mut *state_ptr.as_ptr() };
+
+        if bun_standalone_graph::Graph::get_ref().is_some() {
+            state.set_open_func(Some(open_embedded_file));
+        }
 
         if let Some(compiler_rt_dir) = CompilerRT::dir() {
             if state.add_sys_include_path(compiler_rt_dir).is_err() {

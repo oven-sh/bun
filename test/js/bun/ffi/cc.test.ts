@@ -462,6 +462,244 @@ describe.skipIf(isASAN)("GC liveness of compiled symbols and callbacks", () => {
   });
 });
 
+// A C source imported `with { type: "file" }` or embedded with `--asset` and
+// shipped through `bun build --compile` lives in the embedded file system,
+// which TinyCC's open(2) cannot see. cc() serves those paths to TinyCC itself.
+describe.concurrent("cc() inside a bun build --compile executable", () => {
+  // The executable runs from an empty directory, so a header that TinyCC finds
+  // comes from the embedded file system and not from the source tree.
+  async function compileAndRun(dir: string, entry: string, ...buildArgs: string[]) {
+    const exe = path.join(dir, isWindows ? "app.exe" : "app");
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", entry, "--outfile", exe, ...buildArgs],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [buildStdout, buildStderr, buildExitCode] = await Promise.all([
+      build.stdout.text(),
+      build.stderr.text(),
+      build.exited,
+    ]);
+    expect({ buildStdout, buildStderr, buildExitCode }).toMatchObject({ buildExitCode: 0 });
+
+    const runDir = path.join(dir, "run");
+    mkdirSync(runDir);
+    await using proc = Bun.spawn({
+      cmd: [exe],
+      env: bunEnv,
+      cwd: runDir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  }
+
+  it("compiles an embedded source file", async () => {
+    using dir = tempDir("bun-ffi-cc-compile", {
+      "hello.c": /* c */ `
+        int hello() {
+          return 42;
+        }
+      `,
+      "hello.ts": /* ts */ `
+        import { cc } from "bun:ffi";
+        import source from "./hello.c" with { type: "file" };
+
+        const { symbols } = cc({
+          source,
+          symbols: { hello: { args: [], returns: "int" } },
+        });
+        console.log(symbols.hello());
+      `,
+    });
+
+    const [stdout, stderr, exitCode] = await compileAndRun(String(dir), "hello.ts");
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ stdout: "42\n", exitCode: 0 });
+  });
+
+  it("compiles several embedded source files and keeps their paths in __FILE__", async () => {
+    using dir = tempDir("bun-ffi-cc-compile-many", {
+      "add.c": /* c */ `
+        int add(int a, int b) {
+          return a + b;
+        }
+      `,
+      "where.c": /* c */ `
+        const char* where(void) {
+          return __FILE__;
+        }
+      `,
+      "main.ts": /* ts */ `
+        import { cc } from "bun:ffi";
+        import add from "./add.c" with { type: "file" };
+        import where from "./where.c" with { type: "file" };
+
+        const { symbols } = cc({
+          source: [add, where],
+          symbols: {
+            add: { args: ["int", "int"], returns: "int" },
+            where: { args: [], returns: "cstring" },
+          },
+        });
+        console.log(JSON.stringify({
+          sum: symbols.add(1, 2),
+          where: symbols.where().toString(),
+          embedded: where,
+        }));
+      `,
+    });
+
+    const [stdout, stderr, exitCode] = await compileAndRun(String(dir), "main.ts");
+
+    const result = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ result, stderr, exitCode }).toMatchObject({ result: { sum: 3 }, exitCode: 0 });
+    // TinyCC normalizes Windows separators to "/" in __FILE__.
+    expect(result.where).toBe(result.embedded.replaceAll("\\", "/"));
+    expect(result.embedded).toMatch(/where-[a-z0-9]+\.c$/);
+  });
+
+  // `--asset ./csrc` keeps the tree's relative paths, so quoted includes resolve
+  // next to the embedded source, including `..` segments.
+  it('resolves #include "..." between files embedded with --asset', async () => {
+    using dir = tempDir("bun-ffi-cc-compile-include", {
+      "csrc/hello.c": /* c */ `
+        #include "sibling.h"
+        #include "sub/deep.h"
+        int hello() {
+          return ANSWER + DEEP;
+        }
+        int has_sibling(void) {
+        #if __has_include("sibling.h") && !__has_include("missing.h")
+          return 1;
+        #else
+          return 0;
+        #endif
+        }
+      `,
+      "csrc/sibling.h": /* c */ `
+        #define ANSWER 40
+      `,
+      "csrc/sub/deep.h": /* c */ `
+        #include "../sibling.h"
+        #define DEEP 2
+      `,
+      "main.ts": /* ts */ `
+        import { cc } from "bun:ffi";
+        import path from "path";
+
+        const { symbols } = cc({
+          source: path.join(import.meta.dir, "csrc", "hello.c"),
+          symbols: {
+            hello: { args: [], returns: "int" },
+            has_sibling: { args: [], returns: "int" },
+          },
+        });
+        console.log(symbols.hello(), symbols.has_sibling());
+      `,
+    });
+
+    const [stdout, stderr, exitCode] = await compileAndRun(String(dir), "main.ts", "--asset", "./csrc");
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ stdout: "42 1\n", exitCode: 0 });
+  });
+
+  it("searches include directories embedded with --asset", async () => {
+    using dir = tempDir("bun-ffi-cc-compile-include-dir", {
+      "hello.c": /* c */ `
+        #include <answer.h>
+        int hello() {
+          return ANSWER;
+        }
+      `,
+      "headers/answer.h": /* c */ `
+        #define ANSWER 42
+      `,
+      "main.ts": /* ts */ `
+        import { cc } from "bun:ffi";
+        import path from "path";
+        import source from "./hello.c" with { type: "file" };
+
+        const { symbols } = cc({
+          source,
+          include: [path.join(import.meta.dir, "headers")],
+          symbols: { hello: { args: [], returns: "int" } },
+        });
+        console.log(symbols.hello());
+      `,
+    });
+
+    const [stdout, stderr, exitCode] = await compileAndRun(String(dir), "main.ts", "--asset", "./headers");
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ stdout: "42\n", exitCode: 0 });
+  });
+
+  // An out-of-root entry point keeps its `..` in the embedded name (#32728),
+  // and the lookup has to match that name byte for byte.
+  it("finds an embedded source whose path keeps a parent segment", async () => {
+    using dir = tempDir("bun-ffi-cc-compile-parent", {
+      "hello.c": /* c */ `
+        int hello() {
+          return 42;
+        }
+      `,
+      "app/index.ts": /* ts */ `
+        import { cc } from "bun:ffi";
+
+        const source = import.meta.dir + "/../hello.c";
+        const { symbols } = cc({
+          source,
+          symbols: { hello: { args: [], returns: "int" } },
+        });
+        console.log(symbols.hello(), source);
+      `,
+    });
+
+    const [stdout, stderr, exitCode] = await compileAndRun(
+      path.join(String(dir), "app"),
+      "./index.ts",
+      "../hello.c",
+      "--asset-naming=[dir]/[name].[ext]",
+    );
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    // import.meta.dir is `/$bunfs/root` (`B:\~BUN\root` on Windows) and the `..` stays in the path.
+    expect(stdout.replaceAll("\\", "/")).toMatch(/^42 .*\/root\/\.\.\/hello\.c\n$/);
+  });
+
+  // TinyCC's setjmp/longjmp error handling conflicts with ASan.
+  it.skipIf(isASAN)("reports errors against the embedded path", async () => {
+    using dir = tempDir("bun-ffi-cc-compile-error", {
+      "broken.c": /* c */ `
+        int broken() {
+          return 1 +;
+        }
+      `,
+      "main.ts": /* ts */ `
+        import { cc } from "bun:ffi";
+        import source from "./broken.c" with { type: "file" };
+
+        try {
+          cc({ source, symbols: { broken: { args: [], returns: "int" } } });
+          console.log("no error");
+        } catch (e) {
+          console.log(JSON.stringify({ message: e.message, source }));
+        }
+      `,
+    });
+
+    const [stdout, stderr, exitCode] = await compileAndRun(String(dir), "main.ts");
+
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    const result = JSON.parse(stdout);
+    expect(result.source).toMatch(/broken-[a-z0-9]+\.c$/);
+    expect(result.message).toStartWith(`1 errors while compiling ${result.source}\n`);
+    expect(result.message).toContain(`${result.source.replaceAll("\\", "/")}:3: error:`);
+  });
+});
+
 // va_arg on x86_64 SysV lowers to a call to __va_arg, which TinyCC expects
 // libtcc1 to provide; Bun replaces libtcc1 with src/runtime/ffi/libtcc1.c.
 // TinyCC's setjmp/longjmp error handling conflicts with ASan.

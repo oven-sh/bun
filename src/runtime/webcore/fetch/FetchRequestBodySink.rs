@@ -228,7 +228,8 @@ impl FetchRequestBodySink {
             Some(StreamError::Error(e)) => Some(e),
             _ => None,
         };
-        self.source.get_mut().close(sys_err);
+        let mut source = self.source.get();
+        source.close(sys_err);
     }
 
     pub fn end_from_js(&mut self, _global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {

@@ -184,11 +184,19 @@ impl FSWatchTask {
     }
 }
 
-bun_event_loop::boxed_task! {
-    FSWatchTask => FSWatchTask;
-    run = FSWatchTask::run;
-    release_unrun = FSWatchTask::release_unrun;
-    refused = FSWatchTask::release_unrun;
+// SAFETY: the only task type for `task_tag::FSWatchTask`; the queued
+// carrier owns the box (`ConcurrentTask::create_boxed`).
+unsafe impl bun_event_loop::BoxedTask for FSWatchTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FSWatchTask;
+    fn run(self: Box<Self>) -> bun_event_loop::JsResult<()> {
+        FSWatchTask::run(self)
+    }
+    fn release_unrun(self: Box<Self>) {
+        FSWatchTask::release_unrun(self)
+    }
+    fn refused(self: Box<Self>) {
+        FSWatchTask::release_unrun(self)
+    }
 }
 
 /// One `FSWatcher`'s end of a shared POSIX path watch: what the watcher

@@ -21,10 +21,7 @@ async function run(file: string, { args = [], cwd, env = {} }: Opts = {}): Promi
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
-    env: {
-      ...env,
-      ...bunEnv,
-    },
+    env: { ...bunEnv, ...env },
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

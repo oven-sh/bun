@@ -125,6 +125,7 @@ pub(crate) fn scan_imports_and_exports(
     let sorted_aliases: *mut [js_meta::SortedAndFilteredExportAliases] =
         meta.sorted_and_filtered_export_aliases;
     let cjs_export_copies: *mut [js_meta::CjsExportCopies] = meta.cjs_export_copies;
+    let module_exports_refs: *mut [Ref] = meta.module_exports_ref;
 
     {
         // Step 1: Figure out what modules must be CommonJS
@@ -529,6 +530,26 @@ pub(crate) fn scan_imports_and_exports(
             let exports_ref = col_ref!(exports_refs)[id];
             let module_ref = col_ref!(module_refs)[id];
 
+            // A compiled executable evaluates every embedded chunk as ESM, and a
+            // run-time `require()` of one returns its `"module.exports"` export
+            // when there is one. So the `module.exports` value of a CommonJS
+            // entry point gets a top-level binding that the entry point tail
+            // exports as `default` and `"module.exports"`
+            // (`generate_entry_point_tail_js`). For a CommonJS module converted
+            // to ESM exports that value is an object of getters, built only when
+            // there are exports and none of them is already `default`.
+            let binds_module_exports = is_entry_point
+                && output_format == Format::Esm
+                && this.options.compile_mode.is_executable()
+                && match wrap {
+                    WrapKind::Cjs => true,
+                    _ => {
+                        col_ref!(ast_flags_list)[id].contains(AstFlags::FORCE_CJS_TO_ESM)
+                            && !aliases.is_empty()
+                            && !aliases.iter().any(|alias| **alias == *b"default")
+                    }
+                };
+
             // Format the source identifier once into a reusable scratch so the
             // per-file `init_/exports_/module_` writes below are plain memcpys
             // instead of three trips through `core::fmt::write`.
@@ -567,6 +588,10 @@ pub(crate) fn scan_imports_and_exports(
                 {
                     count += "exports_".len() + ident_fmt_len;
                     count += "module_".len() + ident_fmt_len;
+                }
+
+                if binds_module_exports {
+                    count += ident_fmt_len + "_default".len();
                 }
 
                 break 'brk count;
@@ -612,6 +637,17 @@ pub(crate) fn scan_imports_and_exports(
                     );
                 }
                 col!(cjs_export_copies)[id] = copies;
+            }
+
+            if binds_module_exports {
+                let start = builder.len;
+                builder.append(ident);
+                builder.append(b"_default");
+                let end = builder.len;
+                let original_name = &builder.allocated_slice()[start..end];
+                col!(module_exports_refs)[id] =
+                    this.graph
+                        .generate_new_symbol(source_index, SymbolKind::Other, original_name);
             }
 
             // Use "init_*" for ESM wrappers instead of "require_*"

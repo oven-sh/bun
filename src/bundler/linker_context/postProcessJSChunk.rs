@@ -761,26 +761,61 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
         options::OutputFormat::Esm => {
             match flags.wrap {
                 crate::WrapKind::Cjs => {
-                    stmts.push(Stmt::alloc(
-                        // "export default require_foo();"
-                        S::ExportDefault {
-                            default_name: bun_ast::LocRef {
-                                loc: bun_ast::Loc::EMPTY,
-                                ref_: ast.wrapper_ref,
-                            },
-                            value: StmtOrExpr::Expr(Expr::init(
-                                E::Call {
-                                    target: Expr::init_identifier(
-                                        ast.wrapper_ref,
-                                        bun_ast::Loc::EMPTY,
-                                    ),
-                                    ..Default::default()
-                                },
-                                bun_ast::Loc::EMPTY,
-                            )),
+                    let require_call = Expr::init(
+                        E::Call {
+                            target: Expr::init_identifier(ast.wrapper_ref, bun_ast::Loc::EMPTY),
+                            ..Default::default()
                         },
                         bun_ast::Loc::EMPTY,
-                    ));
+                    );
+                    let module_exports_ref =
+                        c.graph.meta.items_module_exports_ref()[source_index as usize];
+                    if module_exports_ref.is_valid() {
+                        // A compiled executable evaluates this chunk as ESM. Its
+                        // `require()` returns the `"module.exports"` export when
+                        // there is one, so a run-time `require()` of this entry
+                        // point gets `module.exports` instead of the namespace.
+                        //
+                        //   var foo_default = require_foo();
+                        //   export { foo_default as default, foo_default as "module.exports" };
+                        stmts.push(Stmt::alloc(
+                            S::Local {
+                                decls: G::DeclList::from_slice(&[G::Decl {
+                                    binding: Binding::alloc(
+                                        temp_arena,
+                                        B::Identifier {
+                                            r#ref: module_exports_ref,
+                                        },
+                                        bun_ast::Loc::EMPTY,
+                                    ),
+                                    value: Some(require_call),
+                                }]),
+                                ..Default::default()
+                            },
+                            bun_ast::Loc::EMPTY,
+                        ));
+                        let items: &mut [bun_ast::ClauseItem] = arena
+                            .alloc_slice_fill_iter(module_exports_clause_items(module_exports_ref));
+                        stmts.push(Stmt::alloc(
+                            S::ExportClause {
+                                items: bun_ast::StoreSlice::new_mut(items),
+                                is_single_line: false,
+                            },
+                            bun_ast::Loc::EMPTY,
+                        ));
+                    } else {
+                        // "export default require_foo();"
+                        stmts.push(Stmt::alloc(
+                            S::ExportDefault {
+                                default_name: bun_ast::LocRef {
+                                    loc: bun_ast::Loc::EMPTY,
+                                    ref_: ast.wrapper_ref,
+                                },
+                                value: StmtOrExpr::Expr(require_call),
+                            },
+                            bun_ast::Loc::EMPTY,
+                        ));
+                    }
                 }
                 _ => {
                     if flags.wrap == crate::WrapKind::Esm && ast.wrapper_ref.is_valid() {
@@ -986,6 +1021,52 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                         }
 
                         let own_len = items.len();
+
+                        // A CommonJS module that the bundler converted to ESM exports
+                        // has no `module.exports` object. Code that `import()`s or
+                        // `require()`s it may expect one, so build an object with a
+                        // getter per statically known export. This is kind of similar
+                        // to what Node.js does.
+                        let module_exports_ref =
+                            c.graph.meta.items_module_exports_ref()[source_index as usize];
+                        let mut synthetic_default: Option<Expr> = (!had_default_export
+                            && own_len > 0
+                            && (module_exports_ref.is_valid()
+                                || flags.needs_synthetic_default_export))
+                            .then(|| synthetic_default_export_object(arena, &items[..own_len]));
+
+                        if module_exports_ref.is_valid() {
+                            // In a compiled executable, `require()` of this chunk
+                            // returns the `"module.exports"` export and `import()`
+                            // reads `default`, so the object gets a binding that is
+                            // exported under both names.
+                            //
+                            //   var foo_default = { get a() { return a; } };
+                            //   export { a, foo_default as default, foo_default as "module.exports" };
+                            debug_assert!(synthetic_default.is_some());
+                            if let Some(value) = synthetic_default.take() {
+                                stmts.push(Stmt::alloc(
+                                    S::Local {
+                                        decls: G::DeclList::from_slice(&[G::Decl {
+                                            binding: Binding::alloc(
+                                                temp_arena,
+                                                B::Identifier {
+                                                    r#ref: module_exports_ref,
+                                                },
+                                                bun_ast::Loc::EMPTY,
+                                            ),
+                                            value: Some(value),
+                                        }]),
+                                        ..Default::default()
+                                    },
+                                    bun_ast::Loc::EMPTY,
+                                ));
+                                items.extend(
+                                    module_exports_clause_items(module_exports_ref).into_iter(),
+                                );
+                            }
+                        }
+
                         items.extend(cross_chunk_exports.iter().map(|item| bun_ast::ClauseItem {
                             alias: item.alias,
                             alias_loc: item.alias_loc,
@@ -993,8 +1074,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                             original_name: item.original_name,
                         }));
                         // arena-owned `*mut [ClauseItem]` — move the
-                        // collected Vec into the linker arena. The arena slice is also iterated
-                        // below for the synthetic-default-export path.
+                        // collected Vec into the linker arena.
                         let items: &mut [bun_ast::ClauseItem] = arena.alloc_slice_fill_iter(items);
                         stmts.push(Stmt::alloc(
                             S::ExportClause {
@@ -1003,76 +1083,15 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                             },
                             bun_ast::Loc::EMPTY,
                         ));
-                        let items = &items[..own_len];
 
-                        if flags.needs_synthetic_default_export
-                            && !had_default_export
-                            && !items.is_empty()
-                        {
-                            let mut properties = G::PropertyList::init_capacity(items.len());
-                            let getter_fn_body: &mut [Stmt] =
-                                arena.alloc_slice_fill_default(items.len());
-                            let mut remain_getter_fn_body = &mut getter_fn_body[..];
-                            for export_item in items.iter() {
-                                let (fn_body, rest) = remain_getter_fn_body.split_at_mut(1);
-                                remain_getter_fn_body = rest;
-                                fn_body[0] = Stmt::alloc(
-                                    S::Return {
-                                        value: Some(Expr::init(
-                                            E::Identifier {
-                                                ref_: export_item.name.ref_,
-                                                ..Default::default()
-                                            },
-                                            export_item.name.loc,
-                                        )),
-                                    },
-                                    bun_ast::Loc::EMPTY,
-                                );
-                                VecExt::append(
-                                    &mut properties,
-                                    G::Property {
-                                        key: Some(Expr::init(
-                                            E::String {
-                                                // SAFETY: alias is an arena `*const [u8]`; never null.
-                                                data: export_item.alias.slice().into(),
-                                                is_utf16: false,
-                                                ..Default::default()
-                                            },
-                                            export_item.alias_loc,
-                                        )),
-                                        value: Some(Expr::init(
-                                            E::Function {
-                                                func: G::Fn {
-                                                    body: G::FnBody {
-                                                        loc: bun_ast::Loc::EMPTY,
-                                                        stmts: bun_ast::StoreSlice::new_mut(
-                                                            fn_body,
-                                                        ),
-                                                    },
-                                                    ..Default::default()
-                                                },
-                                            },
-                                            export_item.alias_loc,
-                                        )),
-                                        kind: G::PropertyKind::Get,
-                                        flags: bun_ast::Flags::Property::IsMethod.into(),
-                                        ..Default::default()
-                                    },
-                                );
-                            }
+                        if let Some(value) = synthetic_default {
                             stmts.push(Stmt::alloc(
                                 S::ExportDefault {
                                     default_name: bun_ast::LocRef {
                                         ref_: Ref::NONE,
                                         loc: bun_ast::Loc::EMPTY,
                                     },
-                                    value: StmtOrExpr::Expr(Expr::init(
-                                        E::Object {
-                                            properties,
-                                            ..Default::default()
-                                        },
-                                        bun_ast::Loc::EMPTY,
-                                    )),
+                                    value: StmtOrExpr::Expr(value),
                                 },
                                 bun_ast::Loc::EMPTY,
                             ));
@@ -1203,4 +1222,81 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
         // The exports were recorded straight into the chunk's ModuleInfo above.
         module_info: None,
     }
+}
+
+/// `foo_default as default, foo_default as "module.exports"`: the two export
+/// names under which a compiled executable's entry point tail exposes the
+/// `module.exports` value of a CommonJS entry point (`js_meta.module_exports_ref`).
+fn module_exports_clause_items(module_exports_ref: Ref) -> [bun_ast::ClauseItem; 2] {
+    let aliases: [&[u8]; 2] = [b"default", b"module.exports"];
+    aliases.map(|alias| bun_ast::ClauseItem {
+        name: bun_ast::LocRef {
+            ref_: module_exports_ref,
+            loc: bun_ast::Loc::EMPTY,
+        },
+        alias: bun_ast::StoreStr::new(alias),
+        alias_loc: bun_ast::Loc::EMPTY,
+        ..Default::default()
+    })
+}
+
+/// `{ get a() { return a; }, ... }`: one getter per export clause item, the shape
+/// `module.exports` would have had for a CommonJS module that the bundler
+/// converted to ESM exports.
+fn synthetic_default_export_object(arena: &Arena, items: &[bun_ast::ClauseItem]) -> Expr {
+    let mut properties = G::PropertyList::init_capacity(items.len());
+    let getter_fn_body: &mut [Stmt] = arena.alloc_slice_fill_default(items.len());
+    let mut remain_getter_fn_body = &mut getter_fn_body[..];
+    for export_item in items.iter() {
+        let (fn_body, rest) = remain_getter_fn_body.split_at_mut(1);
+        remain_getter_fn_body = rest;
+        fn_body[0] = Stmt::alloc(
+            S::Return {
+                value: Some(Expr::init(
+                    E::Identifier {
+                        ref_: export_item.name.ref_,
+                        ..Default::default()
+                    },
+                    export_item.name.loc,
+                )),
+            },
+            bun_ast::Loc::EMPTY,
+        );
+        VecExt::append(
+            &mut properties,
+            G::Property {
+                key: Some(Expr::init(
+                    E::String {
+                        // SAFETY: alias is an arena `*const [u8]`; never null.
+                        data: export_item.alias.slice().into(),
+                        is_utf16: false,
+                        ..Default::default()
+                    },
+                    export_item.alias_loc,
+                )),
+                value: Some(Expr::init(
+                    E::Function {
+                        func: G::Fn {
+                            body: G::FnBody {
+                                loc: bun_ast::Loc::EMPTY,
+                                stmts: bun_ast::StoreSlice::new_mut(fn_body),
+                            },
+                            ..Default::default()
+                        },
+                    },
+                    export_item.alias_loc,
+                )),
+                kind: G::PropertyKind::Get,
+                flags: bun_ast::Flags::Property::IsMethod.into(),
+                ..Default::default()
+            },
+        );
+    }
+    Expr::init(
+        E::Object {
+            properties,
+            ..Default::default()
+        },
+        bun_ast::Loc::EMPTY,
+    )
 }

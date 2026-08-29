@@ -126,6 +126,11 @@ pub mod js_meta {
         pub sorted_and_filtered_export_aliases: SortedAndFilteredExportAliases,
         pub top_level_symbol_to_parts_overlay: TopLevelSymbolToParts,
         pub cjs_export_copies: CjsExportCopies,
+        /// A CommonJS entry point of a `--compile` ESM build binds its
+        /// `module.exports` value to this top-level symbol so the chunk can
+        /// export it as both `default` and `"module.exports"`
+        /// (`generate_entry_point_tail_js`). `Ref::NONE` otherwise.
+        pub module_exports_ref: Ref,
         pub wrapper_part_index: Index,
         pub flags: Flags,
     }
@@ -140,6 +145,7 @@ pub mod js_meta {
                 sorted_and_filtered_export_aliases: AstAlloc::vec(),
                 top_level_symbol_to_parts_overlay: TopLevelSymbolToParts::default(),
                 cjs_export_copies: AstAlloc::vec(),
+                module_exports_ref: Ref::NONE,
                 wrapper_part_index: Index::default(),
                 flags: Flags::default(),
             }
@@ -155,6 +161,7 @@ pub mod js_meta {
             sorted_and_filtered_export_aliases: SortedAndFilteredExportAliases,
             top_level_symbol_to_parts_overlay: TopLevelSymbolToParts,
             cjs_export_copies: CjsExportCopies,
+            module_exports_ref: Ref,
             wrapper_part_index: Index,
             flags: Flags,
         }

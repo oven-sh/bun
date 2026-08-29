@@ -820,7 +820,7 @@ mod windows_impl {
                 rc
             );
 
-            if let Some(err) = rc.err_enum_e() {
+            if let Some(err) = rc.errno() {
                 // SAFETY: `this` is live.
                 if err == sys::E::NOENT && unsafe { (*this).mkdirp_if_not_exists } {
                     // cleanup the request so we can reuse it later.

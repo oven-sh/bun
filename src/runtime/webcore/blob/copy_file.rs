@@ -1810,7 +1810,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
     let rc = this.io_request.result;
 
     bun_sys::syslog!("uv_fs_copyfile() = {}", rc);
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.errno() {
         // ENOENT from uv_fs_copyfile can mean either the source file or the
         // destination directory is missing. Disambiguate so a missing source
         // rejects directly instead of entering the mkdirp+retry path. Only an

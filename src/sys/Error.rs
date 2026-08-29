@@ -452,10 +452,10 @@ impl bun_core::output::ErrName for &Error {
 #[cfg(windows)]
 pub trait ReturnCodeExt: Sized {
     /// `Some(errno)` when the return code is negative; `None` on success.
-    fn err_enum_e(self) -> Option<crate::E>;
+    fn errno(self) -> Option<crate::E>;
     #[inline]
     fn to_error(self, syscall_tag: Tag) -> Option<Error> {
-        self.err_enum_e().map(|e| Error::from_code(e, syscall_tag))
+        self.errno().map(|e| Error::from_code(e, syscall_tag))
     }
     #[inline]
     fn to_result(self, syscall_tag: Tag) -> crate::Result<()> {
@@ -468,14 +468,14 @@ pub trait ReturnCodeExt: Sized {
 #[cfg(windows)]
 impl ReturnCodeExt for crate::windows::libuv::ReturnCode {
     #[inline]
-    fn err_enum_e(self) -> Option<crate::E> {
+    fn errno(self) -> Option<crate::E> {
         (self.int() < 0).then(|| crate::windows::translate_uv_error_to_e(self.int()))
     }
 }
 #[cfg(windows)]
 impl ReturnCodeExt for crate::windows::libuv::ReturnCodeI64 {
     #[inline]
-    fn err_enum_e(self) -> Option<crate::E> {
+    fn errno(self) -> Option<crate::E> {
         (self.int() < 0).then(|| crate::windows::translate_uv_error_to_e(self.int() as c_int))
     }
 }

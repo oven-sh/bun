@@ -1132,7 +1132,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         let mut json_fds: [uv::uv_file; 2] = [0; 2];
         // SAFETY: FFI — `json_fds` is a 2-element out-array; flags are valid.
         let pipe_rc = unsafe { uv::uv_pipe(&mut json_fds, 0, uv::UV_NONBLOCK_PIPE as i32) };
-        if let Some(e) = pipe_rc.err_enum_e() {
+        if let Some(e) = pipe_rc.errno() {
             ipc_output_fds[0].close();
             ipc_output_fds[1].close();
             return Err(bun_errno::from_errno(e as i32).into());

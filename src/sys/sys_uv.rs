@@ -111,7 +111,7 @@ pub fn open(file_path: &ZStr, c_flags: i32, perm_: Mode) -> Result<Fd> {
         perm,
         rc.int()
     );
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.errno() {
         Result::Err(Error::new(errno, Tag::open).with_path(file_path.as_bytes()))
     } else {
         Result::Ok(Fd::from_uv(req.result.to_fd()))
@@ -137,7 +137,7 @@ pub fn mkdir(file_path: &ZStr, flags: Mode) -> Result<()> {
         flags,
         rc.int()
     );
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.errno() {
         Result::Err(Error::new(errno, Tag::mkdir).with_path(file_path.as_bytes()))
     } else {
         Result::Ok(())
@@ -164,7 +164,7 @@ pub fn chmod(file_path: &ZStr, flags: Mode) -> Result<()> {
         flags,
         rc.int()
     );
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.errno() {
         Result::Err(Error::new(errno, Tag::chmod).with_path(file_path.as_bytes()))
     } else {
         Result::Ok(())
@@ -178,7 +178,7 @@ pub fn fchmod(fd: Fd, flags: Mode) -> Result<()> {
     let rc = unsafe { uv::uv_fs_fchmod(uv::Loop::get(), &mut *req, uv_fd, flags as c_int, None) };
 
     log!("uv fchmod({}, {}) = {}", uv_fd, flags, rc.int());
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.errno() {
         Result::Err(Error::new(errno, Tag::fchmod).with_fd(fd))
     } else {
         Result::Ok(())
@@ -199,7 +199,7 @@ pub fn statfs(file_path: &ZStr) -> Result<StatFS> {
         BStr::new(file_path.as_bytes()),
         rc.int()
     );
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.errno() {
         Result::Err(Error::new(errno, Tag::statfs).with_path(file_path.as_bytes()))
     } else {
         // On Windows `StatFS == uv_statfs_t`, so the libuv result *is* the
@@ -235,7 +235,7 @@ pub fn chown(file_path: &ZStr, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<(
         gid,
         rc.int()
     );
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.errno() {
         Result::Err(Error::new(errno, Tag::chown).with_path(file_path.as_bytes()))
     } else {
         Result::Ok(())
@@ -263,7 +263,7 @@ pub fn lchown(file_path: &ZStr, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<
         gid,
         rc.int()
     );
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.errno() {
         Result::Err(Error::new(errno, Tag::lchown).with_path(file_path.as_bytes()))
     } else {
         Result::Ok(())
@@ -278,7 +278,7 @@ pub fn fchown(fd: Fd, uid: uv::uv_uid_t, gid: uv::uv_uid_t) -> Result<()> {
     let rc = unsafe { uv::uv_fs_fchown(uv::Loop::get(), &mut *req, uv_fd, uid, gid, None) };
 
     log!("uv chown({}, {}, {}) = {}", uv_fd, uid, gid, rc.int());
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.errno() {
         Result::Err(Error::new(errno, Tag::fchown).with_fd(fd))
     } else {
         Result::Ok(())
@@ -295,7 +295,7 @@ pub fn rmdir(file_path: &ZStr) -> Result<()> {
         BStr::new(file_path.as_bytes()),
         rc.int()
     );
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.errno() {
         Result::Err(Error::new(errno, Tag::rmdir).with_path(file_path.as_bytes()))
     } else {
         Result::Ok(())
@@ -312,7 +312,7 @@ pub fn unlink(file_path: &ZStr) -> Result<()> {
         BStr::new(file_path.as_bytes()),
         rc.int()
     );
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.errno() {
         Result::Err(Error::new(errno, Tag::unlink).with_path(file_path.as_bytes()))
     } else {
         Result::Ok(())
@@ -329,7 +329,7 @@ pub(crate) fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mu
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
     let rc = unsafe { uv::uv_fs_readlink(uv::Loop::get(), &mut *req, file_path.as_ptr(), None) };
 
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.errno() {
         log!(
             "uv readlink({}) = {}, [err]",
             BStr::new(file_path.as_bytes()),
@@ -386,7 +386,7 @@ pub fn rename(from: &ZStr, to: &ZStr) -> Result<()> {
         BStr::new(to.as_bytes()),
         rc.int()
     );
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.errno() {
         // which one goes in the .path field?
         Result::Err(Error::new(errno, Tag::rename))
     } else {
@@ -406,7 +406,7 @@ pub fn link(from: &ZStr, to: &ZStr) -> Result<()> {
         BStr::new(to.as_bytes()),
         rc.int()
     );
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.errno() {
         Result::Err(
             Error::new(errno, Tag::link)
                 .with_path(from.as_bytes())
@@ -437,7 +437,7 @@ pub fn symlink_uv(target: &ZStr, new_path: &ZStr, flags: c_int) -> Result<()> {
         BStr::new(new_path.as_bytes()),
         rc.int()
     );
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.errno() {
         Result::Err(Error::new(errno, Tag::symlink))
     } else {
         Result::Ok(())
@@ -453,7 +453,7 @@ pub fn ftruncate(fd: Fd, size: i64) -> Result<()> {
     let rc = unsafe { uv::uv_fs_ftruncate(uv::Loop::get(), &mut *req, uv_fd, size, None) };
 
     log!("uv ftruncate({}, {}) = {}", uv_fd, size, rc.int());
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.errno() {
         Result::Err(Error::new(errno, Tag::ftruncate).with_fd(fd))
     } else {
         Result::Ok(())
@@ -467,7 +467,7 @@ pub fn fstat(fd: Fd) -> Result<Stat> {
     let rc = unsafe { uv::uv_fs_fstat(uv::Loop::get(), &mut *req, uv_fd, None) };
 
     log!("uv fstat({}) = {}", uv_fd, rc.int());
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.errno() {
         Result::Err(Error::new(errno, Tag::fstat).with_fd(fd))
     } else {
         // `statbuf` is inline in `fs_t` (not heap), copied out before deinit.
@@ -482,7 +482,7 @@ pub fn fdatasync(fd: Fd) -> Result<()> {
     let rc = unsafe { uv::uv_fs_fdatasync(uv::Loop::get(), &mut *req, uv_fd, None) };
 
     log!("uv fdatasync({}) = {}", uv_fd, rc.int());
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.errno() {
         Result::Err(Error::new(errno, Tag::fdatasync).with_fd(fd))
     } else {
         Result::Ok(())
@@ -496,7 +496,7 @@ pub fn fsync(fd: Fd) -> Result<()> {
     let rc = unsafe { uv::uv_fs_fsync(uv::Loop::get(), &mut *req, uv_fd, None) };
 
     log!("uv fsync({}) = {}", uv_fd, rc.int());
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.errno() {
         Result::Err(Error::new(errno, Tag::fsync).with_fd(fd))
     } else {
         Result::Ok(())
@@ -509,7 +509,7 @@ pub fn stat(path: &ZStr) -> Result<Stat> {
     let rc = unsafe { uv::uv_fs_stat(uv::Loop::get(), &mut *req, path.as_ptr(), None) };
 
     log!("uv stat({}) = {}", BStr::new(path.as_bytes()), rc.int());
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.errno() {
         Result::Err(Error::new(errno, Tag::stat).with_path(path.as_bytes()))
     } else {
         // `statbuf` is inline in `fs_t` (not heap), copied out before deinit.
@@ -523,7 +523,7 @@ pub fn lstat(path: &ZStr) -> Result<Stat> {
     let rc = unsafe { uv::uv_fs_lstat(uv::Loop::get(), &mut *req, path.as_ptr(), None) };
 
     log!("uv lstat({}) = {}", BStr::new(path.as_bytes()), rc.int());
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.errno() {
         Result::Err(Error::new(errno, Tag::lstat).with_path(path.as_bytes()))
     } else {
         // `statbuf` is inline in `fs_t` (not heap), copied out before deinit.
@@ -602,7 +602,7 @@ pub fn preadv(fd: Fd, bufs: &[PlatformIOVec], position: i64) -> Result<usize> {
             );
         }
 
-        if let Some(e) = req.result.err_enum_e() {
+        if let Some(e) = req.result.errno() {
             return Result::Err(Error::new(e, Tag::read).with_fd(fd));
         }
 
@@ -677,7 +677,7 @@ pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usi
             );
         }
 
-        if let Some(e) = req.result.err_enum_e() {
+        if let Some(e) = req.result.errno() {
             return Result::Err(Error::new(e, Tag::write).with_fd(fd));
         }
 

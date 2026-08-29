@@ -75,6 +75,17 @@ impl DirectoryRoute {
         debug_assert!(url_prefix.last() == Some(&b'/'));
         debug_assert!(!strings::contains(url_prefix, b"//"));
 
+        // Before the open: a `?` between `open_a` and the constructor whose
+        // `Drop` closes `root_fd` would leak the fd.
+        let user_last_modified_ms = match headers.get(b"last-modified") {
+            Some(lm) => {
+                let date = bun_string_jsc::parse_date(&BunString::borrow_utf8(lm), global)?;
+                // Same rule as `FileRoute::last_modified_date`.
+                date.is_finite().then(|| date as u64)
+            }
+            None => None,
+        };
+
         let root_fd = match bun_sys::open_a(
             root,
             bun_sys::O::DIRECTORY | bun_sys::O::CLOEXEC | bun_sys::O::RDONLY,
@@ -96,15 +107,6 @@ impl DirectoryRoute {
         for _ in 0..slots {
             stat_cache.push(Cell::new(StatCacheEntry::default()));
         }
-
-        let user_last_modified_ms = match headers.get(b"last-modified") {
-            Some(lm) => {
-                let date = bun_string_jsc::parse_date(&BunString::borrow_utf8(lm), global)?;
-                // Same rule as `FileRoute::last_modified_date`.
-                date.is_finite().then(|| date as u64)
-            }
-            None => None,
-        };
 
         Ok(RefPtr::new(DirectoryRoute {
             ref_count: Cell::new(1),

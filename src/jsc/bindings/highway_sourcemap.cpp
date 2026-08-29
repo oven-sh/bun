@@ -40,6 +40,7 @@
 
 #include <hwy/highway.h>
 #include "highway_dispatch.h"
+#include "highway_mask_bits-inl.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -299,25 +300,6 @@ static HWY_INLINE uint64_t MaskBelow(size_t k)
     return k >= 64 ? ~uint64_t { 0 } : ((uint64_t { 1 } << k) - 1);
 }
 
-// Mask -> one-bit-per-lane uint64_t. On the AVX-512 family the mask
-// register already is the bit layout; everywhere else BitsFromMask
-// provides it without the StoreMaskBits memory round-trip. This matters
-// on NEON, where each BitsFromMask is ~6 insns (no native movemask) and
-// the previous memset+StoreMaskBits+memcpy sequence added store-forward
-// stalls on top of that.
-template<class D, class M>
-static HWY_INLINE uint64_t ToBits(D d, M m)
-{
-#if HWY_TARGET <= HWY_AVX3
-    (void)d;
-    // MFromD<D>::raw is __mmask{8,16,32,64}; the 64-byte CappedTag this
-    // file uses makes it __mmask64.
-    return static_cast<uint64_t>(m.raw);
-#else
-    return hn::BitsFromMask(d, m);
-#endif
-}
-
 // One block of classification: decode base64 -> sextets[], compute the
 // four bitmaps. `d` is CappedTag<u8, 64> so the bitmaps fit in a uint64_t.
 template<class D>
@@ -370,8 +352,8 @@ static HWY_INLINE void ClassifyBlock(D d, const uint8_t* bytes,
 
     hn::StoreU(sx, d, sextets);
 
-    delim_bits = ToBits(d, is_delim);
-    cont_bits = ToBits(d, has_cont);
+    delim_bits = MaskBits(d, is_delim);
+    cont_bits = MaskBits(d, has_cont);
     // Semicolons and invalid bytes are rare (on a measured 3.5 MB minified
     // bundle: 443 ';' and 0 invalid across 688K segments). AllFalse is a
     // single reduction (vmaxvq on NEON, ptest on x86) so testing it first
@@ -383,8 +365,8 @@ static HWY_INLINE void ClassifyBlock(D d, const uint8_t* bytes,
         semi_bits = 0;
         invalid_bits = 0;
     } else {
-        semi_bits = ToBits(d, is_semi);
-        invalid_bits = ToBits(d, is_invalid);
+        semi_bits = MaskBits(d, is_semi);
+        invalid_bits = MaskBits(d, is_invalid);
     }
 }
 
@@ -803,7 +785,7 @@ size_t ParseMappingsImpl(const uint8_t* HWY_RESTRICT bytes, size_t len,
         for (;;) {
             // Leading ';' run.
             if (HWY_UNLIKELY(semi & 1)) {
-                // semi's bits >= N are always 0 (ToBits/BitsFromMask
+                // semi's bits >= N are always 0 (MaskBits
                 // zeros the upper 64-N bits), so ~semi is nonzero for any
                 // N < 64; for N == 64 an all-';' block makes ~semi == 0.
                 const uint64_t ns = ~semi;

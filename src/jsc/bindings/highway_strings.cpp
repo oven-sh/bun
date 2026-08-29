@@ -8,6 +8,7 @@
 // Now include Highway and other headers
 #include <hwy/highway.h>
 #include "highway_dispatch.h"
+#include "highway_mask_bits-inl.h"
 #include <hwy/aligned_allocator.h>
 
 #include <hwy/contrib/algo/find-inl.h>
@@ -1335,16 +1336,6 @@ size_t VisibleLatin1WidthExcludeANSIImpl(const uint8_t* HWY_RESTRICT input, size
 
         const uint64_t laneMask = MaskBitsBelow(N);
 
-        // Extracts a mask as bits (bit k = lane k).
-        alignas(8) uint8_t maskBytes[8];
-        const auto maskToBits = [&](auto mask) HWY_ATTR -> uint64_t {
-            std::memset(maskBytes, 0, sizeof(maskBytes));
-            hn::StoreMaskBits(d, mask, maskBytes);
-            uint64_t bits;
-            std::memcpy(&bits, maskBytes, sizeof(bits));
-            return bits;
-        };
-
         while (i + N <= len) {
             const auto chunk = hn::LoadU(d, input + i);
 
@@ -1367,14 +1358,14 @@ size_t VisibleLatin1WidthExcludeANSIImpl(const uint8_t* HWY_RESTRICT input, size
             const auto term_m = hn::Or(hn::Eq(chunk, vec_bel), abort_m); // BEL | CAN | SUB | ST
             const auto c1_intro_m = hn::Le(hn::Sub(chunk, vec_0x90), vec_0x0F); // 0x90..0x9F
 
-            const uint64_t esc = maskToBits(esc_m);
-            const uint64_t prn = maskToBits(printable_m);
+            const uint64_t esc = MaskBits(d, esc_m);
+            const uint64_t prn = MaskBits(d, printable_m);
             // An ESC also ends a CSI: it aborts it and re-introduces a sequence.
-            const uint64_t fin = maskToBits(final_m) | esc;
-            const uint64_t term = maskToBits(term_m);
+            const uint64_t fin = MaskBits(d, final_m) | esc;
+            const uint64_t term = MaskBits(d, term_m);
             // Walk mask: ESC plus every byte in 0x90-0x9F (the C1 introducers;
             // the rest of that range settle as single zero-width bytes).
-            const uint64_t intro = esc | maskToBits(c1_intro_m);
+            const uint64_t intro = esc | MaskBits(d, c1_intro_m);
 
             uint64_t zero = 0; // bits covered by escape sequences
             size_t consumed = N; // may exceed N when a sequence straddles the chunk end

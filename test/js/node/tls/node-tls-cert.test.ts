@@ -775,35 +775,104 @@ describe("expired or not-yet-valid CA in the trust set", () => {
     ["baseline: valid intermediate from server", ["leaf", "int-valid"], ["root"], "authorized"],
     ["expired intermediate from the SERVER is still expired", ["leaf", "int-expired"], ["root"], "CERT_HAS_EXPIRED"],
     // was CERT_HAS_EXPIRED: the trusted expired copy shadowed the server's valid one
-    ["expired trusted intermediate does not shadow the server's valid one", ["leaf", "int-valid"], ["root", "int-expired"], "authorized"],
+    [
+      "expired trusted intermediate does not shadow the server's valid one",
+      ["leaf", "int-valid"],
+      ["root", "int-expired"],
+      "authorized",
+    ],
     ["...in either order", ["leaf", "int-valid"], ["int-expired", "root"], "authorized"],
     // was CERT_NOT_YET_VALID
-    ["not-yet-valid trusted intermediate does not shadow either", ["leaf", "int-valid"], ["root", "int-future"], "authorized"],
+    [
+      "not-yet-valid trusted intermediate does not shadow either",
+      ["leaf", "int-valid"],
+      ["root", "int-future"],
+      "authorized",
+    ],
     // was CERT_HAS_EXPIRED / CERT_NOT_YET_VALID: absent, so the leaf has no issuer
-    ["expired trusted intermediate is not an anchor", ["leaf"], ["root", "int-expired"], "UNABLE_TO_VERIFY_LEAF_SIGNATURE"],
-    ["not-yet-valid trusted intermediate is not an anchor", ["leaf"], ["root", "int-future"], "UNABLE_TO_VERIFY_LEAF_SIGNATURE"],
+    [
+      "expired trusted intermediate is not an anchor",
+      ["leaf"],
+      ["root", "int-expired"],
+      "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    ],
+    [
+      "not-yet-valid trusted intermediate is not an anchor",
+      ["leaf"],
+      ["root", "int-future"],
+      "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    ],
     ["valid trusted intermediate is (server sends leaf only)", ["leaf"], ["root", "int-valid"], "authorized"],
     // pinning only an expired intermediate fails closed (was UNABLE_TO_GET_ISSUER_CERT: through it, then no root)
     ["ca = only the expired intermediate", ["leaf", "int-valid"], ["int-expired"], "UNABLE_TO_GET_ISSUER_CERT_LOCALLY"],
-    ["ca = only the expired intermediate, partial chains allowed, server sends it", ["leaf", "int-expired"], ["int-expired"], "CERT_HAS_EXPIRED", { allowPartialTrustChain: true }],
+    [
+      "ca = only the expired intermediate, partial chains allowed, server sends it",
+      ["leaf", "int-expired"],
+      ["int-expired"],
+      "CERT_HAS_EXPIRED",
+      { allowPartialTrustChain: true },
+    ],
     // was CERT_HAS_EXPIRED; an exact match on an expired pinned cert is not a trust anchor either
-    ["ca = only the expired intermediate, partial chains allowed, server sends the valid one", ["leaf", "int-valid"], ["int-expired"], "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", { allowPartialTrustChain: true }],
-    ["ca = only the valid intermediate, partial chains allowed", ["leaf", "int-valid"], ["int-valid"], "authorized", { allowPartialTrustChain: true }],
+    [
+      "ca = only the expired intermediate, partial chains allowed, server sends the valid one",
+      ["leaf", "int-valid"],
+      ["int-expired"],
+      "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+      { allowPartialTrustChain: true },
+    ],
+    [
+      "ca = only the valid intermediate, partial chains allowed",
+      ["leaf", "int-valid"],
+      ["int-valid"],
+      "authorized",
+      { allowPartialTrustChain: true },
+    ],
     // Name constraints are enforced on the chain actually built: a valid constrained copy in the trust set still wins
     // (trusted first) and rejects; an expired constrained copy is absent, and trusting `root` means trusting what it
     // issued. (was UNSPECIFIED, i.e. rejected via the expired constrained copy)
-    ["valid constrained trusted intermediate still applies its constraints", ["leaf", "int-valid"], ["root", "int-constrained-valid"], "UNSPECIFIED"],
+    [
+      "valid constrained trusted intermediate still applies its constraints",
+      ["leaf", "int-valid"],
+      ["root", "int-constrained-valid"],
+      "UNSPECIFIED",
+    ],
     ["constrained intermediate from the server violates", ["leaf", "int-constrained-valid"], ["root"], "UNSPECIFIED"],
-    ["expired constrained trusted intermediate is absent", ["leaf", "int-valid"], ["root", "int-constrained-expired"], "authorized"],
+    [
+      "expired constrained trusted intermediate is absent",
+      ["leaf", "int-valid"],
+      ["root", "int-constrained-expired"],
+      "authorized",
+    ],
     // Roots: was CERT_HAS_EXPIRED in all three
-    ["expired self-signed twin of the root does not shadow it", ["leaf", "int-valid"], ["root-expired", "root"], "authorized"],
+    [
+      "expired self-signed twin of the root does not shadow it",
+      ["leaf", "int-valid"],
+      ["root-expired", "root"],
+      "authorized",
+    ],
     ["only the expired twin trusted", ["leaf", "int-valid"], ["root-expired"], "UNABLE_TO_GET_ISSUER_CERT_LOCALLY"],
-    ["cross-sign to an expired old root: the valid root anchors", ["leaf", "int-valid", "root-cross-by-oldroot"], ["oldroot-expired", "root"], "authorized"],
-    ["cross-sign to an expired old root: only the old root trusted", ["leaf", "int-valid", "root-cross-by-oldroot"], ["oldroot-expired"], "UNABLE_TO_GET_ISSUER_CERT_LOCALLY"],
+    [
+      "cross-sign to an expired old root: the valid root anchors",
+      ["leaf", "int-valid", "root-cross-by-oldroot"],
+      ["oldroot-expired", "root"],
+      "authorized",
+    ],
+    [
+      "cross-sign to an expired old root: only the old root trusted",
+      ["leaf", "int-valid", "root-cross-by-oldroot"],
+      ["oldroot-expired"],
+      "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+    ],
   ];
   for (const [name, chain, ca, expected, extra] of cases) {
     it(name, async () => {
-      expect(await connect(chain.map(n => F[n]).join(""), ca.map(n => F[n]), extra)).toBe(expected);
+      expect(
+        await connect(
+          chain.map(n => F[n]).join(""),
+          ca.map(n => F[n]),
+          extra,
+        ),
+      ).toBe(expected);
     });
   }
 

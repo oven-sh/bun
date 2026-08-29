@@ -45,6 +45,7 @@
 #include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/ExceptionScope.h>
 #include <JavaScriptCore/FunctionConstructor.h>
+#include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/Heap.h>
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/InitializeThreading.h>
@@ -366,17 +367,19 @@ napi_status Napi::defineProperty(napi_env env, JSC::JSObject* to, const napi_pro
 
     PropertyDescriptor descriptor;
     napi_status failureStatus = napi_invalid_arg;
+    JSC::JSObject* getter = nullptr;
+    JSC::JSObject* setter = nullptr;
 
     if (property.getter != nullptr || property.setter != nullptr) {
         if (property.getter) {
             auto name = makeString("get "_s, propertyName.isSymbol() ? String() : propertyName.string());
-            auto* getter = NapiClass::create(vm, env, name, property.getter, dataPtr, 0, nullptr);
+            getter = NapiClass::create(vm, env, name, property.getter, dataPtr, 0, nullptr);
             RETURN_IF_EXCEPTION(scope, napi_pending_exception);
             descriptor.setGetter(getter);
         }
         if (property.setter) {
             auto name = makeString("set "_s, propertyName.isSymbol() ? String() : propertyName.string());
-            auto* setter = NapiClass::create(vm, env, name, property.setter, dataPtr, 0, nullptr);
+            setter = NapiClass::create(vm, env, name, property.setter, dataPtr, 0, nullptr);
             RETURN_IF_EXCEPTION(scope, napi_pending_exception);
             descriptor.setSetter(setter);
         }
@@ -408,6 +411,17 @@ napi_status Napi::defineProperty(napi_env env, JSC::JSObject* to, const napi_pro
         // Node stages instance descriptors on a PrototypeTemplate, where duplicates do not fail napi_define_class.
         if (mode == PropertyDefinitionMode::ClassInstance && to->hasOwnProperty(globalObject, propertyName)) {
             RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+            if (getter || setter) {
+                unsigned accessorAttributes = 0;
+                if (!enumerable)
+                    accessorAttributes |= JSC::PropertyAttribute::DontEnum;
+                if (!configurable)
+                    accessorAttributes |= JSC::PropertyAttribute::DontDelete;
+                auto* getterSetter = JSC::GetterSetter::create(vm, globalObject, getter, setter);
+                to->putDirectAccessor(globalObject, propertyName, getterSetter,
+                    accessorAttributes | JSC::PropertyAttribute::Accessor);
+                RETURN_IF_EXCEPTION(scope, napi_pending_exception);
+            }
             return napi_ok;
         }
         return failureStatus;

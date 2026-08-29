@@ -577,9 +577,14 @@ nativeTests.test_define_class_duplicate_properties = () => {
   ];
   const fmtStatus = status => statusNames[status] ?? String(status);
 
-  for (const kind of ["getter", "setter", "accessor", "method"]) {
+  for (const kind of ["value", "getter", "setter", "accessor", "method"]) {
     const result = nativeTests.define_properties({}, kind, undefined, true, true, false);
-    console.log(`${kind}: status=${fmtStatus(result.status)} pending=${result.pending}`);
+    let value = "";
+    if (result.class && kind !== "setter") {
+      const instance = new result.class();
+      value = ` value=${kind === "method" ? instance.k() : instance.k}`;
+    }
+    console.log(`${kind}: status=${fmtStatus(result.status)} pending=${result.pending}${value}`);
   }
 
   const staticResult = nativeTests.define_properties({}, "method", undefined, true, true, true);

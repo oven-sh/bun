@@ -211,8 +211,13 @@ static napi_value perform_get(const Napi::CallbackInfo &info) {
 
 static napi_value define_properties_getter(napi_env env,
                                            napi_callback_info info) {
+  size_t argc = 0;
+  void *data = nullptr;
+  napi_get_cb_info(env, info, &argc, nullptr, nullptr, &data);
   napi_value result;
-  napi_create_int32(env, 123, &result);
+  napi_create_int32(
+      env, data ? static_cast<int32_t>(reinterpret_cast<intptr_t>(data)) : 123,
+      &result);
   return result;
 }
 
@@ -223,8 +228,13 @@ static napi_value define_properties_setter(napi_env env,
 
 static napi_value define_properties_method(napi_env env,
                                            napi_callback_info info) {
+  size_t argc = 0;
+  void *data = nullptr;
+  napi_get_cb_info(env, info, &argc, nullptr, nullptr, &data);
   napi_value result;
-  napi_create_int32(env, 456, &result);
+  napi_create_int32(
+      env, data ? static_cast<int32_t>(reinterpret_cast<intptr_t>(data)) : 456,
+      &result);
   return result;
 }
 
@@ -278,10 +288,16 @@ static napi_value define_properties(const Napi::CallbackInfo &info) {
   napi_status status;
   bool is_class = false;
   napi_get_value_bool(env, info[3], &is_class);
+  napi_value cls = nullptr;
   if (is_class) {
     bool duplicate = info.Length() > 4 && info[4].As<Napi::Boolean>();
-    napi_property_descriptor properties[] = {desc, desc};
-    napi_value cls = nullptr;
+    desc.data = reinterpret_cast<void *>(1);
+    napi_property_descriptor second = desc;
+    second.data = reinterpret_cast<void *>(2);
+    if (kind == "value") {
+      NODE_API_CALL(env, napi_create_int32(env, 84, &second.value));
+    }
+    napi_property_descriptor properties[] = {desc, second};
     status = napi_define_class(env, "C", NAPI_AUTO_LENGTH,
                                define_properties_method, nullptr,
                                duplicate ? 2 : 1, properties, &cls);
@@ -303,6 +319,9 @@ static napi_value define_properties(const Napi::CallbackInfo &info) {
   NODE_API_CALL(env, napi_set_named_property(env, result, "status", js_status));
   NODE_API_CALL(env,
                 napi_set_named_property(env, result, "pending", js_pending));
+  if (cls != nullptr) {
+    NODE_API_CALL(env, napi_set_named_property(env, result, "class", cls));
+  }
   return result;
 }
 

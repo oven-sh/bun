@@ -1154,6 +1154,110 @@ describe("ES Decorators", () => {
     });
   });
 
+  describe("lowering temporaries are unique per class", () => {
+    // Without a renamer the lowering printed one `var _init` (and `_dec`, and
+    // the WeakMap behind an accessor) per decorated class under the same
+    // name, so a later class overwrote the state an earlier class's
+    // constructor reads.
+    test("an accessor decorator's init does not leak into an earlier decorated class (#40761)", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function Field(_, _c) {}
+        function AccessorDecorator(_, c) {
+          return { init: () => c.name, get: () => c.name };
+        }
+        class Entity { @Field id; }
+        class Action { @AccessorDecorator accessor success; }
+        console.log(new Entity().id);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("undefined\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("two classes with an accessor of the same name keep separate storage", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(_, _c) {}
+        class A { @dec accessor x = "a"; }
+        class B { @dec accessor x = "b"; }
+        const a = new A();
+        const b = new B();
+        console.log(a.x, b.x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a b\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("two decorated classes inside one function keep separate initializers", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(_, ctx) {
+          ctx.addInitializer(function () { this.tag = ctx.name; });
+        }
+        function make() {
+          class A { @dec a() {} }
+          class B { @dec b() {} }
+          return [new A().tag, new B().tag];
+        }
+        console.log(make().join(" "));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a b\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("class expressions in sibling blocks keep separate storage", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(_, _c) {}
+        let A, B;
+        { A = class { @dec accessor x = "a"; }; }
+        { B = class { @dec accessor x = "b"; }; }
+        console.log(new A().x, new B().x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a b\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("user bindings named like a temporary are left alone", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const _init = "init";
+        let _x = "x";
+        function dec(_, _c) {}
+        class A { @dec accessor x = 1; }
+        console.log(_init, _x, new A().x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("init x 1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a subclass can redeclare an accessor of its base class (#29837)", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class A { accessor name = "A"; }
+        class B extends A {
+          accessor name = "B";
+          logName() { console.log(this.name, super.name); }
+        }
+        new B().logName();
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("B A\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("an accessor with a string key that is not an identifier gets a valid storage name", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(_, _c) {}
+        class A { @dec accessor "x y" = 1; accessor "a-b" = 2; }
+        const a = new A();
+        console.log(a["x y"], a["a-b"]);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1 2\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("accessor with TypeScript annotations", () => {
     test("accessor with definite assignment assertion (!)", async () => {
       using dir = tempDir("es-dec-accessor-bang", {

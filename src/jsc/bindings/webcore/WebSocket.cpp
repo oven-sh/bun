@@ -1752,10 +1752,7 @@ extern "C" void WebSocket__didConnectWithTunnel(WebCore::WebSocket* webSocket, v
     webSocket->didConnectWithTunnel(tunnel, bufferedData, deflate_params);
 }
 
-struct FfiRawHeaderSlice {
-    const WebCore::WebSocket::HandshakeRawHeader* ptr;
-    size_t len;
-};
+using FfiRawHeaderSlice = Bun::FfiSlice<WebCore::WebSocket::HandshakeRawHeader>;
 
 extern "C" void WebSocket__didReceiveHandshakeResponse(WebCore::WebSocket* webSocket, uint16_t statusCode, WebCore::WebSocket::FfiSlice statusMessage, FfiRawHeaderSlice headers, WebCore::WebSocket::FfiSlice body)
 {

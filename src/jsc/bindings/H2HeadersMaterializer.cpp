@@ -18,6 +18,7 @@
 #include <wtf/text/StringView.h>
 #include "HTTPHeaderIdentifiers.h"
 #include "HTTPHeaderNames.h"
+#include "FfiSlice.h"
 
 using namespace JSC;
 using namespace WebCore;
@@ -61,14 +62,16 @@ static JSString* h2ValueToJS(VM& vm, const uint8_t* ptr, size_t length)
 // packed layout: name bytes then value bytes, in field order.
 // Returns [rawHeadersArray, headersObject, sensitiveArray | undefined], or 0
 // with an exception pending.
-extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__h2__materializeHeaders(
+extern "C" JSC::EncodedJSValue Bun__h2__materializeHeaders(
     JSC::JSGlobalObject* globalObject,
-    const uint8_t* packed,
-    const uint32_t* meta,
-    size_t fieldCount)
+    FfiSlice<uint8_t> packedSlice,
+    FfiSlice<uint32_t> metaSlice)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    const uint8_t* packed = packedSlice.ptr;
+    const uint32_t* meta = metaSlice.ptr;
+    const size_t fieldCount = metaSlice.len / 2;
 
     JSC::JSArray* raw = JSC::constructEmptyArray(globalObject, nullptr, static_cast<unsigned>(fieldCount * 2));
     RETURN_IF_EXCEPTION(scope, {});
@@ -85,6 +88,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__h2__materializ
         const size_t nameLen = packedNameLen & 0x7fffffffu;
         const size_t valueLen = meta[i * 2 + 1];
 
+        ASSERT(offset + nameLen + valueLen <= packedSlice.len);
         const uint8_t* nameBytes = packed + offset;
         offset += nameLen;
         const uint8_t* valueBytes = packed + offset;

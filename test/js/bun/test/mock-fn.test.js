@@ -1219,6 +1219,37 @@ describe("spyOn", () => {
       expect(fn).not.toHaveBeenCalled();
     });
 
+    // An index this large never gets vector storage. It lives in the sparse map from the
+    // start, which is where the malformed accessor entry used to crash reads and writes.
+    test("spyOn works with a large sparse index that is not a function", () => {
+      const obj = {};
+      const original = [1.5];
+      obj[3221225473] = original;
+
+      const fn = spyOn(obj, 3221225473);
+      expect(Object.getOwnPropertyDescriptor(obj, 3221225473)).toEqual({
+        get: fn,
+        set: fn,
+        enumerable: true,
+        configurable: true,
+      });
+      expect(obj[3221225473]).toBe(original);
+      obj[3221225473] = 5;
+      expect(obj[3221225473]).toBe(original);
+      expect(fn.mock.calls).toEqual([[], [5], []]);
+
+      fn.mockRestore();
+      expect(Object.getOwnPropertyDescriptor(obj, 3221225473)).toEqual({
+        value: original,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      obj[3221225473] = 6;
+      expect(obj[3221225473]).toBe(6);
+      expect(fn).not.toHaveBeenCalled();
+    });
+
     // An array filled after creation is not copy-on-write, so it takes a different
     // storage path than an array literal when the index becomes an accessor.
     test("spyOn installs a getter/setter on an indexed property that is not a function", () => {

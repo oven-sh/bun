@@ -43,9 +43,9 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
     "CLI: file-loader asset, --asset dir + file, /$bunfs/ fs semantics, and { dir } route",
     async () => {
       // Larger than a fresh socket's send buffer, so the route's body needs more
-      // than one write and the onWritable continuation runs.
-      const big = Buffer.alloc(4 * 1024 * 1024);
-      for (let i = 0; i < big.length; i++) big[i] = i % 251;
+      // than one write and the onWritable continuation runs. A 251-byte cycle
+      // shows an offset error on resume.
+      const big = Buffer.alloc(4 * 1024 * 1024, Buffer.from(Array.from({ length: 251 }, (_, i) => i)));
       using dir = tempDir("bunfs-cli", {
         "index.ts": /* ts */ `
         import asset from "./data.txt" with { type: "file" };

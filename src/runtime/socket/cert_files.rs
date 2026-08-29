@@ -30,7 +30,11 @@ pub(crate) fn read_file_for(path: &ZStr, ctx: *mut c_void, on_file: OnFile) -> c
 /// # Safety
 /// `path` must be a valid NUL-terminated C string; `ctx` whatever `on_file` expects.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__readCertificateFile(path: *const c_char, ctx: *mut c_void, on_file: OnFile) -> c_int {
+unsafe extern "C" fn Bun__readCertificateFile(
+    path: *const c_char,
+    ctx: *mut c_void,
+    on_file: OnFile,
+) -> c_int {
     // SAFETY: caller contract.
     read_file_for(unsafe { ZStr::from_c_ptr(path) }, ctx, on_file)
 }
@@ -41,7 +45,11 @@ unsafe extern "C" fn Bun__readCertificateFile(path: *const c_char, ctx: *mut c_v
 /// # Safety
 /// `default_path` must be a valid NUL-terminated C string; `ctx` whatever `on_file` expects.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__readOpenSSLDefaultCertFile(default_path: *const c_char, ctx: *mut c_void, on_file: OnFile) {
+unsafe extern "C" fn Bun__readOpenSSLDefaultCertFile(
+    default_path: *const c_char,
+    ctx: *mut c_void,
+    on_file: OnFile,
+) {
     match env_var::SSL_CERT_FILE::get() {
         Some(b"") => {}
         Some(path) => {

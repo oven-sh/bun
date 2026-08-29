@@ -53,7 +53,7 @@ static bool us_should_use_system_ca() {
 // Platform-specific system certificate loading implementations are separated:
 // - macOS: root_certs_darwin.cpp (Security framework with dynamic loading)
 // - Windows: root_certs_windows.cpp (Windows CryptoAPI)
-// - Linux/Unix: us_load_system_certificates_linux() below
+// - Linux/other Unix: us_load_system_certificates_posix() in src/runtime/socket/system_certs.rs
 
 // This callback is used to avoid the default passphrase callback in OpenSSL
 // which will typically prompt for the passphrase. The prompting is designed
@@ -250,7 +250,7 @@ STACK_OF(X509) *us_get_root_system_cert_instances() {
 #elif defined(_WIN32)
     us_load_system_certificates_windows(&system_certs);
 #else
-    us_load_system_certificates_linux(&system_certs);
+    us_load_system_certificates_posix(&system_certs);
 #endif
   });
   return system_certs;
@@ -367,6 +367,6 @@ void us_load_system_certificates_windows(STACK_OF(X509) **system_certs) {
 }
 
 #else
-// Linux and other Unix-like systems: src/runtime/socket/system_certs.rs
-extern "C" void us_load_system_certificates_linux(STACK_OF(X509) **system_certs);
+// Linux, FreeBSD and other non-Apple Unix: src/runtime/socket/system_certs.rs
+extern "C" void us_load_system_certificates_posix(STACK_OF(X509) **system_certs);
 #endif

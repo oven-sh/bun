@@ -1,5 +1,5 @@
-//! The Linux system certificate store, for `--use-system-ca` and `tls.getCACertificates('system')`:
-//! `us_load_system_certificates_linux`, called once per process from `root_certs.cpp`.
+//! The system certificate store on Linux and the other non-Apple Unixes, for `--use-system-ca` and `tls.getCACertificates('system')`:
+//! `us_load_system_certificates_posix`, called once per process from `root_certs.cpp`.
 //!
 //! Sources are the union of what Node's `GetOpenSSLSystemCertificates` reads — `$SSL_CERT_FILE` else OpenSSL's
 //! default file, and every regular file in `$SSL_CERT_DIR` else OpenSSL's default directory, where a variable that is
@@ -54,8 +54,8 @@ struct Loader {
     certs: *mut boringssl::struct_stack_st_X509,
     /// `(st_dev, st_ino)` of every file already read and every directory already walked.
     seen: bun_collections::HashMap<(u64, u64), ()>,
-    /// Every DER encoding already on `certs`.
-    ders: bun_collections::HashMap<Box<[u8]>, ()>,
+    /// SHA-256 of every DER encoding already on `certs` (the `X509` keeps the DER itself).
+    ders: bun_collections::HashMap<[u8; 32], ()>,
     buf: Vec<u8>,
 }
 
@@ -90,9 +90,11 @@ impl Loader {
             }
             // SAFETY: on success BoringSSL hands us ownership of `name` and `der` (`der_len` bytes).
             unsafe { boringssl::OPENSSL_free(name.cast()) };
-            let bytes = unsafe { core::slice::from_raw_parts(der, der_len as usize) };
+            let mut digest = [0u8; 32];
+            // SAFETY: `der` points at `der_len` readable bytes; `digest` has room for SHA-256.
+            unsafe { boringssl::SHA256(der, der_len as usize, digest.as_mut_ptr()) };
             let mut pushed = true;
-            if !self.ders.contains_key(bytes) {
+            if !self.ders.contains_key(&digest) {
                 let mut p = der.cast_const();
                 // SAFETY: `p` points at `der_len` readable bytes.
                 let x509 = unsafe { boringssl::d2i_X509(ptr::null_mut(), &mut p, der_len) };
@@ -100,7 +102,7 @@ impl Loader {
                 pushed =
                     !x509.is_null() && unsafe { boringssl::sk_X509_push(self.certs, x509) } != 0;
                 if pushed {
-                    self.ders.insert(Box::from(bytes), ());
+                    self.ders.insert(digest, ());
                 } else if !x509.is_null() {
                     // SAFETY: not adopted by the stack.
                     unsafe { boringssl::X509_free(x509) };
@@ -193,7 +195,7 @@ unsafe extern "C" fn no_password(
 /// # Safety
 /// `out` must be valid for a write of one pointer. The caller owns the returned `STACK_OF(X509)`.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn us_load_system_certificates_linux(
+unsafe extern "C" fn us_load_system_certificates_posix(
     out: *mut *mut boringssl::struct_stack_st_X509,
 ) {
     let certs = boringssl::sk_X509_new_null();

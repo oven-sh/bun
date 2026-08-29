@@ -6,7 +6,6 @@
 #include <hwy/foreach_target.h>
 #include <hwy/highway.h>
 #include "highway_dispatch.h"
-#include "highway_mask_bits-inl.h"
 
 #include <string.h>
 
@@ -82,14 +81,14 @@ size_t JsonIndexImpl(const uint8_t* HWY_RESTRICT input, size_t len, size_t base_
         for (size_t v = 0; v < 64 / N; ++v) {
             const auto chunk = hn::LoadU(d, p + v * N);
             const unsigned sh = (unsigned)(v * N);
-            m_bs |= MaskBits(d, hn::Eq(chunk, v_bs)) << sh;
-            m_quote |= MaskBits(d, hn::Eq(chunk, v_quote)) << sh;
+            m_bs |= hn::BitsFromMask(d, hn::Eq(chunk, v_bs)) << sh;
+            m_quote |= hn::BitsFromMask(d, hn::Eq(chunk, v_quote)) << sh;
             const auto cls = hn::And(hn::TableLookupBytes(lut_lo, hn::And(chunk, v_0f)),
                 hn::TableLookupBytes(lut_hi, hn::ShiftRight<4>(chunk)));
-            m_op |= MaskBits(d, hn::Ne(hn::And(cls, v_op_bits), v_zero)) << sh;
-            m_opws |= MaskBits(d, hn::Ne(hn::And(cls, v_opws_bits), v_zero)) << sh;
-            m_odd |= MaskBits(d, hn::Ne(hn::And(cls, v_odd_bits), v_zero)) << sh;
-            m_ctrl |= MaskBits(d, hn::Ne(hn::And(cls, v_ctrl_bits), v_zero)) << sh;
+            m_op |= hn::BitsFromMask(d, hn::Ne(hn::And(cls, v_op_bits), v_zero)) << sh;
+            m_opws |= hn::BitsFromMask(d, hn::Ne(hn::And(cls, v_opws_bits), v_zero)) << sh;
+            m_odd |= hn::BitsFromMask(d, hn::Ne(hn::And(cls, v_odd_bits), v_zero)) << sh;
+            m_ctrl |= hn::BitsFromMask(d, hn::Ne(hn::And(cls, v_ctrl_bits), v_zero)) << sh;
         }
 
         uint64_t escaped;

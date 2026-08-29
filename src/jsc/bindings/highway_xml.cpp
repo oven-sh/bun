@@ -9,7 +9,6 @@
 #include <hwy/foreach_target.h>
 #include <hwy/highway.h>
 #include "highway_dispatch.h"
-#include "highway_mask_bits-inl.h"
 
 #include <string.h>
 
@@ -38,10 +37,10 @@ static HWY_INLINE void Classify(D8 d, V lo, unsigned sh, BlockMasks& m)
     const auto v_zero = hn::Zero(d);
     const auto cls = hn::And(hn::TableLookupBytes(lut_lo, hn::And(lo, v_0f)),
         hn::TableLookupBytes(lut_hi, hn::ShiftRight<4>(lo)));
-    m.lt |= MaskBits(d, hn::Ne(hn::And(cls, hn::Set(d, (uint8_t)BUN_XML_CLASS_LT)), v_zero)) << sh;
-    m.gt |= MaskBits(d, hn::Ne(hn::And(cls, hn::Set(d, (uint8_t)BUN_XML_CLASS_GT)), v_zero)) << sh;
-    m.always |= MaskBits(d, hn::Ne(hn::And(cls, hn::Set(d, (uint8_t)BUN_XML_CLASS_ALWAYS)), v_zero)) << sh;
-    m.tag |= MaskBits(d, hn::Ne(hn::And(cls, hn::Set(d, (uint8_t)BUN_XML_CLASS_TAG)), v_zero)) << sh;
+    m.lt |= hn::BitsFromMask(d, hn::Ne(hn::And(cls, hn::Set(d, (uint8_t)BUN_XML_CLASS_LT)), v_zero)) << sh;
+    m.gt |= hn::BitsFromMask(d, hn::Ne(hn::And(cls, hn::Set(d, (uint8_t)BUN_XML_CLASS_GT)), v_zero)) << sh;
+    m.always |= hn::BitsFromMask(d, hn::Ne(hn::And(cls, hn::Set(d, (uint8_t)BUN_XML_CLASS_ALWAYS)), v_zero)) << sh;
+    m.tag |= hn::BitsFromMask(d, hn::Ne(hn::And(cls, hn::Set(d, (uint8_t)BUN_XML_CLASS_TAG)), v_zero)) << sh;
 }
 
 // The part both kernels share: `in_tag` = MatchStar(lt, ~gt) — every position reachable from a
@@ -107,9 +106,9 @@ size_t XmlIndexImpl(const uint8_t* HWY_RESTRICT input, size_t len, size_t base_o
             const auto chunk = hn::LoadU(d, p + v * N);
             const unsigned sh = (unsigned)(v * N);
             Classify(d, chunk, sh, m);
-            m_ef |= MaskBits(d, hn::Eq(chunk, v_ef)) << sh;
-            m_bf |= MaskBits(d, hn::Eq(chunk, v_bf)) << sh;
-            m_bebf |= MaskBits(d, hn::Eq(hn::Or(chunk, v_01), v_bf)) << sh;
+            m_ef |= hn::BitsFromMask(d, hn::Eq(chunk, v_ef)) << sh;
+            m_bf |= hn::BitsFromMask(d, hn::Eq(chunk, v_bf)) << sh;
+            m_bebf |= hn::BitsFromMask(d, hn::Eq(hn::Or(chunk, v_01), v_bf)) << sh;
         }
         m.nonchar = m_bebf & ((m_bf << 1) | (prev_bf >> 63)) & ((m_ef << 2) | (prev_ef >> 62));
         prev_ef = m_ef;
@@ -170,16 +169,16 @@ size_t XmlIndex16Impl(const uint16_t* HWY_RESTRICT input, size_t len, size_t bas
             const unsigned sh = (unsigned)(v * N);
             BlockMasks unit;
             Classify(d, lo, 0, unit);
-            const uint64_t ascii = MaskBits(d, hn::Eq(hi, v_zero));
+            const uint64_t ascii = hn::BitsFromMask(d, hn::Eq(hi, v_zero));
             m.lt |= (unit.lt & ascii) << sh;
             m.gt |= (unit.gt & ascii) << sh;
             m.always |= (unit.always & ascii) << sh;
             m.tag |= (unit.tag & ascii) << sh;
-            const uint64_t nonchar = MaskBits(d, hn::And(hn::Eq(hi, v_ff), hn::Eq(hn::Or(lo, v_01), v_ff)));
+            const uint64_t nonchar = hn::BitsFromMask(d, hn::And(hn::Eq(hi, v_ff), hn::Eq(hn::Or(lo, v_01), v_ff)));
             m.nonchar |= nonchar << sh;
             const auto plane = hn::And(hi, v_fc);
-            lead |= MaskBits(d, hn::Eq(plane, v_d8)) << sh;
-            trail |= MaskBits(d, hn::Eq(plane, v_dc)) << sh;
+            lead |= hn::BitsFromMask(d, hn::Eq(plane, v_d8)) << sh;
+            trail |= hn::BitsFromMask(d, hn::Eq(plane, v_dc)) << sh;
         }
         lead &= valid;
         trail &= valid;

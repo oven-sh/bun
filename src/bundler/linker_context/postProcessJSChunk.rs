@@ -772,7 +772,6 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                         c.graph.meta.items_module_exports_ref()[source_index as usize];
                     if module_exports_ref.is_valid() {
                         // "var foo_default = require_foo();"
-                        // "export { foo_default as default, foo_default as "module.exports" };"
                         stmts.push(Stmt::alloc(
                             S::Local {
                                 decls: G::DeclList::from_slice(&[G::Decl {
@@ -789,6 +788,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                             },
                             bun_ast::Loc::EMPTY,
                         ));
+                        // "export { foo_default as default, foo_default as "module.exports" };"
                         let items: &mut [bun_ast::ClauseItem] = arena
                             .alloc_slice_fill_iter(module_exports_clause_items(module_exports_ref));
                         stmts.push(Stmt::alloc(
@@ -1027,7 +1027,6 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
 
                         if module_exports_ref.is_valid() {
                             // "var foo_default = { get a() { return a; } };"
-                            // "export { a, foo_default as default, foo_default as "module.exports" };"
                             debug_assert!(synthetic_default.is_some());
                             if let Some(value) = synthetic_default.take() {
                                 stmts.push(Stmt::alloc(
@@ -1207,8 +1206,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
     }
 }
 
-/// `foo_default as default, foo_default as "module.exports"`. Bun's `require()`
-/// of an ES module returns its `"module.exports"` export when there is one.
+/// `foo_default as default, foo_default as "module.exports"`, the names `require(esm)` reads.
 fn module_exports_clause_items(module_exports_ref: Ref) -> [bun_ast::ClauseItem; 2] {
     let aliases: [&[u8]; 2] = [b"default", b"module.exports"];
     aliases.map(|alias| bun_ast::ClauseItem {
@@ -1222,8 +1220,7 @@ fn module_exports_clause_items(module_exports_ref: Ref) -> [bun_ast::ClauseItem;
     })
 }
 
-/// `{ get a() { return a; }, ... }`, one getter per export clause item: what
-/// `module.exports` would have been for a CommonJS module converted to ESM.
+/// `{ get a() { return a; }, ... }`: the `module.exports` a CommonJS module converted to ESM lacks.
 fn synthetic_default_export_object(arena: &Arena, items: &[bun_ast::ClauseItem]) -> Expr {
     let mut properties = G::PropertyList::init_capacity(items.len());
     let getter_fn_body: &mut [Stmt] = arena.alloc_slice_fill_default(items.len());

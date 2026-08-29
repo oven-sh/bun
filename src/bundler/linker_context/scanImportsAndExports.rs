@@ -530,9 +530,7 @@ pub(crate) fn scan_imports_and_exports(
             let exports_ref = col_ref!(exports_refs)[id];
             let module_ref = col_ref!(module_refs)[id];
 
-            // A compiled executable `require()`s this entry point as an ES module, so
-            // its `module.exports` value gets a top-level binding that the entry point
-            // tail exports as `default` and `"module.exports"` (`generate_entry_point_tail_js`).
+            // A compiled executable's `require()` of the chunk reads its `"module.exports"` export.
             let binds_module_exports = is_entry_point
                 && output_format == Format::Esm
                 && this.options.compile_mode.is_executable()

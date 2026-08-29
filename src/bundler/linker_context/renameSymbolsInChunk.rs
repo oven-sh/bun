@@ -102,10 +102,8 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         )
     };
 
-    // Declared by the entry point tail at chunk top level, so it is named with the
-    // chunk-level symbols: the per-file loops below name a CommonJS closure's
-    // generated symbols inside the closure, and with code splitting the entry
-    // file may not be in this chunk at all.
+    // Named with the chunk-level symbols: the per-file loops below would name it inside the
+    // entry's CommonJS closure, or not at all when splitting puts the entry file in another chunk.
     let entry_module_exports_ref: bun_ast::Ref = if chunk.is_entry_point() {
         module_exports_ref_col[chunk.entry_point.source_index() as usize]
     } else {

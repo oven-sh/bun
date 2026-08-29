@@ -1902,8 +1902,16 @@ impl FetchTasklet {
         // hop (`HTTPClient::reevaluate_proxy_for_redirect`). `ProxySettings`
         // owns copies of the env values, so a later `process.env.HTTP_PROXY =
         // ...` on the JS thread cannot invalidate them mid-request.
+        //
+        // `unix` is the transport for this request, so neither the proxy env nor
+        // the per-hop re-resolution may apply to it (otherwise the daemon would
+        // be sent an absolute-form request or a CONNECT, with the proxy's
+        // credentials); fetch() already rejects an explicit `proxy` with `unix`.
         let proxy_settings: Option<Box<http::ProxySettings>> =
-            if let Some(proxy_opt) = &fetch_options.proxy {
+            if !fetch_options.unix_socket_path.slice().is_empty() {
+                debug_assert!(fetch_options.proxy.is_none());
+                None
+            } else if let Some(proxy_opt) = &fetch_options.proxy {
                 if !proxy_opt.is_empty() {
                     http::ProxySettings::from_explicit(proxy_opt.href, env)
                 } else {

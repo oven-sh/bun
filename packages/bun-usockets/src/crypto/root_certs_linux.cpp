@@ -3,193 +3,143 @@
 
 #include "libusockets.h"
 #include <dirent.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <limits.h>
-#include <openssl/x509.h>
-#include <openssl/x509_vfy.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <openssl/err.h>
 #include <openssl/pem.h>
+#include <openssl/x509.h>
 
-// Helper function to load certificates from a directory
-static void load_certs_from_directory(const char* dir_path, STACK_OF(X509)* cert_stack, bool accept_hashed) {
-  DIR* dir = opendir(dir_path);
-  if (!dir) {
-    return;
-  }
+#include <algorithm>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
 
-  struct dirent* entry;
-  while ((entry = readdir(dir)) != NULL) {
-    // Skip . and ..
-    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
-      continue;
-    }
+#include "root_certs_platform.h"
 
-    // Accept .crt/.pem/.cer everywhere. Optionally also accept OpenSSL
-    // c_rehash-style names (^[0-9a-f]{8}\.[0-9]+$). accept_hashed is on for
-    // Android system stores (which use ONLY that format) and for SSL_CERT_DIR
-    // env-override directories (so a c_rehash-only dir works); it's off for
-    // the built-in /etc/ssl/certs fallback because Debian has both *.pem and
-    // <hash>.0 symlinks to the SAME files there and we'd double-load.
-    const char* ext = strrchr(entry->d_name, '.');
-    if (!ext) continue;
-    bool ok = strcmp(ext, ".crt") == 0 || strcmp(ext, ".pem") == 0 || strcmp(ext, ".cer") == 0;
-    if (!ok && accept_hashed) {
-      size_t prefix = (size_t)(ext - entry->d_name);
-      if (prefix == 8) {
-        ok = true;
-        for (size_t i = 0; i < 8; i++) {
-          char c = entry->d_name[i];
-          if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) { ok = false; break; }
-        }
-        for (const char* p = ext + 1; ok && *p; p++) if (*p < '0' || *p > '9') ok = false;
-        if (ext[1] == '\0') ok = false;
+// The Linux system store, read the way Node's --use-system-ca reads it (GetOpenSSLSystemCertificates in
+// src/crypto/crypto_context.cc): $SSL_CERT_FILE, else X509_get_default_cert_file(); and every regular file in
+// $SSL_CERT_DIR, else X509_get_default_cert_dir() — always both, and a variable that is set but empty turns its
+// source off. Unlike Node, each file is read once per inode and each certificate is reported once: distros link every
+// root two or three times under /etc/ssl/certs and repeat them all in the bundle.
+namespace {
+
+struct SystemCertLoader {
+  STACK_OF(X509) *out;
+  std::set<std::pair<dev_t, ino_t>> files_seen;
+  std::set<std::string> ders_seen;
+
+  // PEM_bytes_read_bio is PEM_read_bio_X509 without the ASN.1 parse: same name matching, skipping and header
+  // handling. Deduplicating on the DER first means an aliased root is parsed once.
+  void loadBio(BIO *bio) {
+    for (;;) {
+      uint8_t *data = nullptr;
+      long len = 0;
+      char *name = nullptr;
+      if (!PEM_bytes_read_bio(&data, &len, &name, PEM_STRING_X509, bio, us_no_password_callback, nullptr)) {
+        break;
+      }
+      OPENSSL_free(name);
+      bool ok = true;
+      if (ders_seen.emplace(reinterpret_cast<const char *>(data), static_cast<size_t>(len)).second) {
+        const uint8_t *p = data;
+        X509 *cert = d2i_X509(nullptr, &p, len);
+        ok = cert != nullptr && (sk_X509_push(out, cert) || (X509_free(cert), false));
+      }
+      OPENSSL_free(data);
+      if (!ok) {
+        break;
       }
     }
-    if (!ok) continue;
-    
-    // Build full path
-    char filepath[PATH_MAX];
-    snprintf(filepath, sizeof(filepath), "%s/%s", dir_path, entry->d_name);
-    
-    // Try to load certificate
-    FILE* file = fopen(filepath, "r");
-    if (file) {
-      X509* cert = PEM_read_X509(file, NULL, NULL, NULL);
+    ERR_clear_error();
+  }
+
+  // No file-type check here, as in Node, so SSL_CERT_FILE may name a pipe.
+  void loadFile(const char *path) {
+    FILE *file = fopen(path, "re");
+    if (file == nullptr) {
+      return;
+    }
+    struct stat st;
+    if (fstat(fileno(file), &st) == 0 && !files_seen.emplace(st.st_dev, st.st_ino).second) {
       fclose(file);
-      
-      if (cert) {
-        if (!sk_X509_push(cert_stack, cert)) {
-          X509_free(cert);
-        }
+      return;
+    }
+    BIO *bio = BIO_new_fp(file, BIO_CLOSE);
+    if (bio == nullptr) {
+      fclose(file);
+      return;
+    }
+    loadBio(bio);
+    BIO_free(bio);
+  }
+
+  // Every regular file (after following links) directly in `dir`, in name order.
+  void loadDirectory(const std::string &dir) {
+    DIR *d = opendir(dir.c_str());
+    if (d == nullptr) {
+      return;
+    }
+    std::vector<std::string> names;
+    while (struct dirent *entry = readdir(d)) {
+      if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+        names.emplace_back(entry->d_name);
       }
     }
-  }
-  
-  closedir(dir);
-}
-
-// Helper function to load certificates from a bundle file
-// Returns how many certificates the bundle contributed.
-static size_t load_certs_from_bundle(const char* bundle_path, STACK_OF(X509)* cert_stack) {
-  FILE* file = fopen(bundle_path, "r");
-  if (!file) {
-    return 0;
-  }
-  
-  size_t loaded = 0;
-  X509* cert;
-  while ((cert = PEM_read_X509(file, NULL, NULL, NULL)) != NULL) {
-    if (!sk_X509_push(cert_stack, cert)) {
-      X509_free(cert);
-      break;
+    closedir(d);
+    std::sort(names.begin(), names.end());
+    for (const std::string &name : names) {
+      std::string path = dir + "/" + name;
+      struct stat st;
+      if (stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode) || files_seen.count({st.st_dev, st.st_ino})) {
+        continue;
+      }
+      loadFile(path.c_str());
     }
-    loaded++;
   }
-  ERR_clear_error();
-  
-  fclose(file);
-  return loaded;
-}
+};
 
-// Main function to load system certificates on Linux and other Unix-like systems
+} // namespace
+
 extern "C" void us_load_system_certificates_linux(STACK_OF(X509) **system_certs) {
   *system_certs = sk_X509_new_null();
   if (*system_certs == NULL) {
     return;
   }
+  SystemCertLoader loader{*system_certs, {}, {}};
 
-  // First check environment variables (same as Node.js and OpenSSL)
-  const char* ssl_cert_file = getenv("SSL_CERT_FILE");
-  const char* ssl_cert_dir = getenv("SSL_CERT_DIR");
-  
-  // If SSL_CERT_FILE is set, load from it
-  if (ssl_cert_file && strlen(ssl_cert_file) > 0) {
-    load_certs_from_bundle(ssl_cert_file, *system_certs);
+  const char *cert_file = getenv("SSL_CERT_FILE");
+  if (cert_file == nullptr) {
+    cert_file = X509_get_default_cert_file();
   }
-  
-  // If SSL_CERT_DIR is set, load from each directory (colon-separated)
-  if (ssl_cert_dir && strlen(ssl_cert_dir) > 0) {
-    char* dir_copy = us_strdup(ssl_cert_dir);
-    if (dir_copy) {
-      char* token = strtok(dir_copy, ":");
-      while (token != NULL) {
-        // Skip empty tokens
-        if (strlen(token) > 0) {
-          load_certs_from_directory(token, *system_certs, /*accept_hashed=*/true);
-        }
-        token = strtok(NULL, ":");
-      }
-      us_free(dir_copy);
+  if (cert_file[0] != '\0') {
+    loader.loadFile(cert_file);
+  }
+
+  const char *cert_dir = getenv("SSL_CERT_DIR");
+  if (cert_dir == nullptr) {
+#ifdef __ANDROID__
+    // Android has no OpenSSL layout: mainline store (API 30+), base store, user-installed store.
+    loader.loadDirectory("/apex/com.android.conscrypt/cacerts");
+    loader.loadDirectory("/system/etc/security/cacerts");
+    loader.loadDirectory("/data/misc/user/0/cacerts-added");
+#else
+    loader.loadDirectory(X509_get_default_cert_dir());
+#endif
+  } else {
+    // OpenSSL accepts several directories separated by ':' here.
+    std::string dirs = cert_dir;
+    size_t start = 0;
+    while (start <= dirs.size()) {
+      size_t end = dirs.find(':', start);
+      if (end == std::string::npos) end = dirs.size();
+      if (end > start) loader.loadDirectory(dirs.substr(start, end - start));
+      start = end + 1;
     }
-  }
-  
-  // If environment variables were set, use only those (even if they yield zero certs)
-  if (ssl_cert_file || ssl_cert_dir) {
-    return;
-  }
-
-  // Otherwise, load certificates from standard Linux/Unix paths
-  // These are the common locations for system certificates
-#ifdef __ANDROID__
-  // Android: no bundle files. System CAs are individual hashed PEM files.
-  static const char* bundle_paths[] = { NULL };
-  static const char* dir_paths[] = {
-    "/apex/com.android.conscrypt/cacerts",  // API 30+ (mainline updatable)
-    "/system/etc/security/cacerts",         // base system store
-    "/data/misc/user/0/cacerts-added",      // user-installed
-    NULL
-  };
-#else
-  // Common certificate bundle locations (single file with multiple certs)
-  // These paths are based on common Linux distributions and OpenSSL defaults
-  static const char* bundle_paths[] = {
-    "/etc/ssl/certs/ca-certificates.crt",  // Debian/Ubuntu/Gentoo
-    "/etc/pki/tls/certs/ca-bundle.crt",    // Fedora/RHEL 6
-    "/etc/ssl/ca-bundle.pem",               // OpenSUSE
-    "/etc/pki/tls/cert.pem",                // Fedora/RHEL 7+
-    "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",  // CentOS/RHEL 7+
-    "/etc/ssl/cert.pem",                    // Alpine Linux, macOS OpenSSL
-    "/usr/local/etc/openssl/cert.pem",      // Homebrew OpenSSL on macOS
-    "/usr/local/share/ca-certificates/ca-certificates.crt", // Custom CA installs
-    NULL
-  };
-
-  // Common certificate directory locations (multiple files)
-  // Note: OpenSSL expects hashed symlinks in directories (c_rehash format)
-  static const char* dir_paths[] = {
-    "/etc/ssl/certs",           // Common location (Debian/Ubuntu with hashed links)
-    "/etc/pki/tls/certs",       // RHEL/Fedora
-    "/usr/share/ca-certificates", // Debian/Ubuntu (original certs, not hashed)
-    "/usr/local/share/certs",   // FreeBSD
-    "/etc/openssl/certs",       // NetBSD
-    "/var/ssl/certs",           // AIX
-    "/usr/local/etc/openssl/certs", // Homebrew OpenSSL on macOS
-    "/System/Library/OpenSSL/certs", // macOS system OpenSSL (older versions)
-    NULL
-  };
-#endif
-  
-  // The distro's bundle is one file that several of these paths usually alias (Fedora/Amazon Linux symlink four of them
-  // to the same tls-ca-bundle.pem, whose contents the hashed directory repeats again), so take the first bundle that
-  // yields certificates — as OpenSSL's default verify paths and Node's --use-system-ca do — and only walk the
-  // directories when no bundle did. The directories are distinct stores (Android: apex, system, user-added), not
-  // aliases, so all of them are read.
-  size_t loaded = 0;
-  for (const char** path = bundle_paths; *path != NULL && !loaded; path++) {
-    loaded = load_certs_from_bundle(*path, *system_certs);
-  }
-  if (loaded) {
-    return;
-  }
-  
-#ifdef __ANDROID__
-  const bool accept_hashed = true;
-#else
-  const bool accept_hashed = false;
-#endif
-  for (const char** path = dir_paths; *path != NULL; path++) {
-    load_certs_from_directory(*path, *system_certs, accept_hashed);
   }
 }
 

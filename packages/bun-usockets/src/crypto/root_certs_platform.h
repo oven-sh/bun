@@ -10,4 +10,7 @@ void us_load_system_certificates_linux(STACK_OF(X509) **system_certs);
 void us_load_system_certificates_macos(STACK_OF(X509) **system_certs);
 void us_load_system_certificates_windows(STACK_OF(X509) **system_certs);
 
+// Passphrase callback that never answers, so PEM decryption fails instead of prompting the terminal.
+int us_no_password_callback(char *buf, int size, int rwflag, void *u);
+
 }

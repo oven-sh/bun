@@ -48,7 +48,7 @@ static bool us_should_use_system_ca() {
 // for the OpenSSL CLI, but works poorly for this case because it involves
 // synchronous interaction with the controlling terminal, something we never
 // want, and use this function to avoid it.
-int us_no_password_callback(char *buf, int size, int rwflag, void *u) {
+extern "C" int us_no_password_callback(char *buf, int size, int rwflag, void *u) {
   return 0;
 }
 

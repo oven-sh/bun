@@ -93,9 +93,8 @@ impl Pipeline {
         }
     }
 
-    /// Starts exactly ONE child per call and returns its `start()` Yield. The
-    /// trampoline's `drain_pipelines` (Yield.rs) re-enters `Pipeline::next`
-    /// to start the next child once the current one suspends.
+    /// Starts ONE child per call; `drain_pipelines` (Yield.rs) re-enters
+    /// `Pipeline::next` for the next one once the current child suspends.
     fn next_starting(interp: &Interpreter, this: NodeId, idx: u32) -> Yield {
         if interp.as_pipeline(this).cmds.is_none() {
             debug_assert_eq!(idx, 0);
@@ -123,12 +122,9 @@ impl Pipeline {
         interp.start_node(child)
     }
 
-    /// Create the N-1 pipes, dupe the shell env per child and init every
-    /// child, without starting any. A failed pipe or dup finishes the pipeline
-    /// with exit 1 and `deinit` frees the inited children, which is only safe
-    /// while none of them runs a subtree `deinit` does not reach.
-    ///
-    /// Returns `Some(yield)` when the pipeline finished here.
+    /// Creates the pipes and inits every child without starting any, so a
+    /// failed pipe or dup finishes the pipeline (`Some(yield)`) while no child
+    /// runs a subtree that `deinit` cannot reach.
     fn setup_commands(interp: &Interpreter, this: NodeId) -> Option<Yield> {
         let (node, parent_shell, evtloop) = {
             let me = interp.as_pipeline(this);
@@ -183,8 +179,6 @@ impl Pipeline {
             // Position among runnable children (indexes `pipes[]`/`cmds[]`).
             let cmd_idx = cmds.len();
 
-            // stdin from the previous pipe, stdout to the next one; the first
-            // and last child use the pipeline's own.
             let child_io = {
                 let me = interp.as_pipeline(this);
                 let stdin = if cmd_idx == 0 {
@@ -230,8 +224,7 @@ impl Pipeline {
             } {
                 Ok(d) => d,
                 Err(e) => {
-                    // `child_io` owns two of the pipe ends, the inited
-                    // children own the rest. Close the unclaimed ones.
+                    // Close the pipe ends that neither `child_io` nor an inited child owns.
                     drop(child_io);
                     for p in &pipes[cmd_idx..] {
                         closefd(p[0]);
@@ -399,8 +392,7 @@ impl Pipeline {
 
     pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
         log!("Pipeline {} deinit", this);
-        // Children still here never started (setup failed). Their IO owns
-        // the pipe fds and closes them when the node drops.
+        // Only children that never started (setup failed) are still here.
         let cmds = interp.as_pipeline_mut(this).cmds.take();
         if let Some(cmds) = cmds {
             for c in cmds.into_vec() {

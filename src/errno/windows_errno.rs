@@ -577,11 +577,13 @@ impl SystemErrnoInit for i32 {
 impl SystemErrnoInit for u32 {
     #[inline]
     fn into_system_errno(self) -> Option<SystemErrno> {
-        // GetLastError()/WSAGetLastError() return DWORD; HRESULT-shaped facility
-        // codes and some installer/WinHTTP errors exceed 0xFFFF. Those are
-        // intentionally unmapped → None. Codes that DO fit u16 route via
-        // the Win32Error→errno table.
-        u16::try_from(self).ok().and_then(SystemErrno::init_numeric)
+        // A DWORD from GetLastError() and friends: values above 0xFFFF are
+        // unmapped unless they are a `FACILITY_WIN32` HRESULT wrapping a Win32
+        // code (see `Win32Error::from_u32`).
+        match Win32Error::from_u32(self) {
+            Win32Error(u16::MAX) => None,
+            code => SystemErrno::init_numeric(code.0),
+        }
     }
 }
 

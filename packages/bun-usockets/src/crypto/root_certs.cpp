@@ -26,9 +26,23 @@ typedef void (*us_on_cert_file)(void *ctx, const uint8_t *data, size_t len);
 extern "C" int Bun__readCertificateFile(const char *path, void *ctx, us_on_cert_file on_file);
 extern "C" void Bun__readOpenSSLDefaultCertFile(const char *default_path, void *ctx, us_on_cert_file on_file);
 
+// A read-only memory BIO over an owned copy of the file. (A writable BIO_s_mem() would memmove the rest of the buffer
+// on every line PEM reads.)
+struct us_cert_file_bio {
+  uint8_t *data = nullptr;
+  BIO *bio = nullptr;
+  ~us_cert_file_bio() {
+    BIO_free(bio);
+    free(data);
+  }
+};
+
 static void us_cert_file_into_bio(void *ctx, const uint8_t *data, size_t len) {
-  *static_cast<BIO **>(ctx) = BIO_new(BIO_s_mem());
-  if (*static_cast<BIO **>(ctx) != nullptr) BIO_write(*static_cast<BIO **>(ctx), data, len);
+  us_cert_file_bio *file = static_cast<us_cert_file_bio *>(ctx);
+  file->data = static_cast<uint8_t *>(malloc(len ? len : 1));
+  if (file->data == nullptr) return;
+  memcpy(file->data, data, len);
+  file->bio = BIO_new_mem_buf(file->data, len);
 }
 
 // Forward declarations for platform-specific functions
@@ -72,10 +86,12 @@ static STACK_OF(X509) *us_ssl_ctx_load_all_certs_from_file(const char *filename)
 
   ERR_clear_error(); // clear error stack for SSL_CTX_use_certificate()
 
-  if (int err = Bun__readCertificateFile(filename, &in, us_cert_file_into_bio)) {
+  us_cert_file_bio file;
+  if (int err = Bun__readCertificateFile(filename, &file, us_cert_file_into_bio)) {
     BUN__warn__extra_ca_load_failed(filename, strerror(err));
     return NULL;
   }
+  in = file.bio;
   if (in == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
     goto end;
@@ -108,11 +124,9 @@ static STACK_OF(X509) *us_ssl_ctx_load_all_certs_from_file(const char *filename)
     goto end;
   }
 
-  BIO_free(in);
   return certs;
 
 end:
-  BIO_free(in);
   if (certs) {
     sk_X509_pop_free(certs, X509_free);
   }
@@ -168,8 +182,9 @@ static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
   static us_openssl_default_cert_file result;
   static std::once_flag once;
   std::call_once(once, []() {
-    BIO *in = nullptr;
-    Bun__readOpenSSLDefaultCertFile(X509_get_default_cert_file(), &in, us_cert_file_into_bio);
+    us_cert_file_bio file;
+    Bun__readOpenSSLDefaultCertFile(X509_get_default_cert_file(), &file, us_cert_file_into_bio);
+    BIO *in = file.bio;
     if (in == nullptr) {
       return;
     }
@@ -217,7 +232,6 @@ static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
       OPENSSL_free(header);
       OPENSSL_free(data);
     }
-    BIO_free(in);
     ERR_clear_error();
 
     if (ok && !certs.empty()) {

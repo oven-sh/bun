@@ -17,9 +17,15 @@ pub trait StandaloneModuleGraph: Send + Sync {
     fn has_module_info(&self, _name: &[u8]) -> bool {
         false
     }
+    /// The embedded module whose entry point was spelled `name` at build time (`/$bunfs/root/data.json` for the
+    /// module embedded as `/$bunfs/root/data.js`), when the executable recorded it.
+    fn find_entry_point_alias(&self, _name: &[u8]) -> Option<&'static [u8]> {
+        None
+    }
     /// The embedded module `specifier` names when imported from `source_dir`: an absolute embedded path (in either
-    /// path syntax), or a `./` / `../` specifier joined onto `source_dir`, looked up as spelled and then -- since every
-    /// entry point is embedded under a `.js` name -- under the `.js` name for a source extension or no extension
+    /// path syntax), or a `./` / `../` specifier joined onto `source_dir`, looked up as spelled, then as the source
+    /// spelling of an entry point (`./data.json` -> `/$bunfs/root/data.js`), and then -- since every entry point is
+    /// embedded under a `.js` name -- under the `.js` name for a source extension or no extension
     /// (`./w.ts` -> `/$bunfs/root/w.js`). Returns the graph's own name for the module, which is what the module
     /// loader keys on; `None` for anything else (bare specifiers, other absolute paths, misses).
     fn resolve(&self, source_dir: &[u8], specifier: &[u8]) -> Option<&'static [u8]> {
@@ -49,6 +55,9 @@ pub trait StandaloneModuleGraph: Send + Sync {
             .len()
         };
         if let Some(name) = self.find_assume_standalone_path(&buf[..path_len]) {
+            return Some(name);
+        }
+        if let Some(name) = self.find_entry_point_alias(&buf[..path_len]) {
             return Some(name);
         }
         // Entry points are embedded under a `.js` name whatever the (case-insensitive) source extension was.

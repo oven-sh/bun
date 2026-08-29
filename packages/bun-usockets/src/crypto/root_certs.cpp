@@ -22,6 +22,16 @@
 
 extern "C" void BUN__warn__extra_ca_load_failed(const char* filename, const char* error_msg);
 
+// src/runtime/socket/cert_files.rs: this file keeps to BoringSSL and takes file contents from Rust.
+typedef void (*us_on_cert_file)(void *ctx, const uint8_t *data, size_t len);
+extern "C" int Bun__readCertificateFile(const char *path, void *ctx, us_on_cert_file on_file);
+extern "C" void Bun__readOpenSSLDefaultCertFile(const char *default_path, void *ctx, us_on_cert_file on_file);
+
+static void us_cert_file_into_bio(void *ctx, const uint8_t *data, size_t len) {
+  *static_cast<BIO **>(ctx) = BIO_new(BIO_s_mem());
+  if (*static_cast<BIO **>(ctx) != nullptr) BIO_write(*static_cast<BIO **>(ctx), data, len);
+}
+
 // Forward declarations for platform-specific functions
 // (Actual implementations are in platform-specific files)
 
@@ -63,9 +73,12 @@ static STACK_OF(X509) *us_ssl_ctx_load_all_certs_from_file(const char *filename)
 
   ERR_clear_error(); // clear error stack for SSL_CTX_use_certificate()
 
-  in = BIO_new_file(filename, "r");
+  if (int err = Bun__readCertificateFile(filename, &in, us_cert_file_into_bio)) {
+    BUN__warn__extra_ca_load_failed(filename, strerror(err));
+    return NULL;
+  }
   if (in == NULL) {
-    OPENSSL_PUT_ERROR(SSL, ERR_R_SYS_LIB);
+    OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
     goto end;
   }
 
@@ -159,11 +172,9 @@ static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
   static us_openssl_default_cert_file result;
   static std::once_flag once;
   std::call_once(once, []() {
-    const char *path = getenv(X509_get_default_cert_file_env());
-    if (path == nullptr) path = X509_get_default_cert_file();
-    BIO *in = BIO_new_file(path, "rb");
+    BIO *in = nullptr;
+    Bun__readOpenSSLDefaultCertFile(X509_get_default_cert_file(), &in, us_cert_file_into_bio);
     if (in == nullptr) {
-      ERR_clear_error();
       return;
     }
 

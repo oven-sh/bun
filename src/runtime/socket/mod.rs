@@ -32,6 +32,7 @@ pub mod windows_named_pipe;
 #[path = "WindowsNamedPipeContext.rs"]
 pub mod windows_named_pipe_context;
 
+mod cert_files;
 #[cfg(all(unix, not(target_vendor = "apple")))]
 mod system_certs;
 

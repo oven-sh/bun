@@ -7703,10 +7703,9 @@ describe("css tests", () => {
 
   describe("color()", () => {
     // Every predefined color space, in the absolute form and as the target of a
-    // relative color that references all three channels. Expected values are
-    // lightningcss output. A color() that fails to parse is kept as an unparsed
-    // token stream, so the alpha percentage and the channel keywords would be
-    // printed verbatim instead of being folded.
+    // relative color that references all three channels. A color() that fails to
+    // parse is kept as an unparsed token stream, so the alpha percentage and the
+    // channel keywords would be printed verbatim instead of being folded.
     const predefined: [space: string, channels: string, printed?: string][] = [
       ["srgb", "b g r"],
       ["srgb-linear", "b g r"],
@@ -7725,6 +7724,108 @@ describe("css tests", () => {
         `.foo{color:color(${printed} .125 .25 .5)}`,
       );
     }
+
+    // lightningcss 1.30.2 `test_relative_color`, the loop over the RGB-like predefined
+    // spaces (src/lib.rs, `for color_space in &["srgb", "srgb-linear", "a98-rgb", "rec2020",
+    // "prophoto-rgb"]`). `{}` stands for the color space. Like the upstream `test()` helper,
+    // the expected color literal is normalized through the printer before the comparison.
+    describe("relative colors in the RGB-like predefined spaces", () => {
+      function relative_color_test(input: string, expected: string) {
+        const source = `.foo { color: ${input} }`;
+        test(source, () => {
+          const normalized = minify_test_with_options(`.foo { color: ${expected} }`, "");
+          expect(minify_test_with_options(source, "")).toBe(normalized);
+        });
+      }
+
+      const cases: [input: string, expected: string][] = [
+        // No modifications.
+        ["color(from color({} 0.7 0.5 0.3) {} r g b)", "color({} 0.7 0.5 0.3)"],
+        ["color(from color({} 0.7 0.5 0.3) {} r g b / alpha)", "color({} 0.7 0.5 0.3)"],
+        ["color(from color({} 0.7 0.5 0.3 / 40%) {} r g b)", "color({} 0.7 0.5 0.3)"],
+        ["color(from color({} 0.7 0.5 0.3 / 40%) {} r g b / alpha)", "color({} 0.7 0.5 0.3 / 0.4)"],
+        // Nested relative colors.
+        ["color(from color(from color({} 0.7 0.5 0.3) {} r g b) {} r g b)", "color({} 0.7 0.5 0.3)"],
+        // Replacement with 0.
+        ["color(from color({} 0.7 0.5 0.3) {} 0 0 0)", "color({} 0 0 0)"],
+        ["color(from color({} 0.7 0.5 0.3) {} 0 0 0 / 0)", "color({} 0 0 0 / 0)"],
+        ["color(from color({} 0.7 0.5 0.3) {} 0 g b / alpha)", "color({} 0 0.5 0.3)"],
+        ["color(from color({} 0.7 0.5 0.3) {} r 0 b / alpha)", "color({} 0.7 0 0.3)"],
+        ["color(from color({} 0.7 0.5 0.3) {} r g 0 / alpha)", "color({} 0.7 0.5 0)"],
+        ["color(from color({} 0.7 0.5 0.3) {} r g b / 0)", "color({} 0.7 0.5 0.3 / 0)"],
+        ["color(from color({} 0.7 0.5 0.3 / 40%) {} 0 g b / alpha)", "color({} 0 0.5 0.3 / 0.4)"],
+        ["color(from color({} 0.7 0.5 0.3 / 40%) {} r 0 b / alpha)", "color({} 0.7 0 0.3 / 0.4)"],
+        ["color(from color({} 0.7 0.5 0.3 / 40%) {} r g 0 / alpha)", "color({} 0.7 0.5 0 / 0.4)"],
+        ["color(from color({} 0.7 0.5 0.3 / 40%) {} r g b / 0)", "color({} 0.7 0.5 0.3 / 0)"],
+        // Replacement with a constant.
+        ["color(from color({} 0.7 0.5 0.3) {} 0.2 g b / alpha)", "color({} 0.2 0.5 0.3)"],
+        ["color(from color({} 0.7 0.5 0.3) {} 20% g b / alpha)", "color({} 0.2 0.5 0.3)"],
+        ["color(from color({} 0.7 0.5 0.3) {} r 0.2 b / alpha)", "color({} 0.7 0.2 0.3)"],
+        ["color(from color({} 0.7 0.5 0.3) {} r 20% b / alpha)", "color({} 0.7 0.2 0.3)"],
+        ["color(from color({} 0.7 0.5 0.3) {} r g 0.2 / alpha)", "color({} 0.7 0.5 0.2)"],
+        ["color(from color({} 0.7 0.5 0.3) {} r g 20% / alpha)", "color({} 0.7 0.5 0.2)"],
+        ["color(from color({} 0.7 0.5 0.3) {} r g b / 0.2)", "color({} 0.7 0.5 0.3 / 0.2)"],
+        ["color(from color({} 0.7 0.5 0.3) {} r g b / 20%)", "color({} 0.7 0.5 0.3 / 0.2)"],
+        ["color(from color({} 0.7 0.5 0.3 / 40%) {} 0.2 g b / alpha)", "color({} 0.2 0.5 0.3 / 0.4)"],
+        ["color(from color({} 0.7 0.5 0.3 / 40%) {} 20% g b / alpha)", "color({} 0.2 0.5 0.3 / 0.4)"],
+        ["color(from color({} 0.7 0.5 0.3 / 40%) {} r 0.2 b / alpha)", "color({} 0.7 0.2 0.3 / 0.4)"],
+        ["color(from color({} 0.7 0.5 0.3 / 40%) {} r 20% b / alpha)", "color({} 0.7 0.2 0.3 / 0.4)"],
+        ["color(from color({} 0.7 0.5 0.3 / 40%) {} r g 0.2 / alpha)", "color({} 0.7 0.5 0.2 / 0.4)"],
+        ["color(from color({} 0.7 0.5 0.3 / 40%) {} r g 20% / alpha)", "color({} 0.7 0.5 0.2 / 0.4)"],
+        ["color(from color({} 0.7 0.5 0.3 / 40%) {} r g b / 0.2)", "color({} 0.7 0.5 0.3 / 0.2)"],
+        ["color(from color({} 0.7 0.5 0.3 / 40%) {} r g b / 20%)", "color({} 0.7 0.5 0.3 / 0.2)"],
+        ["color(from color({} 0.7 0.5 0.3) {} 2 3 4)", "color({} 2 3 4)"],
+        ["color(from color({} 0.7 0.5 0.3) {} 2 3 4 / 5)", "color({} 2 3 4)"],
+        ["color(from color({} 0.7 0.5 0.3) {} -2 -3 -4)", "color({} -2 -3 -4)"],
+        ["color(from color({} 0.7 0.5 0.3) {} -2 -3 -4 / -5)", "color({} -2 -3 -4 / 0)"],
+        ["color(from color({} 0.7 0.5 0.3) {} 200% 300% 400%)", "color({} 2 3 4)"],
+        ["color(from color({} 0.7 0.5 0.3) {} 200% 300% 400% / 500%)", "color({} 2 3 4)"],
+        ["color(from color({} 0.7 0.5 0.3) {} -200% -300% -400%)", "color({} -2 -3 -4)"],
+        ["color(from color({} 0.7 0.5 0.3) {} -200% -300% -400% / -500%)", "color({} -2 -3 -4 / 0)"],
+        // Valid permutations (the types match).
+        ["color(from color({} 0.7 0.5 0.3) {} g b r)", "color({} 0.5 0.3 0.7)"],
+        ["color(from color({} 0.7 0.5 0.3) {} b alpha r / g)", "color({} 0.3 1 0.7 / 0.5)"],
+        ["color(from color({} 0.7 0.5 0.3) {} r r r / r)", "color({} 0.7 0.7 0.7 / 0.7)"],
+        ["color(from color({} 0.7 0.5 0.3) {} alpha alpha alpha / alpha)", "color({} 1 1 1)"],
+        ["color(from color({} 0.7 0.5 0.3 / 40%) {} g b r)", "color({} 0.5 0.3 0.7)"],
+        ["color(from color({} 0.7 0.5 0.3 / 40%) {} b alpha r / g)", "color({} 0.3 0.4 0.7 / 0.5)"],
+        ["color(from color({} 0.7 0.5 0.3 / 40%) {} r r r / r)", "color({} 0.7 0.7 0.7 / 0.7)"],
+        ["color(from color({} 0.7 0.5 0.3 / 40%) {} alpha alpha alpha / alpha)", "color({} 0.4 0.4 0.4 / 0.4)"],
+        // Out of gamut components.
+        ["color(from color({} 1.7 1.5 1.3) {} r g b)", "color({} 1.7 1.5 1.3)"],
+        ["color(from color({} 1.7 1.5 1.3) {} r g b / alpha)", "color({} 1.7 1.5 1.3)"],
+        ["color(from color({} 1.7 1.5 1.3 / 140%) {} r g b)", "color({} 1.7 1.5 1.3)"],
+        ["color(from color({} 1.7 1.5 1.3 / 140%) {} r g b / alpha)", "color({} 1.7 1.5 1.3)"],
+        ["color(from color({} -0.7 -0.5 -0.3) {} r g b)", "color({} -0.7 -0.5 -0.3)"],
+        ["color(from color({} -0.7 -0.5 -0.3) {} r g b / alpha)", "color({} -0.7 -0.5 -0.3)"],
+        ["color(from color({} -0.7 -0.5 -0.3 / -40%) {} r g b)", "color({} -0.7 -0.5 -0.3)"],
+        ["color(from color({} -0.7 -0.5 -0.3 / -40%) {} r g b / alpha)", "color({} -0.7 -0.5 -0.3 / 0)"],
+        // calc().
+        ["color(from color({} 0.7 0.5 0.3) {} calc(r) calc(g) calc(b))", "color({} 0.7 0.5 0.3)"],
+        [
+          "color(from color({} 0.7 0.5 0.3 / 40%) {} calc(r) calc(g) calc(b) / calc(alpha))",
+          "color({} 0.7 0.5 0.3 / 0.4)",
+        ],
+        // none.
+        ["color(from color({} 0.7 0.5 0.3) {} none none none)", "color({} none none none)"],
+        ["color(from color({} 0.7 0.5 0.3) {} none none none / none)", "color({} none none none / none)"],
+        ["color(from color({} 0.7 0.5 0.3) {} r g none)", "color({} 0.7 0.5 none)"],
+        ["color(from color({} 0.7 0.5 0.3) {} r g none / alpha)", "color({} 0.7 0.5 none)"],
+        ["color(from color({} 0.7 0.5 0.3) {} r g b / none)", "color({} 0.7 0.5 0.3 / none)"],
+        ["color(from color({} 0.7 0.5 0.3 / 40%) {} r g none / alpha)", "color({} 0.7 0.5 none / 0.4)"],
+        ["color(from color({} 0.7 0.5 0.3 / 40%) {} r g b / none)", "color({} 0.7 0.5 0.3 / none)"],
+        // A none channel of the origin is 0 when a keyword references it.
+        ["color(from color({} none none none) {} r g b)", "color({} 0 0 0)"],
+        ["color(from color({} none none none / none) {} r g b / alpha)", "color({} 0 0 0 / 0)"],
+        ["color(from color({} 0.7 none 0.3) {} r g b)", "color({} 0.7 0 0.3)"],
+        ["color(from color({} 0.7 0.5 0.3 / none) {} r g b / alpha)", "color({} 0.7 0.5 0.3 / 0)"],
+      ];
+      for (const space of ["srgb", "srgb-linear", "a98-rgb", "rec2020", "prophoto-rgb"]) {
+        for (const [input, expected] of cases) {
+          relative_color_test(input.replaceAll("{}", space), expected.replaceAll("{}", space));
+        }
+      }
+    });
 
     describe("a98-rgb", () => {
       minify_test(".foo { color: color(A98-RGB 0 1 0 / 50%) }", ".foo{color:color(a98-rgb 0 1 0/.5)}");
@@ -7813,16 +7914,13 @@ describe("css tests", () => {
     });
 
     describe("srgb-linear", () => {
-      // The `r` channel keyword of an srgb-linear relative color.
+      // The `r` channel keyword of an srgb-linear relative color, with an origin
+      // that has to be converted into srgb-linear first.
       minify_test(".foo { color: color(from red srgb-linear r g b) }", ".foo{color:color(srgb-linear 1 0 0)}");
       minify_test(".foo { color: color(from red srgb-linear g g r) }", ".foo{color:color(srgb-linear 0 0 1)}");
       minify_test(
         ".foo { color: color(from color(srgb-linear .5 .25 .125) srgb-linear calc(r / 2) g b) }",
         ".foo{color:color(srgb-linear .25 .25 .125)}",
-      );
-      minify_test(
-        ".foo { color: color(from color(srgb-linear .5 .25 .125) srgb-linear r g b / 50%) }",
-        ".foo{color:color(srgb-linear .5 .25 .125/.5)}",
       );
       minify_test(
         ".foo { color: color(from #808080 srgb-linear r g b) }",
@@ -7861,28 +7959,129 @@ describe("css tests", () => {
   });
 
   describe("color-mix()", () => {
-    // `in xyz-d50` interpolates in, and yields a color in, xyz-d50; it used to be
-    // routed through xyz-d65. Expected values are lightningcss output.
-    minify_test(
-      ".foo { color: color-mix(in xyz-d50, color(xyz-d50 .1 .2 .3), color(xyz-d50 .3 .2 .1)) }",
-      ".foo{color:color(xyz-d50 .2 .2 .2)}",
-    );
-    minify_test(
-      ".foo { color: color-mix(in xyz-d50, color(xyz-d50 none .2 .3), color(xyz-d50 .3 .2 .1)) }",
-      ".foo{color:color(xyz-d50 .3 .2 .2)}",
-    );
-    minify_test(
-      ".foo { color: color-mix(in xyz-d50, color(xyz-d50 .1 .2 .3), color(xyz-d50 none .2 .1)) }",
-      ".foo{color:color(xyz-d50 .1 .2 .2)}",
-    );
-    minify_test(
-      ".foo { color: color-mix(in xyz-d50, color(xyz-d50 none .2 .3), color(xyz-d50 none .2 .1)) }",
-      ".foo{color:color(xyz-d50 none .2 .2)}",
-    );
-    minify_test(
-      ".foo { color: color-mix(in xyz, color(xyz .1 .2 .3), color(xyz none .2 .1)) }",
-      ".foo{color:color(xyz .1 .2 .2)}",
-    );
+    // lightningcss 1.30.2 `test_color_mix`, the loop over the XYZ spaces (src/lib.rs,
+    // `for color_space in [/*"srgb", */ "srgb-linear", "xyz", "xyz-d50", "xyz-d65"]`, itself
+    // converted from the web platform tests). `{}` stands for the interpolation space in
+    // the input and for the result space in the output: `in xyz-d65` yields `color(xyz ...)`.
+    // `in xyz-d50` interpolates in, and yields a color in, xyz-d50; it used to be routed
+    // through xyz-d65. srgb-linear is left out: 8 of its cases mix `none` or out-of-range
+    // channels, and `CssColor::interpolate` gamut-maps and drops the powerless components
+    // of the wrong operand (its `converted_*` flags are inverted), which #38508 fixes.
+    const cases: [input: string, expected: string][] = [
+      [".foo { color: color-mix(in {}, color({} .1 .2 .3), color({} .5 .6 .7)) }", ".foo{color:color({} .3 .4 .5)}"],
+      [
+        ".foo { color: color-mix(in {}, color({} .1 .2 .3) 25%, color({} .5 .6 .7)) }",
+        ".foo{color:color({} .4 .5 .6)}",
+      ],
+      [
+        ".foo { color: color-mix(in {}, 25% color({} .1 .2 .3), color({} .5 .6 .7)) }",
+        ".foo{color:color({} .4 .5 .6)}",
+      ],
+      [
+        ".foo { color: color-mix(in {}, color({} .1 .2 .3), color({} .5 .6 .7) 25%) }",
+        ".foo{color:color({} .2 .3 .4)}",
+      ],
+      [
+        ".foo { color: color-mix(in {}, color({} .1 .2 .3), 25% color({} .5 .6 .7)) }",
+        ".foo{color:color({} .2 .3 .4)}",
+      ],
+      [
+        ".foo { color: color-mix(in {}, color({} .1 .2 .3) 25%, color({} .5 .6 .7) 75%) }",
+        ".foo{color:color({} .4 .5 .6)}",
+      ],
+      [
+        ".foo { color: color-mix(in {}, color({} .1 .2 .3) 30%, color({} .5 .6 .7) 90%) }",
+        ".foo{color:color({} .4 .5 .6)}",
+      ],
+      [
+        ".foo { color: color-mix(in {}, color({} .1 .2 .3) 12.5%, color({} .5 .6 .7) 37.5%) }",
+        ".foo{color:color({} .4 .5 .6/.5)}",
+      ],
+      [".foo { color: color-mix(in {}, color({} .1 .2 .3) 0%, color({} .5 .6 .7)) }", ".foo{color:color({} .5 .6 .7)}"],
+      [
+        ".foo { color: color-mix(in {}, color({} .1 .2 .3 / .5), color({} .5 .6 .7 / .8)) }",
+        ".foo{color:color({} .346154 .446154 .546154/.65)}",
+      ],
+      [
+        ".foo { color: color-mix(in {}, color({} .1 .2 .3 / .4) 25%, color({} .5 .6 .7 / .8)) }",
+        ".foo{color:color({} .442857 .542857 .642857/.7)}",
+      ],
+      [
+        ".foo { color: color-mix(in {}, 25% color({} .1 .2 .3 / .4), color({} .5 .6 .7 / .8)) }",
+        ".foo{color:color({} .442857 .542857 .642857/.7)}",
+      ],
+      [
+        ".foo { color: color-mix(in {}, color({} .1 .2 .3 / .4), color({} .5 .6 .7 / .8) 25%) }",
+        ".foo{color:color({} .26 .36 .46/.5)}",
+      ],
+      [
+        ".foo { color: color-mix(in {}, color({} .1 .2 .3 / .4), 25% color({} .5 .6 .7 / .8)) }",
+        ".foo{color:color({} .26 .36 .46/.5)}",
+      ],
+      [
+        ".foo { color: color-mix(in {}, color({} .1 .2 .3 / .4) 25%, color({} .5 .6 .7 / .8) 75%) }",
+        ".foo{color:color({} .442857 .542857 .642857/.7)}",
+      ],
+      [
+        ".foo { color: color-mix(in {}, color({} .1 .2 .3 / .4) 30%, color({} .5 .6 .7 / .8) 90%) }",
+        ".foo{color:color({} .442857 .542857 .642857/.7)}",
+      ],
+      [
+        ".foo { color: color-mix(in {}, color({} .1 .2 .3 / .4) 12.5%, color({} .5 .6 .7 / .8) 37.5%) }",
+        ".foo{color:color({} .442857 .542857 .642857/.35)}",
+      ],
+      [
+        ".foo { color: color-mix(in {}, color({} .1 .2 .3 / .4) 0%, color({} .5 .6 .7 / .8)) }",
+        ".foo{color:color({} .5 .6 .7/.8)}",
+      ],
+      [".foo { color: color-mix(in {}, color({} 2 3 4 / 5), color({} 4 6 8 / 10)) }", ".foo{color:color({} 3 4.5 6)}"],
+      [".foo { color: color-mix(in {}, color({} -2 -3 -4), color({} -4 -6 -8)) }", ".foo{color:color({} -3 -4.5 -6)}"],
+      [
+        ".foo { color: color-mix(in {}, color({} -2 -3 -4 / -5), color({} -4 -6 -8 / -10)) }",
+        ".foo{color:color({} 0 0 0/0)}",
+      ],
+      [
+        ".foo { color: color-mix(in {}, color({} none none none), color({} none none none)) }",
+        ".foo{color:color({} none none none)}",
+      ],
+      [
+        ".foo { color: color-mix(in {}, color({} none none none), color({} .5 .6 .7)) }",
+        ".foo{color:color({} .5 .6 .7)}",
+      ],
+      [
+        ".foo { color: color-mix(in {}, color({} .1 .2 .3), color({} none none none)) }",
+        ".foo{color:color({} .1 .2 .3)}",
+      ],
+      [".foo { color: color-mix(in {}, color({} .1 .2 none), color({} .5 .6 .7)) }", ".foo{color:color({} .3 .4 .7)}"],
+      [".foo { color: color-mix(in {}, color({} .1 .2 .3), color({} .5 .6 none)) }", ".foo{color:color({} .3 .4 .3)}"],
+      [
+        ".foo { color: color-mix(in {}, color({} none .2 .3), color({} .5 none .7)) }",
+        ".foo{color:color({} .5 .2 .5)}",
+      ],
+      [
+        ".foo { color: color-mix(in {}, color({} .1 .2 .3 / none), color({} .5 .6 .7)) }",
+        ".foo{color:color({} .3 .4 .5)}",
+      ],
+      [
+        ".foo { color: color-mix(in {}, color({} .1 .2 .3 / none), color({} .5 .6 .7 / 0.5)) }",
+        ".foo{color:color({} .3 .4 .5/.5)}",
+      ],
+      [
+        ".foo { color: color-mix(in {}, color({} .1 .2 .3 / none), color({} .5 .6 .7 / none)) }",
+        ".foo{color:color({} .3 .4 .5/none)}",
+      ],
+    ];
+    for (const [space, result] of [
+      ["xyz", "xyz"],
+      ["xyz-d50", "xyz-d50"],
+      ["xyz-d65", "xyz"],
+    ]) {
+      for (const [input, expected] of cases) {
+        minify_test(input.replaceAll("{}", space), expected.replaceAll("{}", result));
+      }
+    }
+
+    // Operands that have to be converted into the interpolation space first.
     minify_test(
       ".foo { color: color-mix(in xyz-d50, red, blue) }",
       ".foo{color:color(xyz-d50 .289572 .141556 .364012)}",

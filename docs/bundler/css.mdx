@@ -194,7 +194,7 @@ The `color()` function specifies colors in predefined color spaces beyond tradit
 }
 ```
 
-For browsers that don't support these color spaces, Bun's CSS bundler adds fallbacks in more widely supported ones:
+For browsers that don't support these color spaces, Bun's CSS bundler adds RGB fallbacks:
 
 ```css title="styles.css" icon="file-code"
 .vivid-element {
@@ -204,8 +204,6 @@ For browsers that don't support these color spaces, Bun's CSS bundler adds fallb
   color: color(display-p3 1 0.1 0.3);
 
   background-color: #6a815c;
-  /* display-p3 is more widely supported than the other color() spaces */
-  background-color: color(display-p3 0.431961 0.501334 0.375499);
   background-color: color(a98-rgb 0.44 0.5 0.37);
 }
 ```

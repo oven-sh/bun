@@ -141,18 +141,35 @@ end:
 
 // The bundled Mozilla roots (embedded as DER by src/runtime/socket/bundled_root_certs.rs), indexed by subject but not
 // parsed: BoringSSL parses one the first time a chain names it (X509_LAZY_CERT_SET, oven-sh/boringssl).
-extern "C" size_t us_bundled_root_certs_der(const uint8_t *const **out_certs, const size_t **out_lens);
+extern "C" size_t us_bundled_root_cert_count();
+extern "C" const uint8_t *us_bundled_root_cert(size_t index, size_t *out_len);
 
-X509_LAZY_CERT_SET *us_get_bundled_root_cert_set() {
-  static X509_LAZY_CERT_SET *set = nullptr;
+struct us_bundled_roots_t {
+  std::vector<const uint8_t *> certs;
+  std::vector<size_t> lens;
+  X509_LAZY_CERT_SET *set = nullptr;
+};
+
+static const us_bundled_roots_t &us_bundled_roots() {
+  static us_bundled_roots_t roots;
   static std::once_flag once;
   std::call_once(once, []() {
-    const uint8_t *const *certs;
-    const size_t *lens;
-    size_t count = us_bundled_root_certs_der(&certs, &lens);
-    set = X509_LAZY_CERT_SET_new_static(certs, lens, count);
+    size_t count = us_bundled_root_cert_count();
+    roots.certs.resize(count);
+    roots.lens.resize(count);
+    for (size_t i = 0; i < count; i++) roots.certs[i] = us_bundled_root_cert(i, &roots.lens[i]);
+    roots.set = X509_LAZY_CERT_SET_new_static(roots.certs.data(), roots.lens.data(), count);
   });
-  return set;
+  return roots;
+}
+
+X509_LAZY_CERT_SET *us_get_bundled_root_cert_set() { return us_bundled_roots().set; }
+
+extern "C" size_t us_bundled_root_certs_der(const uint8_t *const **out_certs, const size_t **out_lens) {
+  const us_bundled_roots_t &roots = us_bundled_roots();
+  *out_certs = roots.certs.data();
+  *out_lens = roots.lens.data();
+  return roots.certs.size();
 }
 
 // std::call_once, not a flag: concurrent Workers must block until the list is

@@ -77,9 +77,9 @@ impl Loader {
             // SAFETY: out-pointers are valid; `bio` is live; no password callback data.
             let ok = unsafe {
                 boringssl::PEM_bytes_read_bio(
-                    &mut der,
-                    &mut der_len,
-                    &mut name,
+                    &raw mut der,
+                    &raw mut der_len,
+                    &raw mut name,
                     c"CERTIFICATE".as_ptr(),
                     bio,
                     Some(no_password),
@@ -96,9 +96,10 @@ impl Loader {
             unsafe { boringssl::SHA256(der, der_len as usize, digest.as_mut_ptr()) };
             let mut ok = true;
             if !self.ders.contains_key(&digest) {
-                // SAFETY: `der` points at `der_len` readable bytes; CRYPTO_BUFFER_new copies them.
+                // SAFETY: `der` points at `der_len` readable bytes.
                 ok = unsafe { boringssl::X509_LAZY_CERT_SET_can_index(der, der_len as usize) } != 0;
                 if ok {
+                    // SAFETY: `der` points at `der_len` readable bytes; CRYPTO_BUFFER_new copies them.
                     let buf = unsafe {
                         boringssl::CRYPTO_BUFFER_new(der, der_len as usize, ptr::null_mut())
                     };

@@ -9,9 +9,11 @@ export function binaryRevision(exe: string): string {
   const { exitCode, stdout, stderr } = spawn(exe, ["--print", "Bun.revision"], {
     env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" },
   });
-  const revision = stdout.trim();
+  // spawnSync leaves stdout and stderr null when the binary cannot launch at
+  // all (missing file, wrong architecture), and spawn() passes that through.
+  const revision = (stdout ?? "").trim();
   if (exitCode !== 0 || !/^[0-9a-f]{40}$/.test(revision)) {
-    throw new Error(`Could not read the build commit from ${exe}: ${stderr || stdout}`);
+    throw new Error(`Could not read the build commit from ${exe}: ${stderr || stdout || "the binary did not run"}`);
   }
   return revision;
 }

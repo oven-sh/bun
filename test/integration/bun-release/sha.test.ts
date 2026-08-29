@@ -19,7 +19,7 @@ const SHA = "d578a8c70d103dd11c75cf3c8b681d4a015a66df";
 
 test("binaryRevision reads the embedded build commit out of a binary", () => {
   expect(binaryRevision(bunExe())).toBe(Bun.revision);
-  expect(() => binaryRevision("/does/not/exist")).toThrow();
+  expect(() => binaryRevision("/does/not/exist")).toThrow(/Could not read the build commit from/);
 });
 
 test("binaryIncludesSha finds the embedded revision among binary bytes", () => {

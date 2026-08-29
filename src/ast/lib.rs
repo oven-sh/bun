@@ -2960,6 +2960,11 @@ pub mod flags {
         /// A `// eslint-disable… react-hooks/…` comment was scanned at or before
         /// this function's body close. The React Compiler skips such functions.
         HasReactHooksSuppression,
+
+        /// A class constructor the TypeScript lowering added to hold field
+        /// assignments. The source has no constructor, so tsc emits no
+        /// `design:paramtypes` for the class.
+        IsSynthesizedConstructor,
     }
     pub type FunctionSet = EnumSet<Function>;
     pub const FUNCTION_NONE: FunctionSet = EnumSet::empty();

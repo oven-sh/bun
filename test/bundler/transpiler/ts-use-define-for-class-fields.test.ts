@@ -335,6 +335,63 @@ describe("tsconfig compilerOptions.target implies useDefineForClassFields", () =
     expect(exitCode).toBe(0);
   });
 
+  // tsc emits `design:paramtypes` only for a constructor written in the source.
+  // The constructor synthesized for lowered fields must not shadow the parent's
+  // metadata, or dependency injection (NestJS) loses the inherited types.
+  for (const compilerOptions of [{ target: "ES2021" }, { useDefineForClassFields: false }]) {
+    test.concurrent(
+      `${JSON.stringify(compilerOptions)}: synthesized constructor has no design:paramtypes`,
+      async () => {
+        using dir = tempDir("udfcf-target-metadata", {
+          "tsconfig.json": JSON.stringify({
+            compilerOptions: { ...compilerOptions, experimentalDecorators: true, emitDecoratorMetadata: true },
+          }),
+          "index.ts": `
+          const store = new WeakMap<object, Map<string, unknown>>();
+          (Reflect as any).metadata = (key: string, value: unknown) => (target: object) => {
+            if (!store.has(target)) store.set(target, new Map());
+            store.get(target)!.set(key, value);
+          };
+          const own = (target: object) => store.get(target)?.get("design:paramtypes") as Function[] | undefined;
+          const inherited = (target: object) => {
+            for (let t: object | null = target; t; t = Object.getPrototypeOf(t)) {
+              const types = own(t);
+              if (types) return types;
+            }
+          };
+          const names = (types?: Function[]) => types?.map(t => t.name) ?? null;
+
+          function Injectable(): ClassDecorator { return () => {}; }
+          class Dep {}
+          @Injectable() class Base { constructor(public dep: Dep) {} }
+          @Injectable() class Declared extends Base { label: string; }
+          @Injectable() class Initialized extends Base { name = "x"; }
+          @Injectable() class Explicit extends Base { constructor(d: Dep, n: number) { super(d); } }
+
+          const report = (cls: any) => ({
+            own: names(own(cls)),
+            inherited: names(inherited(cls)),
+            keys: Object.getOwnPropertyNames(new cls(new Dep(), 1)),
+          });
+          process.stdout.write(JSON.stringify({
+            Declared: report(Declared),
+            Initialized: report(Initialized),
+            Explicit: report(Explicit),
+          }));
+        `,
+        });
+        const { stdout, stderr, exitCode } = await run(String(dir));
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual({
+          Declared: { own: null, inherited: ["Dep"], keys: ["dep"] },
+          Initialized: { own: null, inherited: ["Dep"], keys: ["dep", "name"] },
+          Explicit: { own: ["Dep", "Number"], inherited: ["Dep", "Number"], keys: ["dep"] },
+        });
+        expect(exitCode).toBe(0);
+      },
+    );
+  }
+
   test.concurrent("Bun.Transpiler derives the default from target", () => {
     const source = `
       class A {

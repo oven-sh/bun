@@ -6664,7 +6664,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             constructor_stmts.into_bump_slice_mut(),
                                         ),
                                     },
-                                    flags: Flags::FUNCTION_NONE,
+                                    flags: Flags::Function::IsSynthesizedConstructor.into(),
                                     ..Default::default()
                                 },
                             },
@@ -6702,7 +6702,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let mut array: Vec<Expr> = s_class.class.ts_decorators.move_to_list_managed();
 
                     if self.options.features.emit_decorator_metadata {
-                        if let Some(cf) = constructor_function {
+                        // Only a constructor the source declares gets `design:paramtypes`,
+                        // like tsc. A synthesized one would shadow the parent's metadata.
+                        let declared_constructor = constructor_function.filter(|cf| {
+                            !cf.func
+                                .flags
+                                .contains(Flags::Function::IsSynthesizedConstructor)
+                        });
+                        if let Some(cf) = declared_constructor {
                             // design:paramtypes
                             let constructor_args: &[G::Arg] = cf.func.args.slice();
                             let args1 = if !constructor_args.is_empty() {

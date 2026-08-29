@@ -222,8 +222,7 @@ impl StandaloneModuleGraph {
         self.dir_key(name).is_ok()
     }
 
-    /// The stored key of directory `name` (posix-separated, no trailing `/`),
-    /// or the errno `open(O_DIRECTORY)` gives: `ENOTDIR` for a file, else `ENOENT`.
+    /// Directory `name`'s stored key (posix, no trailing `/`), or `open(O_DIRECTORY)`'s errno.
     pub fn dir_key(&self, name: &[u8]) -> Result<&[u8], E> {
         if !is_bun_standalone_file_path(name) {
             return Err(E::ENOENT);

@@ -62,7 +62,7 @@ void InspectorLifecycleAgent::didCreateFrontendAndBackend()
 
 void InspectorLifecycleAgent::willDestroyFrontendAndBackend(DisconnectReason)
 {
-    disable();
+    (void)disable();
 }
 
 Protocol::ErrorStringOr<void> InspectorLifecycleAgent::enable()

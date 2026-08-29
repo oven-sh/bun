@@ -1810,6 +1810,15 @@ pub fn get_network_task(this: &mut PackageManager) -> *mut NetworkTask {
 }
 
 pub fn alloc_github_url(this: &PackageManager, repository: &Repository) -> Vec<u8> {
+    let committish = this.lockfile.str(&repository.committish);
+    alloc_github_url_for_ref(this, repository, committish)
+}
+
+pub(crate) fn alloc_github_url_for_ref(
+    this: &PackageManager,
+    repository: &Repository,
+    committish: &[u8],
+) -> Vec<u8> {
     let mut github_api_url: &[u8] = b"https://api.github.com";
     if let Some(url) = this.env().get(b"GITHUB_API_URL") {
         if !url.is_empty() {
@@ -1819,7 +1828,6 @@ pub fn alloc_github_url(this: &PackageManager, repository: &Repository) -> Vec<u
 
     let owner = this.lockfile.str(&repository.owner);
     let repo = this.lockfile.str(&repository.repo);
-    let committish = this.lockfile.str(&repository.committish);
 
     let mut out = Vec::new();
     write!(

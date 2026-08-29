@@ -331,6 +331,7 @@ pub trait RepositoryExt: Sized {
     fn fmt_store_path<'a>(&'a self, label: &'a str, string_buf: &'a [u8])
     -> StorePathFormatter<'a>;
     fn fmt<'a>(&'a self, label: &'a str, buf: &'a [u8]) -> Formatter<'a>;
+    fn resolved_commit<'a>(&'a self, buf: &'a [u8]) -> &'a [u8];
     fn try_ssh(url: &[u8]) -> Option<&[u8]>;
     fn try_https(url: &[u8]) -> Option<&[u8]>;
     fn download(
@@ -608,6 +609,14 @@ impl RepositoryExt for Repository {
             repository: self,
             buf,
             label,
+        }
+    }
+
+    fn resolved_commit<'a>(&'a self, buf: &'a [u8]) -> &'a [u8] {
+        let resolved = self.resolved.slice(buf);
+        match strings::last_index_of_char(resolved, b'-') {
+            Some(i) => &resolved[i + 1..],
+            None => resolved,
         }
     }
 
@@ -1170,10 +1179,7 @@ impl<'a> fmt::Display for StorePathFormatter<'a> {
 
         if !self.repo.resolved.is_empty() {
             writer.write_str("+")?; // this would be '#' but it's not valid on windows
-            let mut resolved = self.repo.resolved.slice(self.string_buf);
-            if let Some(i) = strings::last_index_of_char(resolved, b'-') {
-                resolved = &resolved[i + 1..];
-            }
+            let resolved = self.repo.resolved_commit(self.string_buf);
             write!(writer, "{}", Install::fmt_store_path(resolved))?;
         } else if !self.repo.committish.is_empty() {
             writer.write_str("+")?; // this would be '#' but it's not valid on windows
@@ -1213,10 +1219,7 @@ impl<'a> fmt::Display for Formatter<'a> {
 
         if !self.repository.resolved.is_empty() {
             writer.write_str("#")?;
-            let mut resolved = self.repository.resolved.slice(self.buf);
-            if let Some(i) = strings::last_index_of_char(resolved, b'-') {
-                resolved = &resolved[i + 1..];
-            }
+            let resolved = self.repository.resolved_commit(self.buf);
             write!(writer, "{}", BStr::new(resolved))?;
         } else if !self.repository.committish.is_empty() {
             writer.write_str("#")?;

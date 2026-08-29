@@ -790,18 +790,8 @@ describe("expired or not-yet-valid CA in the trust set", () => {
       "authorized",
     ],
     // absent as an anchor, but the failure still names the reason
-    [
-      "expired trusted intermediate is not an anchor",
-      ["leaf"],
-      ["root", "int-expired"],
-      "CERT_HAS_EXPIRED",
-    ],
-    [
-      "not-yet-valid trusted intermediate is not an anchor",
-      ["leaf"],
-      ["root", "int-future"],
-      "CERT_NOT_YET_VALID",
-    ],
+    ["expired trusted intermediate is not an anchor", ["leaf"], ["root", "int-expired"], "CERT_HAS_EXPIRED"],
+    ["not-yet-valid trusted intermediate is not an anchor", ["leaf"], ["root", "int-future"], "CERT_NOT_YET_VALID"],
     ["valid trusted intermediate is (server sends leaf only)", ["leaf"], ["root", "int-valid"], "authorized"],
     // pinning only an expired intermediate fails closed (was UNABLE_TO_GET_ISSUER_CERT: through it, then no root)
     ["ca = only the expired intermediate", ["leaf", "int-valid"], ["int-expired"], "CERT_HAS_EXPIRED"],

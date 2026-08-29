@@ -114,6 +114,12 @@ impl From<i64> for Value<'_> {
         Value::Int(v)
     }
 }
+impl From<bool> for Value<'_> {
+    #[inline]
+    fn from(v: bool) -> Self {
+        Value::Bool(v)
+    }
+}
 impl From<u16> for Value<'_> {
     #[inline]
     fn from(v: u16) -> Self {

@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -196,6 +196,45 @@ describe("Bun.spawn", () => {
 });
 
 describe("net", () => {
+  test("tls.connect: the span's verdict is the socket's (kept-but-unauthorized is not an error; a rejected handshake is)", async () => {
+    const tls = require("node:tls");
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: tlsCert,
+      socket: { data() {}, open() {} },
+    });
+    Bun.otel.start({ exporters: [{ export: (b: any[]) => spans.push(...b) }], instrumentations: { net: "always" } });
+    const once = (s: any, ev: string) => new Promise<void>((res, rej) => { s.once(ev, () => res()); s.once("error", rej); });
+    // (a) self-signed, caller accepts it anyway
+    const a = tls.connect({ host: "127.0.0.1", port: listener.port, rejectUnauthorized: false });
+    await once(a, "secureConnect");
+    expect(a.authorized).toBe(false);
+    a.destroy();
+    // (b) trusted CA + matching name
+    const b = tls.connect({ host: "127.0.0.1", port: listener.port, ca: tlsCert.cert, servername: "localhost" });
+    await once(b, "secureConnect");
+    expect(b.authorized).toBe(true);
+    b.destroy();
+    // (c) wrong name, but the caller's checkServerIdentity accepts it (node:tls decides in JS)
+    const c = tls.connect({ host: "127.0.0.1", port: listener.port, ca: tlsCert.cert, servername: "not-the-host.example", checkServerIdentity: () => undefined });
+    await once(c, "secureConnect");
+    c.destroy();
+    // (d) default policy against a self-signed peer: rejected
+    const d = tls.connect({ host: "127.0.0.1", port: listener.port });
+    const err: any = await new Promise(res => d.once("error", res));
+    expect(err.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    const got = (await collect()).filter(s => s.name === "tls.connect");
+    expect(
+      got.map(s => [s.status.code, s.attributes["tls.authorized"], s.attributes["tls.authorization_error"], s.attributes["error.type"], typeof s.attributes["network.peer.address"]]),
+    ).toEqual([
+      [0, false, "DEPTH_ZERO_SELF_SIGNED_CERT", undefined, "string"],
+      [0, true, undefined, undefined, "string"],
+      [0, true, undefined, undefined, "string"],
+      [2, undefined, undefined, "DEPTH_ZERO_SELF_SIGNED_CERT", "undefined"],
+    ]);
+  });
+
   test("a connect attempt destroyed before it opens is not exported (and a later attempt on the wrapper is not 'replaced')", async () => {
     using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {}, open() {} } });
     const net = require("node:net");

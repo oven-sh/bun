@@ -1114,12 +1114,20 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !self.otel_connect.get().is_some() {
             return;
         }
-        self.otel_connect_end_slow(error);
+        self.otel_connect_end_slow(match error {
+            Some(e) => TlsOutcome::Rejected(e),
+            None => TlsOutcome::Kept { unauthorized: None },
+        });
+    }
+
+    #[inline(always)]
+    fn otel_connect_end_tls(&self, outcome: TlsOutcome<'_>) {
+        self.otel_connect_end_slow(outcome);
     }
 
     #[cold]
     #[inline(never)]
-    fn otel_connect_end_slow(&self, error: Option<(&str, &str)>) {
+    fn otel_connect_end_slow(&self, outcome: TlsOutcome<'_>) {
         use bun_telemetry::http_record::PeerIp;
         let stub = self.otel_connect.replace(bun_telemetry::SpanStub::NONE);
         if !stub.is_recording() {
@@ -1151,6 +1159,18 @@ impl<const SSL: bool> NewSocket<SSL> {
             |w| {
                 w.attr("network.transport", transport);
                 w.server(host, port);
+                let error = match outcome {
+                    TlsOutcome::Rejected(e) => Some(e),
+                    TlsOutcome::Kept { unauthorized } => {
+                        if SSL {
+                            w.attr("tls.authorized", unauthorized.is_none());
+                        }
+                        if let Some((code, _reason)) = unauthorized {
+                            w.attr("tls.authorization_error", code);
+                        }
+                        None
+                    }
+                };
                 if error.is_none() && !self.socket.get().is_detached() {
                     let mut raw = [0u8; 16];
                     let mut text = [0u8; 64];
@@ -1896,27 +1916,6 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let verify_failed = SSL && ssl_error.error_no != 0;
 
-        if SSL && !this.acts_as_tls_server() && this.otel_connect.get().is_some() {
-            this.otel_connect_end(if authorized && !verify_failed {
-                None
-            } else if verify_failed {
-                Some((
-                    core::str::from_utf8(ssl_error.code_bytes())
-                        .ok()
-                        .filter(|c| !c.is_empty())
-                        .unwrap_or("handshake_failed"),
-                    core::str::from_utf8(ssl_error.reason_bytes()).unwrap_or(""),
-                ))
-            } else if hostname_mismatch {
-                Some((
-                    "ERR_TLS_CERT_ALTNAME_INVALID",
-                    "Hostname/IP does not match certificate's altnames",
-                ))
-            } else {
-                Some(("handshake_failed", "TLS handshake failed"))
-            });
-        }
-
         this.verify_error.set(if verify_failed {
             Some(StoredVerifyError {
                 code: Box::from(ssl_error.code_bytes()),
@@ -1948,6 +1947,33 @@ impl<const SSL: bool> NewSocket<SSL> {
         // twin of an `upgradeTLS` pair cannot push plaintext through its
         // BYPASS_TLS write path in the window before JS tears the pair down.
         let transport_unusable = reject_unauthorized || (SSL && success == 0);
+
+        if SSL && !this.acts_as_tls_server() && this.otel_connect.get().is_some() {
+            // The span's verdict is the socket's: failed only when the connection
+            // is rejected. A kept-but-unauthorized connection (rejectUnauthorized:
+            // false, or node:tls deferring the hostname check to JS) records why.
+            let verify_problem: Option<(&str, &str)> = if verify_failed {
+                Some((
+                    core::str::from_utf8(ssl_error.code_bytes())
+                        .ok()
+                        .filter(|c| !c.is_empty())
+                        .unwrap_or("handshake_failed"),
+                    core::str::from_utf8(ssl_error.reason_bytes()).unwrap_or(""),
+                ))
+            } else if hostname_mismatch && !flags.contains(Flags::DEFERS_SERVER_IDENTITY) {
+                Some((
+                    "ERR_TLS_CERT_ALTNAME_INVALID",
+                    "Hostname/IP does not match certificate's altnames",
+                ))
+            } else {
+                None
+            };
+            this.otel_connect_end_tls(if transport_unusable {
+                TlsOutcome::Rejected(verify_problem.unwrap_or(("handshake_failed", "TLS handshake failed")))
+            } else {
+                TlsOutcome::Kept { unauthorized: verify_problem }
+            });
+        }
 
         // `REJECTED` is set before the callback runs so no write path can
         // deliver application data to a peer that is about to be rejected —
@@ -5354,3 +5380,13 @@ pub mod testing_apis {
     }
 }
 pub use testing_apis as testing_ap_is;
+
+/// How a client connect span ends once the (TLS) handshake verdict is known.
+#[derive(Clone, Copy)]
+enum TlsOutcome<'a> {
+    /// The connection is torn down: (`error.type`, message).
+    Rejected((&'a str, &'a str)),
+    /// The connection stays up; `unauthorized` says why the peer did not
+    /// verify when it did not (the caller accepted it anyway).
+    Kept { unauthorized: Option<(&'a str, &'a str)> },
+}

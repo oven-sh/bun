@@ -409,10 +409,10 @@ pub use bun_windows_sys::Win32Error;
 /// newtype).
 pub use bun_errno::Win32ErrorExt;
 
-/// The errno for the Win32 call that just failed: `Win32Error::get().to_system_errno()`.
-/// Build a `bun_sys::Error` with `Error::from_win32(Win32Error::get(), tag)` instead.
+/// The errno for the Win32 call that just failed; build a `bun_sys::Error`
+/// with `Error::from_win32(Win32Error::get(), tag)` instead.
 #[inline]
-pub fn last_errno() -> SystemErrno {
+pub fn last_system_errno() -> SystemErrno {
     Win32Error::get().to_system_errno()
 }
 
@@ -1470,12 +1470,10 @@ pub fn update_stdio_mode_flags(
 ) -> Result<DWORD, SystemErrno> {
     let fd = i.fd();
     let mut original_mode: DWORD = 0;
-    if kernel32_2::GetConsoleMode(fd.native(), &mut original_mode) != 0 {
-        if kernel32_2::SetConsoleMode(fd.native(), (original_mode | opts.set) & !opts.unset) == 0 {
-            return Err(last_errno());
-        }
-    } else {
-        return Err(last_errno());
+    if kernel32_2::GetConsoleMode(fd.native(), &mut original_mode) == 0
+        || kernel32_2::SetConsoleMode(fd.native(), (original_mode | opts.set) & !opts.unset) == 0
+    {
+        return Err(last_system_errno());
     }
     Ok(original_mode)
 }
@@ -2026,14 +2024,6 @@ pub mod env;
 // Additional surface unblocked for dependents.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `bun.windows.translateNtStatusToErrno` — alias of
-/// [`translate_nt_status_to_errno`] kept for external callers; the previous
-/// duplicate body returned different values and has been removed.
-#[inline]
-pub fn translate_ntstatus_to_errno(status: NTSTATUS) -> E {
-    translate_nt_status_to_errno(status)
-}
-
 /// `bun.windows.getenvW` — read a UTF-16 env var into an owned `Vec<u16>`.
 ///
 /// SAFETY CONTRACT: `name` MUST be NUL-terminated (last element == `0`).
@@ -2078,9 +2068,9 @@ mod tests {
     /// A Win32 code with no entry in `SystemErrno::init_win32_error`.
     const UNMAPPED: Win32Error = Win32Error(0xFFFE);
 
-    /// `GetLastError()` after a failed Win32 call can return codes not in the
-    /// table (filter drivers, network redirectors, AV hooks), or 0. Reporting
-    /// success for those would swallow the failure.
+    /// A failed Win32 call can leave a code with no row in the table (e.g.
+    /// `ERROR_BAD_NET_NAME` from `CopyFileW` to a missing share) or 0; neither
+    /// may read as success.
     #[test]
     fn to_e_never_success() {
         assert_eq!(Win32Error::FILE_NOT_FOUND.to_e(), E::NOENT);

@@ -595,11 +595,8 @@ impl Process {
             );
         } else {
             this.on_exit(
-                // libuv exit_status is negative (a `-UV_E*` code) on this arm;
-                // `E::from_raw` takes the unsigned table ordinal, so route
-                // through the libuv→bun errno map via the i32 ctor.
-                Status::Err(bun_sys::Error::from_code_int(
-                    i32::try_from(exit_status).expect("int cast"),
+                Status::Err(bun_sys::Error::from_code(
+                    bun_sys::windows::translate_uv_error_to_e(exit_status as c_int),
                     bun_sys::Tag::waitpid,
                 )),
                 &rusage,

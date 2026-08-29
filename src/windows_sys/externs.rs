@@ -1292,7 +1292,7 @@ impl Win32Error {
 
     #[inline]
     pub fn from_ntstatus(status: NTSTATUS) -> Win32Error {
-        Win32Error(RtlNtStatusToDosError(status) as u16)
+        Win32Error(u16::try_from(RtlNtStatusToDosError(status)).unwrap_or(u16::MAX))
     }
     /// Snake-cased alias for [`from_ntstatus`] (matches `bun_sys::windows`
     /// callers — `from_nt_status`).

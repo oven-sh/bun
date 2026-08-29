@@ -232,7 +232,7 @@ pub enum E {
 impl E {
     /// An undeclared discriminant maps to `UNKNOWN`.
     #[inline]
-    pub(crate) const fn from_raw(n: u16) -> Self {
+    pub const fn from_raw(n: u16) -> Self {
         match Self::from_repr(n) {
             Some(e) => e,
             None => Self::UNKNOWN,
@@ -363,13 +363,16 @@ pub use bun_core::S as s;
 // last_error
 // ──────────────────────────────────────────────────────────────────────────
 
-/// The errno for the Win32 call that just failed (see `Win32ErrorExt::to_e`).
+/// `GetLastError()` as `E`: `SUCCESS` when no code is recorded, else
+/// `Win32ErrorExt::to_e`. For the error of a call known to have failed use
+/// `bun_sys::Error::from_win32` / `bun_sys::windows::last_system_errno`.
 #[inline]
 pub fn last_error() -> E {
-    Win32Error::get().to_e()
+    match Win32Error::get() {
+        Win32Error::SUCCESS => E::SUCCESS,
+        code => code.to_e(),
+    }
 }
-
-const _: () = assert!(E::UNKNOWN as u16 == uv::E_UNKNOWN);
 
 // ──────────────────────────────────────────────────────────────────────────
 // SystemErrno
@@ -536,9 +539,10 @@ pub enum SystemErrno {
 }} // ← UV_* tail appended by `for_each_uv_errno!`
 
 /// Type-dispatch shim for `SystemErrno::init`.
-/// Covers every concrete type the codebase actually passes — `i64` (shared
-/// `Error.rs` paths), `u32`/`DWORD` (a Win32/WSA code carried as an integer),
-/// and `c_int` (libuv rc). A typed `Win32Error` uses `Win32ErrorExt` instead.
+/// Covers every concrete type the codebase actually passes — `i64`
+/// (POSIX-shaped shared call sites), `u32`/`DWORD` (a Win32/WSA code carried
+/// as an integer), and `c_int` (libuv rc). A typed `Win32Error` uses
+/// `Win32ErrorExt` instead.
 pub trait SystemErrnoInit {
     fn into_system_errno(self) -> Option<SystemErrno>;
 }
@@ -790,7 +794,7 @@ pub mod uv_e {
 pub mod windows {
     use super::{E, SystemErrno};
 
-    /// `enum(u16) Win32Error` — newtype over `GetLastError()`'s low word.
+    /// `enum(u16) Win32Error` — newtype over `GetLastError()` (see `Win32Error::get`).
     /// Re-exported from the tier-0 `bun_windows_sys` leaf crate (no cycle:
     /// that crate has zero workspace deps), so this module and
     /// `bun_sys::windows` share one nominal type.

@@ -68,23 +68,10 @@ impl IntoErrnoInt for SystemErrno {
         self as Int
     }
 }
-impl IntoErrnoInt for u16 {
-    #[inline]
-    fn into_errno_int(self) -> Int {
-        self
-    }
-}
-impl IntoErrnoInt for i32 {
-    #[inline]
-    fn into_errno_int(self) -> Int {
-        Int::try_from(self).expect("errno must be a non-negative discriminant")
-    }
-}
 
 impl Error {
     /// `Error::new(errno, tag)` — dispatches via `IntoErrnoInt` so a single
-    /// constructor covers `E`, `SystemErrno`, raw `u16` (libuv `ReturnCode::errno`)
-    /// and `i32`.
+    /// constructor covers `E`, `SystemErrno` and (Windows) `NTSTATUS`.
     #[inline]
     pub fn new<C: IntoErrnoInt>(errno: C, syscall_tag: Tag) -> Error {
         Error {
@@ -101,18 +88,6 @@ impl Error {
     pub fn from_win32(code: crate::windows::Win32Error, syscall_tag: Tag) -> Error {
         use crate::windows::Win32ErrorExt as _;
         Error::from_code(code.to_e(), syscall_tag)
-    }
-
-    /// The error for a libuv call that returned the negative code `rc`.
-    #[cfg(windows)]
-    #[inline]
-    pub fn from_libuv(rc: c_int, syscall_tag: Tag) -> Error {
-        debug_assert!(rc < 0);
-        Error {
-            errno: crate::windows::translate_uv_error_to_e(rc) as Int,
-            syscall: syscall_tag,
-            ..Default::default()
-        }
     }
 
     pub fn from_code(errno: E, syscall_tag: Tag) -> Error {
@@ -137,7 +112,7 @@ impl Error {
     /// a Win32 or libuv code); one the enum does not declare is `EUNKNOWN`.
     #[inline]
     pub fn get_errno(&self) -> E {
-        SystemErrno::from_raw(self.errno).to_e()
+        E::from_raw(self.errno)
     }
 
     #[inline]
@@ -476,11 +451,12 @@ impl bun_core::output::ErrName for &Error {
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(windows)]
 pub trait ReturnCodeExt: Sized {
-    /// `Some(err)` when negative; `None` on success.
-    fn to_error(self, syscall_tag: Tag) -> Option<Error>;
-    /// `Ok(())` on success, `Err` on negative rc.
-    /// `bun_libuv_sys` returns the raw
-    /// `ReturnCode` for layering; this trait promotes it.
+    /// `Some(errno)` when the return code is negative; `None` on success.
+    fn err_enum_e(self) -> Option<crate::E>;
+    #[inline]
+    fn to_error(self, syscall_tag: Tag) -> Option<Error> {
+        self.err_enum_e().map(|e| Error::from_code(e, syscall_tag))
+    }
     #[inline]
     fn to_result(self, syscall_tag: Tag) -> crate::Result<()> {
         match self.to_error(syscall_tag) {
@@ -488,21 +464,9 @@ pub trait ReturnCodeExt: Sized {
             None => Ok(()),
         }
     }
-    /// Alias for [`to_error`].
-    #[inline]
-    fn as_err(self, syscall_tag: Tag) -> Option<Error> {
-        self.to_error(syscall_tag)
-    }
-    /// `Some(errno)` when negative (`bun_libuv_sys::ReturnCode::errno()`,
-    /// typed — that crate cannot name `E`).
-    fn err_enum_e(self) -> Option<crate::E>;
 }
 #[cfg(windows)]
 impl ReturnCodeExt for crate::windows::libuv::ReturnCode {
-    #[inline]
-    fn to_error(self, syscall_tag: Tag) -> Option<Error> {
-        (self.int() < 0).then(|| Error::from_libuv(self.int(), syscall_tag))
-    }
     #[inline]
     fn err_enum_e(self) -> Option<crate::E> {
         (self.int() < 0).then(|| crate::windows::translate_uv_error_to_e(self.int()))
@@ -510,10 +474,6 @@ impl ReturnCodeExt for crate::windows::libuv::ReturnCode {
 }
 #[cfg(windows)]
 impl ReturnCodeExt for crate::windows::libuv::ReturnCodeI64 {
-    #[inline]
-    fn to_error(self, syscall_tag: Tag) -> Option<Error> {
-        (self.int() < 0).then(|| Error::from_libuv(self.int() as c_int, syscall_tag))
-    }
     #[inline]
     fn err_enum_e(self) -> Option<crate::E> {
         (self.int() < 0).then(|| crate::windows::translate_uv_error_to_e(self.int() as c_int))

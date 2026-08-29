@@ -1380,7 +1380,7 @@ mod _impl {
         if errno == bun_sys::E::SUCCESS {
             return Ok(());
         }
-        let (code, label) = bun_sys::Error::from_code(errno, bun_sys::Tag::TODO)
+        let (code, label) = bun_sys::Error::from_code(errno, bun_sys::Tag::uv_os_setpriority)
             .uv_code_label()
             .unwrap_or(("EUNKNOWN", "unknown error"));
         let err = SystemError {

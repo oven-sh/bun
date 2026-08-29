@@ -226,9 +226,10 @@ use bun_resolver::fs::FileSystem;
 // behind `#[cfg(windows)]`. There is intentionally **no** POSIX stub module
 // here so misuse is a compile error, not a silent null.
 #[cfg(windows)]
-use bun_sys::ReturnCodeExt as _;
-#[cfg(windows)]
-use bun_sys::windows::{self, libuv as uv};
+use bun_sys::{
+    ReturnCodeExt as _,
+    windows::{self, libuv as uv},
+};
 
 // Syscall = `bun_sys::sys_uv` on Windows, `bun_sys` otherwise
 #[cfg(not(windows))]
@@ -911,8 +912,7 @@ mod _async_tasks {
             // `this: &mut Self` is live, re-deriving through the raw `req` would create a
             // second overlapping `&mut` (Stacked-Borrows UB). Go through `this.req` instead.
             this.result = NodeFS::uv_dispatch::<R, A, F>(&mut node_fs, &this.args, this.req.result);
-            // `sys::Error::path` is `Box<[u8]>` boxed at the
-            // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
+            // `sys::Error::path` is owned, so `node_fs` may drop.
             let this_ptr: *mut Self = this;
             this.global_object()
                 .bun_vm()
@@ -5285,10 +5285,10 @@ impl NodeFS {
                     None,
                 )
             };
-            return match rc.to_error(sys::Tag::futime) {
-                Some(err) => Err(err.with_fd(args.fd)),
-                None => Ok(()),
-            };
+            if let Some(err) = rc.to_error(sys::Tag::futime) {
+                return Err(err.with_fd(args.fd));
+            }
+            return Ok(());
         }
         #[cfg(not(windows))]
         match Syscall::futimens(
@@ -7533,11 +7533,8 @@ impl NodeFS {
         }
 
         let dest = args.path.slice_z(&mut self.sync_error_buf);
-        // The original implementation mapped the unlink error through a
-        // *narrow* table to an errno, defaulting to `EFAULT`. We go straight to
-        // `bun_sys::unlink` (raw errno), so route the result through
-        // `map_rm_errno_narrow` to preserve the EFAULT fallthrough (e.g.
-        // `EISDIR` with `recursive=false` must surface as `EFAULT`).
+        // Route the raw errno through `map_rm_errno_narrow` so e.g. `EISDIR`
+        // with `recursive=false` surfaces as `EFAULT` (Node parity).
         if let Err(err1) = sys::unlink(dest) {
             let e1 = err1.get_errno();
             if e1 == E::ENOENT {
@@ -7838,10 +7835,10 @@ impl NodeFS {
                     None,
                 )
             };
-            return match rc.to_error(sys::Tag::utime) {
-                Some(err) => Err(err.with_path(args.path.slice())),
-                None => Ok(()),
-            };
+            if let Some(err) = rc.to_error(sys::Tag::utime) {
+                return Err(err.with_path(args.path.slice()));
+            }
+            return Ok(());
         }
         #[cfg(not(windows))]
         match Syscall::utimens(
@@ -7869,10 +7866,10 @@ impl NodeFS {
                     None,
                 )
             };
-            return match rc.to_error(sys::Tag::lutime) {
-                Some(err) => Err(err.with_path(args.path.slice())),
-                None => Ok(()),
-            };
+            if let Some(err) = rc.to_error(sys::Tag::lutime) {
+                return Err(err.with_path(args.path.slice()));
+            }
+            return Ok(());
         }
         #[cfg(not(windows))]
         match Syscall::lutimens(
@@ -8701,9 +8698,11 @@ impl NodeFS {
                 None => {
                     let a = unsafe { sys::c::GetFileAttributesW(src.as_ptr()) };
                     if a == sys::c::INVALID_FILE_ATTRIBUTES {
-                        let err = windows::Win32Error::get();
-                        return Err(sys::Error::from_win32(err, sys::Tag::copyfile)
-                            .with_path(self.os_path_into_sync_error_buf(src.as_slice())));
+                        return Err(sys::Error::from_win32(
+                            windows::Win32Error::get(),
+                            sys::Tag::copyfile,
+                        )
+                        .with_path(self.os_path_into_sync_error_buf(src.as_slice())));
                     }
                     a
                 }

@@ -2046,9 +2046,6 @@ pub struct uv_rusage_t {
     pub ru_nivcsw: u64,
 }
 
-/// `bun_errno::E::UNKNOWN` — what a negative code outside the table maps to.
-pub const E_UNKNOWN: u16 = 134;
-
 // ──────────────────────────────────────────────────────────────────────────
 // `ReturnCode` / `ReturnCodeI64` — `enum(c_int)` newtypes; libuv return codes
 // are `0` on success, `-errno` on failure.
@@ -2135,7 +2132,7 @@ pub const fn uv_err_to_e_discriminant(code: c_int) -> Option<u16> {
         UV_ECANCELED => 125,      // E::CANCELED
         UV_ECHARSET => 135,       // E::CHARSET
         UV_EOF => 136,            // E::EOF
-        UV_UNKNOWN => E_UNKNOWN,
+        UV_UNKNOWN => 134,        // E::UNKNOWN
         // EAI_* codes — `bun_errno::E::UV_EAI_*` discriminants are defined as
         // `(-UV_EAI_*) as u16`, i.e. the raw magnitude is the discriminant.
         UV_EAI_ADDRFAMILY => (-UV_EAI_ADDRFAMILY) as u16,
@@ -2234,7 +2231,7 @@ pub const fn e_discriminant_to_uv(discriminant: u16) -> Option<c_int> {
         125 => UV_ECANCELED,      // E::CANCELED
         135 => UV_ECHARSET,       // E::CHARSET
         136 => UV_EOF,            // E::EOF
-        E_UNKNOWN => UV_UNKNOWN,
+        134 => UV_UNKNOWN,        // E::UNKNOWN
         d if d == (-UV_EAI_ADDRFAMILY) as u16 => UV_EAI_ADDRFAMILY,
         d if d == (-UV_EAI_AGAIN) as u16 => UV_EAI_AGAIN,
         d if d == (-UV_EAI_BADFLAGS) as u16 => UV_EAI_BADFLAGS,
@@ -2294,27 +2291,12 @@ impl ReturnCode {
         self.0
     }
     /// `Some(|UV_E*|)` when negative — the **raw** libuv error magnitude
-    /// (e.g. 4082 for `UV_EBUSY`). Use [`errno`] for the translated POSIX
-    /// `bun.sys.E` value (e.g. 16 for `BUSY`).
+    /// (e.g. 4082 for `UV_EBUSY`), for logging. `bun_sys::ReturnCodeExt`
+    /// has the errno translation.
     #[inline]
     pub(crate) const fn raw_errno(self) -> Option<u16> {
         if self.0 < 0 {
             Some(self.0.unsigned_abs() as u16)
-        } else {
-            None
-        }
-    }
-    /// `None` when non-negative; otherwise the `bun_errno::E` discriminant
-    /// for the `UV_E*` code (e.g. `UV_ENOENT (-4058)` → `2`), `EUNKNOWN` for a
-    /// negative code libuv does not define. This is what `bun_sys::Error.errno`
-    /// stores — never the raw `|UV_E*|` magnitude ([`raw_errno`]).
-    #[inline]
-    pub const fn errno(self) -> Option<u16> {
-        if self.0 < 0 {
-            Some(match uv_err_to_e_discriminant(self.0) {
-                Some(d) => d,
-                None => E_UNKNOWN,
-            })
         } else {
             None
         }
@@ -2344,15 +2326,6 @@ impl ReturnCodeI64 {
     #[inline]
     pub const fn int(self) -> i64 {
         self.0
-    }
-    /// Same contract as [`ReturnCode::errno`].
-    #[inline]
-    pub const fn errno(self) -> Option<u16> {
-        if self.0 < 0 {
-            ReturnCode(self.0 as c_int).errno()
-        } else {
-            None
-        }
     }
     /// `req.result` after a successful `uv_fs_open` is the
     /// CRT fd. Returns the raw `uv_file`; caller wraps with `Fd::from_uv`

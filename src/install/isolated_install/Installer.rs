@@ -1016,7 +1016,7 @@ impl Task {
                                                 return Ok(Yield::failure(TaskError::LinkPackage(
                                                     if src_path_len == 0 {
                                                         sys::Error::from_win32(
-                                                            bun_sys::windows::Win32Error::get(),
+                                                            sys::windows::Win32Error::get(),
                                                             sys::Tag::copyfile,
                                                         )
                                                     } else {

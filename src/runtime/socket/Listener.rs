@@ -1625,8 +1625,8 @@ fn connect_finish<const IS_SSL: bool>(
                     Win32Error::SUCCESS => 0,
                     code => code.to_system_errno() as c_int,
                 };
-                // A Winsock AF_UNIX connect error does not say whether the path
-                // exists; Node (named pipes, `CreateFile`) reports ENOENT.
+                // Node reports ENOENT for a missing pipe path; Winsock's AF_UNIX
+                // connect error does not, so probe.
                 if port.is_none() {
                     if let Some(UnixOrHost::Unix(path)) = socket_ref.connection.get() {
                         if !bun_sys::exists(path) {

@@ -248,7 +248,7 @@ pub fn get_errno<T: GetErrno>(rc: T) -> E {
     rc.get_errno()
 }
 
-/// The thread-local errno as `E`, for a libc call already known to have failed.
+/// The thread-local errno as `E` (`SUCCESS` when it is 0).
 #[cfg(not(windows))]
 #[inline]
 pub fn last_error() -> E {
@@ -283,13 +283,6 @@ impl SystemErrno {
             Some(e) => e,
             None => Self::EUNKNOWN,
         }
-    }
-
-    /// `E` is `SystemErrno` on POSIX; Windows defines the real conversion.
-    #[cfg(not(windows))]
-    #[inline]
-    pub const fn to_e(self) -> E {
-        self
     }
 }
 

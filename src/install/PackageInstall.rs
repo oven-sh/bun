@@ -657,7 +657,7 @@ impl HardLinkWindowsInstallTask {
             return None;
         }
 
-        Some(windows::last_errno().into())
+        Some(windows::last_system_errno().into())
     }
 }
 
@@ -1221,7 +1221,7 @@ impl<'a> PackageInstall<'a> {
             } as usize;
             if dest_path_length == 0 || dest_path_length >= buf.len() {
                 let err = crate::Error::Sys(if dest_path_length == 0 {
-                    windows::last_errno()
+                    windows::last_system_errno()
                 } else {
                     bun_errno::SystemErrno::ENAMETOOLONG
                 });
@@ -1255,7 +1255,7 @@ impl<'a> PackageInstall<'a> {
             } as usize;
             if cache_path_length == 0 || cache_path_length >= buf2.len() {
                 let err = crate::Error::Sys(if cache_path_length == 0 {
-                    windows::last_errno()
+                    windows::last_system_errno()
                 } else {
                     bun_errno::SystemErrno::ENAMETOOLONG
                 });
@@ -1373,7 +1373,7 @@ impl<'a> PackageInstall<'a> {
                                     }
                                 }
 
-                                let err = windows::last_errno();
+                                let err = windows::last_system_errno();
                                 if let Some(progress) = progress_.as_deref_mut() {
                                     progress.root.end();
                                     progress.refresh();
@@ -2096,7 +2096,7 @@ impl<'a> PackageInstall<'a> {
             } as usize;
             if dest_path_length == 0 || dest_path_length >= wbuf.len() {
                 let err = crate::Error::Sys(if dest_path_length == 0 {
-                    windows::last_errno()
+                    windows::last_system_errno()
                 } else {
                     bun_errno::SystemErrno::ENAMETOOLONG
                 });

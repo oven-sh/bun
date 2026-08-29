@@ -1536,7 +1536,7 @@ fn file_copier_copy(
                         }
 
                         Output::err(
-                            bun_sys::windows::last_errno(),
+                            bun_sys::windows::last_system_errno(),
                             "failed to copy file {}",
                             format_args!(
                                 "{}",

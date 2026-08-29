@@ -776,22 +776,10 @@ mod windows_impl {
             };
 
             // libuv always returns 0 when a callback is specified
-            if let Some(err) = rc.err_enum_e() {
-                debug_assert!(err != sys::E::NOENT);
-
-                let path = path.into();
+            if let Some(err) = rc.to_error(sys::Tag::open) {
+                debug_assert!(err.get_errno() != sys::E::NOENT);
                 // SAFETY: caller contract — `this` is live; `throw` consumes it.
-                return Err(unsafe {
-                    Self::throw(
-                        this,
-                        sys::Error {
-                            errno: err as _,
-                            path,
-                            syscall: sys::Tag::open,
-                            ..Default::default()
-                        },
-                    )
-                });
+                return Err(unsafe { Self::throw(this, err.with_path(path)) });
             } else {
                 // SAFETY: caller contract — `this` is live on the Ok path.
                 unsafe { (*this).owned_fd = true };

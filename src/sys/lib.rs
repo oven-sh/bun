@@ -1039,8 +1039,7 @@ impl<T> MaybeExt for Result<T> {
         if rc == bun_windows_sys::NTSTATUS::SUCCESS {
             return None;
         }
-        let e = windows::translate_nt_status_to_errno(rc);
-        Some(Err(Error::from_code(e, tag)))
+        Some(Err(Error::new(rc, tag)))
     }
 }
 #[cfg(windows)]
@@ -1388,6 +1387,7 @@ impl Tag {
     #[cfg(not(windows))]
     pub(crate) const setrlimit: Tag = Tag(106);
     pub const clone3: Tag = Tag(107);
+    pub const uv_os_setpriority: Tag = Tag(108);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1395,7 +1395,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 108] = [
+        const NAMES: [&str; 109] = [
             "TODO",
             "dup",
             "access",
@@ -1505,6 +1505,7 @@ impl Tag {
             "getrlimit",
             "setrlimit",
             "clone3",
+            "uv_os_setpriority",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -3877,11 +3878,7 @@ mod windows_impl {
             )
         };
         if rc != bun_windows_sys::NTSTATUS::SUCCESS {
-            // `errnoSys` for `NTSTATUS` routes through the curated
-            // `translateNTStatusToErrno` table first, then falls back to
-            // `RtlNtStatusToDosError` for unmapped codes.
-            let errno = w::translate_nt_status_to_errno(rc);
-            return Err(Error::new(errno, Tag::ftruncate).with_fd(fd));
+            return Err(Error::new(rc, Tag::ftruncate).with_fd(fd));
         }
         Ok(())
     }
@@ -7152,11 +7149,9 @@ fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
     // SAFETY: FFI; attr/basic_info valid for the call duration.
     let rc = unsafe { w::ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
     if rc != w::NTSTATUS::SUCCESS {
-        // `errnoSys` for `NTSTATUS` routes through the curated
-        // `translateNTStatusToErrno` table first (so `OBJECT_PATH_NOT_FOUND`
-        // deterministically maps to `ENOENT`, which `directory_exists_at()`
-        // branches on), then falls back to `RtlNtStatusToDosError` for
-        // unmapped codes.
+        // `Error::new(NTSTATUS)` maps through the curated table first, so
+        // `OBJECT_PATH_NOT_FOUND` is deterministically `ENOENT`, which
+        // `directory_exists_at()` branches on.
         return Err(Error::new(rc, Tag::access));
     }
     // `FILE_ATTRIBUTE_READONLY` on a directory is a folder-customization

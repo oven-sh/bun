@@ -4789,29 +4789,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             IdentifierOpts::new().with_was_originally_identifier(true),
         );
         if parts.len() > 1 {
-            return Ok(self.member_expression(loc, value, &parts[1..]));
+            return Ok(self.member_expression(loc, value, &parts[1..], IdentifierOpts::default()));
         }
 
         Ok(value)
     }
 
+    /// `last_link_opts` applies to the final property access only: in `a.b.c = 1` the
+    /// assignment target is `c`, and `a.b` is read.
     fn member_expression(
         &mut self,
         loc: bun_ast::Loc,
         initial_value: Expr,
         parts: &[&'a [u8]],
+        last_link_opts: IdentifierOpts,
     ) -> Expr {
         let mut value = initial_value;
 
-        for part in parts {
-            if let Some(rewrote) = self.maybe_rewrite_property_access(
-                loc,
-                value,
-                part,
-                loc,
-                // All defaults on the packed-u8 IdentifierOpts.
-                IdentifierOpts::default(),
-            ) {
+        for (i, part) in parts.iter().enumerate() {
+            let opts = if i + 1 == parts.len() {
+                last_link_opts
+            } else {
+                IdentifierOpts::default()
+            };
+            if let Some(rewrote) = self.maybe_rewrite_property_access(loc, value, part, loc, opts) {
                 value = rewrote;
             } else {
                 value = self.new_expr(
@@ -6323,7 +6324,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if rest.is_empty() {
             return value;
         }
-        self.member_expression(loc, value, &rest)
+        // The last link is the assignment or delete target, as `a.b.c = 1` written in source
+        // would be: an import namespace member is rejected and a CommonJS export is converted.
+        self.member_expression(
+            loc,
+            value,
+            &rest,
+            IdentifierOpts::new()
+                .with_assign_target(opts.assign_target())
+                .with_is_delete_target(opts.is_delete_target()),
+        )
     }
 
     // `parts` is `&[Box<[u8]>]` to match the active `DotDefine.parts:

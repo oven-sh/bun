@@ -247,6 +247,91 @@ describe("define values are symbols, not text", () => {
     expect(stdout).toBe("1\n");
     expect(exitCode).toBe(0);
   });
+
+  test("assigning through a member chain to an import namespace member is an error", async () => {
+    using dir = tempDir("bundler-define-assign-namespace", {
+      "entry.js": `
+        import * as ns from "./other.js";
+        FLAG = 1;
+        console.log(ns.member);
+      `,
+      "other.js": `export let member = 0;`,
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      outdir: join(String(dir), "out"),
+      define: { FLAG: "ns.member" },
+      throw: false,
+    });
+    // The same error as the literal `ns.member = 1`
+    expect(result.success).toBe(false);
+    expect(result.logs.map(log => log.message)).toEqual(['Cannot assign to import "member"']);
+  });
+
+  test("assigning through a member chain writes a property of an import namespace member", async () => {
+    using dir = tempDir("bundler-define-assign-namespace-property", {
+      "entry.js": `
+        import * as ns from "./settings.js";
+        FLAG = 1;
+        console.log(ns.settings.flag);
+      `,
+      "settings.js": `export const settings = { flag: 0 };`,
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      outdir: join(String(dir), "out"),
+      define: { FLAG: "ns.settings.flag" },
+    });
+    // Only the last link `flag` is the target. `ns.settings` is read, so the import is not reported.
+    expect(result.logs).toEqual([]);
+    expect(result.success).toBe(true);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), result.outputs[0].path],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("1\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("assigning through a member chain to a CommonJS export converts the export", async () => {
+    using dir = tempDir("bundler-define-assign-cjs-export", {
+      "entry.js": `
+        import * as lib from "./lib.cjs";
+        console.log(lib.foo, lib.bar);
+      `,
+      "lib.cjs": `
+        exports.bar = 1;
+        FOO = 2;
+      `,
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      outdir: join(String(dir), "out"),
+      define: { FOO: "exports.foo" },
+    });
+    expect(result.logs).toEqual([]);
+    expect(result.success).toBe(true);
+    const output = await result.outputs[0].text();
+    // `$foo = 2` is a named export like the literal `exports.foo = 2`, so the module needs no wrapper
+    expect(output).not.toContain("__commonJS");
+    expect(output).not.toContain("FOO");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), result.outputs[0].path],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("2 1\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("define key errors", () => {

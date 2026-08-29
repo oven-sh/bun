@@ -170,8 +170,10 @@ declare module "bun" {
       end(endTime?: TimeInput): void;
       /**
        * Make this the active span until {@link Span.exit} (or disposal).
-       * Prefer `tracer.startActiveSpan(name, fn)` or
-       * `using span = tracer.startActiveSpan(name)`, which pair these for you.
+       * Prefer `tracer.startActiveSpan(name, fn)` (or, in synchronous code,
+       * `using span = tracer.startActiveSpan(name)`), which pair these for
+       * you; in an `async` function a bare `enter()` is seen by the caller
+       * while the function is suspended, like `AsyncLocalStorage.enterWith`.
        */
       enter(): this;
       /** Undo {@link Span.enter}, restoring whatever was active before it. */
@@ -199,7 +201,11 @@ declare module "bun" {
        *
        * Without a callback the span is returned already active, for
        * `using span = tracer.startActiveSpan("name")` — leaving the block
-       * ends the span and restores the previously active one.
+       * ends the span and restores the previously active one. Inside an
+       * `async` function this has `AsyncLocalStorage.enterWith` semantics:
+       * the activation happens in the caller's frame, so the caller sees the
+       * span as active while the function is suspended at an `await`; prefer
+       * the callback form there.
        */
       startActiveSpan<R>(name: string, fn: (span: Span) => R): R;
       startActiveSpan<R>(name: string, options: SpanOptions, fn: (span: Span) => R): R;
@@ -438,7 +444,10 @@ declare module "bun" {
      * });
      * ```
      *
-     * Without `fn`, returns the span, active until it is disposed:
+     * Without `fn`, returns the span, active until it is disposed. In an
+     * `async` function prefer the `fn` form: the activation below happens in
+     * the caller's frame (`AsyncLocalStorage.enterWith` semantics), so the
+     * caller sees the span while this function is suspended at an `await`.
      *
      * ```ts
      * {

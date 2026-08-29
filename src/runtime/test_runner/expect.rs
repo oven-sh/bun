@@ -2873,8 +2873,7 @@ impl ExpectMatcherUtils {
             bun_core::pretty_fmt!("<d>(<r><green>expected<r><d>)<r>", false)
         };
         let mut buf = format!("{head}{not}{matcher_name}{expected_hint}\n\n");
-        // Writing to a `String` cannot fail. The outer error is a JS exception.
-        let _ = diff_formatter.write_to(&mut buf)?;
+        diff_formatter.write_to(&mut buf)?.expect("writing to a String cannot fail");
         buf.push('\n');
         bun_string_jsc::create_utf8_for_js(global_this, buf.as_bytes())
     }

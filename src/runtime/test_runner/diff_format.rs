@@ -17,9 +17,7 @@ pub struct DiffFormatter<'a> {
 }
 
 impl<'a> DiffFormatter<'a> {
-    /// Renders the diff into `out`. A JS exception raised while a value is
-    /// pretty-printed is returned as the outer `Err`, so a `JsResult` caller
-    /// can propagate it. The `Display` impl collapses it into `fmt::Error`.
+    /// The outer `Err` is a JS exception raised while a value was pretty-printed.
     pub(crate) fn write_to<W: fmt::Write>(&self, out: &mut W) -> JsResult<fmt::Result> {
         let diff_config =
             DiffConfig::default(Output::is_ai_agent(), Output::enable_ansi_colors_stderr());

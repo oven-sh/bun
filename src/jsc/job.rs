@@ -418,7 +418,7 @@ pub unsafe fn erased_from_raw(ptr: *mut ()) -> Box<dyn ErasedJob> {
     let header = ptr.cast::<JobHeader>();
     // SAFETY: fn contract; `Job<C>` is `#[repr(C)]` with the header first, and
     // `erase` only casts.
-    unsafe { Box::from_raw(((*header).erase)(header)) }
+    unsafe { bun_core::heap::take(((*header).erase)(header)) }
 }
 
 // The erased dispatch above casts `*mut Job<C>` to `*mut JobHeader`.

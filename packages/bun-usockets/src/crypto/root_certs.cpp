@@ -275,6 +275,7 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   if (store == NULL) {
     return NULL;
   }
+  X509_STORE_set_flags(store, X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
 
   X509_LAZY_CERT_SET *bundled = us_get_bundled_root_cert_set();
   if (bundled == NULL || !X509_STORE_add_lazy_cert_set(store, bundled)) {

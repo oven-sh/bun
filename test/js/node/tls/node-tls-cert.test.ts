@@ -728,3 +728,54 @@ describe("tls ciphers should work", () => {
     );
   });
 });
+
+// An expired copy of a CA in the trust set (Windows' system store caches stale intermediates; a `ca` bundle can carry
+// both generations) must not shadow the currently-valid certificate for the same issuer that the server presents:
+// the expired one is treated as absent. https://github.com/anthropics/claude-code/issues/71554
+describe("expired CA in the trust set", () => {
+  const dir = join(import.meta.dir, "fixtures", "expired-intermediate");
+  const read = (name: string) => readFileSync(join(dir, name), "utf8");
+  const [root, intermediateValid, intermediateExpired, leaf, leafKey] = [
+    "root.pem",
+    "int-valid.pem",
+    "int-expired.pem",
+    "leaf.pem",
+    "leaf.key",
+  ].map(read);
+
+  async function connect(serverCert: string, ca: string[]) {
+    const server = tls.createServer({ key: leafKey, cert: serverCert });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      return await new Promise<string>(resolve => {
+        const socket = tls.connect(
+          { host: "127.0.0.1", port: (server.address() as AddressInfo).port, servername: "localhost", ca },
+          () => {
+            resolve("authorized");
+            socket.destroy();
+          },
+        );
+        socket.on("error", (err: NodeJS.ErrnoException) => resolve(String(err.code)));
+      });
+    } finally {
+      server.close();
+    }
+  }
+
+  it("does not shadow the valid intermediate the server sends", async () => {
+    expect(await connect(leaf + intermediateValid, [root])).toBe("authorized");
+    expect(await connect(leaf + intermediateValid, [root, intermediateExpired])).toBe("authorized");
+    expect(await connect(leaf + intermediateValid, [intermediateExpired, root])).toBe("authorized");
+  });
+
+  it("is not itself a usable trust anchor", async () => {
+    // Server sends only the leaf; the only path is through the expired intermediate in `ca`.
+    expect(await connect(leaf, [root, intermediateExpired])).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+    // With the valid intermediate trusted instead, it is.
+    expect(await connect(leaf, [root, intermediateValid])).toBe("authorized");
+  });
+
+  it("an expired intermediate sent by the server is still an error", async () => {
+    expect(await connect(leaf + intermediateExpired, [root])).toBe("CERT_HAS_EXPIRED");
+  });
+});

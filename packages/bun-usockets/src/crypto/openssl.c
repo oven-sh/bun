@@ -1262,6 +1262,10 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
 
   SSL_CTX *ssl_context = SSL_CTX_new(TLS_method());
   atomic_fetch_add(&ssl_ctx_live, 1);
+  /* An expired CA in a trust source (the OS store caches stale intermediates; a bundled root can outlive its notAfter in
+   * an old binary; a user bundle can carry both generations) is treated as absent rather than left to shadow the
+   * currently-valid certificate for the same issuer. */
+  X509_VERIFY_PARAM_set_flags(SSL_CTX_get0_param(ssl_context), X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
   /* Register the live-count free_func first thing so every exit (including
    * build_fail) balances. The packed reneg policy reuses the same slot. */
   SSL_CTX_set_ex_data(ssl_context, us_ssl_ctx_ex_idx(), NULL);

@@ -172,10 +172,7 @@ impl Drop for ApplyArgs {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Free-fn entry points for `dispatch_js2native.rs`, whose `pub use` cannot
-// name an associated fn.
-// ──────────────────────────────────────────────────────────────────────────
+// Free-fn entry points: `dispatch_js2native.rs` re-exports these with `pub use`, which cannot name an associated fn.
 
 pub fn patch_make_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     TestingAPIs::make_diff(global, frame)

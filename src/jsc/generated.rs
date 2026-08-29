@@ -178,8 +178,6 @@ fn adopt_string(ptr: RawWTFStringImpl) -> GenString {
 
 #[inline]
 fn adopt_opt_string(ptr: RawWTFStringImpl) -> GenOpt<GenString> {
-    // An optional string crosses as a single-word nullable `WTFStringImpl`
-    // pointer, not as a tagged union.
     GenOpt(if ptr.is_null() {
         None
     } else {

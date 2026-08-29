@@ -299,7 +299,7 @@ describe("Bun.serve() directory routes", () => {
 
       server = serve({
         port: 0,
-        routes: { "/assets/*": { POST: { dir: join(String(dir), "public") } } as any },
+        routes: { "/assets/*": { POST: { dir: join(String(dir), "public") } } },
         fetch: () => new Response("fallback", { status: 418 }),
       });
 

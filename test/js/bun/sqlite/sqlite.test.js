@@ -1188,10 +1188,10 @@ describe("Database.prepare", () => {
   // passed, threw "Statement has finalized" otherwise).
   it.each([" ", "\n", ";", " ; ", "-- comment", "/* block */"])("throws on SQL with no statement: %p", sql => {
     const db = new Database(":memory:");
-    expect(() => db.prepare(sql)).toThrow("Invalid SQL statement");
-    expect(() => db.prepare(sql, {})).toThrow("Invalid SQL statement");
-    expect(() => db.prepare(sql, [])).toThrow("Invalid SQL statement");
-    expect(() => db.query(sql)).toThrow("Invalid SQL statement");
+    for (const call of [() => db.prepare(sql), () => db.prepare(sql, {}), () => db.prepare(sql, []), () => db.query(sql)]) {
+      expect(call).toThrow(RangeError);
+      expect(call).toThrow("Invalid SQL statement");
+    }
   });
 });
 

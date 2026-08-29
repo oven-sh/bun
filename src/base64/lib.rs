@@ -25,7 +25,7 @@ static MIXED_DECODER: zig_base64::Base64DecoderWithIgnore = {
 /// An initialized byte buffer viewed as write slots. Sound because `u8` has no
 /// invalid bit patterns and nothing here ever stores `MaybeUninit::uninit()`.
 #[inline]
-fn as_uninit_mut(bytes: &mut [u8]) -> &mut [MaybeUninit<u8>] {
+pub(crate) fn as_uninit_mut(bytes: &mut [u8]) -> &mut [MaybeUninit<u8>] {
     // SAFETY: same layout; every slot starts (and, written only via `write`, stays) initialized.
     unsafe { &mut *(core::ptr::from_mut(bytes) as *mut [MaybeUninit<u8>]) }
 }
@@ -922,7 +922,11 @@ pub mod zig_base64 {
                 let decoded = &mut buffer[..];
                 let mut written: usize = 0;
                 decoder_ignore_nothing
-                    .decode(decoded, expected_with_ignore, &mut written)
+                    .decode(
+                        crate::as_uninit_mut(decoded),
+                        expected_with_ignore,
+                        &mut written,
+                    )
                     .unwrap();
                 assert!(written <= decoded.len());
                 assert_eq!(expected_decoded, &decoded[0..written]);
@@ -935,7 +939,7 @@ pub mod zig_base64 {
             let decoded = &mut buffer[..];
             let mut written: usize = 0;
             decoder_ignore_space
-                .decode(decoded, encoded, &mut written)
+                .decode(crate::as_uninit_mut(decoded), encoded, &mut written)
                 .unwrap();
             assert_eq!(expected_decoded, &decoded[0..written]);
         }
@@ -963,7 +967,11 @@ pub mod zig_base64 {
             }
 
             let mut written: usize = 0;
-            let result = decoder_ignore_space.decode(&mut buffer[..], encoded, &mut written);
+            let result = decoder_ignore_space.decode(
+                crate::as_uninit_mut(&mut buffer[..]),
+                encoded,
+                &mut written,
+            );
             match expected_with_ignore {
                 Some(expected) => assert_eq!(result.unwrap_err(), expected),
                 None => assert!(result.is_ok()),
@@ -976,7 +984,8 @@ pub mod zig_base64 {
             let size = codecs.decoder.calc_size_for_slice(encoded).unwrap() - 1;
             let decoded = &mut buffer[0..size];
             let mut written: usize = 0;
-            match decoder_ignore_space.decode(decoded, encoded, &mut written) {
+            match decoder_ignore_space.decode(crate::as_uninit_mut(decoded), encoded, &mut written)
+            {
                 Ok(_) => panic!("ExpectedError"),
                 Err(err) => assert_eq!(err, Error::NoSpaceLeft),
             }

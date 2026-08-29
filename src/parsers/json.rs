@@ -901,6 +901,7 @@ fn skip_json_value(contents: &[u8], p: usize) -> Option<usize> {
 }
 
 /// Deep-convert an immutable-AST document into the classic `E::Object` / `E::Array` tree.
+/// The rows must carry their value locations (`JSONOptions::record_value_locs`).
 pub fn materialize(
     root: &Expr,
     source: &bun_ast::Source,
@@ -951,7 +952,7 @@ impl Materializer<'_> {
     fn expr(&self, e: &Expr, loc: bun_ast::Loc) -> Expr {
         match &e.data {
             js_ast::expr::Data::EObjectJSON(o) => Expr::init(self.object(o.get()), loc),
-            js_ast::expr::Data::EArrayJSON(a) => Expr::init(self.array(a.get(), loc), loc),
+            js_ast::expr::Data::EArrayJSON(a) => Expr::init(self.array(a.get()), loc),
             js_ast::expr::Data::EString(s) => {
                 Expr::init(E::EString::init(self.rehome(s.get().data).slice()), loc)
             }
@@ -967,8 +968,10 @@ impl Materializer<'_> {
         let rows = o.properties();
         let mut properties: G::PropertyList =
             Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
-        let value_locs = o.value_locs();
-        for (i, row) in rows.iter().enumerate() {
+        let value_locs = o
+            .value_locs()
+            .expect("materialize needs rows parsed with record_value_locs");
+        for (row, &value_loc) in rows.iter().zip(value_locs) {
             let key = Expr::init(
                 E::String {
                     data: self.rehome(row.key),
@@ -976,10 +979,6 @@ impl Materializer<'_> {
                 },
                 row.key_loc,
             );
-            let value_loc = match value_locs {
-                Some(locs) => locs[i],
-                None => property_value_loc_or_key(self.contents, row.key_loc),
-            };
             properties.push(G::Property {
                 flags: E::own_key_property_flags(&key),
                 key: Some(key),
@@ -998,7 +997,7 @@ impl Materializer<'_> {
         }
     }
 
-    fn array(&self, a: &E::ArrayJSON, loc: bun_ast::Loc) -> E::Array {
+    fn array(&self, a: &E::ArrayJSON) -> E::Array {
         if !self.stack_check.is_safe_to_recurse() {
             self.overflowed.set(true);
             return E::Array::default();
@@ -1006,22 +1005,11 @@ impl Materializer<'_> {
         let rows = a.items();
         let mut items: js_ast::ExprNodeList =
             Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
-        let item_locs = a.item_locs();
-        let mut cursor = match item_locs {
-            Some(_) => None,
-            None => usize::try_from(loc.start)
-                .ok()
-                .and_then(|start| array_first_item(self.contents, start)),
-        };
-        for (i, item) in rows.iter().enumerate() {
-            let item_loc = match item_locs {
-                Some(locs) => locs[i],
-                None => cursor.map_or(loc, bun_ast::usize2loc),
-            };
+        let item_locs = a
+            .item_locs()
+            .expect("materialize needs rows parsed with record_value_locs");
+        for (item, &item_loc) in rows.iter().zip(item_locs) {
             items.push(self.json_value(item, item_loc));
-            if item_locs.is_none() {
-                cursor = cursor.and_then(|p| array_next_item(self.contents, p));
-            }
         }
         E::Array {
             items,
@@ -1035,7 +1023,7 @@ impl Materializer<'_> {
     fn json_value(&self, value: &E::JsonValue, loc: bun_ast::Loc) -> Expr {
         match value {
             E::JsonValue::Object(o) => Expr::init(self.object(o.get()), loc),
-            E::JsonValue::Array(a) => Expr::init(self.array(a.get(), loc), loc),
+            E::JsonValue::Array(a) => Expr::init(self.array(a.get()), loc),
             E::JsonValue::String(s) => Expr::init(E::EString::init(self.rehome(*s).slice()), loc),
             _ => Expr::from_json_value(value, loc),
         }
@@ -1088,6 +1076,16 @@ mod tests {
                     p.root
                 })
             }
+            Which::RowsWithLocs(opts) => {
+                let opts = JSONOptions {
+                    record_value_locs: true,
+                    ..opts
+                };
+                parse_to_rows(&source, &mut log, opts).map(|mut p| {
+                    tape = p.tape.take();
+                    p.root
+                })
+            }
         };
         let first_msg = log
             .msgs
@@ -1113,6 +1111,8 @@ mod tests {
         PackageJson,
         Jsonc,
         Immutable,
+        /// Rows with the value locations `materialize` needs.
+        RowsWithLocs(JSONOptions),
     }
 
     fn json_value_to_string(v: &E::JsonValue, out: &mut String) {
@@ -1661,38 +1661,40 @@ mod tests {
             ));
         }
         generated.push('}');
+        const ROWS: Which = Which::RowsWithLocs(JSONOptions::DEFAULT);
+        const JSONC_ROWS: Which = Which::RowsWithLocs(TSCONFIG_OPTS);
         let docs: Vec<(&str, Which, Which)> = vec![
-            ("{}", Which::Utf8, Which::Immutable),
-            ("[]", Which::Utf8, Which::Immutable),
-            ("\"leaf\"", Which::Utf8, Which::Immutable),
-            ("\"l\\u00e9af\\n\"", Which::Utf8, Which::Immutable),
-            ("-3.25e2", Which::Utf8, Which::Immutable),
+            ("{}", Which::Utf8, ROWS),
+            ("[]", Which::Utf8, ROWS),
+            ("\"leaf\"", Which::Utf8, ROWS),
+            ("\"l\\u00e9af\\n\"", Which::Utf8, ROWS),
+            ("-3.25e2", Which::Utf8, ROWS),
             (
                 r#"{"a": 1, "b": [true, null, "x", [], {}], "c": {"d": "é🚀", "e": ""}, "es\ncé": -0}"#,
                 Which::Utf8,
-                Which::Immutable,
+                ROWS,
             ),
             (
                 "[0, -1.5e3, \"s\", {\"n\": {\"deep\": [\"x\"]}},\n[\n1\n]\n]",
                 Which::Utf8,
-                Which::Immutable,
+                ROWS,
             ),
-            (&deep, Which::Utf8, Which::Immutable),
-            (&generated, Which::Utf8, Which::Immutable),
+            (&deep, Which::Utf8, ROWS),
+            (&generated, Which::Utf8, ROWS),
             (
                 "// c\n{\"a\": [1, 2,], /* x */ \"b\": 'sq', }",
                 Which::TsConfig,
-                Which::Jsonc,
+                JSONC_ROWS,
             ),
             (
                 "{\n  // line\n  \"a\" /* k */ : // v\n   42,\n  \"arr\": [ /* a */ 1,\n     [2], // b\n   {'z': 'q'},\n  ],\n}",
                 Which::TsConfig,
-                Which::Jsonc,
+                JSONC_ROWS,
             ),
             (
                 "{\"\u{e9}k\":\u{a0}\u{feff} 1,\"l\":\u{a0}[\u{a0}1\u{a0},\u{a0}2]}",
                 Which::TsConfig,
-                Which::Jsonc,
+                JSONC_ROWS,
             ),
         ];
         for (doc, full_which, immutable_which) in docs {

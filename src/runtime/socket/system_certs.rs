@@ -18,6 +18,8 @@ struct Loader {
     files_read: bun_collections::HashMap<(u64, u64), ()>,
     /// The DER encoding of every certificate already handed out.
     certificates: bun_collections::HashMap<Vec<u8>, ()>,
+    /// Decode buffer, reused across blocks.
+    der: Vec<u8>,
 }
 
 impl Loader {
@@ -73,10 +75,10 @@ impl Loader {
 
     /// As `PEM_read_bio_X509`: other block names are skipped, the file ends at the first block that fails.
     fn load_pem(&mut self, bytes: &[u8]) {
-        let mut lines = strings::split(bytes, b"\n").map(trim_trailing_space);
+        let mut lines = Lines { bytes, pos: 0 };
         loop {
             let name = loop {
-                let Some(line) = lines.next() else {
+                let Some((_, line)) = lines.next() else {
                     return;
                 };
                 if let Some(rest) = line.strip_prefix(b"-----BEGIN ")
@@ -86,64 +88,82 @@ impl Loader {
                 }
             };
 
-            let mut section: Vec<u8> = Vec::new();
-            let mut header_len: Option<usize> = None;
-            let end_line = loop {
-                let Some(line) = lines.next() else {
+            // The body is decoded in place from the file buffer. A blank line right after BEGIN is an
+            // empty header. A blank line after other lines makes them a header, which fails as in BoringSSL.
+            let mut body_start = lines.pos;
+            let mut blank_seen = false;
+            let body_end = loop {
+                let Some((start, line)) = lines.next() else {
                     return;
                 };
-                if line.starts_with(b"-----END ") {
-                    break line;
+                if let Some(rest) = line.strip_prefix(b"-----END ") {
+                    if rest.strip_prefix(name) != Some(b"-----") {
+                        return;
+                    }
+                    break start;
                 }
-                if line.is_empty() && header_len.is_none() {
-                    header_len = Some(section.len());
-                    continue;
+                if line.is_empty() && !blank_seen {
+                    blank_seen = true;
+                    if start != body_start {
+                        return;
+                    }
+                    body_start = lines.pos;
                 }
-                section.extend_from_slice(line);
-                section.push(b'\n');
             };
-            let end_ok = end_line
-                .strip_prefix(b"-----END ")
-                .and_then(|rest| rest.strip_prefix(name))
-                .is_some_and(|rest| rest == b"-----");
-            if !end_ok {
-                return;
-            }
 
             if name != b"CERTIFICATE" && name != b"X509 CERTIFICATE" {
                 continue;
             }
-            let (header, body) = match header_len {
-                Some(len) => section.split_at(len),
-                None => (&[][..], &section[..]),
-            };
-            if !header.is_empty() {
+            if !self.decode(&bytes[body_start..body_end]) {
                 return;
             }
-            let der = match bun_base64::decode_alloc(body) {
-                Ok(der) if !der.is_empty() => der,
-                _ => return,
-            };
-            if self.certificates.contains_key(der.as_slice()) {
+            if self.certificates.contains_key(self.der.as_slice()) {
                 continue;
             }
             // SAFETY: `add` and `ctx` come from the C++ caller, which keeps `ctx` alive for the whole call.
-            if !unsafe { (self.add)(self.ctx, der.as_ptr(), der.len()) } {
+            if !unsafe { (self.add)(self.ctx, self.der.as_ptr(), self.der.len()) } {
                 return;
             }
-            self.certificates.insert(der, ());
+            self.certificates.insert(self.der.clone(), ());
         }
+    }
+
+    /// Decodes one base64 body into `self.der`. The decoder skips whitespace, so the line breaks stay in.
+    fn decode(&mut self, body: &[u8]) -> bool {
+        self.der.clear();
+        self.der.resize(bun_base64::decode_len(body), 0);
+        let result = bun_base64::decode(&mut self.der, body);
+        if !result.is_successful() || result.count == 0 {
+            return false;
+        }
+        self.der.truncate(result.count);
+        true
     }
 }
 
-/// BoringSSL's PEM reader drops every trailing byte that is not above ' '.
-fn trim_trailing_space(mut line: &[u8]) -> &[u8] {
-    while let [rest @ .., last] = line
-        && *last <= b' '
-    {
-        line = rest;
+/// Lines of a file as `(offset, line)`, trailing bytes up to `' '` removed as BoringSSL's PEM reader does.
+struct Lines<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Lines<'a> {
+    fn next(&mut self) -> Option<(usize, &'a [u8])> {
+        let start = self.pos;
+        if start >= self.bytes.len() {
+            return None;
+        }
+        let end = strings::index_of_char_usize(&self.bytes[start..], b'\n')
+            .map_or(self.bytes.len(), |i| start + i);
+        self.pos = end + 1;
+        let mut line = &self.bytes[start..end];
+        while let [rest @ .., last] = line
+            && *last <= b' '
+        {
+            line = rest;
+        }
+        Some((start, line))
     }
-    line
 }
 
 /// Safety: `default_cert_file` and `default_cert_dir` must be valid NUL-terminated C strings.
@@ -159,6 +179,7 @@ unsafe extern "C" fn Bun__forEachSystemCertificate(
         add,
         files_read: bun_collections::HashMap::new(),
         certificates: bun_collections::HashMap::new(),
+        der: Vec::new(),
     };
 
     match env_var::SSL_CERT_FILE::get() {

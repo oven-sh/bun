@@ -814,9 +814,7 @@ impl Drop for Endpoints {
 
 #[cfg(windows)]
 fn pipe_error(rc: uv::ReturnCode, tag: bun_sys::Tag) -> crate::Error {
-    bun_sys::Error::from_uv_rc(rc, tag)
-        .expect("an error return code")
-        .into()
+    rc.to_error(tag).expect("an error return code").into()
 }
 
 #[cfg(windows)]

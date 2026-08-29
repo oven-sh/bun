@@ -10,7 +10,6 @@ use std::borrow::Cow;
 use bun_alloc::Arena;
 use bun_collections::StringArrayHashMap;
 use bun_core::Output;
-use bun_core::Utf8Bytes;
 use bun_core::{ZStr, strings};
 use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult};
 use bun_paths::PathBuffer;
@@ -480,7 +479,9 @@ impl Framework {
                         "'framework.serverComponents.separateSSRGraph' must be a boolean"
                     )));
                 },
-                server_runtime_import: match sc.get_optional_slice(global, "serverRuntimeImportSource")? {
+                server_runtime_import: match sc
+                    .get_optional_slice(global, "serverRuntimeImportSource")?
+                {
                     Some(s) => Cow::Owned(s.slice().to_vec()),
                     None => {
                         return Err(global.throw_invalid_arguments(format_args!(

@@ -1,6 +1,74 @@
 import assert from "assert";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { itBundled } from "./expectBundled";
+
+// An `await using` whose value only has Symbol.dispose: a synchronous throw from
+// the disposer must surface as a rejection, so a microtask that was already
+// queued ("interleave") runs before the catch block.
+const syncDisposeThrow = {
+  source: /* ts */ `
+    const out: string[] = [];
+    async function main() {
+      const interleave = Promise.resolve().then(() => { out.push("interleave") });
+      try {
+        await using x = { [Symbol.dispose]() { out.push("dispose"); throw null } };
+      } catch {
+        out.push("catch");
+      }
+      await interleave;
+      return out;
+    }
+    console.log((await main()).join());
+  `,
+  stdout: "dispose,interleave,catch",
+};
+
+// A Symbol.dispose fallback that returns a promise: the promise is not awaited.
+// Disposal of `x` proceeds after one tick, before `y`'s two-tick promise settles.
+const syncDisposeReturnsPromise = {
+  source: /* ts */ `
+    const out: string[] = [];
+    async function main() {
+      await using x = { async [Symbol.asyncDispose]() { out.push("x asyncDispose") } };
+      await using y = {
+        [Symbol.dispose]() {
+          out.push("y dispose");
+          return Promise.resolve().then(() => {}).then(() => { out.push("y promise settled") });
+        },
+      };
+      out.push("body");
+    }
+    await main();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    console.log(out.join());
+  `,
+  stdout: "body,y dispose,x asyncDispose,y promise settled",
+};
+
+// A null Symbol.asyncDispose falls back to Symbol.dispose (GetMethod treats null like undefined).
+const nullAsyncDisposeFallsBack = {
+  source: /* ts */ `
+    const out: string[] = [];
+    async function main() {
+      try {
+        await using x = { [Symbol.asyncDispose]: null, [Symbol.dispose]() { out.push("dispose") } };
+        out.push("body");
+      } catch (e) {
+        out.push("threw " + (e as Error).message);
+      }
+    }
+    await main();
+    console.log(out.join());
+  `,
+  stdout: "body,dispose",
+};
+
+const awaitUsingFallbackCases = {
+  AwaitUsingSyncDisposeThrowIsRejected: syncDisposeThrow,
+  AwaitUsingSyncDisposePromiseNotAwaited: syncDisposeReturnsPromise,
+  AwaitUsingNullAsyncDisposeFallsBack: nullAsyncDisposeFallsBack,
+};
 
 describe("bundler", () => {
   const nodePolyfillList = {
@@ -659,4 +727,40 @@ describe("bundler", () => {
       stdout: "Before!\nThe dispose function was called\n",
     },
   });
+
+  // The `__using` helper's Symbol.dispose fallback for `await using`. `--target=bun`
+  // keeps the syntax and JavaScriptCore runs it natively. Other targets lower it: a
+  // bundle inlines the helper, `--no-bundle` output imports it from `bun:wrap`. Every
+  // mode must agree with the spec (and with `bun run` of the source) on the order.
+  for (const [name, { source, stdout }] of Object.entries(awaitUsingFallbackCases)) {
+    for (const target of ["bun", "node", "browser"] as const) {
+      for (const bundling of [true, false]) {
+        itBundled(`browser/${name}/${target}${bundling ? "" : "-no-bundle"}`, {
+          files: { "/entry.ts": source },
+          target,
+          bundling,
+          run: { stdout },
+        });
+      }
+    }
+  }
+});
+
+describe.concurrent("bun run", () => {
+  for (const [name, { source, stdout }] of Object.entries(awaitUsingFallbackCases)) {
+    test(name, async () => {
+      using dir = tempDir("await-using-fallback", { "entry.ts": source });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).toBe("");
+      expect(out.trim()).toBe(stdout);
+      expect(exitCode).toBe(0);
+    });
+  }
 });

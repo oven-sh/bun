@@ -428,10 +428,14 @@ const RUNTIME_USING_BUN: &str = "\
 export var __using = (stack, value, async) => {
   if (value != null) {
     if (typeof value !== 'object' && typeof value !== 'function') throw TypeError('Object expected to be assigned to \"using\" declaration')
-    let dispose
+    let dispose, inner
     if (async) dispose = value[Symbol.asyncDispose]
-    if (dispose === void 0) dispose = value[Symbol.dispose]
+    if (dispose == null) {
+      dispose = value[Symbol.dispose]
+      if (async) inner = dispose
+    }
     if (typeof dispose !== 'function') throw TypeError('Object not disposable')
+    if (inner) dispose = function() { try { inner.call(this) } catch (e) { return Promise.reject(e) } }
     stack.push([async, dispose, value])
   } else if (async) {
     stack.push([async])
@@ -458,6 +462,7 @@ export var __callDispose = (stack, error, hasError) => {
 
 // Other platforms may or may not have the symbol or errors
 // The definitions of __dispose and __asyncDispose match what esbuild's __wellKnownSymbol() helper does
+// The `inner` wrapper is the spec's GetDisposeMethod step for an `await using` that falls back to Symbol.dispose
 const RUNTIME_USING_OTHER: &str = "\
 var __dispose = Symbol.dispose || /* @__PURE__ */ Symbol.for('Symbol.dispose');
 var __asyncDispose =  Symbol.asyncDispose || /* @__PURE__ */ Symbol.for('Symbol.asyncDispose');
@@ -465,10 +470,14 @@ var __asyncDispose =  Symbol.asyncDispose || /* @__PURE__ */ Symbol.for('Symbol.
 export var __using = (stack, value, async) => {
   if (value != null) {
     if (typeof value !== 'object' && typeof value !== 'function') throw TypeError('Object expected to be assigned to \"using\" declaration')
-    var dispose
+    var dispose, inner
     if (async) dispose = value[__asyncDispose]
-    if (dispose === void 0) dispose = value[__dispose]
+    if (dispose == null) {
+      dispose = value[__dispose]
+      if (async) inner = dispose
+    }
     if (typeof dispose !== 'function') throw TypeError('Object not disposable')
+    if (inner) dispose = function() { try { inner.call(this) } catch (e) { return Promise.reject(e) } }
     stack.push([async, dispose, value])
   } else if (async) {
     stack.push([async])

@@ -21,8 +21,8 @@ use crate::renamer;
 use crate::{
     ARGUMENTS_STR as arguments_str, DeferredArrowArgErrors, DeferredErrors,
     DeferredImportNamespace, EXPORTS_STRING_NAME as exports_string_name, ExprBindingTuple,
-    FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit, IdentifierOpts,
-    ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest,
+    FindLabelSymbolResult, FnKind, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit,
+    IdentifierOpts, ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest,
     LOC_MODULE_SCOPE as loc_module_scope, LocList, MacroState, ParseStatementOptions, ParsedPath,
     PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RuntimeImports, ScopeOrder,
     ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution, TempRef, ThenCatchChain,
@@ -1464,7 +1464,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub(crate) fn log_arrow_arg_errors(&mut self, errors: &mut DeferredArrowArgErrors) {
+    pub(crate) fn log_arrow_arg_errors(&mut self, errors: &DeferredArrowArgErrors) {
         if errors.invalid_expr_await.len > 0 {
             let r = errors.invalid_expr_await;
             self.log().add_range_error(
@@ -1481,6 +1481,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 r,
                 b"Cannot use a \"yield\" expression here",
             );
+        }
+    }
+
+    pub(crate) fn log_deferred_arrow_arg_errors(&mut self, errors: &DeferredErrors) {
+        for paren in errors.invalid_parens.iter() {
+            InvalidLoc {
+                loc: paren.loc,
+                kind: crate::parser::InvalidLocTag::Parentheses,
+            }
+            .add_error(self.log(), self.source);
         }
     }
 
@@ -3278,13 +3288,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     });
                 }
 
-                if ex.is_parenthesized {
-                    invalid_loc.push(InvalidLoc {
-                        loc: self.source.range_of_operator_before(expr.loc, b"(").loc,
-                        kind: crate::parser::InvalidLocTag::Parentheses,
-                    });
-                }
-
                 // p.markSyntaxFeature(Destructing)
                 let mut items = BumpVec::with_capacity_in(ex.items.len_u32() as usize, self.arena);
                 let mut is_spread = false;
@@ -3330,13 +3333,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     invalid_loc.push(InvalidLoc {
                         loc: sp,
                         kind: crate::parser::InvalidLocTag::Spread,
-                    });
-                }
-
-                if ex.is_parenthesized {
-                    invalid_loc.push(InvalidLoc {
-                        loc: self.source.range_of_operator_before(expr.loc, b"(").loc,
-                        kind: crate::parser::InvalidLocTag::Parentheses,
                     });
                 }
                 // p.markSyntaxFeature(compat.Destructuring, p.source.RangeOfOperatorAfter(expr.Loc, "{"))
@@ -3438,6 +3434,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             binding: bind,
             expr: initializer,
         }
+    }
+
+    pub(crate) fn is_forbidden_await_or_yield_identifier(&self, name: &[u8]) -> bool {
+        (self.fn_or_arrow_data_parse.allow_await != crate::AwaitOrYield::AllowIdent
+            && name == b"await")
+            || (self.fn_or_arrow_data_parse.allow_yield != crate::AwaitOrYield::AllowIdent
+                && name == b"yield")
+    }
+
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn log_invalid_identifier(&mut self, name: &[u8], r: bun_ast::Range) {
+        self.log().add_range_error_fmt(
+            Some(self.source),
+            r,
+            format_args!(
+                "Cannot use {} as an identifier here",
+                bun_core::fmt::quote(name)
+            ),
+        );
     }
 
     #[cold]
@@ -4523,7 +4539,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(ref_)
     }
 
-    pub(crate) fn validate_function_name(&mut self, func: &G::Fn) {
+    pub(crate) fn validate_function_name(&mut self, func: &G::Fn, kind: FnKind) {
         if let Some(name) = &func.name {
             // SAFETY: Symbol.original_name is an arena/source-contents slice valid for 'a.
             let original_name: &[u8] = self.symbols[name.ref_.inner_index() as usize]
@@ -4536,12 +4552,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     js_lexer::range_of_identifier(self.source, name.loc),
                     b"An async function cannot be named \"await\"",
                 );
-            } else if func.flags.contains(Flags::Function::IsGenerator) && original_name == b"yield"
+            } else if func.flags.contains(Flags::Function::IsGenerator)
+                && original_name == b"yield"
+                && kind == FnKind::Expr
             {
                 self.log().add_range_error(
                     Some(self.source),
                     js_lexer::range_of_identifier(self.source, name.loc),
-                    b"An generator function expression cannot be named \"yield\"",
+                    b"A generator function expression cannot be named \"yield\"",
                 );
             }
         }

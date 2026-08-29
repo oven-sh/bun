@@ -4524,8 +4524,13 @@ struct HeaderResponseSizePair<
     pub(crate) size: usize,
 }
 
-struct HeaderResponsePair<'a, ThisServer: 'static, const SSL: bool, const DBG: bool, const MUX: bool>
-{
+struct HeaderResponsePair<
+    'a,
+    ThisServer: 'static,
+    const SSL: bool,
+    const DBG: bool,
+    const MUX: bool,
+> {
     pub this: &'a RequestContext<ThisServer, SSL, DBG, MUX>,
     /// The JS wrapper's cell pointer, not a `&mut Response`: the receiving
     /// frame hands it to `set_response`, which stores it in a `WeakPtr` that

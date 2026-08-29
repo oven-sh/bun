@@ -84,7 +84,7 @@ function generate(name) {
       },
     },
     klass: {},
-    finalize: true,
+    refCounted: true,
     construct: true,
     noConstructor: true,
     values: [

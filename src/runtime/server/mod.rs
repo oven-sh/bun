@@ -2383,20 +2383,26 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // H2/H3 fallback — same three-way as H1 above, but driven by user/static
         // "/*" coverage only (DevServer routes are not mirrored to H2/H3).
-        let mux_fallback = if has_on_request {
-            Self::on_mux_request
-        } else {
-            Self::on_mux_404
-        };
         for_each_mux_app!(self, |mux| {
+            // The default handler for a method (or `None` = any) on "/*".
+            macro_rules! fallback_mux {
+                ($method:expr) => {
+                    match ($method, has_on_request) {
+                        (Some(m), true) => mux.method_this(m, b"/*", Self::on_mux_request, this),
+                        (Some(m), false) => mux.method_this(m, b"/*", Self::on_mux_404, this),
+                        (None, true) => mux.any_this(b"/*", Self::on_mux_request, this),
+                        (None, false) => mux.any_this(b"/*", Self::on_mux_404, this),
+                    }
+                };
+            }
             if mux_star_covered == http_method::Set::all() {
                 // user/static "/*" already covers every method
             } else if has_any_user_route_for_star_path || has_static_route_for_star_path {
                 for m in !mux_star_covered {
-                    mux.method_this(m, b"/*", mux_fallback, this);
+                    fallback_mux!(Some(m));
                 }
             } else {
-                mux.any_this(b"/*", mux_fallback, this);
+                fallback_mux!(None::<http_method::Method>);
             }
         });
 
@@ -2441,7 +2447,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `config.http2`: attach an HTTP/2 context to `app`. On failure returns
     /// the message for `fail_listen` (empty when an exception is already
     /// pending).
-    fn attach_http2(&self) -> Result<(), core::fmt::Arguments<'static>>
+    fn attach_http2(&self) -> Result<(), &'static str>
     where
         Self: ServerPools<SSL, DEBUG>,
     {
@@ -2469,14 +2475,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let _ = self.global_this().throw_invalid_arguments(format_args!(
                     "http1: false with http2: true is not supported {why}"
                 ));
-                return Err(format_args!(""));
+                return Err("");
             }
             bun_core::warn!("http2: true is ignored {}", why);
             return Ok(());
         }
         let app = self.app_mut().expect("created before attach_http2");
         let Some(h2) = uws_sys::h2::OwnedApp::create::<SSL>(app, http1, idle_timeout) else {
-            return Err(format_args!("Failed to create HTTP/2 server"));
+            return Err("Failed to create HTTP/2 server");
         };
         // Streams parked on socket backpressure by a JS-driven write get their
         // next drain pass from the event loop's deferred task queue (after the
@@ -2493,7 +2499,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 .post_task(NonNull::new(app), drain);
         }
         let h2_ptr = h2.as_ptr();
-        bun_opaque::opaque_deref_mut(h2_ptr).on_schedule_drain(schedule_h2_drain, h2_ptr.cast::<c_void>());
+        bun_opaque::opaque_deref_mut(h2_ptr)
+            .on_schedule_drain(schedule_h2_drain, h2_ptr.cast::<c_void>());
         self.h2_app.set(Some(h2));
         if self.mux_request_pool.get().is_none() {
             self.mux_request_pool
@@ -2569,7 +2576,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     .set(Some(<Self as ServerPools<SSL, DEBUG>>::mux_request_pool()));
             }
             if let Err(msg) = server.attach_http2() {
-                return Self::fail_listen(this, msg, false);
+                return Self::fail_listen(this, format_args!("{msg}"), false);
             }
 
             route_list_value = server.set_routes();
@@ -2670,7 +2677,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             server.app.set(Some(app));
             server.self_ref.set(Some(RefPtr::from_this(this)));
             if let Err(msg) = server.attach_http2() {
-                return Self::fail_listen(this, msg, false);
+                return Self::fail_listen(this, format_args!("{msg}"), false);
             }
             route_list_value = server.set_routes();
         }
@@ -2710,7 +2717,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     Addr::Unix(bun_core::ZBox::from_bytes(unix.as_bytes()))
                 }
             };
-            (addr, config.http1 || config.http2, config.get_usockets_options())
+            (
+                addr,
+                config.http1 || config.http2,
+                config.get_usockets_options(),
+            )
         };
 
         match &addr {

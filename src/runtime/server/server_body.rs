@@ -287,9 +287,10 @@ fn h1_pool<const SSL: bool, const DEBUG: bool>(
 fn mux_pool<const SSL: bool, const DEBUG: bool>(
     server: &NewServer<SSL, DEBUG>,
 ) -> &'static CtxPool<ServerMuxRequestContext<SSL, DEBUG>> {
-    server.mux_request_pool.get().expect(
-        "HTTP/2 or HTTP/3 request dispatched but mux_request_pool was never allocated",
-    )
+    server
+        .mux_request_pool
+        .get()
+        .expect("HTTP/2 or HTTP/3 request dispatched but mux_request_pool was never allocated")
 }
 impl_request_ctx!(false, uws_sys::Request, h1_pool);
 impl_request_ctx!(true, uws_sys::h3::Request, mux_pool);
@@ -2559,23 +2560,22 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         JSValue::from(DEBUG)
     }
 
-    pub fn finalize(self: Box<Self>) {
+    /// Runs before the wrapper's ref is dropped (`refCounted` class).
+    pub fn finalize(&self) {
         httplog!("finalize");
-        bun_ptr::finalize_js_box(self, |this| {
-            this.js_value.with_mut(|v| v.finalize());
-            this.deinit_if_we_can();
-            // `deinit_if_we_can` may defer (pending requests), so teardown is not
-            // unconditional. JSC-handle Drops are no-ops past `is_shutting_down()`;
-            // `TERMINATED` means `app.close()` already ran, so destroying the app
-            // can't orphan a keep-alive socket.
-            if this.has_flags(ServerFlags::DEINIT_SCHEDULED)
-                && this.has_flags(ServerFlags::TERMINATED)
-                && this.vm().is_shutting_down()
-            {
-                // Not the last ref: `finalize_js_box` still holds the wrapper's.
-                drop(this.teardown());
-            }
-        });
+        self.js_value.with_mut(|v| v.finalize());
+        self.deinit_if_we_can();
+        // `deinit_if_we_can` may defer (pending requests), so teardown is not
+        // unconditional. JSC-handle Drops are no-ops past `is_shutting_down()`;
+        // `TERMINATED` means `app.close()` already ran, so destroying the app
+        // can't orphan a keep-alive socket.
+        if self.has_flags(ServerFlags::DEINIT_SCHEDULED)
+            && self.has_flags(ServerFlags::TERMINATED)
+            && self.vm().is_shutting_down()
+        {
+            // Not the last ref: the caller still holds the wrapper's.
+            drop(self.teardown());
+        }
     }
 
     pub(crate) fn get_all_closed_promise(&self, global: &JSGlobalObject) -> JSValue {
@@ -2618,16 +2618,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         resp: uws::AnyResponse,
     ) {
         match mux_parts(req, resp) {
-            MuxParts::H2(req, resp) => {
-                Self::on_user_route_request_for::<ServerMuxRequestContext<SSL, DEBUG>, _>(
-                    user_route, req, resp,
-                )
-            }
-            MuxParts::H3(req, resp) => {
-                Self::on_user_route_request_for::<ServerMuxRequestContext<SSL, DEBUG>, _>(
-                    user_route, req, resp,
-                )
-            }
+            MuxParts::H2(req, resp) => Self::on_user_route_request_for::<
+                ServerMuxRequestContext<SSL, DEBUG>,
+                _,
+            >(user_route, req, resp),
+            MuxParts::H3(req, resp) => Self::on_user_route_request_for::<
+                ServerMuxRequestContext<SSL, DEBUG>,
+                _,
+            >(user_route, req, resp),
         }
     }
 

@@ -107,16 +107,32 @@ describe.skipIf(!isLinux)("tls.getCACertificates('system')", () => {
   });
 
   test("reads SSL_CERT_FILE and every regular file in SSL_CERT_DIR, each certificate once", async () => {
-    const [ca1, ca2, ca3, ca4, ca5, ca6, leaf] = ["ca1", "ca2", "ca3", "ca4", "ca5", "ca6", "agent1"].map(fixtureCert);
+    const [ca1, ca2, ca3, ca4, ca5, ca6, leaf1, leaf2, leaf3] = [
+      "ca1",
+      "ca2",
+      "ca3",
+      "ca4",
+      "ca5",
+      "ca6",
+      "agent1",
+      "agent2",
+      "agent3",
+    ].map(fixtureCert);
+    // An encrypted key block carries header lines. PEM_read_bio_X509 decodes it, then skips it by name.
+    const encryptedKey =
+      "-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,00112233445566778899AABBCCDDEEFF\n\nQUJDREVGR0hJSktMTU5PUA==\n-----END RSA PRIVATE KEY-----\n";
+    const badBlock = "-----BEGIN PRIVATE KEY-----\n!!! not base64 !!!\n-----END PRIVATE KEY-----\n";
     using dir = tempDir("system-ca", {
       "bundle.pem": ca1 + ca2,
       certs: {
         "a-again.pem": ca1, // already in the bundle
+        "bad-block.pem": badBlock + leaf2, // a block that does not decode ends the file, whatever its name
         "c.pem": ca3,
+        "encrypted-key.pem": encryptedKey + leaf3, // a block with another name is skipped, headers and all
         "multi.crt": ca5 + ca6, // every certificate in a file, not only the first
         "noext": ca4, // names are not filtered
         "README": "not a certificate\n",
-        sub: { "d.pem": leaf }, // subdirectories are not entered
+        sub: { "d.pem": leaf1 }, // subdirectories are not entered
       },
     });
     // A second name for the same file.
@@ -126,9 +142,9 @@ describe.skipIf(!isLinux)("tls.getCACertificates('system')", () => {
       SSL_CERT_FILE: join(String(dir), "bundle.pem"),
       SSL_CERT_DIR: join(String(dir), "certs"),
     });
-    // The file first, then the directory in name order: a-again.pem (dropped), c-alias.pem, c.pem (same file,
-    // skipped), multi.crt, noext.
-    expect(fingerprints).toEqual([ca1, ca2, ca3, ca5, ca6, ca4].map(fingerprint));
+    // The file first, then the directory in name order: a-again.pem (dropped), bad-block.pem (nothing),
+    // c-alias.pem, c.pem (same file, skipped), encrypted-key.pem, multi.crt, noext.
+    expect(fingerprints).toEqual([ca1, ca2, ca3, leaf3, ca5, ca6, ca4].map(fingerprint));
 
     // A variable that is set but empty turns that source off.
     expect(await systemFingerprints({ SSL_CERT_FILE: join(String(dir), "bundle.pem"), SSL_CERT_DIR: "" })).toEqual(

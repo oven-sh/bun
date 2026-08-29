@@ -88,9 +88,9 @@ impl Loader {
                 }
             };
 
-            // A blank line right after BEGIN is an empty header. One after other lines makes them a header.
-            let mut body_start = lines.pos;
-            let mut blank_seen = false;
+            // The lines before the first blank line are the header, the rest up to END is the body.
+            let block_start = lines.pos;
+            let mut first_blank: Option<(usize, usize)> = None;
             let body_end = loop {
                 let Some((start, line)) = lines.next() else {
                     return;
@@ -101,19 +101,20 @@ impl Loader {
                     }
                     break start;
                 }
-                if line.is_empty() && !blank_seen {
-                    blank_seen = true;
-                    if start != body_start {
-                        return;
-                    }
-                    body_start = lines.pos;
+                if line.is_empty() && first_blank.is_none() {
+                    first_blank = Some((start, lines.pos));
                 }
             };
+            let body_start = first_blank.map_or(block_start, |(_, after_blank)| after_blank);
+            let has_header = first_blank.is_some_and(|(blank, _)| blank != block_start);
 
+            if !self.decode(&bytes[body_start..body_end]) {
+                return;
+            }
             if name != b"CERTIFICATE" && name != b"X509 CERTIFICATE" {
                 continue;
             }
-            if !self.decode(&bytes[body_start..body_end]) {
+            if has_header {
                 return;
             }
             if self.certificates.contains_key(self.der.as_slice()) {

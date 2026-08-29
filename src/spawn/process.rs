@@ -192,11 +192,8 @@ impl ProcessHandle {
         self.process_mut().on_exit(status, rusage)
     }
 
-    pub fn kill(&self, signal: u8) -> Maybe<()> {
-        self.process_mut().kill(signal)
-    }
-
-    /// The process's address, for identity checks in exit callbacks.
+    /// The process's address, for identity checks in exit callbacks and
+    /// registries keyed by it (`ProcessAutoKiller`). Valid while this handle is held.
     pub fn as_ptr(&self) -> *mut Process {
         self.0.as_ptr()
     }
@@ -243,13 +240,6 @@ impl ProcessHandle {
             Poller::Uv(uv_proc) => Some(uv_getrusage(uv_proc)),
             _ => None,
         }
-    }
-
-    /// The process's address (root provenance), for registries keyed by it
-    /// (`ProcessAutoKiller`). Valid while this handle is held.
-    #[inline]
-    pub fn as_ptr(&self) -> core::ptr::NonNull<Process> {
-        self.0.as_non_null()
     }
 }
 

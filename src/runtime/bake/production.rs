@@ -784,13 +784,9 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             }
         }
     }
-    // Write the runtime file to disk if there are any client chunks
-    {
-        let Some(runtime_file_index) = maybe_runtime_file_index else {
-            Output::panic(format_args!(
-                "Runtime file not found. This is an unexpected bug in Bun. Please file a bug report on GitHub."
-            ));
-        };
+    // Write the runtime file to disk if there are any client chunks. The runtime
+    // is absent when no bundled module uses any of its helpers.
+    if let Some(runtime_file_index) = maybe_runtime_file_index {
         let any_client_chunks = bundled_outputs_list.iter().any(|file| {
             file.side == Some(bun_bundler::options::Side::Client)
                 && file.src_path.text != b"bun-framework-react/client.tsx"

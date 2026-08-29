@@ -80,7 +80,7 @@ impl DirectoryRoute {
             Some(lm) => {
                 let date = bun_string_jsc::parse_date(&BunString::borrow_utf8(lm), global)?;
                 // Same rule as `FileRoute::last_modified_date`.
-                date.is_finite().then(|| date as u64)
+                date.is_finite().then_some(date as u64)
             }
             None => None,
         };

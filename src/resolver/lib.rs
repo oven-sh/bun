@@ -855,7 +855,6 @@ pub mod fs {
             #[cfg(windows)]
             {
                 use bun_sys::windows as w;
-                use w::Win32ErrorUnwrap as _;
                 let _ = from_name;
                 let mut existing_buf = bun_paths::WPathBuffer::uninit();
                 let mut new_buf = bun_paths::WPathBuffer::uninit();
@@ -887,7 +886,11 @@ pub mod fs {
                     )
                 } == w::FALSE
                 {
-                    w::Win32Error::get().unwrap()?;
+                    return Err(bun_sys::Error::from_win32(
+                        w::Win32Error::get(),
+                        bun_sys::Tag::rename,
+                    )
+                    .into());
                 }
                 Ok(())
             }

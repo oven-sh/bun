@@ -1995,7 +1995,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // Android, so match both explicitly.
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 {
-                    let errno = bun_sys::get_errno(-1i32);
+                    let errno = bun_sys::last_error();
                     if errno == bun_sys::E::EACCES {
                         let host = _hostname
                             .as_ref()
@@ -2039,7 +2039,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
             server_config::Address::Unix(unix) => {
                 let unix = unix.as_bytes();
-                match bun_sys::get_errno(-1i32) {
+                match bun_sys::last_error() {
                     bun_sys::E::SUCCESS => jsc::SystemError {
                         message: bun_core::String::create_format(format_args!(
                             "Failed to listen on unix socket {}",

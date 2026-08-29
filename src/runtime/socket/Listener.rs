@@ -1616,14 +1616,14 @@ fn connect_finish<const IS_SSL: bool>(
         Ok(()) => None,
         Err(crate::Error::Js(err)) => Some(err),
         Err(_) => {
-            // Winsock sets WSAGetLastError, not the CRT `_errno()` that
+            // Winsock sets the Win32 last-error, not the CRT `_errno()` that
             // `last_errno()` reads.
             #[cfg(windows)]
             let os_errno = {
-                let mut e = bun_sys::windows::WSAGetLastError().map_or(0, |err| err as c_int);
-                // Winsock AF_UNIX returns WSAECONNREFUSED whether the path exists
-                // or not; Node distinguishes ENOENT via `CreateFile`.
-                if port.is_none() && e == bun_sys::SystemErrno::ECONNREFUSED as c_int {
+                let mut e = bun_sys::last_error() as c_int;
+                // Node reports ENOENT for a missing pipe path; Winsock's AF_UNIX
+                // connect error does not, so probe.
+                if port.is_none() {
                     if let Some(UnixOrHost::Unix(path)) = socket_ref.connection.get() {
                         if !bun_sys::exists(path) {
                             e = bun_sys::SystemErrno::ENOENT as c_int;

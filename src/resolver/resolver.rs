@@ -2526,9 +2526,9 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // On the stack: a "browser" remap can re-enter this function while `esm` is in use.
-        let mut esm_subpath_buf = [0u8; 512];
-        let esm_ = crate::package_json::Package::parse(import_path, &mut esm_subpath_buf);
+        // Pooled, not `bufs!`: a "browser" remap can re-enter this function while `esm` is in use.
+        let mut esm_subpath_buf = bun_paths::path_buffer_pool::get();
+        let esm_ = crate::package_json::Package::parse(import_path, &mut **esm_subpath_buf);
 
         let source_dir_info = dir_info;
         let mut any_node_modules_folder = false;

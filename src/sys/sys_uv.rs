@@ -329,18 +329,13 @@ pub fn realpath<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a [u8]> {
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; `req` lives on the stack for the duration.
     let rc = unsafe { uv::uv_fs_realpath(uv::Loop::get(), &mut *req, file_path.as_ptr(), None) };
-    if let Some(errno) = rc.errno() {
+    if let Some(err) = rc.to_error(Tag::realpath) {
         log!(
             "uv realpath({}) = {}",
             BStr::new(file_path.as_bytes()),
             rc.int()
         );
-        return Result::Err(Error {
-            errno,
-            syscall: Tag::realpath,
-            path: file_path.as_bytes().into(),
-            ..Default::default()
-        });
+        return Result::Err(err.with_path(file_path.as_bytes()));
     }
     let Some(resolved) = req.ptr_c_str() else {
         return Result::Err(Error::new(E::NOENT, Tag::realpath).with_path(file_path.as_bytes()));
@@ -380,12 +375,8 @@ pub fn mkdtemp(template: &mut [u8]) -> Result<usize> {
             None,
         )
     };
-    if let Some(errno) = rc.errno() {
-        return Result::Err(Error {
-            errno,
-            syscall: Tag::mkdtemp,
-            ..Default::default()
-        });
+    if let Some(err) = rc.to_error(Tag::mkdtemp) {
+        return Result::Err(err);
     }
     let created = req.path_c_str().map(|p| p.to_bytes()).unwrap_or(&[]);
     let len = created.len().min(template.len());
@@ -412,14 +403,7 @@ pub fn utime(file_path: &ZStr, atime: f64, mtime: f64) -> Result<()> {
         BStr::new(file_path.as_bytes()),
         rc.int()
     );
-    match rc.errno() {
-        Some(errno) => Result::Err(Error {
-            errno,
-            syscall: Tag::utime,
-            ..Default::default()
-        }),
-        None => Result::Ok(()),
-    }
+    rc.to_result(Tag::utime)
 }
 
 /// `uv_fs_lutime` (times in seconds). The error carries no path.
@@ -441,14 +425,7 @@ pub fn lutime(file_path: &ZStr, atime: f64, mtime: f64) -> Result<()> {
         BStr::new(file_path.as_bytes()),
         rc.int()
     );
-    match rc.errno() {
-        Some(errno) => Result::Err(Error {
-            errno,
-            syscall: Tag::lutime,
-            ..Default::default()
-        }),
-        None => Result::Ok(()),
-    }
+    rc.to_result(Tag::lutime)
 }
 
 /// `uv_fs_futime` (times in seconds).
@@ -458,13 +435,8 @@ pub fn futime(fd: Fd, atime: f64, mtime: f64) -> Result<()> {
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.
     let rc = unsafe { uv::uv_fs_futime(uv::Loop::get(), &mut *req, uv_fd, atime, mtime, None) };
     log!("uv futime({}) = {}", uv_fd, rc.int());
-    match rc.errno() {
-        Some(errno) => Result::Err(Error {
-            errno,
-            syscall: Tag::futime,
-            fd,
-            ..Default::default()
-        }),
+    match rc.to_error(Tag::futime) {
+        Some(err) => Result::Err(err.with_fd(fd)),
         None => Result::Ok(()),
     }
 }

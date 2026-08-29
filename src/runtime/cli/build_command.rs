@@ -463,8 +463,7 @@ impl BuildCommand {
         {
             match bun_standalone_module_graph::StandaloneModuleGraph::target_builtins(
                 &ctx.bundler_options.compile_target,
-                // SAFETY: `env` is a process-lifetime singleton.
-                unsafe { &mut *this_transpiler.env },
+                this_transpiler.env(),
                 ctx.bundler_options.compile_executable_path.as_deref(),
             ) {
                 Ok(Some(section)) => options::CompileTargetBuiltins::Target(section),

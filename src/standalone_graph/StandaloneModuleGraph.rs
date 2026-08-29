@@ -2380,7 +2380,7 @@ pub(crate) fn download_to_path(
 /// host target, otherwise the cached download of that platform's bun at this version (fetched now if missing).
 pub fn target_executable(
     target: &CompileTarget,
-    env: &mut bun_dotenv::Loader,
+    env: &bun_dotenv::Loader,
     self_exe_path: Option<&[u8]>,
 ) -> Result<bun_core::ZBox, CompileError> {
     Ok(if let Some(path) = self_exe_path {
@@ -2443,7 +2443,7 @@ pub fn target_executable(
 /// can read; builtin bytecode is skipped then.
 pub fn target_builtins(
     target: &CompileTarget,
-    env: &mut bun_dotenv::Loader,
+    env: &bun_dotenv::Loader,
     self_exe_path: Option<&[u8]>,
 ) -> Result<Option<std::sync::Arc<[u8]>>, CompileError> {
     use bun_exe_format::builtins::{Builtins, BuiltinsError, find_section};

@@ -1489,7 +1489,11 @@ impl CommandLineReporter {
         });
     }
 
-    pub(crate) fn generate_code_coverage(&self, vm: &mut VirtualMachine, opts: &mut CodeCoverageOptions) {
+    pub(crate) fn generate_code_coverage(
+        &self,
+        vm: &mut VirtualMachine,
+        opts: &mut CodeCoverageOptions,
+    ) {
         let _trace = bun::perf::trace("TestCommand.printCodeCoverage");
         if ByteRangeMapping::with_map(|m| m.is_empty()).unwrap_or(true) {
             return;

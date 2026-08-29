@@ -192,6 +192,7 @@ impl ProcessHandle {
         self.process_mut().on_exit(status, rusage)
     }
 
+    /// See [`Process::kill`].
     pub fn kill(&self, signal: u8) -> Maybe<()> {
         self.process_mut().kill(signal)
     }
@@ -209,11 +210,6 @@ impl ProcessHandle {
     /// See [`Process::wait`]; may synchronously run the exit handler.
     pub fn wait(&self, sync_: bool) {
         self.process_mut().wait(sync_)
-    }
-
-    /// See [`Process::kill`].
-    pub fn kill(&self, signal: u8) -> Maybe<()> {
-        self.process_mut().kill(signal)
     }
 
     /// See [`Process::close`].
@@ -243,13 +239,6 @@ impl ProcessHandle {
             Poller::Uv(uv_proc) => Some(uv_getrusage(uv_proc)),
             _ => None,
         }
-    }
-
-    /// The process's address (root provenance), for registries keyed by it
-    /// (`ProcessAutoKiller`). Valid while this handle is held.
-    #[inline]
-    pub fn as_ptr(&self) -> core::ptr::NonNull<Process> {
-        self.0.as_non_null()
     }
 }
 

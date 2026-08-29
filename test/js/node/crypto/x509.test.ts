@@ -192,7 +192,12 @@ describe("PEM base64 for public objects", () => {
   const der = new X509Certificate(wildcardSanCertPem).raw;
   const b64 = der.toString("base64");
   const pem64 = (label: string, buf: Buffer) =>
-    `-----BEGIN ${label}-----\n` + buf.toString("base64").replace(/(.{64})/g, "$1\n").replace(/\n?$/, "\n") + `-----END ${label}-----\n`;
+    `-----BEGIN ${label}-----\n` +
+    buf
+      .toString("base64")
+      .replace(/(.{64})/g, "$1\n")
+      .replace(/\n?$/, "\n") +
+    `-----END ${label}-----\n`;
   const canonical = pem64("CERTIFICATE", der);
 
   test("X509Certificate#toString() is 64-column PEM with a terminated last line", () => {
@@ -215,8 +220,14 @@ describe("PEM base64 for public objects", () => {
   test.each([
     ["CRLF line endings", canonical.replaceAll("\n", "\r\n")],
     ["no line breaks in the body", "-----BEGIN CERTIFICATE-----\n" + b64 + "\n-----END CERTIFICATE-----\n"],
-    ["spaces and tabs inside the body", "-----BEGIN CERTIFICATE-----\n" + b64.replace(/(.{10})/g, "$1 \t") + "\n-----END CERTIFICATE-----\n"],
-    ["whitespace between data and padding", "-----BEGIN CERTIFICATE-----\n" + b64.replace(/=$/, "\n =") + "\n-----END CERTIFICATE-----\n"],
+    [
+      "spaces and tabs inside the body",
+      "-----BEGIN CERTIFICATE-----\n" + b64.replace(/(.{10})/g, "$1 \t") + "\n-----END CERTIFICATE-----\n",
+    ],
+    [
+      "whitespace between data and padding",
+      "-----BEGIN CERTIFICATE-----\n" + b64.replace(/=$/, "\n =") + "\n-----END CERTIFICATE-----\n",
+    ],
   ])("decodes with %s", (_, pem) => {
     expect(new X509Certificate(pem).raw.equals(der)).toBe(true);
   });

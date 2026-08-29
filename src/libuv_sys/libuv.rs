@@ -1966,6 +1966,8 @@ impl core::ops::DerefMut for OwnedFsReq {
 impl fs_t {
     #[cfg(debug_assertions)]
     const UV_FS_CLEANEDUP: c_int = 0x0010;
+    /// Poison `loop_` value marking a request never handed to libuv.
+    const UNINIT_LOOP_SENTINEL: usize = 0xAAAA_AAAA_AAAA_0000;
 
     /// Debug sentinel: `loop_` is poisoned so `deinit()` can assert that libuv
     /// actually wrote the request before we try to clean it up.
@@ -1976,7 +1978,7 @@ impl fs_t {
     #[inline(always)]
     pub fn uninitialized() -> fs_t {
         let mut v: fs_t = bun_core::ffi::zeroed();
-        v.loop_ = 0xAAAA_AAAA_AAAA_0000usize as *mut Loop;
+        v.loop_ = Self::UNINIT_LOOP_SENTINEL as *mut Loop;
         v
     }
 
@@ -1990,7 +1992,7 @@ impl fs_t {
     #[inline]
     fn assert_initialized(&self) {
         #[cfg(debug_assertions)]
-        if self.loop_ as usize == 0xAAAA_AAAA_AAAA_0000usize {
+        if self.loop_ as usize == Self::UNINIT_LOOP_SENTINEL {
             panic!("uv_fs_t was not initialized");
         }
     }
@@ -1998,7 +2000,7 @@ impl fs_t {
     pub fn assert_cleaned_up(&self) {
         #[cfg(debug_assertions)]
         {
-            if self.loop_ as usize == 0xAAAA_AAAA_AAAA_0000usize {
+            if self.loop_ as usize == Self::UNINIT_LOOP_SENTINEL {
                 return;
             }
             if (self.flags & Self::UV_FS_CLEANEDUP) != 0 {
@@ -2018,7 +2020,7 @@ impl fs_t {
     /// [`uninitialized`](Self::uninitialized) sentinel).
     #[inline]
     pub fn is_initialized(&self) -> bool {
-        self.loop_ as usize != 0xAAAA_AAAA_AAAA_0000usize
+        self.loop_ as usize != Self::UNINIT_LOOP_SENTINEL
     }
     /// The `uv_statfs_t` a successful `uv_fs_statfs` left in `req.ptr`, copied
     /// out (`None` before completion, on error, or after cleanup nulled it).

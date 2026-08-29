@@ -35,11 +35,6 @@ pub enum PipelineState {
         idx: u32,
     },
     Pending,
-    /// `write_failing_error` is inside `IOWriter::enqueue`. A completion
-    /// dispatched from under that call runs on a nested trampoline while the
-    /// caller's trampoline still has this pipeline on its `pipeline_stack`.
-    EnqueuingWriteErr,
-    /// The error message is queued; `on_io_writer_chunk` finishes the pipeline.
     WaitingWriteErr,
     Done {
         exit_code: ExitCode,
@@ -91,9 +86,7 @@ impl Pipeline {
     pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
         match interp.as_pipeline(this).state {
             PipelineState::StartingCmds { idx } => Self::next_starting(interp, this, idx),
-            PipelineState::Pending
-            | PipelineState::EnqueuingWriteErr
-            | PipelineState::WaitingWriteErr => Yield::suspended(),
+            PipelineState::Pending | PipelineState::WaitingWriteErr => Yield::suspended(),
             PipelineState::Done { exit_code } => {
                 let parent = interp.as_pipeline(this).base.parent;
                 interp.child_done(parent, this, exit_code)
@@ -312,21 +305,9 @@ impl Pipeline {
         };
         if let Some((writer, captured)) = stderr_fd {
             // Only the fd arm transitions state.
-            interp.as_pipeline_mut(this).state = PipelineState::EnqueuingWriteErr;
+            interp.as_pipeline_mut(this).state = PipelineState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(this, io_writer::WriterTag::Pipeline);
-            let y = writer.enqueue(child, captured, &buf);
-            let me = interp.as_pipeline_mut(this);
-            return match me.state {
-                // `enqueue` failed synchronously and `on_io_writer_chunk`
-                // already ran on a nested trampoline. Report the completion to
-                // the caller's trampoline, which has us on its `pipeline_stack`.
-                PipelineState::Done { .. } => Yield::Next(this),
-                // The completion is `y` itself or arrives from the event loop.
-                _ => {
-                    me.state = PipelineState::WaitingWriteErr;
-                    y
-                }
-            };
+            return writer.enqueue(child, captured, &buf);
         }
         if let OutKind::Pipe = &interp.as_pipeline(this).io.stderr {
             // SAFETY: single trampoline frame; no other borrow of the env's
@@ -343,9 +324,9 @@ impl Pipeline {
         Self::finish(interp, this, 1)
     }
 
-    /// IOWriter completion callback for the error message written by
-    /// `write_failing_error`. The pipeline finishes with exit code 1 whether
-    /// or not the write succeeded: the parent always needs a completion, and a
+    /// IOWriter completion callback for the error message written in
+    /// `WaitingWriteErr`. The pipeline finishes with exit code 1 whether or
+    /// not the write succeeded: the parent always needs a completion, and a
     /// failed stderr write has nowhere else to be reported.
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
@@ -353,16 +334,10 @@ impl Pipeline {
         _written: usize,
         _err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        let me = interp.as_pipeline_mut(this);
-        if matches!(me.state, PipelineState::EnqueuingWriteErr) {
-            // Dispatched from a nested trampoline while `write_failing_error`
-            // is still inside `enqueue`. Only record the result here:
-            // `Next(this)` on this trampoline would free the node while the
-            // caller's trampoline still has it on its `pipeline_stack`.
-            me.state = PipelineState::Done { exit_code: 1 };
-            return Yield::done();
-        }
-        debug_assert!(matches!(me.state, PipelineState::WaitingWriteErr));
+        debug_assert!(matches!(
+            interp.as_pipeline(this).state,
+            PipelineState::WaitingWriteErr
+        ));
         Self::finish(interp, this, 1)
     }
 

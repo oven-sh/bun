@@ -74,8 +74,44 @@ impl<'a> LinkerContext<'a> {
         }
 
         // 2. Files in a static-import cycle keep today's hoisted form: inside a cycle a module's exported `function`s
-        //    can be called before its own statements have run.
-        let in_cycle = self.files_in_static_import_cycles()?;
+        //    can be called before its own statements have run. The same goes for a file some *earlier-printed* part of
+        //    its chunk refers to (an importer inside a cycle, or a namespace object built ahead of it): ESM makes function
+        //    declarations available from instantiation, which the hoisted form preserved and a block would not.
+        let mut in_cycle = self.files_in_static_import_cycles()?;
+        {
+            let parts = self.graph.ast.items_parts();
+            let symbols = &self.graph.symbols;
+            let mut printed = AutoBitSet::init_empty(file_count)?;
+            for chunk in chunks.iter() {
+                let Content::Javascript(js) = &chunk.content else { continue };
+                // every file in this chunk starts unprinted
+                for r in js.parts_in_chunk_in_order.iter() {
+                    printed.unset(r.source_index.get() as usize);
+                }
+                for r in js.parts_in_chunk_in_order.iter() {
+                    let source_index = r.source_index.get();
+                    let parts_live = &self.graph.parts_live[source_index as usize];
+                    let file_parts = parts[source_index as usize].as_slice();
+                    for part_index in r.part_index_begin..r.part_index_end {
+                        if !parts_live.is_set(part_index as usize) {
+                            continue;
+                        }
+                        for &ref_ in file_parts[part_index as usize].symbol_uses.keys() {
+                            let target = symbols.follow(ref_);
+                            let owner = target.source_index();
+                            if owner != source_index
+                                && (owner as usize) < file_count
+                                && !printed.is_set(owner as usize)
+                                && chunk.files_with_parts_in_chunk.contains(&owner)
+                            {
+                                in_cycle.set(owner as usize);
+                            }
+                        }
+                    }
+                    printed.set(source_index as usize);
+                }
+            }
+        }
 
         // 3. Every top-level symbol some *other* file's live part refers to (imports are followed to what they bind).
         let mut used_elsewhere: ArrayHashMap<Ref, ()> = ArrayHashMap::new();
@@ -255,9 +291,6 @@ impl<'a> LinkerContext<'a> {
             hoisted_symbols,
             in_cycle.count()
         );
-        if std::env::var_os("BUN_DEBUG_OMS").is_some() {
-            eprintln!("[optimize-module-scopes] {} files blocked, {} bindings internal, {} kept at chunk scope, {} files in import cycles", blocked_files, internal_symbols, hoisted_symbols, in_cycle.count());
-        }
         Ok(())
     }
 

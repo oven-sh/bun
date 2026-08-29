@@ -513,7 +513,9 @@ mod tests {
     static REFUSED: AtomicUsize = AtomicUsize::new(0);
     static DROPPED: AtomicUsize = AtomicUsize::new(0);
 
-    struct Payload(#[allow(dead_code)] Box<[u8; 64]>);
+    struct Payload {
+        _buf: Box<[u8; 64]>,
+    }
     impl Drop for Payload {
         fn drop(&mut self) {
             DROPPED.fetch_add(1, Ordering::SeqCst);
@@ -528,14 +530,20 @@ mod tests {
 
     #[test]
     fn refused_boxed_carrier_releases_its_payload() {
-        let carrier = ConcurrentTask::create_boxed(Box::new(Payload(Box::new([7; 64]))));
+        let carrier = ConcurrentTask::create_boxed(Box::new(Payload {
+            _buf: Box::new([7; 64]),
+        }));
         // SAFETY: never queued; ours.
         unsafe { ConcurrentTask::release_refused(carrier) };
         assert_eq!(REFUSED.load(Ordering::SeqCst), 1);
         assert_eq!(DROPPED.load(Ordering::SeqCst), 1);
 
-        let mut intrusive =
-            ConcurrentTask::intrusive(Box::new(Payload(Box::new([7; 64]))).into_task());
+        let mut intrusive = ConcurrentTask::intrusive(
+            Box::new(Payload {
+                _buf: Box::new([7; 64]),
+            })
+            .into_task(),
+        );
         // SAFETY: never queued; an intrusive carrier is left alone.
         unsafe { ConcurrentTask::release_refused(core::ptr::NonNull::from(&mut intrusive)) };
         assert_eq!(DROPPED.load(Ordering::SeqCst), 1);

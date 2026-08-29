@@ -170,7 +170,7 @@ impl<'a> Transpiler<'a> {
     /// so free `BundleOptions` here. `log`/`fs`/`env` are aliased/singletons; left alone.
     /// `resolver` is a value field whose caches alias process-global BSSMaps, so the
     /// resolver itself stays put — only its owned `opts` projection (cloned in
-    /// `resolver_bundle_options_subset`) and parsed tsconfig override are released.
+    /// `resolver_bundle_options_subset`, carrying the parsed tsconfig override) is released.
     ///
     /// # Safety
     /// Calls `drop_in_place` on `options` / `result` / `resolver.opts` /
@@ -190,7 +190,6 @@ impl<'a> Transpiler<'a> {
         if let Some(ctx) = self.macro_context.take() {
             ctx.deinit();
         }
-        drop(self.resolver.tsconfig_override_json.take());
         // SAFETY: `options`, `result`, and `resolver.opts` are init'd and never
         // read past `destroy()` / the `--changed` scan teardown. Caller upholds
         // the no-auto-drop contract above.
@@ -613,7 +612,8 @@ impl<'a> Transpiler<'a> {
     /// rather than `Clone`. Called after `init_transpiler_with_options` mutates
     /// `self.options` so the resolver sees the same conditions/target/public_path.
     pub fn sync_resolver_opts(&mut self) {
-        self.resolver.opts = resolver_bundle_options_subset(&self.options);
+        self.resolver
+            .set_opts(resolver_bundle_options_subset(&self.options));
     }
 
     /// Print the loaded environment variables to stdout as 2-space-indented
@@ -1136,6 +1136,8 @@ fn resolver_bundle_options_subset(
         preserve_symlinks: src.preserve_symlinks,
         rewrite_jest_for_tests: src.rewrite_jest_for_tests,
         tsconfig_override: src.tsconfig_override.clone(),
+        // Parsed by the resolver (`load_tsconfig_override` / `set_opts`), not projected.
+        tsconfig_override_json: None,
         production: src.production,
         force_node_env: src.force_node_env,
         // FORWARD_DECL: bundler-only fields read via `c.resolver.opts` in

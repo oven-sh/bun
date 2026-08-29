@@ -481,9 +481,6 @@ pub use bun_watcher::AnyResolveWatcher;
 
 pub struct Resolver<'a> {
     pub opts: options::BundleOptions,
-    /// Read in place of the tsconfigs recorded in `dir_cache`, never stored there: that cache is
-    /// process-wide and usually already filled when a `Bun.build()` resolver is created.
-    pub tsconfig_override_json: Option<Arc<TSConfigJSON>>,
     // NOTE: `fs` / `log` are raw aliasing
     // pointers — the bundler builds a `Resolver` per worker thread sharing the
     // process-wide `FileSystem` singleton, so `&'a mut` here would manufacture
@@ -632,11 +629,12 @@ impl<'a> Resolver<'a> {
     pub unsafe fn for_worker(
         from: &Resolver<'_>,
         log: NonNull<bun_ast::Log>,
-        opts: options::BundleOptions,
+        mut opts: options::BundleOptions,
     ) -> Resolver<'a> {
+        // Share the parent's parsed tsconfig override instead of re-parsing per worker.
+        opts.tsconfig_override_json = from.opts.tsconfig_override_json.clone();
         Resolver {
             opts,
-            tsconfig_override_json: from.tsconfig_override_json.clone(),
             fs: from.fs,
             log,
             extension_order: from.extension_order,
@@ -938,7 +936,6 @@ impl<'a> Resolver<'a> {
             mutex: &RESOLVER_MUTEX,
             caches: CacheSet::init(),
             opts,
-            tsconfig_override_json: None,
             timer: Timer::start().unwrap_or_else(|_| panic!("Timer fail")),
             fs: _fs,
             log,
@@ -970,9 +967,24 @@ impl<'a> Resolver<'a> {
         // `dir_info_cached` holds this around every other tsconfig parse.
         let _unlock = self.mutex.lock_guard();
         match self.parse_tsconfig_chain(&path, FD::INVALID) {
-            Ok(Some(tsconfig)) => self.tsconfig_override_json = Some(Arc::from(tsconfig)),
+            Ok(Some(tsconfig)) => self.opts.tsconfig_override_json = Some(Arc::from(tsconfig)),
             Ok(None) => {}
             Err(err) => self.log_tsconfig_read_error(&path, err),
+        }
+    }
+
+    /// Replace `opts` wholesale (the bundler re-projects its subset after mutating its own
+    /// options). The parsed tsconfig override is carried over when the path is unchanged,
+    /// else re-loaded from the new path.
+    pub fn set_opts(&mut self, opts: options::BundleOptions) {
+        let same_override = self.opts.tsconfig_override == opts.tsconfig_override;
+        let parsed = self.opts.tsconfig_override_json.take();
+        self.opts = opts;
+        if same_override {
+            self.opts.tsconfig_override_json = parsed;
+        } else {
+            drop(parsed);
+            self.load_tsconfig_override();
         }
     }
 
@@ -982,7 +994,7 @@ impl<'a> Resolver<'a> {
         if !self.opts.load_tsconfig_json {
             return None;
         }
-        self.tsconfig_override_json.as_deref()
+        self.opts.tsconfig_override_json.as_deref()
     }
 
     /// The override, else the nearest tsconfig recorded for `dir`. The borrow is decoupled from

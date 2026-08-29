@@ -234,6 +234,9 @@ pub struct BundleOptions {
     pub preserve_symlinks: bool,
     pub rewrite_jest_for_tests: bool,
     pub tsconfig_override: Option<Box<[u8]>>,
+    /// Parsed from `tsconfig_override` by `Resolver::load_tsconfig_override`. Lives here rather
+    /// than on `Resolver` so `Transpiler::deinit`'s `drop_in_place(resolver.opts)` releases it.
+    pub tsconfig_override_json: Option<std::sync::Arc<crate::TSConfigJSON>>,
     pub production: bool,
     pub force_node_env: ForceNodeEnv,
     // Bundler-only fields read via `c.resolver.opts` in
@@ -277,6 +280,7 @@ impl Default for BundleOptions {
             preserve_symlinks: false,
             rewrite_jest_for_tests: false,
             tsconfig_override: None,
+            tsconfig_override_json: None,
             output_dir: Box::default(),
             root_dir: Box::default(),
             public_path: Box::default(),

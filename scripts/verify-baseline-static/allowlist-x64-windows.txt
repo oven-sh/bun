@@ -870,8 +870,9 @@ blake2b_simd::avx2::compress1_loop  [AVX, AVX2]
 
 # ----------------------------------------------------------------------------
 # MSVC STL vectorized algorithms. Gate: __isa_available.
-# (14 symbols)
+# (15 symbols)
 # ----------------------------------------------------------------------------
+__std_mismatch_1                                                                                          [AVX, AVX2]
 __std_reverse_copy_trivially_copyable_1                                                                   [AVX, AVX2]
 __std_reverse_trivially_swappable_1                                                                       [AVX, AVX2]
 __std_reverse_trivially_swappable_2                                                                       [AVX, AVX2]

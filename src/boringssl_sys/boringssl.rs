@@ -1125,6 +1125,7 @@ unsafe extern "C" {
     pub fn X509_STORE_add_cert(store: *mut X509_STORE, x509: *mut X509) -> c_int;
     pub fn X509_STORE_add_crl(store: *mut X509_STORE, crl: *mut X509_CRL) -> c_int;
     pub fn X509_STORE_set_flags(store: *mut X509_STORE, flags: c_ulong) -> c_int;
+    pub fn X509_VERIFY_PARAM_set_flags(param: *mut c_void, flags: c_ulong) -> c_int;
     pub fn X509_CRL_free(crl: *mut X509_CRL);
     pub fn PEM_read_bio_X509_CRL(
         bp: *mut BIO,

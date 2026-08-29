@@ -1534,9 +1534,6 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   return ssl_context;
 }
 
-/* node:tls `secureContext.context.addCACert(pem)`: append the certificates in
- * `content` to this context's trust store. Returns 0 when the content is not
- * a PEM document or contains a malformed certificate. */
 /* Whether the context's store was configured from user CAs (ca / addCACert / pfx extras) rather than being the
  * empty SSL_CTX_new() store or the shared default roots. */
 int us_ssl_ctx_has_user_ca(SSL_CTX *ctx) {
@@ -1544,6 +1541,9 @@ int us_ssl_ctx_has_user_ca(SSL_CTX *ctx) {
   return ctx != NULL && SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_ex_idx) != NULL;
 }
 
+/* node:tls `secureContext.context.addCACert(pem)`: append the certificates in
+ * `content` to this context's trust store. Returns 0 when the content is not
+ * a PEM document or contains a malformed certificate. */
 int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content) {
   if (!ctx || !content) {
     return 0;

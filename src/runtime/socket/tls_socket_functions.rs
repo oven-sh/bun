@@ -250,8 +250,6 @@ pub(super) mod ffi {
         );
         // Returns the borrowed cert store of a live `SSL_CTX*`.
         pub(crate) safe fn SSL_CTX_get_cert_store(ctx: &SSL_CTX) -> *mut X509_STORE;
-        // Emptiness probe for a cert store: `get0_objects` borrows the
-        // object stack and `OPENSSL_sk_num(NULL)` returns 0.
         // The process-wide default root store; up-refs before returning, so
         // the caller owns a reference it must release with X509_STORE_free.
         pub(crate) fn us_get_shared_default_ca_store() -> *mut X509_STORE;

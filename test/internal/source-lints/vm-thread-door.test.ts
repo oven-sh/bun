@@ -8,7 +8,7 @@
 // `sql_jsc`, `http_jsc`), the two things that could open one:
 //
 //   1. `unsafe impl Send` / `unsafe impl Sync`, the `owned_task!` macro
-//      (which emits one), and `intrusive_work_task!` / `shared_work_task!`
+//      (which emits one), and `intrusive_work_task!` / `unsafe impl SharedWorkTask`
 //      (which are what makes a type schedulable on the pool). `VirtualMachine`,
 //      `EventLoop` and `JSGlobalObject` are `!Send + !Sync`, so VM state can
 //      only reach another thread inside a type someone declared `Send` by hand.
@@ -45,7 +45,7 @@ const PATTERNS: [name: string, re: RegExp][] = [
   ["unsafe impl Sync", /\bunsafe\s+impl(?:\s*<[^>]*>)?\s+Sync\s+for\s+([A-Za-z_][\w:<>, ']*)/g],
   ["owned_task!", /\b(?:bun_threading::)?owned_task!\s*\(\s*([A-Za-z_]\w*)/g],
   ["intrusive_work_task!", /\b(?:bun_threading::)?intrusive_work_task!\s*\(\s*([A-Za-z_]\w*)/g],
-  ["shared_work_task!", /\b(?:bun_threading::)?shared_work_task!\s*\(\s*([A-Za-z_]\w*)/g],
+  ["unsafe impl SharedWorkTask", /\bunsafe\s+impl(?:\s*<[^>]*>)?\s+(?:bun_threading::(?:work_pool::)?)?SharedWorkTask\s+for\s+([A-Za-z_][\w:<>, ']*)/g],
   ["WorkPool::schedule*", /\bWorkPool::(?:schedule|schedule_new|schedule_owned|schedule_shared|go)\b/g],
   ["worker_pool.schedule(Batch)", /\)\s*\.schedule\(\s*(?:bun_threading::thread_pool::)?Batch::from/g],
   ["HTTPThread::schedule", /\bHTTPThread::schedule\s*\(/g],

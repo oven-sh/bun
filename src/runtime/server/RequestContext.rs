@@ -2012,10 +2012,7 @@ where
                 .sink
                 .take()
                 .expect("infallible: sink_mut returned Some");
-            ResponseStreamJSSink::<SSL_ENABLED>::detach(
-                &mut wrapper.sink.source,
-                global_this,
-            );
+            ResponseStreamJSSink::<SSL_ENABLED>::detach(&mut wrapper.sink.source, global_this);
             crate::dispatch::fold(stream.cancel(global_this));
             wrapper.sink.mark_done();
             wrapper.sink.on_first_write = None;
@@ -2071,13 +2068,12 @@ where
         );
 
         // We are already corked!
-        let assignment_result: JSValue =
-            ResponseStreamJSSink::<SSL_ENABLED>::assign_to_stream(
-                global_this,
-                stream.value,
-                NonNull::from(&mut response_stream.sink),
-                |s| response_stream.sink.source = s,
-            );
+        let assignment_result: JSValue = ResponseStreamJSSink::<SSL_ENABLED>::assign_to_stream(
+            global_this,
+            stream.value,
+            NonNull::from(&mut response_stream.sink),
+            |s| response_stream.sink.source = s,
+        );
 
         assignment_result.ensure_still_alive();
 
@@ -2853,10 +2849,7 @@ where
                 .sink
                 .global_this
                 .expect("sink.global_this set in do_render_stream");
-            ResponseStreamJSSink::<SSL_ENABLED>::detach(
-                &mut wrapper.sink.source,
-                &sink_global,
-            );
+            ResponseStreamJSSink::<SSL_ENABLED>::detach(&mut wrapper.sink.source, &sink_global);
             drop(owned_sink);
         }
 
@@ -2965,10 +2958,7 @@ where
                 .sink
                 .global_this
                 .expect("sink.global_this set in do_render_stream");
-            ResponseStreamJSSink::<SSL_ENABLED>::detach(
-                &mut wrapper.sink.source,
-                &sink_global,
-            );
+            ResponseStreamJSSink::<SSL_ENABLED>::detach(&mut wrapper.sink.source, &sink_global);
             drop(owned_sink);
         }
 

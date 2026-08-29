@@ -51,7 +51,7 @@ const snippets: Record<string, { code: string; stdout: string }> = {
     stdout: "SyntaxError: Unexpected end of script",
   },
   "vm.SourceTextModule with a syntax error": {
-    code: `const { SourceTextModule } = require("node:vm"); try { new SourceTextModule("{"); } catch (e) { console.log(e.constructor.name + ": " + e.message); }`,
+    code: `import { SourceTextModule } from "node:vm"; try { new SourceTextModule("{"); } catch (e) { console.log(e.constructor.name + ": " + e.message); }`,
     stdout: "SyntaxError: Unexpected end of script",
   },
 };

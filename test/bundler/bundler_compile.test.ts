@@ -1304,6 +1304,37 @@ describe("bundler", () => {
     },
     run: { stdout: new Array(7).fill("true").join("\n") },
   });
+  // An entry point that another entry point imports is copied into that
+  // entry's bundle. The copy is a dependency there, so its `require.main ===
+  // module` (lowered to `import.meta.main`) is false, as when the files run
+  // unbundled. The first entry point is the executable's main module and
+  // keeps the inlined `true` (observed through toString, as above).
+  for (const format of ["esm", "cjs"] as const) {
+    itBundled("compile/ImportMetaMainEntryImportedByOtherEntry+" + format, {
+      backend: "cli",
+      compile: true,
+      format,
+      files: {
+        "/entry.ts": /* js */ `
+          import lib from "./lib.cjs";
+          console.log(JSON.stringify(lib), (() => import.meta.main).toString().includes("true"));
+        `,
+        "/lib.cjs": /* js */ `
+          module.exports = {
+            isMain: require.main === module,
+            cli: (function () { if (require.main === module) return "CLI-RAN"; return "lib"; })(),
+          };
+        `,
+      },
+      entryPointsRaw: ["./entry.ts", "./lib.cjs"],
+      outfile: "dist/out",
+      run: {
+        stdout: '{"isMain":false,"cli":"lib"} true',
+        file: "dist/out",
+        setCwd: true,
+      },
+    });
+  }
   itBundled("compile/SourceMap", {
     target: "bun",
     compile: true,

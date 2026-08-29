@@ -2872,6 +2872,7 @@ pub mod bv2_impl {
             task.loader = Some(loader);
             task.task.node.next = core::ptr::null_mut();
             task.is_entry_point = is_entry_point;
+            task.is_primary_entry_point = is_entry_point && self.graph.entry_points.is_empty();
             task.known_target = target;
             task.jsx.development = self
                 .transpiler_for_target(target)
@@ -3063,6 +3064,8 @@ pub mod bv2_impl {
                 };
             this.linker.options.bytecode_depth = this.transpiler.options.bytecode_depth;
             this.linker.options.compile_mode = this.transpiler.options.compile_mode;
+            this.linker.options.inline_entrypoint_import_meta_main =
+                this.transpiler.options.inline_entrypoint_import_meta_main;
             this.linker.options.metafile = this.transpiler.options.metafile;
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
             this.linker.options.metafile_json_path =

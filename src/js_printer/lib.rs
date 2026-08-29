@@ -1350,6 +1350,9 @@ pub struct Options<'a> {
     pub inline_require_and_import_errors: bool,
     pub has_run_symbol_renamer: bool,
 
+    /// Prints `EImportMetaMain` as this literal (an entry point's module inside another entry's bundle).
+    pub import_meta_main_value: Option<bool>,
+
     pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,
 
     /// The module type of the importing file (after linking), used to determine interop helper behavior.
@@ -1418,6 +1421,7 @@ impl<'a> Default for Options<'a> {
             print_dce_annotations: true,
             inline_require_and_import_errors: true,
             has_run_symbol_renamer: false,
+            import_meta_main_value: None,
             require_or_import_meta_for_source_callback: RequireOrImportMetaCallback::default(),
             input_module_type: bundle_opts::ModuleType::Unknown,
             module_type: bundle_opts::Format::Esm,
@@ -3213,7 +3217,24 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::EImportMetaMain(data) => {
-                    if self.options.module_type == bundle_opts::Format::Esm
+                    if let Some(value) = self.options.import_meta_main_value {
+                        let value = value != data.inverted;
+                        self.add_source_mapping(expr.loc);
+                        if self.options.minify_syntax {
+                            if level.gte(Level::Prefix) {
+                                self.print(if value { b"(!0)" } else { b"(!1)" });
+                            } else {
+                                self.print(if value { b"!0" } else { b"!1" });
+                            }
+                        } else {
+                            self.print_space_before_identifier();
+                            self.print(if value {
+                                b"true".as_slice()
+                            } else {
+                                b"false".as_slice()
+                            });
+                        }
+                    } else if self.options.module_type == bundle_opts::Format::Esm
                         && self.options.target != bun_ast::Target::Node
                     {
                         // Node.js doesn't support import.meta.main

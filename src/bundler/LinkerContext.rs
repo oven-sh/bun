@@ -1305,6 +1305,8 @@ pub struct LinkerOptions {
     pub(crate) source_maps: SourceMapOption,
     pub(crate) target: Target,
     pub(crate) compile_mode: CompileMode,
+    /// `--compile`: an entry point's own bundle is a main module (`import.meta.main` is `true`).
+    pub(crate) inline_entrypoint_import_meta_main: bool,
     pub(crate) metafile: bool,
     /// Path to write JSON metafile (for Bun.build API)
     pub(crate) metafile_json_path: &'static [u8],
@@ -1348,6 +1350,7 @@ impl Default for LinkerOptions {
             source_maps: SourceMapOption::None,
             target: Target::Browser,
             compile_mode: CompileMode::None,
+            inline_entrypoint_import_meta_main: false,
             metafile: false,
             metafile_json_path: b"",
             metafile_markdown_path: b"",
@@ -2218,6 +2221,7 @@ impl<'a> LinkerContext<'a> {
         source_index: Index,
         source: &Source,
         module_info: Option<&mut crate::analyze_transpiled_module::ModuleInfo>,
+        import_meta_main_value: Option<bool>,
     ) -> js_printer::PrintResult {
         let parts_to_print = &[Part {
             stmts: bun_ast::StoreSlice::new_mut(out_stmts),
@@ -2273,6 +2277,7 @@ impl<'a> LinkerContext<'a> {
             module_type: self.options.output_format,
             print_dce_annotations: self.options.emit_dce_annotations,
             has_run_symbol_renamer: true,
+            import_meta_main_value,
 
             to_esm_ref,
             to_commonjs_ref,

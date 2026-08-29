@@ -116,6 +116,8 @@ pub struct ParseTask {
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
     pub(crate) is_entry_point: bool,
+    /// The first user entry point: the main module of a `--compile` executable.
+    pub(crate) is_primary_entry_point: bool,
 }
 
 pub enum ParseTaskStage {
@@ -289,6 +291,7 @@ impl ParseTask {
             },
             stage: ParseTaskStage::NeedsSourceCode,
             is_entry_point: false,
+            is_primary_entry_point: false,
         }
     }
 
@@ -329,6 +332,7 @@ impl Default for ParseTask {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            is_primary_entry_point: false,
         }
     }
 }
@@ -569,6 +573,7 @@ pub mod parse_worker {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            is_primary_entry_point: false,
         };
         let source = Source {
             // `bun_ast::Source.path` is `bun_paths::fs::Path<'static>`, distinct
@@ -2591,11 +2596,19 @@ pub mod parse_worker {
         opts.ignore_dce_annotations =
             topts.ignore_dce_annotations && !task.source_index.is_runtime();
 
-        // For files that are not user-specified entrypoints, set `import.meta.main` to `false`.
-        // Entrypoints will have `import.meta.main` set as "unknown", unless we use `--compile`,
-        // in which we inline `true`.
-        if topts.inline_entrypoint_import_meta_main || !task.is_entry_point {
-            opts.import_meta_main_value = Some(task.is_entry_point && !topts.has_dev_server());
+        // A file that is not a user entry point is never the main module. An entry point is
+        // "unknown" (decided at run time), except under `--compile`, where it is inlined as `true`
+        // so the dead branch folds. An executable's other entry points are also copied into every
+        // entry's bundle that imports them, as dependencies. Only the printer can tell a copy from
+        // the entry's own bundle (`generate_code_for_file_in_chunk_js`), so they stay unknown.
+        let entry_point_may_be_dependency =
+            topts.compile_mode.is_executable() && !task.is_primary_entry_point;
+        if !task.is_entry_point {
+            opts.import_meta_main_value = Some(false);
+        } else if topts.inline_entrypoint_import_meta_main {
+            if !entry_point_may_be_dependency {
+                opts.import_meta_main_value = Some(!topts.has_dev_server());
+            }
         } else if target == options::Target::Node {
             opts.lower_import_meta_main_for_node_js = true;
         }

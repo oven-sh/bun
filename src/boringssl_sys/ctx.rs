@@ -545,16 +545,19 @@ impl SSL_CTX {
     }
 
     /// `X509_VERIFY_PARAM_set1_host` on the context's verify parameters: the
-    /// name peer certificates must match. An empty `host` clears it.
+    /// name peer certificates must match. `false` for an empty `host` (which
+    /// BoringSSL would read as "clear the check") or on failure.
     pub fn set1_verify_host(&self, host: &[u8]) -> bool {
-        // BoringSSL treats (non-null, 0) as a NUL-terminated string and would
-        // strlen() the slice's dangling pointer; (null, 0) is "clear".
-        let name: *const c_char = if host.is_empty() { core::ptr::null() } else { host.as_ptr().cast() };
-        // SAFETY: `self` is live; its param block lives with it; `name` is
-        // null or readable for `host.len()` bytes and copied.
+        if host.is_empty() {
+            return false;
+        }
+        // SAFETY: `self` is live; its param block lives with it; `host` is
+        // non-empty, readable for its length, and copied.
         unsafe {
             let param = SSL_CTX_get0_param(self.as_mut_ptr());
-            !param.is_null() && X509_VERIFY_PARAM_set1_host(param, name, host.len()) == 1
+            !param.is_null()
+                && X509_VERIFY_PARAM_set1_host(param, host.as_ptr().cast(), host.len()) == 1
         }
+    }
     }
 }

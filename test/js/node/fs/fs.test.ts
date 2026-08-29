@@ -7031,12 +7031,19 @@ describe.concurrent("a throw from a node-style callback is an uncaughtException"
 
   it("leaves a non-callable symlink callback as an ignored handler, like node", async () => {
     // The link is still created; the child waits for it to appear so that a
-    // throw from the completion path would land before the process exits.
+    // throw from the completion path would land before the process exits. The
+    // ignored callback is the only place a failed symlink would report, so the
+    // wait has a deadline and names the failure.
     const result = await runScript(`
       const fs = require("fs");
       const link = ${dirLit} + "/lnc";
       fs.symlink(${file}, link, "file", "notafunc");
-      const poll = () => (fs.existsSync(link) ? console.log("created") : setImmediate(poll));
+      const deadline = Date.now() + 5000;
+      const poll = () => {
+        if (fs.existsSync(link)) return console.log("created");
+        if (Date.now() > deadline) return console.log("link not created within 5s");
+        setTimeout(poll, 1);
+      };
       poll();
     `);
     expect(result).toEqual({ stdout: "created", stderr: "", exitCode: 0 });

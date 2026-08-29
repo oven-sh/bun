@@ -1021,14 +1021,13 @@ impl CompletionStruct for BundleJob {
             {
                 match bun_standalone_graph::StandaloneModuleGraph::target_builtins(
                     &compile.compile_target,
-                    // SAFETY: `self.env` is the per-VM `DotEnv.Loader` stashed at construction; see `to_executable` below.
-                    unsafe { &mut *self.env },
+                    transpiler.env_mut(),
                     Some(&compile.executable_path.list[..]).filter(|p| !p.is_empty()),
                 ) {
                     Ok(Some(section)) => options::CompileTargetBuiltins::Target(section),
                     Ok(None) => options::CompileTargetBuiltins::None,
                     Err(err) => {
-                        self.log.add_error_fmt(
+                        transpiler.log_mut().add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
                             format_args!("{}", bstr::BStr::new(err.slice())),

@@ -139,28 +139,9 @@ impl<const SSL: bool> boringssl_sys::AlpnSelectCallback for TlsSocketAlpnSelect<
                 // handler, the selection's `toString`, the scope's checkpoint), and
                 // restore it on every path back to BoringSSL — after the scope guard
                 // below has exited, since this guard is declared first. Connected
-                // usockets only: UpgradedDuplex/Pipe own mem BIOs whose BIO_get_data
-                // is a BUF_MEM*, not loop_ssl_data.
-                const LOOP_STATE_SLOTS: usize = 6; // US_SSL_LOOP_STATE_SLOTS
-                debug_assert_eq!(
-                    LOOP_STATE_SLOTS as core::ffi::c_int,
-                    tls_socket_functions::ffi::us_internal_ssl_loop_state_slots(),
-                    "loop-state snapshot size drifted from US_SSL_LOOP_STATE_SLOTS in internal.h"
-                );
-                let mut saved_loop_state: [*mut c_void; LOOP_STATE_SLOTS] =
-                    [core::ptr::null_mut(); LOOP_STATE_SLOTS];
-                if matches!(this.socket.get().socket, uws::InternalSocket::Connected(_)) {
-                    tls_socket_functions::ffi::us_internal_ssl_loop_state_save(
-                        ssl,
-                        saved_loop_state.as_mut_ptr(),
-                    );
-                }
-                // (A no-op for the all-null snapshot of a non-Connected socket.)
-                let _restore_loop_state = scopeguard::guard(saved_loop_state, |mut saved| {
-                    tls_socket_functions::ffi::us_internal_ssl_loop_state_restore(
-                        saved.as_mut_ptr(),
-                    );
-                });
+                // usockets only (a no-op snapshot otherwise): UpgradedDuplex/Pipe
+                // own mem BIOs whose BIO_get_data is a BUF_MEM*, not loop_ssl_data.
+                let _restore_loop_state = bun_uws_sys::ssl::SslLoopState::save(&this.socket.get());
                 // Exited (and, at loop entry, checkpointed) when this block ends or
                 // returns, before the loop state is restored.
                 let _scope = ScopeExit {
@@ -1456,7 +1437,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Add SNI support for TLS (mongodb and others requires this)
         if SSL {
             if let Some(ssl) = this.socket.get().ssl_mut() {
-                if tls_socket_functions::ffi::SSL_is_init_finished(ssl) == 0 {
+                if !ssl.is_init_finished() {
                     if let Some(server_name) = this.server_name.get() {
                         let host: &[u8] = server_name.as_ref();
                         if !host.is_empty() {
@@ -1483,7 +1464,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                             || !this.get_handlers().on_alpn_callback().is_empty())
                     {
                         ssl.set_ex_data(Self::tls_socket_slot(), Some(BackRef::new(this.get())));
-                        SSL_CTX::opaque_ref(tls_socket_functions::ffi::SSL_get_SSL_CTX(ssl))
+                        ssl.ssl_ctx()
                             .set_alpn_select_callback::<TlsSocketAlpnSelect<SSL>>();
                     }
                     // A rejecting client must refuse a bad chain DURING the
@@ -1492,7 +1473,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     if !this.acts_as_tls_server()
                         && this.flags.get().contains(Flags::REJECT_UNAUTHORIZED)
                     {
-                        tls_socket_functions::ffi::us_internal_ssl_set_inline_reject(ssl);
+                        bun_uws_sys::ssl::ssl_set_inline_reject(ssl);
                     }
                     if let Some(protos) = this.protos.get() {
                         if this.acts_as_tls_server() {
@@ -3622,7 +3603,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // before the handshake is driven.
         if is_server && !tls.get_handlers().on_server_name().is_empty() {
             bun_opaque::opaque_deref_mut(new_raw.as_ptr())
-                .on_server_name(super::listener::us_dispatch_socket_server_name);
+                .on_server_name::<super::uws_handlers::BunServerName<false>>();
         }
         // Fire onOpen with the right `this`, then send ClientHello. Doing
         // it before ext was repointed would have ALPN/onOpen land in the

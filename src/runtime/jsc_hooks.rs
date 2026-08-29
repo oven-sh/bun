@@ -1797,11 +1797,12 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
                 let c = unsafe { bun_ptr::ThisPtr::new(c.as_ptr()) };
                 crate::socket::DuplexUpgradeContext::stop_for_vm_teardown(c)
             }
-            // SAFETY: live until it unregisters when its deinit task runs.
             #[cfg(windows)]
-            ActiveHandle::WindowsNamedPipe(c) => unsafe {
-                crate::socket::WindowsNamedPipeContext::stop_for_vm_teardown(c.as_ptr())
-            },
+            ActiveHandle::WindowsNamedPipe(c) => {
+                // SAFETY: live until it unregisters when its deinit task runs.
+                let c = unsafe { bun_ptr::ThisPtr::new(c.as_ptr()) };
+                crate::socket::WindowsNamedPipeContext::stop_for_vm_teardown(c)
+            }
             // SAFETY: live until it unregisters in `deinit`.
             ActiveHandle::Fetch(t) => unsafe {
                 crate::webcore::fetch::FetchTasklet::stop_for_vm_teardown(t.as_ptr())

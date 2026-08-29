@@ -130,6 +130,27 @@ pub fn set_owner(handle: *mut uv_handle_t, owner: *mut c_void, close: Option<Clo
     });
 }
 
+/// An owner a thread teardown can close a listed handle through.
+pub trait HandleOwner: Sized {
+    fn close_for_vm_teardown(&self);
+}
+
+/// [`set_owner`] recording `owner` with `T`'s teardown hook. `owner` clears
+/// or replaces the slot before it goes away (the [`bun_ptr::BackRef`]
+/// obligation).
+pub fn set_owner_ref<T: HandleOwner>(handle: *mut uv_handle_t, owner: bun_ptr::BackRef<T>) {
+    unsafe fn close<T: HandleOwner>(owner: *mut c_void) {
+        // SAFETY: `owner` is the `BackRef<T>` `set_owner_ref` recorded, still
+        // live per its obligation.
+        unsafe { &*owner.cast::<T>() }.close_for_vm_teardown();
+    }
+    set_owner(
+        handle,
+        owner.as_const_ptr().cast_mut().cast(),
+        Some(close::<T>),
+    );
+}
+
 #[cfg(debug_assertions)]
 pub fn count() -> usize {
     OPEN.with(|o| {

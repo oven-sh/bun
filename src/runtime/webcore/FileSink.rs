@@ -589,9 +589,13 @@ impl FileSink {
             h => Fd::from_system(h),
         };
         let this = RefPtr::new(FileSink::new(evtloop, fd));
-        // SAFETY: `this` was just allocated above and is the sole reference.
+        // SAFETY: `this` was just allocated above and is the sole reference;
+        // `pipe` is the Box-allocated `uv::Pipe` the caller hands over.
         unsafe {
-            (*this.as_ptr()).writer.get_mut().set_pipe(pipe);
+            (*this.as_ptr())
+                .writer
+                .get_mut()
+                .set_pipe(bun_core::heap::take(pipe));
             (*this.as_ptr()).writer.get_mut().set_parent(this.as_ptr());
         }
         this

@@ -1388,6 +1388,8 @@ impl Tag {
     pub(crate) const setrlimit: Tag = Tag(106);
     pub const clone3: Tag = Tag(107);
     pub const uv_os_setpriority: Tag = Tag(108);
+    pub const getsockname: Tag = Tag(109);
+    pub const getsockopt: Tag = Tag(110);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1395,7 +1397,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 109] = [
+        const NAMES: [&str; 111] = [
             "TODO",
             "dup",
             "access",
@@ -1506,6 +1508,8 @@ impl Tag {
             "setrlimit",
             "clone3",
             "uv_os_setpriority",
+            "getsockname",
+            "getsockopt",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -3112,6 +3116,73 @@ mod posix_impl {
             return Err(Error::from_code_int(last_errno(), Tag::setsockopt));
         }
         Ok(())
+    }
+
+    /// `getsockopt(2)` of an `int` option value.
+    pub fn getsockopt_int(fd: Fd, level: i32, optname: i32) -> Maybe<i32> {
+        let mut value: libc::c_int = 0;
+        let mut len = core::mem::size_of::<libc::c_int>() as libc::socklen_t;
+        // SAFETY: `value` is writable for `len` bytes, its exact size.
+        let rc = unsafe {
+            libc::getsockopt(
+                fd.native(),
+                level,
+                optname,
+                core::ptr::from_mut(&mut value).cast(),
+                &raw mut len,
+            )
+        };
+        if rc != 0 {
+            return Err(Error::from_code_int(last_errno(), Tag::getsockopt));
+        }
+        Ok(value)
+    }
+
+    /// `getsockname(2)`: the local address `fd` is bound to.
+    pub fn getsockname(fd: Fd) -> Maybe<crate::net::Address> {
+        let mut storage: libc::sockaddr_storage = bun_core::ffi::zeroed();
+        let mut len = core::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+        // SAFETY: `storage` is writable for `len` bytes; the kernel writes at
+        // most that many.
+        let rc = unsafe {
+            libc::getsockname(
+                fd.native(),
+                core::ptr::from_mut(&mut storage).cast(),
+                &raw mut len,
+            )
+        };
+        if rc != 0 {
+            return Err(Error::from_code_int(last_errno(), Tag::getsockname));
+        }
+        Ok(crate::net::Address::from_storage(&storage))
+    }
+
+    /// `listen(2)`.
+    pub fn listen(fd: Fd, backlog: i32) -> Maybe<()> {
+        // SAFETY: no pointer arguments.
+        let rc = unsafe { libc::listen(fd.native(), backlog) };
+        if rc != 0 {
+            return Err(Error::from_code_int(last_errno(), Tag::listen));
+        }
+        Ok(())
+    }
+
+    /// `if_indextoname(3)`: the interface name for `index`, written into
+    /// `buf` and returned without the trailing NUL.
+    pub fn if_indextoname(index: u32, buf: &mut [u8; libc::IF_NAMESIZE + 1]) -> Option<&[u8]> {
+        // SAFETY: `buf` is at least IF_NAMESIZE bytes, which is all
+        // `if_indextoname` writes (NUL included).
+        let p = unsafe { libc::if_indextoname(index, buf.as_mut_ptr().cast()) };
+        if p.is_null() {
+            return None;
+        }
+        Some(bun_core::ffi::slice_to_nul(&buf[..]))
+    }
+
+    /// `if_nametoindex(3)`: the index of interface `name`, or 0.
+    pub fn if_nametoindex(name: &core::ffi::CStr) -> u32 {
+        // SAFETY: `name` is NUL-terminated.
+        unsafe { libc::if_nametoindex(name.as_ptr()) }
     }
 
     /// `fcntl(F_GETFD)` then OR in `FD_CLOEXEC`.
@@ -8227,6 +8298,83 @@ pub mod net {
         core::mem::align_of::<sockaddr_in6>()
             == core::mem::align_of::<crate::posix::sockaddr_in6>()
     );
+    const _: () = assert!(
+        core::mem::offset_of!(sockaddr_in, family) == core::mem::offset_of!(sockaddr_in6, family)
+            && core::mem::offset_of!(sockaddr_in, port)
+                == core::mem::offset_of!(sockaddr_in6, port)
+    );
+
+    /// `sockaddr_in` and `sockaddr_in6` overlaid — 28 bytes where
+    /// `sockaddr_storage` is 128 — discriminated by the `family` both carry
+    /// at the same offset. Constructed through [`v4`](Self::v4) /
+    /// [`v6`](Self::v6), which stamp the matching family over fully
+    /// initialised storage (or reinterpreted from a fully-initialised
+    /// `sockaddr_storage`, whose leading `ss_family` is the same tag), so the
+    /// tag-checked views below are always of the variant that was written.
+    #[allow(non_camel_case_types)]
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub union sockaddr_inet {
+        sin: sockaddr_in,
+        sin6: sockaddr_in6,
+    }
+
+    impl sockaddr_inet {
+        /// An IPv4 address (`sin.family` is forced to `AF_INET`).
+        #[inline]
+        pub const fn v4(mut sin: sockaddr_in) -> Self {
+            sin.family = AF_INET as sa_family_t;
+            let mut this = sockaddr_inet {
+                sin6: sockaddr_in6::ZEROED,
+            };
+            this.sin = sin;
+            this
+        }
+
+        /// An IPv6 address (`sin6.family` is forced to `AF_INET6`).
+        #[inline]
+        pub const fn v6(mut sin6: sockaddr_in6) -> Self {
+            sin6.family = AF_INET6 as sa_family_t;
+            sockaddr_inet { sin6 }
+        }
+
+        /// Raw `sa_family_t` from the shared prefix.
+        #[inline]
+        pub const fn family(&self) -> sa_family_t {
+            // SAFETY: `family` sits at the same offset/type in both variants
+            // (asserted above) and every byte is initialised by `v4`/`v6`.
+            unsafe { self.sin.family }
+        }
+
+        /// Raw network-byte-order port from the shared prefix.
+        #[inline]
+        pub const fn port_be(&self) -> in_port_t {
+            // SAFETY: as for `family`.
+            unsafe { self.sin.port }
+        }
+
+        /// The IPv4 payload; `None` unless `family() == AF_INET`.
+        #[inline]
+        pub const fn as_in4(&self) -> Option<&sockaddr_in> {
+            if self.family() as i32 == AF_INET as i32 {
+                // SAFETY: family == AF_INET ⇒ `v4` wrote `sin`.
+                Some(unsafe { &self.sin })
+            } else {
+                None
+            }
+        }
+
+        /// The IPv6 payload; `None` unless `family() == AF_INET6`.
+        #[inline]
+        pub const fn as_in6(&self) -> Option<&sockaddr_in6> {
+            if self.family() as i32 == AF_INET6 as i32 {
+                // SAFETY: family == AF_INET6 ⇒ `v6` wrote `sin6`.
+                Some(unsafe { &self.sin6 })
+            } else {
+                None
+            }
+        }
+    }
 
     /// Tagged union over sockaddr_in/in6/un.
     #[derive(Clone, Copy)]
@@ -8330,6 +8478,48 @@ pub mod net {
         pub fn into_storage(self) -> sockaddr_storage {
             self.any
         }
+
+        /// View a `sockaddr_storage` FFI filled in (`getsockname`,
+        /// `recvmsg`, ...) through the tag-checked accessors.
+        #[inline]
+        pub fn from_storage(storage: &sockaddr_storage) -> Self {
+            Self { any: *storage }
+        }
+
+        /// The IP this address holds; `None` for other families.
+        pub fn ip(&self) -> Option<core::net::IpAddr> {
+            if let Some(v4) = self.as_in4() {
+                // `sin_addr` is `in_addr { s_addr: u32 }` on POSIX/ws2_32 but
+                // `[u8; 4]` in `bun_libuv_sys::sockaddr_in`; reinterpret as
+                // raw octets so both shapes resolve.
+                // SAFETY: `sin_addr` is 4 bytes of POD on every target.
+                let octets: [u8; 4] =
+                    unsafe { *core::ptr::addr_of!(v4.sin_addr).cast::<[u8; 4]>() };
+                Some(core::net::IpAddr::V4(core::net::Ipv4Addr::from(octets)))
+            } else if let Some(v6) = self.as_in6() {
+                // SAFETY: `sin6_addr` is 16 bytes of POD on every target.
+                let octets: [u8; 16] =
+                    unsafe { *core::ptr::addr_of!(v6.sin6_addr).cast::<[u8; 16]>() };
+                Some(core::net::IpAddr::V6(core::net::Ipv6Addr::from(octets)))
+            } else {
+                None
+            }
+        }
+
+        /// The port (host order); `None` for non-IP families.
+        pub fn port(&self) -> Option<u16> {
+            if let Some(v4) = self.as_in4() {
+                Some(u16::from_be(v4.sin_port))
+            } else {
+                self.as_in6().map(|v6| u16::from_be(v6.sin6_port))
+            }
+        }
+
+        /// The IPv6 zone index; 0 for IPv4 / none.
+        pub fn scope_id(&self) -> u32 {
+            self.as_in6().map_or(0, |v6| v6.sin6_scope_id)
+        }
+
         /// Tag-checked borrow of the IPv4 payload. `None` unless
         /// `family() == AF_INET`.
         #[inline]

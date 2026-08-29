@@ -1,12 +1,155 @@
-use core::ffi::{c_char, c_int, c_uint, c_ushort, c_void};
+use core::ffi::{CStr, c_char, c_int, c_uint, c_ushort, c_void};
+use core::ptr::NonNull;
+
+use bun_ptr::ThisPtr;
 
 use crate::{LIBUS_SOCKET_DESCRIPTOR, Loop};
 // `sockaddr_storage` is not in `libc` on Windows; route through the leaf
 // ws2_32 shim there. Both definitions are 128-byte 8-aligned POD.
 #[cfg(windows)]
-use bun_windows_sys::ws2_32::sockaddr_storage;
+pub use bun_windows_sys::ws2_32::sockaddr_storage;
 #[cfg(not(windows))]
-use libc::sockaddr_storage;
+pub use libc::sockaddr_storage;
+
+/// Callbacks for a UDP socket created with [`UdpSocket::create`], whose
+/// user slot is the intrusively-refcounted owner `Self`.
+pub trait UdpHandler: bun_ptr::AnyRefCounted + Sized + 'static {
+    fn on_data(this: ThisPtr<Self>, socket: &mut Socket, buf: &mut PacketBuffer, packets: c_int);
+    fn on_drain(this: ThisPtr<Self>, socket: &mut Socket);
+    /// uSockets closed the socket: either the owner's [`UdpSocket::close`],
+    /// or a poll error. The owner must dispose of a [`UdpSocket`] it still
+    /// holds through [`UdpSocket::closed`] here.
+    fn on_close(this: ThisPtr<Self>, socket: &mut Socket);
+    /// Always registered, so the socket is created with `IP_RECVERR` where
+    /// the platform has it.
+    fn on_recv_error(_this: ThisPtr<Self>, _socket: &mut Socket, _errno: c_int, _errqueue: c_int) {}
+}
+
+fn udp_owner<U>(socket: *mut Socket) -> Option<(ThisPtr<U>, &'static mut Socket)> {
+    let socket = Socket::opaque_mut(socket);
+    let user = socket.user().cast::<U>();
+    // SAFETY: `user` is the owner `UdpSocket::<U>::create` registered; that
+    // handle holds a ref on it until the socket is closed, and uSockets stops
+    // calling back once it is (on_close is the last callback).
+    (!user.is_null()).then(|| (unsafe { ThisPtr::new(user) }, socket))
+}
+
+extern "C" fn udp_on_data<U: UdpHandler>(s: *mut Socket, buf: *mut PacketBuffer, n: c_int) {
+    if let Some((this, socket)) = udp_owner::<U>(s) {
+        U::on_data(this, socket, PacketBuffer::opaque_mut(buf), n);
+    }
+}
+extern "C" fn udp_on_drain<U: UdpHandler>(s: *mut Socket) {
+    if let Some((this, socket)) = udp_owner::<U>(s) {
+        U::on_drain(this, socket);
+    }
+}
+extern "C" fn udp_on_close<U: UdpHandler>(s: *mut Socket) {
+    if let Some((this, socket)) = udp_owner::<U>(s) {
+        let _keep = bun_ptr::RefPtr::from_this(this);
+        U::on_close(this, socket);
+    }
+}
+extern "C" fn udp_on_recv_error<U: UdpHandler>(s: *mut Socket, errno: c_int, errqueue: c_int) {
+    if let Some((this, socket)) = udp_owner::<U>(s) {
+        U::on_recv_error(this, socket, errno, errqueue);
+    }
+}
+
+/// An open UDP socket whose user slot is its owner `U`; holds a ref on the
+/// owner for as long as uSockets can call back through it.
+pub struct UdpSocket<U: UdpHandler> {
+    socket: NonNull<Socket>,
+    /// `None` only inside [`UdpSocket::closed`], so `Drop` skips the close.
+    owner: Option<bun_ptr::RefPtr<U>>,
+}
+
+impl<U: UdpHandler> UdpSocket<U> {
+    /// Bind a UDP socket on this thread's loop. On failure `Err` carries the
+    /// errno.
+    pub fn create(
+        host: &CStr,
+        port: c_ushort,
+        options: c_int,
+        owner: ThisPtr<U>,
+    ) -> Result<Self, c_int> {
+        let owner = bun_ptr::RefPtr::from_this(owner);
+        let mut err: c_int = 0;
+        match NonNull::new(Socket::create(
+            Loop::get(),
+            udp_on_data::<U>,
+            udp_on_drain::<U>,
+            udp_on_close::<U>,
+            udp_on_recv_error::<U>,
+            host.as_ptr(),
+            port,
+            options,
+            Some(&mut err),
+            owner.as_ptr().cast(),
+        )) {
+            Some(socket) => Ok(UdpSocket {
+                socket,
+                owner: Some(owner),
+            }),
+            None => Err(err),
+        }
+    }
+
+    /// Adopt an already created (and usually bound) UDP descriptor on this
+    /// thread's loop (`us_create_udp_socket_from_fd`). On failure `Err`
+    /// carries the errno (0 when uSockets reported none).
+    pub fn create_from_fd(fd: c_int, shared: bool, owner: ThisPtr<U>) -> Result<Self, c_int> {
+        let owner = bun_ptr::RefPtr::from_this(owner);
+        let mut err: c_int = 0;
+        match NonNull::new(Socket::create_from_fd(
+            Loop::get(),
+            udp_on_data::<U>,
+            udp_on_drain::<U>,
+            udp_on_close::<U>,
+            udp_on_recv_error::<U>,
+            fd,
+            shared,
+            Some(&mut err),
+            owner.as_ptr().cast(),
+        )) {
+            Some(socket) => Ok(UdpSocket {
+                socket,
+                owner: Some(owner),
+            }),
+            None => Err(err),
+        }
+    }
+
+    #[allow(clippy::mut_from_ref)]
+    pub fn get(&self) -> &mut Socket {
+        Socket::opaque_mut(self.socket.as_ptr())
+    }
+
+    pub fn as_ptr(&self) -> NonNull<Socket> {
+        self.socket
+    }
+
+    /// Close the socket (fires [`UdpHandler::on_close`] synchronously) and
+    /// release the owner ref. Take the handle out of the owner first so
+    /// `on_close` finds none.
+    pub fn close(self) {
+        drop(self);
+    }
+
+    /// Dispose of a handle whose socket uSockets already closed (from
+    /// [`UdpHandler::on_close`]): releases the owner ref without closing.
+    pub fn closed(mut self) {
+        self.owner = None;
+    }
+}
+
+impl<U: UdpHandler> Drop for UdpSocket<U> {
+    fn drop(&mut self) {
+        if self.owner.is_some() {
+            self.get().close();
+        }
+    }
+}
 
 bun_opaque::opaque_ffi! {
     /// Opaque uSockets UDP socket handle (`us_udp_socket_t`).
@@ -110,9 +253,15 @@ impl Socket {
         us_udp_socket_bound_port(self)
     }
 
-    pub fn bound_ip(&mut self, buf: *mut u8, length: &mut i32) {
-        // SAFETY: buf must point to at least *length bytes; thin FFI passthrough.
-        unsafe { us_udp_socket_bound_ip(self, buf, length) }
+    /// The bound address's raw bytes (4 for IPv4, 16 for IPv6), written to
+    /// the front of `buf`; returns how many were written (0 when unbound or
+    /// `buf` is too small).
+    pub fn bound_ip_into(&mut self, buf: &mut [u8]) -> usize {
+        let mut len = i32::try_from(buf.len()).unwrap_or(i32::MAX);
+        // SAFETY: `buf` is writable for `len` bytes; uSockets writes at most
+        // that many and stores the count back.
+        unsafe { us_udp_socket_bound_ip(self, buf.as_mut_ptr(), &raw mut len) };
+        usize::try_from(len).unwrap_or(0).min(buf.len())
     }
 
     pub fn remote_ip(&mut self, buf: *mut u8, length: &mut i32) {
@@ -292,6 +441,21 @@ pub mod raw {
             addrlen: c_int,
             flags: c_int,
         ) -> c_int;
+    }
+
+    /// [`bsd_bind_udp_fd`] for an address held in a `sockaddr_storage`;
+    /// `addrlen` is clamped to the storage size. Returns the C result (0 on
+    /// success, errno set otherwise).
+    pub fn bind_udp_fd(
+        fd: LIBUS_SOCKET_DESCRIPTOR,
+        addr: &super::sockaddr_storage,
+        addrlen: c_int,
+        flags: c_int,
+    ) -> c_int {
+        let addrlen = addrlen.clamp(0, core::mem::size_of::<super::sockaddr_storage>() as c_int);
+        // SAFETY: `addr` is readable for `size_of::<sockaddr_storage>()` >=
+        // `addrlen` bytes.
+        unsafe { bsd_bind_udp_fd(fd, core::ptr::from_ref(addr).cast(), addrlen, flags) }
     }
 }
 

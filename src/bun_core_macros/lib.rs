@@ -228,7 +228,9 @@ pub fn comptime_string_set_impl(input: TokenStream) -> TokenStream {
 //
 // Custom destructor: `#[ref_count(destroy = Self::deinit)]` on the struct
 // routes the trait's `destroy` to that path instead of the default
-// `drop(Box::from_raw(this))`.
+// `drop(Box::from_raw(this))`. `#[ref_count(release = Self::f)]` instead
+// hands the allocation to `fn f(this: bun_ptr::OwnedThis<Self>)` — for types
+// whose free is deferred (queued to a later tick) rather than immediate.
 
 /// Locate the refcount field per the rules above.
 fn find_ref_count_field(fields: &Fields) -> Result<&syn::Ident, syn::Error> {
@@ -263,8 +265,18 @@ fn find_ref_count_field(fields: &Fields) -> Result<&syn::Ident, syn::Error> {
     ))
 }
 
-/// Parse the optional struct-level `#[ref_count(destroy = path)]` attribute.
-fn find_destroy_path(attrs: &[syn::Attribute]) -> Result<Option<syn::Expr>, syn::Error> {
+/// How a struct-level `#[ref_count(...)]` attribute routes the zero-count
+/// destructor.
+enum DestroyPath {
+    /// `destroy = path`: `path(this: *mut Self)`.
+    Raw(syn::Expr),
+    /// `release = path`: `path(this: bun_ptr::OwnedThis<Self>)`.
+    Owned(syn::Expr),
+}
+
+/// Parse the optional struct-level `#[ref_count(destroy = path)]` /
+/// `#[ref_count(release = path)]` attribute.
+fn find_destroy_path(attrs: &[syn::Attribute]) -> Result<Option<DestroyPath>, syn::Error> {
     for a in attrs {
         if !a.path().is_ident("ref_count") {
             continue;
@@ -274,9 +286,17 @@ fn find_destroy_path(attrs: &[syn::Attribute]) -> Result<Option<syn::Expr>, syn:
         if let Meta::List(_) = &a.meta {
             let mut out = None;
             a.parse_nested_meta(|meta| {
-                if meta.path.is_ident("destroy") {
+                let is_destroy = meta.path.is_ident("destroy");
+                if is_destroy || meta.path.is_ident("release") {
+                    if out.is_some() {
+                        return Err(meta.error("`destroy` and `release` are mutually exclusive"));
+                    }
                     let value: syn::Expr = meta.value()?.parse()?;
-                    out = Some(value);
+                    out = Some(if is_destroy {
+                        DestroyPath::Raw(value)
+                    } else {
+                        DestroyPath::Owned(value)
+                    });
                     Ok(())
                 } else {
                     Err(meta.error("unknown ref_count attribute key"))
@@ -286,6 +306,29 @@ fn find_destroy_path(attrs: &[syn::Attribute]) -> Result<Option<syn::Expr>, syn:
         }
     }
     Ok(None)
+}
+
+/// The `destroy` override a [`DestroyPath`] expands to.
+fn destroy_impl(destroy: Option<DestroyPath>) -> Option<proc_macro2::TokenStream> {
+    destroy.map(|d| match d {
+        DestroyPath::Raw(path) => quote! {
+            #[inline]
+            unsafe fn destroy(this: *mut Self) {
+                // SAFETY: trait contract — refcount hit zero, `this` is the
+                // sole live owner of its allocation.
+                #[allow(unused_unsafe)]
+                unsafe { (#path)(this) }
+            }
+        },
+        DestroyPath::Owned(path) => quote! {
+            #[inline]
+            unsafe fn destroy(this: *mut Self) {
+                // SAFETY: trait contract — refcount hit zero, `this` is the
+                // root pointer of the Box allocation and nothing else owns it.
+                (#path)(unsafe { ::bun_ptr::OwnedThis::from_raw(this) })
+            }
+        },
+    })
 }
 
 /// `#[derive(CellRefCounted)]` — see module comment above.
@@ -313,17 +356,7 @@ pub fn derive_cell_ref_counted(input: TokenStream) -> TokenStream {
         Err(e) => return e.to_compile_error().into(),
     };
 
-    let destroy_impl = destroy.map(|path| {
-        quote! {
-            #[inline]
-            unsafe fn destroy(this: *mut Self) {
-                // SAFETY: trait contract — refcount hit zero, `this` is the
-                // sole live owner of its allocation.
-                #[allow(unused_unsafe)]
-                unsafe { (#path)(this) }
-            }
-        }
-    });
+    let destroy_impl = destroy_impl(destroy);
 
     let expanded = quote! {
         unsafe impl #impl_g ::bun_ptr::CellRefCounted for #name #ty_g #where_g {
@@ -406,15 +439,20 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
         Err(e) => return e.to_compile_error().into(),
     };
 
-    let destroy_impl = destroy.map(|path| {
-        quote! {
+    let destroy_impl = destroy.map(|d| match d {
+        DestroyPath::Raw(path) => quote! {
             #[inline]
             unsafe fn destructor(this: *mut Self) {
                 // SAFETY: trait contract — refcount hit zero.
                 #[allow(unused_unsafe)]
                 unsafe { (#path)(this) }
             }
-        }
+        },
+        DestroyPath::Owned(path) => syn::Error::new_spanned(
+            &path,
+            "ThreadSafeRefCounted: `release = ...` is not supported; use `destroy = ...`",
+        )
+        .to_compile_error(),
     });
 
     let expanded = quote! {

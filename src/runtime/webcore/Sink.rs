@@ -206,6 +206,16 @@ impl<T: JsSinkAbi> JSSink<T> {
         )
     }
 
+    /// [`create_object`](Self::create_object) for a sink reached through its
+    /// root pointer.
+    pub fn create_object_this(
+        global: &crate::webcore::jsc::JSGlobalObject,
+        object: bun_ptr::ThisPtr<T>,
+        destructor: usize,
+    ) -> crate::webcore::jsc::JSValue {
+        T::create_object_extern(global, object.as_ptr().cast::<c_void>(), destructor)
+    }
+
     pub fn set_destroy_callback(value: crate::webcore::jsc::JSValue, callback: usize) {
         T::set_destroy_callback_extern(value, callback)
     }

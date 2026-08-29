@@ -91,6 +91,67 @@ pub trait BufferedReaderParent {
     }
 }
 
+/// A [`BufferedReaderParent`] that holds its reader in a by-value field, so a
+/// live parent is a live reader. Implemented by `impl_buffered_reader_parent!`
+/// (`reader = <field>;`); lets the parent drive the raw-pointer entry points
+/// ([`BufferedReader::read`], [`BufferedReader::on_error`]) from a
+/// [`ThisPtr`](bun_ptr::ThisPtr) without materialising a reference that the
+/// re-entrant dispatch could invalidate.
+///
+/// # Safety
+/// `reader` must be a place projection to a field inside `*this` (same
+/// allocation), performing no reads.
+pub unsafe trait BufferedReaderOwner: Sized {
+    fn reader(this: *mut Self) -> *mut BufferedReader;
+}
+
+/// The field types `impl_buffered_reader_parent!`'s `reader = <field>;` accepts.
+pub trait ReaderSlot {
+    fn raw(slot: *mut Self) -> *mut BufferedReader;
+}
+impl ReaderSlot for BufferedReader {
+    #[inline(always)]
+    fn raw(slot: *mut Self) -> *mut BufferedReader {
+        slot
+    }
+}
+impl ReaderSlot for bun_ptr::JsCell<BufferedReader> {
+    #[inline(always)]
+    fn raw(slot: *mut Self) -> *mut BufferedReader {
+        // `JsCell<T>` is `repr(transparent)` over `UnsafeCell<T>`.
+        slot.cast()
+    }
+}
+
+/// Place projection for `impl_buffered_reader_parent!`'s `reader = <field>;`:
+/// `this + offset`, typed by the (never called) field accessor.
+#[doc(hidden)]
+#[inline(always)]
+pub fn reader_slot_ptr<T, S: ReaderSlot>(
+    this: *mut T,
+    offset: usize,
+    _field: fn(&T) -> &S,
+) -> *mut BufferedReader {
+    S::raw(this.wrapping_byte_add(offset).cast::<S>())
+}
+
+impl BufferedReader {
+    /// [`read`](Self::read) on the reader embedded in `parent`.
+    #[inline]
+    pub fn read_from<P: BufferedReaderOwner>(parent: bun_ptr::ThisPtr<P>) {
+        // SAFETY: `parent` is live (`ThisPtr` invariant), so its embedded
+        // reader is; no reference to either is held across the dispatch.
+        unsafe { Self::read(P::reader(parent.as_ptr())) }
+    }
+
+    /// [`on_error`](Self::on_error) on the reader embedded in `parent`.
+    #[inline]
+    pub fn on_error_from<P: BufferedReaderOwner>(parent: bun_ptr::ThisPtr<P>, err: sys::Error) {
+        // SAFETY: as `read_from`.
+        unsafe { Self::on_error(P::reader(parent.as_ptr()), err) }
+    }
+}
+
 impl BufferedReaderVTable {
     fn init<T: BufferedReaderParent>() -> BufferedReaderVTable {
         BufferedReaderVTable {

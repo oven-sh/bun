@@ -275,21 +275,17 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
 impl FileSink {
     /// `bun.spawn`'s subprocess exited while this `FileSink` was its stdin.
     ///
-    /// Takes the canonical `*mut FileSink` (not `&mut self`): `writer.close()`
+    /// Takes the root pointer (not `&mut self`): `writer.close()`
     /// re-enters `on_close` via the writer backref and `stream.cancel`/
     /// `run_pending` drain microtasks — any of which may drop the last ref and
     /// free `this`. A `&mut self` held across those calls would (a) carry a
     /// `noalias` LLVM attribute the re-entry violates and (b) place a Unique
     /// Stacked-Borrows tag on the whole struct, popping the writer's own
     /// `*mut Self` tag. The four PipeWriter callbacks have the same shape.
-    ///
-    /// # Safety
-    /// `this` must be the canonical heap-allocation pointer (the one threaded
-    /// through `set_parent` by `init`/`create*`), live, with write+dealloc
-    /// provenance over the allocation.
-    pub(crate) unsafe fn on_attached_process_exit(this: *mut FileSink, status: &SpawnStatus) {
+    pub(crate) fn on_attached_process_exit(this: bun_ptr::ThisPtr<FileSink>, status: &SpawnStatus) {
         bun_core::scoped_log!(FileSink, "onAttachedProcessExit()");
-        // SAFETY: caller contract — `this` is live with write+dealloc provenance.
+        let this: *mut FileSink = this.as_ptr();
+        // SAFETY: `ThisPtr` invariant — `this` is the live allocation root.
         unsafe {
             // `writer.close()` below re-enters `onClose` which releases the
             // keep-alive ref, and `stream.cancel`/`runPending` drain microtasks
@@ -576,24 +572,24 @@ impl FileSink {
     #[cfg(windows)]
     pub(crate) fn create_with_pipe(
         event_loop_: impl Into<EventLoopHandle>,
-        pipe: *mut uv::Pipe,
+        pipe: Box<uv::Pipe>,
     ) -> RefPtr<FileSink> {
         let evtloop: EventLoopHandle = event_loop_.into();
 
-        // SAFETY: `pipe` is a live `*mut uv::Pipe` provided by the caller.
         // `UvHandle::fd()` returns the raw `uv_os_fd_t` (HANDLE on Windows);
         // INVALID_HANDLE_VALUE maps to `Fd::INVALID`, anything else is
         // tagged as a system handle.
-        let fd = match unsafe { (*pipe).fd() } {
+        let fd = match pipe.fd() {
             h if h == uv::INVALID_HANDLE_VALUE => Fd::INVALID,
             h => Fd::from_system(h),
         };
         let this = RefPtr::new(FileSink::new(evtloop, fd));
-        // SAFETY: `this` was just allocated above and is the sole reference.
-        unsafe {
-            (*this.as_ptr()).writer.get_mut().set_pipe(pipe);
-            (*this.as_ptr()).writer.get_mut().set_parent(this.as_ptr());
-        }
+        let root = this.as_ptr();
+        this.writer.with_mut(|w| {
+            // SAFETY: `pipe` is Box-allocated; ownership transfers to the writer.
+            unsafe { w.set_pipe(bun_core::heap::into_raw(pipe)) };
+            w.set_parent(root);
+        });
         this
     }
 
@@ -996,10 +992,9 @@ impl FileSink {
         // via `self.ref_()`, and `finalize`'s `deref()` below releases it.
         // `JsSinkType::construct` allocates with `ref_count=1` and that +1
         // belongs to the wrapper it's about to be stored in, so no extra
-        // `ref_()` there. Callers that allocate via `init`/`create` and then
-        // `to_js()` must `deref()` once to release init's +1 (see
-        // `Blob::get_writer`). `pending`/`readable_stream` are left for
-        // `deinit` (Box drop) since in-flight IO may still need them.
+        // `ref_()` there. `init`/`create*` hand their initial ref back as a
+        // `RefPtr` the caller drops after `to_js()`. `pending`/`readable_stream`
+        // are left for `Drop` since in-flight IO may still need them.
         // SAFETY: as above; the `deref` is the last use of `this`.
         unsafe {
             (*this).js_sink_ref.with_mut(|r| r.deinit());
@@ -1019,8 +1014,8 @@ impl FileSink {
 
     pub(crate) fn init(fd: Fd, event_loop_handle: impl Into<EventLoopHandle>) -> RefPtr<FileSink> {
         let this = RefPtr::new(FileSink::new(event_loop_handle.into(), fd));
-        // SAFETY: `this` was just allocated above and is the sole reference.
-        unsafe { (*this.as_ptr()).writer.get_mut().set_parent(this.as_ptr()) };
+        let root = this.as_ptr();
+        this.writer.with_mut(|w| w.set_parent(root));
         this
     }
 
@@ -1201,14 +1196,14 @@ impl FileSink {
         }
     }
 
-    pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
+    pub fn to_js(this: bun_ptr::ThisPtr<FileSink>, global_this: &JSGlobalObject) -> JSValue {
         // Wrapper's +1; balanced by `finalize` → `deref()`.
-        self.ref_();
-        JSSink::create_object(global_this, self, 0)
+        this.ref_();
+        JSSink::create_object_this(global_this, this, 0)
     }
 
     pub(crate) fn to_js_with_destructor(
-        &mut self,
+        this: bun_ptr::ThisPtr<FileSink>,
         global_this: &JSGlobalObject,
         // `sink::DestructorPtr` is `TaggedPtrUnion<(Detached, Detached)>`
         // which does not satisfy `bun_ptr::TypeList` yet (sibling Sink.rs); accept
@@ -1216,8 +1211,8 @@ impl FileSink {
         destructor: Option<usize>,
     ) -> JSValue {
         // Wrapper's +1; balanced by `finalize` → `deref()`.
-        self.ref_();
-        JSSink::create_object(global_this, self, destructor.unwrap_or(0))
+        this.ref_();
+        JSSink::create_object_this(global_this, this, destructor.unwrap_or(0))
     }
 
     pub(crate) fn end_from_js(&self, global_this: &JSGlobalObject) -> sys::Result<JSValue> {
@@ -1640,44 +1635,48 @@ impl FileSink {
         }
     }
 
+    /// `this: ThisPtr` because the wrapper / native sink handle / promise
+    /// reaction each keep the sink's address past this call.
     pub fn assign_to_stream(
-        &mut self,
+        this: bun_ptr::ThisPtr<FileSink>,
         stream: &mut ReadableStream,
         global_this: &JSGlobalObject,
     ) -> JSValue {
-        // SAFETY: `&mut self` carries write+dealloc provenance over the allocation.
-        let _guard = unsafe { RefPtr::init_ref(std::ptr::from_mut::<FileSink>(self)) };
+        let _guard = RefPtr::from_this(this);
+        let self_: &FileSink = this.get();
 
-        self.readable_stream
+        self_
+            .readable_stream
             .set(readable_stream::Strong::init(*stream, global_this));
 
         // Native ByteStream/FileReader fast-path: wire the SinkHandle
         // directly, skipping the JS pump.
         match stream.wire_native_sink(
             global_this,
-            webcore::SinkHandle::FileSink(bun_ptr::BackRef::new(&*self)),
+            webcore::SinkHandle::FileSink(bun_ptr::BackRef::new(self_)),
             JSValue::UNDEFINED,
-            |src| self.source.set(src),
+            |src| self_.source.set(src),
         ) {
             readable_stream::NativeWireResult::Wired => {
                 // A synchronous producer may have driven `end_from_stream`
                 // (clears `source`) inline; no keepalive then.
-                if !matches!(self.source.get(), streams::SourceHandle::None) {
-                    self.writer
-                        .with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));
-                    if !self.must_be_kept_alive_until_eof.get() {
-                        self.must_be_kept_alive_until_eof.set(true);
-                        self.ref_();
+                if !matches!(self_.source.get(), streams::SourceHandle::None) {
+                    self_
+                        .writer
+                        .with_mut(|w| w.enable_keeping_process_alive(self_.io_evtloop()));
+                    if !self_.must_be_kept_alive_until_eof.get() {
+                        self_.must_be_kept_alive_until_eof.set(true);
+                        self_.ref_();
                     }
                 }
                 return JSValue::UNDEFINED;
             }
             readable_stream::NativeWireResult::EndedInline(err) => {
-                self.source.set(streams::SourceHandle::None);
+                self_.source.set(streams::SourceHandle::None);
                 match err {
-                    Some(err) => self.end_from_stream(Some(err)),
+                    Some(err) => self_.end_from_stream(Some(err)),
                     None => {
-                        let _ = self.end(None);
+                        let _ = self_.end(None);
                     }
                 }
                 return JSValue::UNDEFINED;
@@ -1689,14 +1688,13 @@ impl FileSink {
         // above): the JS builtins always call `controller.end()`/`.close()`
         // (`${controller}__end/close` → `controller->detach()` → m_sinkPtr=null)
         // before GC, so the controller's dtor never reaches `finalize`.
-        let promise_result = JSSink::assign_to_stream(
-            global_this,
-            stream.value,
-            core::ptr::NonNull::from(&mut *self),
-        );
+        let promise_result =
+            JSSink::assign_to_stream(global_this, stream.value, core::ptr::NonNull::from(this));
 
         if let Some(err) = promise_result.to_error() {
-            self.readable_stream.set(readable_stream::Strong::default());
+            self_
+                .readable_stream
+                .set(readable_stream::Strong::default());
             return err;
         }
 
@@ -1713,29 +1711,30 @@ impl FileSink {
                 // SAFETY: `as_any_promise` returned non-null.
                 match unsafe { (*js_promise).status() } {
                     bun_jsc::js_promise::Status::Pending => {
-                        self.writer
-                            .with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));
-                        self.ref_();
+                        self_
+                            .writer
+                            .with_mut(|w| w.enable_keeping_process_alive(self_.io_evtloop()));
+                        self_.ref_();
                         // TODO: properly propagate exception upwards
                         // `JSValue::then` takes already-wrapped C-ABI
                         // host fns; the `toJSHostFunction` step is the manual
                         // shims at the bottom of this file.
                         promise_result.then(
                             global_this,
-                            std::ptr::from_mut::<FileSink>(self),
+                            this.as_ptr(),
                             on_resolve_stream_shim,
                             on_reject_stream_shim,
                         );
                     }
                     bun_jsc::js_promise::Status::Fulfilled => {
                         // These don't ref().
-                        self.handle_resolve_stream();
+                        self_.handle_resolve_stream();
                     }
                     bun_jsc::js_promise::Status::Rejected => {
                         // These don't ref().
                         // SAFETY: `js_promise` is non-null (`as_any_promise`).
                         let result = unsafe { (*js_promise).result(global_this.vm()) };
-                        crate::dispatch::fold(self.handle_reject_stream(global_this, result));
+                        crate::dispatch::fold(self_.handle_reject_stream(global_this, result));
                     }
                 }
             }

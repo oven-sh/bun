@@ -40,7 +40,7 @@ use crate::shell::yield_::Yield;
 pub struct ChildPtr {
     pub node: NodeId,
     pub(crate) tag: WriterTag,
-    /// Only meaningful when `tag == Subproc` — `*mut subproc::CapturedWriter`.
+    /// Only meaningful when `tag == Subproc` — `*mut subproc::PipeReader`.
     /// `core::ptr::null_mut()` otherwise. Stored untyped to keep this header
     /// free of a `subproc` dependency.
     pub(crate) raw: *mut core::ffi::c_void,
@@ -62,8 +62,8 @@ impl ChildPtr {
         }
     }
 
-    /// Construct a `ChildPtr` targeting a `subproc::CapturedWriter` (lives
-    /// outside the NodeId arena).
+    /// Construct a `ChildPtr` targeting a `subproc::PipeReader`'s captured
+    /// writer (lives outside the NodeId arena).
     #[inline]
     pub(crate) fn subproc_capture(cw: *mut core::ffi::c_void) -> ChildPtr {
         ChildPtr {
@@ -1242,13 +1242,15 @@ pub(crate) fn on_io_writer_chunk(
         WriterTag::Subproc => {
             let _ = interp;
             debug_assert!(!child.raw.is_null());
-            // SAFETY: `raw` was set from `&mut CapturedWriter` in
-            // `CapturedWriter::do_write`; the PipeReader (and the embedded
-            // CapturedWriter) is kept alive by the `Readable::Pipe` Arc on
-            // the owning ShellSubprocess until `on_close_io` runs, which only
-            // happens after the writer has finished draining. Single-threaded.
-            let cw = unsafe { &mut *child.raw.cast::<crate::shell::subproc::CapturedWriter>() };
-            cw.on_iowriter_chunk(written, err)
+            // SAFETY: `raw` is the `PipeReader` root set in
+            // `PipeReader::captured_child_ptr`; the reader is kept alive by
+            // the `Readable::Pipe` ref on the owning ShellSubprocess until
+            // `on_close_io` runs, which only happens after the writer has
+            // finished draining (or `cancel_chunks` removed this entry).
+            let pipe = unsafe {
+                bun_ptr::ThisPtr::new(child.raw.cast::<crate::shell::subproc::PipeReader>())
+            };
+            crate::shell::subproc::PipeReader::on_captured_iowriter_chunk(pipe, written, err)
         }
     }
 }

@@ -494,6 +494,15 @@ impl EventLoopHandle {
         }
     }
 
+    /// `f($key)` from the loop's dotenv loader; the value is borrowed only for
+    /// the call (the map is mutable at runtime).
+    pub fn with_env_var<R>(self, key: &[u8], f: impl FnOnce(Option<&[u8]>) -> R) -> R {
+        // SAFETY: `env()` is the non-null loader both arms are created with
+        // (`VirtualMachine::env_loader`; `MiniEventLoop::env_ptr`), live for
+        // the loop's lifetime; the borrow ends with `f`.
+        f(unsafe { (*self.env()).get(key) })
+    }
+
     pub fn top_level_dir(self) -> &'static [u8] {
         match self {
             // SAFETY: slice borrowed for VM lifetime.

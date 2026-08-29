@@ -571,3 +571,34 @@ extern "C" fn Source__setRawModeStdin(uv_loop: *mut uv::Loop, raw: bool) -> c_in
     }
     0
 }
+
+/// An object that holds bare uv pipes (no reader/writer in front of them) and
+/// closes them itself when its VM's thread is torn down.
+pub trait UvPipeOwner {
+    /// `uv::open_handles` entry point: close every pipe still held.
+    fn close_pipes_for_vm_teardown(&self);
+}
+
+/// Record `owner` as the one a thread teardown closes `pipe` through (`pipe`
+/// is used as the registry key only). `owner` takes the pipe off the list —
+/// by closing it, e.g. [`close_and_destroy_pipe`], at the latest from its own
+/// `Drop` — so the entry never outlives it.
+pub fn set_pipe_owner<T: UvPipeOwner>(pipe: &Pipe, owner: bun_ptr::ThisPtr<T>) {
+    unsafe fn close<T: UvPipeOwner>(owner: *mut c_void) {
+        // SAFETY: `owner` was recorded from a live `ThisPtr<T>` and every pipe
+        // it owns leaves the list before the owner is freed (fn contract).
+        unsafe { &*owner.cast::<T>() }.close_pipes_for_vm_teardown()
+    }
+    uv::open_handles::set_owner(
+        core::ptr::from_ref::<Pipe>(pipe).cast_mut().cast(),
+        owner.as_ptr().cast(),
+        Some(close::<T>),
+    );
+}
+
+/// `uv_close` (if the pipe was ever initialised) and free it from the close
+/// callback; see [`Pipe::close_and_destroy`].
+pub fn close_and_destroy_pipe(pipe: Box<Pipe>) {
+    // SAFETY: `pipe` is the `Box` the contract asks for; ownership moves in.
+    unsafe { Pipe::close_and_destroy(Box::into_raw(pipe)) }
+}

@@ -92,6 +92,25 @@ bun_dispatch::link_interface! {
 /// `None` = no handler set (the default for `Process::exit_handler`).
 pub type ProcessExitHandler = Option<ProcessExit>;
 
+/// `_PATH_DEFPATH`: the `PATH` to search for `argv[0]` when the environment
+/// has none (empty on Windows).
+pub fn default_search_path() -> &'static [u8] {
+    #[cfg(unix)]
+    {
+        unsafe extern "C" {
+            // `_PATH_DEFPATH` string literal emitted from C; immutable,
+            // load-time initialized, never null.
+            safe static BUN_DEFAULT_PATH_FOR_SPAWN: *const core::ffi::c_char;
+        }
+        // SAFETY: NUL-terminated static C string (see decl).
+        unsafe { core::ffi::CStr::from_ptr(BUN_DEFAULT_PATH_FOR_SPAWN) }.to_bytes()
+    }
+    #[cfg(not(unix))]
+    {
+        b""
+    }
+}
+
 // In-crate `link_impl_*!` calls must be textually after the `link_interface!`
 // that emits the macro (`#[macro_export]` is path-addressable from *other*
 // crates only; same-crate use is textual-scope). POSIX `spawn_sync` waits

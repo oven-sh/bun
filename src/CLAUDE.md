@@ -354,11 +354,12 @@ materialize `&self`/`&mut self` at the boundary — a `&self`-derived raw
 pointer carries `SharedReadOnly` provenance, and `Box::from_raw`/dealloc
 through it is UB. Pass and dispatch off `*mut Self` until the body proves
 ownership. `src/io/PipeWriter.rs`'s `impl_streaming_writer_parent!` macro
-encodes the three modes:
+encodes these modes:
 
 - `borrow = mut` — body forms `&mut *this`; safe when nothing re-enters
 - `borrow = shared` — body forms `&*this`; safe when re-entrant code only needs `&Self`
-- `borrow = ptr` — body calls `Self::method(this, ..)` with `this: *mut Self`; required when the callback may free `self`
+- `borrow = ptr` — body calls `Self::method(this, ..)` with `this: *mut Self` (legacy raw-pointer form for callbacks that may free `self`; new parents use `this`)
+- `borrow = this` — body calls `Self::method(this, ..)` with `this: ThisPtr<Self>`; the typed form of `ptr` for intrusively-refcounted parents (hold a `RefPtr::from_this(this)` guard across anything that may drop the last ref)
 
 ### `Strong` / `Weak` JS handles
 

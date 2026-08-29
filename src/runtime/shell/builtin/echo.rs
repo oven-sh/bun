@@ -110,11 +110,7 @@ impl Echo {
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
         Self::state_mut(interp, cmd).state = State::Done;
-        let exit_code = match err {
-            Some(e) => Builtin::status_for(e.get_errno()),
-            None => 0,
-        };
-        Builtin::done(interp, cmd, exit_code)
+        Builtin::done(interp, cmd, err.map_or(0, |_| 1))
     }
 }
 

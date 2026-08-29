@@ -238,12 +238,12 @@ describe("mv", async () => {
   TestBuilder.command`mv nosuchsrc dst`
     .ensureTempDir()
     .exitCode(1)
-    .stderr(s => expect(s).toContain("No such file or directory"))
+    .stderr_contains("No such file or directory")
     .runAsTest("missing source exits 1 (not ENOENT)");
 
   TestBuilder.command`mkdir -p d/x; mv d d/inside`
     .ensureTempDir()
     .exitCode(1)
-    .stderr(s => expect(s).toContain("mv:"))
+    .stderr_contains("mv:")
     .runAsTest("move dir into own subdir exits 1 (not EINVAL)");
 });

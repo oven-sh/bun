@@ -1066,7 +1066,9 @@ impl Cmd {
         child.close_io(StdioKind::Stderr);
     }
 
-    /// Lost relay output turns a successful exit into 1; a nonzero child status wins.
+    /// Lost relay output turns a successful exit into 1. A nonzero child status
+    /// that is already known is kept. If the relay fails first, the Cmd finishes
+    /// with 1 at once and `on_process_exit` skips the status that arrives later.
     fn fail_output_relay(&mut self) {
         self.output_relay_failed = true;
         if matches!(self.exit_code, None | Some(0)) {

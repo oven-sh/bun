@@ -127,7 +127,14 @@ describe("bunshell", () => {
       const subproc = (await $`$(echo env; exit 5)`.quiet().nothrow()).exitCode;
       const builtin = (await $`$(echo true; exit 5)`.quiet().nothrow()).exitCode;
       const noName = (await $`$(echo; exit 5)`.quiet().nothrow()).exitCode;
-      expect({ subproc, builtin, noName }).toEqual({ subproc: 0, builtin: 0, noName: 5 });
+      // The other direction: a substitution that exits 0 must not hide the named command's failure.
+      const failingSubproc = (await $`$(echo "sh -c false")`.quiet().nothrow()).exitCode;
+      expect({ subproc, builtin, noName, failingSubproc }).toEqual({
+        subproc: 0,
+        builtin: 0,
+        noName: 5,
+        failingSubproc: 1,
+      });
     });
 
     // `[[ ]]` takes no redirect and `cat` reads stdin, so their failing write

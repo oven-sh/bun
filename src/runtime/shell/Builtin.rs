@@ -845,12 +845,6 @@ impl Builtin {
         Cmd::on_exec_done(interp, cmd, exit_code)
     }
 
-    /// POSIX/coreutils exit 1 on any operational failure; errno goes to stderr, not `$?`.
-    #[inline]
-    pub fn status_for(_errno: bun_sys::E) -> ExitCode {
-        1
-    }
-
     /// Look up the Builtin inside a Cmd's `exec` slot.
     #[inline]
     #[track_caller]

@@ -240,8 +240,7 @@ impl Cat {
         _: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if let Some(e) = err {
-            let exit_code = Builtin::status_for(e.get_errno());
+        if err.is_some() {
             let rchild = ReaderChildPtr {
                 node: cmd,
                 tag: ReaderTag::Cat,
@@ -266,7 +265,7 @@ impl Cat {
                 CatState::WaitingWriteErr => {}
                 _ => panic!("Invalid state"),
             }
-            return Builtin::done(interp, cmd, exit_code);
+            return Builtin::done(interp, cmd, 1);
         }
 
         let step = match &mut Self::state_mut(interp, cmd).state {
@@ -336,7 +335,7 @@ impl Cat {
         cmd: NodeId,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        let exit_code: ExitCode = err.map(|e| Builtin::status_for(e.get_errno())).unwrap_or(0);
+        let exit_code: ExitCode = err.map_or(0, |_| 1);
         let stdout_needs_io = Builtin::of(interp, cmd).stdout.needs_io().is_some();
         let mut cancel = false;
         let step = match &mut Self::state_mut(interp, cmd).state {

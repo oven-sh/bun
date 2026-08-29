@@ -381,13 +381,10 @@ impl Rm {
                 }
             }
             state => {
-                if let Some(err) = &e {
-                    let code = Builtin::status_for(err.get_errno());
-                    *state = RmState::Err(code);
-                    Some(code)
-                } else {
-                    Some(1)
+                if e.is_some() {
+                    *state = RmState::Err(1);
                 }
+                Some(1)
             }
         };
         drop(e);

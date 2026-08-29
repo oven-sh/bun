@@ -2,7 +2,6 @@
 
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::builtin::Builtin;
 use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::Base;
@@ -165,8 +164,8 @@ impl CondExpr {
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
         let parent = interp.as_condexpr(this).base.parent;
-        if let Some(e) = err {
-            return interp.child_done(parent, this, Builtin::status_for(e.get_errno()));
+        if err.is_some() {
+            return interp.child_done(parent, this, 1);
         }
         if matches!(
             interp.as_condexpr(this).state,

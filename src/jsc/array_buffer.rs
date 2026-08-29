@@ -439,7 +439,19 @@ impl ArrayBuffer {
                 return Self::create::<{ JSType::Uint8Array }>(ctx, b"");
             }
 
-            // TODO: others
+            // Other kinds: a zero-length view with no backing store to free
+            // (`ptr` may be dangling here, e.g. `EMPTY`).
+            // SAFETY: null/0 with no deallocator is the documented empty case.
+            return unsafe {
+                make_typed_array_with_bytes_no_copy(
+                    ctx,
+                    self.typed_array_type.to_typed_array_type(),
+                    core::ptr::null_mut(),
+                    0,
+                    None,
+                    core::ptr::null_mut(),
+                )
+            };
         }
 
         if self.typed_array_type == JSType::ArrayBuffer {

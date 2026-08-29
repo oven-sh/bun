@@ -549,7 +549,7 @@ pub trait SystemErrnoInit {
 impl SystemErrnoInit for i64 {
     #[inline]
     fn into_system_errno(self) -> Option<SystemErrno> {
-        // Only `u16` / positive `c_int` inputs enter the Win32/uv mapping
+        // Only `u32` / positive `c_int` inputs enter the Win32/uv mapping
         // branch; `i64` is a direct discriminant cast, NOT the Win32Error
         // mapper. Routing i64 through `init_c_int` would mis-map e.g. 13 →
         // EINVAL (Win32 ERROR_INVALID_DATA) instead of EACCES (discriminant 13).

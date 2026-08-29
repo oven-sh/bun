@@ -300,7 +300,7 @@ impl SystemErrno {
     // `i64` covers every concrete call site (errno-range values).
     //
     // Windows defines its own `init<C: SystemErrnoInit>` (typed dispatch over
-    // DWORD/c_int/Win32Error) in windows_errno.rs, so this impl is POSIX-only.
+    // i64/DWORD/c_int) in windows_errno.rs, so this impl is POSIX-only.
     pub fn init(code: i64) -> Option<SystemErrno> {
         u16::try_from(code.unsigned_abs())
             .ok()

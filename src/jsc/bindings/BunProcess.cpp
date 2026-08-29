@@ -1489,15 +1489,12 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
         MarkedArgumentBuffer args;
         args.append(reason);
         args.append(promise);
-        // Like Node, a throwing listener reaches uncaughtException with the async context cleared, not the promise's.
+        // A throwing listener ends the dispatch; the caller reports it after restoring the async context, as Node does.
         WTF::NakedPtr<JSC::Exception> listenerException;
         wrapped.emit(eventType, args, listenerException);
         if (listenerException) [[unlikely]] {
-            auto* asyncContextData = globalObject->m_asyncContextData.get();
-            JSC::JSValue saved = asyncContextData->getInternalField(0);
-            asyncContextData->putInternalField(vm, 0, JSC::jsUndefined());
-            Bun__reportUnhandledError(globalObject, JSC::JSValue::encode(JSC::JSValue(listenerException.get())));
-            asyncContextData->putInternalField(vm, 0, saved);
+            auto throwScope = DECLARE_THROW_SCOPE(vm);
+            throwScope.throwException(globalObject, listenerException.get());
         }
         return true;
     }

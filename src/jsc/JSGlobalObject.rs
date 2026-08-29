@@ -1113,15 +1113,15 @@ impl JSGlobalObject {
         crate::from_js_host_call_generic(self, || JSC__JSGlobalObject__handleRejectedPromises(self))
     }
 
-    /// Installs `context` as the current async context, returning the previous one.
-    pub fn exchange_async_context(&self, context: JSValue) -> JSValue {
-        unsafe extern "C" {
-            safe fn AsyncContextFrame__exchangeAsyncContext(
-                global: &JSGlobalObject,
-                context: JSValue,
-            ) -> JSValue;
+    /// Installs `context` as the current async context until the guard drops.
+    pub fn enter_async_context(&self, context: JSValue) -> AsyncContextScope<'_> {
+        let mut clear_count = 0u32;
+        let previous = AsyncContextFrame__exchangeAsyncContext(self, context, &mut clear_count);
+        AsyncContextScope {
+            global: self,
+            previous,
+            clear_count,
         }
-        AsyncContextFrame__exchangeAsyncContext(self, context)
     }
 
     // The `readableStreamTo*` consumers throw `ERR_INVALID_ARG_TYPE` when
@@ -1592,24 +1592,29 @@ unsafe extern "C" {
     ) -> *mut JSGlobalObject;
 }
 
-/// Clears the async context for the guard's lifetime (top-level drains and GC assume it is undefined), restoring it on drop; `previous` stays GC-visible because this guard only ever lives on the stack, which JSC scans conservatively.
-pub struct ClearedAsyncContextScope<'a> {
+unsafe extern "C" {
+    safe fn AsyncContextFrame__exchangeAsyncContext(
+        global: &JSGlobalObject,
+        context: JSValue,
+        clear_count: &mut u32,
+    ) -> JSValue;
+    safe fn AsyncContextFrame__restoreAsyncContext(
+        global: &JSGlobalObject,
+        previous: JSValue,
+        clear_count: u32,
+    );
+}
+
+/// Puts back the async context [`JSGlobalObject::enter_async_context`] replaced, or undefined if `enterWith()`'s one-shot cleanup cleared the slot meanwhile (the saved value is stale); stack-only, so `previous` stays GC-visible.
+pub struct AsyncContextScope<'a> {
     global: &'a JSGlobalObject,
     previous: JSValue,
+    clear_count: u32,
 }
 
-impl<'a> ClearedAsyncContextScope<'a> {
-    pub fn new(global: &'a JSGlobalObject) -> Self {
-        Self {
-            global,
-            previous: global.exchange_async_context(JSValue::UNDEFINED),
-        }
-    }
-}
-
-impl Drop for ClearedAsyncContextScope<'_> {
+impl Drop for AsyncContextScope<'_> {
     fn drop(&mut self) {
-        self.global.exchange_async_context(self.previous);
+        AsyncContextFrame__restoreAsyncContext(self.global, self.previous, self.clear_count);
     }
 }
 

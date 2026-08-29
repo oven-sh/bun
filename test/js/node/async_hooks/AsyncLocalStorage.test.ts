@@ -1361,18 +1361,18 @@ describe.concurrent("unhandledRejection async context", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "store: null\n", stderr: "", exitCode: 0 });
   });
 
-  // --unhandled-rejections=strict routes the rejection into uncaughtException. Node
-  // keeps the promise's context installed across the whole per-mode dispatch
-  // (lib/internal/process/promises.js), so the uncaughtException handler sees it too.
-  // It drains microtasks outside that window, so a continuation registered with no
-  // context must not pick the store up.
-  test.each(runtimes)(
-    "--unhandled-rejections=strict keeps the context for uncaughtException only (%s)",
-    async (_name, exe) => {
+  // --unhandled-rejections=strict and =throw route a rejection nobody listens for into
+  // uncaughtException. Node keeps the promise's context installed across the whole
+  // per-mode dispatch (lib/internal/process/promises.js), so the uncaughtException
+  // handler sees it too. It drains microtasks outside that window, so a continuation
+  // registered with no context must not pick the store up.
+  test.each(["strict", "throw"].flatMap(mode => runtimes.map(([name, exe]) => [mode, name, exe])))(
+    "--unhandled-rejections=%s keeps the context for uncaughtException only (%s)",
+    async (mode, _name, exe) => {
       await using proc = Bun.spawn({
         cmd: [
           exe,
-          "--unhandled-rejections=strict",
+          `--unhandled-rejections=${mode}`,
           "-e",
           `const { AsyncLocalStorage } = require("node:async_hooks");
         const als = new AsyncLocalStorage();
@@ -1401,12 +1401,11 @@ describe.concurrent("unhandledRejection async context", () => {
   );
 
   // A throwing unhandledRejection listener halts iteration (subsequent listeners are
-  // skipped) and reaches uncaughtException with the slot cleared. Node does the same, even
-  // with a persistent top-level enterWith("Y"), so the observable semantic is
-  // "undefined", not "whatever the drain's ambient was". The strict-mode direct
-  // dispatch above is the only path where uncaughtException sees the promise's context.
+  // skipped). Node restores the context the dispatch replaced before the throw propagates
+  // to uncaughtException. At a top-level drain that context is undefined, so the handler
+  // reads no store while a callback registered under the top-level enterWith("Y") still does.
   test.each(runtimes)(
-    "a throwing unhandledRejection listener halts later listeners and reaches uncaughtException with the slot cleared (%s)",
+    "a throwing unhandledRejection listener halts later listeners and reaches uncaughtException with the dispatch's context restored (%s)",
     async (_name, exe) => {
       await using proc = Bun.spawn({
         cmd: [
@@ -1442,6 +1441,90 @@ describe.concurrent("unhandledRejection async context", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  // enterWith() leaves its store in the ambient slot until the next microtask clears it.
+  // Every non-default mode drains microtasks inside the dispatch, so that clear can run
+  // while the dispatch still holds the pre-dispatch slot for its restore. The restore must
+  // not put the cleared store back: a callback registered with no context reads the slot
+  // as-is, and after the dispatch it must read nothing, as on node.
+  test.each(
+    ["warn", "none", "throw", "warn-with-error-code"].flatMap(mode => runtimes.map(([name, exe]) => [mode, name, exe])),
+  )(
+    "--unhandled-rejections=%s does not resurrect a stale enterWith() store after the dispatch (%s)",
+    async (mode, _name, exe) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          exe,
+          `--unhandled-rejections=${mode}`,
+          "-e",
+          `const { AsyncLocalStorage } = require("node:async_hooks");
+        const als = new AsyncLocalStorage();
+        const log = [];
+        const show = label => log.push(label + " store=" + JSON.stringify(als.getStore() ?? null));
+
+        // Registered before any context exists, so they read the ambient slot as-is.
+        process.on("exit", () => {
+          show("exit");
+          console.log(log.join(" | "));
+        });
+        process.on("warning", warning => show("warning(" + warning.name + ")"));
+
+        process.on("unhandledRejection", () => {
+          show("listener");
+          Promise.resolve().then(() => show("listener microtask"));
+        });
+
+        setTimeout(() => {
+          // "Y" stays in the ambient slot until the next microtask runs, and the rejection is
+          // dispatched before one does.
+          als.enterWith("Y");
+          als.run("S", () => {
+            Promise.reject(new Error("e"));
+          });
+        }, 1);`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const warnings = mode === "warn" ? `warning(UnhandledPromiseRejectionWarning) store="S" | `.repeat(2) : "";
+      expect(stdout).toBe(`listener store="S" | ${warnings}listener microtask store="S" | exit store=null\n`);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // With no listener, the default mode prints the rejection with the promise's context
+  // still installed, so an error whose stack the printer computes lazily sees the store.
+  test("the default printer runs with the promise's context installed", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { AsyncLocalStorage } = require("node:async_hooks");
+        const fs = require("node:fs");
+        const als = new AsyncLocalStorage();
+        als.run(7, () => {
+          const err = new Error("printed");
+          Object.defineProperty(err, "stack", {
+            get() {
+              fs.writeSync(1, "stack getter store=" + JSON.stringify(als.getStore() ?? null) + "\\n");
+              return "Error: printed\\n    at <anonymous>";
+            },
+          });
+          Promise.reject(err);
+        });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("stack getter store=7");
+    expect(stdout).not.toContain("store=null");
+    expect(stderr).toContain("printed");
+    expect(exitCode).toBe(1);
+  });
 
   // `bun test` (isBunTest) doesn't dispatch the process event at all; the test
   // runner's handler receives the rejection instead, and that path must not let

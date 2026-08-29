@@ -432,6 +432,8 @@ public:
     }
 
     bool asyncHooksNeedsCleanup = false;
+    // Bumped by each one-shot enterWith() cleanup (cleanupAsyncHooksData), so a save/restore spanning a drain can tell its saved value went stale.
+    uint32_t asyncContextClearCount = 0;
     double INSPECT_MAX_BYTES = 50;
     bool isInsideErrorPrepareStackTraceCallback = false;
 

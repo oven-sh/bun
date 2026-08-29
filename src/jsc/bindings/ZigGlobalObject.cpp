@@ -407,6 +407,7 @@ static void cleanupAsyncHooksData(JSC::VM& vm)
     auto* globalObject = defaultGlobalObject();
     globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
     globalObject->asyncHooksNeedsCleanup = false;
+    globalObject->asyncContextClearCount++;
     if (!globalObject->m_nextTickQueue) {
         vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
         checkIfNextTickWasCalledDuringMicrotask(vm);
@@ -3272,7 +3273,8 @@ RefPtr<Performance> GlobalObject::performance()
     return m_performance;
 }
 
-extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise);
+// `asyncContext` is the promise's rejection-time async context (empty for a promise rejected with none).
+extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise, JSC::EncodedJSValue asyncContext);
 
 void GlobalObject::handleRejectedPromises()
 {
@@ -3301,23 +3303,7 @@ void GlobalObject::handleRejectedPromises()
                 continue;
             inflight.index = i + 1;
 
-            // Contextless entries replay undefined rather than inherit a (possibly re-entrant) drain's context.
-            InternalFieldTuple* asyncContextData = nullptr;
-            JSC::JSValue restoreAsyncContext;
-            if (asyncContext || isAsyncContextTrackingEnabled()) {
-                if (!asyncContext)
-                    asyncContext = JSC::jsUndefined();
-                asyncContextData = m_asyncContextData.get();
-                restoreAsyncContext = asyncContextData->getInternalField(0);
-                asyncContextData->putInternalField(virtual_machine, 0, asyncContext);
-            }
-
-            Bun__handleRejectedPromise(this, promise);
-
-            // Restore before reporting anything that escaped the dispatch, as Node does.
-            if (asyncContextData)
-                asyncContextData->putInternalField(virtual_machine, 0, restoreAsyncContext);
-
+            Bun__handleRejectedPromise(this, promise, JSC::JSValue::encode(asyncContext));
             if (auto ex = scope.exception()) {
                 if (virtual_machine.isTerminationException(ex)) [[unlikely]]
                     return;

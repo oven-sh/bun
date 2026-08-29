@@ -115,8 +115,13 @@ pub fn vm_handle_queue_task_concurrently(
     unsafe { crate::VmHandle::borrow_ref(r).post_cpp_task(crate::LoopKind::Regular, task) };
 }
 
+/// `async_context`: the promise's rejection-time async context; empty installs undefined, so a contextless rejection does not inherit a re-entrant drain's.
 // HOST_EXPORT(Bun__handleRejectedPromise, c)
-pub fn handle_rejected_promise(global: &JSGlobalObject, promise: &mut JSPromise) {
+pub fn handle_rejected_promise(
+    global: &JSGlobalObject,
+    promise: &mut JSPromise,
+    async_context: JSValue,
+) {
     crate::mark_binding!();
 
     let result = promise.result(global.vm());
@@ -127,9 +132,12 @@ pub fn handle_rejected_promise(global: &JSGlobalObject, promise: &mut JSPromise)
         return;
     }
 
-    jsc_vm.unhandled_rejection(global, result, promise.to_js());
-    // The caller still has the promise's async context installed.
-    let _scope = crate::ClearedAsyncContextScope::new(global);
+    let rejection_context = if async_context.is_empty() {
+        JSValue::UNDEFINED
+    } else {
+        async_context
+    };
+    jsc_vm.unhandled_rejection_in_context(global, result, promise.to_js(), Some(rejection_context));
     jsc_vm.auto_garbage_collect();
 }
 

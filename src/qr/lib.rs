@@ -648,32 +648,14 @@ impl QrCode {
     }
 
     fn draw_codewords(&mut self, data: &[u8]) {
-        let s = i32::from(self.size);
-        let mut bit_index: usize = 0;
-        let mut right: i32 = s - 1;
-        while right >= 1 {
-            if right == 6 {
-                right = 5;
-            }
-            for v in 0..s {
-                for j in 0..2 {
-                    let x = right - j;
-                    let upward = ((right + 1) & 2) == 0;
-                    let y = if upward { s - 1 - v } else { v };
-                    let idx = self.idx(x, y);
-                    if self.is_function[idx] {
-                        continue;
-                    }
-                    if bit_index < data.len() * 8 {
-                        let byte = data[bit_index >> 3];
-                        self.modules[idx] = (byte >> (7 - (bit_index & 7))) & 1;
-                    }
-                    bit_index += 1;
+        let modules = &mut self.modules;
+        let visited =
+            for_each_data_module(i32::from(self.size), &self.is_function, |bit, idx, _, _| {
+                if bit < data.len() * 8 {
+                    modules[idx] = (data[bit >> 3] >> (7 - (bit & 7))) & 1;
                 }
-            }
-            right -= 2;
-        }
-        debug_assert!(bit_index >= data.len() * 8);
+            });
+        debug_assert!(visited >= data.len() * 8);
     }
 
     fn apply_mask(&mut self, mask: u8) {
@@ -800,6 +782,38 @@ fn finder_terminate(run_color: u8, mut run_len: i32, history: &mut [i32; 7], siz
     run_len += size;
     finder_push(history, run_len, size);
     finder_count(history)
+}
+
+/// Calls `f(bit, idx, x, y)` for every non-function module in codeword
+/// placement order: column pairs from the right edge leftward, skipping the
+/// timing column, alternating upward and downward. Returns the module count.
+fn for_each_data_module(
+    size: i32,
+    is_function: &[bool],
+    mut f: impl FnMut(usize, usize, i32, i32),
+) -> usize {
+    let mut bit = 0usize;
+    let mut right = size - 1;
+    while right >= 1 {
+        if right == 6 {
+            right = 5;
+        }
+        for v in 0..size {
+            for j in 0..2 {
+                let x = right - j;
+                let upward = ((right + 1) & 2) == 0;
+                let y = if upward { size - 1 - v } else { v };
+                let idx = (y * size + x) as usize;
+                if is_function[idx] {
+                    continue;
+                }
+                f(bit, idx, x, y);
+                bit += 1;
+            }
+        }
+        right -= 2;
+    }
+    bit
 }
 
 /// True where mask pattern `mask` (0..=7) inverts the module at `(x, y)`.
@@ -1095,34 +1109,15 @@ pub fn decode_matrix(modules: &[u8], size: usize) -> Result<Decoded, DecodeError
     // The encoder's own function-pattern map tells us which modules carry data.
     let is_fn = QrCode::with_function_patterns(version, ecc).is_function;
 
-    // Extract raw codewords in the same zig-zag order the encoder wrote them.
+    // Read the raw codewords back in the order the encoder placed them.
     let raw = raw_codeword_count(version);
     let mut code = vec![0u8; raw];
-    let mut bit_index: usize = 0;
-    let s = size as i32;
-    let mut right: i32 = s - 1;
-    while right >= 1 {
-        if right == 6 {
-            right = 5;
+    for_each_data_module(size as i32, &is_fn, |bit, _, x, y| {
+        if bit < raw * 8 {
+            let dark = get(x, y) ^ mask_bit(mask, x, y);
+            code[bit >> 3] |= u8::from(dark) << (7 - (bit & 7));
         }
-        for v in 0..s {
-            for j in 0..2 {
-                let x = right - j;
-                let upward = ((right + 1) & 2) == 0;
-                let y = if upward { s - 1 - v } else { v };
-                let idx = (y as usize) * size + (x as usize);
-                if is_fn[idx] {
-                    continue;
-                }
-                if bit_index < raw * 8 {
-                    let bit = get(x, y) ^ mask_bit(mask, x, y);
-                    code[bit_index >> 3] |= u8::from(bit) << (7 - (bit_index & 7));
-                }
-                bit_index += 1;
-            }
-        }
-        right -= 2;
-    }
+    });
 
     // Deinterleave into blocks and correct each with Reed-Solomon.
     let data = deinterleave_and_correct(version, ecc, &code)?;
@@ -1495,11 +1490,16 @@ fn parse_segments(data: &[u8], version: u8) -> Result<Vec<u8>, DecodeError> {
                 }
             }
             Mode::Kanji => {
-                // Emitted as Shift-JIS byte pairs.
+                // Emitted as Shift-JIS byte pairs. Kanji mode covers
+                // 0x8140..=0x9FFC and 0xE040..=0xEBBF; a 13-bit value can
+                // land between or past them.
                 for _ in 0..count {
                     let v = r.take(13)?;
                     let mut w = (v / 0xC0) << 8 | (v % 0xC0);
                     w += if w < 0x1F00 { 0x8140 } else { 0xC140 };
+                    if !(0x8140..=0x9FFC).contains(&w) && !(0xE040..=0xEBBF).contains(&w) {
+                        return Err(DecodeError::InvalidStructure);
+                    }
                     out.push((w >> 8) as u8);
                     out.push(w as u8);
                 }
@@ -1740,6 +1740,16 @@ mod tests {
         assert_eq!(
             parse_segments(&[0x10, 0x08], 1),
             Err(DecodeError::InvalidStructure)
+        );
+        // kanji mode, count=1, value 5951 → 0x9FFF, past the first range.
+        assert_eq!(
+            parse_segments(&[0x80, 0x1B, 0x9F, 0x80], 1),
+            Err(DecodeError::InvalidStructure)
+        );
+        // kanji mode, count=1, value 5952 → 0xE040, the start of the second range.
+        assert_eq!(
+            parse_segments(&[0x80, 0x1B, 0xA0, 0x00], 1),
+            Ok(vec![0xE0, 0x40])
         );
     }
 }

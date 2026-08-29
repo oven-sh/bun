@@ -400,19 +400,14 @@ fn generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         OutputFormat::Object => {
             let ec =
                 bun_jsc::bun_string_jsc::create_utf8_for_js(global, ecc_name(qr.ecc()).as_bytes())?;
+            let (version, size, mask) = (qr.version(), qr.size(), qr.mask());
+            let matrix = JSUint8Array::from_bytes(global, qr.into_modules().into_boxed_slice())?;
             let obj = JSValue::create_empty_object(global, 5);
-            obj.put(
-                global,
-                b"version",
-                JSValue::js_number(f64::from(qr.version())),
-            );
-            obj.put(global, b"size", JSValue::js_number(f64::from(qr.size())));
+            obj.put(global, b"version", JSValue::js_number(f64::from(version)));
+            obj.put(global, b"size", JSValue::js_number(f64::from(size)));
             obj.put(global, b"errorCorrection", ec);
-            obj.put(global, b"mask", JSValue::js_number(f64::from(qr.mask())));
-            // Last: the typed-array constructor opens a throw scope, and the
-            // host_fn epilogue is what checks it.
-            let modules = qr.into_modules().into_boxed_slice();
-            obj.put(global, b"matrix", JSUint8Array::from_bytes(global, modules));
+            obj.put(global, b"mask", JSValue::js_number(f64::from(mask)));
+            obj.put(global, b"matrix", matrix);
             Ok(obj)
         }
     }
@@ -481,6 +476,7 @@ fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
     let text = bun_jsc::bun_string_jsc::create_utf8_for_js(global, &decoded.bytes)?;
     let ec = bun_jsc::bun_string_jsc::create_utf8_for_js(global, ecc_name(decoded.ecc).as_bytes())?;
+    let bytes = JSUint8Array::from_bytes(global, decoded.bytes.into_boxed_slice())?;
     let obj = JSValue::create_empty_object(global, 5);
     obj.put(global, b"text", text);
     obj.put(
@@ -490,12 +486,6 @@ fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     );
     obj.put(global, b"errorCorrection", ec);
     obj.put(global, b"mask", JSValue::js_number(f64::from(decoded.mask)));
-    // Last: the typed-array constructor opens a throw scope, and the
-    // host_fn epilogue is what checks it.
-    obj.put(
-        global,
-        b"bytes",
-        JSUint8Array::from_bytes(global, decoded.bytes.into_boxed_slice()),
-    );
+    obj.put(global, b"bytes", bytes);
     Ok(obj)
 }

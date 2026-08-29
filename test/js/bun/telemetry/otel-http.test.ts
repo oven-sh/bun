@@ -903,6 +903,37 @@ describe("node:http", () => {
     expect([server.name, server.status.code, server.attributes["error.type"]]).toEqual(["GET", 0, undefined]);
   });
 
+  test("node:http CONNECT through a proxy: client span names the proxy, server span ends at the tunnel handoff", async () => {
+    const proxy = http.createServer((req, res) => res.end("plain"));
+    proxy.on("connect", (req, socket) => {
+      socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      socket.on("data", d => socket.write(d));
+    });
+    await new Promise<void>(r => proxy.listen(0, r));
+    const port = (proxy.address() as any).port;
+    await new Promise<void>((resolve, reject) => {
+      const req = http.request({ host: "127.0.0.1", port, method: "CONNECT", path: "example.com:443" });
+      req.on("connect", (res, socket) => {
+        socket.destroy();
+        resolve();
+      });
+      req.on("error", reject);
+      req.end();
+    });
+    const got = await collect(2);
+    await new Promise<void>(r => proxy.close(() => r()));
+    const [client] = byName(got, "bun.http.client");
+    const [server] = byName(got, "bun.http.server");
+    expect(client.attributes).toMatchObject({
+      "http.request.method": "CONNECT",
+      "url.full": `http://127.0.0.1:${port}`,
+      "server.address": "127.0.0.1",
+      "server.port": port,
+      "http.response.status_code": 200,
+    });
+    expect([server.name, server.status.code, server.attributes["error.type"]]).toEqual(["CONNECT", 0, undefined]);
+  });
+
   test("node:http and fetch describe an unknown method the same way", async () => {
     using server = Bun.serve({ port: 0, fetch: () => new Response("x") });
     await (await fetch(server.url, { method: "PROPFIND" })).text();

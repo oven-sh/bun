@@ -232,7 +232,9 @@ function otelClientRequestStart(req, protocol, host, port, arrayHeaders?) {
   const [stub, traceparent, tracestate, baggage] = started;
   req[kOtelSpan] = stub;
   const defaultPort = protocol === "https:" ? 443 : 80;
-  req[kOtelUrl] = protocol + "//" + formatAuthority(host, port, defaultPort) + req.path;
+  // CONNECT's request-target is the tunnel authority, not a path on this server.
+  req[kOtelUrl] =
+    protocol + "//" + formatAuthority(host, port, defaultPort) + (req.method === "CONNECT" ? "" : req.path);
   // traceparent: set; tracestate: string = set, null = remove, undefined = leave; baggage: set if given.
   if (arrayHeaders !== undefined) {
     arrayHeaders = ArrayPrototypeSlice.$call(arrayHeaders);

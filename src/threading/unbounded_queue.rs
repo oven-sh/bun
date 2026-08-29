@@ -339,7 +339,14 @@ impl<T: Node> UnboundedQueue<T> {
 /// [`drain`](Self::drain), so callers never see a raw node.
 pub struct BoxQueue<V> {
     inner: UnboundedQueue<BoxNode<V>>,
+    /// Owns the queued `V`s: auto-`Send` only if `V: Send`.
+    _values: core::marker::PhantomData<Box<V>>,
 }
+
+// SAFETY: channel semantics — `push`/`drain` are the internally synchronized
+// MPSC operations and only ever move a `V` from the pushing thread to the
+// draining one; no `&V` is shared, so `V: Send` suffices.
+unsafe impl<V: Send> Sync for BoxQueue<V> {}
 
 /// The heap node behind [`BoxQueue`].
 pub struct BoxNode<V> {
@@ -361,6 +368,7 @@ impl<V> Default for BoxQueue<V> {
     fn default() -> Self {
         Self {
             inner: UnboundedQueue::default(),
+            _values: core::marker::PhantomData,
         }
     }
 }

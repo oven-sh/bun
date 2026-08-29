@@ -6,6 +6,7 @@
 
 STACK_OF(X509) *us_get_root_extra_cert_instances();
 STACK_OF(X509) *us_get_root_system_cert_instances();
+X509_LAZY_CERT_SET *us_get_bundled_root_cert_set();
 
 #else
 #define CPPDECL extern

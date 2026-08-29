@@ -16,7 +16,6 @@
 #include <stdio.h>
 #include <limits.h>
 #endif
-static const int root_certs_size = sizeof(root_certs) / sizeof(root_certs[0]);
 
 extern "C" void BUN__warn__extra_ca_load_failed(const char* filename, const char* error_msg);
 
@@ -51,28 +50,6 @@ static bool us_should_use_system_ca() {
 // want, and use this function to avoid it.
 int us_no_password_callback(char *buf, int size, int rwflag, void *u) {
   return 0;
-}
-
-static X509 *
-us_ssl_ctx_get_X509_without_callback_from(struct us_cert_string_t content) {
-  X509 *x = NULL;
-  BIO *in;
-
-  ERR_clear_error(); // clear error stack for SSL_CTX_use_certificate()
-
-  in = BIO_new_mem_buf(content.str, content.len);
-  if (in == NULL) {
-    OPENSSL_PUT_ERROR(SSL, ERR_R_BUF_LIB);
-  } else {
-    x = PEM_read_bio_X509(in, NULL, us_no_password_callback, NULL);
-    if (x == NULL) {
-      OPENSSL_PUT_ERROR(SSL, ERR_R_PEM_LIB);
-    }
-
-    // NOTE: PEM_read_bio_X509 allocates, so input BIO must be freed.
-    BIO_free(in);
-  }
-  return x;
 }
 
 static STACK_OF(X509) *us_ssl_ctx_load_all_certs_from_file(const char *filename) {
@@ -133,62 +110,36 @@ end:
   return NULL;
 }
 
-static void us_internal_init_root_certs(
-    X509 *root_cert_instances[root_certs_size],
-    STACK_OF(X509) *&root_extra_cert_instances) {
-  // This used to use an atomic_flag spinlock together with an atomic_bool.
-  // The bool was set to true via atomic_exchange BEFORE the certificates were
-  // actually parsed, so concurrent callers (e.g. Workers calling
-  // tls.getCACertificates() or opening a TLS connection) observed
-  // "initialized" and returned early while the STACK_OF(X509) pointers were
-  // still being pushed to and realloc'd by this thread. That's a data race
-  // which at best yields truncated/stale certificate lists and at worst
-  // crashes inside BoringSSL (e.g. when a torn read hands a freed/garbage
-  // pointer to PEM encode, or heap corruption from the concurrent access
-  // lands in the middle of X509 parsing).
-  //
-  // std::call_once does exactly what we want: initialization runs exactly
-  // once and every other caller blocks until it has fully completed.
-  static std::once_flag root_cert_instances_once;
-  std::call_once(root_cert_instances_once, [&]() {
-    for (size_t i = 0; i < root_certs_size; i++) {
-      root_cert_instances[i] =
-          us_ssl_ctx_get_X509_without_callback_from(root_certs[i]);
-    }
-
-    // get extra cert option from environment variable
-    const char *extra_certs = getenv("NODE_EXTRA_CA_CERTS");
-    if (extra_certs && extra_certs[0]) {
-      root_extra_cert_instances = us_ssl_ctx_load_all_certs_from_file(extra_certs);
-    }
+// The bundled Mozilla roots, indexed by subject but not parsed: BoringSSL
+// parses one the first time a chain names it (X509_LAZY_CERT_SET, oven-sh/boringssl).
+X509_LAZY_CERT_SET *us_get_bundled_root_cert_set() {
+  static X509_LAZY_CERT_SET *set = nullptr;
+  static std::once_flag once;
+  std::call_once(once, []() {
+    set = X509_LAZY_CERT_SET_new_static(kBundledRootCerts, kBundledRootCertLens,
+                                        BUNDLED_ROOT_CERT_COUNT);
   });
+  return set;
 }
 
-extern "C" int us_internal_raw_root_certs(struct us_cert_string_t **out) {
-  *out = root_certs;
-  return root_certs_size;
+extern "C" size_t us_bundled_root_certs_der(const uint8_t *const **out_certs,
+                                           const size_t **out_lens) {
+  *out_certs = kBundledRootCerts;
+  *out_lens = kBundledRootCertLens;
+  return BUNDLED_ROOT_CERT_COUNT;
 }
 
-struct us_default_ca_certificates {
-  X509 *root_cert_instances[root_certs_size];
-  STACK_OF(X509) *root_extra_cert_instances;
-};
-
-us_default_ca_certificates* us_get_default_ca_certificates() {
-  static us_default_ca_certificates default_ca_certificates = {{NULL}, NULL};
-
-  us_internal_init_root_certs(default_ca_certificates.root_cert_instances,
-                              default_ca_certificates.root_extra_cert_instances);
-
-  return &default_ca_certificates;
-}
-
+// std::call_once, not a flag: concurrent Workers must block until the list is
+// fully parsed rather than observe a half-built STACK_OF(X509).
 STACK_OF(X509) *us_get_root_extra_cert_instances() {
-  // No NODE_EXTRA_CA_CERTS: nothing to report, and no reason to parse the bundled roots yet (that happens with the
-  // first TLS context); tls.getCACertificates('extra') is often asked at startup before any connection is made.
   const char *extra_certs = getenv("NODE_EXTRA_CA_CERTS");
   if (!extra_certs || !extra_certs[0]) return nullptr;
-  return us_get_default_ca_certificates()->root_extra_cert_instances;
+  static STACK_OF(X509) *root_extra_cert_instances = nullptr;
+  static std::once_flag once;
+  std::call_once(once, [&]() {
+    root_extra_cert_instances = us_ssl_ctx_load_all_certs_from_file(extra_certs);
+  });
+  return root_extra_cert_instances;
 }
 
 // Single source of truth for the OS trust store. Loaded on first demand,
@@ -222,19 +173,13 @@ extern "C" X509_STORE *us_get_default_ca_store() {
     return NULL;
   }
 
-  us_default_ca_certificates *default_ca_certificates = us_get_default_ca_certificates();
-  X509** root_cert_instances = default_ca_certificates->root_cert_instances;
-  STACK_OF(X509) *root_extra_cert_instances = default_ca_certificates->root_extra_cert_instances;
-
-  // load all root_cert_instances on the default ca store
-  for (size_t i = 0; i < root_certs_size; i++) {
-    X509 *cert = root_cert_instances[i];
-    if (cert == NULL)
-      continue;
-    X509_up_ref(cert);
-    X509_STORE_add_cert(store, cert);
+  X509_LAZY_CERT_SET *bundled = us_get_bundled_root_cert_set();
+  if (bundled == NULL || !X509_STORE_add_lazy_cert_set(store, bundled)) {
+    X509_STORE_free(store);
+    return NULL;
   }
 
+  STACK_OF(X509) *root_extra_cert_instances = us_get_root_extra_cert_instances();
   if (root_extra_cert_instances) {
     for (int i = 0; i < sk_X509_num(root_extra_cert_instances); i++) {
       X509 *cert = sk_X509_value(root_extra_cert_instances, i);
@@ -259,10 +204,8 @@ extern "C" X509_STORE *us_get_default_ca_store() {
 
 // Process-wide immutable default store. Safe to share across SSL_CTXs that
 // don't add per-config CAs (the user-`ca` path in build_raw populates the
-// SSL_CTX's own private, initially-empty store instead). This makes the
-// ~150-root build a once-per-process cost instead of once-per-SSL_CTX, which
-// is what kept Bun.connect({tls:true}) under the node-tls-server.test.ts
-// 100ms cold-path budget in debug+ASAN.
+// SSL_CTX's own private, initially-empty store instead), so roots parsed for
+// one connection's chain are already there for the next.
 extern "C" X509_STORE *us_get_shared_default_ca_store() {
   static X509_STORE *shared = nullptr;
   static std::once_flag once;

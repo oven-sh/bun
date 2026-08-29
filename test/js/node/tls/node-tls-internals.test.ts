@@ -1,5 +1,6 @@
 import { canonicalizeIP } from "bun:internal-for-testing";
 import { createTest } from "node-harness";
+import { X509Certificate } from "node:crypto";
 import { rootCertificates } from "tls";
 const { describe, expect } = createTest(import.meta.path);
 
@@ -32,5 +33,25 @@ describe("NodeTLS.cpp", () => {
       expect(cert).toStartWith("-----BEGIN CERTIFICATE-----");
       expect(cert).toEndWith("-----END CERTIFICATE-----");
     }
+  });
+
+  // The bundled roots are embedded as DER and tls.rootCertificates re-encodes
+  // them; the strings must stay exactly what they were when they were embedded
+  // as PEM text (72-column body, trailing newline before the END line, none
+  // after), and each must be the certificate it claims to be.
+  test("rootCertificates are the DER roots re-encoded in the historical format", () => {
+    for (const pem of rootCertificates) {
+      const lines = pem.split("\n");
+      expect(lines[0]).toBe("-----BEGIN CERTIFICATE-----");
+      expect(lines.at(-1)).toBe("-----END CERTIFICATE-----");
+      const body = lines.slice(1, -1);
+      expect(body.length).toBeGreaterThan(0);
+      for (let i = 0; i < body.length - 1; i++) expect(body[i].length).toBe(72);
+      expect(body.at(-1)!.length).toBeGreaterThan(0);
+      expect(body.at(-1)!.length).toBeLessThanOrEqual(72);
+      const der = new X509Certificate(pem).raw;
+      expect(body.join("")).toBe(der.toString("base64"));
+    }
+    expect(new Set(rootCertificates).size).toBe(rootCertificates.length);
   });
 });

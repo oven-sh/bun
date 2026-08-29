@@ -129,7 +129,8 @@ test.skipIf(!perl)("generate-root-certs.pl keeps roots with an inline trust-obje
   const generated = readFileSync(join(String(dir), "root_certs.h"), "utf8");
 
   // Control root + inline-comment root must both survive.
-  expect(generated).toContain("DirectTrustRoot");
-  expect(generated).toContain("DistrustAfterRoot");
-  expect(generated.match(/-----BEGIN CERTIFICATE-----/g) ?? []).toHaveLength(2);
+  expect(generated).toContain("/* DirectTrustRoot */");
+  expect(generated).toContain("/* DistrustAfterRoot */");
+  expect(generated).toContain("#define BUNDLED_ROOT_CERT_COUNT 2\n");
+  expect(generated.match(/kBundledRootCertsDER \+ \d+,/g) ?? []).toHaveLength(2);
 });

@@ -210,8 +210,9 @@ print CRT "// for TLS certificate validation.\n";
 print CRT "//\n";
 print CRT "// The certificates come from Mozilla, specifically NSS's `certdata.txt` file.\n";
 print CRT "//\n";
-print CRT "// The PEM encodings of the certificates are converted to C strings, and committed\n";
-print CRT "// in `src/crypto/root_certs.h`.\n";
+print CRT "// The DER encodings of the certificates are committed in `src/crypto/root_certs.h`;\n";
+print CRT "// they are indexed by subject at startup and each is parsed only when a\n";
+print CRT "// verification first names it (see root_certs.cpp).\n";
 print CRT "//\n";
 print CRT "// When to update\n";
 print CRT "//\n";
@@ -229,8 +230,10 @@ print CRT "//    `src/crypto/root_certs.h`.\n";
 print CRT "//  * Using `git diff-files` to determine which certificate have been added and/or\n";
 print CRT "//    removed.\n";
 print CRT "//  \n";
-print CRT "#include \"libusockets.h\"\n";
-print CRT "static struct us_cert_string_t root_certs[] = {\n";
+print CRT "#include <stddef.h>\n#include <stdint.h>\n\n// clang-format off\nstatic const uint8_t kBundledRootCertsDER[] = {\n";
+my @cert_offsets;
+my @cert_lens;
+my $der_offset = 0;
 while (<TXT>) {
   if (/\*\*\*\*\* BEGIN LICENSE BLOCK \*\*\*\*\*/) {
     print CRT;
@@ -294,17 +297,16 @@ while (<TXT>) {
       $skipnum ++;
     } else {
       my $encoded = MIME::Base64::encode_base64($data, '');
-      my $encoded_len_calc = $encoded;
-      $encoded_len_calc =~ s/(.{1,${opt_w}})/$1\n/g;
-
-      my $cert_len = length($encoded_len_calc) + 53;
-      $encoded =~ s/(.{1,${opt_w}})/"$1\\n"\n/g;
-      
-      my $pem = "{.str=\"-----BEGIN CERTIFICATE-----\\n\"\n"
+      $encoded =~ s/(.{1,${opt_w}})/$1\n/g;
+      my $pem = "-----BEGIN CERTIFICATE-----\n"
               . $encoded
-              . "\"-----END CERTIFICATE-----\",.len="
-              . $cert_len
-              ."},\n";
+              . "-----END CERTIFICATE-----\n";
+      my $der_hex = join(",", map { sprintf("0x%02x", $_) } unpack("C*", $data));
+      $der_hex =~ s/((?:0x[0-9a-f]{2},){16})/$1\n/g;
+      $der_hex =~ s/,\n?$//;
+      push @cert_offsets, $der_offset;
+      push @cert_lens, length($data);
+      $der_offset += length($data);
       print CRT "\n/* $caname */\n";
 
       my $maxStringLength = length($caname);
@@ -316,7 +318,7 @@ while (<TXT>) {
         }
       }
       if (!$opt_t) {
-        print CRT $pem;
+        print CRT $der_hex . ",\n";
       } else {
         my $pipe = "";
         foreach my $hash (@included_signature_algorithms) {
@@ -350,6 +352,12 @@ while (<TXT>) {
     }
   }
 }
+print CRT "};\n\n";
+print CRT "#define BUNDLED_ROOT_CERT_COUNT $certnum\n\n";
+print CRT "static const uint8_t *const kBundledRootCerts[BUNDLED_ROOT_CERT_COUNT] = {\n";
+print CRT "  kBundledRootCertsDER + $_,\n" foreach @cert_offsets;
+print CRT "};\n\nstatic const size_t kBundledRootCertLens[BUNDLED_ROOT_CERT_COUNT] = {\n";
+print CRT "  $_,\n" foreach @cert_lens;
 print CRT "};\n";
 close(TXT) or die "Couldn't close $txt: $!\n";
 close(CRT) or die "Couldn't close $crt.~: $!\n";

@@ -19,26 +19,41 @@
 #include "openssl/pem.h"
 #include "openssl/x509.h"
 #include "../../packages/bun-usockets/src/crypto/root_certs_header.h"
+#include "wtf/SIMDUTF.h"
 
 namespace Bun {
 
 using namespace JSC;
+
+// tls.rootCertificates format: 72-column base64, no trailing newline.
+static WTF::String pemFromDER(std::span<const uint8_t> der)
+{
+    static constexpr auto header = "-----BEGIN CERTIFICATE-----\n"_s;
+    static constexpr auto footer = "-----END CERTIFICATE-----"_s;
+    static constexpr size_t lineLength = 72;
+    size_t bodyLength = simdutf::base64_length_from_binary_with_lines(der.size(), simdutf::base64_default, lineLength);
+    std::span<Latin1Character> buffer;
+    auto result = WTF::String::createUninitialized(header.length() + bodyLength + 1 + footer.length(), buffer);
+    memcpySpan(buffer, header.span8());
+    size_t offset = header.length();
+    offset += simdutf::binary_to_base64_with_lines(reinterpret_cast<const char*>(der.data()), der.size(), reinterpret_cast<char*>(buffer.data() + offset), lineLength, simdutf::base64_default);
+    buffer[offset++] = '\n';
+    memcpySpan(buffer.subspan(offset), footer.span8());
+    ASSERT(offset + footer.length() == buffer.size());
+    return result;
+}
 
 JSC_DEFINE_HOST_FUNCTION(getBundledRootCertificates, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    struct us_cert_string_t* out;
-    auto size = us_raw_root_certs(&out);
-    if (size < 0) {
-        return JSValue::encode(jsUndefined());
-    }
+    const uint8_t* const* certs;
+    const size_t* lens;
+    size_t size = us_bundled_root_certs_der(&certs, &lens);
     auto rootCertificates = JSC::JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), size);
-    for (auto i = 0; i < size; i++) {
-        auto raw = out[i];
-        auto str = WTF::String::fromUTF8(std::span { raw.str, raw.len });
-        rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
+    for (size_t i = 0; i < size; i++) {
+        rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, pemFromDER({ certs[i], lens[i] })));
         RETURN_IF_EXCEPTION(scope, {});
     }
 

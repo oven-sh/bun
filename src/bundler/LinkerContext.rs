@@ -353,6 +353,61 @@ impl<'a> LinkerContext<'a> {
                 .is_entry_point()
     }
 
+    /// The parser's verdict on a file: `ExplicitStrictMode` for a `"use strict"`
+    /// directive, an implicit kind for ES module syntax (`import`, `export`,
+    /// top-level `await`), `SloppyMode` otherwise.
+    fn module_strict_mode(&self, source_index: usize) -> bun_ast::StrictModeKind {
+        self.graph.ast.items_module_scope()[source_index].strict_mode
+    }
+
+    /// A file whose code is strict, or that has no code of its own to be sloppy
+    /// with: the runtime helpers (strict-safe, they run strict in esm output)
+    /// and data loaders such as JSON, whose code the bundler generates.
+    fn file_is_strict(&self, source_index: usize) -> bool {
+        source_index == Index::RUNTIME.value() as usize
+            || !self.parse_graph().input_files.items_loader()[source_index].is_javascript_like()
+            || self.module_strict_mode(source_index) != bun_ast::StrictModeKind::SloppyMode
+    }
+
+    /// Whether a wrapped file needs a `"use strict"` directive at the top of its
+    /// `__commonJS` or `__esm` closure body. The esm output is a module and is
+    /// strict already. The cjs and iife outputs are a CommonJS module and a
+    /// script: sloppy unless a directive says otherwise, so a strict file's code
+    /// keeps its strictness only through a directive in the closure.
+    pub(crate) fn wrapper_needs_use_strict(&self, source_index: usize) -> bool {
+        matches!(self.options.output_format, Format::Cjs | Format::Iife)
+            && self.module_strict_mode(source_index) != bun_ast::StrictModeKind::SloppyMode
+    }
+
+    /// Whether an entry point chunk needs a `"use strict"` directive at its top.
+    /// The entry point's statements are the chunk's top-level statements, so
+    /// the chunk's strictness is the entry point's. A directive the entry file
+    /// spelled out always applies to the output, as in esbuild. An ES module
+    /// entry file is strict with no directive to copy. Every other file in the
+    /// chunk is printed into the same scope, so its code is made strict only
+    /// when all of them are strict too: a sloppy CommonJS file must not turn
+    /// strict because of a directive it did not write.
+    pub(crate) fn entry_chunk_needs_use_strict(&self, chunk: &Chunk) -> bool {
+        let entry_strict_mode = self.module_strict_mode(chunk.entry_point.source_index() as usize);
+        match self.options.output_format {
+            Format::Esm => false,
+            // The dev server wraps every module in its own closure. A chunk-level
+            // directive would apply to all of them, so only a spelled-out one is kept.
+            Format::InternalBakeDev => {
+                entry_strict_mode == bun_ast::StrictModeKind::ExplicitStrictMode
+            }
+            Format::Cjs | Format::Iife => match entry_strict_mode {
+                bun_ast::StrictModeKind::SloppyMode => false,
+                bun_ast::StrictModeKind::ExplicitStrictMode => true,
+                _ => chunk
+                    .files_with_parts_in_chunk
+                    .keys()
+                    .iter()
+                    .all(|&source_index| self.file_is_strict(source_index as usize)),
+            },
+        }
+    }
+
     /// `"sideEffects": false` (or the resolver's equivalent), unless
     /// `--ignore-dce-annotations` says not to trust it.
     pub(crate) fn file_has_no_side_effects(&self, source_index: u32) -> bool {
@@ -4285,6 +4340,14 @@ impl InsideWrapperPrefix {
     pub(crate) fn append_non_dependency_slice(&mut self, stmts: &[Stmt]) -> Result<(), AllocError> {
         self.stmts.extend_from_slice(stmts);
         Ok(())
+    }
+
+    /// A directive is only a directive as the first statement of the wrapper
+    /// body, so it goes ahead of the `init_*()` dependency calls, which are
+    /// inserted at `sync_dependencies_end`.
+    pub(crate) fn append_directive(&mut self, stmt: Stmt) {
+        self.stmts.insert(0, stmt);
+        self.sync_dependencies_end += 1;
     }
 
     fn append_sync_dependency(&mut self, call_expr: Expr) -> Result<(), AllocError> {

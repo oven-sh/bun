@@ -252,26 +252,18 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         u32::MAX
     };
 
-    let output_format = c.options.output_format;
-
     // The top-level directive must come first (the non-wrapped case is handled
     // by the chunk generation code, although only for the entry point)
     if flags.wrap != WrapKind::None
-        && ast
-            .flags
-            .contains(AstFlags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE)
-        && !chunk.is_entry_point()
-        && !output_format.is_always_strict_mode()
+        && !c.graph.files.items_entry_point_kind()[source_index].is_entry_point()
+        && c.wrapper_needs_use_strict(source_index)
     {
-        stmts
-            .inside_wrapper_prefix
-            .append_non_dependency(Stmt::alloc(
-                S::Directive {
-                    value: bun_ast::StoreStr::new(b"use strict"),
-                },
-                bun_ast::Loc::EMPTY,
-            ))
-            .expect("unreachable");
+        stmts.inside_wrapper_prefix.append_directive(Stmt::alloc(
+            S::Directive {
+                value: bun_ast::StoreStr::new(b"use strict"),
+            },
+            bun_ast::Loc::EMPTY,
+        ));
     }
 
     // `convert_stmts_for_chunk` takes `&mut c` inside the loop body, so capture
@@ -779,6 +771,15 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         // resized in this loop; `end <= i < len`.
                         inner_stmts.slice_mut()[end] = transformed;
                         end += 1;
+                    }
+                    // Directives alone are not a body. Everything else was hoisted,
+                    // so the closure stays empty, as the parser assumed when it
+                    // allocated no wrapper symbol (`needs_wrapper_ref`).
+                    if inner_stmts.slice()[..end]
+                        .iter()
+                        .all(|stmt| matches!(stmt.data, StmtData::SDirective(_)))
+                    {
+                        end = 0;
                     }
                     inner_stmts.truncate(end);
                 }

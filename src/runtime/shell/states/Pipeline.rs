@@ -1,3 +1,4 @@
+use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{
     Interpreter, Node, NodeId, Pipe, ShellExecEnv, ShellExecEnvKind, StateKind, closefd, log,
@@ -11,7 +12,6 @@ use crate::shell::states::cond_expr::CondExpr;
 use crate::shell::states::r#if::If;
 use crate::shell::states::subshell::Subshell;
 use crate::shell::yield_::Yield;
-use crate::shell::{ExitCode, ShellErr};
 
 pub struct Pipeline {
     pub(crate) base: Base,
@@ -114,12 +114,7 @@ impl Pipeline {
 
         if cmd_count == 0 {
             // An empty pipeline finishes with 0.
-            // Return `Next(this)` so the trampoline sees `is_done`, removes us
-            // from the pipeline stack, and `next()` bubbles to the parent.
-            // Calling `child_done(parent, ..)` directly here would free this
-            // node while it's still on `pipeline_stack`.
-            interp.as_pipeline_mut(this).state = PipelineState::Done { exit_code: 0 };
-            return Yield::Next(this);
+            return Self::finish(interp, this, 0);
         }
 
         // First entry: allocate pipes + cmd slots.
@@ -143,13 +138,12 @@ impl Pipeline {
                             closefd(p[0]);
                             closefd(p[1]);
                         }
-                        // Leave `StartingCmds` so `drain_pipelines` doesn't
-                        // re-enter `next_starting` and retry the failing
-                        // syscall in a loop; stay suspended until the error
-                        // write completes.
-                        interp.as_pipeline_mut(this).state = PipelineState::WaitingWriteErr;
-                        interp.throw(ShellErr::new_sys(&e));
-                        return Yield::failed();
+                        let sys_err = e.to_shell_system_error();
+                        return Self::write_failing_error(
+                            interp,
+                            this,
+                            format_args!("bun: {}\n", sys_err.message),
+                        );
                     }
                 }
             }
@@ -226,12 +220,8 @@ impl Pipeline {
         } {
             Ok(d) => d,
             Err(e) => {
-                // On dupe failure,
-                // close the pipe ends not yet wrapped in an IOReader/IOWriter,
-                // deref `cmd_io`, transition to `.waiting_write_err`, and
-                // suspend. Without the state transition `drain_pipelines`
-                // would re-enter at the same `idx`, re-wrapping the same fds
-                // in fresh IOReader/IOWriter each iteration.
+                // Drop `child_io` (its IOReader/IOWriter own two of the pipe
+                // ends) and close the pipe ends no child has claimed yet.
                 drop(child_io);
                 {
                     let me = interp.as_pipeline_mut(this);
@@ -244,10 +234,13 @@ impl Pipeline {
                             closefd(p[1]);
                         }
                     }
-                    me.state = PipelineState::WaitingWriteErr;
                 }
-                interp.throw(ShellErr::new_sys(&e));
-                return Yield::failed();
+                let sys_err = e.to_shell_system_error();
+                return Self::write_failing_error(
+                    interp,
+                    this,
+                    format_args!("bun: {}\n", sys_err.message),
+                );
             }
         };
 
@@ -268,25 +261,67 @@ impl Pipeline {
         interp.start_node(child)
     }
 
+    /// Mark the pipeline done with `exit_code`. Returns `Next(this)` so the
+    /// trampoline sees `is_done`, removes us from `pipeline_stack`, and
+    /// `next()` reports to the parent. Calling `child_done(parent, ..)`
+    /// directly would free this node while it is still on `pipeline_stack`.
+    fn finish(interp: &Interpreter, this: NodeId, exit_code: ExitCode) -> Yield {
+        interp.as_pipeline_mut(this).state = PipelineState::Done { exit_code };
+        Yield::Next(this)
+    }
+
+    /// Same shape as `Builtin::cmd_write_failing_error`: `.fd` stderr
+    /// enqueues an async write and parks in `WaitingWriteErr` (resumed by
+    /// `on_io_writer_chunk`); otherwise append to the captured stderr buffer
+    /// and finish with exit 1.
+    fn write_failing_error(
+        interp: &Interpreter,
+        this: NodeId,
+        args: core::fmt::Arguments<'_>,
+    ) -> Yield {
+        use std::io::Write as _;
+        let mut buf = Vec::new();
+        let _ = buf.write_fmt(args);
+        if interp.as_pipeline(this).io.stderr.needs_io().is_some() {
+            // Only the fd arm transitions state.
+            interp.as_pipeline_mut(this).state = PipelineState::WaitingWriteErr;
+            let child = io_writer::ChildPtr::new(this, io_writer::WriterTag::Pipeline);
+            // `OutKind::Fd` guaranteed by `needs_io()`.
+            if let OutKind::Fd(fd) = &interp.as_pipeline(this).io.stderr {
+                return fd.writer.enqueue(child, fd.captured, &buf);
+            }
+            unreachable!()
+        }
+        if let OutKind::Pipe = &interp.as_pipeline(this).io.stderr {
+            // SAFETY: single trampoline frame; no other borrow of the env's
+            // (or its parent's) stderr buffer is live.
+            let stderr = unsafe {
+                interp
+                    .as_pipeline_mut(this)
+                    .base
+                    .shell_mut()
+                    .buffered_stderr_mut()
+            };
+            stderr.extend_from_slice(&buf);
+        }
+        Self::finish(interp, this, 1)
+    }
+
     /// IOWriter completion callback for the error message written in
-    /// `WaitingWriteErr`: throw on write failure, otherwise finish the
-    /// pipeline with exit code 1.
+    /// `WaitingWriteErr`. The pipeline finishes with exit code 1 whether or
+    /// not the write succeeded: the parent always needs a completion, and a
+    /// failed stderr write has nowhere else to be reported.
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,
         _written: usize,
-        err: Option<bun_sys::SystemError>,
+        _err: Option<bun_sys::SystemError>,
     ) -> Yield {
         debug_assert!(matches!(
             interp.as_pipeline(this).state,
             PipelineState::WaitingWriteErr
         ));
-        if let Some(e) = err {
-            interp.throw(ShellErr::from_system(e));
-            return Yield::failed();
-        }
-        let parent = interp.as_pipeline(this).base.parent;
-        interp.child_done(parent, this, 1)
+        Self::finish(interp, this, 1)
     }
 
     pub(crate) fn child_done(
@@ -378,6 +413,5 @@ impl Pipeline {
         // child; when those drop they close. Any unclaimed ones (error path)
         // were closed inline above.
         me.pipes = None;
-        me.base.end_scope();
     }
 }

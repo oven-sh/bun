@@ -73,8 +73,12 @@ test("version is number with dot", async () => {
 
   let [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
+  expect(err).toContain(
+    "warn: pnpm-lock.yaml is lockfileVersion 5.4, which bun cannot migrate; resolving from package.json instead\nnote: pnpm install --lockfile-only\n",
+  );
+  expect(err).not.toContain("Ignoring lockfile");
+  expect(err).not.toContain("failed to migrate lockfile");
   expect(exitCode).toBe(0);
-  expect(err).toContain("pnpm-lock.yaml version is too old (< v7)");
 });
 
 describe.todo("bin", () => {

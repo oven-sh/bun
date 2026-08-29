@@ -97,7 +97,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSCryptoKeyPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSCryptoKeyPrototype* ptr = new (NotNull, JSC::allocateCell<JSCryptoKeyPrototype>(vm)) JSCryptoKeyPrototype(vm, globalObject, structure);
+        JSCryptoKeyPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSCryptoKeyPrototype))) JSCryptoKeyPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -111,7 +111,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -136,11 +136,7 @@ template<> JSValue JSCryptoKeyDOMConstructor::prototypeForStructure(JSC::VM& vm,
 
 template<> void JSCryptoKeyDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "CryptoKey"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSCryptoKey::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "CryptoKey"_s, JSCryptoKey::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -158,9 +154,9 @@ const ClassInfo JSCryptoKeyPrototype::s_info = { "CryptoKey"_s, &Base::s_info, n
 void JSCryptoKeyPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSCryptoKey::info(), JSCryptoKeyPrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, JSCryptoKey::info(), JSCryptoKeyPrototypeTableValues, *this);
     Bun::WebStreams::installInspectCustom(vm, this, jsCryptoKeyPrototype_inspectCustom);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSCryptoKey::s_info = { "CryptoKey"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCryptoKey) };
@@ -291,31 +287,26 @@ JSC_DEFINE_HOST_FUNCTION(jsCryptoKeyPrototype_inspectCustom, (JSGlobalObject * l
 
     JSValue type = toJS<IDLEnumeration<CryptoKey::Type>>(*lexicalGlobalObject, scope, impl.type());
     RETURN_IF_EXCEPTION(scope, {});
-    data->putDirect(vm, Identifier::fromString(vm, "type"_s), type, 0);
+    Bun::putDirectNamed(vm, data, "type"_s, type);
 
     JSValue extractable = toJS<IDLBoolean>(*lexicalGlobalObject, scope, impl.extractable());
     RETURN_IF_EXCEPTION(scope, {});
-    data->putDirect(vm, Identifier::fromString(vm, "extractable"_s), extractable, 0);
+    Bun::putDirectNamed(vm, data, "extractable"_s, extractable);
 
     JSValue algorithm = toJS<IDLUnion<IDLDictionary<CryptoKeyAlgorithm>, IDLDictionary<CryptoAesKeyAlgorithm>, IDLDictionary<CryptoEcKeyAlgorithm>, IDLDictionary<CryptoHmacKeyAlgorithm>, IDLDictionary<CryptoRsaHashedKeyAlgorithm>, IDLDictionary<CryptoRsaKeyAlgorithm>>>(*lexicalGlobalObject, globalObject, scope, impl.algorithm());
     RETURN_IF_EXCEPTION(scope, {});
-    data->putDirect(vm, Identifier::fromString(vm, "algorithm"_s), algorithm, 0);
+    Bun::putDirectNamed(vm, data, "algorithm"_s, algorithm);
 
     JSValue usages = toJS<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(*lexicalGlobalObject, globalObject, scope, impl.usages());
     RETURN_IF_EXCEPTION(scope, {});
-    data->putDirect(vm, Identifier::fromString(vm, "usages"_s), usages, 0);
+    Bun::putDirectNamed(vm, data, "usages"_s, usages);
 
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "CryptoKey"_s, data));
 }
 
 JSC::GCClient::IsoSubspace* JSCryptoKey::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSCryptoKey, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForCryptoKey.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCryptoKey = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForCryptoKey.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForCryptoKey = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSCryptoKey, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForCryptoKey, m_subspaceForCryptoKey));
 }
 
 template<typename Visitor>
@@ -337,20 +328,6 @@ void JSCryptoKey::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
-}
-
-bool JSCryptoKeyOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    if (reason) [[unlikely]]
-        *reason = "Reachable from CryptoKey"_s;
-    return visitor.containsOpaqueRoot(context);
-}
-
-void JSCryptoKeyOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsCryptoKey = static_cast<JSCryptoKey*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsCryptoKey->wrapped(), jsCryptoKey);
 }
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<CryptoKey>&& impl)

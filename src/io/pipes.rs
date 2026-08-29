@@ -140,9 +140,45 @@ pub enum ReadState {
     /// Neither EOF nor EAGAIN
     Progress,
 
-    /// Received a 0-byte read
+    /// Received a 0-byte read, or the reader's limit or byte budget is used up: nothing more will be read
     Eof,
 
     /// Received an EAGAIN
     Drained,
+}
+
+/// One delivery from a `BufferedReader`. The variant says who owns the bytes, so a consumer never has to work that out from the pointer.
+pub enum Chunk<'a> {
+    /// The loop's shared scratch: gone once `on_read_chunk` returns. Copy what you keep.
+    Scratch(&'a [u8]),
+    /// The reader's own buffer, which it clears and reuses after the call. Copy what you keep, or `take()` it when moving beats copying.
+    Buffer(&'a mut Vec<u8>),
+    /// The reader is finished with these bytes (EOF, limit, error, budget): yours to move.
+    Owned(Vec<u8>),
+}
+
+impl Chunk<'_> {
+    /// The bytes as an owned `Vec`, moving rather than copying where the variant allows.
+    pub fn take(self) -> Vec<u8> {
+        match self {
+            Chunk::Scratch(bytes) => bytes.to_vec(),
+            Chunk::Buffer(buffer) => core::mem::take(buffer),
+            Chunk::Owned(buffer) => buffer,
+        }
+    }
+
+    pub fn is_owned(&self) -> bool {
+        matches!(self, Chunk::Owned(_))
+    }
+}
+
+impl core::ops::Deref for Chunk<'_> {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        match self {
+            Chunk::Scratch(bytes) => bytes,
+            Chunk::Buffer(buffer) => buffer,
+            Chunk::Owned(buffer) => buffer,
+        }
+    }
 }

@@ -776,12 +776,6 @@
     "musl": 71,
     "windows": 164
   },
-  "cli/feedback.test.ts": {
-    "default": 161,
-    "asan": 598,
-    "musl": 105,
-    "windows": 375
-  },
   "cli/heap-prof.test.ts": {
     "default": 102,
     "asan": 1011,
@@ -3799,12 +3793,6 @@
     "asan": 160,
     "musl": 100,
     "windows": 470
-  },
-  "js/bun/sys/error-name-from-libuv.test.ts": {
-    "default": 30,
-    "asan": 70,
-    "musl": 30,
-    "windows": 30
   },
   "js/bun/sys/fstat-windows-crt-fd-leak.test.ts": {
     "default": 30,

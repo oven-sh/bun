@@ -1,6 +1,7 @@
 //! macOS DNSServiceGetAddrInfo backend: all lookups share one mDNSResponder connection (see dns.rs banner).
 
 use super::*;
+use bun_collections::index_sort;
 
 pub(crate) type DNSServiceRef = *mut c_void;
 type DNSServiceFlags = u32;
@@ -46,15 +47,25 @@ unsafe extern "C" {
     fn DNSServiceRefSockFD(sd_ref: DNSServiceRef) -> c_int;
     fn DNSServiceProcessResult(sd_ref: DNSServiceRef) -> DNSServiceErrorType;
     fn DNSServiceRefDeallocate(sd_ref: DNSServiceRef);
-    fn DNSServiceGetAddrInfo(
+    // SPI (macOS 12+): DNSServiceGetAddrInfo plus the attribute libinfo's getaddrinfo passes.
+    fn DNSServiceGetAddrInfoEx(
         sd_ref: *mut DNSServiceRef,
         flags: DNSServiceFlags,
         interface_index: u32,
         protocol: DNSServiceProtocol,
         hostname: *const c_char,
+        attr: *const DNSServiceAttribute,
         callback: GetAddrInfoReply,
         context: *mut c_void,
     ) -> DNSServiceErrorType;
+    /// Lets mDNSResponder fail a query over to other resolvers (scoped/supplemental), as getaddrinfo does.
+    #[allow(non_upper_case_globals)]
+    static kDNSServiceAttrAllowFailover: DNSServiceAttribute;
+}
+
+#[repr(C)]
+pub(crate) struct DNSServiceAttribute {
+    _opaque: [u8; 0],
 }
 
 /// Map a DNSServiceErrorType to the EAI_* code the existing error paths expect.
@@ -269,7 +280,9 @@ impl QueryState {
     pub(crate) fn take_results(&mut self) -> bun_dns::ResultList {
         let mut results = core::mem::take(&mut self.results);
         // Family arrival order races upstream; match getaddrinfo's RFC 6724 default (IPv6 first).
-        results.sort_by_key(|r| r.address.family() != netc::AF_INET6);
+        index_sort::sort_slice_by(&mut results, |a, b| {
+            (a.address.family() != netc::AF_INET6).cmp(&(b.address.family() != netc::AF_INET6))
+        });
         results
     }
 }
@@ -434,18 +447,19 @@ impl SharedConnection {
         let mut sub: DNSServiceRef = self.main_ref;
         // SAFETY: FFI; `hostname` is NUL-terminated (copied by dns_sd); `context` is only stored.
         let err = unsafe {
-            DNSServiceGetAddrInfo(
+            DNSServiceGetAddrInfoEx(
                 &raw mut sub,
                 FLAGS_SHARE_CONNECTION | FLAGS_TIMEOUT | FLAGS_RETURN_INTERMEDIATES | suppress,
                 0,
                 protocol,
                 hostname.as_ptr().cast::<c_char>(),
+                &raw const kDNSServiceAttrAllowFailover,
                 callback,
                 context,
             )
         };
         if err != ERR_NO_ERROR {
-            bun_output::scoped_log!(dns, "DNSServiceGetAddrInfo failed: {}", err);
+            bun_output::scoped_log!(dns, "DNSServiceGetAddrInfoEx failed: {}", err);
             return None;
         }
         Some(sub)
@@ -725,7 +739,6 @@ pub(crate) fn lookup(
         cache,
         get_addr_info_request::Backend::DnsSd(get_addr_info_request::BackendDnsSd::new(protocol)),
         Some(this.as_ctx_ptr()),
-        query,
         global_this,
         PendingCacheField::PendingHostCacheNative,
     );
@@ -742,8 +755,7 @@ pub(crate) fn lookup(
     ) else {
         // SAFETY: request is exclusively owned; dns_sd never accepted it.
         unsafe {
-            if (*request).cache.pending_cache() {
-                let pos = (*request).cache.pos_in_pending();
+            if let Some(pos) = (*request).pending_slot {
                 this.pending_host_cache_native.with_mut(|c| {
                     let slot = c.ptr_at(pos as usize);
                     // SAFETY: `pos` was alloc'd; no other token outstanding.

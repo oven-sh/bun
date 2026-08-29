@@ -94,7 +94,7 @@ describe.concurrent("configVersion", () => {
     expect(normalizeBunSnapshot(out, packageDir)).toMatchInlineSnapshot(`
       "bun install <version> (<revision>)
 
-      2 packages installed"
+      1 package installed"
     `);
     expect(exitCode).toBe(0);
 

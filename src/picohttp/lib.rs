@@ -381,9 +381,6 @@ impl fmt::Display for RequestCurlFormatter<'_> {
 
         if !self.body.is_empty() && Self::is_printable_body(content_type) {
             f.write_str(" --data-raw ")?;
-            // bun_core re-exports the tier-0 minimal impl as
-            // `js_printer::write_json_string`; the full encoding-aware printer
-            // in bun_js_printer overrides at link time.
             bun_core::js_printer::write_json_string(
                 self.body,
                 f,
@@ -435,19 +432,7 @@ pub struct Response<'a> {
     pub status_code: u32,
     pub status: &'a [u8],
     pub headers: HeaderList<'a>,
-    pub bytes_read: c_int,
-}
-
-impl<'a> Default for Response<'a> {
-    fn default() -> Self {
-        Response {
-            minor_version: 0,
-            status_code: 0,
-            status: b"",
-            headers: HeaderList::default(),
-            bytes_read: 0,
-        }
-    }
+    pub bytes_read: usize,
 }
 
 impl<'a> Response<'a> {
@@ -539,7 +524,9 @@ impl<'a> Response<'a> {
                     headers: HeaderList {
                         list: &src[0..num_headers.min(src.len())],
                     },
-                    bytes_read: rc,
+                    // > 0 here: -1/-2 were handled above and 0 is not a
+                    // return value of phr_parse_response.
+                    bytes_read: rc as usize,
                 })
             }
         }

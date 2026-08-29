@@ -106,6 +106,11 @@ impl AlignedBlob {
         })
     }
 
+    fn as_slice(&self) -> &[u8] {
+        // SAFETY: `ptr` is valid for `len` bytes for the lifetime of `self`.
+        unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+    }
+
     fn as_mut_slice(&mut self) -> &mut [u8] {
         // SAFETY: `ptr` is valid for `len` bytes for the lifetime of `self`.
         unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
@@ -295,6 +300,11 @@ pub fn init_from_env_once() {
                 ENABLED.store(1, Ordering::Relaxed);
                 return;
             }
+            if crate::virtual_machine::standalone_module_graph().is_some() {
+                cclog!("[compile cache] Disabled in standalone executables.\n");
+                ENABLED.store(1, Ordering::Relaxed);
+                return;
+            }
             let _ = enable_with_dir(dir, portable_from_env());
         } else {
             ENABLED.store(1, Ordering::Relaxed);
@@ -437,7 +447,15 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
         tagged.as_bstr()
     );
 
-    let dir_handle = match sys::Dir::cwd().make_open_path(&tagged, Default::default()) {
+    let cwd = sys::Dir::cwd();
+    let dir_flags = O::RDONLY | O::CLOEXEC | O::NOFOLLOW;
+    let opened = match cwd.open_at_with(&tagged, dir_flags) {
+        Err(e) if e.get_errno() == sys::E::ENOENT => cwd
+            .make_path(&tagged)
+            .and_then(|()| cwd.open_at_with(&tagged, dir_flags)),
+        result => result,
+    };
+    let dir_handle = match opened {
         Ok(d) => d,
         Err(e) => {
             let errname = errno_name(&e);
@@ -453,6 +471,26 @@ fn enable_with_dir(dir: &[u8], portable: bool) -> EnableResult {
             };
         }
     };
+    #[cfg(unix)]
+    {
+        let owned_private = sys::fstat(dir_handle.fd()).is_ok_and(|st| {
+            st.st_uid == sys::c::getuid() && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+        });
+        if !owned_private {
+            cclog!(
+                "[compile cache] creating cache directory {}...not owned by the current user or writable by others\n",
+                tagged.as_bstr()
+            );
+            return EnableResult {
+                status: STATUS_FAILED,
+                directory: None,
+                message: Some(
+                    "Cannot use cache directory: it must be owned by the current user and not be group- or world-writable"
+                        .to_string(),
+                ),
+            };
+        }
+    }
     cclog!(
         "[compile cache] creating cache directory {}...success\n",
         tagged.as_bstr()
@@ -514,7 +552,11 @@ pub fn get_dir() -> Option<Vec<u8>> {
 /// Module-fetch hook: register/refresh the entry for `filename`; returns the
 /// validated bytecode blob when the on-disk cache matches `code` (post-
 /// transpile text). The pointer stays valid for the process (entry map owns it).
-pub fn fetch(filename: &[u8], is_cjs: bool, code: &[u8]) -> Option<(*mut u8, usize)> {
+pub fn fetch(
+    filename: &[u8],
+    is_cjs: bool,
+    code: &[u8],
+) -> Option<crate::resolved_source::Bytecode> {
     if !is_enabled() || filename.is_empty() || !bun_paths::is_absolute(filename) {
         return None;
     }
@@ -530,7 +572,10 @@ pub fn fetch(filename: &[u8], is_cjs: bool, code: &[u8]) -> Option<(*mut u8, usi
     if let Some(entry) = state.entries.get(&key) {
         if entry.code_hash == code_hash && entry.code_size == code_size {
             // Same module, unchanged code (e.g. re-required): reuse.
-            return entry.blob.as_ref().map(|b| (b.ptr.as_ptr(), b.len));
+            return entry
+                .blob
+                .as_ref()
+                .map(|b| crate::resolved_source::Bytecode::persistent(b.as_slice()));
         }
     }
 
@@ -552,7 +597,10 @@ pub fn fetch(filename: &[u8], is_cjs: bool, code: &[u8]) -> Option<(*mut u8, usi
             type_name(is_cjs),
             display_name(filename, is_cjs)
         );
-        entry.blob.as_ref().map(|b| (b.ptr.as_ptr(), b.len))
+        entry
+            .blob
+            .as_ref()
+            .map(|b| crate::resolved_source::Bytecode::persistent(b.as_slice()))
     } else {
         cclog!(
             "[compile cache] code cache for {} {} was not initialized, initializing the in-memory entry\n",
@@ -654,7 +702,7 @@ fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option
 
     let file = match state
         .dir_handle
-        .open_file(&basename, O::RDONLY | O::CLOEXEC, 0)
+        .open_file(&basename, O::RDONLY | O::CLOEXEC | O::NOFOLLOW, 0)
     {
         Ok(f) => f,
         Err(e) => {
@@ -693,13 +741,21 @@ fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option
         // SAFETY: the mapping is `total` bytes and outlives this borrow.
         Some((base, _)) => unsafe { core::slice::from_raw_parts(base.as_ptr(), total) },
         None => {
-            let mut contents = vec![0u8; total];
-            match file.pread_all(&mut contents, 0) {
-                Ok(n) if n == total => {}
-                _ => {
-                    finish(line, &|| "reading header failed\n".into());
-                    return;
-                }
+            let mut contents: Vec<u8> = Vec::new();
+            if contents.try_reserve_exact(total).is_err() {
+                finish(line, &|| "allocation failed\n".into());
+                return;
+            }
+            // SAFETY: `pread_all` only writes into the spare bytes and returns how many it filled.
+            let read = unsafe {
+                bun_core::vec::fill_spare(&mut contents, 0, |spare| {
+                    let read = file.pread_all(&mut spare[..total], 0).ok();
+                    (read.unwrap_or(0), read)
+                })
+            };
+            if read != Some(total) {
+                finish(line, &|| "reading header failed\n".into());
+                return;
             }
             heap_contents = contents;
             &heap_contents
@@ -854,11 +910,14 @@ fn generate_bytecode(format: Format, code: &[u8], url: &[u8]) -> Option<Box<[u8]
                 .stack_size(16 * 1024 * 1024)
                 .spawn(move || {
                     for job in rx {
-                        let mut url = BunString::clone_utf8(&job.url);
+                        let url = BunString::clone_utf8(&job.url);
                         let result = crate::cached_bytecode::__bun_jsc_generate_cached_bytecode(
-                            job.format, &job.code, &mut url,
+                            job.format,
+                            &job.code,
+                            &url,
+                            u32::MAX,
+                            None,
                         );
-                        url.deref();
                         let _ = job.resp.send(result);
                     }
                 });
@@ -1171,20 +1230,21 @@ pub unsafe extern "C" fn Bun__NodeCompileCache__enable(
     );
     if let Some(directory) = result.directory {
         // SAFETY: out-param is valid for write per fn contract.
-        unsafe { *out_directory = BunString::clone_utf8(&directory) };
+        unsafe { out_directory.write(BunString::clone_utf8(&directory)) };
     }
     if let Some(message) = result.message {
         // SAFETY: out-param is valid for write per fn contract.
-        unsafe { *out_message = BunString::clone_utf8(message.as_bytes()) };
+        unsafe { out_message.write(BunString::clone_utf8(message.as_bytes())) };
     }
     result.status
 }
 
+/// The C++ caller `transferToJS()`s the result.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__NodeCompileCache__getDir() -> BunString {
     match get_dir() {
         Some(dir) => BunString::clone_utf8(&dir),
-        None => BunString::empty(),
+        None => BunString::EMPTY,
     }
 }
 

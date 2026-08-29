@@ -115,6 +115,20 @@ export function getStdioWriteStream(
   return [stream, underlyingSink];
 }
 
+// node:worker_threads worker: process.stdout/stderr write to the parent Worker over a
+// MessagePort; process.stdin reads from one for { stdin: true }, else is already ended.
+export function getNodeWorkerStdioStream(process: typeof globalThis.process, fd: number, ports: any) {
+  const stdio = require("internal/worker/stdio");
+  if (fd === 0) {
+    return ports.stdin ? stdio.makePortReadable(ports.stdin, true) : stdio.makeEndedReadable();
+  }
+  const stream = stdio.makePortWritable(fd === 1 ? ports.stdout : ports.stderr);
+  // A synchronous exit leaves no loop turn for the reader's ack; complete the parked
+  // writev so buffered chunks are posted before the thread goes away (node's flushSync).
+  process.on("exit", stream[stdio.kFlushSync]);
+  return stream;
+}
+
 export function getStdinStream(
   process: typeof globalThis.process,
   fd: number,
@@ -448,7 +462,7 @@ export function windowsEnv(
   envMapList: Array<string>,
   editWindowsEnvVar: EditWindowsEnvVarCb,
   coerceForWrite,
-  resetTZ,
+  resetForDelete,
 ) {
   (internalEnv as any)[Bun.inspect.custom] = () => {
     let o = {};
@@ -541,10 +555,9 @@ export function windowsEnv(
         envMapList.splice(i, 1);
       }
       editWindowsEnvVar(k, null);
-      // Node's RealEnvStore::Delete resets Date caches for TZ; internalEnv
-      // is a plain object here so `delete internalEnv[k]` never reaches the
-      // TZ setter — fire the reset explicitly.
-      if (k === "TZ") resetTZ();
+      // internalEnv is a plain object here so `delete internalEnv[k]` never
+      // reaches the CustomAccessor — undo the native side effect explicitly.
+      if (k === "TZ" || k === "NODE_TLS_REJECT_UNAUTHORIZED") resetForDelete(k);
       return delete internalEnv[k];
     },
     defineProperty(_, p, attributes) {

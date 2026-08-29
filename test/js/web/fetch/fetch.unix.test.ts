@@ -244,3 +244,32 @@ it("handle redirect to non-unix", async () => {
     expect(await response.text()).toBe("world");
   }
 });
+
+// Following a redirect hands a reusable connection to the keep-alive pool,
+// keyed by the request URL's host and port. A unix-socket connection is not
+// reusable that way: the request URL below names the TCP server, so pooling
+// the unix connection would serve the TCP hop (and any later fetch of that
+// host:port) from the unix server.
+it("does not pool the unix-socket connection whose redirect is being followed", async () => {
+  startServer({
+    fetch(req) {
+      return new Response(`tcp ${new URL(req.url).pathname}`);
+    },
+  });
+  const path = startServerUnix({
+    fetch(req) {
+      const { pathname } = new URL(req.url);
+      if (pathname === "/hello") {
+        return new Response(null, { status: 302, headers: { Location: "/world" } });
+      }
+      return new Response(`unix ${pathname}`);
+    },
+  });
+
+  const results: string[] = [];
+  for (let i = 0; i < 5; i++) {
+    const response = await fetch(`http://127.0.0.1:${server.port}/hello`, { unix: path });
+    results.push(`${response.status} ${response.redirected} ${await response.text()}`);
+  }
+  expect(results).toEqual(Array(5).fill("200 true tcp /world"));
+});

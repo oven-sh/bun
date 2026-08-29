@@ -1014,9 +1014,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if p.current_scope == p.module_scope {
-                // defer-vs-drop-scope — restore hook_ctx_storage/is_control_flow_dead
-                // before propagating Err so the stack-local `react_hook_data` ptr is never left in
-                // p.react_refresh on the OOM path.
+                // Restore hook_ctx_storage/is_control_flow_dead before propagating Err so the
+                // stack-local `react_hook_data` ptr is never left in p.react_refresh on the OOM path.
                 rr = p.handle_react_refresh_register(
                     stmts,
                     original_name,

@@ -688,8 +688,8 @@ pub(crate) fn resize(
             f as i32,
         )
     };
-    let mut block: Vec<u8> = vec![0u8; out_sz + scratch_sz];
-    // SAFETY: block has out_sz + scratch_sz bytes; dst at [0..out_sz), scratch at [out_sz..).
+    let mut block: Vec<u8> = Vec::with_capacity(out_sz + scratch_sz);
+    // SAFETY: capacity = dst [0..out_sz) + scratch; the kernel fills scratch before reading it.
     let rc = unsafe {
         bun_image_resize_rgba8(
             src.as_ptr(),
@@ -705,9 +705,10 @@ pub(crate) fn resize(
     if rc != 0 {
         return Err(Error::OutOfMemory);
     }
+    // SAFETY: rc 0 means the vertical pass stored all dst_w×dst_h pixels, i.e. out_sz bytes.
+    unsafe { bun_core::vec::commit_spare(&mut block, out_sz) };
     // Drop the scratch tail; mimalloc's shrink is in-place when the new size
     // fits the same block, so this is free.
-    block.truncate(out_sz);
     block.shrink_to_fit();
     // PERF: Vec::shrink_to_fit may not be in-place — profile if hot.
     Ok(block)
@@ -734,8 +735,9 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded
             Err(e) => return Err(e),
         }
     }
-    let mut out: Vec<u8> = vec![0u8; (dw as usize) * (dh as usize) * 4];
-    // SAFETY: src has w*h*4 bytes; out has dw*dh*4 bytes; degrees is multiple of 90.
+    let out_len = (dw as usize) * (dh as usize) * 4;
+    let mut out: Vec<u8> = Vec::with_capacity(out_len);
+    // SAFETY: src has w*h*4 bytes; out has dw*dh*4 bytes of capacity; degrees is multiple of 90.
     unsafe {
         bun_image_rotate_rgba8(
             src.as_ptr(),
@@ -745,6 +747,8 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded
             i32::try_from(degrees).expect("int cast"),
         )
     };
+    // SAFETY: the rotate kernel is a permutation that stores every one of the dw*dh dst pixels.
+    unsafe { bun_core::vec::commit_spare(&mut out, out_len) };
     Ok(Decoded {
         rgba: out,
         width: dw,
@@ -762,8 +766,9 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
             Err(e) => return Err(e),
         }
     }
-    let mut out: Vec<u8> = vec![0u8; (w as usize) * (h as usize) * 4];
-    // SAFETY: src and out both have w*h*4 bytes.
+    let out_len = (w as usize) * (h as usize) * 4;
+    let mut out: Vec<u8> = Vec::with_capacity(out_len);
+    // SAFETY: src has w*h*4 bytes; out has w*h*4 bytes of capacity.
     unsafe {
         bun_image_flip_rgba8(
             src.as_ptr(),
@@ -773,5 +778,7 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
             horizontal as i32,
         )
     };
+    // SAFETY: the flip kernel is a permutation that stores every one of the w*h dst pixels.
+    unsafe { bun_core::vec::commit_spare(&mut out, out_len) };
     Ok(out)
 }

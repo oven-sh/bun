@@ -7,21 +7,21 @@
  */
 
 import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, arch as hostArch, platform as hostPlatform } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { NODEJS_ABI_VERSION, NODEJS_V8_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { assert, BuildError } from "./error.ts";
 import { resolveMacosSdkPath } from "./macos-sdk.ts";
-import { clangTargetArch } from "./tools.ts";
+import { clangTargetArch, toolchainOverride } from "./tools.ts";
 import { cyan, dim, green } from "./tty.ts";
 
 export type OS = "linux" | "darwin" | "windows" | "freebsd";
 export type Arch = "x64" | "aarch64";
 export type Abi = "gnu" | "musl" | "android";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
-export type BuildMode = "full" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link";
+export type BuildMode = "full" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link" | "archive-link";
 export type WebKitMode = "prebuilt" | "local";
 
 /**
@@ -29,7 +29,7 @@ export type WebKitMode = "prebuilt" | "local";
  * (Config.os/arch/windows) which is what we're building FOR.
  *
  * Host vs target matters for rust-only cross-compile: a linux CI box
- * can cross-compile libbun_rust.a for any linux abi/arch and (with the
+ * can cross-compile libbun_runtime.a for any linux abi/arch and (with the
  * right SDK) darwin. Target determines cargo's `--target` triple and
  * rustflags; host determines shell syntax (cmd vs sh), quoting, and
  * tool executable suffixes.
@@ -84,8 +84,6 @@ export interface Config {
   freebsd: boolean;
   /** linux || darwin || freebsd */
   unix: boolean;
-  /** darwin || freebsd — kqueue-based event loop */
-  kqueue: boolean;
   x64: boolean;
   arm64: boolean;
 
@@ -124,7 +122,7 @@ export interface Config {
   lto: boolean;
   /**
    * Cross-language LTO: rustc emits LLVM bitcode (`-Clinker-plugin-lto`) into
-   * `libbun_rust.a` so the final lld `-flto=thin` link sees through Rust↔C++
+   * `libbun_runtime.a` so the final lld `-flto=thin` link sees through Rust↔C++
    * call edges. When false but `lto` is true, both halves still LTO
    * independently (C++ via `-flto=thin`, Rust via `[profile.release] lto =
    * "fat"`); only the cross-language inlining is lost.
@@ -175,6 +173,14 @@ export interface Config {
 
   // ─── Dependency modes ───
   webkit: WebKitMode;
+  /**
+   * Deps built from a local checkout instead of the pinned tarball, keyed by
+   * dep name → absolute source dir. Set via `--local-deps=name=path[,...]`.
+   * The checkout is used as-is: no fetch, no `.ref` stamp, and the dep's
+   * `patches` are NOT applied (they target the pinned tarball; a fork
+   * checkout is expected to carry whatever you're iterating on).
+   */
+  localDeps: Record<string, string>;
 
   // ─── Paths (all absolute) ───
   /** Repository root. */
@@ -231,13 +237,15 @@ export interface Config {
   rustLlvmVersion: string | undefined;
   /**
    * `rustc --print sysroot`. Used to locate rustc's bundled `llvm-nm` for
-   * reading LTO bitcode in `libbun_rust.a` — clang's `llvm-nm` may lag
+   * reading LTO bitcode in `libbun_runtime.a` — clang's `llvm-nm` may lag
    * rustc's LLVM major and reject the bitcode (#53609, #53656). Unlike
    * `rustLld`, this is needed regardless of whether cross-language LTO is
    * actually using rust-lld as the linker.
    */
   rustSysroot: string | undefined;
   strip: string;
+  /** llvm-nm, for `DirectBuild.forbidUndefined`; undefined skips those checks. */
+  nm: string | undefined;
   /** Set when the target is darwin. Undefined on non-darwin targets. */
   dsymutil: string | undefined;
   /** Self-host bun for codegen (bun install, bun build). */
@@ -268,13 +276,15 @@ export interface Config {
    * would otherwise pick up that worktree's pin).
    */
   rustToolchain: string | undefined;
+  /** Explicit rustc for cargo to drive (BUN_TOOLCHAIN_RUST); undefined = cargo's own resolution (rustup proxy). */
+  rustc: string | undefined;
   /** Windows: MSVC link.exe path (to avoid Git's /usr/bin/link shadowing). */
   msvcLinker: string | undefined;
   /** Windows: llvm-rc for nested cmake (CMAKE_RC_COMPILER). */
   rc: string | undefined;
   /** Windows: llvm-mt for nested cmake (CMAKE_MT). May be absent in some LLVM distros. */
   mt: string | undefined;
-  /** Windows-x64: nasm for BoringSSL's NASM-syntax assembly. */
+  /** x64: nasm for BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD. */
   nasm: string | undefined;
 
   // ─── macOS SDK (darwin only, undefined elsewhere) ───
@@ -303,14 +313,8 @@ export interface Config {
    * undefined on native Windows builds (VS dev shell supplies the SDK).
    */
   winsysroot: string | undefined;
-  /** Android NDK root. undefined when abi != "android". */
-  androidNdk: string | undefined;
-  /** Android API level (the N in `__ANDROID_API__=N`). undefined when abi != "android". */
-  androidApiLevel: number | undefined;
   /** NDK compiler-rt/libunwind dir: `<ndk>/toolchains/llvm/prebuilt/<host>/lib/clang/<ver>/lib/linux`. */
   androidNdkRuntimeDir: string | undefined;
-  /** FreeBSD release version targeted (e.g. "14.3"). undefined when os != "freebsd". */
-  freebsdVersion: string | undefined;
 
   // ─── Versioning ───
   /** Bun's own version (from package.json). */
@@ -356,6 +360,12 @@ export interface PartialConfig {
   ci?: boolean;
   buildkite?: boolean;
   webkit?: WebKitMode;
+  /**
+   * `name=path[,name=path...]` — build these deps from a local checkout
+   * (e.g. `mimalloc=~/code/mimalloc`). `~` expands to $HOME; relative paths
+   * resolve against the repo root. See `Config.localDeps`.
+   */
+  localDeps?: string;
   buildDir?: string;
   cacheDir?: string;
   /** Override NDK location (default: $ANDROID_NDK_ROOT etc). Only used when abi=android. */
@@ -443,6 +453,8 @@ export interface Toolchain {
    * can't read Mach-O, so darwin cross-compiles swap this in as `cfg.strip`.
    */
   llvmStrip: string | undefined;
+  /** llvm-nm; undefined skips the per-dep undefined-symbol checks (source.ts). */
+  nm: string | undefined;
   dsymutil: string | undefined;
   bun: string;
   jsRuntime: string;
@@ -474,11 +486,7 @@ export interface Toolchain {
    * source.ts) sidesteps the need.
    */
   mt: string | undefined;
-  /**
-   * Windows only: nasm. BoringSSL's win-x64 assembly is NASM syntax;
-   * clang's integrated assembler can't read it. win-aarch64 uses gas
-   * .S files instead, so this is x64-only in practice.
-   */
+  /** x64 targets: nasm for BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD. */
   nasm: string | undefined;
 }
 
@@ -732,7 +740,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const windows = os === "windows";
   const freebsd = os === "freebsd";
   const unix = linux || darwin || freebsd;
-  const kqueue = darwin || freebsd;
   const x64 = arch === "x64";
   const arm64 = arch === "aarch64";
   // Darwin target on a non-darwin host (Linux CI box building macOS
@@ -823,7 +830,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const crossLangLto = lto && !(windows && host.os === "windows");
 
   // Cross-language LTO bitcode-version skew: `-Clinker-plugin-lto` makes
-  // rustc emit raw LLVM bitcode into libbun_rust.a. LLVM bitcode is
+  // rustc emit raw LLVM bitcode into libbun_runtime.a. LLVM bitcode is
   // forward-compatible only (newer reader, older writer), so when rustc's
   // bundled LLVM is ahead of clang's, clang's ld.lld rejects the rust .o
   // files ("Unknown attribute kind"). rust-lld is built against rustc's
@@ -1093,7 +1100,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const pkgJsonPath = resolve(cwd, "package.json");
   const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf8")) as { version: string };
   const version = pkgJson.version;
-  const revision = getGitRevision(cwd);
+  const revision = getGitRevision(cwd, debug && !ci ? buildDir : undefined);
 
   // Defaults from versions.ts. Override via --webkit-version=<hash> etc.
   // to test a branch before bumping the pinned default.
@@ -1175,7 +1182,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     windows,
     freebsd,
     unix,
-    kqueue,
     x64,
     arm64,
     host,
@@ -1210,6 +1216,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     ci,
     buildkite,
     webkit: partial.webkit ?? "prebuilt",
+    localDeps: parseLocalDeps(partial.localDeps, cwd),
     cwd,
     buildDir,
     codegenDir,
@@ -1237,6 +1244,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
           ? `/usr/bin/${crossTarget}-strip`
           : (toolchain.llvmStrip ?? toolchain.strip)
         : toolchain.strip),
+    nm: toolchain.nm,
     dsymutil: toolchain.dsymutil,
     bun: toolchain.bun,
     jsRuntime: toolchain.jsRuntime,
@@ -1246,7 +1254,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     cargo: toolchain.cargo,
     cargoHome: toolchain.cargoHome,
     rustupHome: toolchain.rustupHome,
-    rustToolchain: readRustToolchainChannel(cwd),
+    rustToolchain: toolchainOverride.rust !== undefined ? undefined : readRustToolchainChannel(cwd),
+    rustc:
+      toolchainOverride.rust !== undefined
+        ? join(toolchainOverride.rust, "bin", `rustc${host.os === "windows" ? ".exe" : ""}`)
+        : undefined,
     // Cargo-driven links (the bun_shim_impl.exe edge, any future target
     // cdylib) must keep using a real lld-link/link.exe, not the gcc-ld/
     // lld-link wrapper `ld` may have been swapped to above: rustc treats a
@@ -1265,10 +1277,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     crossTarget,
     sysroot,
     winsysroot,
-    androidNdk,
-    androidApiLevel,
     androidNdkRuntimeDir,
-    freebsdVersion,
     version,
     revision,
     nodejsVersion,
@@ -1418,6 +1427,31 @@ export function findRepoRoot(): string {
 }
 
 /**
+ * Parse `--local-deps=name=path[,name=path...]` into name → absolute path.
+ * Names are checked against `allDeps` later (bun.ts) where the dep list is
+ * in scope; here we only validate shape and resolve paths.
+ */
+function parseLocalDeps(spec: string | undefined, cwd: string): Record<string, string> {
+  // Null prototype: any name (even `__proto__`) is stored as a plain entry and
+  // reaches the unknown-dep check in validateBunConfig.
+  const out = Object.create(null) as Record<string, string>;
+  if (spec === undefined || spec === "") return out;
+  for (const entry of spec.split(",")) {
+    const eq = entry.indexOf("=");
+    if (eq <= 0 || eq === entry.length - 1) {
+      throw new BuildError(`--local-deps: expected name=path, got '${entry}'`, {
+        hint: "Example: --local-deps=mimalloc=~/code/mimalloc",
+      });
+    }
+    const name = entry.slice(0, eq);
+    let path = entry.slice(eq + 1);
+    if (path === "~" || path.startsWith("~/")) path = join(homedir(), path.slice(1));
+    out[name] = resolve(cwd, path);
+  }
+  return out;
+}
+
+/**
  * Get the current git revision (HEAD sha).
  *
  * Uses `git rev-parse` rather than reading .git/HEAD directly — the sha
@@ -1453,17 +1487,29 @@ function readRustToolchainChannel(cwd: string): string | undefined {
   return m?.[1];
 }
 
-function getGitRevision(cwd: string): string {
+function getGitRevision(cwd: string, pinDir: string | undefined): string {
   // CI env first — authoritative and zero-cost.
   const envSha = process.env.BUILDKITE_COMMIT ?? process.env.GITHUB_SHA ?? process.env.GIT_SHA;
   if (envSha !== undefined && envSha.length > 0) {
     return envSha;
   }
+  // Local debug builds pin the sha at first configure: it is a const in `bun_core`, so tracking HEAD would recompile every Rust crate on each commit/checkout/pull.
+  const pinFile = pinDir === undefined ? undefined : resolve(pinDir, "git-revision");
+  if (pinFile !== undefined && existsSync(pinFile)) {
+    const pinned = readFileSync(pinFile, "utf8").trim();
+    if (/^[0-9a-f]{40}$/.test(pinned)) return pinned;
+  }
+  let sha: string;
   try {
-    return execSync("git rev-parse HEAD", { cwd, encoding: "utf8" }).trim();
+    sha = execSync("git rev-parse HEAD", { cwd, encoding: "utf8" }).trim();
   } catch {
     return "unknown";
   }
+  if (pinFile !== undefined) {
+    mkdirSync(pinDir!, { recursive: true });
+    writeFileSync(pinFile, sha + "\n");
+  }
+  return sha;
 }
 
 /**
@@ -1523,9 +1569,7 @@ export function formatConfig(cfg: Config, exe: string): string {
     `  ${label("target")} ${cfg.os}-${cfg.arch}${cfg.abi !== undefined ? "-" + cfg.abi : ""}`,
     `  ${label("build type")} ${cfg.buildType}`,
     `  ${label("build dir")} ${relBuildDir}`,
-    // Revision makes it obvious why configure re-ran after a commit
-    // (the sha changes → the build's -Dsha equivalent changes → build.ninja differs).
-    `  ${label("revision")} ${cfg.revision === "unknown" ? "unknown" : cfg.revision.slice(0, 10)}`,
+    `  ${label("revision")} ${cfg.revision === "unknown" ? "unknown" : cfg.revision.slice(0, 10)}${cfg.debug && !cfg.ci ? " (pinned; rm <build dir>/git-revision to refresh)" : ""}`,
   ];
   const features: string[] = [];
   if (cfg.lto) features.push("lto");
@@ -1543,6 +1587,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (!cfg.canary) features.push("canary:off");
   // Non-default modes — show so you notice when a build is unusual.
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);
+  for (const name of Object.keys(cfg.localDeps)) features.push(`local:${name}`);
   if (cfg.mode !== "full") features.push(`mode:${cfg.mode}`);
   // Version pin overrides — show an identifying value so you catch "forgot
   // to revert my WebKit test branch" before the build goes weird. Strip the

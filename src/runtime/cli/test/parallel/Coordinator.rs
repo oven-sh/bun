@@ -21,7 +21,6 @@ use crate::test_command::CommandLineReporter;
 
 // `Status` lives in `crate::api::bun::process`
 // (not the lower-tier `bun_spawn` crate). Worker.exit_status is this type.
-use crate::api::bun::process::Process;
 use crate::api::bun::process::Status as SpawnStatus;
 
 pub struct Coordinator<'a> {
@@ -42,9 +41,13 @@ pub struct Coordinator<'a> {
     pub(crate) envps: Vec<bun_dotenv::NullDelimitedEnvMap>,
 
     pub(crate) workers: &'a mut [Worker],
-    pub(crate) junit_chunks: Vec<Option<Box<[u8]>>>,
-    pub(crate) junit_totals: super::aggregate::JunitTotals,
-    pub(crate) coverage_chunks: Vec<Box<[u8]>>,
+    /// Per file index, when a structured reporter (JUnit) is configured: the
+    /// `TestDone` records received for it, replayed in file order at the end
+    /// so the document matches a serial run. Empty otherwise.
+    pub(crate) test_records: Vec<FileTestRecords>,
+    /// Per source path: coverage folded across every worker that loaded it.
+    pub(crate) coverage_files:
+        bun_collections::StringArrayHashMap<bun_sourcemap_jsc::code_coverage::MergedReport>,
     /// File index whose `path:` header was most recently written. Result lines
     /// from concurrent workers interleave; whenever the source file changes the
     /// header is re-emitted so every line has visible context. None at start.
@@ -59,7 +62,7 @@ pub struct Coordinator<'a> {
     pub(crate) live_workers: u32,
     pub(crate) crashed_files: Vec<u32>,
     pub(crate) aborted: Option<u32>,
-    pub(crate) bailed: bool,
+    pub(crate) stop_reason: Option<StopReason>,
     pub(crate) last_printed_dot: bool,
     /// Kill-on-close Job Object so the OS reaps workers if the coordinator dies
     /// without running its signal handler (e.g. SIGKILL / TerminateProcess).
@@ -67,9 +70,28 @@ pub struct Coordinator<'a> {
     pub(crate) windows_job: Option<*mut c_void>,
 }
 
+#[derive(Default)]
+pub(crate) struct FileTestRecords {
+    /// `TestDone` payloads past the formatted line; see `runner::decode_test_case`.
+    pub(crate) tests: Vec<Box<[u8]>>,
+    pub(crate) elapsed_ns: u64,
+}
+
+/// Why the run stopped dispatching files. A worker panic overrides `Bail`
+/// (see `abort_on_worker_panic`); nothing clears it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StopReason {
+    /// `--bail=N` reached: idle workers are shut down, inflight files finish.
+    Bail,
+    /// A worker died of a crash signal and every other worker was terminated,
+    /// so the siblings' inflight files are collateral, not crashes of their own.
+    WorkerPanicked,
+}
+
 impl<'a> Coordinator<'a> {
     fn is_done(&self) -> bool {
-        (self.files_done as usize >= self.files.len() || self.bailed) && self.live_workers == 0
+        (self.files_done as usize >= self.files.len() || self.stop_reason.is_some())
+            && self.live_workers == 0
     }
 
     fn has_undispatched_files(&self) -> bool {
@@ -128,7 +150,7 @@ impl<'a> Coordinator<'a> {
             }
             if self.spawned_count < self.parallel_limit
                 && self.has_undispatched_files()
-                && !self.bailed
+                && self.stop_reason.is_none()
             {
                 // Bound the wait so we wake to scale up even if no I/O arrives.
                 const MS_PER_S: i64 = bun_core::time::MS_PER_S as i64;
@@ -162,10 +184,10 @@ impl<'a> Coordinator<'a> {
             .iter()
             .filter_map(|w| w.inflight.map(|idx| (idx, now - w.dispatched_at)))
             .collect();
-        for (idx, _) in &running {
+        for (idx, ms) in &running {
             self.reporter.summary().fail += 1;
             self.reporter.summary().files += 1;
-            self.crashed_files.push(*idx);
+            self.mark_crashed(*idx, *ms);
             self.files_done += 1;
         }
         if !running.is_empty() {
@@ -189,21 +211,19 @@ impl<'a> Coordinator<'a> {
             Output::flush();
         }
         for w in self.workers[..self.spawned_count as usize].iter_mut() {
-            if let Some(p) = w.process {
+            if let Some(p) = &w.process {
                 #[cfg(unix)]
                 {
-                    // SAFETY: `p` is the live intrusive-refcounted *mut Process;
-                    // FFI call; -pid targets the worker's process group.
+                    // SAFETY: FFI call; -pid targets the worker's process group.
                     unsafe {
-                        let _ = libc::kill(-((*p).pid as libc::pid_t), libc::SIGTERM);
+                        let _ = libc::kill(-(p.pid as libc::pid_t), libc::SIGTERM);
                     }
                 }
                 #[cfg(not(unix))]
                 {
                     // SIGKILL → TerminateProcess; libuv-win ENOSYSes signals
                     // other than SIGQUIT/SIGTERM/SIGKILL/SIGINT.
-                    // SAFETY: `p` is the live intrusive-refcounted *mut Process.
-                    let _ = unsafe { (*p).kill(9) };
+                    let _ = p.kill(9);
                 }
             }
         }
@@ -244,7 +264,7 @@ impl<'a> Coordinator<'a> {
         if self.spawned_count >= self.parallel_limit {
             return;
         }
-        if self.bailed || !self.has_undispatched_files() {
+        if self.stop_reason.is_some() || !self.has_undispatched_files() {
             return;
         }
         let now = bun_core::time::milli_timestamp();
@@ -272,7 +292,7 @@ impl<'a> Coordinator<'a> {
     }
 
     fn assign_work(&mut self, w: &mut Worker) {
-        if self.bailed {
+        if self.stop_reason.is_some() {
             return w.shutdown();
         }
         if let Some(idx) = w.range.pop_front() {
@@ -307,10 +327,10 @@ impl<'a> Coordinator<'a> {
     }
 
     fn bail_out(&mut self) {
-        if self.bailed {
+        if self.stop_reason.is_some() {
             return;
         }
-        self.bailed = true;
+        self.stop_reason = Some(StopReason::Bail);
         self.break_dots();
         bun_core::pretty_error!(
             "\nBailed out after {} failure{}<r>\n",
@@ -410,6 +430,9 @@ impl<'a> Coordinator<'a> {
                 if w.inflight != Some(idx) {
                     return;
                 }
+                if let Some(file) = self.test_records.get_mut(idx as usize) {
+                    file.tests.push(Box::from(rd.p));
+                }
                 self.flush_captured(w);
                 if formatted.is_empty() {
                     return; // e.g. pass under --only-failures
@@ -441,6 +464,9 @@ impl<'a> Coordinator<'a> {
                     files,
                     unhandled,
                 ] = nums;
+                if let Some(file) = self.test_records.get_mut(idx as usize) {
+                    file.elapsed_ns = rd.u64();
+                }
 
                 self.flush_captured(w);
                 if self.last_header_idx == Some(idx) {
@@ -499,20 +525,14 @@ impl<'a> Coordinator<'a> {
                     .todos_to_repeat_buf
                     .extend_from_slice(rd.str());
             }
-            frame::Kind::JunitChunk => {
-                let idx = rd.u32() as usize;
-                let chunk = rd.str();
-                if !chunk.is_empty()
-                    && let Some(slot) = self.junit_chunks.get_mut(idx)
-                {
-                    super::aggregate::add_junit_chunk_totals(&mut self.junit_totals, chunk);
-                    *slot = Some(Box::<[u8]>::from(chunk));
-                }
-            }
-            frame::Kind::CoverageChunk => {
-                let chunk = rd.str();
-                if !chunk.is_empty() {
-                    self.coverage_chunks.push(Box::<[u8]>::from(chunk));
+            frame::Kind::CoverageFile => {
+                use bun_sourcemap_jsc::code_coverage::wire;
+                // fd 3 is writable from test JS, so a frame that doesn't
+                // decode is dropped rather than trusted.
+                if let Some(report) = wire::decode(rd.str()) {
+                    let merged =
+                        bun_core::handle_oom(self.coverage_files.get_or_put(&report.source_url));
+                    bun_core::handle_oom(merged.value_ptr.add(&report));
                 }
             }
             frame::Kind::Run | frame::Kind::Shutdown => {}
@@ -575,14 +595,31 @@ impl<'a> Coordinator<'a> {
             // Bun or addon bug and must not be
             // masked by the rest of the suite passing: abort the whole run so
             // the exit status reflects the crash. SIGKILL is treated as a
-            // regular failure (commonly the OOM killer or the user).
+            // regular failure (commonly the OOM killer or the user). When the
+            // kill was ours (`Worker::on_channel_done`, corrupt IPC stream),
+            // the status says nothing the user can act on; report the cause.
             let panicked = is_panic_status(status);
-            let was_bailed = self.bailed;
-            if was_bailed && !panicked {
+            if self.stop_reason == Some(StopReason::WorkerPanicked) && !panicked {
                 self.account_unfinished(idx, b"aborted: sibling worker panicked");
             } else {
                 self.record_timing(idx, w.dispatched_at);
-                self.account_crash(idx, status);
+                if w.ipc.corrupt_frame.get() && !panicked {
+                    self.account_crash(
+                        idx,
+                        w.dispatched_at,
+                        format_args!("worker killed: corrupt IPC frame, something wrote to fd 3"),
+                    );
+                } else {
+                    let mut buf = [0u8; 32];
+                    self.account_crash(
+                        idx,
+                        w.dispatched_at,
+                        format_args!(
+                            "worker crashed: {}",
+                            bstr::BStr::new(describe_status(&mut buf, status))
+                        ),
+                    );
+                }
             }
             Output::flush();
             // SAFETY: fresh root derivation — `account_crash` can reach `bail_out`, which retags the slots.
@@ -595,16 +632,10 @@ impl<'a> Coordinator<'a> {
 
         // SAFETY: fresh derivation — `abort_on_worker_panic` above retags the slots.
         let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
-        if let Some(p) = w.process.take() {
-            // SAFETY: `p` is the live `*mut Process` from `to_process`; sole owner now.
-            unsafe {
-                (*p).detach();
-                Process::deref(p);
-            }
-        }
+        w.process = None;
 
         let mut respawned = false;
-        if !self.bailed && self.has_undispatched_files() {
+        if self.stop_reason.is_none() && self.has_undispatched_files() {
             // SAFETY: fresh derivation — `has_undispatched_files` read the slots.
             let w = unsafe { &mut *self.workers.as_mut_ptr().add(slot) };
             w.ipc = Default::default();
@@ -623,7 +654,7 @@ impl<'a> Coordinator<'a> {
         }
 
         if !respawned {
-            if !self.bailed && self.live_workers == 0 {
+            if self.stop_reason.is_none() && self.live_workers == 0 {
                 self.abort_queued_files(b"no live workers");
             }
             // Explicit early release: `w` is a borrowed slot in self.workers, so
@@ -650,17 +681,28 @@ impl<'a> Coordinator<'a> {
         self.files_done += 1;
     }
 
-    fn account_crash(&mut self, file_idx: u32, status: &SpawnStatus) {
+    fn mark_crashed(&mut self, file_idx: u32, elapsed_ms: i64) {
+        self.crashed_files.push(file_idx);
+        if let Some(file) = self.test_records.get_mut(file_idx as usize) {
+            file.elapsed_ns = u64::try_from(elapsed_ms).unwrap_or(0) * bun_core::time::NS_PER_MS;
+        }
+    }
+
+    fn account_crash(
+        &mut self,
+        file_idx: u32,
+        dispatched_at: i64,
+        detail: core::fmt::Arguments<'_>,
+    ) {
         self.break_dots();
-        let mut buf = [0u8; 32];
         bun_core::pretty_error!(
-            "<r><red>✗<r> <b>{}<r> <d>(worker crashed: {})<r>\n",
+            "<r><red>✗<r> <b>{}<r> <d>({})<r>\n",
             bstr::BStr::new(self.rel_path(file_idx)),
-            bstr::BStr::new(describe_status(&mut buf, status)),
+            detail,
         );
         self.reporter.summary().fail += 1;
         self.reporter.summary().files += 1;
-        self.crashed_files.push(file_idx);
+        self.mark_crashed(file_idx, bun_core::time::milli_timestamp() - dispatched_at);
         self.files_done += 1;
         if self.bail > 0 && self.reporter.summary().fail >= self.bail {
             self.bail_out();
@@ -668,8 +710,8 @@ impl<'a> Coordinator<'a> {
     }
 
     /// A worker was killed by a crash signal — treat this as a Bun bug, not
-    /// a test failure. Print the panic banner (even if --bail already set
-    /// `bailed`), terminate every other worker, and mark all remaining
+    /// a test failure. Print the panic banner (even if --bail already
+    /// stopped the run), terminate every other worker, and mark all remaining
     /// files as aborted so the run ends immediately with a non-zero exit
     /// and the panic's stderr (already flushed via flushCaptured) is the
     /// last meaningful output, not buried under hundreds of later passes.
@@ -689,8 +731,8 @@ impl<'a> Coordinator<'a> {
         // mid-file would keep producing output after the panic banner.
         // Terminate the whole process group (same as the SIGINT path) so the
         // run ends now; reapWorker() will account each inflight file as a
-        // crash when the exit arrives. Runs even if --bail already set
-        // `bailed`, since bailOut() only shutdown()s idle workers and would
+        // crash when the exit arrives. Runs even if --bail already stopped
+        // the run, since bailOut() only shutdown()s idle workers and would
         // leave inflight ones running past the banner.
         // Reachable from reap_worker with the caller's
         // `w: &mut Worker` still live and used afterward; iter_mut() would
@@ -709,13 +751,12 @@ impl<'a> Coordinator<'a> {
             }
             // SAFETY: `other` is in-bounds (see above); reading `.process`
             // through *mut forms no `&mut Worker` aliasing the caller's `w`.
-            if let Some(p) = unsafe { (*other).process } {
+            if let Some(p) = unsafe { &(*other).process } {
                 #[cfg(unix)]
                 {
-                    // SAFETY: `p` is the live intrusive-refcounted *mut Process;
-                    // FFI call; -pid targets the worker's process group.
+                    // SAFETY: FFI call; -pid targets the worker's process group.
                     unsafe {
-                        let _ = libc::kill(-((*p).pid as libc::pid_t), libc::SIGTERM);
+                        let _ = libc::kill(-(p.pid as libc::pid_t), libc::SIGTERM);
                     }
                 }
                 #[cfg(not(unix))]
@@ -724,15 +765,18 @@ impl<'a> Coordinator<'a> {
                     // signals, so e.g. kill(1) would leave the sibling running
                     // past the banner); it reaps as Signaled(9) →
                     // "aborted: sibling worker panicked".
-                    // SAFETY: `p` is the live intrusive-refcounted *mut Process.
-                    let _ = unsafe { (*p).kill(9) };
+                    let _ = p.kill(9);
                 }
             }
         }
-        if self.bailed {
+        // Overrides an earlier --bail stop so the siblings terminated above
+        // reap as collateral; the queued files are only swept when this panic
+        // is what stopped the run.
+        let already_stopped = self.stop_reason.is_some();
+        self.stop_reason = Some(StopReason::WorkerPanicked);
+        if already_stopped {
             return;
         }
-        self.bailed = true;
         self.abort_queued_files(b"aborted: worker panicked");
     }
 
@@ -901,7 +945,7 @@ fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] 
                 &buf[..buf.len() - remaining]
             }
         }
-        SpawnStatus::Err(e) => <&'static str>::from(e.get_errno()).as_bytes(),
+        SpawnStatus::Err(e) => e.name(),
         SpawnStatus::Running => b"running",
     }
 }

@@ -6,7 +6,7 @@ use core::fmt;
 use bun_alloc::Arena as Bump;
 
 use bun_alloc::AllocError;
-use bun_collections::VecExt;
+use bun_collections::{VecExt, index_sort};
 use bun_core::strings;
 
 use crate::{Expr, ExprNodeIndex, ExprNodeList, G, OptionalChain, Ref, StoreRef};
@@ -124,7 +124,7 @@ impl Array {
                 debug_assert!(matches!(item.data, crate::expr::Data::EString(_)));
             }
         }
-        self.items.slice_mut().sort_by(array_sorter_is_less_than);
+        index_sort::sort_slice_by(self.items.slice_mut(), array_sorter_is_less_than);
     }
 }
 
@@ -991,7 +991,6 @@ pub struct JsonTape {
     prop_value_locs: Vec<crate::Loc, TapeAlloc>,
     item_locs: Vec<crate::Loc, TapeAlloc>,
     str_chunks: Vec<Vec<u8, TapeAlloc>, TapeAlloc>,
-    str_used: usize,
     pub encoding: StrEncoding,
 }
 
@@ -1014,7 +1013,6 @@ impl JsonTape {
             prop_value_locs: Vec::new_in(alloc),
             item_locs: Vec::new_in(alloc),
             str_chunks: Vec::new_in(alloc),
-            str_used: 0,
             encoding: StrEncoding::Utf8,
         }
     }
@@ -1061,7 +1059,7 @@ impl JsonTape {
         (first, rows.len() as u32)
     }
 
-    /// Copy decoded string bytes into the tape; chunks never move once handed out.
+    /// Copy decoded string bytes into the tape; chunks grow only within capacity and so never move.
     pub fn alloc_str(&mut self, bytes: &[u8]) -> Str {
         self.alloc_str_join(bytes, b"")
     }
@@ -1072,26 +1070,21 @@ impl JsonTape {
         let fits = self
             .str_chunks
             .last()
-            .is_some_and(|c| c.len() - self.str_used >= len);
+            .is_some_and(|c| c.capacity() - c.len() >= len);
         if !fits {
             let cap = len.max(Self::STR_CHUNK);
-            let mut chunk: Vec<u8, TapeAlloc> = Vec::with_capacity_in(cap, self.alloc());
-            chunk.resize(cap, 0);
+            let chunk: Vec<u8, TapeAlloc> = Vec::with_capacity_in(cap, self.alloc());
             self.str_chunks.push(chunk);
-            self.str_used = 0;
         }
         let chunk = self.str_chunks.last_mut().expect("chunk pushed above");
-        let out = &mut chunk[self.str_used..self.str_used + len];
+        let start = chunk.len();
         if len <= 32 {
-            for (o, &c) in out.iter_mut().zip(a.iter().chain(b)) {
-                *o = c;
-            }
+            chunk.extend(a.iter().chain(b));
         } else {
-            out[..a.len()].copy_from_slice(a);
-            out[a.len()..].copy_from_slice(b);
+            chunk.extend_from_slice(a);
+            chunk.extend_from_slice(b);
         }
-        self.str_used += len;
-        Str::new(out)
+        Str::new(&chunk[start..])
     }
 
     /// The row buffers, for a reader that resolves spans itself.
@@ -1341,14 +1334,6 @@ pub enum SetError {
 }
 bun_core::impl_tag_error!(SetError);
 bun_core::oom_from_alloc!(SetError);
-impl From<SetError> for crate::Error {
-    fn from(e: SetError) -> Self {
-        match e {
-            SetError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
-            SetError::Clobber => crate::Error::Clobber,
-        }
-    }
-}
 
 // ── live Object accessor surface ───────────────────────────────────────────
 // Adapted to the current `Vec` API (`append(v)`, `slice()`, `slice_mut()`).
@@ -1527,15 +1512,11 @@ impl Object {
                 ));
             }
         }
-        self.properties
-            .slice_mut()
-            .sort_by(object_sorter_is_less_than);
+        index_sort::sort_slice_by(self.properties.slice_mut(), object_sorter_is_less_than);
     }
 
     pub fn package_json_sort(&mut self) {
-        self.properties
-            .slice_mut()
-            .sort_by(package_json_sort_is_less_than);
+        index_sort::sort_slice_by(self.properties.slice_mut(), package_json_sort_is_less_than);
     }
 }
 
@@ -1643,6 +1624,33 @@ pub struct Spread {
     pub value: ExprNodeIndex,
 }
 
+/// Discriminants are shared with the C++ switch in
+/// `Bun__Temporal__fromDateTimeLiteral`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum TomlDateTimeKind {
+    /// `1979-05-27T00:32:00-07:00` → `Temporal.Instant`
+    OffsetDateTime = 1,
+    /// `1979-05-27T07:32:00` → `Temporal.PlainDateTime`
+    LocalDateTime = 2,
+    /// `1979-05-27` → `Temporal.PlainDate`
+    LocalDate = 3,
+    /// `07:32:00` → `Temporal.PlainTime`
+    LocalTime = 4,
+}
+
+impl TomlDateTimeKind {
+    /// Unqualified Temporal class name (`Instant`, `PlainDateTime`, …).
+    pub fn temporal_class(self) -> &'static [u8] {
+        match self {
+            TomlDateTimeKind::OffsetDateTime => b"Instant",
+            TomlDateTimeKind::LocalDateTime => b"PlainDateTime",
+            TomlDateTimeKind::LocalDate => b"PlainDate",
+            TomlDateTimeKind::LocalTime => b"PlainTime",
+        }
+    }
+}
+
 /// JavaScript string literal type
 // repr(C, align(8)): `StoreStr`/`StoreRef` are `packed(4)`, so under
 // `repr(Rust)` the `data.ptr: NonNull<u8>` lands at a 4-but-not-8-aligned
@@ -1668,9 +1676,31 @@ pub struct EString {
     pub rope_len: u32,
     pub prefer_template: bool,
     pub is_utf16: bool,
+    /// Set only by the TOML parser on a date/time literal (`data` is its
+    /// ASCII source text). The TOML AST never enters the JS visit passes;
+    /// the sinks that materialize or print it check this tag and produce a
+    /// Temporal value instead of a string.
+    pub toml_datetime: Option<TomlDateTimeKind>,
 }
 // Also exported as `String`; `EString` avoids colliding with bun_core::String.
 pub use EString as String;
+
+/// [`EString::flattened`] result: the node itself, or an owned copy when a rope was flattened.
+pub enum Flattened<'a> {
+    Borrowed(&'a EString),
+    Owned(EString),
+}
+
+impl core::ops::Deref for Flattened<'_> {
+    type Target = EString;
+    #[inline]
+    fn deref(&self) -> &EString {
+        match self {
+            Flattened::Borrowed(s) => s,
+            Flattened::Owned(s) => s,
+        }
+    }
+}
 
 impl Default for EString {
     fn default() -> Self {
@@ -1681,6 +1711,7 @@ impl Default for EString {
             end: None,
             rope_len: 0,
             is_utf16: false,
+            toml_datetime: None,
         }
     }
 }
@@ -1728,6 +1759,7 @@ impl EString {
             end: None,
             rope_len: 0,
             is_utf16: false,
+            toml_datetime: None,
         }
     }
     /// `data` is arena-owned (source text or `Expr.Data.Store` / bump arena)
@@ -1735,6 +1767,16 @@ impl EString {
     pub fn init(data: &[u8]) -> Self {
         Self {
             data: Str::new(data),
+            ..Default::default()
+        }
+    }
+
+    /// A TOML date/time literal; `data` must be ASCII text `Temporal.*.from`
+    /// accepts verbatim.
+    pub fn init_toml_datetime(data: &[u8], kind: TomlDateTimeKind) -> Self {
+        Self {
+            data: Str::new(data),
+            toml_datetime: Some(kind),
             ..Default::default()
         }
     }
@@ -1850,10 +1892,28 @@ impl EString {
         true
     }
 
+    /// Flatten in place. Parser only; shared-AST readers use [`Self::flattened`].
     pub fn resolve_rope_if_needed(&mut self, bump: &Bump) {
         if self.next.is_none() || !self.is_utf8() {
             return;
         }
+        self.data = Str::new(self.flatten_rope(bump));
+        self.next = None;
+    }
+
+    /// `self` if not a rope, else a copy flattened into `bump`. Never writes to `self`.
+    pub fn flattened(&self, bump: &Bump) -> Flattened<'_> {
+        if self.next.is_none() || !self.is_utf8() {
+            return Flattened::Borrowed(self);
+        }
+        let mut copy = self.shallow_clone();
+        copy.data = Str::new(self.flatten_rope(bump));
+        copy.next = None;
+        Flattened::Owned(copy)
+    }
+
+    /// The rope's bytes, concatenated into a fresh `bump` slice.
+    fn flatten_rope<'b>(&self, bump: &'b Bump) -> &'b [u8] {
         let mut bytes = bun_alloc::ArenaVec::<u8>::with_capacity_in(self.rope_len as usize, bump);
         bytes.extend_from_slice(&self.data);
         let mut str_ = self.next;
@@ -1861,8 +1921,7 @@ impl EString {
             bytes.extend_from_slice(&part.get().data);
             str_ = part.get().next;
         }
-        self.data = Str::new(bytes.into_bump_slice());
-        self.next = None;
+        bytes.into_bump_slice()
     }
 
     /// Return UTF-8 bytes, transcoding if UTF-16.
@@ -1964,6 +2023,7 @@ impl EString {
             end: self.end,
             rope_len: self.rope_len,
             is_utf16: self.is_utf16,
+            toml_datetime: self.toml_datetime,
         }
     }
 
@@ -2346,17 +2406,24 @@ pub struct If {
     pub no: ExprNodeIndex,
 }
 
+pub enum UnwrappedRequireMarker {}
+/// Index into the parser's `imports_to_convert_from_require`.
+pub type UnwrappedRequireIndex = bun_core::GenericIndex<u32, UnwrappedRequireMarker>;
+pub type UnwrappedRequireIndexOptional =
+    bun_core::GenericIndexOptional<u32, UnwrappedRequireMarker>;
+
 #[derive(Clone, Copy)]
 pub struct RequireString {
     pub import_record_index: u32,
 
-    pub unwrapped_id: u32,
+    /// Set when `unwrap_commonjs_to_esm` turned this `require()` into an import.
+    pub unwrapped_id: UnwrappedRequireIndexOptional,
 }
 impl Default for RequireString {
     fn default() -> Self {
         Self {
             import_record_index: 0,
-            unwrapped_id: u32::MAX,
+            unwrapped_id: UnwrappedRequireIndexOptional::NONE,
         }
     }
 }

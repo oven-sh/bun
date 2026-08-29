@@ -1,6 +1,6 @@
-use bun_jsc::ZigStringJsc as _;
+use bun_core::EncodedSlice;
+use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::virtual_machine::GCLevel;
-use bun_jsc::zig_string::ZigString;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSType, JSValue, JsResult};
 
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
@@ -49,10 +49,9 @@ fn array_buffer_to_string(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
             // Uint16Array/Int16Array storage is u16-aligned with even byte length;
             // bytemuck checks both at runtime.
             let utf16: &[u16] = bytemuck::cast_slice(array_buffer.byte_slice());
-            let zig_str = ZigString::init_utf16(utf16);
-            Ok(zig_str.to_js(global))
+            Ok(EncodedSlice::utf16(utf16).to_js(global))
         }
-        _ => Ok(ZigString::init(array_buffer.slice()).to_js(global)),
+        _ => Ok(EncodedSlice::latin1(array_buffer.slice()).to_js(global)),
     }
 }
 

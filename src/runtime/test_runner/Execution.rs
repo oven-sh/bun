@@ -201,7 +201,7 @@ impl ExecutionSequence {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr, strum::FromRepr)]
 #[repr(u8)]
 pub enum Result {
     #[default]
@@ -268,11 +268,11 @@ impl Result {
     }
 }
 
-// Recover the parent `BunTest` from `&mut self`. Returns `NonNull` (not
+// Recover the parent `BunTest` from `&mut self`. Returns `*mut BunTest` (not
 // `&mut BunTest`) because `self` *is* `BunTest.execution`, so materializing a
 // `&mut BunTest` while `&mut self` is live would be aliased-`&mut` UB. Callers
 // must dereference at point-of-use into disjoint fields only.
-bun_core::impl_field_parent! { Execution => BunTest.execution; fn nonnull bun_test; }
+bun_core::impl_field_parent! { Execution => BunTest.execution; fn mut bun_test; }
 
 impl Execution {
     pub(crate) fn init() -> Execution {
@@ -297,7 +297,15 @@ impl Execution {
 
     pub(crate) fn handle_timeout(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
         let _g = group_begin!();
+        self.kill_dangling_processes_on_timeout(global_this);
+        let buntest = self.bun_test();
+        // SAFETY: deref parent at point-of-use; `self` is not accessed while this `&mut BunTest` is live.
+        unsafe { (*buntest).add_result(RefDataValue::Start) };
+        Ok(())
+    }
 
+    /// The kill-only half of [`handle_timeout`]: reaps a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.
+    pub(crate) fn kill_dangling_processes_on_timeout(&mut self, global_this: &JSGlobalObject) {
         // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
         //   kill any dangling processes
         // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
@@ -326,11 +334,6 @@ impl Execution {
                 }
             }
         }
-
-        let buntest = self.bun_test();
-        // SAFETY: deref parent at point-of-use; `self` is not accessed while this `&mut BunTest` is live.
-        unsafe { (*buntest.as_ptr()).add_result(RefDataValue::Start) };
-        Ok(())
     }
 
     pub(crate) fn step(
@@ -570,7 +573,11 @@ impl Execution {
 
     fn on_group_completed(global_this: &JSGlobalObject) {
         // SAFETY: bun_vm() returns the live per-thread VM.
-        global_this.bun_vm().as_mut().auto_killer.disable();
+        let vm = global_this.bun_vm().as_mut();
+        // Under --isolate the swap between files kills and clears the tracked set.
+        if !vm.test_isolation_enabled {
+            vm.auto_killer.disable();
+        }
     }
 
     fn on_sequence_started(sequence: &mut ExecutionSequence) {
@@ -700,7 +707,7 @@ impl Execution {
         }
     }
 
-    /// Drop any captured junit failure so the next retry/repeat starts fresh.
+    /// Drop any captured failure so the next retry/repeat starts fresh.
     /// Kept out of `reset_sequence` so within-attempt errors (e.g. a throwing
     /// afterEach after the test body already threw) accumulate instead of
     /// clobbering the primary failure.
@@ -710,9 +717,7 @@ impl Execution {
         if let Some(reporter) = unsafe { (*buntest.as_ptr()).reporter } {
             // SAFETY: `reporter` is a `NonNull<CommandLineReporter>` with write
             // provenance (see BunTest docs); single-threaded, no other borrow.
-            if let Some(junit) = unsafe { (*reporter.as_ptr()).reporters.junit.as_deref_mut() } {
-                junit.last_failure = None;
-            }
+            unsafe { (*reporter.as_ptr()).test_failure = None };
         }
     }
 

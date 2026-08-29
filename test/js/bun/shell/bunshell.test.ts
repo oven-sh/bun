@@ -223,6 +223,30 @@ describe("bunshell", () => {
       TestBuilder.command`FOO=bar && echo ${shellvar}`.stdout(`$FOO\n`).runAsTest("no quotes");
     });
 
+    describe("interpolated value after a literal $ stays literal", async () => {
+      const name = "FOO";
+      TestBuilder.command`FOO=bar && echo $${name}`.stdout(`$FOO\n`).runAsTest("no quotes");
+      TestBuilder.command`FOO=bar && echo "$${name}"`.stdout(`$FOO\n`).runAsTest("double quotes");
+      TestBuilder.command`FOO=bar && echo a$${name}b`.stdout(`a$FOOb\n`).runAsTest("inside a word");
+
+      test("does not extend a preceding variable name", async () => {
+        const { stdout, stderr, exitCode } = await $`FOOBAR=long && FOO=short && echo $FOO${"BAR"}`.env({ ...bunEnv });
+        expect(stderr.toString()).toBe("");
+        expect(stdout.toString()).toBe("shortBAR\n");
+        expect(exitCode).toBe(0);
+      });
+
+      test("does not name a variable from the environment", async () => {
+        const { stdout, stderr, exitCode } = await $`echo $${"SHELL_TEST_SECRET"}`.env({
+          ...bunEnv,
+          SHELL_TEST_SECRET: "hunter2",
+        });
+        expect(stderr.toString()).toBe("");
+        expect(stdout.toString()).toBe("$SHELL_TEST_SECRET\n");
+        expect(exitCode).toBe(0);
+      });
+    });
+
     test("can't escape a js string/obj ref", async () => {
       const shellvar = "$FOO";
       await TestBuilder.command`FOO=bar && echo \\${shellvar}`.stdout(`\\$FOO\n`).run();
@@ -502,6 +526,127 @@ describe("bunshell", () => {
     const { stdout } = await $`echo "LMAO" | cat`;
 
     expect(stdout.toString()).toEqual("LMAO\n");
+  });
+
+  // The builtin cat is only on by default on Windows; the flag turns it on
+  // everywhere. Captured output finishes the command from the reader side,
+  // output on a real fd also goes through the writer completions, and the
+  // missing-file case with stderr on a fd finishes from the writer side alone.
+  test("builtin cat finishes from its reader and writer completions", async () => {
+    using dir = tempDir("builtin-cat", {});
+    const script = /* ts */ `
+      import { $ } from "bun";
+      $.nothrow();
+      const results = {};
+      for (const [name, run] of Object.entries({
+        "captured": () => $\`echo hi | cat\`,
+        "stdout to fd": () => $\`echo hi | cat > out.txt\`,
+        "missing file, stderr captured": () => $\`cat missing.txt\`,
+        "missing file, stderr to fd": () => $\`cat missing.txt 2> err.txt\`,
+      })) {
+        const r = await run().quiet();
+        results[name] = { stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode };
+      }
+      results["out.txt"] = await Bun.file("out.txt").text();
+      results["err.txt"] = await Bun.file("err.txt").text();
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // On Windows the message carries the absolute path (shell_openat only
+    // re-tags the error with the argument as written on POSIX).
+    const missingFileError = expect.stringMatching(/^cat: (.*[\\/])?missing\.txt: No such file or directory\n$/);
+    expect(JSON.parse(stdout)).toEqual({
+      "captured": { stdout: "hi\n", stderr: "", exitCode: 0 },
+      "stdout to fd": { stdout: "", stderr: "", exitCode: 0 },
+      "missing file, stderr captured": { stdout: "", stderr: missingFileError, exitCode: 1 },
+      "missing file, stderr to fd": { stdout: "", stderr: "", exitCode: 1 },
+      "out.txt": "hi\n",
+      "err.txt": missingFileError,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // `ulimit -n` caps the fd table of the child so the pipeline cannot create
+  // its pipes (EMFILE). The pipeline must print the error on its stderr and
+  // finish with exit code 1 so the `$` promise settles and the script goes on,
+  // instead of throwing from inside the interpreter and never completing.
+  describe.skipIf(isWindows)("pipeline that fails to create its pipes", () => {
+    const runWithFdLimit = (limit: number, script: string, env = bunEnv) =>
+      Bun.spawn({
+        cmd: ["/bin/sh", "-c", `ulimit -n ${limit} && exec "$1" -e "$2"`, "sh", bunExe(), script],
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+    test("reports EMFILE on stderr and finishes with exit code 1", async () => {
+      // 24 pipes need 48 fds; the whole process gets 32.
+      const pipeline = ["echo hi", ...Array(24).fill("cat")].join(" | ");
+      const script = /* ts */ `
+        import { $ } from "bun";
+        const results = {};
+        const record = (name, r) => {
+          results[name] = { stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode };
+        };
+        record("stderr captured", await $\`${pipeline}\`.nothrow().quiet());
+        record("stderr on a fd", await $\`${pipeline}\`.nothrow());
+        record("script continues", await $\`${pipeline}; echo after\`.nothrow().quiet());
+        try {
+          await $\`${pipeline}\`.quiet();
+          results["throws"] = "did not throw";
+        } catch (e) {
+          record("throws", e);
+        }
+        console.log(JSON.stringify(results));
+      `;
+      await using proc = runWithFdLimit(32, script);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("bun: Too many open files\n");
+      expect(JSON.parse(stdout)).toEqual({
+        "stderr captured": { stdout: "", stderr: "bun: Too many open files\n", exitCode: 1 },
+        "stderr on a fd": { stdout: "", stderr: "bun: Too many open files\n", exitCode: 1 },
+        "script continues": { stdout: "after\n", stderr: "bun: Too many open files\n", exitCode: 0 },
+        "throws": { stdout: "", stderr: "bun: Too many open files\n", exitCode: 1 },
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // Pipelines of growing length against a fixed fd budget. The short ones
+    // fit. Past some length the pipes still fit but the per-command `dup` of
+    // the cwd fd fails. Past that the pipes themselves fail. Every pipeline
+    // must finish, either with its output or with the EMFILE message.
+    test("reports EMFILE from the per-command env dup and finishes", async () => {
+      const script = /* ts */ `
+        import { $ } from "bun";
+        const results = [];
+        for (let n = 2; n <= 16; n++) {
+          const pipeline = ["echo hi", ...Array(n - 1).fill("cat")].join(" | ");
+          const r = await $\`\${{ raw: pipeline }}\`.nothrow().quiet();
+          results.push({ stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode });
+        }
+        console.log(JSON.stringify(results));
+      `;
+      // The builtin cat keeps this to pipes and dups: no subprocess, so no
+      // spawn-time fds change the accounting.
+      await using proc = runWithFdLimit(32, script, { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const results = JSON.parse(stdout);
+      const ok = { stdout: "hi\n", stderr: "", exitCode: 0 };
+      const emfile = { stdout: "", stderr: "bun: Too many open files\n", exitCode: 1 };
+      const firstFailure = results.findIndex(r => r.exitCode !== 0);
+      expect(firstFailure).toBeGreaterThan(0);
+      expect(results).toEqual([...Array(firstFailure).fill(ok), ...Array(results.length - firstFailure).fill(emfile)]);
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("operators no spaces", async () => {
@@ -1318,6 +1463,12 @@ describe("deno_task", () => {
       .stdout("Test1\nTest: 1\nCommandSub\n$\n$VAR\n")
       .stderr("bun: command not found: 1\n")
       .runAsTest("shell var 3");
+
+    // Assignment values are not field split (POSIX 2.9.1), so the command
+    // substitution output keeps its interior whitespace.
+    TestBuilder.command`VAR=$(echo a && echo b) && echo "$VAR"`
+      .stdout("a\nb\n")
+      .runAsTest("assignment keeps command substitution newlines");
   });
 
   describe("env variables", async () => {
@@ -1328,6 +1479,22 @@ describe("deno_task", () => {
     TestBuilder.command`export VAR=1 VAR2=testing VAR3="test this out" && echo $VAR $VAR2 $VAR3`
       .stdout("1 testing test this out\n")
       .runAsTest("exported vars 2");
+
+    // `export` is a declaration utility: a `NAME=value` operand expands like
+    // an assignment, with no field splitting of the substitution output.
+    TestBuilder.command`export NAME=$(echo "hello world") && echo "NAME=[$NAME] world=[$world]"`
+      .stdout("NAME=[hello world] world=[]\n")
+      .runAsTest("export does not field split command substitution");
+
+    TestBuilder.command`export A=$(echo one two) B=$(echo three four) && echo "$A,$B"`
+      .stdout("one two,three four\n")
+      .runAsTest("export does not field split multiple assignment operands");
+
+    // A word that is not a literal `NAME=` assignment keeps the normal
+    // field splitting, matching bash.
+    TestBuilder.command`export $(echo "SPLIT=hello world") && echo "SPLIT=[$SPLIT]"`
+      .stdout("SPLIT=[hello]\n")
+      .runAsTest("export splits a non-assignment word");
   });
 
   describe("pipeline", async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, withoutAggressiveGC } from "harness";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 
 test("Bun.file in CryptoHasher is not supported yet", () => {
   expect(() => Bun.SHA1.hash(Bun.file(import.meta.path))).toThrow();
@@ -52,6 +52,21 @@ test("CryptoHasher.update(str, 'hex') rejects odd-length hex like node:crypto", 
     createHash("sha1").update(Buffer.from("abc")).digest("hex"),
   );
 });
+test("update(str, 'hex') decodes two-byte strings from the low byte of each code unit like node", () => {
+  // U+FF41 narrows to 'A', so "f\uff41" is the byte 0xfa; U+0147 narrows to 'G' and stops decoding.
+  for (const [input, bytes] of [
+    ["f\uff41", [0xfa]],
+    ["\uff46\uff41\u0147\u0147cd", [0xfa]],
+    ["\u0131\u0132\u0133\u0134", [0x12, 0x34]],
+  ] as const) {
+    const expected = createHash("sha1").update(Buffer.from(bytes)).digest("hex");
+    expect(new Bun.CryptoHasher("sha1").update(input, "hex").digest("hex"), JSON.stringify(input)).toBe(expected);
+    expect(new Bun.CryptoHasher("sha1", "key").update(input, "hex").digest("hex"), JSON.stringify(input)).toBe(
+      createHmac("sha1", "key").update(Buffer.from(bytes)).digest("hex"),
+    );
+    expect(createHash("sha1").update(input, "hex").digest("hex"), JSON.stringify(input)).toBe(expected);
+  }
+});
 test("CryptoHasher throws on non-latin1 algorithm names instead of crashing", () => {
   // @ts-expect-error
   expect(() => Bun.CryptoHasher.hash("🚀", "hello")).toThrow(/Unsupported algorithm/);
@@ -61,6 +76,75 @@ test("CryptoHasher throws on non-latin1 algorithm names instead of crashing", ()
   expect(() => new Bun.CryptoHasher("🚀")).toThrow(/Unsupported algorithm/);
   // @ts-expect-error
   expect(() => new Bun.CryptoHasher("ünïcode")).toThrow(/Unsupported algorithm/);
+});
+
+test("static hash requires the algorithm to be a string primitive", () => {
+  const expected = expect.objectContaining({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: "Expected string",
+  });
+  // @ts-expect-error
+  expect(() => Bun.CryptoHasher.hash(new String("sha256"), "hello")).toThrow(expected);
+  expect(() =>
+    Bun.CryptoHasher.hash(
+      // @ts-expect-error
+      {
+        toString() {
+          return "sha256";
+        },
+      },
+      "hello",
+    ),
+  ).toThrow(expected);
+  // @ts-expect-error
+  expect(() => Bun.CryptoHasher.hash(123, "hello")).toThrow(expected);
+  // @ts-expect-error
+  expect(() => Bun.CryptoHasher.hash(undefined, "hello")).toThrow(expected);
+  // @ts-expect-error
+  expect(() => Bun.CryptoHasher.hash(null, "hello")).toThrow(expected);
+  expect(Bun.CryptoHasher.hash("sha256", "hello", "hex")).toBe(
+    "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+  );
+});
+
+test("update rejects a hasher that was digested while its input was being converted", async () => {
+  const source = /* js */ `
+    const results = {};
+    for (const name of ["SHA1", "SHA224", "SHA256", "SHA384", "SHA512", "SHA512_256", "MD4", "MD5"]) {
+      const hasher = new Bun[name]();
+      hasher.update("hello");
+      const input = new String("world");
+      input.toString = () => {
+        hasher.digest();
+        return "world";
+      };
+      try {
+        hasher.update(input);
+        results[name] = "no throw";
+      } catch (e) {
+        results[name] = { code: e.code, message: e.message };
+      }
+    }
+    console.log(JSON.stringify(results));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", source],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const expected: Record<string, { code: string; message: string }> = {};
+  for (const name of ["SHA1", "SHA224", "SHA256", "SHA384", "SHA512", "SHA512_256", "MD4", "MD5"]) {
+    expected[name] = {
+      code: "ERR_INVALID_STATE",
+      message: `${name} hasher already digested, create a new instance to update`,
+    };
+  }
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual(expected);
+  expect(exitCode).toBe(0);
 });
 
 test("static hash reads the input buffer only after every argument has been coerced", async () => {
@@ -184,6 +268,47 @@ test("Bun.sha reads its buffers only after every argument has been coerced", asy
     output: "TypedArray must be at least 32 bytes",
   });
   expect(exitCode).toBe(0);
+});
+
+test("Bun.sha validates its arguments like Bun.SHA512_256.hash", () => {
+  const hex = "53048e2681941ef99b2e29b76b4c7dabe4c2d0c634fc6d46e0e2f13107e7af23";
+  expect(Bun.sha("abc", "hex")).toBe(hex);
+  expect(Bun.SHA512_256.hash("abc", "hex")).toBe(hex);
+  const out = new Uint8Array(32);
+  expect(Bun.sha("abc", out)).toBe(out);
+  expect(Buffer.from(out).toString("hex")).toBe(hex);
+  expect(Bun.sha("abc")).toEqual(out);
+  expect(Bun.sha("abc", undefined)).toEqual(out);
+
+  // An output argument that is neither an encoding nor a TypedArray throws
+  // instead of being ignored.
+  const badOutput = expect.objectContaining({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: "expected string or buffer",
+  });
+  for (const output of [123, {}, null, true, [], () => {}, Symbol("x")]) {
+    const label = `output ${typeof output}`;
+    // @ts-expect-error
+    expect(() => Bun.sha("abc", output), label).toThrow(badOutput);
+    // @ts-expect-error
+    expect(() => Bun.SHA512_256.hash("abc", output), label).toThrow(badOutput);
+  }
+
+  const badInput = expect.objectContaining({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: "expected blob, string or buffer",
+  });
+  for (const input of [undefined, 123, null, {}]) {
+    const label = `input ${typeof input}`;
+    // @ts-expect-error
+    expect(() => Bun.sha(input), label).toThrow(badInput);
+    // @ts-expect-error
+    expect(() => Bun.SHA512_256.hash(input), label).toThrow(badInput);
+  }
+  // @ts-expect-error
+  expect(() => Bun.sha()).toThrow(badInput);
 });
 
 describe("HMAC", () => {

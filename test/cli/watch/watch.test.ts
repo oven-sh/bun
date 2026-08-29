@@ -20,6 +20,7 @@ function stdoutWaiter(proc: Subprocess<"ignore", "pipe", any>) {
       }
     },
     release: () => reader.releaseLock(),
+    output: () => output,
   };
 }
 
@@ -284,6 +285,58 @@ it("--watch forces a restart when the kill-signal handler itself never returns",
   release();
   watchee.kill("SIGKILL");
   await watchee.exited;
+}, 30000);
+
+// With colors enabled, a reload also clears the terminal. The forced reload
+// runs on the grace thread, which has its own thread-local Output state; the
+// clear used to write through that thread's never-initialized writers and
+// segfault instead of restarting.
+it("--watch forced restart clears the terminal when colors are enabled", async () => {
+  using dir = tempDir("watch-busy-sigterm-clear-screen", {
+    "busy.js": `
+      process.on("SIGTERM", () => {});
+      console.log("iter first");
+      const end = Date.now() + 30_000;
+      while (Date.now() < end) {}
+      process.exit(1);
+    `,
+  });
+
+  const env = { ...bunEnv, FORCE_COLOR: "1" };
+  delete env.NO_COLOR;
+  // stderr is piped, not inherited: the clear sequence below would otherwise
+  // wipe the terminal running the test suite.
+  const proc = spawn({
+    cmd: [bunExe(), "--watch", "busy.js"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  watchee = proc;
+  const stderr = proc.stderr.text();
+
+  const { waitFor, release, output } = stdoutWaiter(proc);
+
+  await waitFor("iter first");
+  await Bun.write(
+    join(String(dir), "busy.js"),
+    `process.on("SIGTERM", () => {});
+     console.log("iter second");
+     process.exit(0);`,
+  );
+  await waitFor("iter second");
+
+  release();
+  proc.kill("SIGKILL");
+  await proc.exited;
+
+  const clearScreen = "\x1b[2J\x1b[3J\x1b[H";
+  expect(output()).toContain(clearScreen);
+  const [beforeReload, afterReload] = output().split(clearScreen);
+  expect(beforeReload).toContain("iter first");
+  expect(afterReload).toContain("iter second");
+  expect(await stderr).toContain(clearScreen);
 }, 30000);
 
 // execve replaces the process without reaching on_exit(), so the compile

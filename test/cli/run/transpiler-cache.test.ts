@@ -81,6 +81,36 @@ describe("transpiler cache", () => {
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("a");
     expect(!existsSync(cache_dir)).toBeTrue();
   });
+  test("does not cache a file whose parse logged an error", async () => {
+    // The parser reports the `import` next to `module.exports` after it has
+    // built the AST, and the lexer reports `0foo` while the parser is being
+    // constructed. Nothing may be printed or cached for such a file, or a
+    // later run would serve the broken output from the cache without the error.
+    const filler = "\n//" + Buffer.alloc(5 * 1024, "f").toString();
+    writeFileSync(join(temp_dir, "dep.js"), `export const x = 1;`);
+    writeFileSync(join(temp_dir, "mixed.js"), `import { x } from "./dep.js";\nmodule.exports = { x };` + filler);
+    writeFileSync(join(temp_dir, "first.js"), `\\u0030foo = 1;` + filler);
+    writeFileSync(
+      join(temp_dir, "main.js"),
+      `const out = {};
+       for (const file of ["./mixed.js", "./first.js"]) {
+         try { await import(file); } catch (e) { out["import " + file] = [e.name, e.message]; }
+         try { require(file); } catch (e) { out["require " + file] = [e.name, e.message]; }
+       }
+       console.log(JSON.stringify(out));`,
+    );
+    const mixed = ["BuildMessage", "Cannot use import statement with CommonJS-only features"];
+    const first = ["BuildMessage", 'Invalid identifier: "0foo"'];
+    const expected = JSON.stringify({
+      "import ./mixed.js": mixed,
+      "require ./mixed.js": mixed,
+      "import ./first.js": first,
+      "require ./first.js": first,
+    });
+    expect(await bunRun(join(temp_dir, "main.js"), env)).toSpawn(expected);
+    expect(await bunRun(join(temp_dir, "main.js"), env)).toSpawn(expected);
+    expect(!existsSync(cache_dir)).toBeTrue();
+  });
   test("it is indeed content addressable", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("b");
@@ -249,6 +279,49 @@ describe("transpiler cache", () => {
     expect(run(["--feature=OTHER", "--feature=SUPER_SECRET"])).toBe("enabled");
     expect(newCacheCount()).toBe(0); // cache hit, order doesn't matter
   });
+
+  // Serving the entry point from the cache must not change how the modules it
+  // loads are resolved. Both of these are gated on the `has_loaded` flag, which
+  // used to be set only on the path that runs the printer.
+  describe("a cached entry point does not change how later modules load", () => {
+    // Padding so the entry point clears MINIMUM_CACHE_SIZE (4 KiB) and is
+    // eligible for the cache at all.
+    const filler = "\n//" + Buffer.alloc(5 * 1024, "f").toString();
+
+    test("require.extensions is still consulted", async () => {
+      writeFileSync(
+        join(temp_dir, "entry.js"),
+        `require.extensions[".data"] = (module, filename) => {
+           module.exports = "custom-loader";
+         };
+         console.log(require("./asset.data"));${filler}`,
+      );
+      // If the custom loader is skipped, this is transpiled as JS/TS instead.
+      writeFileSync(join(temp_dir, "asset.data"), `module.exports = "default-loader";`);
+
+      expect(await bunRun(join(temp_dir, "entry.js"), env)).toSpawn("custom-loader");
+      expect(newCacheCount()).toBe(1);
+
+      expect(await bunRun(join(temp_dir, "entry.js"), env)).toSpawn("custom-loader");
+      expect(newCacheCount()).toBe(0);
+    });
+
+    test("unknown extensions still use the file loader", async () => {
+      writeFileSync(
+        join(temp_dir, "entry.mjs"),
+        `import asset from "./asset.someext";
+         console.log(typeof asset === "string" ? "file-loader" : "???");${filler}`,
+      );
+      // Not valid JS/TS, so a non-file loader fails the run outright.
+      writeFileSync(join(temp_dir, "asset.someext"), `hello world contents\n`);
+
+      expect(await bunRun(join(temp_dir, "entry.mjs"), env)).toSpawn("file-loader");
+      expect(newCacheCount()).toBe(1);
+
+      expect(await bunRun(join(temp_dir, "entry.mjs"), env)).toSpawn("file-loader");
+      expect(newCacheCount()).toBe(0);
+    });
+  });
 });
 
 test("rejects cached module records containing out-of-range string indices", () => {
@@ -263,10 +336,11 @@ test("rejects cached module records containing out-of-range string indices", () 
   //   0: cache_version u32, 4: module_type u8, 5: output_encoding u8,
   //   then twelve u64 fields; esm_record_byte_offset @ 78,
   //   esm_record_byte_length @ 86, esm_record_hash @ 94. Payload follows @ 102.
-  // Serialized module record layout (src/bundler/analyze_transpiled_module.rs,
-  // serialize()):
-  //   [record_kinds_len u32][record_kinds, 1 byte each][pad to 4]
-  //   [buffer_len u32][buffer: u32 string index x buffer_len] ...
+  // Serialized module record layout (ModuleInfoStringTable + body, see
+  // `ModuleInfoDeserialized::serialize` in src/js_printer/lib.rs):
+  //   table: [offset_width u8][0;3][count u32][(count+1) offsets][pad to even][bytes]
+  //   body:  [flags u8][id_width u8][0;2][n_requested u32][n_records u32]
+  //          [n_records tag bytes][n_requested tag bytes][string ids @ id_width ...]
   const ESM_RECORD_BYTE_OFFSET_AT = 78;
   const ESM_RECORD_BYTE_LENGTH_AT = 86;
   const ESM_RECORD_HASH_AT = 94;
@@ -279,18 +353,23 @@ test("rejects cached module records containing out-of-range string indices", () 
     const esmLen = Number(data.readBigUInt64LE(ESM_RECORD_BYTE_LENGTH_AT));
     if (esmLen === 0 || esmOff + esmLen > data.length) return false;
 
-    const recordKindsLen = data.readUInt32LE(esmOff);
-    const pad = (4 - (recordKindsLen % 4)) % 4;
-    let off = esmOff + 4 + recordKindsLen + pad;
-    const bufferLen = data.readUInt32LE(off);
-    off += 4;
-    if (bufferLen === 0) return false;
+    const readUint = (at: number, width: number) =>
+      width === 1 ? data.readUInt8(at) : width === 2 ? data.readUInt16LE(at) : data.readUInt32LE(at);
+    const offsetWidth = data.readUInt8(esmOff);
+    const count = data.readUInt32LE(esmOff + 4);
+    const offsetsAt = esmOff + 8;
+    const total = readUint(offsetsAt + count * offsetWidth, offsetWidth);
+    const offsetsLen = (count + 1) * offsetWidth;
+    const bodyAt = offsetsAt + offsetsLen + (offsetsLen % 2) + total;
+    const nRequested = data.readUInt32LE(bodyAt + 4);
+    const nRecords = data.readUInt32LE(bodyAt + 8);
+    const idsAt = bodyAt + 12 + nRecords + nRequested;
+    const end = esmOff + esmLen;
+    if (nRecords === 0 || idsAt >= end) return false;
 
-    // Point every string index in the record buffer far beyond the identifier
-    // table (but below the reserved sentinel range near u32::MAX).
-    for (let i = 0; i < bufferLen; i++) {
-      data.writeUInt32LE(0x7fffffff, off + i * 4);
-    }
+    // Point every string id in the body past the table (and past the two
+    // sentinels count / count+1): all-ones at whatever width the ids use.
+    data.fill(0xff, idsAt, end);
     // The cache loader skips esm-record content verification when the stored
     // hash field is zero, so whoever writes the cache file controls exactly
     // what reaches the module record deserializer.

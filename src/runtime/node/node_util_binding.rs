@@ -1,5 +1,5 @@
 use bun_core::strings::EncodingNonAscii;
-use bun_core::{self as bstr, OwnedString, String as BunString, ZigString, strings};
+use bun_core::{self as bstr, EncodedSlice, String as BunString, strings};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
 use bun_sys::UV_E;
 
@@ -18,8 +18,7 @@ pub(crate) fn internal_error_name(global: &JSGlobalObject, frame: &CallFrame) ->
     if let Some(name) = UV_E::name(err_int) {
         return BunString::static_(name).to_js(global);
     }
-    let mut fmtstring = BunString::create_format(format_args!("Unknown system error {}", err_int));
-    fmtstring.transfer_to_js(global)
+    BunString::create_format(format_args!("Unknown system error {}", err_int)).into_js(global)
 }
 
 #[bun_jsc::host_fn]
@@ -56,6 +55,35 @@ pub(crate) fn enobufs_error_code(
     Ok(JSValue::js_number_from_int32(-UV_E::NOBUFS))
 }
 
+#[bun_jsc::host_fn]
+pub(crate) fn uv_translate_sys_error(
+    _global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let arg = frame.arguments_as_array::<1>()[0];
+    if !arg.is_number() {
+        return Ok(JSValue::js_number_from_int32(-UV_E::INVAL));
+    }
+    let n = arg.to_int32();
+    if n <= 0 {
+        return Ok(JSValue::js_number_from_int32(n));
+    }
+    #[cfg(windows)]
+    {
+        // SAFETY: pure translation function.
+        let uv_err = unsafe { bun_libuv_sys::uv_translate_sys_error(n) };
+        return Ok(JSValue::js_number_from_int32(if uv_err != 0 {
+            uv_err
+        } else {
+            -UV_E::INVAL
+        }));
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(JSValue::js_number_from_int32(-n))
+    }
+}
+
 /// libuv's ECANCELED code (`uv_udp_send` requests cancelled by close). Not a
 /// JS-side literal (unlike EBADF/EINVAL, ECANCELED's number differs across the
 /// POSIX platforms: Linux 125, Darwin 89, FreeBSD 85; synthetic -4081 on
@@ -87,9 +115,7 @@ pub(crate) fn extracted_split_new_lines_fast_path_strings_only(
     let value = frame.argument(0);
     debug_assert!(value.is_string());
 
-    // `defer str.deref()` — `to_bun_string` returns +1; `OwnedString`'s Drop
-    // releases it on every exit path (bun_core::String itself is Copy, no Drop).
-    let str = OwnedString::new(value.to_bun_string(global)?);
+    let str = value.to_bun_string(global)?;
 
     match str.encoding() {
         EncodingNonAscii::Utf16 => split(EncodingNonAscii::Utf16, global, &str),
@@ -112,11 +138,7 @@ fn split(
     global: &JSGlobalObject,
     str: &BunString,
 ) -> JsResult<JSValue> {
-    // `Vec<OwnedString>`'s Drop runs `deref()` on every element (covers both
-    // the success path after `to_js_array` and any `?` early-return). Raw
-    // `bun_core::String` is `Copy` and has NO Drop, so a `Vec<BunString>` would
-    // leak; `OwnedString` is the RAII wrapper that releases each ref.
-    let mut lines: Vec<OwnedString> = Vec::new();
+    let mut lines: Vec<bun_core::String> = Vec::new();
 
     // Split into two arms over the buffer's element type (u8 for
     // utf8/latin1, u16 for utf16).
@@ -128,8 +150,7 @@ fn split(
                 index: Some(0),
             };
             while let Some(line) = it.next() {
-                // errdefer encoded_line.deref() — folded into OwnedString Drop
-                lines.push(OwnedString::new(BunString::borrow_utf16(line)));
+                lines.push(BunString::borrow_utf16(line));
             }
         }
         EncodingNonAscii::Utf8 | EncodingNonAscii::Latin1 => {
@@ -144,13 +165,12 @@ fn split(
                 } else {
                     BunString::clone_latin1(line)
                 };
-                // errdefer encoded_line.deref() — folded into OwnedString Drop
-                lines.push(OwnedString::new(encoded_line));
+                lines.push(encoded_line);
             }
         }
     }
 
-    bun_string_jsc::to_js_array(global, OwnedString::as_raw_slice(&lines))
+    bun_string_jsc::to_js_array(global, &lines)
 }
 
 struct SplitNewlineIterator<'a, T> {
@@ -189,8 +209,7 @@ impl<'a, T: Copy + PartialEq + From<u8>> SplitNewlineIterator<'a, T> {
 #[bun_jsc::host_fn]
 pub(crate) fn normalize_encoding(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let input = frame.argument(0);
-    // `defer str.deref()` — `from_js` returns +1; OwnedString releases on Drop.
-    let str = OwnedString::new(BunString::from_js(input, global)?);
+    let str = BunString::from_js(input, global)?;
     debug_assert!(str.tag() != bstr::Tag::Dead);
     if str.length() == 0 {
         return Ok(Encoding::Utf8.to_js(global));
@@ -208,7 +227,8 @@ pub(crate) fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
 
     // `validate_string` accepts StringObject, so coerce to a primitive JSString
     // before slicing.
-    let str = content.to_js_string(global)?.to_slice(global);
+    let view = content.to_js_string_view(global)?;
+    let str = view.to_utf8();
 
     let mut p = envloader::Loader::init();
     p.load_from_string::<true, false>(str.slice())?;
@@ -217,7 +237,7 @@ pub(crate) fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
     for (k, v) in p.map.map.iter() {
         obj.put(
             global,
-            ZigString::init_utf8(k),
+            EncodedSlice::from_bytes(k),
             bun_string_jsc::create_utf8_for_js(global, &v.value)?,
         );
     }

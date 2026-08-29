@@ -38,11 +38,6 @@ pub struct Unaligned<T: Copy>(T);
 
 impl<T: Copy> Unaligned<T> {
     #[inline(always)]
-    pub const fn new(value: T) -> Self {
-        Self(value)
-    }
-
-    #[inline(always)]
     pub fn get(self) -> T {
         // `self` is by-value (already moved into an aligned local), so a plain
         // field read is fine; the `packed` repr only affects in-place borrows.
@@ -266,6 +261,8 @@ impl ZBox {
     /// Take ownership of `v` and append a trailing NUL.
     #[inline]
     pub fn from_vec(mut v: Vec<u8>) -> ZBox {
+        // Grow by exactly one so `into_boxed_slice` doesn't have to shrink again.
+        v.reserve_exact(1);
         v.push(0);
         ZBox(v.into_boxed_slice())
     }
@@ -601,8 +598,7 @@ macro_rules! opaque_extern {
 // `bun_threading::Guarded` / `bun_threading::RwLock` directly.
 //
 // API parity with the previous `parking_lot` aliases: `const fn new(T)`,
-// `.lock()` → guard (no `Result`), `.try_lock()` → `Option`, `.get_mut()`,
-// `Default`.
+// `.lock()` → guard (no `Result`), `.try_lock()` → `Option`, `Default`.
 
 /// Poison-free `std::sync::Mutex<T>` wrapper. See module note above for why
 /// this is not `bun_threading::Guarded<T>`.
@@ -635,13 +631,6 @@ impl<T> Mutex<T> {
             Err(std::sync::TryLockError::WouldBlock) => None,
         }
     }
-
-    #[inline]
-    pub fn get_mut(&mut self) -> &mut T {
-        self.0
-            .get_mut()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
 }
 
 impl<T: Default> Default for Mutex<T> {
@@ -673,13 +662,6 @@ impl<T> RwLock<T> {
     pub fn write(&self) -> RwLockWriteGuard<'_, T> {
         self.0
             .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    #[inline]
-    pub fn get_mut(&mut self) -> &mut T {
-        self.0
-            .get_mut()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
@@ -1060,10 +1042,17 @@ impl Fd {
             .copied()
             .unwrap_or(Fd::INVALID)
     }
+    /// The Windows `AT_FDCWD`; [`Fd::decode_windows`] maps it to the PEB's
+    /// current directory handle. Handles fit in 32 bits, bit 63 is the uv tag
+    /// and `INVALID_HANDLE_VALUE` masks to all of bits 0..63, so bit 62 alone
+    /// is out of band.
+    #[cfg(windows)]
+    const WINDOWS_CWD: u64 = 1 << 62;
+
     #[cfg(windows)]
     #[inline]
     pub fn cwd() -> Fd {
-        Fd::from_system(fd::windows_current_directory_handle())
+        Fd(Self::WINDOWS_CWD)
     }
 
     /// Whether this is the process's stdin/stdout/stderr.
@@ -1115,9 +1104,12 @@ impl Fd {
         match self.kind() {
             FdKind::System => {
                 // A stored value of 0 decodes to INVALID_HANDLE_VALUE.
-                let n = self.value_as_system();
-                let h = if n == 0 { usize::MAX } else { n as usize };
-                DecodeWindows::Windows(h as *mut core::ffi::c_void)
+                let h = match self.value_as_system() {
+                    0 => usize::MAX as *mut core::ffi::c_void,
+                    Self::WINDOWS_CWD => fd::windows_current_directory_handle(),
+                    n => n as usize as *mut core::ffi::c_void,
+                };
+                DecodeWindows::Windows(h)
             }
             // Direct extract — do NOT recurse into self.uv() (which calls decode_windows).
             FdKind::Uv => DecodeWindows::Uv((self.0 & FD_VALUE_MASK) as u32 as i32),
@@ -1468,6 +1460,9 @@ impl core::fmt::Display for Fd {
         }
         #[cfg(windows)]
         {
+            if fd == Fd::cwd() {
+                return w.write_str("[cwd]");
+            }
             match fd.decode_windows() {
                 DecodeWindows::Windows(_) => write!(w, "{}[handle]", fd.value_as_system()),
                 DecodeWindows::Uv(n) => write!(w, "{}[libuv]", n),
@@ -2935,9 +2930,7 @@ pub mod time {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EmbedKind {
     Codegen,
-    CodegenEager,
     Src,
-    SrcEager,
 }
 
 #[doc(hidden)]
@@ -2946,10 +2939,8 @@ pub fn __runtime_embed_load(kind: EmbedKind, sub: &'static str) -> String {
     // → bytes), so the bytes are valid UTF-8 by construction.
     let from = |b: &'static [u8]| unsafe { ::core::str::from_utf8_unchecked(b) };
     let mut p = match kind {
-        EmbedKind::Codegen | EmbedKind::CodegenEager => {
-            ::std::path::PathBuf::from(from(crate::build_options::CODEGEN_PATH))
-        }
-        EmbedKind::Src | EmbedKind::SrcEager => {
+        EmbedKind::Codegen => ::std::path::PathBuf::from(from(crate::build_options::CODEGEN_PATH)),
+        EmbedKind::Src => {
             let mut b = ::std::path::PathBuf::from(from(crate::build_options::BASE_PATH));
             b.push("src");
             b
@@ -2965,8 +2956,8 @@ pub fn __runtime_embed_load(kind: EmbedKind, sub: &'static str) -> String {
 }
 
 /// Per-call-site embedded file.
-/// `$root` must be one of the bare idents `Codegen` /
-/// `CodegenEager` / `Src` / `SrcEager` and `$sub_path` a string literal.
+/// `$root` must be one of the bare idents `Codegen` / `Src` and `$sub_path` a
+/// string literal.
 ///
 /// The `cfg(bun_codegen_embed)` split lives **inside** the macro so call
 /// sites never repeat the `#[cfg]`/`#[cfg(not)]` pair (which is error-prone
@@ -2983,10 +2974,8 @@ pub fn __runtime_embed_load(kind: EmbedKind, sub: &'static str) -> String {
 /// whenever `bun_codegen_embed` is set).
 #[macro_export]
 macro_rules! runtime_embed_file {
-    (Codegen,      $sub:literal) => { $crate::__runtime_embed_impl!(@codegen $sub) };
-    (CodegenEager, $sub:literal) => { $crate::__runtime_embed_impl!(@codegen $sub) };
-    (Src,          $sub:literal) => { $crate::__runtime_embed_impl!(@src     $sub) };
-    (SrcEager,     $sub:literal) => { $crate::__runtime_embed_impl!(@src     $sub) };
+    (Codegen, $sub:literal) => { $crate::__runtime_embed_impl!(@codegen $sub) };
+    (Src,     $sub:literal) => { $crate::__runtime_embed_impl!(@src     $sub) };
 }
 
 #[doc(hidden)]
@@ -3412,16 +3401,11 @@ impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
 pub trait GenericIndexInt: Copy + Eq + PartialOrd {
     const NULL_VALUE: Self;
     fn to_usize(self) -> usize;
-    fn from_usize(n: usize) -> Self;
 }
 macro_rules! generic_index_int { ($($t:ty),*) => { $(
     impl GenericIndexInt for $t {
         const NULL_VALUE: Self = <$t>::MAX;
         #[inline] fn to_usize(self) -> usize { self as usize }
-        #[inline] fn from_usize(n: usize) -> Self {
-            debug_assert!(n as u128 <= <$t>::MAX as u128, "GenericIndex::from_usize: truncation");
-            n as Self
-        }
     }
 )* } }
 generic_index_int!(u8, u16, u32, u64, usize, i32, i64);
@@ -3775,42 +3759,27 @@ fn raw_os_argv() -> Option<&'static [*const core::ffi::c_char]> {
 fn argv_storage() -> &'static [ZBox] {
     ARGV_STORAGE.get_or_init(|| {
         // Windows: the CRT-provided `char** argv` captured by `init_argv` is
-        // ANSI-encoded (CP_ACP) — `WideCharToMultiByte` lossy-converts the
-        // UTF-16 command line, replacing unrepresentable code points with `?`.
-        // Go straight to `GetCommandLineW` +
-        // `CommandLineToArgvW` and convert each UTF-16 arg to WTF-8 ourselves
-        // so non-ASCII argv (e.g. `bun -e "🌊 测试"`)
-        // round-trips. See https://github.com/oven-sh/bun/issues/11610.
+        // ANSI-encoded (CP_ACP) — lossy for non-ASCII argv (e.g.
+        // `bun -e "🌊 测试"`, https://github.com/oven-sh/bun/issues/11610).
+        // libstd's `args_os()` splits `GetCommandLineW` itself with the MSVC
+        // CRT (2008+) rules — the argv every `wmain` program, node included,
+        // sees — without loading shell32.dll for `CommandLineToArgvW`.
+        // `into_string()` is an O(1) check that moves the buffer through; only
+        // an arg with an unpaired surrogate takes the lossy copy (→ U+FFFD, as
+        // before).
         #[cfg(windows)]
-        {
-            use bun_windows_sys::externs::{CommandLineToArgvW, GetCommandLineW};
-            let mut argc: core::ffi::c_int = 0;
-            // SAFETY: `GetCommandLineW` returns a process-static buffer;
-            // `CommandLineToArgvW` allocates its own array (lifetime managed
-            // by the system — intentionally not `LocalFree`d, the
-            // argv strings are referenced for the process lifetime).
-            let argvw = unsafe { CommandLineToArgvW(GetCommandLineW(), &mut argc) };
-            if !argvw.is_null() {
-                let argc = argc.max(0) as usize;
-                // SAFETY: `CommandLineToArgvW` returned `argc` valid `LPWSTR`s.
-                let argvw = unsafe { core::slice::from_raw_parts(argvw, argc) };
-                return argvw
-                    .iter()
-                    .map(|&p| {
-                        // SAFETY: each entry is a NUL-terminated UTF-16 string
-                        // owned by the `CommandLineToArgvW` allocation.
-                        let arg = unsafe { crate::ffi::wstr_units(p) };
-                        ZBox::from_vec(crate::strings::to_utf8_alloc(arg))
-                    })
-                    .collect();
-            }
-            // Fall through to `args_os` if `CommandLineToArgvW` failed (OOM /
-            // INVAL) — degrade to libstd's
-            // own `GetCommandLineW`-backed parser instead of aborting.
-        }
+        let args = std::env::args_os()
+            .map(|a| {
+                ZBox::from_vec(
+                    a.into_string()
+                        .unwrap_or_else(|a| a.to_string_lossy().into_owned())
+                        .into_bytes(),
+                )
+            })
+            .collect();
         #[cfg(not(windows))]
-        if let Some(raw) = raw_os_argv() {
-            return raw
+        let args = match raw_os_argv() {
+            Some(raw) => raw
                 .iter()
                 .map(|&p| {
                     // SAFETY: kernel argv entries are NUL-terminated and live
@@ -3818,15 +3787,16 @@ fn argv_storage() -> &'static [ZBox] {
                     let s = unsafe { core::ffi::CStr::from_ptr(p) };
                     ZBox::from_bytes(s.to_bytes())
                 })
-                .collect();
-        }
-        // Fallback for entry points that don't go through `extern "C" fn main`
-        // (e.g. `cargo test` harness, Rust `fn main()` via `lang_start`). On
-        // glibc/macOS/Windows this also works for the real binary — only
-        // musl-static needs the `raw_os_argv` path above.
-        std::env::args_os()
-            .map(|a| ZBox::from_vec_with_nul(a.into_encoded_bytes()))
-            .collect()
+                .collect(),
+            // Entry points that don't go through `extern "C" fn main` (the
+            // `cargo test` harness, Rust `fn main()` via `lang_start`). On
+            // glibc/macOS this also works for the real binary — only
+            // musl-static needs the `raw_os_argv` path above.
+            None => std::env::args_os()
+                .map(|a| ZBox::from_vec_with_nul(a.into_encoded_bytes()))
+                .collect(),
+        };
+        args
     })
 }
 
@@ -4165,6 +4135,9 @@ fn getcwd_len(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
     unsafe {
         let p = libc::getcwd(buf.0.as_mut_ptr().cast(), buf.0.len());
         if p.is_null() {
+            if crate::ffi::errno() == libc::ENOENT {
+                return Err(crate::CrateError::CurrentWorkingDirectoryUnlinked);
+            }
             return Err(crate::CrateError::Unexpected);
         }
         Ok(libc::strlen(p))
@@ -4602,6 +4575,8 @@ pub mod spawn_ffi {
         pub gid: u32,
         pub set_uid: bool,
         pub set_gid: bool,
+        /// Linux: directory fd of the cgroup the child starts in. -1 = unset.
+        pub cgroup_fd: c_int,
     }
 
     impl Default for BunSpawnRequest {
@@ -4617,6 +4592,7 @@ pub mod spawn_ffi {
                 gid: 0,
                 set_uid: false,
                 set_gid: false,
+                cgroup_fd: -1,
             }
         }
     }
@@ -4915,11 +4891,6 @@ impl Timespec {
     pub const EPOCH: Timespec = Timespec { sec: 0, nsec: 0 };
     const NS_PER_S: i64 = crate::time::NS_PER_S as i64;
     const NS_PER_MS: i64 = crate::time::NS_PER_MS as i64;
-
-    #[inline]
-    pub const fn new(sec: i64, nsec: i64) -> Self {
-        Self { sec, nsec }
-    }
 
     #[inline]
     pub fn eql(&self, other: &Timespec) -> bool {

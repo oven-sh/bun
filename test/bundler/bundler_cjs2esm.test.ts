@@ -141,6 +141,87 @@ describe("bundler", () => {
       stdout: "bar",
     },
   });
+  // The same file as an entry point is a module in its own right, not only a redirect for its importers.
+  itBundled("cjs2esm/ModuleExportsEqualsRequireEntryPoint", {
+    files: {
+      "/entry.cjs": /* js */ `
+        /*! banner */
+        "use strict";
+        module.exports = require('./library.js')
+      `,
+      "/library.js": /* js */ `
+        module.exports = { foo: 'bar' };
+      `,
+      "/user.mjs": /* js */ `
+        import lib from './out.js';
+        console.log(lib.foo, require('./out.js').default.foo);
+      `,
+    },
+    outfile: "/out.js",
+    run: { file: "/user.mjs", stdout: "bar bar" },
+  });
+  // An entry point that another entry point imports: still a module of its own (parsed once, as an entry point),
+  // and the importer links to it rather than past it.
+  itBundled("cjs2esm/ModuleExportsEqualsRequireEntryPointImportedByEntryPoint", {
+    files: {
+      "/a.js": /* js */ `
+        import lib from './b.js';
+        console.log('a', lib.foo);
+      `,
+      "/b.js": /* js */ `
+        module.exports = require('./library.js')
+      `,
+      "/library.js": /* js */ `
+        module.exports = { foo: 'bar' };
+      `,
+      "/user.mjs": /* js */ `
+        await import('./out/a.js');
+        const b = await import('./out/b.js');
+        console.log('b', b.default.foo);
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    run: { file: "/user.mjs", stdout: "a bar\nb bar" },
+  });
+  itBundled("cjs2esm/ModuleExportsEqualsRequireEntryPointImportedByEntryPointSplitting", {
+    files: {
+      "/a.js": /* js */ `
+        import lib from './b.js';
+        console.log('a', lib.foo);
+      `,
+      "/b.js": /* js */ `
+        module.exports = require('./library.js')
+      `,
+      "/library.js": /* js */ `
+        module.exports = { foo: 'bar' };
+      `,
+      "/user.mjs": /* js */ `
+        await import('./out/a.js');
+        const b = await import('./out/b.js');
+        console.log('b', b.default.foo);
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    splitting: true,
+    run: { file: "/user.mjs", stdout: "a bar\nb bar" },
+  });
+  // Two re-export-only entry points over the same target: two modules, one shared target.
+  itBundled("cjs2esm/ModuleExportsEqualsRequireTwoEntryPoints", {
+    files: {
+      "/a.js": `module.exports = require('./library.js')`,
+      "/b.js": `module.exports = require('./library.js')`,
+      "/library.js": `module.exports = { foo: 'bar' };`,
+      "/user.mjs": /* js */ `
+        const [a, b] = await Promise.all([import('./out/a.js'), import('./out/b.js')]);
+        console.log(a.default.foo, b.default.foo);
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    run: { file: "/user.mjs", stdout: "bar bar" },
+  });
   itBundled("cjs2esm/ModuleExportsBasedOnNodeEnvProduction", {
     files: {
       "/entry.js": /* js */ `
@@ -282,6 +363,42 @@ describe("bundler", () => {
     },
     run: {
       stdout: "react\nreact\nreact\nreact\nundefined\nreact\nreact\nreact\nreact\nreact\nreact\n1 react\nreact\nreact",
+    },
+  });
+  // A require() of an unwrapped package that initializes a destructuring
+  // declaration is kept as a require expression that remembers it was
+  // unwrapped, and prints as the namespace object. One inside try/catch is
+  // never unwrapped and prints as an ordinary require.
+  itBundled("cjs2esm/UnwrappedModuleRequireDestructuredAndInTry", {
+    files: {
+      "/entry.js": /* js */ `
+        const { react: named } = require("react");
+        console.log(named);
+
+        let inTry = "missing";
+        try {
+          inTry = require("react").react;
+        } catch {}
+        console.log(inTry);
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        exports.react = "react";
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        {
+          "name": "react",
+          "version": "2.0.0",
+          "main": "index.js"
+        }
+      `,
+    },
+    onAfterBundle: api => {
+      const code = api.readFile("out.js");
+      expect(code).toMatch(/\{ react: named \} = \(?exports_react\)?;/);
+      expect(code).toContain("__toCommonJS(exports_react)).react");
+    },
+    run: {
+      stdout: "react\nreact",
     },
   });
   itBundled("cjs2esm/ReactSpecificUnwrapping", {

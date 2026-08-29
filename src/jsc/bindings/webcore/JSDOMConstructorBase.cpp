@@ -38,7 +38,6 @@ JSC_DEFINE_HOST_FUNCTION(callThrowTypeErrorForJSDOMConstructor, (JSGlobalObject 
     auto* callee = callframe->jsCallee();
     auto* constructor = dynamicDowncast<JSDOMConstructorBase>(callee);
     const auto& name = constructor->name();
-    RETURN_IF_EXCEPTION(scope, {});
     Bun::throwError(globalObject, scope, constructor->errorCode(), makeString("Use `new "_s, name, "(...)` instead of `"_s, name, "(...)`"_s));
     return {};
 }
@@ -62,6 +61,15 @@ JSC_DEFINE_HOST_FUNCTION(throwTypeErrorForJSDOMConstructorNotConstructable, (JSG
 JSC::GCClient::IsoSubspace* JSDOMConstructorBase::subspaceForImpl(JSC::VM& vm)
 {
     return &static_cast<JSVMClientData*>(vm.clientData)->domConstructorSpace();
+}
+
+void JSDOMConstructorBase::initializeBaseProperties(JSC::VM& vm, unsigned length, ASCIILiteral name, JSC::JSObject* prototype)
+{
+    putDirect(vm, vm.propertyNames->length, jsNumber(length), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
+    JSString* nameString = jsNontrivialString(vm, String(name));
+    m_originalName.set(vm, this, nameString);
+    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
+    putDirect(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 }
 
 } // namespace WebCore

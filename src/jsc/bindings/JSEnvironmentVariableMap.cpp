@@ -38,8 +38,8 @@ using namespace JSC;
 extern "C" size_t Bun__getEnvCount(JSGlobalObject* globalObject, void** list_ptr);
 extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
 
-extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const ZigString* name, ZigString* value);
-extern "C" bool Bun__getEnvValueBunString(JSGlobalObject* globalObject, const BunString* name, BunString* value);
+extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const EncodedSlice* name, EncodedSlice* value);
+extern "C" BunString Bun__getEnvValueBunString(JSGlobalObject* globalObject, const BunString* name);
 extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
 extern "C" bool Bun__Node__ProcessPendingDeprecation;
 
@@ -107,6 +107,8 @@ static JSC::JSString* coerceEnvValue(JSGlobalObject* globalObject, JSC::ThrowSco
 }
 
 static void applyTZFromString(JSGlobalObject*, const String&);
+static void applyTLSRejectFromString(JSGlobalObject*, const String&);
+static void applyVerboseFetchFromString(JSGlobalObject*, const String&);
 static bool shouldApplyTZSideEffect(JSGlobalObject*);
 
 // TZ side effect for put() and jsProcessEnvCoerceForWrite, so delete-then-set
@@ -118,6 +120,14 @@ static void applyTimeZoneEnvValue(JSGlobalObject* globalObject, JSC::JSString* s
     if (view->isNull())
         return;
     applyTZFromString(globalObject, view->toString());
+}
+
+static void applyTLSRejectEnvValue(JSGlobalObject* globalObject, JSC::JSString* string)
+{
+    auto view = string->view(globalObject);
+    if (view->isNull())
+        return;
+    applyTLSRejectFromString(globalObject, view->toString());
 }
 
 bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
@@ -143,6 +153,12 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
     // updates Date caches. putDirect bypasses the accessor so the side effect fires once.
     if (uid && WTF::equal(uid, "TZ"_s)) [[unlikely]] {
         applyTimeZoneEnvValue(globalObject, string);
+        RETURN_IF_EXCEPTION(scope, false);
+        static_cast<JSEnvironmentVariableMap*>(cell)->putDirect(vm, propertyName, string, 0);
+        return true;
+    }
+    if (uid && WTF::equal(uid, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) [[unlikely]] {
+        applyTLSRejectEnvValue(globalObject, string);
         RETURN_IF_EXCEPTION(scope, false);
         static_cast<JSEnvironmentVariableMap*>(cell)->putDirect(vm, propertyName, string, 0);
         return true;
@@ -197,8 +213,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
     if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
+    EncodedSlice name = toEncodedSlice(propertyName.publicName());
+    EncodedSlice value = { nullptr, 0 };
 
     if (name.len == 0) [[unlikely]]
         return JSValue::encode(jsUndefined());
@@ -227,8 +243,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterProxyEnvironmentVariable, (JSGlobalObject * glo
         return JSValue::encode(jsUndefined());
 
     BunString name = Bun::toStringView(propertyName.publicName());
-    BunString value = { BunStringTag::Dead };
-    if (!Bun__getEnvValueBunString(globalObject, &name, &value)) {
+    BunString value = Bun__getEnvValueBunString(globalObject, &name);
+    if (value.tag == BunStringTag::Dead) {
         return JSValue::encode(jsUndefined());
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, value.toWTFString())));
@@ -279,8 +295,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
 
     auto* clientData = WebCore::clientData(vm);
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
+    EncodedSlice name = toEncodedSlice(propertyName.publicName());
+    EncodedSlice value = { nullptr, 0 };
 
     auto hasExistingValue = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().dataPrivateName());
     RETURN_IF_EXCEPTION(scope, {});
@@ -297,12 +313,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
 
     return JSValue::encode(out);
 }
-
-// Parse-and-apply for NODE_TLS_REJECT_UNAUTHORIZED / BUN_CONFIG_VERBOSE_FETCH,
-// used by both the CustomSetters below and applySharedEnvSideEffects.
-// (applyTZFromString is forward-declared above applyTimeZoneEnvValue.)
-static void applyTLSRejectFromString(JSGlobalObject*, const String&);
-static void applyVerboseFetchFromString(JSGlobalObject*, const String&);
 
 // Store-only: the TZ side effect fires from put() / jsProcessEnvCoerceForWrite on every
 // write. Firing here too would double-apply on Windows (writeEnvVar already ran it).
@@ -334,15 +344,17 @@ bool JSEnvironmentVariableMap::deleteProperty(JSCell* cell, JSGlobalObject* glob
         DeletePropertySlot dataSlot;
         Base::deleteProperty(cell, globalObject, clientData->builtinNames().dataPrivateName(), dataSlot);
         RETURN_IF_EXCEPTION(scope, false);
+    } else if (uid && WTF::equal(uid, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) {
+        applyTLSRejectFromString(globalObject, String());
     }
 
     RELEASE_AND_RETURN(scope, Base::deleteProperty(cell, globalObject, propertyName, slot));
 }
 
 extern "C" int Bun__getTLSRejectUnauthorizedValue();
-extern "C" int Bun__setTLSRejectUnauthorizedValue(int value);
+extern "C" void Bun__setTLSRejectUnauthorizedValue(int value);
 extern "C" int Bun__getVerboseFetchValue();
-extern "C" int Bun__setVerboseFetchValue(int value);
+extern "C" void Bun__setVerboseFetchValue(int value);
 
 ALWAYS_INLINE static Identifier NODE_TLS_REJECT_UNAUTHORIZED_PRIVATE_PROPERTY(VM& vm)
 {
@@ -377,8 +389,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeTLSRejectUnauthorizedGetter, (JSGlobalObject * gl
         return JSValue::encode(result);
     }
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
+    EncodedSlice name = toEncodedSlice(propertyName.publicName());
+    EncodedSlice value = { nullptr, 0 };
 
     if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
         return JSValue::encode(jsUndefined());
@@ -425,8 +437,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsBunConfigVerboseFetchGetter, (JSGlobalObject * global
         return JSValue::encode(result);
     }
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
+    EncodedSlice name = toEncodedSlice(propertyName.publicName());
+    EncodedSlice value = { nullptr, 0 };
 
     if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
         return JSValue::encode(jsUndefined());
@@ -459,7 +471,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * global
 }
 
 #if OS(WINDOWS)
-extern "C" void Bun__Process__editWindowsEnvVar(BunString, BunString);
+extern "C" void Bun__Process__editWindowsEnvVar(const BunString*, const BunString*);
 
 // Windows Proxy set/defineProperty write path: DEP0104 + ToString via coerceEnvValue,
 // plus the TZ side effect so it survives `delete process.env.TZ`. Returns the string.
@@ -477,19 +489,32 @@ JSC_DEFINE_HOST_FUNCTION(jsProcessEnvCoerceForWrite, (JSGlobalObject * globalObj
         if (WTF::equal(keyView, "TZ"_s)) {
             applyTimeZoneEnvValue(globalObject, string);
             RETURN_IF_EXCEPTION(scope, {});
+        } else if (WTF::equal(keyView, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) {
+            applyTLSRejectEnvValue(globalObject, string);
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
     return JSValue::encode(string);
 }
 
-// `delete process.env.TZ` on Windows: reset the timezone override (POSIX handles this in
+// `delete process.env.X` on Windows: undo X's native side effect (POSIX handles this in
 // JSEnvironmentVariableMap::deleteProperty; the Windows internalEnv is a plain object).
-JSC_DEFINE_HOST_FUNCTION(jsProcessEnvResetTZ, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsProcessEnvResetForDelete, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
-    if (shouldApplyTZSideEffect(globalObject)) {
-        WTF::setTimeZoneOverride(String());
-        resetDateCachesAfterTimeZoneChange(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue key = callFrame->argument(0);
+    if (!key.isString())
+        return JSValue::encode(jsUndefined());
+    auto keyView = asString(key)->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (WTF::equal(keyView, "TZ"_s)) {
+        if (shouldApplyTZSideEffect(globalObject)) {
+            WTF::setTimeZoneOverride(String());
+            resetDateCachesAfterTimeZoneChange(vm);
+        }
+    } else if (WTF::equal(keyView, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) {
+        applyTLSRejectFromString(globalObject, String());
     }
     return JSValue::encode(jsUndefined());
 }
@@ -506,9 +531,13 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
     if (arg2.isCell()) {
         WTF::String string2 = arg2.toWTFString(global);
         RETURN_IF_EXCEPTION(scope, {});
-        Bun__Process__editWindowsEnvVar(Bun::toString(string1), Bun::toString(string2));
+        BunString k = Bun::toString(string1);
+        BunString v = Bun::toString(string2);
+        Bun__Process__editWindowsEnvVar(&k, &v);
     } else {
-        Bun__Process__editWindowsEnvVar(Bun::toString(string1), { .tag = BunStringTag::Dead });
+        BunString k = Bun::toString(string1);
+        BunString v = { .tag = BunStringTag::Dead };
+        Bun__Process__editWindowsEnvVar(&k, &v);
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
@@ -524,10 +553,9 @@ static ALWAYS_INLINE void syncWindowsEnv(SharedEnvStore* store, const String& ke
 #if OS(WINDOWS)
     if (!store || !store->isMainRooted())
         return;
-    if (value)
-        Bun__Process__editWindowsEnvVar(Bun::toString(key), Bun::toString(*value));
-    else
-        Bun__Process__editWindowsEnvVar(Bun::toString(key), { .tag = BunStringTag::Dead });
+    BunString k = Bun::toString(key);
+    BunString v = value ? Bun::toString(*value) : BunString { .tag = BunStringTag::Dead };
+    Bun__Process__editWindowsEnvVar(&k, &v);
 #else
     UNUSED_PARAM(store);
     UNUSED_PARAM(key);
@@ -588,12 +616,12 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static JSSharedEnvMap* create(JSC::VM& vm, JSC::Structure* structure)
     {
-        JSSharedEnvMap* ptr = new (NotNull, JSC::allocateCell<JSSharedEnvMap>(vm)) JSSharedEnvMap(vm, structure);
+        JSSharedEnvMap* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSSharedEnvMap))) JSSharedEnvMap(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -772,9 +800,12 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
     // side effect via applySharedEnvSideEffects, so delete has to undo it or
     // existing Date instances keep the deleted zone's offset.
     String key(uid);
-    if (SharedEnvStore::normalizeKey(key) == "TZ"_s && shouldApplyTZSideEffect(globalObject)) {
+    String normalizedKey = SharedEnvStore::normalizeKey(key);
+    if (normalizedKey == "TZ"_s && shouldApplyTZSideEffect(globalObject)) {
         WTF::setTimeZoneOverride(String());
         resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
+    } else if (normalizedKey == "NODE_TLS_REJECT_UNAUTHORIZED"_s) {
+        applyTLSRejectFromString(globalObject, String());
     }
 
     syncWindowsEnv(store, key, nullptr);
@@ -1046,8 +1077,8 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         // This causes strange issues when the environment variable name is an integer.
         if (chars[0] >= '0' && chars[0] <= '9') [[unlikely]] {
             if (auto index = parseIndex(identifier)) {
-                ZigString valueString = { nullptr, 0 };
-                ZigString nameStr = toZigString(name);
+                EncodedSlice valueString = { nullptr, 0 };
+                EncodedSlice nameStr = toEncodedSlice(name);
                 if (Bun__getEnvValue(globalObject, &nameStr, &valueString)) {
                     JSValue value = jsString(vm, Zig::toStringCopy(valueString));
                     RETURN_IF_EXCEPTION(scope, {});
@@ -1113,7 +1144,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     args.append(keyArray);
     args.append(editWindowsEnvVar);
     args.append(JSC::JSFunction::create(vm, globalObject, 2, "coerceForWrite"_s, jsProcessEnvCoerceForWrite, ImplementationVisibility::Private));
-    args.append(JSC::JSFunction::create(vm, globalObject, 0, "resetTZ"_s, jsProcessEnvResetTZ, ImplementationVisibility::Private));
+    args.append(JSC::JSFunction::create(vm, globalObject, 1, "resetForDelete"_s, jsProcessEnvResetForDelete, ImplementationVisibility::Private));
     auto clientData = WebCore::clientData(vm);
     JSC::CallData callData = JSC::getCallData(getSourceEvent);
     NakedPtr<JSC::Exception> returnedException = nullptr;

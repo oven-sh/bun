@@ -37,6 +37,13 @@ class WithPrototypeGetter {
   }
 }
 
+class WithValue {
+  a = 1;
+}
+
+const sharedConstructor = function sharedConstructor() {};
+const sharedPrototype = { p: 1 };
+
 function anonymousClassInstance() {
   return new (class {
     a = 1;
@@ -52,6 +59,27 @@ function sameNameClassInstance() {
 function nonEnumerable() {
   const object = {};
   Object.defineProperty(object, "hidden", { value: 1, enumerable: false });
+  return object;
+}
+
+function withHiddenProperty<T extends object>(object: T, key: PropertyKey, value: unknown): T {
+  return Object.defineProperty(object, key, { value, writable: true, configurable: true });
+}
+
+function withOwnConstructor(prototype: object | null, constructor: unknown) {
+  return Object.create(prototype, { constructor: { value: constructor } });
+}
+
+function seventyProperties<T extends Record<string, unknown>>(object: T): T {
+  for (let i = 0; i < 70; i++) (object as Record<string, unknown>)["k" + i] = i;
+  return object;
+}
+
+function dictionaryMode<T extends Record<string, unknown>>(object: T): T {
+  for (let i = 0; i < 5; i++) {
+    (object as Record<string, unknown>)["t" + i] = 1;
+    delete (object as Record<string, unknown>)["t" + i];
+  }
   return object;
 }
 
@@ -260,6 +288,280 @@ const cases: Case[] = [
     b: () => Object.create(Array.prototype),
     strict: false,
     loose: false,
+  },
+  // Strict mode compares the inherited constructor, not the [[Prototype]]
+  // itself: an object with a plain-object prototype chain still equals {}.
+  {
+    name: "Object.create({ x: 1 }) and {}",
+    a: () => Object.create({ x: 1 }),
+    b: () => ({}),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "{} and Object.create({ x: 1 })",
+    a: () => ({}),
+    b: () => Object.create({ x: 1 }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "two objects with different non-null prototypes",
+    a: () => Object.create({ x: 1 }),
+    b: () => Object.create({ z: 2 }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "nested objects whose prototypes differ",
+    a: () => ({ a: { ns: Object.create({ inherited: 1 }) } }),
+    b: () => ({ a: { ns: {} } }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a class instance and an object inheriting the same prototype",
+    a: () => new WithValue(),
+    b: () => Object.assign(Object.create(WithValue.prototype), { a: 1 }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a Map subclass instance and a Map",
+    a: () => new (class extends Map {})(),
+    b: () => new Map(),
+    strict: false,
+    loose: true,
+  },
+  // An own "constructor" property only short-circuits the prototype
+  // comparison when its value is a well-known built-in constructor.
+  {
+    name: "own constructor: Object on objects with different prototypes",
+    a: () => Object.create({ q: 1 }, { constructor: { value: Object } }),
+    b: () => Object.create({ w: 2 }, { constructor: { value: Object } }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "own constructor: a user function on objects with different prototypes",
+    a: () => Object.create({ q: 1 }, { constructor: { value: sharedConstructor } }),
+    b: () => Object.create({ w: 2 }, { constructor: { value: sharedConstructor } }),
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "own constructor: a user function on objects with the same prototype",
+    a: () => Object.create(sharedPrototype, { constructor: { value: sharedConstructor } }),
+    b: () => Object.create(sharedPrototype, { constructor: { value: sharedConstructor } }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "own constructor: different non-enumerable user functions on objects with the same prototype",
+    a: () => Object.create(sharedPrototype, { constructor: { value: function A() {} } }),
+    b: () => Object.create(sharedPrototype, { constructor: { value: function B() {} } }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a Proxy of {} and {}",
+    a: () => new Proxy({}, {}),
+    b: () => ({}),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a Proxy of { a: 1 } and { a: 1 }",
+    a: () => new Proxy({ a: 1 }, {}),
+    b: () => ({ a: 1 }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "{ a: 1 } and a Proxy of { a: 2 }",
+    a: () => ({ a: 1 }),
+    b: () => new Proxy({ a: 2 }, {}),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "a Proxy of a class instance and another instance of that class",
+    a: () => new Proxy(new WithValue(), {}),
+    b: () => new WithValue(),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a Proxy whose getPrototypeOf trap returns null and a null-prototype object",
+    a: () => new Proxy({}, { getPrototypeOf: () => null }),
+    b: () => Object.create(null),
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "a Proxy with an own constructor: Object and an object with another prototype and the same own constructor",
+    a: () => new Proxy({ constructor: Object }, {}),
+    b: () => Object.create({ z: 1 }, { constructor: { value: Object, enumerable: true } }),
+    strict: true,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  {
+    name: "own constructor: Uint8Array on objects with different prototypes",
+    a: () => withOwnConstructor({ q: 1 }, Uint8Array),
+    b: () => withOwnConstructor({ w: 2 }, Uint8Array),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "own constructor: Buffer on objects with different prototypes",
+    a: () => withOwnConstructor({ q: 1 }, Buffer),
+    b: () => withOwnConstructor({ w: 2 }, Buffer),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "own constructor: DataView on objects with different prototypes",
+    a: () => withOwnConstructor({ q: 1 }, DataView),
+    b: () => withOwnConstructor({ w: 2 }, DataView),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "own constructor: TypeError on objects with different prototypes",
+    a: () => withOwnConstructor({ q: 1 }, TypeError),
+    b: () => withOwnConstructor({ w: 2 }, TypeError),
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "own non-enumerable constructor: Object and Array on the same structure",
+    a: () => withHiddenProperty({}, "constructor", Object),
+    b: () => withHiddenProperty({}, "constructor", Array),
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "objects with different prototypes whose inherited constructor is undefined",
+    a: () => Object.create(withOwnConstructor(null, undefined)),
+    b: () => Object.create(withOwnConstructor(null, undefined)),
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "Object.setPrototypeOf([], null) and []",
+    a: () => Object.setPrototypeOf([], null),
+    b: () => [],
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "{} and Object.create(Object.create(Object.prototype))",
+    a: () => ({}),
+    b: () => Object.create(Object.create(Object.prototype)),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "{} and an object whose prototype has a getter",
+    a: () => ({}),
+    b: () =>
+      Object.create({
+        get g() {
+          return 1;
+        },
+      }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "{} and an object inheriting Symbol.toStringTag",
+    a: () => ({}),
+    b: () => Object.create({ [Symbol.toStringTag]: "X" }),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "Object.create({ x: 1 }) and { x: 1 }",
+    a: () => Object.create({ x: 1 }),
+    b: () => ({ x: 1 }),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "70-property objects, one with an inherited enumerable property",
+    a: () => seventyProperties({}),
+    b: () => seventyProperties(Object.create({ inherited: 1 })),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a dictionary-mode object and one with an inherited enumerable property",
+    a: () => dictionaryMode({ x: 1, y: 2 }),
+    b: () => Object.assign(Object.create({ inherited: 1 }), { x: 1, y: 2 }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "{ x: 1 } and an object with a non-enumerable x",
+    a: () => ({ x: 1 }),
+    b: () => withHiddenProperty({}, "x", 1),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "an object with a non-enumerable x and { x: 1 }",
+    a: () => withHiddenProperty({}, "x", 1),
+    b: () => ({ x: 1 }),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "{ x: 1, y: 2 } and { x: 1 } with a non-enumerable y",
+    a: () => ({ x: 1, y: 2 }),
+    b: () => withHiddenProperty({ x: 1 }, "y", 2),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "a Date and a Date subclass instance with the same time",
+    a: () => new Date(0),
+    b: () => new (class extends Date {})(0),
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "a boxed string and a null-prototype boxed string",
+    a: () => new String("a"),
+    b: () => Object.setPrototypeOf(new String("a"), null),
+    strict: false,
+    loose: true,
+    looseBug: "throws a TypeError",
+  },
+  {
+    name: "new Number(1) and Object.create(Number.prototype)",
+    a: () => new Number(1),
+    b: () => Object.create(Number.prototype),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "an Error and a plain object inheriting Error.prototype with the same message",
+    a: () => new Error("a"),
+    b: () => withHiddenProperty(withHiddenProperty(Object.create(Error.prototype), "message", "a"), "stack", ""),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "two pending Promises",
+    a: () => new Promise(() => {}),
+    b: () => new Promise(() => {}),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
   },
 
   // Symbol keys: compared in strict mode, ignored in loose mode.
@@ -739,6 +1041,12 @@ describe("util.isDeepStrictEqual", () => {
     ])("propagates through %s", (_name, makeA, makeB) => {
       expect(util.isDeepStrictEqual(makeA(), makeB())).toBe(false);
       expect(util.isDeepStrictEqual(makeA(), makeB(), true)).toBe(true);
+    });
+
+    test("still compares Object.prototype.toString tags", () => {
+      expect(util.isDeepStrictEqual(argumentsObject(1), { 0: 1 }, true)).toBe(false);
+      expect(util.isDeepStrictEqual(argumentsObject(1), argumentsObject(1), true)).toBe(true);
+      expect(util.isDeepStrictEqual(Object.create({ [Symbol.toStringTag]: "X" }), {}, true)).toBe(false);
     });
 
     test("ignores the boxed-primitive subclass distinction", () => {

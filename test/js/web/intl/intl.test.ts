@@ -10,14 +10,14 @@
 // links the unmodified libicudata.a.
 
 import { describe, expect, test } from "bun:test";
-import { isLinux } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, libcPathForDlopen } from "harness";
 
 // Snapshots are CLDR-version-specific. Only check them where Bun bundles the
-// ICU they were generated against (Linux); macOS uses Apple's libicucore and
-// Windows is on a different ICU build, so snapshot diffs there are expected
-// and not a regression. The structural sweep below runs everywhere.
-const SNAPSHOT_ICU_VERSION = "75.1";
-const snapshotIf = isLinux && process.versions.icu === SNAPSHOT_ICU_VERSION ? test : test.skip;
+// ICU they were generated against; macOS uses Apple's libicucore, so snapshot
+// diffs there are expected and not a regression. The structural sweep below
+// runs everywhere.
+const SNAPSHOT_ICU_VERSION = "78.3";
+const snapshotIf = !isMacOS && process.versions.icu === SNAPSHOT_ICU_VERSION ? test : test.skip;
 
 const LOCALES = ["en", "de", "fr", "ja", "ko", "ru", "zh", "zh-Hant", "ar", "th", "es-419", "pt-PT"] as const;
 
@@ -111,6 +111,54 @@ describe("Intl.DateTimeFormat", () => {
 // ---------------------------------------------------------------------------
 
 describe("Intl.Collator", () => {
+  // The default locale must not be ICU's en_US_POSIX fallback (what an invalid
+  // platform language tag degrades to; bionic's default "C.UTF-8" used to
+  // produce exactly that): its case-first collation gives "a".localeCompare("B") === 1.
+  test("default locale is a real locale, not en-US-u-va-posix", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `console.log(JSON.stringify([new Intl.Collator().resolvedOptions().locale, "a".localeCompare("B")]))`,
+      ],
+      // whatever the environment says, including nothing at all
+      env: { ...bunEnv, LANG: undefined, LC_ALL: undefined, LC_CTYPE: undefined },
+      stdout: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [locale, order] = JSON.parse(stdout);
+    expect(locale).not.toContain("posix");
+    expect(order).toBe(-1);
+    expect(exitCode).toBe(0);
+  });
+
+  // Same path with the C locale spelled "C.UTF-8" (glibc/musl name for it, and
+  // what bionic reports by default): WTF must still treat it as C -> "en-US".
+  test.skipIf(!isLinux)("default locale under C.UTF-8 is not en-US-u-va-posix", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { dlopen } = require("bun:ffi");
+         const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, { setlocale: { args: ["i32", "cstring"], returns: "cstring" } });
+         const LC_CTYPE = 0; // glibc, musl and bionic; the category platformLanguage() reads
+         const set = String(libc.symbols.setlocale(LC_CTYPE, Buffer.from("C.UTF-8\\0")));
+         console.log(JSON.stringify([set, new Intl.Collator().resolvedOptions().locale, "a".localeCompare("B"), (12345.5).toLocaleString()]));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [set, locale, order, grouped] = JSON.parse(stdout);
+    // a libc without a C.UTF-8 locale keeps "C", which is the case above
+    if (set === "C.UTF-8") {
+      expect(locale).toBe("en-US");
+      expect(order).toBe(-1);
+      expect(grouped).toBe("12,345.5");
+    }
+    expect(exitCode).toBe(0);
+  });
+
   snapshotIf("sort order across locales", () => {
     const out: Record<string, string[]> = {};
     for (const loc of LOCALES) out[loc] = ["z", "a", "ä", "ö", "Z", "A"].sort(new Intl.Collator(loc).compare);
@@ -137,6 +185,53 @@ describe("Intl.Collator", () => {
     expect(c.compare("a", "A")).toBe(0);
     expect(c.compare("a", "á")).toBe(0);
     expect(c.compare("a", "b")).toBeLessThan(0);
+  });
+});
+
+// ICU reads its own default locale from LC_ALL, then LC_MESSAGES, then LANG the
+// first time a calendar or collator is opened. A value it cannot parse used to
+// leave that default unset, and the first Date#toString / localeCompare / Intl
+// constructor then crashed inside ICU. Bun's own default locale does not come
+// from these variables, so every value, parseable or not, must give the en-US
+// output. On Windows neither holds: ICU reads the system locale and JSC reports
+// the UI language of the machine.
+describe.skipIf(isWindows).concurrent("locale variables in the environment", () => {
+  const script = `console.log(JSON.stringify([
+    new Date(0).toString(),
+    "a".localeCompare("b"),
+    (1234.5).toLocaleString(),
+    new Intl.DateTimeFormat().resolvedOptions().locale,
+  ]))`;
+
+  test.each([
+    // eleven bytes is the longest language subtag ICU accepts
+    { LANG: "abcdefghijkl" },
+    { LANG: "/usr/lib/locale/en_US" },
+    // ICU turns the modifier into a variant before it parses the value, and a
+    // variant of 180 or more bytes is rejected. The value itself canonicalizes.
+    { LANG: "en_US@k=" + Buffer.alloc(200, "a").toString() },
+    { LC_MESSAGES: "abcdefghijkl" },
+    { LC_ALL: "abcdefghijkl", LANG: "en_US.UTF-8" },
+    // a parseable or empty variable in front of an unparseable one wins
+    { LC_ALL: "C", LANG: "abcdefghijkl" },
+    { LC_ALL: "", LANG: "abcdefghijkl" },
+    { LC_ALL: "de_DE.UTF-8" },
+  ])("%o", async vars => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, LANG: undefined, LC_ALL: undefined, LC_MESSAGES: undefined, ...vars },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([
+      "Thu Jan 01 1970 00:00:00 GMT+0000 (Coordinated Universal Time)",
+      -1,
+      "1,234.5",
+      "en-US",
+    ]);
+    expect(exitCode).toBe(0);
   });
 });
 

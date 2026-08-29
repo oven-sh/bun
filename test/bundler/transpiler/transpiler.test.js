@@ -2584,6 +2584,14 @@ console.log(<div {...obj} key="after" />);`),
   });
 
   describe("scanImports", () => {
+    it("decodes non-ASCII specifiers as UTF-8", () => {
+      const imports = transpiler.scanImports(`import a from "./módulo-ü.js"; import b from "pkg-日本";`, "js");
+      expect(imports.map(i => i.path)).toEqual(["./módulo-ü.js", "pkg-日本"]);
+      expect(transpiler.scan(`import a from "./módulo-ü.js";`, "js").imports.map(i => i.path)).toEqual([
+        "./módulo-ü.js",
+      ]);
+    });
+
     it("reports import paths, excluding types", () => {
       const imports = transpiler.scanImports(code, "tsx");
       expect(imports.filter(({ path }) => path === "remix")).toHaveLength(1);
@@ -3504,6 +3512,51 @@ class Foo {
     expectParseError("class Foo { #x() { this.#x += 1 } }", 'Writing to read-only method "#x" will throw');
   });
 
+  it("class bodies keep `this` and the class name as written", () => {
+    expectPrinted_(
+      "class Foo { static x = this; static { this.y = Foo } z = () => this }",
+      "class Foo {\n  static x = this;\n  static {\n    this.y = Foo;\n  }\n  z = () => this;\n}",
+    );
+    expectPrinted_("(class { static x = this })", "(class {\n  static x = this;\n})");
+    expectPrinted_(
+      "let Foo = class Bar { static self = Bar; m() { return Bar } }",
+      "let Foo = class Bar {\n  static self = Bar;\n  m() {\n    return Bar;\n  }\n}",
+    );
+  });
+
+  it("declarations named eval or arguments, and reserved words, in strict mode", () => {
+    expectParseError(
+      '"use strict"; var arguments = 1',
+      'Declarations with the name "arguments" cannot be used in strict mode',
+    );
+    expectParseError(
+      '"use strict"; function eval() {}',
+      'Declarations with the name "eval" cannot be used in strict mode',
+    );
+    expectParseError('"use strict"; var package = 1', '"package" is a reserved word and cannot be used in strict mode');
+    expectParseError(
+      '"use strict"; let implements = 1',
+      '"implements" is a reserved word and cannot be used in strict mode',
+    );
+
+    // Strict mode implied by `export`, by a class body, and by top-level await.
+    expectParseError("export {}; let eval = 1", 'Declarations with the name "eval" cannot be used in strict mode');
+    expectParseError(
+      "class A { m(arguments) {} }",
+      'Declarations with the name "arguments" cannot be used in strict mode',
+    );
+    expectParseError(
+      "await 1; var arguments = 1",
+      'Declarations with the name "arguments" cannot be used in strict mode',
+    );
+
+    // Sloppy mode allows all of them when the transpiler is not bundling.
+    expectPrinted_(
+      "var arguments = 1; var package = 2; function eval() {}",
+      "var arguments = 1;\nvar package = 2;\nfunction eval() {}",
+    );
+  });
+
   describe("simplification", () => {
     const transpiler = new Bun.Transpiler({
       loader: "tsx",
@@ -4422,6 +4475,58 @@ console.log(foo, array);
 
       expect(out.includes("keepSecondArgument")).toBe(false);
       expect(out.includes("otherNamesStillWork")).toBe(true);
+    });
+
+    it("a macro that runs a nested transformSync macro and then requires a module leaves the importing file intact", async () => {
+      const otherLines = [];
+      for (let i = 0; i < 300; i++) {
+        otherLines.push(`const v${i} = { a: [${i}, "s${i}"], b: (${i} + 1) * 2, c: String(${i}).length };`);
+      }
+      otherLines.push(`module.exports = { value: v299.b + v0.c };`);
+
+      using dir = tempDir("macro-nested-transform-sync", {
+        "inner-macro.ts": `export function inner() { return "inner-value"; }`,
+        "outer-macro.ts": `
+          import { join } from "node:path";
+          export function outer() {
+            const source =
+              "import { inner } from " +
+              JSON.stringify(join(import.meta.dir, "inner-macro.ts")) +
+              ' with { type: "macro" };\\nexport const v = inner();\\n';
+            const code = new Bun.Transpiler({ loader: "ts" }).transformSync(source);
+            const expanded = code.includes('"inner-value"') && !code.includes("inner(");
+            const other = import.meta.require("./other.cjs");
+            return "expanded=" + expanded + " other=" + other.value;
+          }
+        `,
+        "other.cjs": otherLines.join("\n"),
+        "index.ts": `
+          import { writeFileSync } from "node:fs";
+          import { join } from "node:path";
+          import { inner } from "./inner-macro.ts" with { type: "macro" };
+          import { outer } from "./outer-macro.ts" with { type: "macro" };
+          const pre = inner();
+          const res = outer();
+          const tail = { list: [1, 2, 3].map(n => n * 2), label: ["a", "b"].join("-") };
+          writeFileSync(join(import.meta.dir, "out.json"), JSON.stringify({ pre, res, tail }));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "index.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      expect(await Bun.file(join(String(dir), "out.json")).text()).toBe(
+        JSON.stringify({
+          pre: "inner-value",
+          res: "expanded=true other=601",
+          tail: { list: [2, 4, 6], label: "a-b" },
+        }),
+      );
     });
 
     it("special identifier in import statement", () => {
@@ -5479,5 +5584,106 @@ describe("multi-line comment scanning", () => {
     expectParseError(`/*${pad600}*`, message);
     expectParseError(`/*${Buffer.alloc(600, "*").toString()}`, message);
     expectParseError(`/*${pad600}🦊`, message);
+  });
+});
+
+// The printer folds `var a = obj.x, b = obj.y` into `var { x: a, y: b } = obj`.
+// A pattern evaluates `obj` once, so a declarator that rebinds `obj` must end
+// the group. A `var` that re-declares a parameter or an earlier `var` gets its
+// own symbol, linked to the existing one. The check has to compare the linked
+// symbols, or `var n = n.next, n = n.next` folds into `{ next: n, next: n } = n`
+// and both members read the original `n`.
+describe("same-target destructuring with a re-declared target", () => {
+  const plain = new Bun.Transpiler({ loader: "js" });
+  const minifier = new Bun.Transpiler({ loader: "js", minifyWhitespace: true, minify: { syntax: true } });
+
+  it("keeps a run that rebinds a re-declared parameter", () => {
+    expect(plain.transformSync("function f(n) { var n = n.next, n = n.next; return n; }")).toBe(
+      "function f(n) {\n  var n = n.next, n = n.next;\n  return n;\n}\n",
+    );
+    expect(plain.transformSync("function f(o) { var o = o.o, o = o.o, o = o.o; return o; }")).toBe(
+      "function f(o) {\n  var o = o.o, o = o.o, o = o.o;\n  return o;\n}\n",
+    );
+    expect(plain.transformSync("function f() { try {} catch (n) { var n = n.next, n = n.next; } }")).toBe(
+      "function f() {\n  try {} catch (n) {\n    var n = n.next, n = n.next;\n  }\n}\n",
+    );
+  });
+
+  it("keeps a run whose target is re-declared again later in the scope", () => {
+    expect(plain.transformSync("function f(n) { var n = n.next, v = n.v; var n; return v; }")).toBe(
+      "function f(n) {\n  var n = n.next, v = n.v;\n  var n;\n  return v;\n}\n",
+    );
+  });
+
+  it("ends the group at a re-declared parameter that rebinds the target", () => {
+    expect(plain.transformSync("function f(n) { var a = n.next, n = n.next, b = n.v; return [a, n, b]; }")).toBe(
+      "function f(n) {\n  var { next: a, next: n } = n, b = n.v;\n  return [a, n, b];\n}\n",
+    );
+  });
+
+  it("keeps a run that rebinds an earlier var after the statements merge", () => {
+    expect(minifier.transformSync("function f() { var n = L; var n = n.next, n = n.next; return n; }")).toBe(
+      "function f(){var n=L,n=n.next,n=n.next;return n}",
+    );
+    expect(minifier.transformSync("function f() { for (var n = L, n = n.next, n = n.next; ; ) return n; }")).toBe(
+      "function f(){for(var n=L,n=n.next,n=n.next;;)return n}",
+    );
+  });
+
+  it("still folds a run with distinct bindings", () => {
+    expect(plain.transformSync("function f(o) { var a = o.a, b = o.b; return [a, b]; }")).toBe(
+      "function f(o) {\n  var { a, b } = o;\n  return [a, b];\n}\n",
+    );
+    expect(minifier.transformSync("function f() { var o = M; var a = o.a, b = o.b; return [a, b]; }")).toBe(
+      "function f(){var o=M,{a,b}=o;return[a,b]}",
+    );
+  });
+
+  it("walks a linked list with var re-declarations at runtime", async () => {
+    using dir = tempDir("same-target-redecl", {
+      "walk.js": /* js */ `
+        const L = { v: 0, next: { v: 1, next: { v: 2, next: null } } };
+        const M = { o: { o: { o: "deep" } } };
+        console.log(
+          JSON.stringify({
+            param: (function (n) { var n = n.next, n = n.next; return n.v; })(L),
+            redecl: (function () { var n = L; var n = n.next, n = n.next; return n.v; })(),
+            oneStmt: (function () { var n = L, n = n.next, n = n.next; return n.v; })(),
+            chain3: (function () { var o = M; var o = o.o, o = o.o, o = o.o; return o; })(),
+            arrow: ((n) => { var n = n.next, n = n.next; return n.v; })(L),
+            method: ({ m(n) { var n = n.next, n = n.next; return n.v; } }).m(L),
+            forHead: (function () { for (var n = L, n = n.next, n = n.next; ; ) return n.v; })(),
+            catchParam: (function () { try { throw L; } catch (n) { var n = n.next, n = n.next; return n.v; } })(),
+            laterRedecl: (function (n) { var n = n.next, v = n.v; var n; return v; })(L),
+            mixed: (function (n) { var a = n.next, n = n.next, b = n.v; return [a.v, n.v, b]; })(L),
+            assign: (function () { var n = L; n = n.next, n = n.next; return n.v; })(),
+          }),
+        );
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "walk.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      param: 2,
+      redecl: 2,
+      oneStmt: 2,
+      chain3: "deep",
+      arrow: 2,
+      method: 2,
+      forHead: 2,
+      catchParam: 2,
+      laterRedecl: 1,
+      mixed: [1, 1, 1],
+      assign: 2,
+    });
+    expect(exitCode).toBe(0);
   });
 });

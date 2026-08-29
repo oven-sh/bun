@@ -64,64 +64,70 @@ function getValidCiphersSet() {
 }
 
 // OpenSSL cipher-list selector keywords that are not literal suite names.
-const CIPHER_LIST_SELECTORS = new Set([
-  "DEFAULT",
-  "ALL",
-  "COMPLEMENTOFDEFAULT",
-  "COMPLEMENTOFALL",
-  "HIGH",
-  "MEDIUM",
-  "LOW",
-  "PSK",
-  "aNULL",
-  "eNULL",
-  "NULL",
-  "EXPORT",
-  "EXP",
-  "kRSA",
-  "aRSA",
-  "RSA",
-  "kDHE",
-  "kEDH",
-  "DH",
-  "DHE",
-  "EDH",
-  "kECDHE",
-  "kEECDH",
-  "ECDHE",
-  "EECDH",
-  "ECDH",
-  "aECDSA",
-  "ECDSA",
-  "aDSS",
-  "DSS",
-  "kPSK",
-  "aPSK",
-  "AES",
-  "AES128",
-  "AES256",
-  "AESGCM",
-  "AESCCM",
-  "CHACHA20",
-  "3DES",
-  "DES",
-  "RC4",
-  "RC2",
-  "MD5",
-  "SHA",
-  "SHA1",
-  "SHA256",
-  "SHA384",
-  "CAMELLIA",
-  "ARIA",
-  "SRP",
-  "TLSv1",
-  "TLSv1.0",
-  "TLSv1.2",
-  "TLSv1.3",
-  "SSLv3",
-  "FIPS",
-]);
+let _CIPHER_LIST_SELECTORS: Set<string> | undefined;
+function getCipherListSelectors() {
+  if (!_CIPHER_LIST_SELECTORS) {
+    _CIPHER_LIST_SELECTORS = new Set([
+      "DEFAULT",
+      "ALL",
+      "COMPLEMENTOFDEFAULT",
+      "COMPLEMENTOFALL",
+      "HIGH",
+      "MEDIUM",
+      "LOW",
+      "PSK",
+      "aNULL",
+      "eNULL",
+      "NULL",
+      "EXPORT",
+      "EXP",
+      "kRSA",
+      "aRSA",
+      "RSA",
+      "kDHE",
+      "kEDH",
+      "DH",
+      "DHE",
+      "EDH",
+      "kECDHE",
+      "kEECDH",
+      "ECDHE",
+      "EECDH",
+      "ECDH",
+      "aECDSA",
+      "ECDSA",
+      "aDSS",
+      "DSS",
+      "kPSK",
+      "aPSK",
+      "AES",
+      "AES128",
+      "AES256",
+      "AESGCM",
+      "AESCCM",
+      "CHACHA20",
+      "3DES",
+      "DES",
+      "RC4",
+      "RC2",
+      "MD5",
+      "SHA",
+      "SHA1",
+      "SHA256",
+      "SHA384",
+      "CAMELLIA",
+      "ARIA",
+      "SRP",
+      "TLSv1",
+      "TLSv1.0",
+      "TLSv1.2",
+      "TLSv1.3",
+      "SSLv3",
+      "FIPS",
+    ]);
+  }
+  return _CIPHER_LIST_SELECTORS;
+}
 
 function validateCiphers(ciphers: string, name: string = "options") {
   // Set the cipher list and cipher suite before anything else because
@@ -167,7 +173,7 @@ function validateCiphers(ciphers: string, name: string = "options") {
         first === 0x2b /* + */ ||
         first === 0x40 /* @ */ ||
         StringPrototypeIncludes.$call(r, "+") ||
-        CIPHER_LIST_SELECTORS.has(r) ||
+        getCipherListSelectors().has(r) ||
         ciphersSet.has(r)
       ) {
         sawUsableEntry = true;
@@ -190,7 +196,6 @@ const SUPPORTED_ECDH_GROUPS = new Set([
   "secp521r1",
   "X25519",
   "x25519",
-  "X25519Kyber768Draft00",
   "X25519MLKEM768",
   "MLKEM1024",
 ]);
@@ -697,6 +702,7 @@ const ksession = Symbol("ksession");
 const krenegotiationDisabled = Symbol("renegotiationDisabled");
 
 const buntls = Symbol.for("::buntls::");
+const kSharedCreds = Symbol.for("::buntlssharedcreds::");
 // net.ts's SNI dispatch uses this to recognize a raw native SecureContext
 // (Node's `context.context || context` unwrap accepts both the wrapper and
 // the unwrapped native context).
@@ -1486,15 +1492,13 @@ function Server(options, secureConnectionListener): void {
     // TLS layer, like Node's tls.Server wraps any injected duplex
     // (node v26.3.0 lib/_tls_wrap.js, Server's connection listener).
     if (!socket || (socket.encrypted && socket.server === this)) return;
-    let secureContext = this._sharedCreds;
-    if (!secureContext) {
-      try {
-        secureContext = buildSharedCreds(this);
-      } catch (err) {
-        socket.destroy();
-        this.emit("error", err);
-        return;
-      }
+    let secureContext;
+    try {
+      secureContext = this[kSharedCreds]();
+    } catch (err) {
+      socket.destroy();
+      this.emit("error", err);
+      return;
     }
     const wrapped = new TLSSocket(socket, {
       secureContext,
@@ -1512,6 +1516,9 @@ function Server(options, secureConnectionListener): void {
   });
 }
 $toClass(Server, "Server", NetServer);
+Server.prototype[kSharedCreds] = function () {
+  return this._sharedCreds || buildSharedCreds(this);
+};
 
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);

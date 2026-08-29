@@ -31,10 +31,8 @@ struct BakeAdditionsToGlobalObject {
     {
         this->m_JSBakeResponseClassStructure.visit(visitor);
         this->m_DevServerFrameworkRequestArgsClassStructure.visit(visitor);
-        visitor.append(this->m_wrapComponent);
         visitor.append(this->m_asyncLocalStorageInstance);
 
-        this->m_bakeGetAsyncLocalStorage.visit(visitor);
         this->m_bakeEnsureAsyncLocalStorage.visit(visitor);
         this->m_bakeGetBundleNewRoute.visit(visitor);
         this->m_bakeGetNewRouteParams.visit(visitor);
@@ -45,11 +43,6 @@ struct BakeAdditionsToGlobalObject {
         m_JSBakeResponseClassStructure.initLater(
             [](LazyClassStructure::Initializer& init) {
                 Bun::setupJSBakeResponseClassStructure(init);
-            });
-
-        m_bakeGetAsyncLocalStorage.initLater(
-            [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
-                init.set(JSFunction::create(init.vm, init.owner, 0, String("bakeGetAsyncLocalStorage"_s), jsFunctionBakeGetAsyncLocalStorage, ImplementationVisibility::Public, NoIntrinsic));
             });
 
         m_bakeEnsureAsyncLocalStorage.initLater(
@@ -98,11 +91,6 @@ struct BakeAdditionsToGlobalObject {
         return m_asyncLocalStorageInstance.get();
     }
 
-    JSC::JSFunction* wrapComponent(JSGlobalObject*);
-
-    template<typename T>
-    using LazyPropertyOfGlobalObject = LazyProperty<JSGlobalObject, T>;
-
     JSC::JSObject* JSBakeResponseConstructor(const JSGlobalObject* global) const { return m_JSBakeResponseClassStructure.constructorInitializedOnMainThread(global); }
     JSC::Structure* JSBakeResponseStructure(const JSGlobalObject* global) const { return m_JSBakeResponseClassStructure.getInitializedOnMainThread(global); }
 
@@ -122,10 +110,7 @@ struct BakeAdditionsToGlobalObject {
     LazyClassStructure m_DevServerFrameworkRequestArgsClassStructure;
 
 private:
-    WriteBarrier<JSFunction> m_wrapComponent;
-
     WriteBarrier<Unknown> m_asyncLocalStorageInstance;
-    LazyProperty<JSGlobalObject, JSFunction> m_bakeGetAsyncLocalStorage;
     LazyProperty<JSGlobalObject, JSFunction> m_bakeEnsureAsyncLocalStorage;
     LazyProperty<JSGlobalObject, JSFunction> m_bakeGetBundleNewRoute;
     LazyProperty<JSGlobalObject, JSFunction> m_bakeGetNewRouteParams;

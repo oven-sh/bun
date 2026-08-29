@@ -1,11 +1,12 @@
 use core::cmp::Ordering;
 use std::io::Write as _;
 
+use bun_collections::DynamicBitSet;
 use bun_core::fmt::PathSep;
 use bun_core::strings;
 use bun_core::{Global, Output, env_var, fmt as bun_fmt};
 use bun_install::dependency::Dependency;
-use bun_install::lockfile::{LoadResult, Lockfile, package::PackageColumns as _, tree};
+use bun_install::lockfile::{LoadResult, LoadStep, Lockfile, package::PackageColumns as _, tree};
 use bun_install::npm as Npm;
 use bun_install::package_manager_real::{
     CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
@@ -17,11 +18,14 @@ use bun_resolver::fs as Fs;
 use bun_sys::{self, Dir, Fd, File};
 
 use crate::cli::Command;
+use crate::cli::pm_diff_command as PmDiffCommand;
+use crate::cli::pm_licenses_command::{LicensesFlags, PmLicensesCommand};
 use crate::cli::pm_pkg_command::PmPkgCommand;
 use crate::cli::pm_trusted_command::{DefaultTrustedCommand, TrustCommand, UntrustedCommand};
 use crate::cli::pm_version_command::PmVersionCommand;
 use crate::cli::pm_view_command as PmViewCommand;
 use crate::cli::pm_why_command::PmWhyCommand;
+use bun_collections::index_sort;
 
 pub(crate) use crate::cli::pack_command::PackCommand;
 pub(crate) use crate::cli::scan_command::ScanCommand;
@@ -49,6 +53,15 @@ impl<'a> ByName<'a> {
     }
 }
 
+fn load_step_verb(step: LoadStep) -> &'static str {
+    match step {
+        LoadStep::OpenFile => "open",
+        LoadStep::ReadFile => "read",
+        LoadStep::ParseFile => "parse",
+        LoadStep::Migrating => "migrate",
+    }
+}
+
 pub(crate) struct PackageManagerCommand;
 
 impl PackageManagerCommand {
@@ -56,20 +69,38 @@ impl PackageManagerCommand {
     // can keep `pm` mutably borrowed by `LoadResult` (which holds
     // `&mut Lockfile` into `pm.lockfile`) across this call.
     pub(crate) fn handle_load_lockfile_errors(load_lockfile: &LoadResult<'_>, log_level: LogLevel) {
+        Self::handle_load_lockfile_errors_for(load_lockfile, log_level, "");
+    }
+
+    pub(crate) fn handle_load_lockfile_errors_for(
+        load_lockfile: &LoadResult<'_>,
+        log_level: LogLevel,
+        nothing_to: &str,
+    ) {
         let not_silent = log_level != LogLevel::Silent;
 
-        if matches!(load_lockfile, LoadResult::NotFound) {
-            if not_silent {
-                Output::err_generic("Lockfile not found", ());
+        match load_lockfile {
+            LoadResult::NotFound => {
+                if not_silent {
+                    if nothing_to.is_empty() {
+                        Output::err_generic("missing lockfile", ());
+                    } else {
+                        Output::err_generic("missing lockfile, nothing to {s}", (nothing_to,));
+                    }
+                    bun_core::note!("run 'bun install' first");
+                }
+                Global::exit(1);
             }
-            Global::exit(1);
-        }
-
-        if let LoadResult::Err(err) = load_lockfile {
-            if not_silent {
-                Output::err_generic("Error loading lockfile: {s}", (err.value.name(),));
+            LoadResult::Err(err) => {
+                if not_silent && !migration::reported_unsupported_lockfile_version(err) {
+                    Output::err_generic(
+                        "failed to {s} lockfile: {s}",
+                        (load_step_verb(err.step), err.value.name()),
+                    );
+                }
+                Global::exit(1);
             }
-            Global::exit(1);
+            LoadResult::Ok(_) => {}
         }
     }
 
@@ -101,7 +132,7 @@ impl PackageManagerCommand {
             (*lockfile).load_from_bytes(Some(&mut *pm_raw), bytes, &mut *log)
         };
 
-        Self::handle_load_lockfile_errors(&load_lockfile, log_level);
+        Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
 
         Output::flush();
         Output::disable_buffering();
@@ -155,10 +186,23 @@ impl PackageManagerCommand {
   <d>└<r> <cyan>--quiet<r>                   only output the tarball filename\n\
   <b><green>bun pm<r> <blue>bin<r>                  print the path to bin folder\n\
   <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder\n\
-  <b><green>bun<r> <blue>list<r>                  list the dependency tree according to the current lockfile\n\
+  <b><green>bun pm<r> <blue>ls<r>                   list the dependency tree according to the current lockfile\n\
   <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile\n\
   <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies\n\
   <b><green>bun pm<r> <blue>why<r> <d>\\<pkg\\><r>            show dependency tree explaining why a package is installed\n\
+  <b><green>bun pm<r> <blue>diff<r> <d>[a] [b]<r>           show what changed between two versions of a package (or vs a folder/tarball)\n\
+  <d>├<r> <d>bun pm diff react<r>            installed version → latest\n\
+  <d>├<r> <d>bun pm diff react@18.2.0 19.0.0<r>\n\
+  <d>├<r> <d>bun pm diff axios@1.6.0:lib 1.6.1<r>  only files under lib/ <d>(also<r> <d>:file.js<r><d>, or paths after the two sides)<r>\n\
+  <d>├<r> <cyan>--stat<r>, <cyan>--name-only<r>       summarize instead of printing hunks\n\
+  <d>├<r> <cyan>-U<r> <d>n<r>                      lines of context (default 3)\n\
+  <d>└<r> <cyan>--json<r>                    one JSON document (files, patch text, notes, totals)\n\
+  <b><green>bun pm<r> <blue>licenses<r>             list installed packages grouped by license\n\
+  <d>├<r> <cyan>--json<r>                    output as JSON\n\
+  <d>├<r> <cyan>--prod<r>                    omit devDependencies\n\
+  <d>├<r> <cyan>--dev<r>                     list only what devDependencies pull in\n\
+  <d>├<r> <cyan>--long<r>                    also print author, description and homepage\n\
+  <d>└<r> <cyan>--filter<r> <d>\\<pattern\\><r>      list only the matching workspaces' dependencies\n\
   <b><green>bun pm<r> <blue>whoami<r>               print the current npm username\n\
   <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>\n\
   <b><green>bun pm<r> <blue>version<r> <d>[increment]<r>  bump the version in package.json and create a git tag\n\
@@ -202,6 +246,21 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             .is_some_and(|arg| strings::eql_comptime(arg.as_bytes(), b"whoami"));
 
         let cli = CommandLineArguments::parse(Subcommand::Pm)?;
+        let licenses_flags = LicensesFlags {
+            dev_only: cli.dev_only,
+            long: cli.long,
+        };
+        let diff_flags = PmDiffCommand::DiffFlags {
+            raw: cli.diff_raw,
+            json: cli.json_output,
+            unminify: cli.diff_unminify,
+            minify: cli.diff_minify,
+            ignore_space: cli.diff_ignore_space,
+            name_only: cli.diff_name_only,
+            stat: cli.diff_stat,
+            context: cli.diff_context.unwrap_or(3),
+        };
+        let diff_args: Vec<&'static [u8]> = cli.diff_args.clone();
         let (pm, cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Pm) {
             Ok(v) => v,
             Err(err) => {
@@ -243,6 +302,12 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         // Normalize "list" to "ls" (handles both "bun list" and "bun pm list")
         if strings::eql_comptime(subcommand, b"list") {
             subcommand = b"ls";
+        }
+
+        if !pm.options.filter_patterns.is_empty() && !strings::eql_comptime(subcommand, b"licenses")
+        {
+            Output::err_generic("--filter is only supported by `bun pm licenses`", ());
+            Global::exit(1);
         }
 
         if pm.options.global {
@@ -332,7 +397,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         } else if strings::eql_comptime(subcommand, b"hash") {
             let log_level = pm.options.log_level;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-            Self::handle_load_lockfile_errors(&load_lockfile, log_level);
+            Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
 
             // SAFETY: pm_ptr is the unique owner; lockfile borrow released above.
             let pm = unsafe { &mut *pm_ptr };
@@ -348,7 +413,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         } else if strings::eql_comptime(subcommand, b"hash-print") {
             let log_level = pm.options.log_level;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-            Self::handle_load_lockfile_errors(&load_lockfile, log_level);
+            Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
 
             Output::flush();
             Output::disable_buffering();
@@ -358,7 +423,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         } else if strings::eql_comptime(subcommand, b"hash-string") {
             let log_level = pm.options.log_level;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-            Self::handle_load_lockfile_errors(&load_lockfile, log_level);
+            Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
 
             // SAFETY: pm_ptr is the unique owner; lockfile borrow released above.
             let pm = unsafe { &mut *pm_ptr };
@@ -493,7 +558,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         } else if strings::eql_comptime(subcommand, b"ls") {
             let log_level = pm.options.log_level;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-            Self::handle_load_lockfile_errors(&load_lockfile, log_level);
+            Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "list");
 
             Output::flush();
             Output::disable_buffering();
@@ -571,7 +636,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 let root_deps = slice.items_dependencies()[0];
 
                 Output::println(format_args!(
-                    "{} node_modules ({})",
+                    "{} node_modules ({} installed)",
                     bstr::BStr::new(path),
                     lockfile.buffers.hoisted_dependencies.len(),
                 ));
@@ -585,9 +650,9 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     dependencies,
                     buf: string_bytes,
                 };
-                // `sort_unstable_by` is pdqsort; names are
-                // unique so stability is irrelevant.
-                sorted_dependencies.sort_unstable_by(|a, b| by_name.cmp(*a, *b));
+                // The root lists a workspace it also declares once per declaration.
+                index_sort::sort_indices(&mut sorted_dependencies, &mut |a, b| by_name.cmp(a, b));
+                sorted_dependencies.dedup_by(|a, b| by_name.cmp(*a, *b) == Ordering::Equal);
 
                 if trusted_only {
                     sorted_dependencies.retain(|&dep_id| {
@@ -701,6 +766,14 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             let positionals: &[&[u8]] = pm.options.positionals;
             PmWhyCommand::exec(&&mut *ctx, pm, positionals)?;
             Global::exit(0);
+        } else if strings::eql_comptime(subcommand, b"diff") {
+            let positionals: Vec<&[u8]> = pm.options.positionals.to_vec();
+            PmDiffCommand::exec(pm, &positionals, &diff_args, diff_flags, &cwd)?;
+            Global::exit(0);
+        } else if strings::eql_comptime(subcommand, b"licenses") {
+            let positionals: &[&[u8]] = pm.options.positionals;
+            PmLicensesCommand::exec(pm, positionals, &cwd, licenses_flags)?;
+            Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"pkg") {
             let positionals: &[&[u8]] = pm.options.positionals;
             PmPkgCommand::exec(&&mut *ctx, pm, positionals, &cwd)?;
@@ -804,7 +877,7 @@ fn print_node_modules_folder_structure(
     };
     // `sort_unstable_by` is pdqsort; names are unique so
     // stability is irrelevant.
-    sorted_dependencies.sort_unstable_by(|a, b| by_name.cmp(*a, *b));
+    index_sort::sort_indices_unstable(&mut sorted_dependencies, &mut |a, b| by_name.cmp(a, b));
 
     let sorted_len = sorted_dependencies.len();
     for (index, &dependency_id) in sorted_dependencies.iter().enumerate() {
@@ -927,7 +1000,7 @@ fn print_trusted_dependencies_flat(
     let pkg_names = slice.items_name();
     let pkg_count = lockfile.packages.len();
 
-    let mut seen: Vec<bool> = vec![false; pkg_count];
+    let mut seen = bun_core::handle_oom(DynamicBitSet::init_empty(pkg_count));
     let mut trusted: Vec<DependencyID> = Vec::new();
 
     let mut visit = |dep_id: DependencyID| {
@@ -935,13 +1008,13 @@ fn print_trusted_dependencies_flat(
         if package_id as usize >= pkg_count {
             return;
         }
-        if seen[package_id as usize] {
+        if seen.is_set(package_id as usize) {
             return;
         }
         let alias = dependencies[dep_id as usize].name.slice(string_bytes);
         let pkg_name = pkg_names[package_id as usize].slice(string_bytes);
         if lockfile.has_trusted_dependency(alias, pkg_name, &resolutions[package_id as usize]) {
-            seen[package_id as usize] = true;
+            seen.set(package_id as usize);
             trusted.push(dep_id);
         }
     };
@@ -958,7 +1031,7 @@ fn print_trusted_dependencies_flat(
         dependencies,
         buf: string_bytes,
     };
-    trusted.sort_unstable_by(|a, b| by_name.cmp(*a, *b));
+    index_sort::sort_indices_unstable(&mut trusted, &mut |a, b| by_name.cmp(a, b));
 
     for (index, &dep_id) in trusted.iter().enumerate() {
         let package_id = resolutions_buf[dep_id as usize];

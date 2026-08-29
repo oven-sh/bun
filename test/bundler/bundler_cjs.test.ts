@@ -729,6 +729,74 @@ describe("bundler", () => {
     run: { stdout: "true false" },
   });
 
+  // Reads of `module.id`, `module.require()` and `exports.foo` in an ESM file
+  // are printed as written. The CommonJS folds (`module.id` inlined,
+  // `module.require(x)` rewritten to `require(x)`) do not apply to globals.
+  itBundled("cjs/ModuleMembersInESMStayVerbatim", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { describeEnv } from './lib';
+        export const env = describeEnv();
+        console.log(env);
+      `,
+      "/lib.ts": /* ts */ `
+        globalThis['ca' + 'pture'] = x => x;
+        declare const module: any;
+        declare const exports: any;
+
+        export function describeEnv() {
+          return [
+            typeof module === 'undefined' ? 'no module' : capture(module.id),
+            typeof module === 'undefined' ? 'no require' : capture(module.require('node:fs')),
+            typeof exports === 'undefined' ? 'no exports' : capture(exports.foo),
+          ].join(', ');
+        }
+      `,
+    },
+    capture: ["module.id", 'module.require("node:fs")', "exports.foo"],
+    run: { stdout: "no module, no require, no exports" },
+  });
+
+  // The renamer must not take the names `module` and `exports` for minified
+  // identifiers in a file where they are globals.
+  itBundled("cjs/TypeofModuleAndExportsInESMMinified", {
+    files: {
+      "/entry.ts": /* ts */ `
+        globalThis['ca' + 'pture'] = x => x;
+        await Promise.resolve();
+        console.log(capture(typeof module), capture(typeof exports));
+      `,
+    },
+    minifyIdentifiers: true,
+    capture: ["typeof module", "typeof exports"],
+    run: { stdout: "undefined undefined" },
+  });
+
+  // With the CommonJS output format the globals refer to the output file's own
+  // `module` and `exports`, under bun and under node.
+  itBundled("cjs/ModuleAndExportsInESMWithFormatCJS", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { install } from './install';
+        install();
+      `,
+      "/install.ts": /* ts */ `
+        declare const module: any;
+        declare const exports: any;
+
+        export function install() {
+          console.log(typeof module, typeof exports, module.exports === exports);
+        }
+      `,
+    },
+    format: "cjs",
+    target: "node",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toMatch(/\b(?:module|exports)_install\b/);
+    },
+    run: [{ stdout: "object object true" }, { runtime: "node", stdout: "object object true" }],
+  });
+
   // `define` only replaces free identifiers, so it applies to `module` in a file
   // with ESM exports and not in a CommonJS file, where `module` is the wrapper's
   // argument.

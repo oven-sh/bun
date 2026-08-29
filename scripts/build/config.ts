@@ -1256,9 +1256,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     rustupHome: toolchain.rustupHome,
     rustToolchain: toolchainOverride.rust !== undefined ? undefined : readRustToolchainChannel(cwd),
     rustc:
-      toolchainOverride.rust !== undefined
-        ? join(toolchainOverride.rust, "bin", `rustc${host.exeSuffix}`)
-        : undefined,
+      toolchainOverride.rust !== undefined ? join(toolchainOverride.rust, "bin", `rustc${host.exeSuffix}`) : undefined,
     // Cargo-driven links (the bun_shim_impl.exe edge, any future target
     // cdylib) must keep using a real lld-link/link.exe, not the gcc-ld/
     // lld-link wrapper `ld` may have been swapped to above: rustc treats a

@@ -662,7 +662,11 @@ pub mod registry {
         }
 
         pub(crate) fn find_entry<'a>(list: &'a [UrlAuth], url: &URL) -> Option<&'a UrlAuth> {
-            if list.is_empty() || is_opaque_path(query_free_path(url)) {
+            // The key comes from the WHATWG-resolved path while the request carries
+            // the raw one, so a dot segment could select a key the wire path never
+            // reaches; such a tarball gets no line of its own (the registry's own
+            // credentials still follow it on the registry's origin).
+            if list.is_empty() || !path_is_canonical(query_free_path(url)) {
                 return None;
             }
             // The key comes from the WHATWG serialisation while the request goes to
@@ -697,22 +701,10 @@ pub mod registry {
         &pathname[..strings::index_of_char_usize(pathname, b'?').unwrap_or(pathname.len())]
     }
 
-    /// A path the request sends as written but the key would resolve differently: a
-    /// backslash (the WHATWG serialisation reads it as `/`; the wire request keeps it),
-    /// a `%5c`, or a `%2f` that splits a segment into pieces one of which is a dot
-    /// segment. Plain dot segments (and their `%2e` spellings) are resolved the same
-    /// way on both sides, so they are fine here; a plain `%2f` inside a name, the
-    /// `@scope%2fpkg` form manifests are requested with, is fine too.
-    pub(crate) fn is_opaque_path(path: &[u8]) -> bool {
-        strings::contains_char(path, b'\\')
-            || contains_percent_encoded(path, b'5', b'c')
-            || strings::split(path, b"/").any(|segment| {
-                contains_percent_encoded(segment, b'2', b'f') && is_unsafe_segment(segment)
-            })
-    }
-
-    /// `is_opaque_path`, plus no dot segment at all (plain, `%2e`-spelled, or a
-    /// backslash): for a path compared before any normalisation.
+    /// No dot segment (plain, `%2e`-spelled, or after a backslash), no `%5c`, and no
+    /// `%2f` that splits a segment into pieces one of which is a dot segment: a path
+    /// the request sends exactly as the key reads it. A plain `%2f` inside a name,
+    /// the `@scope%2fpkg` form manifests are requested with, is fine.
     pub(crate) fn path_is_canonical(path: &[u8]) -> bool {
         if strings::contains_char(path, b'\\') || contains_percent_encoded(path, b'5', b'c') {
             return false;

@@ -1473,6 +1473,57 @@ describe("deno_task", () => {
     TestBuilder.command`export VAR=1 VAR2=testing VAR3="test this out" && echo $VAR $VAR2 $VAR3`
       .stdout("1 testing test this out\n")
       .runAsTest("exported vars 2");
+
+    TestBuilder.command`export 1abc a-b=5 =x "" ok=1; ${BUN} -e ${"console.log(JSON.stringify([process.env['1abc'], process.env['a-b'], process.env.ok]))"}`
+      .stdout('[null,null,"1"]\n')
+      .stderr(
+        "export: `1abc`: not a valid identifier\n" +
+          "export: `a-b=5`: not a valid identifier\n" +
+          "export: `=x`: not a valid identifier\n" +
+          "export: ``: not a valid identifier\n",
+      )
+      .testMini()
+      .runAsTest("export rejects invalid identifiers and keeps the valid ones");
+
+    TestBuilder.command`export 1abc`
+      .stderr("export: `1abc`: not a valid identifier\n")
+      .exitCode(1)
+      .testMini()
+      .runAsTest("export exits 1 on an invalid identifier");
+
+    // `.quiet()` keeps stderr as an in-memory buffer, so the builtin takes the
+    // synchronous write path instead of the async fd write the other runs use.
+    TestBuilder.command`export 1abc`
+      .stderr("export: `1abc`: not a valid identifier\n")
+      .exitCode(1)
+      .quiet()
+      .runAsTest("export exits 1 on an invalid identifier with quiet output");
+
+    TestBuilder.command`export _ok OK2=1 && echo done`.stdout("done\n").runAsTest("export accepts valid identifiers");
+
+    TestBuilder.command`export -- FOO=bar && echo $FOO && export -- && echo done`
+      .stdout(stdout => {
+        expect(stdout).toStartWith("bar\n");
+        expect(stdout).toContain("FOO=bar\n");
+        expect(stdout).not.toContain("--=");
+        expect(stdout).toEndWith("done\n");
+      })
+      .runAsTest("export treats a leading -- as the end of options");
+
+    TestBuilder.command`export ""`
+      .stderr("export: ``: not a valid identifier\n")
+      .exitCode(1)
+      .runAsTest("export exits 1 on an empty word");
+
+    TestBuilder.command`export A=1 2B C=3 3D || echo "failed A=$A C=$C"`
+      .stdout("failed A=1 C=3\n")
+      .stderr("export: `2B`: not a valid identifier\nexport: `3D`: not a valid identifier\n")
+      .runAsTest("export exits 1 when a bare name is invalid and still exports the valid ones");
+
+    TestBuilder.command`export a-b=5 1FOO=bar OK=1 || echo "failed OK=$OK"`
+      .stdout("failed OK=1\n")
+      .stderr("export: `a-b=5`: not a valid identifier\nexport: `1FOO=bar`: not a valid identifier\n")
+      .runAsTest("export exits 1 when an assignment name is invalid and still exports the valid ones");
   });
 
   describe("pipeline", async () => {

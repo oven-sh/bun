@@ -1,8 +1,8 @@
-use crate::shell::EnvStr;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
+use crate::shell::{EnvStr, ExitCode, is_valid_var_name};
 use bun_collections::index_sort;
 
 #[derive(Default)]
@@ -15,25 +15,32 @@ enum State {
     #[default]
     Idle,
     WaitingIo,
+    Err,
     Done,
 }
 
 impl Export {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let argc = Builtin::of(interp, cmd).args_slice().len();
-        if argc == 0 {
+        // POSIX end-of-options marker: `export -- NAME=value`.
+        let start = usize::from(argc > 0 && Builtin::of(interp, cmd).arg_bytes(0) == b"--");
+        if start >= argc {
             // No args: print all exported vars.
             return Self::print_all(interp, cmd);
         }
-        for i in 0..argc {
+        let mut errors = Vec::new();
+        for i in start..argc {
             let s = Builtin::of(interp, cmd).arg_bytes(i);
-            if s.is_empty() {
-                continue;
-            }
             let (name, value) = match bun_core::strings::index_of_char_usize(s, b'=') {
                 Some(eq) => (&s[..eq], &s[eq + 1..]),
                 None => (s, &b""[..]),
             };
+            if !is_valid_var_name(name) {
+                errors.extend_from_slice(b"export: `");
+                errors.extend_from_slice(s);
+                errors.extend_from_slice(b"`: not a valid identifier\n");
+                continue;
+            }
             // The argv backing is freed when the Cmd retires,
             // so the key/value MUST be duplicated into ref-counted storage —
             // `init_slice` here would leave dangling EnvStr in `export_env`.
@@ -45,7 +52,11 @@ impl Export {
             label.deref();
             val.deref();
         }
-        Builtin::done(interp, cmd, 0)
+        if errors.is_empty() {
+            return Builtin::done(interp, cmd, 0);
+        }
+        Self::state_mut(interp, cmd).state = State::Err;
+        Builtin::write_failing_error(interp, cmd, &errors, 1)
     }
 
     fn print_all(interp: &Interpreter, cmd: NodeId) -> Yield {
@@ -81,7 +92,15 @@ impl Export {
         _: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
+        let failed = matches!(Self::state_mut(interp, cmd).state, State::Err);
         Self::state_mut(interp, cmd).state = State::Done;
-        Builtin::done(interp, cmd, err.map_or(0, |_| 1))
+        Builtin::done(
+            interp,
+            cmd,
+            match err {
+                Some(_err) => 1,
+                None => ExitCode::from(failed),
+            },
+        )
     }
 }

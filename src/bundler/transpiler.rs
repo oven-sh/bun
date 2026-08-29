@@ -145,13 +145,271 @@ pub struct Transpiler<'a> {
     pub macro_context: Option<js_ast::Macro::MacroContext>,
 }
 
+/// A `Transpiler` that owns the arena it was initialised in (its "home"
+/// arena: defines, option strings) and points at a resting `Log` between
+/// calls, for holders that are not themselves process-lifetime
+/// (`Bun.Transpiler`). What it lends never outlives the home arena: [`get`]
+/// borrows at `self`'s lifetime, [`with_mut`] cannot name the arena's
+/// lifetime, and [`with_call`] hands out a [`TranspilerCall`] aimed at one
+/// call's arena and log and aims it back afterwards. Off-thread jobs get a
+/// [`JobTranspiler`] copy ([`new_job`]) that keeps the shared storage alive;
+/// while any is out, the transpiler cannot be reconfigured ([`with_mut`]
+/// panics), only used ([`with_call`]).
+///
+/// [`get`]: Self::get
+/// [`with_mut`]: Self::with_mut
+/// [`with_call`]: Self::with_call
+/// [`new_job`]: Self::new_job
+pub struct OwnedTranspiler(
+    std::sync::Arc<OwnedTranspilerInner>,
+    /// `!Send`/`!Sync`: the transpiler runs macros on, and logs to, its VM.
+    core::marker::PhantomData<*mut ()>,
+);
+
+struct OwnedTranspilerInner {
+    /// Reached only through the one `OwnedTranspiler` handle; `JobTranspiler`s
+    /// hold the `Arc` to keep what their copy aliases alive and never touch it.
+    transpiler: core::cell::UnsafeCell<core::mem::ManuallyDrop<Transpiler<'static>>>,
+    /// `Box::into_raw`; freed in `Drop`, after `transpiler`.
+    arena: *mut Arena,
+    home_log: *mut bun_ast::Log,
+}
+
+// SAFETY: `transpiler` is only read or written through the one `OwnedTranspiler`
+// handle, which is `!Send`/`!Sync`; the other `Arc` holders (`JobTranspiler`)
+// never touch it, and dropping it on their thread frees plain heap data (a
+// macro context is released by whoever created it, see
+// `release_macro_context` on both types).
+unsafe impl Send for OwnedTranspilerInner {}
+// SAFETY: as above — a shared `&OwnedTranspilerInner` gives access to nothing.
+unsafe impl Sync for OwnedTranspilerInner {}
+
+impl Drop for OwnedTranspilerInner {
+    fn drop(&mut self) {
+        // SAFETY: sole owner at drop; the transpiler (which borrows the arena)
+        // goes first, then the arena `new` leaked.
+        unsafe {
+            core::mem::ManuallyDrop::drop(self.transpiler.get_mut());
+            drop(bun_core::heap::take(self.arena));
+        }
+    }
+}
+
+impl OwnedTranspiler {
+    /// Build a transpiler in `arena`, which the result owns from here on. `log`
+    /// is where it logs outside [`with_call`](Self::with_call) and must outlive
+    /// the result. `init` cannot name the arena's lifetime, so whatever it
+    /// returns borrows only `arena` (or true statics).
+    pub fn new<E>(
+        arena: Box<Arena>,
+        log: *mut bun_ast::Log,
+        init: impl for<'a> FnOnce(&'a Arena, *mut bun_ast::Log) -> Result<Transpiler<'a>, E>,
+    ) -> Result<Self, E> {
+        let arena = bun_core::heap::into_raw(arena);
+        // SAFETY: `arena` is live until `OwnedTranspilerInner::drop`, which drops
+        // the transpiler first; the `'static` view never leaves this type (see
+        // the struct doc).
+        let transpiler = match init(unsafe { &*arena }, log) {
+            Ok(t) => t,
+            Err(e) => {
+                // SAFETY: nothing borrows it (init failed).
+                drop(unsafe { bun_core::heap::take(arena) });
+                return Err(e);
+            }
+        };
+        Ok(Self(
+            std::sync::Arc::new(OwnedTranspilerInner {
+                transpiler: core::cell::UnsafeCell::new(core::mem::ManuallyDrop::new(transpiler)),
+                arena,
+                home_log: log,
+            }),
+            core::marker::PhantomData,
+        ))
+    }
+
+    /// The transpiler, for reading its configuration.
+    #[inline]
+    pub fn get(&self) -> &Transpiler<'_> {
+        // SAFETY: see `OwnedTranspilerInner::transpiler` — this handle is the
+        // only accessor; `&self` rules out a concurrent `with_mut`/`with_call`.
+        unsafe { &**self.0.transpiler.get() }
+    }
+
+    /// The transpiler, for (re)configuring it before any job copy exists (a
+    /// copy aliases the configuration, so replacing any of it then would free
+    /// what the copy reads: panics instead). `f` cannot name the home arena's
+    /// lifetime, so it can store nothing shorter-lived in the transpiler.
+    pub fn with_mut<R>(&mut self, f: impl for<'a> FnOnce(&mut Transpiler<'a>) -> R) -> R {
+        // Copies only come from `new_job(&self)`, so none can appear during `f`.
+        assert!(
+            std::sync::Arc::strong_count(&self.0) == 1,
+            "OwnedTranspiler reconfigured while job copies are alive",
+        );
+        // SAFETY: as `get`; `&mut self` makes this the only live borrow.
+        f(unsafe { &mut **self.0.transpiler.get() })
+    }
+
+    /// Run `f` with the transpiler aimed at this call's `arena` and `log`
+    /// (parsing and printing allocate from and log to them), through a handle
+    /// that can parse, print and manage the macro context but not replace the
+    /// transpiler or its configuration; it is aimed back at its homes afterwards.
+    pub fn with_call<'a, R>(
+        &'a mut self,
+        arena: &'a Arena,
+        log: &'a mut bun_ast::Log,
+        f: impl FnOnce(&mut TranspilerCall<'_, 'a>) -> R,
+    ) -> R {
+        struct Restore<'t> {
+            inner: &'t OwnedTranspilerInner,
+            arena: *const Arena,
+            log: *mut bun_ast::Log,
+        }
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                // SAFETY: the `&mut OwnedTranspiler` borrow `with_call` holds makes
+                // this the only access; `arena`/`log` are what the transpiler was
+                // aimed at before this call (its homes, unless calls nest), which
+                // outlive it.
+                unsafe {
+                    let t: &mut Transpiler<'static> = &mut **self.inner.transpiler.get();
+                    t.set_arena(&*self.arena);
+                    t.set_log(self.log);
+                }
+            }
+        }
+        // SAFETY: as `get`.
+        let (prev_arena, prev_log) = unsafe {
+            let t = &**self.0.transpiler.get();
+            (core::ptr::from_ref::<Arena>(t.arena), t.log)
+        };
+        let restore = Restore {
+            inner: &self.0,
+            arena: prev_arena,
+            log: prev_log,
+        };
+        // SAFETY: lifetime narrowing — `Transpiler<'x>` is covariant in `'x`; the
+        // `&mut` is only reachable through `TranspilerCall`, which exposes no
+        // `'x`-typed slot for writing, and `restore` aims `arena`/`log` back
+        // before `'a` ends (on return or unwind) while `self` stays exclusively
+        // borrowed, so the narrowed value is never observed at `'static`.
+        let t: &mut Transpiler<'a> = unsafe {
+            &mut *core::ptr::from_mut::<Transpiler<'static>>(&mut **restore.inner.transpiler.get())
+                .cast::<Transpiler<'a>>()
+        };
+        t.set_arena(arena);
+        t.set_log(log);
+        let r = f(&mut TranspilerCall(t));
+        drop(restore);
+        r
+    }
+
+    /// A [`JobTranspiler`] copy of this transpiler's configuration for an
+    /// off-thread job; it keeps this transpiler's storage alive, and while it
+    /// is, the configuration it aliases cannot change ([`with_mut`](Self::with_mut)).
+    pub fn new_job(&self) -> JobTranspiler {
+        // SAFETY: `JobTranspiler::new`'s contract — the copy holds `self.0`, so
+        // what it aliases outlives it and (see `with_mut`) is not reconfigured;
+        // it is aimed at the homes, not at whatever a `with_call` in progress lent.
+        unsafe {
+            let mut job = JobTranspiler::new(&**self.0.transpiler.get());
+            job.0.set_arena(&*self.0.arena);
+            job.0.set_log(self.0.home_log);
+            job.1 = Some(std::sync::Arc::clone(&self.0));
+            job
+        }
+    }
+
+    /// Free the macro context a parse or scan through this transpiler created
+    /// (job copies have their own), on the thread that ran it.
+    pub fn release_macro_context(&mut self) {
+        // SAFETY: as `get`; `&mut self` makes this the only live borrow, and the
+        // macro context is not part of what job copies alias.
+        if let Some(ctx) = unsafe { &mut **self.0.transpiler.get() }
+            .macro_context
+            .take()
+        {
+            ctx.deinit();
+        }
+    }
+
+    /// The home arena: lives as long as `self` and every job copy.
+    #[inline]
+    pub fn arena(&self) -> &Arena {
+        // SAFETY: live until `OwnedTranspilerInner::drop`.
+        unsafe { &*self.0.arena }
+    }
+}
+
+/// An [`OwnedTranspiler`]'s transpiler aimed at one call's arena and log: it
+/// parses and prints, and its macro context can be taken or replaced, but the
+/// transpiler and its configuration cannot be.
+pub struct TranspilerCall<'t, 'a>(&'t mut Transpiler<'a>);
+
+impl<'a> TranspilerCall<'_, 'a> {
+    #[inline]
+    pub fn options(&self) -> &options::BundleOptions<'a> {
+        &self.0.options
+    }
+    /// This call's log.
+    #[inline]
+    pub fn log_mut(&mut self) -> &mut bun_ast::Log {
+        self.0.log_mut()
+    }
+    #[inline]
+    pub fn parse(
+        &mut self,
+        this_parse: ParseOptions<'a, '_>,
+        client_entry_point: Option<&mut EntryPoints::ClientEntryPoint>,
+    ) -> Option<ParseResult<'a>> {
+        self.0.parse(this_parse, client_entry_point)
+    }
+    #[inline]
+    pub fn print(
+        &mut self,
+        print_arena: &Arena,
+        result: ParseResult,
+        writer: &mut js_printer::BufferPrinter,
+        format: js_printer::Format,
+    ) -> crate::Result<usize> {
+        self.0.print(print_arena, result, writer, format)
+    }
+    /// The transpiler's macro context slot (lazily created by `parse`).
+    #[inline]
+    pub fn macro_context(&mut self) -> &mut Option<js_ast::Macro::MacroContext> {
+        &mut self.0.macro_context
+    }
+    /// Create the macro context if there is none, and return it together with
+    /// the defines, for a scan pass.
+    pub fn macro_context_and_define(
+        &mut self,
+    ) -> (&mut js_ast::Macro::MacroContext, &crate::defines::Define) {
+        if self.0.macro_context.is_none() {
+            let mc = js_ast::Macro::MacroContext::init(self.0);
+            self.0.macro_context = Some(mc);
+        }
+        (
+            self.0.macro_context.as_mut().unwrap(),
+            &self.0.options.define,
+        )
+    }
+}
+
 /// A `Transpiler` for one off-thread transpile job: a bytewise copy of a
 /// long-lived transpiler whose `options` / `resolver` / `fs` / `env` alias the
 /// original's (so it is never dropped as a `Transpiler`), pointed at the job's
 /// own arena and log for the span of each [`for_call`](Self::for_call), with
 /// its own lazily-created macro context (freed on drop). What a job uses
 /// instead of the VM's transpiler itself on the work pool.
-pub struct JobTranspiler(core::mem::ManuallyDrop<Transpiler<'static>>);
+pub struct JobTranspiler(
+    core::mem::ManuallyDrop<Transpiler<'static>>,
+    /// What the copy aliases, when that is an [`OwnedTranspiler`]'s.
+    Option<std::sync::Arc<OwnedTranspilerInner>>,
+);
+
+// SAFETY: a `JobTranspiler` moves to the thread that runs the job and is used
+// there alone; what it aliases from its source is configuration that source
+// only reads while copies are out (`new`'s contract).
+unsafe impl Send for JobTranspiler {}
 
 impl JobTranspiler {
     /// Copy `from`'s configuration for a job.
@@ -170,6 +428,9 @@ impl JobTranspiler {
     /// copy's own macro context; `from`'s thread may parse/scan/print
     /// concurrently under the same restriction but must not hand out
     /// `fs_mut()`/`log_mut()`/`&mut options` borrows that a job could observe.
+    /// [`OwnedTranspiler::new_job`] discharges the no-reconfiguration half at
+    /// runtime (`with_mut` panics while a copy is alive); the VM's own
+    /// transpiler is configured once, before any job is scheduled.
     pub unsafe fn new(from: &Transpiler<'static>) -> Self {
         // SAFETY: fn contract; `ManuallyDrop` keeps the copy from freeing what
         // `from` owns.
@@ -177,7 +438,7 @@ impl JobTranspiler {
         // `from`'s macro context (if any) points back at `from`; `parse` lazily
         // creates this copy's own.
         copy.macro_context = None;
-        Self(copy)
+        Self(copy, None)
     }
 
     /// The copy, aimed at this call's `arena` and `log` until the returned

@@ -187,6 +187,17 @@ pub(crate) fn run_task(
             task.ptr.cast::<$ty>()
         };
     }
+    /// `<$hop as TaskHop>::run` on the queued `ThisPtr`, SAFETY spelled once.
+    macro_rules! hop {
+        ($hop:ty) => {{
+            // SAFETY: §Dispatch — `task.tag` is `<$hop>::TAG`, set together with
+            // `task.ptr` from a `ThisPtr` whose pointee keeps itself alive for
+            // the queued task; not touched here after the call.
+            <$hop as bun_event_loop::TaskHop>::run(unsafe {
+                bun_ptr::ThisPtr::new(cast_ptr!(<$hop as bun_event_loop::TaskHop>::Target))
+            })
+        }};
+    }
     /// `CompressionStream::<T>::run_from_js_thread` takes `*mut T` (full
     /// allocation provenance — R-2) so its trailing `T::deref()` may free the box.
     macro_rules! compression_arm {
@@ -248,9 +259,7 @@ pub(crate) fn run_task(
             })?;
         }
         task_tag::JSBundleCompletionTask => {
-            crate::api::js_bundle_completion_task::JSBundleCompletionTask::on_complete_anytask(
-                cast_ptr!(crate::api::js_bundle_completion_task::JSBundleCompletionTask),
-            )?;
+            hop!(crate::api::js_bundle_completion_task::CompletionHop)?
         }
         task_tag::FetchTaskletPromiseSettle => {
             // SAFETY: boxed at the fetch completion site; the arm consumes it.
@@ -1224,6 +1233,15 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             unsafe { <$ty as Taskable>::release_unrun(task.ptr.cast::<$ty>()) }
         }};
     }
+    /// `<$hop as TaskHop>::release_unrun` on the queued `ThisPtr`, SAFETY spelled once.
+    macro_rules! release_hop {
+        ($hop:ty) => {{
+            // SAFETY: as `release!`; the tag is `<$hop>::TAG`.
+            <$hop as bun_event_loop::TaskHop>::release_unrun(unsafe {
+                bun_ptr::ThisPtr::new(task.ptr.cast::<<$hop as bun_event_loop::TaskHop>::Target>())
+            })
+        }};
+    }
     match task.tag {
         task_tag::AnyTaskJob => {
             // The one erased tag: every payload is a `Job<C>` reached through its header.
@@ -1249,7 +1267,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::HotReloadTask => release!(hot_reloader::HotReloadTask),
         task_tag::WatchReloadTask => release!(hot_reloader::WatchReloadTask),
         task_tag::JSBundleCompletionTask => {
-            release!(crate::api::js_bundle_completion_task::JSBundleCompletionTask)
+            release_hop!(crate::api::js_bundle_completion_task::CompletionHop)
         }
         task_tag::JSCDeferredWorkTask => release!(JSCDeferredWorkTask),
         task_tag::ManagedTask => release!(ManagedTask),

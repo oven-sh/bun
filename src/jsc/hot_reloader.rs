@@ -455,15 +455,25 @@ pub struct Task<Ctx: HotReloaderCtx, EventLoopType, const RELOAD_IMMEDIATELY: bo
     _event_loop: PhantomData<fn() -> EventLoopType>,
 }
 
-// Only the VM's tasks are ever queued (`bun build --watch` has no loop). A
-// task released unrun or refused is a file change that will not reload
-// anything: dropping it is all there is to do.
-bun_event_loop::boxed_task! {
-    impl[const RELOAD_IMMEDIATELY: bool] Task<VirtualMachine, EventLoop, RELOAD_IMMEDIATELY> =>
-        if RELOAD_IMMEDIATELY { task_tag::WatchReloadTask } else { task_tag::HotReloadTask };
-    run = |task: Box<Self>| { task.run(); Ok(()) };
-    release_unrun = drop;
-    refused = drop;
+// SAFETY: the only task type for `task_tag::WatchReloadTask` /
+// `task_tag::HotReloadTask` (one per `RELOAD_IMMEDIATELY`); only the VM's
+// tasks are ever queued (`bun build --watch` has no loop) and the carrier owns
+// the box (`VmHandle::post_boxed`). A task released unrun or refused is a file
+// change that will not reload anything: dropping it is all there is to do.
+unsafe impl<const RELOAD_IMMEDIATELY: bool> bun_event_loop::BoxedTask
+    for Task<VirtualMachine, EventLoop, RELOAD_IMMEDIATELY>
+{
+    const TAG: bun_event_loop::TaskTag = if RELOAD_IMMEDIATELY {
+        task_tag::WatchReloadTask
+    } else {
+        task_tag::HotReloadTask
+    };
+    fn run(self: Box<Self>) -> bun_event_loop::JsResult<()> {
+        Task::run(self);
+        Ok(())
+    }
+    fn release_unrun(self: Box<Self>) {}
+    fn refused(self: Box<Self>) {}
 }
 
 impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>

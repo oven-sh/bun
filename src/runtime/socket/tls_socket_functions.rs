@@ -35,7 +35,6 @@ pub(super) mod ffi {
     }
 
     // ssl.h
-    pub(crate) const TLSEXT_NAMETYPE_host_name: c_int = 0;
 
     // evp.h key types (NID values)
     pub(crate) const EVP_PKEY_RSA: c_int = 6;
@@ -171,7 +170,6 @@ pub(super) mod ffi {
         // scalars / `&mut` out-params leave no caller-side precondition, so
         // declare them `safe fn` here and route callers through
         // `SSL::opaque_ref` (panics on null, which every site already guards).
-        pub(crate) safe fn SSL_get_servername(ssl: &SSL, ty: c_int) -> *const c_char;
         pub(crate) safe fn SSL_is_init_finished(ssl: &SSL) -> c_int;
         /// Installs the inline-reject verify recorder (usockets openssl.c);
         /// the BIO hook + handshake drive then keep a rejected client's
@@ -183,7 +181,6 @@ pub(super) mod ffi {
             out_data: &mut *const u8,
             out_len: &mut c_uint,
         );
-        pub(crate) safe fn SSL_get_ex_data(ssl: &SSL, idx: c_int) -> *mut c_void;
         /// Save/restore the per-loop BIO routing state around in-handshake JS
         /// callbacks (defined in usockets' openssl.c). The caller's snapshot
         /// array must have exactly `us_internal_ssl_loop_state_slots()`
@@ -202,9 +199,6 @@ pub(super) mod ffi {
             callback: super::boringssl::SSL_verify_cb,
         );
         pub(crate) safe fn SSL_is_server(ssl: &SSL) -> c_int;
-        // Opaque-ZST `&SSL` + opaque `*mut c_void` payload (BoringSSL stores
-        // it verbatim, never derefs) ⇒ no caller-side precondition.
-        pub(crate) safe fn SSL_set_ex_data(ssl: &SSL, idx: c_int, data: *mut c_void) -> c_int;
         // Returns the borrowed parent CTX (always non-null for a live `SSL*`).
         pub(crate) safe fn SSL_get_SSL_CTX(ssl: &SSL) -> *mut SSL_CTX;
         // Swaps the cert/key/chain (and session-related state) this connection
@@ -231,23 +225,6 @@ pub(super) mod ffi {
             ssl: *mut SSL,
             chain: *mut core::ffi::c_void,
         ) -> core::ffi::c_int;
-        // Stores `cb`/`arg` opaquely on the CTX (BoringSSL never derefs `arg`
-        // outside the callback). Opaque-ZST `&SSL_CTX` + by-value fn-ptr +
-        // opaque `*mut c_void` ⇒ no caller-side precondition.
-        pub(crate) safe fn SSL_CTX_set_alpn_select_cb(
-            ctx: &SSL_CTX,
-            cb: Option<
-                unsafe extern "C" fn(
-                    ssl: *mut SSL,
-                    out: *mut *const u8,
-                    out_len: *mut u8,
-                    in_: *const u8,
-                    in_len: c_uint,
-                    arg: *mut c_void,
-                ) -> c_int,
-            >,
-            arg: *mut c_void,
-        );
         // Returns the borrowed cert store of a live `SSL_CTX*`.
         pub(crate) safe fn SSL_CTX_get_cert_store(ctx: &SSL_CTX) -> *mut X509_STORE;
         // Emptiness probe for a cert store: `get0_objects` borrows the
@@ -299,16 +276,10 @@ pub(super) fn get_servername(
         return Ok(JSValue::UNDEFINED);
     };
 
-    let servername = ffi::SSL_get_servername(
-        boringssl::SSL::opaque_ref(ssl_ptr),
-        ffi::TLSEXT_NAMETYPE_host_name,
-    );
-    if servername.is_null() {
+    let Some(servername) = boringssl::SSL::opaque_ref(ssl_ptr).servername() else {
         return Ok(JSValue::UNDEFINED);
-    }
-    // SAFETY: SSL_get_servername returns a NUL-terminated C string owned by the SSL session.
-    let slice = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-    bun_string_jsc::create_utf8_for_js(global, slice)
+    };
+    bun_string_jsc::create_utf8_for_js(global, servername)
 }
 
 pub(super) fn set_servername(

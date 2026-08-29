@@ -675,11 +675,7 @@ impl BinaryExpressionVisitor {
                     );
                 }
 
-                // Warn about "module.exports = ..." or "exports.foo = ..." in a
-                // file that also has ESM exports: there is no CommonJS binding
-                // for `module` or `exports` in such a file, so the assignment
-                // goes to a global. Only assignments warn, since `typeof module`
-                // is a legitimate way to detect CommonJS.
+                // Only `=` warns, as in esbuild; `typeof module` is a valid CommonJS check.
                 if p.options.bundle && p.has_esm_exports_syntax && !p.is_control_flow_dead {
                     p.warn_about_commonjs_variable_in_esm(&e_.left);
                 }

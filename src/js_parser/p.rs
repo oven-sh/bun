@@ -269,16 +269,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // Used for forcing CommonJS
     pub(crate) has_with_scope: bool,
 
-    /// The source has an `export` statement or a top-level `await`. Set before
-    /// the visit pass, so it never sees the `export` keyword that unwrapping
-    /// `exports.foo = ...` to ESM synthesizes during the visit. This decides
-    /// whether `module` and `exports` are the CommonJS bindings or unbound
-    /// globals. The module type (`.mjs`, `"type": "module"`) does not count: a
-    /// file with only CommonJS syntax is CommonJS whatever its extension says.
+    /// `export` or top-level `await` in the source (not the module type), read
+    /// before the visit pass synthesizes `export` for unwrapped `exports.foo`.
     pub(crate) has_esm_exports_syntax: bool,
-    /// `has_esm_exports_syntax`, or the module type is ESM. Use this when the
-    /// question is "is this file certainly ESM?", for example to decide
-    /// whether a direct `eval` could reach `module` or `exports`.
+    /// `has_esm_exports_syntax` or an ESM module type (`.mjs`, `"type": "module"`).
     pub(crate) is_file_considered_to_have_esm_exports: bool,
 
     pub(crate) has_called_runtime: bool,
@@ -1448,9 +1442,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.commonjs_named_exports_deoptimized && self.commonjs_named_exports.count() > 0
     }
 
-    /// `left` is the target of an assignment in a file with ESM exports. Warn
-    /// once per variable when it is `module.exports`, `module.exports.foo`, or
-    /// `exports.foo` and `module`/`exports` is an unbound global.
+    /// Warns once per unbound `module`/`exports` that `left` (an assignment target) writes to.
     pub(crate) fn warn_about_commonjs_variable_in_esm(&mut self, left: &Expr) {
         let Some(dot) = left.data.e_dot() else {
             return;
@@ -1498,8 +1490,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         );
     }
 
-    /// The syntax that makes this file an ECMAScript module, for a diagnostic
-    /// note. Only valid when `has_esm_exports_syntax` is set.
+    /// Diagnostic note pointing at the syntax that makes this file an ES module.
     pub(crate) fn why_esm_note(&self) -> (bun_ast::Range, &'static str) {
         debug_assert!(self.has_esm_exports_syntax);
         if self.esm_export_keyword.len > 0 {
@@ -2822,18 +2813,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .generated
             .ensure_unused_capacity(generated_symbols_count as usize * 3);
 
-        // CommonJS-style exports are only enabled if this isn't using ECMAScript-
-        // style exports. You can still use "require" in ESM, just not "module" or
-        // "exports". You can also still use "import" in CommonJS.
+        // `require` stays usable in an ES module; `module` and `exports` do not.
         if !self.has_esm_exports_syntax {
             self.exports_ref =
                 self.declare_common_js_symbol(js_ast::symbol::Kind::Hoisted, b"exports")?;
             self.module_ref =
                 self.declare_common_js_symbol(js_ast::symbol::Kind::Hoisted, b"module")?;
         } else {
-            // Not bound in the module scope: `module` and `exports` in the source
-            // resolve to unbound globals, and `exports_ref` stays free for the
-            // ESM namespace object.
+            // Not in scope: user code gets globals. `exports_ref` is still the namespace object.
             self.exports_ref = self.new_symbol(js_ast::symbol::Kind::Hoisted, b"exports");
             self.module_ref = self.new_symbol(js_ast::symbol::Kind::Hoisted, b"module");
         }

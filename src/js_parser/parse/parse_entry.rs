@@ -1575,9 +1575,7 @@ impl<'a> Parser<'a> {
         let mut reject_import_statements = false;
 
         if p.has_esm_exports_syntax {
-            // `export` or top-level `await` in the source wins over everything
-            // else. `module` and `exports` were never bound in this file, so no
-            // CommonJS export could have been recorded.
+            // `module`/`exports` were never bound here, so nothing CommonJS was recorded.
             debug_assert!(!p.is_deoptimized_commonjs());
             exports_kind = js_ast::ExportsKind::Esm;
         } else if p.is_deoptimized_commonjs() {

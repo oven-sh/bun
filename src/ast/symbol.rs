@@ -116,8 +116,7 @@ bitflags::bitflags! {
         /// Renaming can also break any identifier used inside a "with" statement.
         const MUST_NOT_BE_RENAMED = 1 << 2;
 
-        /// The parser already warned that this unbound `module`/`exports` is
-        /// assigned to inside an ECMAScript module. One warning per variable.
+        /// One "CommonJS variable in an ECMAScript module" warning per unbound `module`/`exports`.
         const DID_WARN_ABOUT_COMMONJS_IN_ESM = 1 << 3;
 
         const REMOVE_OVERWRITTEN_FUNCTION_DECLARATION = 1 << 4;

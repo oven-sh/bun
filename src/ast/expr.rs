@@ -2664,9 +2664,8 @@ pub enum Equality {
     Unknown,
     Equal,
     NotEqual,
-    /// `require.main === module` (or `!==`/`==`/`!=`, in either order); the
-    /// caller rewrites this to an import_meta_main node. Carries the `module`
-    /// identifier's ref so the caller can drop its recorded usage.
+    /// `require.main === module` (any equality operator, either order), with the `module`
+    /// identifier's ref; the caller rewrites this to an import_meta_main node.
     RequireMainAndModule(Ref),
 }
 

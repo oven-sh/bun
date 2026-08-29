@@ -254,8 +254,7 @@ impl<'a, const IS_TS: bool, const SCAN: bool> bun_ast::expr::EqlParser
         if !ref_.is_symbol() {
             return false;
         }
-        // In a file with ESM exports `module` is an unbound global. Bun still
-        // rewrites `require.main === module` to `import.meta.main` there.
+        // An unbound `module` (file with ESM exports) still gets the `import.meta.main` rewrite.
         let symbol = &self.symbols[ref_.inner_index() as usize];
         symbol.kind == bun_ast::symbol::Kind::Unbound && symbol.original_name.slice() == b"module"
     }

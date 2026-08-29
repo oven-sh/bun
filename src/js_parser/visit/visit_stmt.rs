@@ -1542,9 +1542,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
             } else {
                 p.has_top_level_return = true;
-                // Only the CommonJS wrapper can contain this `return`, so
-                // `exports.foo = ...` must stay as-is instead of being
-                // unwrapped to an ESM export.
+                // The wrapper this `return` needs rules out unwrapping `exports.foo = ...` to ESM.
                 p.deoptimize_common_js_named_exports();
             }
         }

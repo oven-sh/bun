@@ -145,7 +145,8 @@ impl FdExt for Fd {
             }
             #[cfg(windows)]
             {
-                use sys::windows::{NTSTATUS, Win32Error, Win32ErrorExt as _, libuv as uv};
+                use sys::ReturnCodeExt as _;
+                use sys::windows::{NTSTATUS, libuv as uv};
                 match self.decode_windows() {
                     // It decodes to ntdll's handle; `close(AT_FDCWD)` is EBADF too.
                     _ if self == Fd::cwd() => Some(sys::Error {
@@ -164,17 +165,8 @@ impl FdExt for Fd {
                         // fs_t has no Drop impl, so cleanup
                         // must be explicit (uv_fs_req_cleanup).
                         req.deinit();
-                        if let Some(errno) = rc.errno() {
-                            Some(sys::Error {
-                                errno,
-                                syscall: sys::Tag::close,
-                                fd: self,
-                                from_libuv: true,
-                                ..Default::default()
-                            })
-                        } else {
-                            None
-                        }
+                        rc.to_error(sys::Tag::close)
+                            .map(|e| sys::Error { fd: self, ..e })
                     }
                     DecodeWindows::Windows(handle) => {
                         unsafe extern "system" {
@@ -187,12 +179,11 @@ impl FdExt for Fd {
                         match NtClose(handle) {
                             NTSTATUS::SUCCESS => None,
                             rc => Some(sys::Error {
-                                errno: Win32Error::from_nt_status(rc)
-                                    .to_system_errno()
-                                    .map_or(1, |e| e as _),
-                                syscall: sys::Tag::CloseHandle,
                                 fd: self,
-                                ..Default::default()
+                                ..sys::Error::from_code(
+                                    sys::windows::translate_nt_status_to_errno(rc),
+                                    sys::Tag::CloseHandle,
+                                )
                             }),
                         }
                     }

@@ -2046,6 +2046,9 @@ pub struct uv_rusage_t {
     pub ru_nivcsw: u64,
 }
 
+/// `bun_errno::E::UNKNOWN` — what a negative code outside the table maps to.
+pub const E_UNKNOWN: u16 = 134;
+
 // ──────────────────────────────────────────────────────────────────────────
 // `ReturnCode` / `ReturnCodeI64` — `enum(c_int)` newtypes; libuv return codes
 // are `0` on success, `-errno` on failure.
@@ -2301,17 +2304,17 @@ impl ReturnCode {
             None
         }
     }
-    /// When negative, map the
-    /// `UV_E*` code to the small POSIX `bun.sys.E` discriminant (e.g.
-    /// `UV_ENOENT (-4058)` → `2`). Returns `None` for non-negative *or*
-    /// unmapped negative codes. Downstream callers
-    /// (`node_fs`, `sys::Fd`, `write_file`, …) store this directly into
-    /// `bun_sys::Error.errno`, so it MUST be the translated value, not the raw
-    /// `|UV_E*|` magnitude — see [`raw_errno`] for the latter.
+    /// `None` when non-negative; otherwise the `bun_errno::E` discriminant
+    /// for the `UV_E*` code (e.g. `UV_ENOENT (-4058)` → `2`), `EUNKNOWN` for a
+    /// negative code libuv does not define. This is what `bun_sys::Error.errno`
+    /// stores — never the raw `|UV_E*|` magnitude ([`raw_errno`]).
     #[inline]
     pub const fn errno(self) -> Option<u16> {
         if self.0 < 0 {
-            uv_err_to_e_discriminant(self.0)
+            Some(match uv_err_to_e_discriminant(self.0) {
+                Some(d) => d,
+                None => E_UNKNOWN,
+            })
         } else {
             None
         }
@@ -2349,25 +2352,18 @@ impl ReturnCodeI64 {
     pub const fn int(self) -> i64 {
         self.0
     }
+    /// Same contract as [`ReturnCode::errno`].
     #[inline]
     pub const fn errno(self) -> Option<u16> {
         if self.0 < 0 {
-            Some(self.0.unsigned_abs() as u16)
+            ReturnCode(self.0 as c_int).errno()
         } else {
             None
         }
     }
-    /// Translated `bun_sys::E`
-    /// discriminant via [`uv_err_to_e_discriminant`] (matching
-    /// [`ReturnCode::err_enum`]). For the typed `bun_sys::E` use
-    /// `bun_sys::ReturnCodeExt::err_enum_e` (layering: `E` lives upstream).
     #[inline]
     pub const fn err_enum(self) -> Option<u16> {
-        if self.0 < 0 {
-            uv_err_to_e_discriminant(self.0 as c_int)
-        } else {
-            None
-        }
+        self.errno()
     }
     /// `req.result` after a successful `uv_fs_open` is the
     /// CRT fd. Returns the raw `uv_file`; caller wraps with `Fd::from_uv`

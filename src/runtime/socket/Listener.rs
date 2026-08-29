@@ -1616,11 +1616,12 @@ fn connect_finish<const IS_SSL: bool>(
         Ok(()) => None,
         Err(crate::Error::Js(err)) => Some(err),
         Err(_) => {
-            // Winsock sets WSAGetLastError, not the CRT `_errno()` that
+            // Winsock sets the Win32 last-error, not the CRT `_errno()` that
             // `last_errno()` reads.
             #[cfg(windows)]
             let os_errno = {
-                let mut e = bun_sys::windows::WSAGetLastError().map_or(0, |err| err as c_int);
+                use bun_sys::windows::Win32ErrorExt as _;
+                let mut e = bun_sys::windows::Win32Error::get().to_system_errno() as c_int;
                 // Winsock AF_UNIX returns WSAECONNREFUSED whether the path exists
                 // or not; Node distinguishes ENOENT via `CreateFile`.
                 if port.is_none() && e == bun_sys::SystemErrno::ECONNREFUSED as c_int {

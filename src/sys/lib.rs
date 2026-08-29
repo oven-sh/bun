@@ -950,7 +950,9 @@ pub fn is_regular_file(mode: Mode) -> bool {
 }
 #[cfg(windows)]
 pub use bun_errno::Win32ErrorExt;
-pub use bun_errno::{E, GetErrno, S, SystemErrno, e_from_negated, get_errno};
+pub use bun_errno::{E, S, SystemErrno, e_from_negated, last_error};
+#[cfg(not(windows))]
+pub use bun_errno::{GetErrno, get_errno};
 
 /// Exported for `headers-handwritten.h` `Bun__errnoName`. Returns a
 /// NUL-terminated upper-case errno name (e.g. `"ENOENT"`) or null for an
@@ -1241,9 +1243,9 @@ pub type Stat = bun_libuv_sys::uv_stat_t;
 use bun_core::ZStr;
 
 /// Read thread-local libc errno (set by the failing syscall).
-/// On Windows this reads the CRT's
-/// thread-local `_errno()`; libuv-backed paths that need Win32
-/// `GetLastError()` go through `bun_sys::windows::get_last_errno` instead.
+/// On Windows this reads the CRT's thread-local `_errno()`, which Win32 and
+/// Winsock calls do not set — use `Win32Error::get()` / `Error::from_win32`
+/// for those.
 #[inline]
 pub fn last_errno() -> i32 {
     bun_core::ffi::errno()
@@ -3922,7 +3924,7 @@ mod windows_impl {
             )
         };
         if out == 0 {
-            return Err(Error::new(w::get_last_errno(), Tag::dup).with_fd(fd));
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::dup).with_fd(fd));
         }
         Ok(Fd::from_native(target as _))
     }
@@ -3938,7 +3940,7 @@ mod windows_impl {
         let len =
             unsafe { w::kernel32::GetCurrentDirectoryW(wbuf.len() as u32, wbuf.as_mut_ptr()) };
         if len == 0 {
-            return Err(Error::new(w::get_last_errno(), Tag::getcwd));
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::getcwd));
         }
         // MSDN: when `nBufferLength` is too small `GetCurrentDirectoryW`
         // returns the *required* size (incl. NUL), which can exceed
@@ -4195,7 +4197,9 @@ mod windows_impl {
         let wpath = bun_paths::string_paths::to_kernel32_path(&mut wbuf, path.as_bytes());
         let attrs = unsafe { w::kernel32::GetFileAttributesW(wpath.as_ptr()) };
         if attrs == w::INVALID_FILE_ATTRIBUTES {
-            return Err(Error::new(w::get_last_errno(), Tag::access).with_path(path.as_bytes()));
+            return Err(
+                Error::from_win32(w::Win32Error::get(), Tag::access).with_path(path.as_bytes())
+            );
         }
         let is_readonly = (attrs & w::FILE_ATTRIBUTE_READONLY) != 0;
         let is_directory = (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0;
@@ -4272,7 +4276,7 @@ mod windows_impl {
         let mut size: i64 = 0;
         let ok = unsafe { w::kernel32::GetFileSizeEx(fd.native() as w::HANDLE, &mut size) };
         if ok == 0 {
-            return Err(Error::new(w::get_last_errno(), Tag::fstat).with_fd(fd));
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::fstat).with_fd(fd));
         }
         // Clamp defensively so a
         // negative LARGE_INTEGER never becomes ~18 EB after the i64→u64 cast.
@@ -4313,7 +4317,7 @@ mod windows_impl {
             w::SetFilePointerEx(fd.native() as w::HANDLE, offset, &mut new, whence as u32)
         };
         if ok == 0 {
-            return Err(Error::new(w::get_last_errno(), Tag::lseek).with_fd(fd));
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::lseek).with_fd(fd));
         }
         Ok(new)
     }
@@ -4324,7 +4328,7 @@ mod windows_impl {
         // SAFETY: `fd` is a valid kernel handle (caller invariant).
         let ok = unsafe { w::SetFilePointerEx(fd.native() as w::HANDLE, 0, &mut new, w::FILE_END) };
         if ok == w::FALSE {
-            return Err(Error::new(w::get_last_errno(), Tag::lseek).with_fd(fd));
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::lseek).with_fd(fd));
         }
         Ok(usize::try_from(new).expect("int cast"))
     }
@@ -4335,7 +4339,9 @@ mod windows_impl {
         let mut wbuf = WPathBuffer::default();
         let wpath = bun_paths::string_paths::to_w_dir_path(&mut wbuf, path.as_bytes());
         if unsafe { w::SetCurrentDirectoryW(wpath.as_ptr()) } == 0 {
-            return Err(Error::new(w::get_last_errno(), Tag::chdir).with_path(path.as_bytes()));
+            return Err(
+                Error::from_win32(w::Win32Error::get(), Tag::chdir).with_path(path.as_bytes())
+            );
         }
         Ok(())
     }
@@ -4363,9 +4369,7 @@ mod windows_impl {
         let rc =
             unsafe { w::ws2_32::recv(fd.native() as _, buf.as_mut_ptr().cast::<_>(), len, flags) };
         if rc < 0 {
-            return Err(
-                Error::new(w::WSAGetLastError().unwrap_or(E::EUNKNOWN), Tag::recv).with_fd(fd),
-            );
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::recv).with_fd(fd));
         }
         Ok(rc as usize)
     }
@@ -4375,9 +4379,7 @@ mod windows_impl {
         let len = buf.len().min(i32::MAX as usize) as i32;
         let rc = unsafe { w::ws2_32::send(fd.native() as _, buf.as_ptr().cast::<_>(), len, flags) };
         if rc < 0 {
-            return Err(
-                Error::new(w::WSAGetLastError().unwrap_or(E::EUNKNOWN), Tag::send).with_fd(fd),
-            );
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::send).with_fd(fd));
         }
         Ok(rc as usize)
     }
@@ -8775,7 +8777,7 @@ mod win_symlink_impl {
         // SAFETY: `from` is NUL-terminated.
         let rc = unsafe { windows::DeleteFileW(from.as_ptr()) };
         if rc == 0 {
-            return Err(Error::from_code(windows::get_last_errno(), Tag::unlink));
+            return Err(Error::from_win32(windows::Win32Error::get(), Tag::unlink));
         }
         Ok(())
     }
@@ -8786,7 +8788,7 @@ mod win_symlink_impl {
         // SAFETY: `path` is NUL-terminated; null security attributes.
         let rc = unsafe { windows::CreateDirectoryW(path.as_ptr(), core::ptr::null_mut()) };
         if rc == 0 {
-            return Err(Error::from_code(windows::get_last_errno(), Tag::mkdir));
+            return Err(Error::from_win32(windows::Win32Error::get(), Tag::mkdir));
         }
         Ok(())
     }
@@ -8798,7 +8800,7 @@ pub use win_symlink_impl::{mkdir_w, symlink_or_junction, symlink_w, unlink_w};
 #[cfg(windows)]
 pub fn link_w(src: &bun_core::WStr, dest: &bun_core::WStr) -> Maybe<()> {
     if windows::CreateHardLinkW(dest.as_ptr(), src.as_ptr(), None) == 0 {
-        return Err(Error::from_code(windows::get_last_errno(), Tag::link));
+        return Err(Error::from_win32(windows::Win32Error::get(), Tag::link));
     }
     Ok(())
 }

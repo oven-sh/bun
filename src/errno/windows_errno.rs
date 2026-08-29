@@ -350,20 +350,6 @@ pub mod posix {
 /// Uppercase re-export so `bun_errno::S::IFDIR` compiles cross-platform.
 pub use self::s as S;
 
-use super::GetErrno;
-
-// Windows errno comes from `GetLastError()` regardless of `rc`, so every impl
-// ignores `self`. Kept to the same concrete-type set as POSIX — a blanket impl
-// would shadow `bun_sys::Error::get_errno` (inherent method) via autoref.
-macro_rules! impl_win_get_errno {
-    ($($t:ty),*) => {$(
-        impl GetErrno for $t {
-            #[inline] fn get_errno(self) -> E { get_errno(self) }
-        }
-    )*};
-}
-impl_win_get_errno!(i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
-
 // ──────────────────────────────────────────────────────────────────────────
 // S — file mode bits
 // ──────────────────────────────────────────────────────────────────────────
@@ -374,19 +360,15 @@ impl_win_get_errno!(i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
 pub use bun_core::S as s;
 
 // ──────────────────────────────────────────────────────────────────────────
-// getErrno
+// last_error
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `get_errno(rc)` — `rc` is ignored: the caller has already seen the call
-/// fail, and this reads `GetLastError()` (which is also `WSAGetLastError()`).
-/// A non-zero code with no row in the Win32→errno table is `UNKNOWN`, like
-/// libuv's `uv_translate_sys_error`, never `SUCCESS`.
-/// NTSTATUS callers use `windows::translate_ntstatus_to_errno` directly.
-pub fn get_errno<T>(_rc: T) -> E {
-    match Win32Error::get() {
-        Win32Error::SUCCESS => E::SUCCESS,
-        err => err.to_e(),
-    }
+/// `GetLastError()` mapped to `E`. There is no `get_errno(rc)` on Windows: a
+/// Win32 return value says only *whether* the call failed, so check it first,
+/// then read this (or build the error with `bun_sys::Error::from_win32`).
+#[inline]
+pub fn last_error() -> E {
+    Win32Error::get().to_e()
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -777,6 +759,7 @@ impl SystemErrno {
             W::META_EXPANSION_TOO_LONG => SystemErrno::E2BIG,
             W::WSAESOCKTNOSUPPORT => SystemErrno::ESOCKTNOSUPPORT,
             W::DELETE_PENDING => SystemErrno::EBUSY,
+            W::BAD_EXE_FORMAT => SystemErrno::EFTYPE,
             _ => return None,
         })
     }
@@ -823,7 +806,7 @@ pub mod uv_e {
 // ──────────────────────────────────────────────────────────────────────────
 // `windows` — Win32Error / NTSTATUS / kernel32 surface moved DOWN from
 // `bun_sys::windows` (cycle-break per PORTING.md §Dep-cycle fixes). Only the
-// subset referenced by `SystemErrno::init` / `get_errno` is mirrored; the full
+// subset referenced by `SystemErrno::init` / `last_error` is mirrored; the full
 // 1100-variant table stays in `bun_sys::windows` and re-exports this newtype.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod windows {
@@ -839,23 +822,25 @@ pub mod windows {
     pub use bun_windows_sys::NTSTATUS;
 
     /// Extension trait for `Win32Error` → `SystemErrno`/`E` mapping.
-    /// `bun_windows_sys` is tier-0 and cannot name `SystemErrno`, so
-    /// `to_system_errno()` surfaces here as an extension method instead.
+    /// `bun_windows_sys` is tier-0 and cannot name `SystemErrno`, so the
+    /// mapping surfaces here as extension methods instead.
     pub trait Win32ErrorExt: Copy {
-        fn to_system_errno(self) -> Option<SystemErrno>;
-        /// Win32 error → `E`, falling back to `E::UNKNOWN` for codes not in
-        /// the Win32→errno table (including `SUCCESS` — check for it first).
+        /// Total: `SUCCESS` → `SUCCESS`, a code in libuv's
+        /// `uv_translate_sys_error` table → that errno, anything else →
+        /// `EUNKNOWN`.
+        fn to_system_errno(self) -> SystemErrno;
         #[inline]
         fn to_e(self) -> E {
-            self.to_system_errno()
-                .map(SystemErrno::to_e)
-                .unwrap_or(E::UNKNOWN)
+            self.to_system_errno().to_e()
         }
     }
     impl Win32ErrorExt for Win32Error {
         #[inline]
-        fn to_system_errno(self) -> Option<SystemErrno> {
-            SystemErrno::init_win32_error(self)
+        fn to_system_errno(self) -> SystemErrno {
+            if self == Win32Error::SUCCESS {
+                return SystemErrno::SUCCESS;
+            }
+            SystemErrno::init_win32_error(self).unwrap_or(SystemErrno::EUNKNOWN)
         }
     }
 

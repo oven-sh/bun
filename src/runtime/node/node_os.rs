@@ -1373,8 +1373,14 @@ mod _impl {
             return bun_sys::E::SUCCESS;
         }
 
-        // get_errno already returns bun_sys::E (= SystemErrno) directly.
-        bun_sys::get_errno(code)
+        #[cfg(windows)]
+        {
+            bun_sys::windows::translate_uv_error_to_e(code)
+        }
+        #[cfg(not(windows))]
+        {
+            bun_sys::get_errno(code)
+        }
     }
 
     pub(crate) fn set_priority1(global: &JSGlobalObject, pid: i32, priority: i32) -> JsResult<()> {

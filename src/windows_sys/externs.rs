@@ -1130,9 +1130,8 @@ pub mod ws2_32 {
 
     #[cfg_attr(windows, link(name = "ws2_32"))]
     unsafe extern "system" {
-        /// Raw `WSAGetLastError`. The `Option<SystemErrno>` wrapper lives in `errno`
-        /// because `SystemErrno` is a higher-tier type. No preconditions; reads
-        /// thread-local Winsock error slot.
+        /// No preconditions; reads the thread-local Winsock error slot (the
+        /// same slot as `GetLastError`).
         pub safe fn WSAGetLastError() -> c_int;
         /// No preconditions; writes the thread-local Winsock error slot.
         pub safe fn WSASetLastError(err: c_int);
@@ -1205,6 +1204,7 @@ impl Win32Error {
     pub const SIGNAL_REFUSED: Win32Error = Win32Error(156);
     pub const BAD_PATHNAME: Win32Error = Win32Error(161);
     pub const ALREADY_EXISTS: Win32Error = Win32Error(183);
+    pub const BAD_EXE_FORMAT: Win32Error = Win32Error(193);
     pub const ENVVAR_NOT_FOUND: Win32Error = Win32Error(203);
     pub const NO_SIGNAL_SENT: Win32Error = Win32Error(205);
     pub const FILENAME_EXCED_RANGE: Win32Error = Win32Error(206);

@@ -17,8 +17,7 @@ macro_rules! impl_get_errno_libc {
                 // against the type's own all-ones value instead (== -1 for
                 // signed, == MAX for unsigned — both are libc's failure rc).
                 if self == !(0 as $t) {
-                    u16::try_from($crate::posix::errno())
-                        .map_or($crate::E::EUNKNOWN, $crate::E::from_raw)
+                    $crate::last_error()
                 } else {
                     $crate::E::SUCCESS
                 }
@@ -234,24 +233,28 @@ pub mod posix {
     pub use bun_core::ffi::errno;
 }
 
-/// Errno extraction strategy, modeled as a trait with per-type impls — call
-/// as `rc.get_errno()` or `get_errno(rc)`.
-///
-/// The trait declaration is target-independent; each per-OS module supplies its
-/// own `impl GetErrno for {i32,u32,isize,usize,...}` (Linux decodes raw-syscall
-/// `-errno` from `usize`, Darwin/FreeBSD read thread-local errno on `-1`,
-/// Windows ignores `rc` and reads `GetLastError()`/`WSAGetLastError()`).
+/// Decode a POSIX syscall return value: `rc.get_errno()` / `get_errno(rc)` is
+/// `SUCCESS` unless `rc` is the failure sentinel, in which case it is the errno
+/// (Linux raw syscalls decode `-errno` from `usize`; libc wrappers read the
+/// thread-local errno on `-1`). Windows has no impls: a Win32 return value
+/// carries no errno, so callers there check it and then read [`last_error`]
+/// (or build a `bun_sys::Error::from_win32`).
+#[cfg(not(windows))]
 pub trait GetErrno: Copy {
     fn get_errno(self) -> E;
 }
 
-// Free-function shim over the trait method. POSIX-only:
-// Windows defines its own divergent `get_errno<T>(_rc)` (no trait bound, reads
-// GetLastError/WSAGetLastError) in windows_errno.rs.
 #[cfg(not(windows))]
 #[inline]
 pub fn get_errno<T: GetErrno>(rc: T) -> E {
     rc.get_errno()
+}
+
+/// The thread-local errno as `E`, for a libc call already known to have failed.
+#[cfg(not(windows))]
+#[inline]
+pub fn last_error() -> E {
+    u16::try_from(posix::errno()).map_or(E::EUNKNOWN, E::from_raw)
 }
 
 /// Decode a Node-style **negated** errno (`c_int`, as written by

@@ -633,11 +633,8 @@ mod platform {
 
                     if rc != w::NTSTATUS::SUCCESS {
                         sys::syslog!("NtQueryDirectoryFile({}) = {:#x}", self.dir, rc.0);
-                        let errno = w::Win32Error::from_nt_status(rc)
-                            .to_system_errno()
-                            .unwrap_or(SystemErrno::EUNKNOWN);
                         return Err(sys::Error::from_code(
-                            errno.to_e(),
+                            w::Win32Error::from_nt_status(rc).to_e(),
                             Tag::NtQueryDirectoryFile,
                         ));
                     }

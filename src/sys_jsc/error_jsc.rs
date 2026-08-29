@@ -43,9 +43,9 @@ impl ErrorJsc for Error {
 pub mod TestingAPIs {
     use super::*;
 
-    /// Exercises Error.name() with from_libuv=true so tests can feed
-    /// negated-UV-code errno values and verify the integer overflow at
-    /// translateUVErrorToE(-code) is fixed. Windows-only.
+    /// `Error::from_libuv(-magnitude).name()`, so tests can feed libuv code
+    /// magnitudes (4058 for `UV_ENOENT`) and check the errno name they decode
+    /// to. Windows-only.
     #[bun_jsc::host_fn]
     pub fn sys_error_name_from_libuv(
         global: &JSGlobalObject,
@@ -63,16 +63,7 @@ pub mod TestingAPIs {
         }
         #[cfg(windows)]
         {
-            let err = Error {
-                // Checked narrowing into Error.errno's int type.
-                errno: arguments[0]
-                    .to_int32()
-                    .try_into()
-                    .expect("infallible: size matches"),
-                syscall: bun_sys::Tag::open,
-                from_libuv: true,
-                ..Default::default()
-            };
+            let err = Error::from_libuv(-arguments[0].to_int32(), bun_sys::Tag::open);
             return bun_string_jsc::create_utf8_for_js(global, err.name());
         }
     }

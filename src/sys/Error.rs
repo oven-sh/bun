@@ -27,8 +27,6 @@ pub(crate) type Int = u16;
 pub struct Error {
     pub errno: Int,
     pub fd: Fd,
-    #[cfg(windows)]
-    pub from_libuv: bool,
     // Box<[u8]> per PORTING.md; `with_path*` eagerly clones. Revisit if
     // profiling shows regressions.
     pub path: Box<[u8]>,
@@ -41,8 +39,6 @@ impl Default for Error {
         Self {
             errno: TODO_ERRNO,
             fd: Fd::INVALID,
-            #[cfg(windows)]
-            from_libuv: false,
             path: Box::default(),
             syscall: Tag::TODO,
             dest: Box::default(),
@@ -108,32 +104,42 @@ impl Error {
         }
     }
 
+    /// The error for a Win32 call that returned its failure value; `code` is
+    /// its `GetLastError()`. A code outside libuv's Win32→errno table is
+    /// `EUNKNOWN`, and so is `SUCCESS` (an API that failed without setting
+    /// the last error), so a failed call never reads as errno 0.
+    #[cfg(windows)]
+    #[inline]
+    pub fn from_win32(code: crate::windows::Win32Error, syscall_tag: Tag) -> Error {
+        use crate::windows::Win32ErrorExt as _;
+        let errno = match code.to_system_errno() {
+            SystemErrno::SUCCESS => SystemErrno::EUNKNOWN,
+            e => e,
+        };
+        Error {
+            errno: errno as Int,
+            syscall: syscall_tag,
+            ..Default::default()
+        }
+    }
+
+    /// The error for a libuv call that returned the negative code `rc`.
+    #[cfg(windows)]
+    #[inline]
+    pub fn from_libuv(rc: c_int, syscall_tag: Tag) -> Error {
+        debug_assert!(rc < 0);
+        Error {
+            errno: crate::windows::translate_uv_error_to_e(rc) as Int,
+            syscall: syscall_tag,
+            ..Default::default()
+        }
+    }
+
     /// `Some(err)` when a libuv `ReturnCode` is negative; `None` on success.
-    /// `ReturnCode::errno()` already maps the `UV_E*` code to the POSIX `E`
-    /// discriminant, so `from_libuv` stays at its default `false`.
     #[cfg(windows)]
     #[inline]
     pub fn from_uv_rc(rc: crate::windows::libuv::ReturnCode, syscall_tag: Tag) -> Option<Error> {
-        rc.errno().map(|e| Error {
-            errno: e,
-            syscall: syscall_tag,
-            ..Default::default()
-        })
-    }
-
-    /// `Some(err)` when a libuv `ReturnCodeI64` is negative; `None` on success.
-    /// `from_libuv` left at default `false`.
-    #[cfg(windows)]
-    #[inline]
-    pub(crate) fn from_uv_rc64(
-        rc: crate::windows::libuv::ReturnCodeI64,
-        syscall_tag: Tag,
-    ) -> Option<Error> {
-        rc.errno().map(|e| Error {
-            errno: e,
-            syscall: syscall_tag,
-            ..Default::default()
-        })
+        (rc.int() < 0).then(|| Error::from_libuv(rc.int(), syscall_tag))
     }
 
     pub fn from_code(errno: E, syscall_tag: Tag) -> Error {
@@ -240,11 +246,8 @@ impl Error {
         }
     }
 
-    /// Unlike `with_path`/`with_path_dest` (which
-    /// reset `fd`/`from_libuv`), this only overlays `dest` and
-    /// preserves every other field — chained on a libuv-sourced error
-    /// (`from_libuv=true`, errno in the 4000-range) it must keep `from_libuv`
-    /// so `name()`/`msg()` still route through the uv→errno mapper.
+    /// Unlike `with_path`/`with_path_dest` (which reset `fd`), this only
+    /// overlays `dest`.
     #[cfg(windows)]
     #[inline]
     pub(crate) fn with_dest(&self, dest: &[u8]) -> Error {
@@ -252,8 +255,6 @@ impl Error {
             errno: self.errno,
             syscall: self.syscall,
             fd: self.fd,
-            #[cfg(windows)]
-            from_libuv: self.from_libuv,
             path: self.path.clone(),
             dest: Box::from(dest),
         }
@@ -279,41 +280,22 @@ impl Error {
         Error {
             errno: self.errno,
             fd: self.fd,
-            #[cfg(windows)]
-            from_libuv: self.from_libuv,
             syscall: self.syscall,
             path: Box::default(),
             dest: Box::default(),
         }
     }
 
-    /// Decode `self.errno` (+ `from_libuv` on Windows) into a validated `SystemErrno`.
-    /// Shared by `name()` / `get_error_code_tag_name()`; a fallible discriminant lookup.
+    /// Decode `self.errno` into a validated `SystemErrno`; `None` for 0 and
+    /// for values outside the enum (`TODO_ERRNO` etc.).
     #[inline]
     fn resolve_system_errno(&self) -> Option<SystemErrno> {
-        #[cfg(windows)]
-        {
-            if self.from_libuv {
-                // `self.errno` is the positive `UV_E*` magnitude; negate back to the signed
-                // uv code, map to `E`, then to `SystemErrno` via the shared #[repr(u16)]
-                // discriminant table.
-                let translated = crate::windows::translate_uv_error_to_e(-c_int::from(self.errno));
-                return Some(SystemErrno::from_raw(translated as u16));
-            }
-            // `self.errno` may be out-of-range (TODO_ERRNO etc.); validate first.
-            // Do NOT call `SystemErrno::init` here — on Windows its u16/i32 entry points map
-            // Win32/WSA error codes to errnos and would corrupt a value that is already a
-            // SystemErrno discriminant (e.g. discriminant 1/EPERM → Win32(1) → EISDIR).
-            E::try_from_raw(self.errno).map(|e| SystemErrno::from_raw(e as u16))
+        if self.errno == 0 {
+            return None;
         }
-        #[cfg(not(windows))]
-        {
-            if self.errno > 0 && self.errno < SystemErrno::MAX {
-                SystemErrno::init(self.errno as i64)
-            } else {
-                None
-            }
-        }
+        // Not `SystemErrno::init`: on Windows its integer entry points treat the
+        // value as a Win32/WSA/uv code, and `self.errno` is already a discriminant.
+        SystemErrno::from_repr(self.errno)
     }
 
     pub fn name(&self) -> &'static [u8] {
@@ -357,11 +339,8 @@ impl Error {
         map: &enum_map::EnumMap<SystemErrno, &'static str>,
     ) -> (SystemError, Option<(&'static str, &'static str)>) {
         // Node reports libuv's codes in `err.errno` on every platform. On POSIX
-        // that is just the negated host errno. On Windows `self.errno` may be
-        // either an `E` discriminant or a raw libuv magnitude regardless of
-        // `from_libuv` (callers are inconsistent), so always try the
-        // discriminant→UV table first; a raw magnitude falls through to plain
-        // negation and lands on the same value.
+        // that is just the negated host errno; on Windows the discriminant maps
+        // back to its `UV_E*` value.
         #[cfg(windows)]
         let js_errno = crate::windows::libuv::e_discriminant_to_uv(self.errno)
             .unwrap_or_else(|| c_int::from(self.errno).wrapping_neg());
@@ -545,7 +524,6 @@ impl bun_core::output::ErrName for &Error {
 #[cfg(windows)]
 pub trait ReturnCodeExt: Sized {
     /// `Some(err)` when negative; `None` on success.
-    /// `from_libuv` stays at default `false`.
     fn to_error(self, syscall_tag: Tag) -> Option<Error>;
     /// `Ok(())` on success, `Err` on negative rc.
     /// `bun_libuv_sys` returns the raw
@@ -586,7 +564,7 @@ impl ReturnCodeExt for crate::windows::libuv::ReturnCode {
 impl ReturnCodeExt for crate::windows::libuv::ReturnCodeI64 {
     #[inline]
     fn to_error(self, syscall_tag: Tag) -> Option<Error> {
-        Error::from_uv_rc64(self, syscall_tag)
+        (self.int() < 0).then(|| Error::from_libuv(self.int() as c_int, syscall_tag))
     }
     #[inline]
     fn err_enum_e(self) -> Option<crate::E> {

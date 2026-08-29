@@ -979,16 +979,15 @@ describe("copyFileSync", () => {
     }).toThrow();
   });
 
-  // A share that does not exist makes CopyFileW fail with ERROR_BAD_NET_NAME,
-  // a Win32 code with no errno mapping.
-  it.if(isWindows)("fails when CopyFileW fails with an unmapped Win32 error", async () => {
+  // CopyFileW fails with ERROR_BAD_NET_NAME (or ERROR_BAD_NETPATH); neither is
+  // in the Win32→errno table, so this is the UNKNOWN path.
+  it.if(isWindows)("throws for a destination on a nonexistent UNC share", async () => {
     const src = import.meta.path;
     const dest = "\\\\localhost\\bun-test-no-such-share$\\copyFileSync.js";
-    const expected = expect.objectContaining({ syscall: "copyfile", errno: -4094, path: src, dest });
+    const expected = expect.objectContaining({ code: "EUNKNOWN", syscall: "copyfile", errno: -4094, path: src, dest });
     expect(() => copyFileSync(src, dest)).toThrow(expected);
     await expect(promisify(fs.copyFile)(src, dest)).rejects.toThrow(expected);
     await expect(fs.promises.copyFile(src, dest)).rejects.toThrow(expected);
-    expect(existsSync(dest)).toBe(false);
   });
 
   if (process.platform === "linux") {

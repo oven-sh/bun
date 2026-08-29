@@ -2,13 +2,14 @@ import { spawnSync } from "bun";
 import { cc, dlopen } from "bun:ffi";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, canBuildNodeAddons, isASAN, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, canBuildNodeAddons, isASAN, isOhos, isWindows, tempDir } from "harness";
 import { join, resolve } from "path";
 
 import source from "./napi-app/ffi_addon_1.c" with { type: "file" };
 
 // The napi-app fixture needs a toolchain that can compile the reported
 // Node headers.
+// OHOS blocks runtime dlopen of native addons, so skip these on isOhos.
 const isFFIUnavailable = !canBuildNodeAddons();
 
 const symbols = {
@@ -72,7 +73,7 @@ beforeAll(() => {
   }
 });
 
-describe.skipIf(isFFIUnavailable)("cc() bundled N-API headers", () => {
+describe.skipIf(isFFIUnavailable || isOhos)("cc() bundled N-API headers", () => {
   it.todoIf(isWindows || isASAN)("resolves <node_api.h> without any -I flag", () => {
     const { symbols } = cc({
       source: join(__dirname, "napi-app/bundled_napi_headers.c"),
@@ -109,7 +110,7 @@ describe.skipIf(isFFIUnavailable)("cc() bundled N-API headers", () => {
 // that references the Node 26 type surface directly against them so the build
 // asserts they stay in sync with upstream.
 const systemCC = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
-describe.skipIf(isWindows || !systemCC)("in-tree N-API headers", () => {
+describe.skipIf(isWindows || !systemCC || isOhos)("in-tree N-API headers", () => {
   it("provide the Node 26 type surface and modern NAPI_MODULE_INIT()", async () => {
     const bunHeaders = resolve(__dirname, "../../src/runtime/napi");
     expect(existsSync(join(bunHeaders, "node_api.h"))).toBe(true);
@@ -154,7 +155,7 @@ describe.skipIf(isWindows || !systemCC)("in-tree N-API headers", () => {
   });
 });
 
-describe.skipIf(isFFIUnavailable)("cc napi integration", () => {
+describe.skipIf(isFFIUnavailable || isOhos)("cc napi integration", () => {
   // fails on windows as TCC can't link the napi_ functions
   // TinyCC's setjmp/longjmp error handling conflicts with ASan.
   it.todoIf(isWindows || isASAN)("has a different napi_env for each cc invocation", () => {

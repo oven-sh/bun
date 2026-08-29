@@ -75,8 +75,7 @@ impl DirectoryRoute {
         debug_assert!(url_prefix.last() == Some(&b'/'));
         debug_assert!(!strings::contains(url_prefix, b"//"));
 
-        // Before the open: a `?` between `open_a` and the constructor whose
-        // `Drop` closes `root_fd` would leak the fd.
+        // Stays before the open: a `?` after `open_a` would leak `root_fd`.
         let user_last_modified_ms = match headers.get(b"last-modified") {
             Some(lm) => {
                 let date = bun_string_jsc::parse_date(&BunString::borrow_utf8(lm), global)?;

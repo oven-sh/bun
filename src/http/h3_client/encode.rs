@@ -9,7 +9,7 @@ use bun_uws::quic::header::Class as QpackClass;
 
 use super::client_session::ClientSession;
 use super::stream::Stream;
-use crate::http_request_body::HTTPRequestBody;
+use crate::http_request_body::Body;
 use crate::internal_state::HTTPStage;
 use crate::{HTTPClient, HTTPVerboseLevel, Protocol};
 
@@ -20,19 +20,15 @@ use crate::{HTTPClient, HTTPVerboseLevel, Protocol};
 /// served the HSK crypto stream).
 pub(crate) fn write_request(
     session: &ClientSession,
-    stream: &mut Stream,
+    stream: &Stream,
     qs: &mut quic::Stream,
 ) -> crate::Result<()> {
-    let Some(client_ptr) = stream.client else {
+    let Some(req) = stream.client.get() else {
         return Err(crate::Error::Aborted);
     };
-    // `stream.client` is a live backref while attached — see `client_mut` doc.
-    let client: &mut HTTPClient = super::client_session::client_mut(client_ptr);
-    // `build_request` returns a `Request<'_>`
-    // that mutably borrows `client`; capture every field we need first.
+    let mut client = req.client();
+    let client: &mut HTTPClient = &mut client;
     let verbose = client.verbose;
-    let href: &[u8] = client.url.href;
-    let host: &[u8] = client.url.host;
     let reject_unauthorized = client.flags.reject_unauthorized;
     // h3 body bytes flow into lsquic's send buffer asynchronously — compress
     // into the Vec so the cursor stays valid across event-loop ticks.
@@ -40,18 +36,19 @@ pub(crate) fn write_request(
     let req_body: bun_ptr::RawSlice<u8> = client.state.request_body;
     let body_len = client.body_len_for_send();
     let is_streaming = client.state.original_request_body.is_stream();
-    let is_bytes = matches!(
-        client.state.original_request_body,
-        HTTPRequestBody::Bytes(_)
-    );
+    let is_bytes = matches!(client.state.original_request_body, Body::Bytes(_));
 
-    let request = client.build_request(body_len);
+    let thread = client.thread();
+    let mut request_headers = thread.request_headers_buf.borrow_mut();
+    let header_count = client.build_request(body_len, &mut request_headers);
+    let request =
+        HTTPClient::built_request(client.method, &client.url, &request_headers[..header_count]);
     if verbose != HTTPVerboseLevel::None {
         let body = req_body.slice();
         crate::print_request(
             Protocol::Http3,
             &request,
-            href,
+            client.url.href(),
             !reject_unauthorized,
             body,
             verbose == HTTPVerboseLevel::Curl,
@@ -72,11 +69,11 @@ pub(crate) fn write_request(
     // the running `remaining` tail never overlaps a stored header.
     let mut remaining: &mut [u8] = &mut lower;
 
-    let mut authority: &[u8] = host;
-    // SAFETY: capacity for `request.headers.len() + 4` was reserved above; slots
-    // 0..4 are fully written below (the four pseudo-headers) before `headers`
-    // is read by `send_headers`. quic::Header has no Drop.
-    unsafe { headers.set_len(4) };
+    let mut authority: &[u8] = client.url.host();
+    // the four pseudo-headers, filled in below once `authority` is known
+    for _ in 0..4 {
+        headers.push(quic::Header::init(b"", b"", None));
+    }
     for h in request.headers {
         if let Some(class) = Qpack::classify(h.name()) {
             match class {
@@ -112,25 +109,27 @@ pub(crate) fn write_request(
     let has_inline_body = is_bytes && !req_body.is_empty();
 
     let end_stream = !has_inline_body && !is_streaming;
-    if qs.send_headers(&headers, end_stream) != 0 {
+    let sent = qs.send_headers(&headers, end_stream);
+    // Keep `lower` / the header scratch alive until after send_headers (header
+    // pointers borrow them).
+    drop(headers);
+    drop(lower);
+    drop(request_headers);
+    if sent != 0 {
         return Err(crate::Error::HTTP3HeaderEncodingError);
     }
 
-    // Keep `lower` alive until after send_headers (header pointers borrow it).
-    drop(lower);
-    drop(headers);
-
     if has_inline_body {
-        stream.pending_body = req_body;
-        drain_send_body(stream, qs);
+        stream.pending_body.set(req_body);
+        drain_send_body_for(stream, client, qs);
     } else if is_streaming {
-        stream.is_streaming_body = true;
-        drain_send_body(stream, qs);
+        stream.is_streaming_body.set(true);
+        drain_send_body_for(stream, client, qs);
     } else {
-        stream.request_body_done = true;
+        stream.request_body_done.set(true);
     }
 
-    client.state.request_stage = if stream.request_body_done {
+    client.state.request_stage = if stream.request_body_done.get() {
         HTTPStage::Done
     } else {
         HTTPStage::Body
@@ -148,56 +147,62 @@ pub(crate) fn write_request(
 /// Push as much of the request body onto `qs` as flow control allows. Called
 /// from `write_request`, `callbacks.on_stream_writable`, and
 /// `ClientSession.stream_body_by_http_id` (when the JS sink delivers more bytes).
-pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
-    if stream.request_body_done {
+pub(crate) fn drain_send_body(stream: &Stream, qs: &mut quic::Stream) {
+    if stream.request_body_done.get() {
         return;
     }
-    let Some(client_ptr) = stream.client else {
+    let Some(req) = stream.client.get() else {
         return;
     };
-    // `stream.client` is a live backref while attached — see `client_mut` doc.
-    let client: &mut HTTPClient = super::client_session::client_mut(client_ptr);
+    let mut client = req.client();
+    drain_send_body_for(stream, &mut client, qs);
+}
 
-    if stream.is_streaming_body {
-        let HTTPRequestBody::Stream(body) = &mut client.state.original_request_body else {
+fn drain_send_body_for(stream: &Stream, client: &mut HTTPClient, qs: &mut quic::Stream) {
+    if stream.request_body_done.get() {
+        return;
+    }
+    if stream.is_streaming_body.get() {
+        let Body::Stream(body) = &mut client.state.original_request_body else {
             unreachable!()
         };
         let ended = body.ended;
-        let Some(sb) = body.buffer_mut() else {
+        let Some(sb) = body.buffer() else {
             return;
         };
-        let buffer = sb.acquire();
-        let data_len = buffer.slice().len();
-        let mut written: usize = 0;
-        while written < data_len {
-            let w = qs.write(&buffer.slice()[written..]);
-            if w <= 0 {
-                break;
+        {
+            let mut buffer = sb.lock();
+            let data_len = buffer.slice().len();
+            let mut written: usize = 0;
+            while written < data_len {
+                let w = qs.write(&buffer.slice()[written..]);
+                if w <= 0 {
+                    break;
+                }
+                written += usize::try_from(w).expect("int cast");
             }
-            written += usize::try_from(w).expect("int cast");
+            buffer.cursor += written;
+            let drained = buffer.is_empty();
+            if drained {
+                buffer.reset();
+            }
+            if drained && ended {
+                stream.request_body_done.set(true);
+                qs.shutdown();
+                client.state.request_stage = HTTPStage::Done;
+            } else if !drained {
+                qs.want_write(true);
+            } else if data_len > 0 {
+                buffer.report_drain();
+            }
         }
-        buffer.cursor += written;
-        let drained = buffer.is_empty();
-        if drained {
-            buffer.reset();
-        }
-        if drained && ended {
-            stream.request_body_done = true;
-            qs.shutdown();
-            client.state.request_stage = HTTPStage::Done;
-        } else if !drained {
-            qs.want_write(true);
-        } else if data_len > 0 {
-            sb.report_drain();
-        }
-        sb.release();
-        if stream.request_body_done {
+        if stream.request_body_done.get() {
             body.detach();
         }
         return;
     }
 
-    let mut remaining = stream.pending_body;
+    let mut remaining = stream.pending_body.get();
     while !remaining.is_empty() {
         let w = qs.write(remaining.slice());
         if w <= 0 {
@@ -206,9 +211,9 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
         remaining =
             bun_ptr::RawSlice::new(&remaining.slice()[usize::try_from(w).expect("int cast")..]);
     }
-    stream.pending_body = remaining;
+    stream.pending_body.set(remaining);
     if remaining.is_empty() {
-        stream.request_body_done = true;
+        stream.request_body_done.set(true);
         qs.shutdown();
         client.state.request_stage = HTTPStage::Done;
     } else {

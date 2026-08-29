@@ -474,23 +474,14 @@ fn run_tasks_erased(
                 // error status keeps its own handling below).
                 let download_failed = match &task.response.metadata {
                     None => true,
-                    Some(m) => task.response.fail.is_some() && m.response.status_code < 400,
+                    Some(m) => task.response.fail.is_some() && m.status_code() < 400,
                 };
                 if download_failed {
                     throttle_after_network_error(manager, &mut has_network_error);
                 }
 
                 // Handle retry-able errors.
-                if download_failed
-                    || task
-                        .response
-                        .metadata
-                        .as_ref()
-                        .unwrap()
-                        .response
-                        .status_code
-                        > 499
-                {
+                if download_failed || task.response.metadata.as_ref().unwrap().status_code() > 499 {
                     let err = task
                         .response
                         .fail
@@ -565,7 +556,7 @@ fn run_tasks_erased(
 
                     continue;
                 };
-                let response = &metadata.response;
+                let response = &metadata.response();
 
                 if response.status_code > 399 {
                     if cb.has_on_package_manifest_error {
@@ -595,7 +586,7 @@ fn run_tasks_erased(
                             None,
                             bun_ast::Loc::EMPTY,
                             "<r><red><b>GET<r><red> {}<d> - {}<r>",
-                            bstr::BStr::new(metadata.url.slice()),
+                            bstr::BStr::new(metadata.url()),
                             response.status_code,
                         );
                     } else {
@@ -604,7 +595,7 @@ fn run_tasks_erased(
                             None,
                             bun_ast::Loc::EMPTY,
                             "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
-                            bstr::BStr::new(metadata.url.slice()),
+                            bstr::BStr::new(metadata.url()),
                             response.status_code,
                         );
                     }
@@ -625,12 +616,7 @@ fn run_tasks_erased(
                 if log_level.is_verbose() {
                     bun_core::pretty_error!("    ");
                     Output::print_elapsed(
-                        // SAFETY: `unsafe_http_client` was initialized by
-                        // `for_manifest`/`for_tarball` before `schedule()`;
-                        // direct field access (not `task.http()`) to keep the
-                        // split borrow with `&mut task.callback` above.
-                        (unsafe { task.unsafe_http_client.assume_init_ref() }.elapsed as f64)
-                            / bun_core::time::NS_PER_MS as f64,
+                        (task.response.elapsed as f64) / bun_core::time::NS_PER_MS as f64,
                     );
                     bun_core::pretty_error!(
                         "\n<d>Downloaded <r><green>{}<r> versions\n",
@@ -748,22 +734,13 @@ fn run_tasks_erased(
 
                 let download_failed = match &task.response.metadata {
                     None => true,
-                    Some(m) => task.response.fail.is_some() && m.response.status_code < 400,
+                    Some(m) => task.response.fail.is_some() && m.status_code() < 400,
                 };
                 if download_failed {
                     throttle_after_network_error(manager, &mut has_network_error);
                 }
 
-                if download_failed
-                    || task
-                        .response
-                        .metadata
-                        .as_ref()
-                        .unwrap()
-                        .response
-                        .status_code
-                        > 499
-                {
+                if download_failed || task.response.metadata.as_ref().unwrap().status_code() > 499 {
                     let err = task
                         .response
                         .fail
@@ -889,7 +866,7 @@ fn run_tasks_erased(
                     continue;
                 };
 
-                let response = &metadata.response;
+                let response = &metadata.response();
 
                 if response.status_code > 399 {
                     // Non-retryable HTTP error: mark the dedupe entry as failed
@@ -941,7 +918,7 @@ fn run_tasks_erased(
                             None,
                             bun_ast::Loc::EMPTY,
                             "<r><red><b>GET<r><red> {}<d> - {}<r>",
-                            bstr::BStr::new(metadata.url.slice()),
+                            bstr::BStr::new(metadata.url()),
                             response.status_code,
                         );
                     } else {
@@ -950,7 +927,7 @@ fn run_tasks_erased(
                             None,
                             bun_ast::Loc::EMPTY,
                             "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
-                            bstr::BStr::new(metadata.url.slice()),
+                            bstr::BStr::new(metadata.url()),
                             response.status_code,
                         );
                     }
@@ -975,12 +952,7 @@ fn run_tasks_erased(
                 if log_level.is_verbose() {
                     bun_core::pretty_error!("    ");
                     Output::print_elapsed(
-                        // SAFETY: `unsafe_http_client` was initialized by
-                        // `for_manifest`/`for_tarball` before `schedule()`;
-                        // direct field access (not `task.http()`) to keep the
-                        // split borrow with `&mut task.callback` above.
-                        (unsafe { task.unsafe_http_client.assume_init_ref() }.elapsed as f64)
-                            / bun_core::time::NS_PER_MS as f64,
+                        (task.response.elapsed as f64) / bun_core::time::NS_PER_MS as f64,
                     );
                     bun_core::pretty_error!(
                         "<d> Downloaded <r><green>{}<r> tarball\n",

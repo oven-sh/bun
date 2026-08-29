@@ -48,11 +48,7 @@ pub struct NetworkTask {
     // `ManuallyDrop<T>`, it suppresses `T`'s validity invariant, so
     // materializing `&mut NetworkTask` after `write_init` (which leaves this
     // field bitwise-untouched) is sound even though `AsyncHTTP` contains
-    // niche-bearing fields (`Decompressor` enum, `Option<NonNull>`). The
-    // HTTP-thread bitwise copy in `notify`
-    // (`ptr::write(real, ptr::read(async_http))`) targets the inner `AsyncHTTP`
-    // directly via `*mut AsyncHTTP`, which is sound because `MaybeUninit<T>`
-    // is `#[repr(transparent)]`.
+    // niche-bearing fields (`Decompressor` enum, `Option<NonNull>`).
     pub(crate) unsafe_http_client: MaybeUninit<AsyncHTTP<'static>>,
     pub(crate) response: HTTPClientResult<'static>,
     pub(crate) task_id: crate::package_manager_task::Id,
@@ -142,15 +138,20 @@ pub(crate) type DedupeMap = HashMap<
     bun_collections::IdentityContext<crate::package_manager_task::Id>,
 >;
 
+impl http::RawResultCallback for NetworkTask {
+    fn on_result(this: *mut Self, result: HTTPClientResult<'_>) {
+        Self::notify(this, result)
+    }
+}
+
 impl NetworkTask {
-    /// Access the HTTP client after `for_manifest`/`for_tarball` (or `notify`'s
-    /// bitwise copy) has initialized it. The field is `MaybeUninit` only to keep
+    /// Access the HTTP client after `for_manifest`/`for_tarball` has
+    /// initialized it. The field is `MaybeUninit` only to keep
     /// `&mut NetworkTask` sound between `write_init` and the `for_*` overwrite.
     #[inline]
     pub(crate) fn http_mut(&mut self) -> &mut AsyncHTTP<'static> {
         // SAFETY: every caller is reached only after `unsafe_http_client` was
-        // populated via `MaybeUninit::new(AsyncHTTP::init(..))` (or the
-        // `ptr::write(real, ..)` in `notify`).
+        // populated via `MaybeUninit::new(AsyncHTTP::init(..))`.
         unsafe { self.unsafe_http_client.assume_init_mut() }
     }
 
@@ -171,14 +172,9 @@ impl NetworkTask {
         unsafe { self.package_manager.assume_mut() }
     }
 
-    // Signature matches `HTTPClientResultCallback::new::<NetworkTask>`'s
-    // `fn(*mut T, *mut AsyncHTTP, HTTPClientResult<'_>)` shape so it can be
-    // installed directly without a separate trampoline.
-    fn notify(
-        this: *mut NetworkTask,
-        async_http: *mut AsyncHTTP<'static>,
-        mut result: HTTPClientResult<'_>,
-    ) {
+    /// [`http::RawResultCallback::on_result`]: a progress or terminal result
+    /// from the HTTP thread.
+    fn notify(this: *mut NetworkTask, mut result: HTTPClientResult<'_>) {
         // `this` is the NetworkTask erased into the callback ctx in
         // `get_completion_callback`; the HTTP thread is the sole writer for
         // this call. It stays a raw receiver: both exits below (`on_chunk(..,
@@ -186,9 +182,6 @@ impl NetworkTask {
         // `&mut NetworkTask` may outlive them and every pointer handed off is
         // derived from the raw `this`.
         //
-        // SAFETY: `async_http` is the threadlocal AsyncHTTP the HTTP client
-        // passes to every completion callback; live for this call.
-        let async_http = unsafe { &mut *async_http };
         // SAFETY: `this` is live (see above). `on_chunk` takes `*mut Self`
         // (freely-aliasing) because a worker may be inside `drain()`
         // concurrently, so `stream` is a raw pointer, never `&mut TarballStream`.
@@ -208,7 +201,7 @@ impl NetworkTask {
             if let Some(m) = result.metadata.take() {
                 // SAFETY: `stream` is the live heap-allocated `TarballStream`.
                 unsafe {
-                    (*stream).status_code = m.response.status_code;
+                    (*stream).status_code = m.status_code();
                     if let http::BodySize::ContentLength(len) = result.body_size {
                         (*stream).content_length = Some(len);
                     }
@@ -338,12 +331,6 @@ impl NetworkTask {
         // The wake happens at the end of the fn (no
         // early returns past this point).
 
-        // SAFETY: `real` is set by the HTTP thread before invoking the
-        // completion callback.
-        unsafe {
-            let real = async_http.real.expect("unreachable").as_ptr();
-            ptr::write(real, ptr::read(async_http));
-        }
         // SAFETY: the HTTP thread is the sole writer for this call; nothing
         // exclusive to `*this` outlives this block, which ends before the
         // cross-thread push below. `into_owned` drops the callback-scoped
@@ -669,9 +656,9 @@ impl NetworkTask {
         let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
         let http_proxy = pm.http_proxy(&url);
         let completion_callback = self.get_completion_callback();
-        // MaybeUninit overwrite — see field doc; old slot value is
-        // either uninitialized (fresh hive slot) or a stale bitwise copy from
-        // `notify`, neither of which is safe/meaningful to drop.
+        // MaybeUninit overwrite — see field doc; old slot value is either
+        // uninitialized (fresh hive slot) or a previous attempt's request that
+        // has already been handed back.
         self.unsafe_http_client = MaybeUninit::new(AsyncHTTP::init(
             http::Method::GET,
             url,
@@ -685,10 +672,10 @@ impl NetworkTask {
                 ..Default::default()
             },
         ));
-        self.http_mut().client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
+        self.http_mut().client_mut().flags.reject_unauthorized = pm.tls_reject_unauthorized();
 
         if PackageManager::verbose_install() {
-            self.http_mut().client.verbose = HTTPVerboseLevel::Headers;
+            self.http_mut().client_mut().verbose = HTTPVerboseLevel::Headers;
         }
 
         self.callback = Callback::PackageManifest {
@@ -701,7 +688,7 @@ impl NetworkTask {
         };
 
         if PackageManager::verbose_install() {
-            self.http_mut().client.verbose = HTTPVerboseLevel::Headers;
+            self.http_mut().client_mut().verbose = HTTPVerboseLevel::Headers;
         }
 
         // Incase the ETag causes invalidation, we fallback to the last modified date.
@@ -710,19 +697,17 @@ impl NetworkTask {
                 .get()
                 .unwrap_or(false)
         {
-            self.http_mut().client.flags.force_last_modified = true;
-            // SAFETY: `last_modified` points into `self.header_buf` or into the manifest `string_buf` cloned into `self.callback`; both outlive the request.
-            self.http_mut().client.if_modified_since =
-                unsafe { bun_ptr::detach_lifetime(last_modified) };
+            self.http_mut().client_mut().flags.force_last_modified = true;
+            // `last_modified` points into `self.header_buf` or into the manifest
+            // `string_buf` cloned into `self.callback`; both outlive the request.
+            self.http_mut().client_mut().if_modified_since = bun_ptr::RawSlice::new(last_modified);
         }
 
         Ok(())
     }
 
     pub(crate) fn get_completion_callback(&mut self) -> HTTPClientResultCallback {
-        // `HTTPClientResultCallback::new`
-        // performs type erasure over a `fn(*mut T, *mut AsyncHTTP, _)`.
-        HTTPClientResultCallback::new::<NetworkTask>(self, Self::notify)
+        HTTPClientResultCallback::new::<NetworkTask>(self)
     }
 
     pub(crate) fn schedule(&mut self, batch: &mut Batch) {
@@ -923,9 +908,9 @@ impl NetworkTask {
         }
 
         let completion_callback = self.get_completion_callback();
-        // MaybeUninit overwrite — see field doc; old slot value is
-        // either uninitialized (fresh hive slot) or a stale bitwise copy from
-        // `notify`, neither of which is safe/meaningful to drop.
+        // MaybeUninit overwrite — see field doc; old slot value is either
+        // uninitialized (fresh hive slot) or a previous attempt's request that
+        // has already been handed back.
         self.unsafe_http_client = MaybeUninit::new(AsyncHTTP::init(
             http::Method::GET,
             url,
@@ -936,9 +921,9 @@ impl NetworkTask {
             http::FetchRedirect::Follow,
             http_options,
         ));
-        self.http_mut().client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
+        self.http_mut().client_mut().flags.reject_unauthorized = pm.tls_reject_unauthorized();
         if PackageManager::verbose_install() {
-            self.http_mut().client.verbose = HTTPVerboseLevel::Headers;
+            self.http_mut().client_mut().verbose = HTTPVerboseLevel::Headers;
         }
 
         Ok(())

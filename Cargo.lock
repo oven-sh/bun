@@ -625,6 +625,8 @@ dependencies = [
  "bun_http_types",
  "bun_io",
  "bun_libdeflate_sys",
+ "bun_lshpack_sys",
+ "bun_opaque",
  "bun_picohttp",
  "bun_ptr",
  "bun_sys",
@@ -984,6 +986,17 @@ dependencies = [
  "bun_wyhash",
  "libc",
  "strum",
+]
+
+[[package]]
+name = "bun_lshpack_sys"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_core",
+ "bun_opaque",
+ "strum",
+ "thiserror",
 ]
 
 [[package]]

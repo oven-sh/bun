@@ -4,94 +4,82 @@
 //! MAX_STREAMS credit is available). Owned by the session's `pending` list
 //! until `ClientSession.detach`.
 
+use core::cell::{Cell, RefCell};
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use bun_picohttp as picohttp;
+use bun_ptr::{BackRef, RefPtr};
 use bun_uws::quic;
 
 use super::ClientSession;
-use crate::HttpClient;
+use crate::RequestRef;
 use crate::h3_client as h3;
 
 pub struct Stream {
-    // BACKREF: owned by `session.pending`; session outlives every Stream it holds.
-    pub(crate) session: bun_ptr::BackRef<ClientSession, bun_ptr::Mut>,
-    // BACKREF: lifetime-erased — cleared on detach; never reads borrowed fields.
-    pub(crate) client: Option<NonNull<HttpClient<'static>>>,
-    // FFI handle into lsquic; bound from `callbacks.onStreamOpen`, closed via `abort`.
-    pub(crate) qstream: Option<NonNull<quic::Stream>>,
+    /// Owned by `session.pending`; the session outlives every Stream it holds.
+    pub(crate) session: BackRef<ClientSession>,
+    /// The reference this entry holds on the session (see
+    /// `ClientSession::enqueue`), released by `detach`.
+    pub(crate) session_ref: Cell<Option<RefPtr<ClientSession>>>,
+    /// Cleared on detach.
+    pub(crate) client: Cell<Option<RequestRef>>,
+    /// FFI handle into lsquic; bound from `callbacks.onStreamOpen`, cleared on
+    /// `on_stream_close` / detach.
+    pub(crate) qstream: Cell<Option<NonNull<quic::Stream>>>,
 
     /// Slices into the lsquic-owned hset buffer; valid only for the duration
     /// of the `onStreamHeaders` callback that populated it. `cloneMetadata`
     /// deep-copies synchronously inside that callback, so nothing reads these
     /// after they go stale.
-    pub(crate) decoded_headers: Vec<picohttp::Header>,
-    pub(crate) body_buffer: Vec<u8>,
-    pub(crate) status_code: u16,
+    pub(crate) decoded_headers: RefCell<Vec<picohttp::Header>>,
+    pub(crate) body_buffer: RefCell<Vec<u8>>,
+    pub(crate) status_code: Cell<u16>,
 
-    // BACKREF: borrows the request body owned by `client`; not freed here.
-    // `RawSlice` carries the outlives-holder invariant.
-    pub(crate) pending_body: bun_ptr::RawSlice<u8>,
-    pub(crate) headers_sent: bool,
-    pub(crate) request_body_done: bool,
-    pub(crate) is_streaming_body: bool,
-    pub(crate) headers_delivered: bool,
-    pub(crate) read_paused: bool,
+    /// The unsent suffix of the request body owned by `client`.
+    pub(crate) pending_body: Cell<bun_ptr::RawSlice<u8>>,
+    pub(crate) headers_sent: Cell<bool>,
+    pub(crate) request_body_done: Cell<bool>,
+    pub(crate) is_streaming_body: Cell<bool>,
+    pub(crate) headers_delivered: Cell<bool>,
+    pub(crate) read_paused: Cell<bool>,
 }
 
 impl Stream {
-    /// Heap-allocates a `Stream` and returns the raw pointer; ownership is held
-    /// by `ClientSession.pending` until `ClientSession::detach` reclaims it via
-    /// `heap::take`.
-    pub(crate) fn new(session: &mut ClientSession, client: &mut HttpClient<'_>) -> *mut Stream {
-        bun_core::heap::into_raw(Box::new(Stream {
-            session: bun_ptr::BackRef::new_mut(session),
-            client: Some(client.as_erased_ptr()),
-            qstream: None,
-            decoded_headers: Vec::new(),
-            body_buffer: Vec::new(),
-            status_code: 0,
-            pending_body: bun_ptr::RawSlice::EMPTY,
-            headers_sent: false,
-            request_body_done: false,
-            is_streaming_body: false,
-            headers_delivered: false,
-            read_paused: false,
-        }))
+    pub(crate) fn new(
+        session: &ClientSession,
+        session_ref: RefPtr<ClientSession>,
+        client: RequestRef,
+    ) -> Self {
+        let _ = h3::LIVE_STREAMS.fetch_add(1, Ordering::Relaxed);
+        Stream {
+            session: BackRef::new(session),
+            session_ref: Cell::new(Some(session_ref)),
+            client: Cell::new(Some(client)),
+            qstream: Cell::new(None),
+            decoded_headers: RefCell::new(Vec::new()),
+            body_buffer: RefCell::new(Vec::new()),
+            status_code: Cell::new(0),
+            pending_body: Cell::new(bun_ptr::RawSlice::EMPTY),
+            headers_sent: Cell::new(false),
+            request_body_done: Cell::new(false),
+            is_streaming_body: Cell::new(false),
+            headers_delivered: Cell::new(false),
+            read_paused: Cell::new(false),
+        }
     }
 
-    /// Mutable access to the bound lsquic stream handle.
-    ///
-    /// INVARIANT: `qstream` is set in `callbacks::on_stream_open` and remains
-    /// valid until `callbacks::on_stream_close` / `ClientSession::detach`
-    /// nulls it. The `quic::Stream` is an FFI-owned allocation distinct from
-    /// `self`, so the returned `&mut` does not alias `self`. HTTP-thread-only.
+    /// The bound lsquic stream (an opaque handle lsquic keeps live until
+    /// `on_stream_close`, which clears this).
     #[inline]
-    pub(crate) fn qstream_mut<'s>(&self) -> Option<&'s mut quic::Stream> {
-        // Route through the shared `client_session::quic_stream_mut` accessor;
-        // see INVARIANT above.
+    pub(crate) fn qstream<'s>(&self) -> Option<&'s mut quic::Stream> {
         self.qstream
-            .map(|qs| super::client_session::quic_stream_mut(qs.as_ptr()))
+            .get()
+            .map(|qs| quic::Stream::opaque_mut(qs.as_ptr()))
     }
 
-    /// Mutable access to the owning `ClientSession`.
-    ///
-    /// INVARIANT: `session` is a set-once `BackRef` recorded in
-    /// `Stream::new`; the session owns this `Stream` (in `pending`) and
-    /// strictly outlives it. The session is a distinct heap allocation from
-    /// `self`, so the returned `&mut` does not alias any borrow of `self`.
-    /// HTTP-thread-only — sole live `&mut ClientSession`. Centralises the
-    /// `BackRef::get_mut` upgrade repeated in every lsquic callback.
-    #[inline]
-    pub(crate) fn session_mut<'s>(&self) -> &'s mut ClientSession {
-        // Route through the shared `client_session::session_mut` accessor
-        // (one centralised unsafe); see INVARIANT above.
-        super::client_session::session_mut(self.session.as_ptr())
-    }
-
-    pub(crate) fn abort(&mut self) {
-        if let Some(qs) = self.qstream_mut() {
+    pub(crate) fn abort(&self) {
+        if let Some(qs) = self.qstream() {
             qs.close();
         }
     }
@@ -99,7 +87,6 @@ impl Stream {
 
 impl Drop for Stream {
     fn drop(&mut self) {
-        // `decoded_headers` / `body_buffer` are Vec — freed automatically.
         h3::LIVE_STREAMS.fetch_sub(1, Ordering::Relaxed);
     }
 }

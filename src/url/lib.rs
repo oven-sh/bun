@@ -193,7 +193,7 @@ pub use whatwg::{
 // literal default).
 #[derive(Clone)]
 pub struct URL<'a> {
-    pub(crate) hash: &'a [u8],
+    pub hash: &'a [u8],
     /// hostname, but with a port — `localhost:3000`
     pub host: &'a [u8],
     /// hostname does not have a port — `localhost`
@@ -205,7 +205,7 @@ pub struct URL<'a> {
     pub path: &'a [u8],
     pub port: &'a [u8],
     pub protocol: &'a [u8],
-    pub(crate) search: &'a [u8],
+    pub search: &'a [u8],
     pub(crate) search_params: Option<QueryStringMap>,
     pub username: &'a [u8],
     pub(crate) port_was_automatically_set: bool,
@@ -227,6 +227,46 @@ impl<'a> Default for URL<'a> {
             search: b"",
             search_params: None,
             username: b"",
+            port_was_automatically_set: false,
+        }
+    }
+}
+
+/// The already-split components of a URL, for rebuilding a [`URL`] view
+/// without reparsing (see [`URL::from_parts`]).
+#[derive(Default, Clone, Copy)]
+pub struct UrlParts<'a> {
+    pub href: &'a [u8],
+    pub protocol: &'a [u8],
+    pub username: &'a [u8],
+    pub password: &'a [u8],
+    pub host: &'a [u8],
+    pub hostname: &'a [u8],
+    pub port: &'a [u8],
+    pub origin: &'a [u8],
+    pub pathname: &'a [u8],
+    pub path: &'a [u8],
+    pub search: &'a [u8],
+    pub hash: &'a [u8],
+}
+
+impl<'a> URL<'a> {
+    /// A view over components a previous `URL::parse` produced.
+    pub fn from_parts(p: &UrlParts<'a>) -> URL<'a> {
+        URL {
+            hash: p.hash,
+            host: p.host,
+            hostname: p.hostname,
+            href: p.href,
+            origin: p.origin,
+            password: p.password,
+            pathname: p.pathname,
+            path: p.path,
+            port: p.port,
+            protocol: p.protocol,
+            search: p.search,
+            search_params: None,
+            username: p.username,
             port_was_automatically_set: false,
         }
     }
@@ -266,6 +306,185 @@ impl OwnedURL {
     #[inline]
     pub fn from_href(href: Box<[u8]>) -> Self {
         Self { href }
+    }
+}
+
+/// Where one component of a [`ParsedURL`] lives: a range of its `href`, or
+/// (for the few components `URL::parse` defaults to a literal) that literal.
+#[derive(Clone, Copy)]
+enum Part {
+    In { off: u32, len: u32 },
+    Lit(&'static [u8]),
+}
+
+impl Part {
+    const EMPTY: Part = Part::Lit(b"");
+
+    fn of(href: &[u8], s: &[u8]) -> Part {
+        if s.is_empty() {
+            return Part::EMPTY;
+        }
+        if bun_alloc::is_slice_in_buffer(s, href) {
+            let off = (s.as_ptr() as usize) - (href.as_ptr() as usize);
+            return Part::In {
+                off: off as u32,
+                len: s.len() as u32,
+            };
+        }
+        // `URL::parse` only ever substitutes these literals.
+        match s {
+            b"/" => Part::Lit(b"/"),
+            _ => {
+                debug_assert!(false, "URL component outside href");
+                Part::EMPTY
+            }
+        }
+    }
+
+    #[inline]
+    fn get(self, href: &[u8]) -> &[u8] {
+        match self {
+            Part::In { off, len } => &href[off as usize..(off + len) as usize],
+            Part::Lit(s) => s,
+        }
+    }
+}
+
+/// Where each component of a parsed URL lies within its `href`.
+#[derive(Clone, Copy)]
+struct Parts {
+    hash: Part,
+    host: Part,
+    hostname: Part,
+    origin: Part,
+    password: Part,
+    pathname: Part,
+    path: Part,
+    port: Part,
+    protocol: Part,
+    search: Part,
+    username: Part,
+    port_was_automatically_set: bool,
+}
+
+impl Parts {
+    /// Record `url`'s components, which lie within `href` (as `URL::parse`
+    /// leaves them).
+    fn record(url: &URL<'_>, href: &[u8]) -> Parts {
+        let p = |s: &[u8]| Part::of(href, s);
+        Parts {
+            hash: p(url.hash),
+            host: p(url.host),
+            hostname: p(url.hostname),
+            origin: p(url.origin),
+            password: p(url.password),
+            pathname: p(url.pathname),
+            path: p(url.path),
+            port: p(url.port),
+            protocol: p(url.protocol),
+            search: p(url.search),
+            username: p(url.username),
+            port_was_automatically_set: url.port_was_automatically_set,
+        }
+    }
+}
+
+/// A URL that owns its `href` and remembers where each component of the parse
+/// lies within it, so the components can be read back without reparsing and
+/// without a self-referential borrow.
+#[derive(Clone)]
+pub struct ParsedURL {
+    href: Box<[u8]>,
+    parts: Parts,
+}
+
+impl Default for ParsedURL {
+    fn default() -> Self {
+        Self::new(Box::default())
+    }
+}
+
+impl ParsedURL {
+    /// Take ownership of `href` and parse it.
+    pub fn new(href: Box<[u8]>) -> Self {
+        let url = URL::parse(&href);
+        let parts = Parts::record(&url, &href);
+        drop(url);
+        Self { href, parts }
+    }
+
+    /// Copy an already-parsed `url` (whose components lie within `url.href`,
+    /// as `URL::parse` leaves them) without reparsing.
+    pub fn from_url(url: &URL<'_>) -> Self {
+        Self {
+            parts: Parts::record(url, url.href),
+            href: Box::from(url.href),
+        }
+    }
+
+    #[inline]
+    pub fn into_href(self) -> Box<[u8]> {
+        self.href
+    }
+
+    /// The borrowed view, rebuilt from the recorded component ranges
+    /// (no reparse; `search_params` is not carried).
+    pub fn url(&self) -> URL<'_> {
+        let h: &[u8] = &self.href;
+        let p = &self.parts;
+        URL {
+            hash: p.hash.get(h),
+            host: p.host.get(h),
+            hostname: p.hostname.get(h),
+            href: h,
+            origin: p.origin.get(h),
+            password: p.password.get(h),
+            pathname: p.pathname.get(h),
+            path: p.path.get(h),
+            port: p.port.get(h),
+            protocol: p.protocol.get(h),
+            search: p.search.get(h),
+            search_params: None,
+            username: p.username.get(h),
+            port_was_automatically_set: p.port_was_automatically_set,
+        }
+    }
+
+    #[inline]
+    pub fn href(&self) -> &[u8] {
+        &self.href
+    }
+    #[inline]
+    pub fn host(&self) -> &[u8] {
+        self.parts.host.get(&self.href)
+    }
+    #[inline]
+    pub fn hostname(&self) -> &[u8] {
+        self.parts.hostname.get(&self.href)
+    }
+    #[inline]
+    pub fn origin(&self) -> &[u8] {
+        self.parts.origin.get(&self.href)
+    }
+    #[inline]
+    pub fn pathname(&self) -> &[u8] {
+        self.parts.pathname.get(&self.href)
+    }
+    #[inline]
+    pub fn port(&self) -> &[u8] {
+        self.parts.port.get(&self.href)
+    }
+    #[inline]
+    pub fn protocol(&self) -> &[u8] {
+        self.parts.protocol.get(&self.href)
+    }
+    #[inline]
+    pub fn username(&self) -> &[u8] {
+        self.parts.username.get(&self.href)
+    }
+    #[inline]
+    pub fn password(&self) -> &[u8] {
+        self.parts.password.get(&self.href)
     }
 }
 

@@ -77,7 +77,76 @@ pub enum ConnectResult {
     Err,
 }
 
+/// The event handlers of a client [`Context`], as safe Rust. lsquic invokes them
+/// on the loop's thread from inside `process_conns`; each handle is live for
+/// the duration of the call (a [`Socket`] until its `on_conn_close` returns, a
+/// [`Stream`] until its `on_stream_close` returns).
+pub trait ClientHandler {
+    fn on_hsk_done(qs: &mut Socket, ok: bool);
+    fn on_goaway(qs: &mut Socket);
+    fn on_conn_close(qs: &mut Socket);
+    fn on_stream_open(s: &mut Stream, is_client: bool);
+    fn on_stream_headers(s: &mut Stream);
+    fn on_stream_data(s: &mut Stream, data: &[u8], fin: bool);
+    fn on_stream_writable(s: &mut Stream);
+    fn on_stream_close(s: &mut Stream);
+}
+
 impl Context {
+    /// Create the client engine on the calling thread's uSockets loop.
+    pub fn create_client_for_current_thread(
+        ext_size: c_uint,
+        conn_ext: c_uint,
+        stream_ext: c_uint,
+    ) -> Option<core::ptr::NonNull<Context>> {
+        // SAFETY: `Loop::get()` is this thread's live loop.
+        unsafe { Self::create_client(Loop::get(), ext_size, conn_ext, stream_ext) }
+            .and_then(core::ptr::NonNull::new)
+    }
+
+    /// Route every client event to `H`.
+    pub fn register_client_handler<H: ClientHandler>(&mut self) {
+        extern "C" fn hsk_done<H: ClientHandler>(qs: *mut Socket, ok: c_int) {
+            H::on_hsk_done(Socket::opaque_mut(qs), ok != 0)
+        }
+        extern "C" fn goaway<H: ClientHandler>(qs: *mut Socket) {
+            H::on_goaway(Socket::opaque_mut(qs))
+        }
+        extern "C" fn close<H: ClientHandler>(qs: *mut Socket) {
+            H::on_conn_close(Socket::opaque_mut(qs))
+        }
+        extern "C" fn stream_open<H: ClientHandler>(s: *mut Stream, is_client: c_int) {
+            H::on_stream_open(Stream::opaque_mut(s), is_client != 0)
+        }
+        extern "C" fn stream_headers<H: ClientHandler>(s: *mut Stream) {
+            H::on_stream_headers(Stream::opaque_mut(s))
+        }
+        extern "C" fn stream_data<H: ClientHandler>(
+            s: *mut Stream,
+            data: *const u8,
+            len: c_uint,
+            fin: c_int,
+        ) {
+            // SAFETY: lsquic hands `len` readable bytes at `data` (or len 0).
+            let data = unsafe { bun_core::ffi::slice(data, len as usize) };
+            H::on_stream_data(Stream::opaque_mut(s), data, fin != 0)
+        }
+        extern "C" fn stream_writable<H: ClientHandler>(s: *mut Stream) {
+            H::on_stream_writable(Stream::opaque_mut(s))
+        }
+        extern "C" fn stream_close<H: ClientHandler>(s: *mut Stream) {
+            H::on_stream_close(Stream::opaque_mut(s))
+        }
+        self.on_hsk_done(hsk_done::<H>);
+        self.on_goaway(goaway::<H>);
+        self.on_close(close::<H>);
+        self.on_stream_open(stream_open::<H>);
+        self.on_stream_headers(stream_headers::<H>);
+        self.on_stream_data(stream_data::<H>);
+        self.on_stream_writable(stream_writable::<H>);
+        self.on_stream_close(stream_close::<H>);
+    }
+
     /// # Safety
     /// `loop_` must point to a live `us_loop_t`. Takes a raw pointer (not `&mut Loop`)
     /// because the Loop is shared across every context/socket/timer on the thread,

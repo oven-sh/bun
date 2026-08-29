@@ -2355,9 +2355,10 @@ pub mod internal {
     }
 
     pub enum DNSRequestOwner {
-        Socket(*mut ConnectingSocket),           // FFI
-        Prefetch(*mut Loop),                     // FFI
-        Quic(*mut bun_http::H3::PendingConnect), // BORROW_PARAM
+        Socket(*mut ConnectingSocket), // FFI
+        Prefetch(*mut Loop),           // FFI
+        /// The HTTP thread's opaque token for a pending QUIC connect.
+        Quic(*mut c_void),
     }
 
     impl DNSRequestOwner {
@@ -2374,10 +2375,9 @@ pub mod internal {
                     us_internal_dns_callback_threadsafe(*socket, req)
                 },
                 DNSRequestOwner::Prefetch(_) => freeaddrinfo(req, 0),
-                // SAFETY: `pc` is the live PendingConnect borrowed for the lifetime of the request.
-                DNSRequestOwner::Quic(pc) => unsafe {
-                    bun_http::H3::PendingConnect::on_dns_resolved_threadsafe(*pc)
-                },
+                DNSRequestOwner::Quic(token) => {
+                    bun_http::H3::PendingConnect::on_dns_resolved_threadsafe(*token)
+                }
             }
         }
 
@@ -2394,10 +2394,9 @@ pub mod internal {
                 DNSRequestOwner::Socket(socket) => unsafe {
                     us_internal_dns_callback(*socket, req)
                 },
-                // SAFETY: `pc` is the live PendingConnect borrowed for the lifetime of the request.
-                DNSRequestOwner::Quic(pc) => unsafe {
-                    bun_http::H3::PendingConnect::on_dns_resolved(*pc)
-                },
+                DNSRequestOwner::Quic(token) => {
+                    bun_http::H3::PendingConnect::on_dns_resolved(*token)
+                }
             }
         }
     }
@@ -2410,12 +2409,13 @@ pub mod internal {
     ///
     /// # Safety
     /// `request` must be a live cache `Request` (refcount held by the caller);
-    /// `pc` must stay valid until its `on_dns_resolved[_threadsafe]` fires.
+    /// `pc` is the HTTP thread's opaque token, handed back verbatim to
+    /// `on_dns_resolved[_threadsafe]` and never dereferenced here.
     // `request` is forwarded to `owner.notify`, which may free it inline
     // (see fn doc); forming `&mut *request` at entry would be unsound across
     // that hand-off, so the param must stay `*mut`.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    fn register_quic(request: *mut Request, pc: *mut bun_http::H3::PendingConnect) {
+    fn register_quic(request: *mut Request, pc: *mut c_void) {
         let guard = global_cache().lock();
         let owner = DNSRequestOwner::Quic(pc);
         // SAFETY: `request` is a live cache entry; `result`/`notify` are only
@@ -3198,17 +3198,14 @@ pub mod internal {
     extern "C" fn Bun__addrinfo_getRequestResult(req: *mut Request) -> *mut RequestResult {
         get_request_result(req)
     }
-    /// QUIC analogue of `Bun__addrinfo_set` — link-time export so `bun_http`
-    /// (lower-tier crate) can register without a `bun_runtime` dep cycle.
-    /// Called via `bun_dns::internal::register_quic`.
+    /// QUIC analogue of `Bun__addrinfo_set` — link-time export so the QUIC
+    /// client (lower tier) can register without a `bun_runtime` dep cycle.
+    /// Called via `bun_uws_sys::quic::PendingConnect::notify_on_resolve`.
     ///
     /// # Safety
     /// See [`register_quic`].
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn Bun__addrinfo_registerQuic(
-        request: *mut Request,
-        pc: *mut bun_http::H3::PendingConnect,
-    ) {
+    unsafe extern "C" fn Bun__addrinfo_registerQuic(request: *mut Request, pc: *mut c_void) {
         register_quic(request, pc)
     }
 }

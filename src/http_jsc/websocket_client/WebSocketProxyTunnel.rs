@@ -215,7 +215,7 @@ impl WebSocketProxyTunnel {
                     // `hostname_z` is a NUL-terminated owned buffer in scope.
                     bun_http::configure_http_client_with_alpn(
                         bun_opaque::opaque_deref_mut(ssl_ptr.as_ptr()),
-                        hostname_z.as_ptr(),
+                        Some(hostname_z.as_cstr()),
                         bun_http::AlpnOffer::H1,
                     );
                     // hostname_z dropped here (owned NUL-terminated copy)

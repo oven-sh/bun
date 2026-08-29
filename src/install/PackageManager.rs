@@ -2319,18 +2319,14 @@ pub fn init(
         Ordering::Relaxed, // .monotonic
     );
 
-    // `InitOpts.ca: Vec<*const c_void>` (erased `[*:0]const u8`). The HTTP
-    // thread reads these asynchronously after `init` returns, so park the
-    // owning `ZBox`es in `holder::CA` for process lifetime (never freed)
-    // and project the pointers from there.
-    let ca_ptrs: Vec<*const c_void> = if ca.is_empty() {
-        Vec::new()
+    // The HTTP thread reads these asynchronously after `init` returns, so
+    // park the owning `ZBox`es in `holder::CA` for process lifetime (never
+    // freed).
+    let ca_static: &'static [bun_core::ZBox] = if ca.is_empty() {
+        &[]
     } else {
         let _ = holder::CA.set(ca);
-        holder::CA
-            .get()
-            .map(|v| v.iter().map(|z| z.as_ptr().cast::<c_void>()).collect())
-            .unwrap_or_default()
+        holder::CA.get().map(|v| &**v).unwrap_or(&[])
     };
     // `InitOpts.abs_ca_file_name: &'static [u8]` — process-lifetime config
     // string. Park it in
@@ -2346,10 +2342,9 @@ pub fn init(
         holder::ABS_CA_FILE_NAME.get().map(|b| &**b).unwrap_or(b"")
     };
     http::http_thread::init(&http::http_thread::InitOpts {
-        ca: ca_ptrs,
+        ca: ca_static,
         abs_ca_file_name: abs_ca_file_name_static,
         on_init_error: http_thread_on_init_error,
-        ..Default::default()
     });
 
     let timestamp_for_manifest_cache_control: u32 = 'brk: {

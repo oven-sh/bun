@@ -671,7 +671,7 @@ struct Http2Context {
     }
 
     uint32_t maxHeaderListSize() {
-        uint64_t v = parentMaxHeaderSize && *parentMaxHeaderSize ? *parentMaxHeaderSize : (BUN_DEFAULT_MAX_HTTP_HEADER_SIZE ? BUN_DEFAULT_MAX_HTTP_HEADER_SIZE : http2::DEFAULT_MAX_HEADER_LIST_SIZE);
+        uint64_t v = parentMaxHeaderSize && *parentMaxHeaderSize ? *parentMaxHeaderSize : (Bun__defaultMaxHttpHeaderSize() ? Bun__defaultMaxHttpHeaderSize() : http2::DEFAULT_MAX_HEADER_LIST_SIZE);
         return v > 0xffffff ? 0xffffff : (uint32_t) v;
     }
 

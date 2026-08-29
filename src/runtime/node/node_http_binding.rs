@@ -46,6 +46,13 @@ pub(crate) fn get_max_http_header_size(
     Ok(JSValue::from(bun_http::max_http_header_size()))
 }
 
+/// The `--max-http-header-size` default for C++ (uWS's parser, node:http's
+/// parser).
+// HOST_EXPORT(Bun__defaultMaxHttpHeaderSize, c)
+pub fn default_max_http_header_size() -> usize {
+    bun_http::max_http_header_size()
+}
+
 pub(crate) fn get_insecure_http_parser(
     _global: &JSGlobalObject,
     _frame: &CallFrame,

@@ -3701,6 +3701,65 @@ pub use bun_alloc::free_sensitive_cstr as free_sensitive;
 /// Optimization-resistant memory zeroing — re-exported from `bun_alloc`.
 pub use bun_alloc::secure_zero;
 
+/// An owned, NUL-terminated C string (a [`dupe_z`] allocation) whose bytes
+/// are zeroed before they are freed. One pointer wide, so
+/// `Option<SecretCString>` has the layout of a nullable `*const c_char` and a
+/// `[SecretCString]` that of a `[*const c_char]`.
+#[repr(transparent)]
+pub struct SecretCString(core::ptr::NonNull<core::ffi::c_char>);
+
+impl SecretCString {
+    /// Copy `bytes` (which should not contain NUL) into a new secret string.
+    #[inline]
+    pub fn new(bytes: &[u8]) -> Self {
+        // `dupe_z` never returns null (OOM crashes).
+        Self(core::ptr::NonNull::new(dupe_z(bytes).cast_mut()).expect("dupe_z"))
+    }
+    #[inline]
+    pub fn as_ptr(&self) -> *const core::ffi::c_char {
+        self.0.as_ptr()
+    }
+    #[inline]
+    pub fn as_cstr(&self) -> &core::ffi::CStr {
+        // SAFETY: a live NUL-terminated `dupe_z` allocation we own.
+        unsafe { core::ffi::CStr::from_ptr(self.0.as_ptr()) }
+    }
+    /// The bytes up to (not including) the first NUL.
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.as_cstr().to_bytes()
+    }
+    /// View a slice of secret strings as the `const char* const*` C wants.
+    #[inline]
+    pub fn slice_as_ptr(slice: &[SecretCString]) -> *const *const core::ffi::c_char {
+        slice.as_ptr().cast()
+    }
+}
+
+impl Clone for SecretCString {
+    fn clone(&self) -> Self {
+        Self::new(self.as_bytes())
+    }
+}
+
+impl Drop for SecretCString {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` is the `dupe_z` allocation `new` made; freed once.
+        unsafe { free_sensitive(self.0.as_ptr()) }
+    }
+}
+
+impl core::fmt::Debug for SecretCString {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("SecretCString(..)")
+    }
+}
+
+// SAFETY: uniquely-owned immutable heap bytes.
+unsafe impl Send for SecretCString {}
+// SAFETY: `&SecretCString` only reads the immutable bytes.
+unsafe impl Sync for SecretCString {}
+
 // ── argv ──────────────────────────────────────────────────────────────────
 // `bun.argv` — process argv as a slice of NUL-terminated byte strings.
 // The owned `ZBox` backing for the

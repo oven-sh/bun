@@ -64,7 +64,7 @@ impl Coder {
 
     /// Decode one header. Result aliases a shared buffer; copy before the next call.
     #[inline]
-    pub fn decode(&mut self, src: &[u8]) -> Result<DecodeResult, HpackError> {
+    pub fn decode(&mut self, src: &[u8]) -> Result<DecodeResult<'_>, HpackError> {
         self.hpack.decode(src)
     }
 }

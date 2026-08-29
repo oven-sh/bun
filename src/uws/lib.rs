@@ -555,6 +555,23 @@ pub mod ssl_wrapper {
             }
         }
 
+        /// Run `f` on the `SSL` object (e.g. to set SNI/ALPN before the
+        /// handshake, or to inspect the peer certificate after it). `None`
+        /// once the wrapper has released it.
+        pub fn with_ssl<R>(&self, f: impl FnOnce(&mut boring_sys::SSL) -> R) -> Option<R> {
+            let ssl = self.ssl.get()?;
+            // `SSL` is an opaque ZST handle, so the `&mut` asserts nothing
+            // about the C object's bytes; it is live until `deinit` clears it.
+            Some(f(boring_sys::SSL::opaque_mut(ssl.as_ptr())))
+        }
+
+        /// Update the `ctx` every callback receives.
+        pub fn set_ctx(&self, ctx: T) {
+            let mut handlers = self.handlers.get();
+            handlers.ctx = ctx;
+            self.handlers.set(handlers);
+        }
+
         pub fn start(&self) {
             // trigger the onOpen callback so the user can configure the SSL connection before first handshake
             let handlers = self.handlers.get();
@@ -1303,7 +1320,7 @@ pub mod ssl_wrapper {
 // loop_data.h) and `struct us_loop_t` (epoll_kqueue.h / libuv.h). Re-exported
 // from bun_uws_sys so `bun_uws::Loop` and `bun_uws_sys::Loop` are the same
 // type (bun_io's EventLoopCtxVTable is typed against the uws_sys version).
-pub use bun_uws_sys::loop_::{LoopHandler, us_wakeup_loop};
+pub use bun_uws_sys::loop_::{LoopHandler, LoopWaker, us_wakeup_loop};
 pub use bun_uws_sys::{InternalLoopData, Loop, NOW_NS_UNKNOWN};
 
 /// Extension methods on the re-exported `bun_uws_sys::InternalLoopData` for the
@@ -1333,7 +1350,9 @@ impl InternalLoopDataExt for InternalLoopData {
 
 /// Alias for the per-group C vtable struct under its pre-merge name.
 pub use bun_uws_sys::socket_group::VTable as SocketGroupVTable;
-pub use bun_uws_sys::{ConnectResult, SocketGroup};
+pub use bun_uws_sys::{
+    ConnectResult, SocketGroup, SocketGroupCell, SslSessionSink, set_session_sink,
+};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SocketContext::BunSocketContextOptions
@@ -1387,6 +1406,7 @@ pub use bun_uws_sys::socket::{
 /// state. Used by proxy-tunnel layers (HTTP `ProxyTunnel`, WebSocket
 /// `WebSocketProxyTunnel`) where the inner socket may be either transport and
 /// may be detached. Distinct from [`AnySocket`] which has no `None` variant.
+#[derive(Clone, Copy)]
 pub enum MaybeAnySocket {
     Tcp(SocketTCP),
     Ssl(SocketTLS),

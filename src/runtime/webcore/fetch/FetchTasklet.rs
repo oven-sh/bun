@@ -1395,7 +1395,7 @@ impl FetchTasklet {
 
         // some times we don't have metadata so we also check the request's url
         let path = if let Some(metadata) = &state.metadata {
-            BunString::clone_utf8(metadata.url.slice())
+            BunString::clone_utf8(metadata.url())
         } else if let Some(storage) = self.request_storage() {
             BunString::clone_utf8(storage.url().href)
         } else {
@@ -1848,7 +1848,7 @@ impl FetchTasklet {
         debug_assert!(state.metadata.is_some());
         // at this point we always should have metadata
         let metadata = state.metadata.as_ref().unwrap();
-        let http_response = &metadata.response;
+        let http_response = &metadata.response();
         // reshaped for borrowck — capture metadata fields before to_body_value() takes &mut state
         let headers = HeadersRef::create_from_pico_headers(http_response.headers.list);
         let status_code = http_response.status_code as u16;
@@ -1861,7 +1861,7 @@ impl FetchTasklet {
             Some(canon) => BunString::static_(canon),
             None => BunString::clone_utf8(http_response.status),
         };
-        let url = BunString::clone_utf8(metadata.url.slice());
+        let url = BunString::clone_utf8(metadata.url());
         let redirected = state.result.redirected;
         let body = if self.response_body_is_null(status_code) {
             self.null_body_value(state)
@@ -2017,7 +2017,7 @@ impl FetchTasklet {
         // hop (`HTTPClient::reevaluate_proxy_for_redirect`). `ProxySettings`
         // owns copies of the env values, so a later `process.env.HTTP_PROXY =
         // ...` on the JS thread cannot invalidate them mid-request.
-        let proxy_settings: Option<Box<http::ProxySettings>> = if has_proxy {
+        let proxy_settings: Option<std::sync::Arc<http::ProxySettings>> = if has_proxy {
             let proxy = ZigURL::parse(&url_proxy_buffer[url_len..]);
             if !proxy.is_empty() {
                 http::ProxySettings::from_explicit(proxy.href, env)
@@ -2131,19 +2131,19 @@ impl FetchTasklet {
             )
         });
         request.with_http_mut(|http_client| {
-            http_client.client.flags.is_streaming_request_body = is_stream;
-            http_client.client.flags.forced_protocol = forced_protocol;
-            http_client.client.flags.is_node_http_client = is_node_http_client;
+            http_client.client_mut().flags.is_streaming_request_body = is_stream;
+            http_client.client_mut().flags.forced_protocol = forced_protocol;
+            http_client.client_mut().flags.is_node_http_client = is_node_http_client;
             if let Some(stream) = request_body_buffer {
-                http_client.request_body = http::HTTPRequestBody::Stream(stream);
+                http_client.set_request_body(http::HTTPRequestBody::Stream(stream));
             }
             // TODO is this necessary? the http client already sets the redirect type,
             // so manually setting it here seems redundant
             if redirect_type != FetchRedirect::Follow {
-                http_client.client.remaining_redirect_count = 0;
+                http_client.client_mut().remaining_redirect_count = 0;
             }
             if let Some(sendfile) = sendfile {
-                http_client.request_body = http::HTTPRequestBody::Sendfile(sendfile);
+                http_client.set_request_body(http::HTTPRequestBody::Sendfile(sendfile));
             }
         });
 

@@ -818,10 +818,7 @@ where
             });
             if let Some(sink_global) = sink_global {
                 sink.with_mut(|sink| {
-                    ResponseStreamJSSink::<SSL_ENABLED>::detach(
-                        &mut sink.source,
-                        &sink_global,
-                    )
+                    ResponseStreamJSSink::<SSL_ENABLED>::detach(&mut sink.source, &sink_global)
                 });
             }
             ResponseStream::destroy(sink);
@@ -1915,13 +1912,14 @@ where
 
         stream.value.ensure_still_alive();
 
-        this.sink.set(Some(Box::new(JsCell::new(ResponseStream::<SSL_ENABLED> {
-            res: Some(resp),
-            buffer: Vec::<u8>::default(),
-            first_write_ctx: Some(AnyRequestContext::init(this.this())),
-            global_this: Some(BackRef::new(global_this)),
-            ..Default::default()
-        }))));
+        this.sink
+            .set(Some(Box::new(JsCell::new(ResponseStream::<SSL_ENABLED> {
+                res: Some(resp),
+                buffer: Vec::<u8>::default(),
+                first_write_ctx: Some(AnyRequestContext::init(this.this())),
+                global_this: Some(BackRef::new(global_this)),
+                ..Default::default()
+            }))));
         // Re-fetched after every call that runs user code: `on_abort` may run
         // in there, but it leaves the sink to `discard_stream_after_abort`.
         let sink = || this.sink().expect("sink set above");
@@ -1935,12 +1933,11 @@ where
         resp.on_writable_this(Self::on_writable_response_stream, this.this());
 
         // We are already corked!
-        let assignment_result: JSValue =
-            ResponseStreamJSSink::<SSL_ENABLED>::assign_to_stream(
-                global_this,
-                stream.value,
-                NonNull::new(sink().as_ptr()).expect("JsCell::as_ptr is non-null"),
-            );
+        let assignment_result: JSValue = ResponseStreamJSSink::<SSL_ENABLED>::assign_to_stream(
+            global_this,
+            stream.value,
+            NonNull::new(sink().as_ptr()).expect("JsCell::as_ptr is non-null"),
+        );
 
         assignment_result.ensure_still_alive();
 
@@ -4148,16 +4145,16 @@ macro_rules! request_ctx_exports {
         $on_resolve:ident, $on_reject:ident, $on_resolve_stream:ident, $on_reject_stream:ident
     );* $(;)?) => {$(
         bun_jsc::jsc_promise_handler!(
-            pub fn $on_resolve => RequestContext::<$srv, $ssl, $dbg, $h3>::on_resolve
+            pub fn $on_resolve => RequestContext::<$srv, $ssl, $dbg, $mux>::on_resolve
         );
         bun_jsc::jsc_promise_handler!(
-            pub fn $on_reject => RequestContext::<$srv, $ssl, $dbg, $h3>::on_reject
+            pub fn $on_reject => RequestContext::<$srv, $ssl, $dbg, $mux>::on_reject
         );
         bun_jsc::jsc_promise_handler!(
-            pub fn $on_resolve_stream => RequestContext::<$srv, $ssl, $dbg, $h3>::on_resolve_stream
+            pub fn $on_resolve_stream => RequestContext::<$srv, $ssl, $dbg, $mux>::on_resolve_stream
         );
         bun_jsc::jsc_promise_handler!(
-            pub fn $on_reject_stream => RequestContext::<$srv, $ssl, $dbg, $h3>::on_reject_stream
+            pub fn $on_reject_stream => RequestContext::<$srv, $ssl, $dbg, $mux>::on_reject_stream
         );
     )*
 

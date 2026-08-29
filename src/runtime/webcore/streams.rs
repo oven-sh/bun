@@ -1115,8 +1115,7 @@ pub type HTTPServerWritableJSSink<const SSL: bool> =
 /// re-enter it from JS, so the owner reaches it through the `JsCell` in short,
 /// closure-scoped borrows rather than through a `Box<Self>` it would have to
 /// keep unaliased.
-pub type OwnedHTTPServerWritable<const SSL: bool> =
-    Box<bun_ptr::JsCell<HTTPServerWritable<SSL>>>;
+pub type OwnedHTTPServerWritable<const SSL: bool> = Box<bun_ptr::JsCell<HTTPServerWritable<SSL>>>;
 
 // `HTTPServerWritable` is exposed to JS via `Sink.JSSink(@This(), name)` where
 // `name` ∈ {HTTPResponseSink, HTTPSResponseSink}. Const-generics

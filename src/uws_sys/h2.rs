@@ -269,21 +269,6 @@ impl Response {
         let mut f = core::mem::ManuallyDrop::new(f);
         c::uws_h2_res_cork(self, (&raw mut *f).cast::<c_void>(), handle::<F>);
     }
-    pub(crate) fn run_corked_with_type<UD>(&mut self, handler: fn(*mut UD), ud: *mut UD) {
-        // cork is synchronous, so we stack-allocate the (handler, ud) pair and
-        // recover it inside the trampoline — same shape as H1's
-        // `Response::run_corked_with_type` so `AnyResponse` can dispatch uniformly.
-        type Ctx<UD> = (fn(*mut UD), *mut UD);
-        // Safe fn item: nested local thunk, only coerced to the C-ABI
-        // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
-        extern "C" fn cb<UD>(p: *mut c_void) {
-            // SAFETY: p points at a stack Ctx<UD> valid for this synchronous call.
-            let ctx = unsafe { &*p.cast::<Ctx<UD>>() };
-            (ctx.0)(ctx.1);
-        }
-        let mut ctx: Ctx<UD> = (handler, ud);
-        c::uws_h2_res_cork(self, (&raw mut ctx).cast(), cb::<UD>)
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

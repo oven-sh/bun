@@ -346,6 +346,132 @@ describe("bundler", () => {
       stdout: '["inf","neg","inf","method","static"]',
     },
   });
+  // https://github.com/oven-sh/bun/issues/40688: the same-target destructuring
+  // transform must apply to every eligible run of declarations, not only the
+  // run at the head of the list.
+  itBundled("minify/SameTargetDestructuringAfterOtherDecl", {
+    files: {
+      "/entry.js": /* js */ `
+        var Math_random = Math.random;
+        var Math_random2 = Math.random;
+        var x = Math_random2() + Math_random();
+        var Math_cos = Math.cos;
+        var Math_sin = Math.sin;
+        console.log(typeof Math_cos(x), typeof Math_sin(x));
+      `,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("{ random: Math_random, random: Math_random2 } = Math");
+      api.expectFile("/out.js").toContain("{ cos: Math_cos, sin: Math_sin } = Math");
+    },
+    run: { stdout: "number number" },
+  });
+  itBundled("minify/SameTargetDestructuringMultipleRuns", {
+    files: {
+      "/entry.js": /* js */ `
+        var o = { a: 1, b: 2 };
+        var p = { a: 3, b: 4 };
+        var w = o.a;
+        var x = o.b;
+        var y = p.a;
+        var z = p.b;
+        var mid = w + x;
+        var q = p.a;
+        var r = p.b;
+        console.log(w, x, y, z, mid, q, r);
+      `,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("{ a: w, b: x } = o");
+      api.expectFile("/out.js").toContain("{ a: y, b: z } = p");
+      api.expectFile("/out.js").toContain("{ a: q, b: r } = p");
+    },
+    run: { stdout: "1 2 3 4 3 3 4" },
+  });
+  // A destructuring group evaluates its target once, before any assignment.
+  // A declarator that rebinds the target itself must end the group, or a
+  // later member reads the old target instead of the rebound one.
+  itBundled("minify/SameTargetDestructuringStopsWhenTargetRebound", {
+    files: {
+      "/entry.js": /* js */ `
+        var o = { a: 1, o: { b: 99 } };
+        var a = o.a;
+        var o = o.o;
+        var b = o.b;
+        console.log(a, b);
+        var p = { x: { y: 5 }, y: 7 };
+        var p = p.x;
+        var c = p.y;
+        console.log(c);
+      `,
+    },
+    minifySyntax: true,
+    run: { stdout: "1 99\n5" },
+  });
+  // A `var` that re-declares a parameter or an earlier `var` gets its own
+  // symbol, linked to the existing one. The rebound-target check must compare
+  // the linked symbols, or `var n = n.next, n = n.next` folds into
+  // `{ next: n, next: n } = n` and both members read the original `n`.
+  const sameTargetRedeclaredFiles = {
+    "/entry.js": /* js */ `
+      const L = { v: 0, next: { v: 1, next: { v: 2, next: null } } };
+      function param(n) { var n = n.next, n = n.next; return n.v; }
+      function redecl() { var n = L; var n = n.next, n = n.next; return n.v; }
+      function later(n) { var n = n.next, v = n.v; var n; return v; }
+      function mixed(n) { var a = n.next, n = n.next, b = n.v; return [a.v, n.v, b].join(""); }
+      console.log(param(L), redecl(), later(L), mixed(L));
+    `,
+  };
+  itBundled("minify/SameTargetDestructuringSkipsRedeclaredTarget", {
+    files: sameTargetRedeclaredFiles,
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var n = n.next, n = n.next");
+      api.expectFile("/out.js").toContain("var n = L, n = n.next, n = n.next");
+      api.expectFile("/out.js").toContain("var n = n.next, v = n.v, n;");
+      api.expectFile("/out.js").toContain("var { next: a, next: n } = n, b = n.v");
+    },
+    run: { stdout: "2 2 1 111" },
+  });
+  itBundled("minify/SameTargetDestructuringSkipsRedeclaredTargetWithoutMinify", {
+    files: sameTargetRedeclaredFiles,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var n = n.next, n = n.next");
+      api.expectFile("/out.js").toContain("var n = n.next, v = n.v;");
+      api.expectFile("/out.js").toContain("var { next: a, next: n } = n, b = n.v");
+    },
+    run: { stdout: "2 2 1 111" },
+  });
+  // A `using` declaration admits only identifier bindings, so the transform
+  // must not rewrite its declarators into an object pattern.
+  itBundled("minify/SameTargetDestructuringSkipsUsingDecls", {
+    files: {
+      "/entry.js": /* js */ `
+        const obj = { x: null, y: null };
+        function mk() {
+          return { r: null, w: null, v: 1, [Symbol.dispose]() {} };
+        }
+        function f() {
+          using a = obj.x, b = obj.y;
+          return [a, b];
+        }
+        function g() {
+          using db = mk(), a = db.r, b = db.w;
+          return [db.v, a, b];
+        }
+        console.log(JSON.stringify(f()), JSON.stringify(g()));
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("using a = obj.x, b = obj.y");
+      api.expectFile("/out.js").toContain("using db = mk(), a = db.r, b = db.w");
+    },
+    run: { stdout: "[null,null] [1,null,null]" },
+  });
   itBundled("minify/InlineArraySpread", {
     files: {
       "/entry.js": /* js */ `

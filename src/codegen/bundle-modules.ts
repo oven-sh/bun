@@ -432,10 +432,8 @@ const internalModulesStamp = (() => {
   return new DataView(h.digest().buffer).getUint32(0);
 })();
 
-// require() edges between JS internal modules that run when the module itself is evaluated (ids are enum order), as
-// offsets into one flat list. The bundled output is unminified with top-level statements at column 0 and function
-// bodies indented, so a registry lookup on an unindented line is one the module wrapper executes eagerly; lookups inside
-// functions are lazy and left out (an ahead-of-time build would rather not carry modules that may never load).
+// require() edges between JS internal modules (ids are enum order), as offsets into one flat list. `bun build --compile
+// --bytecode` embeds bytecode for the builtins an app imports plus everything reachable through this table.
 const internalModuleDependencyTable = (() => {
   const jsModules = moduleList.slice(0, nativeStartIndex);
   const requireRe = /internalModuleRegistry, ?(\d+)/g;
@@ -445,12 +443,12 @@ const internalModuleDependencyTable = (() => {
     offsets.push(flat.length);
     const src = outputs.get(id.slice(0, -3).replaceAll("/", path.sep)) ?? "";
     const edges = new Set<number>();
-    for (const line of src.split("\n")) {
-      if (/^\s/.test(line)) continue;
-      for (const m of line.matchAll(requireRe)) {
-        const dep = Number(m[1]);
-        if (dep !== n && dep < nativeStartIndex) edges.add(dep);
-      }
+    // Lazy require() calls inside functions count too: internal/util/inspect, internal/fs/watch and friends are only
+    // ever reached that way, and the first is loaded by nearly every program (util.inspect, format, console, error
+    // paths). Carrying bytecode for a module that never loads costs bytes; parsing one that does costs startup time.
+    for (const m of src.matchAll(requireRe)) {
+      const dep = Number(m[1]);
+      if (dep !== n && dep < nativeStartIndex) edges.add(dep);
     }
     flat.push(...[...edges].sort((a, b) => a - b));
   });

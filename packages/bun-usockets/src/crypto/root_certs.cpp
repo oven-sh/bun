@@ -184,6 +184,10 @@ us_default_ca_certificates* us_get_default_ca_certificates() {
 }
 
 STACK_OF(X509) *us_get_root_extra_cert_instances() {
+  // No NODE_EXTRA_CA_CERTS: nothing to report, and no reason to parse the bundled roots yet (that happens with the
+  // first TLS context); tls.getCACertificates('extra') is often asked at startup before any connection is made.
+  const char *extra_certs = getenv("NODE_EXTRA_CA_CERTS");
+  if (!extra_certs || !extra_certs[0]) return nullptr;
   return us_get_default_ca_certificates()->root_extra_cert_instances;
 }
 

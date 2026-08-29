@@ -277,6 +277,39 @@ devTest("export named __proto__", {
     await dev.fetch("/").equals("[true,true,true,true,true]");
   },
 });
+// With a separate SSR graph, the server sees a "use client" module through a
+// generated proxy module. Its exports literal is built from the export names
+// of the client module, so it has the same "__proto__" hole.
+devTest("use client export named __proto__", {
+  framework: {
+    ...minimalFramework,
+    serverComponents: {
+      ...minimalFramework.serverComponents!,
+      separateSSRGraph: true,
+    },
+  },
+  files: {
+    "components/Comp.ts": `
+      "use client";
+      function C() { return "C"; }
+      export { C as __proto__, C as other };
+    `,
+    "routes/index.ts": `
+      import * as Comp from '../components/Comp';
+      export default function (req, meta) {
+        return new Response(JSON.stringify([
+          Object.getPrototypeOf(Comp) === Object.prototype,
+          Object.keys(Comp).sort(),
+          Object.hasOwn(Comp, "__proto__") && Comp.__proto__.uid,
+          Comp.other.uid,
+        ]));
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals(JSON.stringify([true, ["__proto__", "other"], "__proto__", "other"]));
+  },
+});
 devTest("ESM <-> CJS sync", {
   files: {
     "index.html": emptyHtmlFile({

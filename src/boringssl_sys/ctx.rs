@@ -559,5 +559,4 @@ impl SSL_CTX {
                 && X509_VERIFY_PARAM_set1_host(param, host.as_ptr().cast(), host.len()) == 1
         }
     }
-    }
 }

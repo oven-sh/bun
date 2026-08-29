@@ -77,15 +77,15 @@ impl ManagedTask {
         fn run<T: RunOnce>(p: *mut c_void) -> JsResult<()> {
             // SAFETY: `p` is the `Box<T>` `new_boxed` leaked into `ctx`; `run`
             // passes it back exactly once.
-            T::run(*unsafe { Box::from_raw(p.cast::<T>()) })
+            T::run(*unsafe { bun_core::heap::take(p.cast::<T>()) })
         }
         fn drop_ctx<T: RunOnce>(p: *mut c_void) {
             // SAFETY: `p` is the `Box<T>` `new_boxed` leaked into `ctx`.
-            T::cancelled(*unsafe { Box::from_raw(p.cast::<T>()) });
+            T::cancelled(*unsafe { bun_core::heap::take(p.cast::<T>()) });
         }
         let managed = bun_core::heap::into_raw(Box::new(ManagedTask {
             callback: run::<T>,
-            ctx: NonNull::new(Box::into_raw(ctx).cast::<c_void>()),
+            ctx: NonNull::new(bun_core::heap::into_raw(ctx).cast::<c_void>()),
             cleanup: Some(drop_ctx::<T>),
         }));
         ManagedTask::task(managed)

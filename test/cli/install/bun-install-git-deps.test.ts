@@ -586,3 +586,36 @@ test.concurrent("installs a git+file:// dependency", async () => {
   expect(await lockedPackages(project)).toEqual(locked);
   expect(exitCode).toBe(0);
 });
+
+// issue #40803: `bun install <git url>` (no alias) sorted the workspace dep
+// under its version literal. The real name is only known once the repo is
+// fetched; it is rewritten in place after resolution, so the written key
+// landed at the literal's position ("git..." here, between nothing and
+// "hhh-first") instead of its own.
+test.concurrent("bun install <git url> sorts the workspace dependency by its resolved name", async () => {
+  using dir = tempDir("git-dep-sort", {
+    "project/package.json": JSON.stringify({
+      name: "project",
+      version: "1.0.0",
+      dependencies: { "hhh-first": "file:./hhh-first", "jjj-last": "file:./jjj-last" },
+    }),
+    "project/hhh-first/package.json": JSON.stringify({ name: "hhh-first", version: "1.0.0" }),
+    "project/jjj-last/package.json": JSON.stringify({ name: "jjj-last", version: "1.0.0" }),
+  });
+  const root = String(dir);
+  const project = join(root, "project");
+  const bare = await makeSharedRepo(root, [{ name: "iii-middle", branch: "main" }], "sort-repo.git");
+
+  const first = await runInstall(project, join(root, "cache"), {});
+  expect(first.stderr).toContain("Saved lockfile");
+  expect(first.exitCode).toBe(0);
+
+  const second = await runInstall(project, join(root, "cache"), {}, `git+${pathToFileURL(bare)}#main`);
+  expect(second.stderr).toContain("Saved lockfile");
+  expect(second.exitCode).toBe(0);
+
+  const lockfile = Bun.JSONC.parse(await Bun.file(join(project, "bun.lock")).text()) as {
+    workspaces: Record<string, { dependencies: Record<string, string> }>;
+  };
+  expect(Object.keys(lockfile.workspaces[""].dependencies)).toEqual(["hhh-first", "iii-middle", "jjj-last"]);
+});

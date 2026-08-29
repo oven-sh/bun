@@ -160,8 +160,7 @@ fn optional_int_option<T: bun_core::Integer>(
     )?))
 }
 
-/// Absent, `undefined` and `null` keep the default, like the enum and color
-/// options; any other value is truthy-coerced.
+/// Absent, `undefined` and `null` keep the default; anything else is truthy-coerced.
 fn bool_option(
     global: &JSGlobalObject,
     value: JSValue,
@@ -381,9 +380,7 @@ fn generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                     )
                     .throw());
             }
-            // The module matrix already is the index plane, so the source is a
-            // 1-bit indexed PNG with `light`/`dark` as its two palette entries:
-            // no RGBA raster and no quantizer on the JS thread.
+            // 1-bit indexed PNG: the matrix is the index plane, `light`/`dark` the palette.
             let (bits, dim) = bun_qr::to_bitmap(&qr, opts.border, opts.scale);
             let palette = [rgba_array(opts.light), rgba_array(opts.dark)];
             let enc = match codecs::png::encode_bilevel(&bits, dim, dim, palette) {

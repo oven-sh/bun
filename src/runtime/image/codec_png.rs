@@ -380,11 +380,9 @@ pub(crate) fn encode_indexed(
     })
 }
 
-/// Emit a 1-bit indexed (colour-type 3) PNG from an already-indexed bilevel
-/// image. `bits` holds `h` rows of `w.div_ceil(8)` bytes, most significant
-/// bit first; a set bit selects `palette[1]`. No quantizer runs, so the two
-/// palette entries are written exactly as given. tRNS is emitted only when an
-/// entry is not opaque.
+/// 1-bit indexed (colour-type 3) PNG. `bits` is `h` rows of `w.div_ceil(8)`
+/// bytes, MSB first; a set bit selects `palette[1]`. tRNS only when an entry
+/// is not opaque.
 pub(crate) fn encode_bilevel(
     bits: &[u8],
     w: u32,

@@ -449,8 +449,7 @@ impl QrCode {
         Ok(QrCode::from_codewords(version, ecc, &codewords, mask))
     }
 
-    /// An all-light symbol with every function pattern drawn and marked in
-    /// `is_function`; no codewords, no mask.
+    /// A blank symbol with the function patterns drawn and marked in `is_function`.
     fn with_function_patterns(version: u8, ecc: Ecc) -> QrCode {
         let size = version * 4 + 17;
         let area = usize::from(size) * usize::from(size);
@@ -770,9 +769,7 @@ impl QrCode {
     }
 }
 
-/// Pushes a run length onto the history. The first run of a line is
-/// extended by `size`: the quiet zone outside the symbol is light, and the
-/// 1:1:3:1:1 rule counts a light area of 4 modules on either side.
+/// The first run of a line includes the quiet zone outside the symbol, which is light.
 fn finder_push(history: &mut [i32; 7], mut run_len: i32, size: i32) {
     if history[0] == 0 {
         run_len += size;
@@ -949,8 +946,7 @@ static NUM_ERROR_CORRECTION_BLOCKS: [[u8; 41]; 4] = [
 
 // ─── Renderers ──────────────────────────────────────────────────────────────
 
-/// Writes ` fill="#rrggbb"`, plus ` fill-opacity="a"` when the color is not
-/// opaque. SVG 1.1 has no `#rrggbbaa` form, so alpha goes in its own attribute.
+/// ` fill="#rrggbb"`, plus ` fill-opacity` when alpha < 255 (SVG 1.1 has no `#rrggbbaa`).
 fn write_fill(out: &mut Vec<u8>, [r, g, b, a]: [u8; 4]) {
     use std::io::Write as _;
     let _ = write!(out, r##" fill="#{r:02x}{g:02x}{b:02x}""##);
@@ -995,9 +991,8 @@ pub fn to_svg(qr: &QrCode, border: u32, light: [u8; 4], dark: [u8; 4]) -> Vec<u8
     out
 }
 
-/// Rasterize to a 1-bit-per-pixel bitmap at `scale` px/module: `dim` rows of
-/// `dim.div_ceil(8)` bytes, most significant bit first, 1 = dark. Returns
-/// the bitmap and `dim`, the width and height in pixels.
+/// 1 bit per pixel at `scale` px/module: `dim` rows of `dim.div_ceil(8)` bytes,
+/// MSB first, 1 = dark. Returns the bitmap and `dim`.
 pub fn to_bitmap(qr: &QrCode, border: u32, scale: u32) -> (Vec<u8>, u32) {
     let s = i32::from(qr.size());
     let b = border as i32;

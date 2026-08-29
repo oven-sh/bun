@@ -246,3 +246,106 @@ describe("tsconfig compilerOptions.useDefineForClassFields", () => {
     expect(out).not.toMatch(/^\s*x;\s*$/m);
   });
 });
+
+// When `useDefineForClassFields` is not set, tsc (and esbuild) derive it from
+// `target`: `false` below ES2022, `true` from ES2022 on.
+describe("tsconfig compilerOptions.target implies useDefineForClassFields", () => {
+  const probe = `
+    let setterCalled = false;
+    class Base { set p(v: any) { setterCalled = true; } get p() { return "getter"; } }
+    class C extends Base { p: any = "field"; b: number; }
+    const c = new C();
+    process.stdout.write(JSON.stringify({
+      setterCalled,
+      p: c.p,
+      ownP: Object.prototype.hasOwnProperty.call(c, "p"),
+      hasB: "b" in c,
+    }));
+  `;
+  const setSemantics = { setterCalled: true, p: "getter", ownP: false, hasB: false };
+  const defineSemantics = { setterCalled: false, p: "field", ownP: true, hasB: true };
+
+  const cases: [compilerOptions: Record<string, unknown>, expected: typeof setSemantics][] = [
+    [{ target: "ES2021" }, setSemantics],
+    [{ target: "es5" }, setSemantics],
+    [{ target: "ES2022" }, defineSemantics],
+    [{ target: "ESNext" }, defineSemantics],
+    [{ target: "ES2017", useDefineForClassFields: true }, defineSemantics],
+    [{ target: "ES2022", useDefineForClassFields: false }, setSemantics],
+  ];
+
+  for (const [compilerOptions, expected] of cases) {
+    const name = JSON.stringify(compilerOptions);
+    const semantics = expected === setSemantics ? "[[Set]]" : "[[Define]]";
+
+    test.concurrent(`${name}: bun run uses ${semantics}`, async () => {
+      using dir = tempDir("udfcf-target", {
+        "tsconfig.json": JSON.stringify({ compilerOptions }),
+        "index.ts": probe,
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir));
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(expected);
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent(`${name}: bun build uses ${semantics}`, async () => {
+      using dir = tempDir("udfcf-target-build", {
+        "tsconfig.json": JSON.stringify({ compilerOptions }),
+        "index.ts": probe,
+      });
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "index.ts", "--outfile", "out.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [buildStderr, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+      expect(buildStderr).toBe("");
+      expect(buildExitCode).toBe(0);
+
+      const { stdout, stderr, exitCode } = await run(String(dir), "out.js");
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(expected);
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  test.concurrent("target below ES2022 is inherited through extends", async () => {
+    using dir = tempDir("udfcf-target-extends", {
+      "base.json": JSON.stringify({ compilerOptions: { target: "ES2017" } }),
+      "tsconfig.json": JSON.stringify({ extends: "./base.json", compilerOptions: { strict: true } }),
+      "index.ts": probe,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir));
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(setSemantics);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("an inherited explicit useDefineForClassFields wins over the child's target", async () => {
+    using dir = tempDir("udfcf-target-extends-explicit", {
+      "base.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: true } }),
+      "tsconfig.json": JSON.stringify({ extends: "./base.json", compilerOptions: { target: "ES2017" } }),
+      "index.ts": probe,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir));
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(defineSemantics);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("Bun.Transpiler derives the default from target", () => {
+    const source = `
+      class A {
+        v = this.x + 1;
+        constructor(public x: number) {}
+      }
+    `;
+    const below = new Bun.Transpiler({ loader: "ts", tsconfig: { compilerOptions: { target: "ES2021" } } });
+    expect(below.transformSync(source)).toContain("this.v = this.x + 1");
+
+    const atOrAbove = new Bun.Transpiler({ loader: "ts", tsconfig: { compilerOptions: { target: "ES2022" } } });
+    expect(atOrAbove.transformSync(source)).not.toContain("this.v = this.x + 1");
+  });
+});

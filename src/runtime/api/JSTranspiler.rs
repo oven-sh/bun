@@ -778,7 +778,7 @@ impl TransformTask {
             experimental_decorators: tsconfig.is_some_and(|ts| ts.experimental_decorators),
             emit_decorator_metadata: tsconfig.is_some_and(|ts| ts.emit_decorator_metadata),
             use_define_for_class_fields: tsconfig
-                .and_then(|ts| ts.use_define_for_class_fields)
+                .and_then(|ts| ts.use_define_for_class_fields_or_target_default())
                 .unwrap_or(true),
             macro_js_ctx: MacroJSCtx::ZERO,
             file_fd_ptr: None,
@@ -1242,7 +1242,7 @@ impl JSTranspiler {
             use_define_for_class_fields: config
                 .tsconfig
                 .as_deref()
-                .and_then(|ts| ts.use_define_for_class_fields)
+                .and_then(|ts| ts.use_define_for_class_fields_or_target_default())
                 .unwrap_or(true),
             file_fd_ptr: None,
             inject_jest_globals: false,

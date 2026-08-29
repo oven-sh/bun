@@ -437,6 +437,185 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!\nWorker loaded!\n", file: "dist/out", setCwd: true },
   });
+  // Every way of naming an embedded worker entry point resolves against the executable, not the cwd: a relative
+  // specifier with the source extension, with the embedded `.js` extension, or with none, a `file:` URL made from
+  // import.meta.url with either extension, and an absolute path in the platform's own syntax.
+  itBundled("compile/WorkerSpecifierForms", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { rmSync } from "fs";
+        import { tmpdir } from "os";
+        import { join } from "path";
+        rmSync("./wjs.js", { force: true });
+        rmSync("./wts.ts", { force: true });
+        rmSync("./wmjs.mjs", { force: true });
+        process.chdir(tmpdir());
+        const specs = [
+          "./wjs.js", "./wjs", "./wts.ts", "./wts", "./wmjs.mjs",
+          new URL("./wjs.js", import.meta.url), new URL("./wts.ts", import.meta.url), new URL("./wmjs.mjs", import.meta.url),
+          new URL("./wts.ts", import.meta.url).href,
+          join(import.meta.dir, "wmjs.mjs"),
+        ];
+        for (const spec of specs) {
+          const w = new Worker(spec);
+          const msg = await new Promise(resolve => {
+            w.onmessage = e => resolve(e.data);
+            w.onerror = e => resolve("error: " + e.message);
+          });
+          w.terminate();
+          console.log(msg);
+        }
+      `,
+      "/wjs.js": `postMessage("wjs");`,
+      "/wts.ts": `postMessage("wts" as string);`,
+      "/wmjs.mjs": `postMessage("wmjs");`,
+    },
+    entryPointsRaw: ["./entry.ts", "./wjs.js", "./wts.ts", "./wmjs.mjs"],
+    outfile: "dist/out",
+    run: { stdout: "wjs\nwjs\nwts\nwts\nwmjs\nwjs\nwts\nwmjs\nwts\nwmjs\n", file: "dist/out", setCwd: true },
+  });
+  // The same resolution for import()/require() at run time (specifiers the bundler could not see), relative to the
+  // embedded importer: by source extension, by embedded name, without extension, and by file: URL.
+  itBundled("compile/DynamicImportEmbeddedEntryPoint", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { rmSync } from "fs";
+        import { tmpdir } from "os";
+        rmSync("./mod.ts", { force: true });
+        process.chdir(tmpdir());
+        const specs = ["./mod.ts", "./mod.js", "./mod", new URL("./mod.ts", import.meta.url).href];
+        for (const spec of specs) console.log((await import(spec)).default, require(spec).default);
+        await import("./nope.ts").catch(e => console.log(e.constructor.name));
+      `,
+      "/mod.ts": `export default "mod" as string;`,
+    },
+    entryPointsRaw: ["./entry.ts", "./mod.ts"],
+    outfile: "dist/out",
+    run: { stdout: "mod mod\nmod mod\nmod mod\nmod mod\nResolveMessage\n", file: "dist/out", setCwd: true },
+  });
+  // Nested embedded entry points, from the entry and from inside the subdirectory (`../`), by every spelling.
+  itBundled("compile/EmbeddedResolveNested", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { rmSync } from "fs";
+        import { tmpdir } from "os";
+        rmSync("./sub", { recursive: true, force: true });
+        rmSync("./top.ts", { force: true });
+        process.chdir(tmpdir());
+        const s = (x: string) => x; // keeps the bundler from resolving the specifier at build time
+        for (const spec of ["./sub/inner.ts", "./sub/inner", "./sub/inner.js"]) console.log((await import(s(spec))).default);
+        const w = new Worker("./sub/worker.ts");
+        console.log(await new Promise(r => { w.onmessage = e => r(e.data); w.onerror = e => r("error: " + e.message); }));
+        w.terminate();
+        // sub/inner.js (the embedded module, not a copy bundled into this one) resolves its sibling and its parent
+        console.log((await import(s("./sub/inner.ts"))).fromInside());
+      `,
+      "/top.ts": `export default "top" as string;`,
+      "/sub/inner.ts": /* js */ `
+        export default "inner" as string;
+        export function fromInside() {
+          const s = (x: string) => x;
+          return [require(s("../top.ts")).default, require(s("../top")).default, require(s("./sibling.ts")).default].join(",");
+        }
+      `,
+      "/sub/sibling.ts": `export default "sibling" as string;`,
+      "/sub/worker.ts": /* js */ `
+        const s = (x: string) => x;
+        postMessage([(await import(s("./sibling.ts"))).default, (await import(s("../top"))).default].join(","));
+      `,
+    },
+    entryPointsRaw: ["./entry.ts", "./top.ts", "./sub/inner.ts", "./sub/sibling.ts", "./sub/worker.ts"],
+    outfile: "dist/out",
+    run: { stdout: "inner\ninner\ninner\nsibling,top\ntop,top,sibling\n", file: "dist/out", setCwd: true },
+  });
+  // What resolves where: an embedded module wins over a file of the same name in the cwd; a relative specifier that
+  // is not embedded still resolves against the cwd; the resolved name of an embedded module is the graph's own.
+  itBundled("compile/EmbeddedResolvePrecedence", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        const s = (x: string) => x;
+        console.log(require(s("./both.js")).default);
+        console.log(require(s("./disk-only.js")).default);
+        const w1 = new Worker("./both.js");
+        console.log(await new Promise(r => { w1.onmessage = e => r(e.data); w1.onerror = e => r("error: " + e.message); }));
+        w1.terminate();
+        const w2 = new Worker("./disk-only-worker.js");
+        console.log(await new Promise(r => { w2.onmessage = e => r(e.data); w2.onerror = e => r("error: " + e.message); }));
+        w2.terminate();
+        const root = process.platform === "win32" ? "B:/~BUN/root/" : "/$bunfs/root/";
+        console.log(require.resolve(s("./both.ts")) === root + "both.js", Bun.resolveSync("./both", import.meta.dir) === root + "both.js");
+        console.log(import.meta.path.replaceAll("\\\\", "/") === root + "out");
+      `,
+      "/both.js": `export default "both:embedded"; if (!Bun.isMainThread) postMessage("both:embedded worker");`,
+    },
+    runtimeFiles: {
+      "/both.js": `export default "both:disk"; if (!Bun.isMainThread) postMessage("both:disk worker");`,
+      "/disk-only.js": `export default "disk-only";`,
+      "/disk-only-worker.js": `postMessage("disk-only worker");`,
+    },
+    entryPointsRaw: ["./entry.ts", "./both.js"],
+    outfile: "dist/out",
+    run: {
+      stdout: "both:embedded\ndisk-only\nboth:embedded worker\ndisk-only worker\ntrue true\ntrue\n",
+      file: "dist/out",
+      setCwd: true,
+    },
+  });
+  // Spellings that must not map to an embedded module, and inputs that must fail cleanly rather than crash.
+  itBundled("compile/EmbeddedResolveMisses", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { rmSync } from "fs";
+        import { tmpdir } from "os";
+        rmSync("./mod.ts", { force: true });
+        rmSync("./UP.TS", { force: true });
+        process.chdir(tmpdir());
+        const s = (x: string) => x;
+        const outcome = async (spec: string) => {
+          try {
+            return (await import(spec)).default;
+          } catch (e: any) {
+            return e?.constructor?.name ?? String(e);
+          }
+        };
+        console.log(await outcome(s("./mod.ts")));          // maps to mod.js
+        console.log(await outcome(s("./UP.ts")), await outcome(s("./up.TS"))); // the extension is case-insensitive, the name is not
+        console.log(await outcome(s("./mod.css")));         // not a source extension: no mapping
+        console.log(await outcome(s("./mod.js/")));         // trailing slash
+        console.log(await outcome(s("../mod.ts")));         // escapes the embedded root
+        console.log(await outcome(s("./" + Buffer.alloc(70000, "a").toString() + ".ts"))); // longer than any path buffer
+        console.log(await outcome(s(".\\\\mod.ts")));      // a relative specifier on Windows only
+      `,
+      "/mod.ts": `export default "mod" as string;`,
+      "/UP.TS": `export default "UP" as string;`,
+    },
+    entryPointsRaw: ["./entry.ts", "./mod.ts", "./UP.TS"],
+    outfile: "dist/out",
+    run: {
+      stdout: [
+        "mod",
+        "UP ResolveMessage",
+        "ResolveMessage",
+        "ResolveMessage",
+        "ResolveMessage",
+        "ResolveMessage",
+        isWindows ? "mod" : "ResolveMessage",
+        "",
+      ].join("\n"),
+      file: "dist/out",
+      setCwd: true,
+    },
+  });
   itBundled("compile/WorkerRelativePathTSExtension", {
     backend: "cli",
     compile: true,

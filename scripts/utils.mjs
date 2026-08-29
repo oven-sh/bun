@@ -3030,18 +3030,24 @@ export function getHostHealthSnapshot() {
   }
 
   // `-e`, not `-ax`: busybox ps (alpine) has no `-x`. `comm` is the executable
-  // as exec'd, a full path on macOS.
-  const ps = run(["ps", "-eo", "pid=,ppid=,user=,stat=,etime=,rss=,comm="]) || "";
-  const procs = ps
+  // as exec'd, a full path on macOS. A busybox built without FEATURE_PS_TIME
+  // rejects `etime`; the process rows matter more than that column.
+  let ps = run(["ps", "-eo", "pid=,ppid=,user=,stat=,etime=,rss=,comm="]);
+  let rowPattern = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\d+)\s+(.*)$/;
+  if (ps === undefined) {
+    ps = run(["ps", "-eo", "pid=,ppid=,user=,stat=,rss=,comm="]);
+    rowPattern = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S+)()\s+(\d+)\s+(.*)$/;
+  }
+  const procs = (ps || "")
     .split("\n")
-    .map(line => /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\d+)\s+(.*)$/.exec(line))
+    .map(line => rowPattern.exec(line))
     .filter(Boolean)
     .map(([, pid, ppid, user, stat, etime, rss, comm]) => ({
       pid: parseInt(pid),
       ppid: parseInt(ppid),
       user,
       stat,
-      etime,
+      etime: etime || "?",
       rss: parseInt(rss),
       comm: comm.trim(),
     }));

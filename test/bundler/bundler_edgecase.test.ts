@@ -2653,6 +2653,58 @@ describe("bundler", () => {
     target: "bun",
     run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
   });
+  // The macro module is transpiled by the macro VM, not by the bundler. That
+  // VM has to be created from the build's transform options, or the macro
+  // module does not see `--define` and `--loader`. The `Bun.build()` variant
+  // lives in transpiler/macro-test.test.ts: the macro VM of a worker thread
+  // outlives the build that created it, so that test needs its own process.
+  itBundled("edgecase/MacroSeesBuildDefinesAndLoaders", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { mode, banner } from "./macro.ts" with { type: "macro" };
+        console.log(mode(), banner());
+      `,
+      "/macro.ts": /* js */ `
+        import banner_ from "./banner.dat";
+        export function mode() {
+          return process.env.MODE ?? "none";
+        }
+        export function banner() {
+          return banner_;
+        }
+      `,
+      "/banner.dat": "hello from a text loader",
+    },
+    backend: "cli",
+    define: { "process.env.MODE": '"prod"' },
+    loader: { ".dat": "text" },
+    target: "bun",
+    run: { stdout: "prod hello from a text loader" },
+  });
+  // `--external` and `--packages=external` describe the output bundle, not the
+  // macro VM. A package the macro module imports has to resolve at build time.
+  itBundled("edgecase/MacroImportsPackageMarkedExternal", {
+    files: {
+      "/entry.ts": /* js */ `
+        import { fooAtBuildTime } from "./macro.ts" with { type: "macro" };
+        import foo from "foo";
+        console.log(fooAtBuildTime(), foo);
+      `,
+      "/macro.ts": /* js */ `
+        import foo from "foo";
+        export function fooAtBuildTime() {
+          return foo;
+        }
+      `,
+      "/node_modules/foo/package.json": `{ "name": "foo", "version": "1.0.0", "main": "index.js" }`,
+      "/node_modules/foo/index.js": `module.exports = "foo-value";`,
+    },
+    backend: "cli",
+    external: ["foo"],
+    packages: "external",
+    target: "bun",
+    run: { stdout: "foo-value foo-value" },
+  });
   itBundled("edgecase/NodeBuiltinWithoutPrefix", {
     files: {
       "/entry.ts": `

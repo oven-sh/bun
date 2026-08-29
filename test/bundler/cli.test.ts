@@ -912,3 +912,41 @@ describe.concurrent("modules that fail to print", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+describe.concurrent("diagnostic markup", () => {
+  // Two composed classes from different files set the same property. The
+  // diagnostic names the property and the class, and the message template
+  // marks both names bold.
+  const composesConflict = {
+    "a.module.css": '.foo {\n  composes: bar from "./b.module.css";\n  color: red;\n}\n',
+    "b.module.css": ".bar {\n  color: blue;\n}\n",
+  };
+
+  test("css composes conflict renders the bold names as ANSI when colors are on", async () => {
+    using dir = tempDir("build-css-composes-color", composesConflict);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "a.module.css"],
+      env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("The value of \x1b[1mcolor\x1b[0m in the class \x1b[1mfoo\x1b[0m is undefined.");
+  });
+
+  test("css composes conflict strips the markup when colors are off", async () => {
+    using dir = tempDir("build-css-composes-plain", composesConflict);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "a.module.css"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("The value of color in the class foo is undefined.");
+    expect(stderr).not.toContain("<b>");
+    expect(stderr).not.toContain("\x1b[");
+  });
+});

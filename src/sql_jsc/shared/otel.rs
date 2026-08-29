@@ -33,6 +33,17 @@ impl ServerAddress {
 #[derive(Default)]
 pub struct QuerySpan(Cell<NativeSpan>);
 
+/// A query dropped without having settled (cancelled / connection torn down)
+/// never got a reply: release its span slot without recording anything.
+impl Drop for QuerySpan {
+    fn drop(&mut self) {
+        if let Some(span) = self.take() {
+            let global = bun_jsc::virtual_machine::VirtualMachine::get().global();
+            bun_telemetry::db::discard(global.as_ptr().cast(), span);
+        }
+    }
+}
+
 impl QuerySpan {
     #[inline(always)]
     pub fn begin(&self, global: &JSGlobalObject, system: System, addr: &ServerAddress, db: &[u8]) {
@@ -73,13 +84,6 @@ impl QuerySpan {
         span.is_some().then_some(span)
     }
 
-    /// The query is going away without having settled (cancelled / connection
-    /// torn down): it never got a reply, so no span for it.
-    pub fn discard(&self, global: &JSGlobalObject) {
-        if let Some(span) = self.take() {
-            bun_telemetry::db::discard(global.as_ptr().cast(), span);
-        }
-    }
 
     pub fn end(
         &self,

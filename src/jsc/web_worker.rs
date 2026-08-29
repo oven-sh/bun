@@ -128,7 +128,7 @@ pub struct WebWorker {
 /// `start_vm()` on the worker thread.
 struct WorkerVmInit {
     transform_options: bun_options_types::schema::api::TransformOptions,
-    env_map: bun_dotenv::Map,
+    env_loader: bun_dotenv::Loader,
     proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
 }
 
@@ -374,25 +374,26 @@ impl WebWorker {
         // parent's proxy_env_storage: snapshot slots + map under its lock so
         // every slice copied is backed by a ref the snapshot holds.
         let mut proxy_env_slots = jsc::rare_data::ProxyEnvSlots::default();
-        let mut env_map = {
+        let mut env_loader = {
             let parent_slots = parent_ref.proxy_env_storage.lock();
             proxy_env_slots.clone_from(&parent_slots);
-            match parent_ref.env_loader().map.clone_with_allocator() {
-                Ok(m) => m,
+            match parent_ref.env_loader().clone_for_worker() {
+                Ok(loader) => loader,
                 Err(_) => {
                     *error_message = BunString::static_("Out of memory");
                     return core::ptr::null_mut();
                 }
             }
         };
-        proxy_env_slots.sync_into(&mut env_map);
+        proxy_env_slots.sync_into(&mut env_loader.map);
         let init = WorkerVmInit {
             transform_options,
-            env_map,
+            env_loader,
             proxy_env_slots,
         };
 
-        let worker = bun_core::heap::into_raw(Box::new(WebWorker {
+        // The construction ref: handed to C++ on success, dropped on failure.
+        let worker = bun_ptr::RefPtr::new(WebWorker {
             messaging_proxy: proxy,
             parent,
             hot_reload: parent_ref.hot_reload,
@@ -428,12 +429,8 @@ impl WebWorker {
             worker_env_loader: Cell::new(core::ptr::null_mut()),
             exit_called: AtomicBool::new(false),
             terminated_by_parent: AtomicBool::new(false),
-        }));
-        // `worker` is non-null (just heap-allocated). Wrap once for the safe
-        // shared reborrows below; the raw `worker` is still used for
-        // `register`/`destroy`/the FFI return value.
-        let worker_ref =
-            bun_ptr::ParentRef::from(NonNull::new(worker).expect("heap::into_raw is non-null"));
+        });
+        let worker_ref = bun_ptr::ParentRef::from(worker.as_non_null());
 
         // Keep the parent's event loop alive until the parent releases this
         // thread, unless the user opted out with `{ ref: false }`.
@@ -443,7 +440,7 @@ impl WebWorker {
         }
 
         // The thread's own ref, taken before it exists so it can never observe zero.
-        worker_ref.ref_();
+        let thread_ref = worker.clone();
         // The thread is something of this VM's on another thread for as long as
         // it runs: the parent joins it before its own teardown's wait, which
         // this ticket would otherwise hold.
@@ -452,7 +449,7 @@ impl WebWorker {
         /// taken above is the thread's), the parent's snapshot, and a ticket on
         /// the parent VM.
         struct ThreadStart {
-            worker: *mut WebWorker,
+            worker: bun_ptr::RefPtr<WebWorker>,
             init: WorkerVmInit,
             _parent_ticket: crate::Ticket,
         }
@@ -463,7 +460,7 @@ impl WebWorker {
         // itself is kept by `_parent_ticket`.
         unsafe impl Send for ThreadStart {}
         let start = ThreadStart {
-            worker,
+            worker: thread_ref,
             init,
             _parent_ticket: parent_ticket,
         };
@@ -471,34 +468,24 @@ impl WebWorker {
             .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
             .spawn(move || {
                 let start = start;
-                // SAFETY: `worker` is live (the thread's ref); `&WebWorker`, never `&mut`.
-                unsafe { (*start.worker).thread_main(start.init) };
-                // SAFETY: dropping the thread's ref; nothing below touches `worker`.
-                unsafe { WebWorker::deref(start.worker) };
+                start.worker.thread_main(start.init);
+                // The thread's ref (and the parent ticket) drop here.
             });
         match spawn {
             Ok(handle) => {
                 worker_ref.join_handle.set(Some(handle));
+                let worker = worker.into_raw();
                 // SAFETY: `parent` is the calling thread's VM; parent-thread-only list.
                 unsafe { (*parent).child_workers.push(worker) };
                 worker
             }
             Err(_) => {
+                // The thread's ref went down with the closure; ours drops on return.
                 worker_ref.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
-                // SAFETY: never shared; drop both refs (the thread's and the caller's).
-                unsafe {
-                    WebWorker::deref(worker);
-                    WebWorker::deref(worker);
-                }
                 *error_message = BunString::static_("Failed to spawn worker thread");
                 core::ptr::null_mut()
             }
         }
-    }
-
-    fn ref_(&self) {
-        // SAFETY: `self` is live; the count is atomic.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut()) };
     }
 
     /// Drop one ref; the last one frees the allocation (`Drop` below). Any thread.
@@ -677,7 +664,7 @@ impl WebWorker {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         let WorkerVmInit {
             transform_options,
-            env_map,
+            env_loader,
             proxy_env_slots,
         } = init;
 
@@ -687,8 +674,7 @@ impl WebWorker {
         // `heap::alloc`'d and stashed on `self` so `shutdown()` step 5 reclaims
         // it on every path — including the early-terminate checkpoint below,
         // which calls `shutdown()` before the VM exists.
-        let loader_ptr: *mut bun_dotenv::Loader =
-            bun_core::heap::into_raw(Box::new(bun_dotenv::Loader::init_with_map(env_map)));
+        let loader_ptr: *mut bun_dotenv::Loader = bun_core::heap::into_raw(Box::new(env_loader));
         self.worker_env_loader.set(loader_ptr);
 
         // Checkpoint before the expensive part: initWorker builds a full JSC

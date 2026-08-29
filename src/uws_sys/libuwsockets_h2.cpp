@@ -87,6 +87,13 @@ void uws_h2_res_end_stream(uws_h2_res_t* res, bool close_connection)
 
 bool uws_h2_res_is_closed(uws_h2_res_t* res) { return ((Http2Response*)res)->dead; }
 
+/* END_STREAM on the request HEADERS, or content-length: 0 (declaredContentLength is -1 when absent). */
+bool uws_h2_res_request_body_ended(uws_h2_res_t* res)
+{
+    Http2Response* r = (Http2Response*)res;
+    return r->remoteClosed || r->declaredContentLength == 0;
+}
+
 /* Server-side failure after the response started (a body stream errored,
  * a file read failed): the peer sees INTERNAL_ERROR, not a cancel. */
 void uws_h2_res_force_close(uws_h2_res_t* res)

@@ -123,6 +123,7 @@ const jsFixtures = [
   "licm-no-pre-header.js",
   // Bytecode generator
   "tagged-templates-optional-chain-this.js",
+  "tagged-templates-super-this.js",
 ];
 
 const wasmFixtures = [

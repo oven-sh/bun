@@ -24,7 +24,7 @@ That is enough to get a trace per request in any OTLP-compatible backend (Jaeger
 | `redis`         | `Bun.redis`: one span per command.                                                                                                                                                                                                                                                                                                                                            |
 | `net`           | `Bun.connect` / `node:net` / `node:tls`: a `tcp.connect` span per outgoing connection.                                                                                                                                                                                                                                                                                        |
 | `websocket`     | `new WebSocket()` connect (the handshake carries `traceparent`, so the server's upgrade span joins the trace); `ServerWebSocket` message handlers (linked to the upgrade request's trace).                                                                                                                                                                                    |
-| `fs`            | `node:fs`, `Bun.file()`, `Bun.write()`.                                                                                                                                                                                                                                                                                                                                       |
+| `fs`            | `node:fs` (except `cp` and recursive async `readdir`), `Bun.file()` reads (`text()`, `json()`, `bytes()`, `arrayBuffer()`, `stat()`, `delete()`) and `Bun.write()` from a string, bytes or `Response`. Streams (`Bun.file().stream()`, `.writer()`), file-to-file copies and files served as a `Response` body are not traced yet.                                            |
 | `spawn`         | `Bun.spawn` / `node:child_process`: one span from spawn to exit.                                                                                                                                                                                                                                                                                                              |
 | `dns`           | `Bun.dns.lookup` / `node:dns` lookups.                                                                                                                                                                                                                                                                                                                                        |
 
@@ -165,14 +165,20 @@ export const loadUser = Bun.otel.wrap(async function loadUser(id: string) {
 
 `Bun.otel.set(key, value)` / `Bun.otel.set({ ... })` annotates whatever span is active — inside a request handler that is the request's span — and returns `false` when there is none.
 
-Without a callback, `Bun.otel.span()` returns the span, active until it is disposed:
+Without a callback, `Bun.otel.span()` returns the span, active until it is disposed. Use this form in synchronous code:
 
 ```ts
 {
-  using span = Bun.otel.span("resize", { width, height });
-  const out = await sharp(input).resize(width, height).toBuffer();
-  span.set("bytes", out.length);
+  using span = Bun.otel.span("parse", { bytes: input.length });
+  const doc = parse(input);
+  span.set("nodes", doc.length);
 } // span ends here
+```
+
+For work that awaits, use the callback form, which keeps the span scoped to the callback:
+
+```ts
+const out = await Bun.otel.span("resize", { width, height }, () => sharp(input).resize(width, height).toBuffer());
 ```
 
 A span has `set(key, value)` / `set({ ... })` for attributes, `fail(error)` (records the exception and marks the span failed), `ok()`, `addEvent(name, attributes?)` and `updateName(name)`. It also implements the full `@opentelemetry/api` `Span` interface; wherever that interface takes a `SpanKind` or `SpanStatusCode` number, Bun also accepts the name (`{ kind: "client" }`, `setStatus("error", message)`).

@@ -575,7 +575,7 @@ impl ClientSession {
         };
         client.state.response_stage = HTTPStage::Headers;
 
-        if let Err(err) = self.pump_send_bodies() {
+        if let Err(err) = self.pump_send_bodies_with(Some((&stream, &mut *client))) {
             // `client` is busy here, so fail it directly rather than through
             // its stream's back-reference.
             stream.client.set(None);
@@ -871,8 +871,21 @@ impl ClientSession {
 
     /// Drain and flush until backpressure or nothing is left: a full flush raises no onWritable.
     fn pump_send_bodies(&self) -> Result<(), Error> {
+        self.pump_send_bodies_with(None)
+    }
+
+    /// [`pump_send_bodies`](Self::pump_send_bodies) while `busy`'s request is
+    /// the one the caller is working on.
+    fn pump_send_bodies_with(
+        &self,
+        mut busy: Option<(&Stream, &mut HTTPClient)>,
+    ) -> Result<(), Error> {
         loop {
-            let more = encode::drain_send_bodies(self);
+            let more = encode::drain_send_bodies(
+                self,
+                busy.as_mut()
+                    .map(|(stream, client)| (&**stream, &mut **client)),
+            );
             let backpressured = self.flush()?;
             if !more || backpressured {
                 return Ok(());

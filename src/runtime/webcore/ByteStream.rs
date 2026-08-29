@@ -192,7 +192,7 @@ impl readable_stream::SourceContext for ByteStream {
         Self::finalize(self)
     }
     fn wrapper_finalized(&self) {
-        self.parent_const().producer.get().consumer_collected();
+        self.parent().producer.get().consumer_collected();
     }
     fn drain_internal_buffer(&self) -> Vec<u8> {
         Self::drain(self)
@@ -211,7 +211,7 @@ impl readable_stream::SourceContext for ByteStream {
 
 // Every `ByteStream` is the `context` field of a heap-allocated `Source`
 // (ReadableStream.NewSource); never constructed standalone.
-bun_core::impl_field_parent! { ByteStream => Source.context; pub fn shared parent; pub fn shared parent_const; }
+bun_core::impl_field_parent! { ByteStream => Source.context; pub fn shared parent; }
 
 impl ByteStream {
     /// A stream seeded from what the producer had already buffered.
@@ -350,14 +350,14 @@ impl ByteStream {
         }
         self.has_received_last_chunk.set(true);
         self.on_cancel();
-        let source = self.parent_const();
+        let source = self.parent();
         let mut p = source.producer.replace(streams::SourceHandle::None);
         p.close(None);
     }
 
     #[inline]
     pub(crate) fn signal_drained(&self) {
-        self.parent_const().producer.get().ready(None, None);
+        self.parent().producer.get().ready(None, None);
     }
 
     /// Take the unread buffered bytes (`buffer[offset..]`) without signalling
@@ -375,7 +375,7 @@ impl ByteStream {
     /// Called by native fast-paths after wiring `self.sink`: a consumer now
     /// waits for bytes, so a parked producer resumes.
     pub fn signal_consumer_attached(&self) {
-        self.parent_const().producer.get().start();
+        self.parent().producer.get().start();
     }
 
     pub(crate) fn on_data(&self, mut stream: streams::Result) {
@@ -448,7 +448,7 @@ impl ByteStream {
                 // (`?` would skip it).
                 bun_output::scoped_log!(ByteStream, "ByteStream.onData err  action.reject()");
 
-                let global = self.parent_const().global_this();
+                let global = self.parent().global_this();
                 // R-2: move the action out of the cell *before* `signal_drained`
                 // and `reject`; both can re-enter and consume the slot.
                 let mut action = self.buffer_action.replace(None).unwrap();
@@ -486,7 +486,7 @@ impl ByteStream {
                     );
 
                     let mut blob = self.to_any_blob().unwrap();
-                    action.fulfill(self.parent_const().global_this(), &mut blob);
+                    action.fulfill(self.parent().global_this(), &mut blob);
                     return;
                 }
                 if self.buffer.get().capacity() == 0 {
@@ -501,7 +501,7 @@ impl ByteStream {
                         // `stream`).
                         self.buffer.set(owned.move_to_list_managed());
                         let mut blob = self.to_any_blob().unwrap();
-                        action.fulfill(self.parent_const().global_this(), &mut blob);
+                        action.fulfill(self.parent().global_this(), &mut blob);
                         return;
                     }
                 }
@@ -518,7 +518,7 @@ impl ByteStream {
                 // (Temporary* variants are non-owning `RawSlice` and so are left alone).
                 drop(stream);
                 let mut blob = self.to_any_blob().unwrap();
-                action.fulfill(self.parent_const().global_this(), &mut blob);
+                action.fulfill(self.parent().global_this(), &mut blob);
                 return;
             } else {
                 self.buffer
@@ -538,7 +538,7 @@ impl ByteStream {
             // Derive the destination from the GC-rooted view: JS can detach or
             // transfer the backing ArrayBuffer between the pull and the data
             // arriving. A detached view re-derives to an empty slice.
-            let global = self.parent_const().global_this();
+            let global = self.parent().global_this();
             let mut pending_view = self
                 .pending_value
                 .get()
@@ -671,7 +671,7 @@ impl ByteStream {
 
     fn set_value(&self, view: JSValue) {
         bun_jsc::mark_binding!();
-        let global = self.parent_const().global_this();
+        let global = self.parent().global_this();
         self.pending_value.with_mut(|pv| pv.set(global, view));
     }
 
@@ -769,7 +769,7 @@ impl ByteStream {
         }
 
         if let Some(mut action) = self.buffer_action.replace(None) {
-            let global = self.parent_const().global_this();
+            let global = self.parent().global_this();
             action.reject(
                 global,
                 &streams::StreamError::AbortReason(jsc::CommonAbortReason::UserAbort),
@@ -854,7 +854,7 @@ impl ByteStream {
                 p.result.release();
                 p.result = streams::Result::Done;
             });
-            self.parent_const().is_closed.set(true);
+            self.parent().is_closed.set(true);
             return Some(blob::Any::InternalBlob(blob::Internal {
                 bytes: buffer,
                 was_string: false,
@@ -920,7 +920,7 @@ pub mod testing_apis {
             return Err(global.throw(format_args!("expected a ByteStream-backed ReadableStream")));
         };
         bytes
-            .parent_const()
+            .parent()
             .producer
             .set(streams::SourceHandle::TestingCancelOnDrain(bytes));
         Ok(JSValue::UNDEFINED)

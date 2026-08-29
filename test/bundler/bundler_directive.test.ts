@@ -197,6 +197,27 @@ describe("bundler", () => {
     run: { stdout: "object object" },
   });
 
+  // A Use Strict Directive is spelled without escape sequences, and a
+  // parenthesized string is not a directive at all: it ends the prologue. Node
+  // runs both functions sloppy and accepts the non-simple parameter list.
+  itBundled("directive/EscapedOrParenthesizedUseStrict", {
+    files: {
+      "/entry.cjs": /* js */ `
+        function escaped(a = 1) { "use\\x20strict"; return typeof this }
+        function unicode() { '\\u0075se strict'; return typeof this }
+        function paren(a = 1) { ("use strict"); return typeof this }
+        function after(a = 1) { ("first"); "use strict"; return typeof this }
+        console.log(escaped(), unicode(), paren(), after());
+        module.exports = after;
+      `,
+    },
+    bundling: false,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("use strict");
+    },
+    run: { stdout: "object object object object" },
+  });
+
   // Only a module or function body has a directive prologue. A string at the
   // start of a block is an expression statement and does not switch the
   // enclosing scope to strict mode.
@@ -457,5 +478,30 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain('(function(exports, require, module, __filename, __dirname) {"use strict";');
     },
     run: { stdout: "undefined" },
+  });
+
+  // The dev server output is a registry of module closures. Each closure starts
+  // with its own module's prologue, and the chunk itself gets no copy: a
+  // chunk-level directive would apply to every module in the registry.
+  itBundled("directive/DevServerModuleClosures", {
+    files: {
+      "/entry.js": /* js */ `
+        "use strict";
+        "use potato";
+        import { x } from "./dep.js";
+        console.log(x);
+      `,
+      "/dep.js": /* js */ `
+        "use tomato";
+        export const x = 1;
+      `,
+    },
+    format: "internal_bake_dev",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/\{\s*"use strict";\s*"use potato";/);
+      expect(out).toMatch(/\{\s*"use tomato";/);
+      expect(out).not.toStartWith('"use strict"');
+    },
   });
 });

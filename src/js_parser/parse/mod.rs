@@ -335,6 +335,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(expr)
     }
 
+    /// Whether the string literal at `loc` is spelled `"use strict"` or `'use strict'`
+    /// in the source. Only an unescaped spelling is a Use Strict Directive.
+    fn source_has_use_strict_token(&self, loc: bun_ast::Loc) -> bool {
+        const RAW: &[u8] = b"use strict";
+        let contents = self.source.contents();
+        let start = loc.i() + 1;
+        let end = start + RAW.len();
+        contents.get(start..end) == Some(RAW) && contents.get(end) == contents.get(loc.i())
+    }
+
     pub(crate) fn parse_call_args(&mut self) -> Result<ExprListLoc, Error> {
         // Allow "in" inside call arguments; restored on every exit path
         let old_allow_in = self.allow_in;
@@ -1479,13 +1489,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_directive_prologue = false;
                 if let js_ast::stmt::Data::SExpr(expr) = &stmt.data {
                     if let js_ast::expr::Data::EString(str_) = &expr.value.data {
-                        if !str_.prefer_template {
+                        // A directive is a bare string token: `("use strict")` ends the prologue.
+                        if !str_.prefer_template && expr.value.loc == stmt.loc {
                             is_directive_prologue = true;
 
                             if str_.eql_comptime(b"use asm") && !p.options.repl_mode {
                                 // Dropped: the output would fail asm.js validation. The REPL keeps it, like node.
                                 skip = true;
                                 stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
+                            } else if str_.eql_comptime(b"use strict")
+                                && !p.source_has_use_strict_token(expr.value.loc)
+                            {
+                                // `"use\x20strict"` cooks to the same value, but a Use Strict
+                                // Directive has no escape sequence. It stays a string statement.
                             } else {
                                 let directive_loc = expr.value.loc;
                                 let is_use_strict = str_.eql_comptime(b"use strict");

@@ -113,6 +113,23 @@ describe.concurrent("run-cjs", () => {
       expect(result).toEqual({ stdout: "2 object object 3 8\n", stderr: "", exitCode: 0 });
     });
 
+    test("an escaped or parenthesized 'use strict' is not a Use Strict Directive", async () => {
+      const result = await run(
+        {
+          "entry.cjs": `
+            function escaped(a = 1) { "use\\x20strict"; return typeof this }
+            function unicode() { '\\u0075se strict'; return typeof this }
+            function paren(a = 1) { ("use strict"); return typeof this }
+            function after(a = 1) { ("first"); "use strict"; return typeof this }
+            ("use strict");
+            console.log(escaped(), unicode(), paren(), after(), typeof this, 010);
+          `,
+        },
+        "entry.cjs",
+      );
+      expect(result).toEqual({ stdout: "object object object object object 8\n", stderr: "", exitCode: 0 });
+    });
+
     test("'use strict' in a function with a non-simple parameter list is a SyntaxError", async () => {
       const result = await run({ "entry.cjs": `function f(a = 1) { "use strict"; return a }` }, "entry.cjs");
       expect(result.stderr).toContain(

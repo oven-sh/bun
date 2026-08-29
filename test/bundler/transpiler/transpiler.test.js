@@ -4741,6 +4741,15 @@ class A {
     expect(new Bun.Transpiler().transformSync("function f() { `use strict`; var package = 1 }")).not.toContain(
       "use strict",
     );
+    // A Use Strict Directive has no escape sequence, and a parenthesized string
+    // ends the prologue. Neither makes the function strict.
+    expect(
+      new Bun.Transpiler().transformSync(`function f(a = 1) { "use\\x20strict"; var package = 1 }
+  function g() { '\\u0075se strict'; var package = 2 }
+  function h(a = 1) { ("use strict"); var package = 3 }
+  function i(a = 1) { ("first"); "use strict"; var package = 4 }
+  ("use strict"); var package = 5;`),
+    ).not.toContain("use strict");
     // A directive prologue applies to the parameters as well
     expect(() => new Bun.Transpiler().transformSync(`function f(arguments) { "use strict" }`)).toThrow(
       'Declarations with the name "arguments" cannot be used in strict mode',

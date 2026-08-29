@@ -77,6 +77,7 @@ class GlobalObject;
 
 namespace Bun {
 class StrongRootBlock;
+struct TestIsolationBaseline;
 
 // JSC measures the live size of the heap at the end of each collection, but only
 // publishes it per scope: an eden collection updates
@@ -280,6 +281,12 @@ public:
 
     JSC::DecoderStringTable* decoderStringTable() final { return m_decoderStringTable.get(); }
     void setDecoderStringTable(std::span<const uint8_t>);
+
+    // See Zig__GlobalObject__captureTestIsolationBaseline (ZigGlobalObject.cpp).
+    struct TestIsolationBaselineDeleter {
+        void operator()(Bun::TestIsolationBaseline*) const;
+    };
+    std::unique_ptr<Bun::TestIsolationBaseline, TestIsolationBaselineDeleter> testIsolationBaseline;
 
 private:
     bool isWebCoreJSClientData() const final { return true; }

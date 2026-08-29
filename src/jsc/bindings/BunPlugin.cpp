@@ -585,6 +585,8 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
         }
     };
 
+    globalObject->moduleMockCalledSinceTestIsolationBaseline = true;
+
     resolveSpecifier();
     RETURN_IF_EXCEPTION(scope, {});
 

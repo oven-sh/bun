@@ -1342,6 +1342,19 @@ impl JSGlobalObject {
         Zig__GlobalObject__createForTestIsolation(old_global, console)
     }
 
+    pub(crate) fn capture_test_isolation_baseline(global: &JSGlobalObject) {
+        Zig__GlobalObject__captureTestIsolationBaseline(global)
+    }
+
+    /// Checked before the context stop: a stopped context cannot be reused.
+    pub(crate) fn is_test_isolation_reuse_candidate(global: &JSGlobalObject) -> bool {
+        Zig__GlobalObject__isTestIsolationReuseCandidate(global)
+    }
+
+    pub(crate) fn try_reset_for_test_isolation(global: &JSGlobalObject) -> bool {
+        Zig__GlobalObject__tryResetForTestIsolation(global)
+    }
+
     pub fn to_type_error(&self, code: JscError, args: Arguments<'_>) -> JSValue {
         code.fmt(self, args)
     }
@@ -1579,6 +1592,9 @@ unsafe extern "C" {
         old_global: &JSGlobalObject,
         console: *mut c_void,
     ) -> *mut JSGlobalObject;
+    safe fn Zig__GlobalObject__captureTestIsolationBaseline(global: &JSGlobalObject);
+    safe fn Zig__GlobalObject__isTestIsolationReuseCandidate(global: &JSGlobalObject) -> bool;
+    safe fn Zig__GlobalObject__tryResetForTestIsolation(global: &JSGlobalObject) -> bool;
 }
 
 impl ScriptExecutionContextIdentifier {

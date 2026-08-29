@@ -1750,8 +1750,9 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
         // JS thread, no re-entry while we hold the field borrow.
         if !all.is_null() && unsafe { (*all).fake_timers.is_active() } {
             let global = vm.global();
-            // SAFETY: as above; only touches `fake_timers.active` and the
-            // `CURRENT_TIME` static.
+            // SAFETY: as above; touches `fake_timers.active`, the `CURRENT_TIME`
+            // static, and deletes the `setTimeout.clock` marker (data-property
+            // ops on the reified native fn; no user JS, no `timer_all()` re-entry).
             unsafe { (*all).fake_timers.reset_for_isolation(global) };
         }
         if !all.is_null() {

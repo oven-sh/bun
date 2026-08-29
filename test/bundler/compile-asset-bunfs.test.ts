@@ -249,8 +249,14 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
       using dir = tempDir("bunfs-dir-route", {
         "index.ts": /* ts */ `
           const root = import.meta.dir + "/public";
-          function errcode(fn: () => unknown): string {
-            try { fn(); return ""; } catch (e: any) { return e.code; }
+          // A server that starts by mistake is stopped so the process still exits.
+          function serveErrcode(dir: string): string {
+            try {
+              Bun.serve({ port: 0, routes: { "/x/*": { dir } } }).stop(true);
+              return "";
+            } catch (e: any) {
+              return e.code;
+            }
           }
           using server = Bun.serve({
             port: 0,
@@ -293,8 +299,8 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
             notModified: await get("/static/a.txt", { headers: { "if-none-match": file.etag! } }),
             staleEtag: (await get("/static/a.txt", { headers: { "if-none-match": '"0000000000000000"' } })).status,
             big: { status: bigRes.status, length: bigBody.length, matches: bigBody.equals(bigExpected) },
-            missingDir: errcode(() => Bun.serve({ port: 0, routes: { "/x/*": { dir: import.meta.dir + "/nope" } } })),
-            fileAsDir: errcode(() => Bun.serve({ port: 0, routes: { "/x/*": { dir: root + "/a.txt" } } })),
+            missingDir: serveErrcode(import.meta.dir + "/nope"),
+            fileAsDir: serveErrcode(root + "/a.txt"),
           }));
         `,
         "public/a.txt": "hello asset",

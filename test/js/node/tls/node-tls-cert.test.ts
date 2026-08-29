@@ -789,22 +789,22 @@ describe("expired or not-yet-valid CA in the trust set", () => {
       ["root", "int-future"],
       "authorized",
     ],
-    // was CERT_HAS_EXPIRED / CERT_NOT_YET_VALID: absent, so the leaf has no issuer
+    // absent as an anchor, but the failure still names the reason
     [
       "expired trusted intermediate is not an anchor",
       ["leaf"],
       ["root", "int-expired"],
-      "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+      "CERT_HAS_EXPIRED",
     ],
     [
       "not-yet-valid trusted intermediate is not an anchor",
       ["leaf"],
       ["root", "int-future"],
-      "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+      "CERT_NOT_YET_VALID",
     ],
     ["valid trusted intermediate is (server sends leaf only)", ["leaf"], ["root", "int-valid"], "authorized"],
     // pinning only an expired intermediate fails closed (was UNABLE_TO_GET_ISSUER_CERT: through it, then no root)
-    ["ca = only the expired intermediate", ["leaf", "int-valid"], ["int-expired"], "UNABLE_TO_GET_ISSUER_CERT_LOCALLY"],
+    ["ca = only the expired intermediate", ["leaf", "int-valid"], ["int-expired"], "CERT_HAS_EXPIRED"],
     [
       "ca = only the expired intermediate, partial chains allowed, server sends it",
       ["leaf", "int-expired"],
@@ -812,12 +812,12 @@ describe("expired or not-yet-valid CA in the trust set", () => {
       "CERT_HAS_EXPIRED",
       { allowPartialTrustChain: true },
     ],
-    // was CERT_HAS_EXPIRED; an exact match on an expired pinned cert is not a trust anchor either
+    // an exact match on an expired pinned cert is not a trust anchor either
     [
       "ca = only the expired intermediate, partial chains allowed, server sends the valid one",
       ["leaf", "int-valid"],
       ["int-expired"],
-      "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+      "CERT_HAS_EXPIRED",
       { allowPartialTrustChain: true },
     ],
     [
@@ -843,14 +843,14 @@ describe("expired or not-yet-valid CA in the trust set", () => {
       ["root", "int-constrained-expired"],
       "authorized",
     ],
-    // Roots: was CERT_HAS_EXPIRED in all three
+    // Roots (the two "authorized" rows were CERT_HAS_EXPIRED)
     [
       "expired self-signed twin of the root does not shadow it",
       ["leaf", "int-valid"],
       ["root-expired", "root"],
       "authorized",
     ],
-    ["only the expired twin trusted", ["leaf", "int-valid"], ["root-expired"], "UNABLE_TO_GET_ISSUER_CERT_LOCALLY"],
+    ["only the expired twin trusted", ["leaf", "int-valid"], ["root-expired"], "CERT_HAS_EXPIRED"],
     [
       "cross-sign to an expired old root: the valid root anchors",
       ["leaf", "int-valid", "root-cross-by-oldroot"],
@@ -861,7 +861,7 @@ describe("expired or not-yet-valid CA in the trust set", () => {
       "cross-sign to an expired old root: only the old root trusted",
       ["leaf", "int-valid", "root-cross-by-oldroot"],
       ["oldroot-expired"],
-      "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+      "CERT_HAS_EXPIRED",
     ],
   ];
   for (const [name, chain, ca, expected, extra] of cases) {

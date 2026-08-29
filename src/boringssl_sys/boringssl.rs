@@ -297,6 +297,59 @@ impl Drop for OwnedSslCtx {
     }
 }
 
+/// Owns one `X509` reference; `X509_free`s it on drop. Construct from a
+/// pointer that already carries a +1 (`SSL_get_peer_certificate`,
+/// `X509_STORE_CTX_get1_issuer`) or take a new one with [`OwnedX509::up_ref`].
+///
+/// `#[repr(transparent)]` over `NonNull`, so it is passed across FFI exactly
+/// like the `X509*` it wraps and `Option<OwnedX509>` has the layout of a
+/// nullable one.
+#[repr(transparent)]
+pub struct OwnedX509(core::ptr::NonNull<X509>);
+
+impl OwnedX509 {
+    /// Takes the +1 `raw` carries; `None` when `raw` is null.
+    ///
+    /// # Safety
+    /// `raw` must be null or carry a reference the caller is giving up.
+    pub unsafe fn from_raw(raw: *mut X509) -> Option<Self> {
+        core::ptr::NonNull::new(raw).map(Self)
+    }
+
+    /// Takes a reference of its own to `cert`.
+    pub fn up_ref(cert: &mut X509) -> Self {
+        X509_up_ref(cert);
+        Self(core::ptr::NonNull::from(cert))
+    }
+
+    pub fn as_ptr(&self) -> *mut X509 {
+        self.0.as_ptr()
+    }
+}
+
+impl core::ops::Deref for OwnedX509 {
+    type Target = X509;
+    fn deref(&self) -> &X509 {
+        // SAFETY: the reference we own keeps the certificate alive until `Drop`.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl core::ops::DerefMut for OwnedX509 {
+    fn deref_mut(&mut self) -> &mut X509 {
+        // SAFETY: as in `Deref`; `X509` is an opaque ZST handle, so the `&mut`
+        // covers no bytes that anything else could alias.
+        unsafe { self.0.as_mut() }
+    }
+}
+
+impl Drop for OwnedX509 {
+    fn drop(&mut self) {
+        // SAFETY: we own exactly one reference, released once.
+        unsafe { X509_free(self.0.as_ptr()) }
+    }
+}
+
 /// Owns the `STACK_OF(GENERAL_NAME)` that `X509V3_EXT_d2i` returns for a
 /// subjectAltName extension. Frees every `GENERAL_NAME` and then the stack.
 pub struct GeneralNames(core::ptr::NonNull<struct_stack_st_GENERAL_NAME>);
@@ -518,6 +571,14 @@ impl SSL {
             sk_X509_value(cert_chain, 0).as_mut()
         }
     }
+
+    /// The peer's leaf certificate as a reference of our own; `None` when the
+    /// peer sent none.
+    pub fn peer_certificate(&self) -> Option<OwnedX509> {
+        // SAFETY: `self` is a live SSL; `SSL_get_peer_certificate` returns a
+        // new reference (or null), which `OwnedX509` takes over.
+        unsafe { OwnedX509::from_raw(SSL_get_peer_certificate(self)) }
+    }
 }
 
 impl Drop for GeneralNames {
@@ -661,6 +722,9 @@ unsafe extern "C" {
     pub fn d2i_X509(out: *mut *mut X509, inp: *mut *const u8, len: c_long) -> *mut X509;
     pub fn i2d_X509(x: *mut X509, outp: *mut *mut u8) -> c_int;
     pub fn X509_free(x509: *mut X509);
+    // Opaque-ZST `&X509` is a bare non-null pointer to BoringSSL; the call
+    // only bumps the refcount, so there is no caller-side precondition.
+    safe fn X509_up_ref(x509: &X509) -> c_int;
     pub fn X509_get_subject_name(x509: *const X509) -> *mut X509_NAME;
     pub fn X509_get_ext_by_NID(x: *const X509, nid: c_int, lastpos: c_int) -> c_int;
     pub fn X509_get_ext(x: *const X509, loc: c_int) -> *mut X509_EXTENSION;

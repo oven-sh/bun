@@ -769,4 +769,153 @@ describe("Bun.serve() directory routes", () => {
     });
     expect(await (await fetch(`${server.url}static/x.txt`)).text()).toBe("x");
   });
+
+  it("applies { headers } to served files", async () => {
+    using dir = tempDir("serve-dir-headers", {
+      "public/app.js": "console.log(1);",
+      "public/sub/index.html": "<h1>sub</h1>",
+    });
+    const cacheControl = "public, max-age=31536000, immutable";
+    server = serve({
+      port: 0,
+      routes: {
+        "/assets/*": {
+          dir: join(String(dir), "public"),
+          headers: { "cache-control": cacheControl, "x-custom": "1" },
+        },
+      },
+    });
+
+    const res = await fetch(`${server.url}assets/app.js`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe(cacheControl);
+    expect(res.headers.get("x-custom")).toBe("1");
+    // Generated headers still present alongside the user headers.
+    expect(res.headers.get("content-type")).toContain("javascript");
+    expect(res.headers.get("etag")).toStartWith('W/"');
+
+    const head = await fetch(`${server.url}assets/app.js`, { method: "HEAD" });
+    expect(head.status).toBe(200);
+    expect(head.headers.get("cache-control")).toBe(cacheControl);
+
+    // 304 responses carry the headers too (RFC 9110 §15.4.5).
+    const notModified = await fetch(`${server.url}assets/app.js`, {
+      headers: { "if-none-match": res.headers.get("etag")! },
+    });
+    expect(notModified.status).toBe(304);
+    expect(notModified.headers.get("cache-control")).toBe(cacheControl);
+
+    // Routing outcomes (404, 301) are not the served files: no user headers.
+    const miss = await fetch(`${server.url}assets/nope.js`);
+    expect(miss.status).toBe(404);
+    expect(miss.headers.get("cache-control")).toBeNull();
+
+    const redirect = await fetch(`${server.url}assets/sub`, { redirect: "manual" });
+    expect(redirect.status).toBe(301);
+    expect(redirect.headers.get("cache-control")).toBeNull();
+  });
+
+  it("a user header replaces the generated header of the same name", async () => {
+    using dir = tempDir("serve-dir-headers-override", {
+      "public/data.json": `{"a":1}`,
+    });
+    server = serve({
+      port: 0,
+      routes: {
+        "/static/*": {
+          dir: join(String(dir), "public"),
+          headers: { "content-type": "text/plain", etag: '"custom"' },
+        },
+      },
+    });
+
+    const { status, head, headers } = await raw("/static/data.json");
+    expect(status).toBe(200);
+    expect(headers["content-type"]).toBe("text/plain");
+    expect(headers["etag"]).toBe('"custom"');
+    // Exactly one of each: the generated header is replaced, not duplicated.
+    expect(head.toLowerCase().split("content-type:").length - 1).toBe(1);
+    expect(head.toLowerCase().split("etag:").length - 1).toBe(1);
+
+    // Preconditions compare against the user ETag.
+    const notModified = await fetch(`${server.url}static/data.json`, {
+      headers: { "if-none-match": '"custom"' },
+    });
+    expect(notModified.status).toBe(304);
+  });
+
+  it("a user last-modified header replaces the stat time in precondition checks", async () => {
+    using dir = tempDir("serve-dir-headers-lm", {
+      "public/a.txt": "aaa",
+    });
+    const userDate = "Wed, 01 Jan 2020 00:00:00 GMT";
+    server = serve({
+      port: 0,
+      routes: {
+        "/static/*": {
+          dir: join(String(dir), "public"),
+          headers: { "last-modified": userDate },
+        },
+      },
+    });
+
+    const { status, head, headers } = await raw("/static/a.txt");
+    expect(status).toBe(200);
+    expect(headers["last-modified"]).toBe(userDate);
+    // The stat-derived header is replaced, not duplicated.
+    expect(head.toLowerCase().split("last-modified:").length - 1).toBe(1);
+
+    // The file mtime is "now", so a 304 here proves the comparison uses the
+    // user date, not the stat time.
+    const notModified = await fetch(`${server.url}static/a.txt`, {
+      headers: { "if-modified-since": userDate },
+    });
+    expect(notModified.status).toBe(304);
+
+    const precondFailed = await fetch(`${server.url}static/a.txt`, {
+      headers: { "if-unmodified-since": "Tue, 01 Jan 2019 00:00:00 GMT" },
+    });
+    expect(precondFailed.status).toBe(412);
+  });
+
+  it("ignores user framing and range headers", async () => {
+    using dir = tempDir("serve-dir-headers-framing", {
+      "public/a.txt": "0123456789",
+    });
+    server = serve({
+      port: 0,
+      routes: {
+        "/static/*": {
+          dir: join(String(dir), "public"),
+          headers: {
+            "content-length": "1",
+            "content-range": "bytes 0-0/1",
+            "transfer-encoding": "chunked",
+            "accept-ranges": "none",
+            "x-kept": "1",
+          },
+        },
+      },
+    });
+
+    const { status, headers, head, body } = await raw("/static/a.txt");
+    expect(status).toBe(200);
+    // The non-framing user header is kept, the framing ones are dropped.
+    expect(headers["x-kept"]).toBe("1");
+    // Framing comes from the file, not the user headers.
+    expect(headers["content-length"]).toBe("10");
+    expect(body).toBe("0123456789");
+    expect(head.toLowerCase()).not.toContain("content-range:");
+    expect(head.toLowerCase()).not.toContain("transfer-encoding:");
+    expect(headers["accept-ranges"]).toBe("bytes");
+    expect(head.toLowerCase().split("accept-ranges:").length - 1).toBe(1);
+
+    // Range serving stays on.
+    const partial = await fetch(`${server.url}static/a.txt`, {
+      headers: { range: "bytes=2-4" },
+    });
+    expect(partial.status).toBe(206);
+    expect(await partial.text()).toBe("234");
+    expect(partial.headers.get("content-range")).toBe("bytes 2-4/10");
+  });
 });

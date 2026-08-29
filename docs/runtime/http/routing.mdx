@@ -225,6 +225,21 @@ Directory routes share the response path with file routes:
 
 Pass `statCache: false` to disable the per-path `Last-Modified` cache (saves roughly 20 KB per route).
 
+Pass `headers` to send extra response headers with every file served from the route, for example a long `cache-control` for hashed asset bundles:
+
+```ts
+Bun.serve({
+  routes: {
+    "/assets/*": {
+      dir: "./dist/assets",
+      headers: { "cache-control": "public, max-age=31536000, immutable" },
+    },
+  },
+});
+```
+
+A header set here replaces the generated header of the same name (`Content-Type`, `Last-Modified`, `ETag`), and the precondition checks compare against the replacement. The headers are not sent on `404` or `301` responses. The route computes framing and range serving per file, so `Content-Length`, `Content-Range`, `Transfer-Encoding`, and `Accept-Ranges` set here are ignored.
+
 ---
 
 ## Streaming files

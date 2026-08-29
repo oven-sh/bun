@@ -630,6 +630,31 @@ declare module "bun" {
        * @default true
        */
       statCache?: boolean;
+      /**
+       * Extra response headers sent with every file served from this route,
+       * for example `cache-control` for hashed assets. A header set here
+       * replaces the generated header of the same name (`Content-Type`,
+       * `Last-Modified`, `ETag`), and precondition checks (`If-None-Match`,
+       * `If-Modified-Since`) compare against the replacement. Not sent on
+       * `404` or `301` responses.
+       *
+       * The route computes framing and range serving per file, so
+       * `Content-Length`, `Content-Range`, `Transfer-Encoding`, and
+       * `Accept-Ranges` set here are ignored.
+       *
+       * @example
+       * ```ts
+       * Bun.serve({
+       *   routes: {
+       *     "/assets/*": {
+       *       dir: "./dist/assets",
+       *       headers: { "cache-control": "public, max-age=31536000, immutable" },
+       *     },
+       *   },
+       * });
+       * ```
+       */
+      headers?: HeadersInit;
     }
 
     type BaseRouteValue = Response | false | HTMLBundle | BunFile | DirectoryRouteOptions;

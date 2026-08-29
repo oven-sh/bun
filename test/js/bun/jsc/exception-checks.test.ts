@@ -27,6 +27,33 @@ const snippets: Record<string, { code: string; stdout: string }> = {
     code: `const a = "SIG"; const b = "BOGUS"; try { process.kill(process.pid, a + b); } catch (e) { console.log(e.code); }`,
     stdout: "ERR_UNKNOWN_SIGNAL",
   },
+  // JSC builds a parse error's stack before it throws the error, which runs
+  // the Error.prepareStackTrace hook. eval is not affected: an eval parse
+  // error skips that step.
+  "new Function with a syntax error": {
+    code: `try { new Function("{"); } catch (e) { console.log(e.constructor.name + ": " + e.message); }`,
+    stdout: "SyntaxError: Unexpected end of script",
+  },
+  "new Function with a syntax error and a custom Error.prepareStackTrace": {
+    code: `Error.prepareStackTrace = (err, sites) => "custom:" + err.message + ":" + (sites.length > 0); try { new Function("a", "{"); } catch (e) { console.log(e.constructor.name + " " + e.stack); }`,
+    stdout: "SyntaxError custom:Unexpected end of script:true",
+  },
+  "new Function with a syntax error and a throwing Error.prepareStackTrace": {
+    code: `Error.prepareStackTrace = () => { throw new Error("boom"); }; try { new Function("{"); } catch (e) { console.log(e.constructor.name + ": " + e.message + " " + typeof e.stack); }`,
+    stdout: "SyntaxError: Unexpected end of script string",
+  },
+  "GeneratorFunction with a syntax error": {
+    code: `const GeneratorFunction = Object.getPrototypeOf(function* () {}).constructor; try { GeneratorFunction("{"); } catch (e) { console.log(e.constructor.name + ": " + e.message); }`,
+    stdout: "SyntaxError: Unexpected end of script",
+  },
+  "AsyncFunction with a syntax error": {
+    code: `const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor; try { new AsyncFunction("{"); } catch (e) { console.log(e.constructor.name + ": " + e.message); }`,
+    stdout: "SyntaxError: Unexpected end of script",
+  },
+  "vm.SourceTextModule with a syntax error": {
+    code: `const { SourceTextModule } = require("node:vm"); try { new SourceTextModule("{"); } catch (e) { console.log(e.constructor.name + ": " + e.message); }`,
+    stdout: "SyntaxError: Unexpected end of script",
+  },
 };
 
 for (const [name, { code, stdout: expected }] of Object.entries(snippets)) {

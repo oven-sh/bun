@@ -45,6 +45,11 @@ impl AnyRequest {
                     // H3 cannot see repeats in one pass; the caller joins.
                     tracestate_repeated: 1,
                     baggage_repeated: 1,
+                    // (a valid traceparent has no comma; a joined repeat does)
+                    traceparent_repeated: r
+                        .header_joined(b"traceparent")
+                        .is_some_and(|v| v.contains(&b','))
+                        as u8,
                     _req: core::marker::PhantomData,
                 }
             }
@@ -118,6 +123,8 @@ pub struct TelemetryHeaders<'a> {
     /// More than one `tracestate` / `baggage` field was present: use `header_joined`.
     pub tracestate_repeated: u8,
     pub baggage_repeated: u8,
+    /// More than one `traceparent` field: the header is invalid (W3C trace-context).
+    pub traceparent_repeated: u8,
     _req: core::marker::PhantomData<&'a Request>,
 }
 
@@ -206,6 +213,7 @@ impl Request {
             http10: 0,
             tracestate_repeated: 0,
             baggage_repeated: 0,
+            traceparent_repeated: 0,
             _req: core::marker::PhantomData,
         };
         c::uws_req_telemetry_headers(self, &mut out);

@@ -447,6 +447,27 @@ describe("Bun.serve", () => {
     expect(srv.traceId).toMatch(/^[0-9a-f]{32}$/);
   });
 
+  test("two traceparent headers on one request are invalid: new root (W3C test_traceparent_duplicated)", async () => {
+    asExternalClient();
+    using server = Bun.serve({ port: 0, fetch: () => new Response("x") });
+    const tp1 = "00-11111111111111111111111111111111-2222222222222222-01";
+    const tp2 = "00-33333333333333333333333333333333-4444444444444444-01";
+    // fetch() would join them into one field; write the raw request so there are two
+    const sock = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        data(s) {
+          s.end();
+        },
+      },
+    });
+    sock.write(`GET / HTTP/1.1\r\nHost: localhost\r\ntraceparent: ${tp1}\r\ntraceparent: ${tp2}\r\nConnection: close\r\n\r\n`);
+    const [srv] = byName(await collect(1), "bun.http.server");
+    expect(srv.parentSpanId).toBeUndefined();
+    expect([tp1.slice(3, 35), tp2.slice(3, 35)]).not.toContain(srv.traceId);
+  });
+
   test("websocket upgrade ends the request span with 101", async () => {
     using server = Bun.serve({
       port: 0,

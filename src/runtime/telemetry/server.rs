@@ -30,7 +30,7 @@ pub fn begin(
     let h = req.telemetry_headers();
     let mut parent = None;
     let mut raw_ts = None;
-    if st.propagate_trace_context {
+    if st.propagate_trace_context && h.traceparent_repeated == 0 {
         if let Some(tp) = h.traceparent() {
             parent = propagation::parse_traceparent(tp);
             if parent.is_some() {

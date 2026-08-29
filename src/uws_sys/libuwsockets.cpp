@@ -1511,6 +1511,8 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     /* More than one tracestate / baggage field was present (combine them). */
     uint8_t tracestate_repeated;
     uint8_t baggage_repeated;
+    /* More than one traceparent field: W3C says the header is then invalid. */
+    uint8_t traceparent_repeated;
   };
   void uws_req_telemetry_headers(uws_req_t *res, struct uws_telemetry_headers_t *out)
   {
@@ -1535,11 +1537,14 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
       if (slot && !slot->ptr) {
         slot->ptr = header.second.data();
         slot->len = header.second.length();
-      } else if (slot && (slot == &out->tracestate || slot == &out->baggage)) {
+      } else if (slot == &out->tracestate) {
         /* W3C: multiple tracestate / baggage fields are one list; flag it so
          * the caller re-reads that header joined (rare). */
-        if (slot == &out->tracestate) out->tracestate_repeated = 1;
-        else out->baggage_repeated = 1;
+        out->tracestate_repeated = 1;
+      } else if (slot == &out->baggage) {
+        out->baggage_repeated = 1;
+      } else if (slot == &out->traceparent) {
+        out->traceparent_repeated = 1;
       }
     }
   }

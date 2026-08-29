@@ -269,8 +269,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // Used for forcing CommonJS
     pub(crate) has_with_scope: bool,
 
-    /// `export` or top-level `await` in the source (not the module type), read
-    /// before the visit pass synthesizes `export` for unwrapped `exports.foo`.
+    /// `export`/top-level `await` in the source, fixed before unwrapping `exports.foo` adds one.
     pub(crate) has_esm_exports_syntax: bool,
     /// `has_esm_exports_syntax` or an ESM module type (`.mjs`, `"type": "module"`).
     pub(crate) is_file_considered_to_have_esm_exports: bool,

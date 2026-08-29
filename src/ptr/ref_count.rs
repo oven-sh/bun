@@ -499,20 +499,20 @@ pub unsafe trait CellRefCounted: Sized {
 /// hand the root pointer and whatever `finalize` returned to `release`, which
 /// gives the storage back.
 ///
-/// Only a `#[ref_count(destroy = …)]` target may call this, forwarding the
-/// pointer the generated [`CellRefCounted::destroy`] received (sole owner,
-/// refcount zero).
+/// # Safety
+/// `this` is the pointer the generated [`CellRefCounted::destroy`] received:
+/// non-null, the allocation root of an initialized `T` whose refcount just
+/// reached zero, with no other live borrow. Only a `#[ref_count(destroy = …)]`
+/// target should call this.
 #[inline]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn destroy_with<T, R>(
+pub unsafe fn destroy_with<T, R>(
     this: *mut T,
     finalize: impl FnOnce(&T) -> R,
     release: impl FnOnce(NonNull<T>, R),
 ) {
     let ptr = NonNull::new(this).expect("destroy_with: null");
-    // SAFETY: `CellRefCounted::destroy` contract — `this` is the sole live
-    // owner of an initialized `T`; `finalize` only observes it shared, and that
-    // borrow ends before `release` may free the storage.
+    // SAFETY: fn contract — sole owner of an initialized `T`; `finalize` only
+    // observes it shared, and that borrow ends before `release` frees storage.
     let r = finalize(unsafe { ptr.as_ref() });
     release(ptr, r);
 }

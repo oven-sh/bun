@@ -258,6 +258,14 @@ where
     }
 }
 
+// SAFETY: `#[ref_count(destroy = Self::destroy)]` above — the last ref runs
+// `destroy` → `release` → `ThisServer::release_request_context`, which returns
+// the slot to the server's `HiveArray` pool; nothing `Box`-frees a context.
+unsafe impl<ThisServer: ServerLike + 'static, const SSL: bool, const DBG: bool, const MUX: bool>
+    bun_collections::PoolReclaimed for RequestContext<ThisServer, SSL, DBG, MUX>
+{
+}
+
 impl<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
     RequestContext<ThisServer, SSL_ENABLED, DEBUG_MODE, MUX>
 where

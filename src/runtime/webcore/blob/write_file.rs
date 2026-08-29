@@ -9,11 +9,9 @@ use bun_ptr::BackRef;
 use bun_sys::{self as sys, Fd};
 use bun_threading::{WorkPool, WorkPoolTask};
 
-use crate::webcore::blob::{
-    self, Blob, FileOpener, MkdirpTarget, Retry, SizeType, mkdir_if_not_exists,
-};
+use crate::webcore::blob::{self, Blob, MkdirpTarget, SizeType};
 #[cfg(not(windows))]
-use crate::webcore::blob::{ClosingState, FileCloser};
+use crate::webcore::blob::{ClosingState, FileCloser, FileOpener, Retry, mkdir_if_not_exists};
 use crate::webcore::body;
 
 bun_output::declare_scope!(WriteFile, hidden);
@@ -69,6 +67,7 @@ impl WriteFile {
     }
 }
 
+#[cfg_attr(windows, allow(dead_code))] // Windows writes go through `WriteFileWindows`
 pub struct WriteFile {
     pub(crate) file_blob: Blob,
     #[cfg(not(windows))]
@@ -102,6 +101,7 @@ bun_io::poll_owner!(WriteFile, io_poll, WriteFile);
 // FileOpener / FileCloser
 // ──────────────────────────────────────────────────────────────────────────
 
+#[cfg(not(windows))]
 impl FileOpener for WriteFile {
     const OPEN_FLAGS: i32 =
         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::NONBLOCK;
@@ -118,8 +118,8 @@ impl FileOpener for WriteFile {
     fn set_system_error(&mut self, e: SystemError) {
         self.system_error = Some(e);
     }
-    fn pathlike(&self) -> &jsc::node_path::PathOrFileDescriptor<'static> {
-        &self
+    fn pathlike(&self) -> blob::PathOrFdRef<'_> {
+        (&self
             .file_blob
             .store
             .get()
@@ -127,7 +127,8 @@ impl FileOpener for WriteFile {
             .unwrap()
             .data
             .as_file()
-            .pathlike
+            .pathlike)
+            .into()
     }
     fn try_mkdirp(
         &mut self,
@@ -136,22 +137,6 @@ impl FileOpener for WriteFile {
         display_path: &[u8],
     ) -> Retry {
         mkdir_if_not_exists(self, &err, path, display_path)
-    }
-    #[cfg(windows)]
-    fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t {
-        unreachable!("WriteFile is POSIX-only; see WriteFileWindows")
-    }
-    #[cfg(windows)]
-    fn req(&mut self) -> &mut bun_libuv_sys::uv_fs_t {
-        unreachable!("WriteFile is POSIX-only")
-    }
-    #[cfg(windows)]
-    fn set_open_callback(&mut self, _cb: fn(&mut Self, Fd)) {
-        unreachable!()
-    }
-    #[cfg(windows)]
-    fn open_callback(&self) -> fn(&mut Self, Fd) {
-        unreachable!()
     }
 }
 

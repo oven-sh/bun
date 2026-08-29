@@ -1,3 +1,4 @@
+use bun_jsc::JsClass as _;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::mem;
@@ -16,7 +17,7 @@ use crate::server::jsc::{
     JsError, JsRef, JsResult,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
-use crate::webcore::{Blob, BlobExt};
+use crate::webcore::Blob;
 
 bun_output::declare_scope!(WebSocketServer, visible);
 
@@ -609,12 +610,7 @@ impl ServerWebSocket {
             BinaryType::ArrayBuffer => {
                 ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global_this, data)
             }
-            BinaryType::Blob => {
-                let blob = Blob::new(Blob::init(data.to_vec(), global_this));
-                // SAFETY: `blob` is the live allocation `Blob::new` just made. `BlobExt::to_js`
-                // reports the payload size to the GC, which the by-value `JsClass::to_js` skips.
-                Ok(unsafe { BlobExt::to_js(&*blob, global_this) })
-            }
+            BinaryType::Blob => Ok(Blob::init(data.to_vec(), global_this).to_js(global_this)),
         }
     }
 

@@ -117,6 +117,13 @@ unsafe impl<A: JsAffine, B: JsAffine, C: JsAffine> JsAffine for (A, B, C) {}
 unsafe impl<T: ?Sized> JsAffine for JsPtr<T> {}
 // SAFETY: see the group note above.
 unsafe impl JsAffine for Protected {}
+// SAFETY: see the group note above.
+unsafe impl<F: ?Sized> JsAffine for JsCallback<F> {}
+
+/// The JS-thread completion a job reports to (a `Box<dyn …>` receiver): the
+/// promise, wrapper or handler it captures is the callee's JS-side state,
+/// and it is run or dropped only on the owning JS thread.
+pub struct JsCallback<F: ?Sized>(pub Box<F>);
 
 /// A GC-protected value a job's completion needs (Node: a `Global<Value>` on
 /// the req_wrap). Unprotected on drop.

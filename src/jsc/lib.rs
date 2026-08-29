@@ -1258,6 +1258,8 @@ pub use self::array_buffer::JSTypedArrayBytesDeallocator;
 // inseparable from `bun_runtime` (streams/fetch). Code that needs to downcast
 // a `JSValue` to `Request`/`Response` lives in `bun_runtime`.
 // ──────────────────────────────────────────────────────────────────────────
+#[path = "LinuxMemFdAllocator.rs"]
+pub mod linux_mem_fd_allocator;
 #[path = "node_path.rs"]
 pub mod node_path;
 #[path = "webcore_types.rs"]
@@ -1335,6 +1337,27 @@ pub mod codegen {
 }
 pub use self::codegen as Codegen;
 
+/// A JS string over `store.shared_view()[range]` without copying: the ref
+/// `store` carries keeps the bytes alive until JSC finalizes the string.
+pub fn external_string_from_store(
+    global: &JSGlobalObject,
+    store: bun_ptr::RefPtr<webcore_types::Store>,
+    range: core::ops::Range<usize>,
+) -> JsResult<JSValue> {
+    let store = bun_ptr::RefPtr::into_raw(store);
+    // SAFETY: `store` carries the ref just released by `into_raw`; it is handed
+    // to JSC below and `Store::external` releases exactly that ref, so the bytes
+    // outlive the string.
+    unsafe {
+        let bytes = &(*store).shared_view()[range];
+        EncodedSliceJsc::external(
+            &bun_core::EncodedSlice::latin1(bytes),
+            global,
+            store.cast::<core::ffi::c_void>(),
+            webcore_types::Store::external,
+        )
+    }
+}
 /// Extension trait providing JSC-aware methods on `bun_sys::Error` (`bun.sys.Error`).
 pub trait SysErrorJsc {
     fn to_system_error(&self) -> SystemError;

@@ -2109,27 +2109,29 @@ function generateRust(
 
   // ── structuredClone ──────────────────────────────────────────────────────
   if (structuredClone) {
+    // The impl sees a `&mut StructuredCloneWriter` / `&mut StructuredCloneReader`
+    // over C++'s serializer / byte range; the raw sink and cursor stay here.
     thunk(
       symbolName(typeName, "onStructuredCloneSerialize"),
       `(this: ${recv}, global: &JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn) -> ()`,
-      `    ${T}::on_structured_clone_serialize(this, global, ctx, write_bytes)`,
+      `    // SAFETY: C++ passes its live \`CloneSerializer\` and the matching write callback for this call.\n` +
+        `        let mut writer = unsafe { host_fn::StructuredCloneWriter::new(ctx, write_bytes) };\n` +
+        `        ${T}::on_structured_clone_serialize(this, global, &mut writer)`,
     );
     if (typeof structuredClone === "object" && structuredClone.transferable) {
       thunk(
         symbolName(typeName, "onStructuredCloneTransfer"),
         `(this: ${recv}, global: &JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn) -> ()`,
-        `    ${T}::on_structured_clone_transfer(this, global, ctx, write_bytes)`,
+        `    // SAFETY: as \`onStructuredCloneSerialize\`.\n` +
+          `        let mut writer = unsafe { host_fn::StructuredCloneWriter::new(ctx, write_bytes) };\n` +
+          `        ${T}::on_structured_clone_transfer(this, global, &mut writer)`,
       );
     }
     thunk(
       symbolName(typeName, "onStructuredCloneDeserialize"),
       `(global: &JSGlobalObject, ptr: *mut *mut u8, end: *const u8) -> JSValue`,
-      `    // Empty with nothing pending: the record was malformed (CloneDeserializer::readTerminal → fail()).
-    match ${T}::on_structured_clone_deserialize(global, ptr, end) {
-        Ok(Some(value)) => value,
-        Ok(None) => JSValue::ZERO,
-        Err(err) => host_fn::host_call_error_value(global, err),
-    }`,
+      `    // SAFETY: C++ passes its live cursor into the \`SerializedScriptValue\` buffer ending at \`end\`.\n` +
+        `        unsafe { host_fn::host_fn_structured_clone_deserialize(global, ptr, end, ${T}::on_structured_clone_deserialize) }`,
     );
   }
 
@@ -2254,11 +2256,7 @@ use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue, JsError, JsResu
 
 /// \`SYSV_ABI void (*)(CloneSerializer*, const uint8_t*, uint32_t)\`
 #[allow(dead_code, unreachable_pub, unused)]
-#[cfg(all(windows, target_arch = "x86_64"))]
-pub type WriteBytesFn = unsafe extern "sysv64" fn(*mut c_void, *const u8, u32);
-#[allow(dead_code, unreachable_pub, unused)]
-#[cfg(not(all(windows, target_arch = "x86_64")))]
-pub type WriteBytesFn = unsafe extern "C" fn(*mut c_void, *const u8, u32);
+pub use bun_jsc::host_fn::WriteBytesFn;
 
 /// \`JSC::PropertyName\` — opaque pointer-sized handle (UniquedStringImpl*).
 #[allow(dead_code, unreachable_pub, unused)]

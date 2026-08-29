@@ -187,6 +187,9 @@ const _: () = {
     // (or `None`) — no precondition beyond the link succeeding.
     unsafe extern "Rust" {
         safe fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob>;
+        // safe: by-value `Blob` and a live `&JSGlobalObject`; the Rust-ABI body
+        // in `bun_runtime` heap-promotes the blob into a new JS wrapper.
+        safe fn __bun_blob_to_js(blob: Blob, global: &JSGlobalObject) -> JSValue;
     }
 
     impl JsClass for Blob {
@@ -197,12 +200,10 @@ const _: () = {
             JSBlob::from_js_direct(value)
         }
         fn to_js(self, global: &JSGlobalObject) -> JSValue {
-            // Heap-promote and hand
-            // ownership to the codegen wrapper. The S3File fast-path (different
-            // JS wrapper) is layered on by `bun_runtime`'s `BlobExt::to_js` for
-            // S3-backed blobs; lower-tier callers never construct S3 blobs.
-            let ptr = Blob::new(self);
-            JSBlob::to_js(ptr, global)
+            // Heap-promote and hand ownership to a new wrapper — `JSBlob`, or
+            // `JSS3File` for an S3-backed blob, which only `bun_runtime` can
+            // tell apart, so it resolves at link time.
+            __bun_blob_to_js(self, global)
         }
         fn get_constructor(global: &JSGlobalObject) -> JSValue {
             JSBlob::get_constructor(global)
@@ -527,6 +528,68 @@ unsafe extern "C" fn Blob__deref(this: *mut Blob) {
     }
 }
 
+/// A new heap `Blob` (for C++ to adopt as a wrapper's `m_ctx`) owning a copy
+/// of `bytes`.
+// HOST_EXPORT(Blob__fromBytes, c)
+pub fn blob_from_bytes(global: &JSGlobalObject, bytes: &[u8]) -> *mut crate::webcore_types::Blob {
+    if bytes.is_empty() {
+        return Blob::new(Blob::init_empty(global));
+    }
+    Blob::new(Blob::init_with_store(Store::init(bytes.to_vec()), global))
+}
+
+fn stamp_content_type(blob: &Blob, mime: Option<&core::ffi::CStr>) {
+    let mime = mime.map(core::ffi::CStr::to_bytes).unwrap_or_default();
+    if !mime.is_empty() {
+        blob.content_type.set(BlobContentType::Owned(mime.into()));
+        blob.content_type_was_set.set(true);
+    }
+}
+
+/// [`blob_from_bytes`] with a `type`.
+// HOST_EXPORT(Blob__fromBytesWithType, c)
+pub fn blob_from_bytes_with_type(
+    global: &JSGlobalObject,
+    bytes: &[u8],
+    mime: Option<&core::ffi::CStr>,
+) -> *mut crate::webcore_types::Blob {
+    let blob = if bytes.is_empty() {
+        Blob::init_empty(global)
+    } else {
+        Blob::init_with_store(Store::init(bytes.to_vec()), global)
+    };
+    stamp_content_type(&blob, mime);
+    Blob::new(blob)
+}
+
+/// A new heap `Blob` that adopts an `mmap`'d region — no copy; the store
+/// `munmap`s it when its last ref drops.
+///
+/// # Safety
+/// `ptr[..len]` is a live mapping nothing else uses or unmaps, handed over to
+/// the returned blob.
+// HOST_EXPORT(Blob__fromMmapWithType, c)
+pub unsafe fn blob_from_mmap_with_type(
+    global: &JSGlobalObject,
+    ptr: *mut u8,
+    len: usize,
+    mime: Option<&core::ffi::CStr>,
+) -> *mut crate::webcore_types::Blob {
+    #[cfg(not(unix))]
+    {
+        // SAFETY: fn contract — `ptr[..len]` is live for the copy.
+        return blob_from_bytes_with_type(global, unsafe { bun_core::ffi::slice(ptr, len) }, mime);
+    }
+    #[cfg(unix)]
+    {
+        // SAFETY: fn contract.
+        let store = Store::from_bytes(unsafe { store::Bytes::adopt_mmap(ptr, len) });
+        let blob = Blob::init_with_store(store, global);
+        stamp_content_type(&blob, mime);
+        Blob::new(blob)
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Store
 // ──────────────────────────────────────────────────────────────────────────
@@ -764,6 +827,71 @@ pub mod store {
                 None => &mut [],
             }
         }
+
+        /// Move the bytes out as a `Vec<u8>`, leaving `self` empty: the
+        /// allocation itself when it is the global allocator's, otherwise a
+        /// copy (and the original is freed through its own allocator).
+        pub fn take_vec(&mut self) -> Vec<u8> {
+            let bytes = match self.ptr.take() {
+                None => Vec::new(),
+                Some(ptr)
+                    if core::ptr::eq(
+                        self.allocator.vtable,
+                        bun_alloc::basic::C_ALLOCATOR.vtable,
+                    ) =>
+                {
+                    // SAFETY: a `Bytes` tagged `C_ALLOCATOR` holds the exact
+                    // `(ptr, len, cap)` of a global-allocator `Vec<u8>`/`Box<[u8]>`
+                    // (`init`/`init_owned`; the `from_raw_parts` contract otherwise).
+                    unsafe {
+                        Vec::from_raw_parts(ptr.as_ptr(), self.len as usize, self.cap as usize)
+                    }
+                }
+                Some(ptr) => {
+                    // SAFETY: `ptr[..len]` initialized, `ptr[..cap]` the
+                    // allocation (the `from_raw_parts` contract).
+                    let (init, all) = unsafe {
+                        (
+                            core::slice::from_raw_parts(ptr.as_ptr(), self.len as usize),
+                            core::slice::from_raw_parts(ptr.as_ptr(), self.cap as usize),
+                        )
+                    };
+                    let copy = init.to_vec();
+                    self.allocator.free(all);
+                    copy
+                }
+            };
+            self.len = 0;
+            self.cap = 0;
+            self.allocator = bun_alloc::basic::C_ALLOCATOR;
+            bytes
+        }
+
+        /// Adopt an `mmap`'d region; dropping the `Bytes` `munmap`s it.
+        ///
+        /// # Safety
+        /// `ptr[..len]` is a live mapping nothing else uses or unmaps, handed
+        /// over to the returned value.
+        #[cfg(unix)]
+        pub unsafe fn adopt_mmap(ptr: *mut u8, len: usize) -> Bytes {
+            fn free(_: *mut core::ffi::c_void, buf: &mut [u8], _: bun_alloc::Alignment, _: usize) {
+                if let Err(err) = bun_sys::munmap(buf.as_mut_ptr(), buf.len()) {
+                    bun_core::debug_warn!("Blob mmap-store munmap failed: {:?}", err);
+                }
+            }
+            static MMAP_FREE_VTABLE: bun_alloc::AllocatorVTable =
+                bun_alloc::AllocatorVTable::free_only(free);
+            Bytes {
+                ptr: NonNull::new(ptr),
+                len: len as SizeType,
+                cap: len as SizeType,
+                allocator: bun_alloc::StdAllocator {
+                    ptr: core::ptr::null_mut(),
+                    vtable: &MMAP_FREE_VTABLE,
+                },
+                stored_name: Box::default(),
+            }
+        }
     }
 
     impl Drop for Bytes {
@@ -898,8 +1026,13 @@ pub mod store {
         /// Takes ownership of
         /// `bytes`. Returns a +1-ref heap `Store`.
         pub fn init(bytes: Vec<u8>) -> RefPtr<Store> {
+            Store::from_bytes(Bytes::init(bytes))
+        }
+
+        /// A +1-ref heap `Store` over `bytes`.
+        pub fn from_bytes(bytes: Bytes) -> RefPtr<Store> {
             RefPtr::new(Store {
-                data: Data::Bytes(Bytes::init(bytes)),
+                data: Data::Bytes(bytes),
                 mime_type: bun_http_types::MimeType::NONE,
                 ref_count: bun_ptr::ThreadSafeRefCount::init(),
                 is_all_ascii: IsAllAscii::default(),

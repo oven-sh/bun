@@ -1,29 +1,5 @@
 use core::ffi::c_void;
 
-// ─── non-JSC helpers (real) ───────────────────────────────────────────────
-// `Rule` and the IP-compare helpers depend on `sockaddr` from the sibling
-// `socket_address` module (lives in `crate::socket`, not `super::`), so they
-// stay gated below. Only the structured-clone byte-shuffling is JSC-free and
-// dependency-free.
-
-struct StructuredCloneWriter {
-    ctx: *mut c_void,
-    // callconv(jsc.conv) → codegen `WriteBytesFn` typedef (cfg-splits to
-    // `"sysv64"` on Windows-x64).
-    impl_: crate::generated_classes::WriteBytesFn,
-}
-
-impl bun_io::Write for StructuredCloneWriter {
-    #[inline]
-    fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
-        // SAFETY: `ctx` and `impl_` were supplied together by the C++
-        // SerializedScriptValue writer; the callback only reads `len` bytes
-        // from `ptr`, both of which we derive from a single `&[u8]`.
-        unsafe { (self.impl_)(self.ctx, bytes.as_ptr(), bytes.len() as u32) };
-        Ok(())
-    }
-}
-
 // ─── JsClass payload + host fns ───────────────────────────────────────────
 // `BlockList` is the `m_ctx` payload for a `.classes.ts` wrapper; every method
 // is a `#[bun_jsc::host_fn]` and the struct itself carries `#[bun_jsc::JsClass]`.
@@ -407,19 +383,13 @@ impl BlockList {
     pub(crate) fn on_structured_clone_serialize(
         this: &Self,
         _global: &JSGlobalObject,
-        ctx: *mut c_void,
-        // codegen `WriteBytesFn` typedef (jsc.conv).
-        write_bytes: crate::generated_classes::WriteBytesFn,
+        writer: &mut bun_jsc::host_fn::StructuredCloneWriter,
     ) {
         use bun_io::Write as _;
         let _guard = this.mutex.lock_guard();
         this.ref_();
         let addr = std::ptr::from_ref::<Self>(this) as usize;
         SERIALIZED_REFS.lock().push((this.serialize_nonce, addr));
-        let mut writer = StructuredCloneWriter {
-            ctx,
-            impl_: write_bytes,
-        };
         // The writer is infallible, so no `?` needed.
         // Only the nonce is serialized; deserialize maps it back to `*mut Self`
         // through `SERIALIZED_REFS` and never forms `&mut Self` (only `ref_()` +
@@ -427,35 +397,14 @@ impl BlockList {
         _ = writer.write_int_le(this.serialize_nonce);
     }
 
-    // C++ codegen calls this with a live `*mut *mut u8` cursor and end pointer; the
-    // signature is fixed by `generate-classes.ts`, so the deref is documented with
-    // the SAFETY comment below.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     /// `Ok(None)`: the bytes are not a valid record (the deserializer reports its usual error).
     pub(crate) fn on_structured_clone_deserialize(
         global: &JSGlobalObject,
-        ptr: *mut *mut u8,
-        end: *const u8,
+        r: &mut bun_jsc::host_fn::StructuredCloneReader<'_>,
     ) -> JsResult<Option<JSValue>> {
-        // SAFETY: `*ptr` and `end` bound a contiguous byte buffer owned by the
-        // caller (C++ SerializedScriptValue); `end >= *ptr`. `ptr` itself is a
-        // non-null out-param the caller expects us to advance.
-        let start: *mut u8 = unsafe { *ptr };
-        let total_length: usize = (end as usize) - (start as usize);
-        // SAFETY: `start` through `end` is the contiguous C++-owned deserialization
-        // buffer (see above); `total_length = end - start`, so the resulting slice
-        // is exactly that buffer and stays valid for the lifetime of `r`.
-        let mut r =
-            bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(start, total_length) });
-
         let Ok(nonce) = r.read_int_le::<u64>() else {
             return Ok(None);
         };
-
-        // Advance the caller's cursor by the number of bytes consumed
-        // SAFETY: `r.pos <= total_length` (`read_exact` bounds-checks via
-        // `checked_add`); `ptr` is the caller's live out-param (see above).
-        unsafe { *ptr = start.add(r.pos) };
 
         // A single SerializedScriptValue can be deserialized multiple times
         // (e.g. BroadcastChannel fan-out), so each wrapper must own its own ref

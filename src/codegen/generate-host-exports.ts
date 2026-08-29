@@ -148,6 +148,14 @@ function ptrify(ty: string): { cTy: string; deref: (n: string) => string; extraL
   if (/^&[^\[]*\[/.test(ty) || /^&\s*str\b/.test(ty)) {
     throw new Error(`slice/str param \`${ty}\` is not FFI-safe; use \`&[T]\` (const) or (ptr, len)`);
   }
+  // `Option<&CStr>` — C passes a (possibly null) NUL-terminated `const char*`.
+  if (/^Option\s*<\s*&\s*(?:(?:::)?(?:core|std)::ffi::)?CStr\s*>$/.test(ty)) {
+    return {
+      cTy: `*const c_char`,
+      deref: n =>
+        `{\n        // SAFETY: C++ caller passes null or a NUL-terminated string live for the call.\n        if ${n}.is_null() { None } else { Some(unsafe { ::core::ffi::CStr::from_ptr(${n}) }) }\n    }`,
+    };
+  }
   // `&mut T` / `&T` — keep as a reference in the thunk signature. `&T` and
   // `*const T` (resp. `&mut T`/`*mut T`) are ABI-identical for `extern "C"`
   // when the C++ caller guarantees non-null (it does), so the thunk param can
@@ -280,13 +288,15 @@ for (const { dir, crate } of scanRoots) {
       if (abi === "rust") shape = "rust";
       else if (
         params.length === 3 &&
-        /^(?:(?:::)?bun_ptr::)?ThisPtr\s*</.test(params[0].ty) &&
+        /^(?:(?:(?:::)?bun_ptr::)?ThisPtr|Box)\s*</.test(params[0].ty) &&
         /JSGlobalObject$/.test(params[1].ty) &&
         /CallFrame$/.test(params[2].ty) &&
         isJsRet
       ) {
         // Promise reaction: `JSValue::then(global, ctx, resolve, reject)` stashes
-        // `ctx` as the trailing argument; the thunk hands it back typed.
+        // `ctx` as the trailing argument; the thunk hands it back typed — a
+        // `ThisPtr` to a refcounted registrant, or the `Box` the registrant
+        // released to the reaction pair (exactly one of which runs, once).
         shape = "reaction";
         abi ??= "jsc";
       } else if (
@@ -437,13 +447,20 @@ ${emitNoMangle(e.abi, e.symbol, "g: *mut JSGlobalObject, cf: *mut CallFrame", "J
     }
     case "reaction": {
       const wrap = retIsJsResult ? "host_fn::host_fn_static_raw" : "host_fn::host_fn_static_passthrough_raw";
+      const boxed = /^Box\s*</.test(e.params[0].ty);
+      const recover = boxed
+        ? `::bun_core::heap::take(args[args.len() - 1].as_promise_ptr())`
+        : `::bun_ptr::ThisPtr::new(args[args.len() - 1].as_promise_ptr())`;
+      const held = boxed
+        ? `the \`Box\` the registrant released to this reaction pair, reclaimed once here.`
+        : `on which the registrant holds a ref until it runs.`;
       const body = `    // SAFETY: JSC trampoline guarantees g/cf are non-null and valid; the
     // trailing argument is the \`ctx\` this reaction was registered with via
-    // \`JSValue::then\`, on which the registrant holds a ref until it runs.
+    // \`JSValue::then\`, ${held}
     unsafe {
         ${wrap}(g, cf, |g, cf| {
             let args = cf.arguments();
-            let this = ::bun_ptr::ThisPtr::new(args[args.len() - 1].as_promise_ptr());
+            let this = ${recover};
             ${impl}(this, g, cf)
         })
     }`;
@@ -467,14 +484,8 @@ ${emitNoMangle(e.abi, e.symbol, "g: &JSGlobalObject", "JSValue", body)}`;
     case "rust": {
       // `extern "Rust"` link-time hook: forward the safe signature verbatim
       // (no pointer rewriting; `extern "Rust"` ABI == native Rust ABI).
-      // Reference params/returns are rejected — `extern "Rust" fn` items need
-      // explicit lifetimes for borrowed types and the generator does not
-      // synthesise them. Use raw pointers in the impl signature instead.
-      for (const p of e.params)
-        if (p.ty.startsWith("&"))
-          throw new Error(
-            `${loc}: HOST_EXPORT(${e.symbol}, rust) param \`${p.raw}\` is a reference; use a raw pointer`,
-          );
+      // Reference params use elided lifetimes; a reference return is
+      // rejected — the generator does not synthesise the lifetime it needs.
       if (e.ret.startsWith("&"))
         throw new Error(
           `${loc}: HOST_EXPORT(${e.symbol}, rust) return type \`${e.ret}\` is a reference; use a raw pointer`,

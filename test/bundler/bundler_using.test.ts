@@ -140,3 +140,88 @@ describe.concurrent("bun run", () => {
     });
   }
 });
+
+// Every form is parsed inside an async function by Bun.Transpiler (target bun keeps
+// the syntax) and by JavaScriptCore (`new Function`). The accept/reject verdicts must
+// agree. Messages differ, so only the verdict is compared.
+test("Bun.Transpiler and JavaScriptCore agree on where using declarations may appear", () => {
+  const forms = [
+    // Directly in a case or default clause: rejected. Nested in anything with braces: accepted.
+    "switch (x) { case 0: using a = b; }",
+    "switch (x) { default: using a = b; }",
+    "switch (x) { case 0: f(); using a = b; g(); }",
+    "switch (x) { case 0: await using a = b; }",
+    "switch (x) { default: await using a = b; }",
+    "switch (x) { case 0: { using a = b; } }",
+    "switch (x) { default: { await using a = b; } }",
+    "switch (x) { case 0: if (y) { using a = b; } }",
+    "switch (x) { case 0: try { await using a = b; } finally {} }",
+    "switch (x) { case 0: for (using a of b) c(a); }",
+    "switch (x) { case 0: for (await using a of b) c(a); }",
+    "switch (x) { case 0: for await (using a of b) c(a); }",
+    "switch (x) { case 0: class C { static { using a = b; } } }",
+    "switch (x) { case 0: { switch (y) { default: { using a = b; } } } }",
+    // `using` as an identifier in a clause.
+    "switch (x) { case 0: using; case 1: using(a); case 2: using = a; case 3: using.a = b; default: using\n a = b; }",
+    "switch (x) { case 0: await using; case 1: await using.a; default: await using\n a = b; }",
+    // For heads: no for-in, initializers required, `using of` is the identifier `using`.
+    "for (using x in y);",
+    "for (await using x in y);",
+    "for (using in x);",
+    "for (using x;;);",
+    "for (await using x;;);",
+    "for (using x = y, z;;);",
+    "for (using x = y;;);",
+    "for (await using x = y;;);",
+    "for (using of = x;;);",
+    "for (await using of = x;;);",
+    "for (using of y);",
+    "for (using of of);",
+    "for (using of of [0, 1, 2]);",
+    "for (using of of y);",
+    "for (await using of y);",
+    "for (await using of of y);",
+    "for await (using of y);",
+    "for (using x of y);",
+    "for (await using x of y);",
+    "for await (using x of y);",
+    "for await (await using x of y);",
+    "for (using\nx of y);",
+    // A newline ends the declaration head: after `using`, and between `await` and `using`.
+    "using\na = b;",
+    "await using\na = b;",
+    "await\nusing a = b;",
+    "await\nusing;",
+    "await\nusing\na = b;",
+    "await\nusing.foo();",
+    "for (await\nusing a of b);",
+    // `of` as a binding name outside a for head.
+    "using of = x;",
+    "await using of = x;",
+  ];
+  const transpiler = new Bun.Transpiler({ loader: "js", target: "bun" });
+  const verdicts = (parse: (code: string) => unknown) =>
+    Object.fromEntries(
+      forms.map(form => {
+        try {
+          parse(`async function f() {\n${form}\n}`);
+          return [form, "accepted"];
+        } catch {
+          return [form, "rejected"];
+        }
+      }),
+    );
+  const jsc = verdicts(code => new Function(code));
+  expect(Object.values(jsc)).toContain("accepted");
+  expect(Object.values(jsc)).toContain("rejected");
+  expect(verdicts(code => transpiler.transformSync(code))).toEqual(jsc);
+
+  // A function body nested in a clause is its own statement list. The spec and V8 accept
+  // these two; the JavaScriptCore bun pins today rejects them, so they are pinned directly.
+  for (const form of [
+    "switch (x) { case 0: function f() { using a = b; } }",
+    "switch (x) { case 0: (async () => { await using a = b; })(); }",
+  ]) {
+    expect(transpiler.transformSync(`async function f() {\n${form}\n}`)).toContain("using a = b");
+  }
+});

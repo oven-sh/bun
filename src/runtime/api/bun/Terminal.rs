@@ -650,6 +650,16 @@ impl Terminal {
         }
     }
 
+    /// The Windows writer's `deref`: release the ref its matching `ref_`
+    /// parked in `pending_write_refs` (may be the last). Runs under a libuv
+    /// callback, so an imbalance asserts in debug instead of unwinding.
+    #[cfg(windows)]
+    fn release_pending_write_ref(this: bun_ptr::ThisPtr<Self>) {
+        let released = this.pending_write_refs.with_mut(|v| v.pop());
+        debug_assert!(released.is_some(), "unbalanced writer deref");
+        drop(released);
+    }
+
     /// Windows analogue of `drain_and_close_slave_fd`'s tail: once the direct
     /// child has exited the writer no longer pins the event loop. The reader
     /// stays ref'd so the loop keeps running until conhost delivers the final
@@ -1618,5 +1628,5 @@ bun_io::impl_streaming_writer_parent! {
     // Called from inside writer methods while a `&mut self.writer` borrow is
     // live: touch only the `pending_write_refs` cell.
     ref_       = |this| this.pending_write_refs.with_mut(|v| v.push(RefPtr::from_this(this))),
-    deref      = |this| drop(this.pending_write_refs.with_mut(|v| v.pop()).expect("unbalanced writer deref")),
+    deref      = |this| Terminal::release_pending_write_ref(this),
 }

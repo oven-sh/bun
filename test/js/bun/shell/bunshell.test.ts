@@ -1481,6 +1481,11 @@ describe("deno_task", () => {
   describe("command substitution", async () => {
     TestBuilder.command`echo $(echo 1)`.stdout("1\n").runAsTest("nested echo cmd subst");
     TestBuilder.command`echo $(echo 1 && echo 2)`.stdout("1 2\n").runAsTest("nested echo cmd subst with conditional");
+    // NUL bytes in the substituted output are dropped (bash prints a warning
+    // and does the same); they cannot be part of an argv word.
+    TestBuilder.command`echo x$(${BUN} -e ${"process.stdout.write('a\\0b')"})y | cat`
+      .stdout("xaby\n")
+      .runAsTest("cmd subst drops NUL bytes");
     // TODO Sleep tests
   });
 

@@ -2752,9 +2752,6 @@ macro_rules! impl_streaming_writer_parent {
 /// `WindowsBufferedWriterParent` for a parent type. See module comment above.
 #[macro_export]
 macro_rules! impl_buffered_writer_parent {
-    (@borrow mut    $p:expr) => { &mut *$p };
-    (@borrow shared $p:expr) => { &*$p };
-
     (@emit
         [$($gen:tt)*] $Ty:ty;
         poll_tag   = $poll_tag:expr,
@@ -2774,20 +2771,21 @@ macro_rules! impl_buffered_writer_parent {
             #[inline]
             unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
                 // SAFETY: `this` is the BACKREF set via `set_parent`; the
-                // BufferedWriter never materializes `&mut Parent`, so this is
-                // the unique access path for the callback's duration.
-                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_write(amount, status) };
+                // BufferedWriter never materializes `&mut Parent`. The handler
+                // is dispatched per the `borrow` mode (`mut`/`shared`/`ptr`/`this` —
+                // see the module comment).
+                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_write(amount, status)) };
             }
             #[inline]
             unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) {
                 // SAFETY: see on_write.
-                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_error(&err) };
+                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_error(&err)) };
             }
             const HAS_ON_CLOSE: bool = true;
             #[inline]
             unsafe fn on_close(this: *mut Self) {
                 // SAFETY: see on_write.
-                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_close() };
+                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_close()) };
             }
             #[inline]
             unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {
@@ -2835,18 +2833,18 @@ macro_rules! impl_buffered_writer_parent {
             #[inline]
             unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
                 // SAFETY: BACKREF set via `set_parent`; see borrow-mode note.
-                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_write(amount, status) };
+                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_write(amount, status)) };
             }
             #[inline]
             unsafe fn on_error(this: *mut Self, err: $crate::pipe_writer::__parent_macro::SysError) {
                 // SAFETY: see on_write.
-                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_error(&err) };
+                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_error(&err)) };
             }
             const HAS_ON_CLOSE: bool = true;
             #[inline]
             unsafe fn on_close(this: *mut Self) {
                 // SAFETY: see on_write.
-                unsafe { ($crate::impl_buffered_writer_parent!(@borrow $borrow this)).$on_close() };
+                unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_close()) };
             }
             #[inline]
             unsafe fn get_buffer<'a>(this: *mut Self) -> &'a [u8] {

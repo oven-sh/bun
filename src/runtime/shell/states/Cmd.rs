@@ -587,10 +587,12 @@ impl Cmd {
         // moved out of the Cmd for the call (argv borrows its storage).
         let args = core::mem::take(&mut interp.as_cmd_mut(this).args);
         let spawn_result = {
+            // Every arg ends in NUL; an interior NUL (e.g. from a JS string)
+            // truncates the entry there, as it would in C.
             let argv: Vec<&core::ffi::CStr> = args
                 .iter()
                 .map(|arg| {
-                    core::ffi::CStr::from_bytes_with_nul(arg).expect("args are NUL-terminated")
+                    core::ffi::CStr::from_bytes_until_nul(arg).expect("args are NUL-terminated")
                 })
                 .collect();
             ShellSubprocess::spawn_async(event_loop, &mut shellio, spawn_args, &argv, cmd_parent)

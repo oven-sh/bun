@@ -1386,10 +1386,12 @@ impl Subprocess<'_> {
     }
 }
 
-/// Each pipe leaves the `uv::open_handles` list as its uv_close is issued
-/// (here, in `finalize_streams`, or at the latest on drop).
+// SAFETY: each pipe in `stdio_pipes` leaves the `uv::open_handles` list as its
+// uv_close is issued — here, in `finalize_streams`, when a taker re-owns it
+// (the IPC channel), or at the latest from `Drop` below — so no entry names a
+// freed Subprocess.
 #[cfg(windows)]
-impl bun_io::source::UvPipeOwner for Subprocess<'_> {
+unsafe impl bun_io::source::UvPipeOwner for Subprocess<'_> {
     fn close_pipes_for_vm_teardown(&self) {
         for item in self.stdio_pipes.replace(Vec::new()) {
             if let StdioResult::Buffer(buffer) = item {

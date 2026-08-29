@@ -72,7 +72,7 @@ pub type Poll<P> = IOWriter<P>;
 bun_io::impl_buffered_writer_parent! {
     for<P: StaticPipeWriterProcess> StaticPipeWriter<P>;
     poll_tag   = P::POLL_OWNER_TAG,
-    borrow     = mut,
+    borrow     = ptr,
     on_write   = on_write,
     on_error   = on_error,
     on_close   = on_close,
@@ -245,11 +245,17 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         }
     }
 
-    pub(crate) fn on_write(&mut self, amount: usize, status: WriteStatus) {
+    /// Writer callback (`borrow = ptr`): completing the write may release the
+    /// last ref, so no `&mut Self` argument (which would have to stay valid
+    /// for the whole call) is formed — fields are reached through `this`.
+    ///
+    /// # Safety
+    /// `this` is the writer's parent back-reference: the live root pointer.
+    pub(crate) unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) onWrite(amount={} {})",
-            std::ptr::from_ref(self) as usize,
+            this as usize,
             amount,
             // Local stringify — `WriteStatus` (upstream bun_io) has no `Debug` impl.
             match status {
@@ -258,55 +264,70 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
                 WriteStatus::Pending => "pending",
             }
         );
-        let len = self.buffer.len();
-        self.buffer = RawSlice::new(&self.buffer.slice()[amount.min(len)..]);
-        if status == WriteStatus::EndOfFile {
-            // The buffered writer closes itself (-> `on_close`) after this
-            // returns, so don't close here. Not the final ref: the owner's slot
-            // still holds one until that `on_close`.
-            self.start_ref = None;
-            return;
-        }
-        if self.buffer.is_empty() {
-            // Taken before `close()` so start()'s ref outlives the owner's.
-            let start_ref = self.start_ref.take();
-            self.writer.close();
-            // May be the final ref; last use of `self`.
-            drop(start_ref);
+        // SAFETY: fn contract; each access below is a momentary field projection.
+        unsafe {
+            let len = (*this).buffer.len();
+            (*this).buffer = RawSlice::new(&(*this).buffer.slice()[amount.min(len)..]);
+            if status == WriteStatus::EndOfFile {
+                // The buffered writer closes itself (-> `on_close`) after this
+                // returns, so don't close here. Not the final ref: the owner's slot
+                // still holds one until that `on_close`.
+                (*this).start_ref = None;
+                return;
+            }
+            if (*this).buffer.is_empty() {
+                // Taken before `close()` so start()'s ref outlives the owner's.
+                let start_ref = (*this).start_ref.take();
+                (*this).writer.close();
+                // May be the final ref; nothing touches `this` after.
+                drop(start_ref);
+            }
         }
     }
 
-    pub(crate) fn on_error(&mut self, err: &bun_sys::Error) {
+    /// # Safety
+    /// As [`Self::on_write`].
+    pub(crate) unsafe fn on_error(this: *mut Self, err: &bun_sys::Error) {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) onError(err={})",
-            std::ptr::from_ref(self) as usize,
+            this as usize,
             err
         );
         // `buffer` aliases `self.source`'s storage, which `detach()` frees.
         // start()'s ref is released by the `on_close` the writer pairs with
         // every error.
-        self.buffer = RawSlice::EMPTY;
-        self.source.detach();
+        // SAFETY: fn contract; momentary field projections.
+        unsafe {
+            (*this).buffer = RawSlice::EMPTY;
+            (*this).source.detach();
+        }
     }
 
-    pub(crate) fn on_close(&mut self) {
+    /// # Safety
+    /// As [`Self::on_write`].
+    pub(crate) unsafe fn on_close(this: *mut Self) {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) onClose()",
-            std::ptr::from_ref(self) as usize
+            this as usize
         );
-        // Still set only after a failed write (every other path takes it before
-        // closing). Must be taken before `on_close_io` empties the slot:
-        // nothing can reach this writer afterwards.
-        let start_ref = self.start_ref.take();
-        // `buffer` aliases `self.source`'s storage; clear it before detach()
-        // frees that storage so no dangling slice survives the close.
-        self.buffer = RawSlice::EMPTY;
-        self.source.detach();
-        P::on_close_io(self.process.this_ptr(), StdioKind::Stdin);
-        // On POSIX this frees `self`: it is the last use here, and the
-        // writer's `close()` frames below do nothing after this callback.
+        // SAFETY: fn contract; momentary field projections (all disjoint from
+        // `writer`, whose `close()` frame may be live below us).
+        let (start_ref, process) = unsafe {
+            // Still set only after a failed write (every other path takes it
+            // before closing). Must be taken before `on_close_io` empties the
+            // slot: nothing can reach this writer afterwards.
+            let start_ref = (*this).start_ref.take();
+            // `buffer` aliases `self.source`'s storage; clear it before detach()
+            // frees that storage so no dangling slice survives the close.
+            (*this).buffer = RawSlice::EMPTY;
+            (*this).source.detach();
+            (start_ref, (*this).process)
+        };
+        P::on_close_io(process.this_ptr(), StdioKind::Stdin);
+        // On POSIX this frees the writer: nothing touches `this` after, and
+        // the writer's `close()` frames below do nothing after this callback.
         // On Windows the in-flight write's ref outlives it.
         drop(start_ref);
     }

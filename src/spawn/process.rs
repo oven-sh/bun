@@ -206,7 +206,8 @@ impl ProcessHandle {
         self.process_mut().watch()
     }
 
-    /// See [`Process::wait`]; may synchronously run the exit handler.
+    /// See [`Process::wait`]; may synchronously run the exit handler (same
+    /// rule as [`watch_or_reap`](Self::watch_or_reap)).
     pub fn wait(&self, sync_: bool) {
         self.process_mut().wait(sync_)
     }

@@ -1728,11 +1728,12 @@ fn spawn_maybe_sync(
     // Therefore, we must do this at the very end.
     if let Some(signal) = abort_signal.take() {
         // Ownership of the ref taken above transfers to `subprocess.abort_signal`.
-        // Registering may synchronously fire `on_abort` (already aborted),
-        // which re-enters via `subprocess_this`; no `&mut Subprocess` is held
-        // across the call.
-        let handle = jsc::AbortListenerHandle::new(signal, subprocess_this);
-        subprocess.abort_signal.set(Some(handle));
+        // The handle is stored before registering: an already-aborted signal
+        // fires `on_abort` synchronously, which re-enters via `subprocess_this`
+        // and clears the slot; no `&mut Subprocess` is held across the call.
+        jsc::AbortListenerHandle::install(signal, subprocess_this, |handle| {
+            subprocess.abort_signal.set(Some(handle))
+        });
     }
 
     if !is_sync {
@@ -1764,8 +1765,9 @@ fn spawn_maybe_sync(
             // Therefore, we must do this at the very end.
             if let Some(signal) = abort_signal.take() {
                 // See the matching block above.
-                let handle = jsc::AbortListenerHandle::new(signal, subprocess_this);
-                subprocess.abort_signal.set(Some(handle));
+                jsc::AbortListenerHandle::install(signal, subprocess_this, |handle| {
+                    subprocess.abort_signal.set(Some(handle))
+                });
             }
         }
         sys::Result::Err(_) => {

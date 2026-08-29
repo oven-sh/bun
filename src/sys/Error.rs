@@ -77,17 +77,7 @@ impl IntoErrnoInt for u16 {
 impl IntoErrnoInt for i32 {
     #[inline]
     fn into_errno_int(self) -> Int {
-        // Only Windows
-        // (libuv negative codes) takes the absolute value; on POSIX a negative errno is
-        // a caller bug, so panic.
-        #[cfg(windows)]
-        {
-            self.unsigned_abs() as Int
-        }
-        #[cfg(not(windows))]
-        {
-            Int::try_from(self).expect("errno must be non-negative on POSIX")
-        }
+        Int::try_from(self).expect("errno must be a non-negative discriminant")
     }
 }
 
@@ -105,22 +95,12 @@ impl Error {
     }
 
     /// The error for a Win32 call that returned its failure value; `code` is
-    /// its `GetLastError()`. A code outside libuv's Win32→errno table is
-    /// `EUNKNOWN`, and so is `SUCCESS` (an API that failed without setting
-    /// the last error), so a failed call never reads as errno 0.
+    /// its `GetLastError()` (see `Win32ErrorExt::to_e` for the mapping).
     #[cfg(windows)]
     #[inline]
     pub fn from_win32(code: crate::windows::Win32Error, syscall_tag: Tag) -> Error {
         use crate::windows::Win32ErrorExt as _;
-        let errno = match code.to_system_errno() {
-            SystemErrno::SUCCESS => SystemErrno::EUNKNOWN,
-            e => e,
-        };
-        Error {
-            errno: errno as Int,
-            syscall: syscall_tag,
-            ..Default::default()
-        }
+        Error::from_code(code.to_e(), syscall_tag)
     }
 
     /// The error for a libuv call that returned the negative code `rc`.
@@ -135,13 +115,6 @@ impl Error {
         }
     }
 
-    /// `Some(err)` when a libuv `ReturnCode` is negative; `None` on success.
-    #[cfg(windows)]
-    #[inline]
-    pub fn from_uv_rc(rc: crate::windows::libuv::ReturnCode, syscall_tag: Tag) -> Option<Error> {
-        (rc.int() < 0).then(|| Error::from_libuv(rc.int(), syscall_tag))
-    }
-
     pub fn from_code(errno: E, syscall_tag: Tag) -> Error {
         Error {
             errno: errno as Int,
@@ -152,37 +125,19 @@ impl Error {
 
     // c_int covers all call sites in practice.
     pub fn from_code_int(errno: c_int, syscall_tag: Tag) -> Error {
-        #[cfg(windows)]
-        let n = Int::try_from(errno.unsigned_abs()).unwrap();
-        // errno values are small positive integers; a truncating cast matches Zig's `@intCast`.
-        #[cfg(not(windows))]
-        let n = {
-            debug_assert!((0..=c_int::from(u16::MAX)).contains(&errno));
-            errno as u16
-        };
+        debug_assert!((0..=c_int::from(u16::MAX)).contains(&errno));
         Error {
-            errno: n,
+            errno: errno as Int,
             syscall: syscall_tag,
             ..Default::default()
         }
     }
 
+    /// `self.errno` is an `E`/`SystemErrno` discriminant on every platform (not
+    /// a Win32 or libuv code); one the enum does not declare is `EUNKNOWN`.
     #[inline]
     pub fn get_errno(&self) -> E {
-        // An errno the enum does not declare is still a failure: `EUNKNOWN`, not `SUCCESS`.
-        #[cfg(windows)]
-        {
-            // `self.errno` already stores an E/SystemErrno *discriminant* (set via `E as Int`),
-            // so a direct discriminant cast is what's wanted. Do NOT
-            // route through `SystemErrno::init`: on Windows its u16/i32 entry points are the
-            // Win32/WSA/uv-error→errno *mapper*, not a discriminant validator, and would
-            // corrupt the value (e.g. EPERM=1 → Win32 INVALID_FUNCTION → EISDIR).
-            E::try_from_raw(self.errno).unwrap_or(E::EUNKNOWN)
-        }
-        #[cfg(not(windows))]
-        {
-            SystemErrno::init(i64::from(self.errno)).unwrap_or(SystemErrno::EUNKNOWN)
-        }
+        SystemErrno::from_raw(self.errno).to_e()
     }
 
     #[inline]
@@ -293,8 +248,6 @@ impl Error {
         if self.errno == 0 {
             return None;
         }
-        // Not `SystemErrno::init`: on Windows its integer entry points treat the
-        // value as a Win32/WSA/uv code, and `self.errno` is already a discriminant.
         SystemErrno::from_repr(self.errno)
     }
 
@@ -540,24 +493,19 @@ pub trait ReturnCodeExt: Sized {
     fn as_err(self, syscall_tag: Tag) -> Option<Error> {
         self.to_error(syscall_tag)
     }
-    /// Translate the negative libuv errno to `bun.sys.E`.
-    /// `bun_libuv_sys::ReturnCode::err_enum()` only yields the raw `u16`
-    /// (layering: it can't name `E`); this overlay yields the typed enum.
+    /// `Some(errno)` when negative (`bun_libuv_sys::ReturnCode::errno()`,
+    /// typed — that crate cannot name `E`).
     fn err_enum_e(self) -> Option<crate::E>;
 }
 #[cfg(windows)]
 impl ReturnCodeExt for crate::windows::libuv::ReturnCode {
     #[inline]
     fn to_error(self, syscall_tag: Tag) -> Option<Error> {
-        Error::from_uv_rc(self, syscall_tag)
+        (self.int() < 0).then(|| Error::from_libuv(self.int(), syscall_tag))
     }
     #[inline]
     fn err_enum_e(self) -> Option<crate::E> {
-        if self.int() < 0 {
-            Some(crate::windows::translate_uv_error_to_e(self.int()))
-        } else {
-            None
-        }
+        (self.int() < 0).then(|| crate::windows::translate_uv_error_to_e(self.int()))
     }
 }
 #[cfg(windows)]
@@ -568,12 +516,6 @@ impl ReturnCodeExt for crate::windows::libuv::ReturnCodeI64 {
     }
     #[inline]
     fn err_enum_e(self) -> Option<crate::E> {
-        if self.int() < 0 {
-            Some(crate::windows::translate_uv_error_to_e(
-                self.int() as core::ffi::c_int
-            ))
-        } else {
-            None
-        }
+        (self.int() < 0).then(|| crate::windows::translate_uv_error_to_e(self.int() as c_int))
     }
 }

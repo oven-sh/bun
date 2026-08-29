@@ -1535,9 +1535,8 @@ fn file_copier_copy(
                             }
                         }
 
-                        use bun_sys::windows::Win32ErrorExt as _;
                         Output::err(
-                            bun_sys::windows::Win32Error::get().to_system_errno(),
+                            bun_sys::windows::last_errno(),
                             "failed to copy file {}",
                             format_args!(
                                 "{}",

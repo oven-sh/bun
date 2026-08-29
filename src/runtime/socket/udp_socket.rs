@@ -2540,7 +2540,7 @@ fn get_us_error<const USE_WSA: bool>(res: c_int, tag: bun_sys::Tag) -> Option<bu
         if USE_WSA {
             let err = bun_sys::windows::Win32Error::get();
             if err != bun_sys::windows::Win32Error::SUCCESS {
-                bun_sys::windows::ws2_32::WSASetLastError(0);
+                bun_sys::windows::kernel32::SetLastError(0);
                 return Some(bun_sys::Error::from_win32(err, tag));
             }
         }

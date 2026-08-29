@@ -363,13 +363,13 @@ pub use bun_core::S as s;
 // last_error
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `GetLastError()` mapped to `E`. There is no `get_errno(rc)` on Windows: a
-/// Win32 return value says only *whether* the call failed, so check it first,
-/// then read this (or build the error with `bun_sys::Error::from_win32`).
+/// The errno for the Win32 call that just failed (see `Win32ErrorExt::to_e`).
 #[inline]
 pub fn last_error() -> E {
     Win32Error::get().to_e()
 }
+
+const _: () = assert!(E::UNKNOWN as u16 == uv::E_UNKNOWN);
 
 // ──────────────────────────────────────────────────────────────────────────
 // SystemErrno
@@ -537,8 +537,8 @@ pub enum SystemErrno {
 
 /// Type-dispatch shim for `SystemErrno::init`.
 /// Covers every concrete type the codebase actually passes — `i64` (shared
-/// `Error.rs` paths), `u32`/`DWORD` (`GetLastError()`), `c_int` (libuv rc),
-/// `u16`, and `Win32Error`.
+/// `Error.rs` paths), `u32`/`DWORD` (a Win32/WSA code carried as an integer),
+/// and `c_int` (libuv rc). A typed `Win32Error` uses `Win32ErrorExt` instead.
 pub trait SystemErrnoInit {
     fn into_system_errno(self) -> Option<SystemErrno>;
 }
@@ -577,19 +577,7 @@ impl SystemErrnoInit for u32 {
         // codes and some installer/WinHTTP errors exceed 0xFFFF. Those are
         // intentionally unmapped → None. Codes that DO fit u16 route via
         // the Win32Error→errno table.
-        u16::try_from(self).ok().and_then(SystemErrno::init_u16)
-    }
-}
-impl SystemErrnoInit for u16 {
-    #[inline]
-    fn into_system_errno(self) -> Option<SystemErrno> {
-        SystemErrno::init_u16(self)
-    }
-}
-impl SystemErrnoInit for Win32Error {
-    #[inline]
-    fn into_system_errno(self) -> Option<SystemErrno> {
-        SystemErrno::init_win32_error(self)
+        u16::try_from(self).ok().and_then(SystemErrno::init_numeric)
     }
 }
 
@@ -607,17 +595,12 @@ impl SystemErrno {
     }
 
     /// Cross-platform `SystemErrno::init` — POSIX targets define a single
-    /// `init(i64)`; Windows splits it into typed entry points (`init_u16` /
-    /// `init_c_int` / `init_win32_error`). Re-unified here behind `SystemErrnoInit` so
-    /// shared call sites can keep writing `SystemErrno::init(code)`.
+    /// `init(i64)`; Windows dispatches on the integer type via
+    /// `SystemErrnoInit` so shared call sites can keep writing
+    /// `SystemErrno::init(code)`.
     #[inline]
     pub fn init<C: SystemErrnoInit>(code: C) -> Option<SystemErrno> {
         code.into_system_errno()
-    }
-
-    /// `init(code: u16)` — Win32/WSA error codes and negated-uv codes encoded as u16.
-    pub(crate) fn init_u16(code: u16) -> Option<SystemErrno> {
-        Self::init_numeric(code)
     }
 
     /// `init(code: c_int)` — same as u16 path for positives; negatives are negated and retried.
@@ -765,15 +748,10 @@ impl SystemErrno {
     }
 }
 
-/// Thin typed adapter over the canonical row table in `bun_libuv_sys`.
+/// A negative libuv return code → `E`; a code libuv does not define is `UNKNOWN`.
 pub fn translate_uv_error_to_e(code: c_int) -> E {
     uv::uv_err_to_e_discriminant(code)
         .and_then(E::try_from_raw)
-        .or_else(|| {
-            u16::try_from(code.wrapping_neg())
-                .ok()
-                .and_then(E::try_from_raw)
-        })
         .unwrap_or(E::UNKNOWN)
 }
 
@@ -825,9 +803,10 @@ pub mod windows {
     /// `bun_windows_sys` is tier-0 and cannot name `SystemErrno`, so the
     /// mapping surfaces here as extension methods instead.
     pub trait Win32ErrorExt: Copy {
-        /// Total: `SUCCESS` → `SUCCESS`, a code in libuv's
-        /// `uv_translate_sys_error` table → that errno, anything else →
-        /// `EUNKNOWN`.
+        /// The errno for a failed call whose `GetLastError()` is `self`: its row
+        /// in the Win32→errno table (`init_win32_error`), else `EUNKNOWN` —
+        /// including `SUCCESS`, a failure that set no code. Compare against
+        /// `Win32Error::SUCCESS` first when the call may have succeeded.
         fn to_system_errno(self) -> SystemErrno;
         #[inline]
         fn to_e(self) -> E {
@@ -837,9 +816,6 @@ pub mod windows {
     impl Win32ErrorExt for Win32Error {
         #[inline]
         fn to_system_errno(self) -> SystemErrno {
-            if self == Win32Error::SUCCESS {
-                return SystemErrno::SUCCESS;
-            }
             SystemErrno::init_win32_error(self).unwrap_or(SystemErrno::EUNKNOWN)
         }
     }

@@ -236,9 +236,7 @@ pub mod posix {
 /// Decode a POSIX syscall return value: `rc.get_errno()` / `get_errno(rc)` is
 /// `SUCCESS` unless `rc` is the failure sentinel, in which case it is the errno
 /// (Linux raw syscalls decode `-errno` from `usize`; libc wrappers read the
-/// thread-local errno on `-1`). Windows has no impls: a Win32 return value
-/// carries no errno, so callers there check it and then read [`last_error`]
-/// (or build a `bun_sys::Error::from_win32`).
+/// thread-local errno on `-1`).
 #[cfg(not(windows))]
 pub trait GetErrno: Copy {
     fn get_errno(self) -> E;
@@ -285,6 +283,13 @@ impl SystemErrno {
             Some(e) => e,
             None => Self::EUNKNOWN,
         }
+    }
+
+    /// `E` is `SystemErrno` on POSIX; Windows defines the real conversion.
+    #[cfg(not(windows))]
+    #[inline]
+    pub const fn to_e(self) -> E {
+        self
     }
 }
 

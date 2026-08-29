@@ -25,7 +25,7 @@ pub use error::ReturnCodeExt;
 impl From<Error> for bun_errno::SystemErrno {
     #[inline]
     fn from(e: Error) -> Self {
-        bun_errno::SystemErrno::init(i64::from(e.errno)).unwrap_or(bun_errno::SystemErrno::EIO)
+        bun_errno::SystemErrno::from_repr(e.errno).unwrap_or(bun_errno::SystemErrno::EIO)
     }
 }
 /// The JS-facing rich error
@@ -568,8 +568,6 @@ pub mod dir_iterator {
             }
         }
         fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
-            use crate::windows::Win32Error;
-            use bun_errno::Win32ErrorExt as _;
             use bun_windows_sys::externs as w;
             // `offset_of!(FILE_DIRECTORY_INFORMATION, FileName)` — fixed by the
             // Win32 layout (4+4 + 6×8 + 4+4 = 64).
@@ -636,8 +634,7 @@ pub mod dir_iterator {
                         return Ok(None);
                     }
                     if rc != w::NTSTATUS::SUCCESS {
-                        let errno = Win32Error::from_nt_status(rc).to_e();
-                        return Err(Error::from_code(errno, Tag::NtQueryDirectoryFile));
+                        return Err(Error::new(rc, Tag::NtQueryDirectoryFile));
                     }
                     if io.Information == 0 {
                         return Ok(None);
@@ -1317,7 +1314,7 @@ impl Tag {
     pub const readlink: Tag = Tag(39);
     pub const rename: Tag = Tag(40);
     pub(crate) const stat: Tag = Tag(41);
-    pub(crate) const statfs: Tag = Tag(42);
+    pub const statfs: Tag = Tag(42);
     pub const symlink: Tag = Tag(43);
     #[cfg(not(windows))]
     pub(crate) const symlinkat: Tag = Tag(44);
@@ -3589,7 +3586,7 @@ mod windows_impl {
                 match er {
                     w::Win32Error::BROKEN_PIPE | w::Win32Error::HANDLE_EOF => return Ok(0),
                     w::Win32Error::OPERATION_ABORTED => continue,
-                    _ => return Err(Error::new(er.to_e(), Tag::read).with_fd(fd)),
+                    _ => return Err(Error::from_win32(er, Tag::read).with_fd(fd)),
                 }
             }
             return Ok(amount_read as usize);
@@ -3616,12 +3613,12 @@ mod windows_impl {
         };
         if rc == 0 {
             let er = w::Win32Error::get();
-            let errno = if er == w::Win32Error::ACCESS_DENIED {
-                E::EBADF
+            let err = if er == w::Win32Error::ACCESS_DENIED {
+                Error::from_code(E::EBADF, Tag::write)
             } else {
-                er.to_e()
+                Error::from_win32(er, Tag::write)
             };
-            return Err(Error::new(errno, Tag::write).with_fd(fd));
+            return Err(err.with_fd(fd));
         }
         Ok(bytes_written as usize)
     }
@@ -3661,7 +3658,7 @@ mod windows_impl {
                     // BROKEN_PIPE/HANDLE_EOF map to EOF (0 bytes read).
                     w::Win32Error::BROKEN_PIPE | w::Win32Error::HANDLE_EOF => return Ok(0),
                     w::Win32Error::OPERATION_ABORTED => continue,
-                    _ => return Err(Error::new(er.to_e(), Tag::pread).with_fd(fd)),
+                    _ => return Err(Error::from_win32(er, Tag::pread).with_fd(fd)),
                 }
             }
             return Ok(amount_read as usize);
@@ -3697,14 +3694,12 @@ mod windows_impl {
         };
         if rc == 0 {
             let er = w::Win32Error::get();
-            // Keep parity with `write()` above and surface the raw errno
-            // (no INVALID_HANDLE → NotOpenForWriting remapping).
-            let errno = if er == w::Win32Error::ACCESS_DENIED {
-                E::EBADF
+            let err = if er == w::Win32Error::ACCESS_DENIED {
+                Error::from_code(E::EBADF, Tag::pwrite)
             } else {
-                er.to_e()
+                Error::from_win32(er, Tag::pwrite)
             };
-            return Err(Error::new(errno, Tag::pwrite).with_fd(fd));
+            return Err(err.with_fd(fd));
         }
         Ok(bytes_written as usize)
     }
@@ -3727,9 +3722,7 @@ mod windows_impl {
     fn fstat_handle(fd: Fd) -> Maybe<Stat> {
         use bun_core::S;
         let handle = fd.native();
-        let nt_err = |rc: w::NTSTATUS| {
-            Error::new(w::translate_nt_status_to_errno(rc), Tag::fstat).with_fd(fd)
-        };
+        let nt_err = |rc: w::NTSTATUS| Error::new(rc, Tag::fstat).with_fd(fd);
         let mut st: Stat = bun_core::ffi::zeroed();
 
         // Dispatch on handle type; pipes and consoles get a synthetic stat.
@@ -4239,7 +4232,7 @@ mod windows_impl {
         // calls; only uv_fs_req_cleanup frees it. fs_t has no Drop impl, so
         // call it explicitly before any return.
         req.deinit();
-        if let Some(err) = Error::from_uv_rc(rc, Tag::utime) {
+        if let Some(err) = rc.to_error(Tag::utime) {
             return Err(err.with_path(path.as_bytes()));
         }
         Ok(())
@@ -4294,7 +4287,7 @@ mod windows_impl {
         // uv_pipe(fds, 0, 0).
         let mut fds: [uv::uv_file; 2] = [-1, -1];
         let rc = unsafe { uv::uv_pipe(&mut fds, 0, 0) };
-        if let Some(err) = Error::from_uv_rc(rc, Tag::pipe) {
+        if let Some(err) = rc.to_error(Tag::pipe) {
             return Err(err);
         }
         Ok([Fd::from_uv(fds[0]), Fd::from_uv(fds[1])])
@@ -6644,8 +6637,7 @@ fn open_windows_device_path(
         )
     };
     if rc == bun_windows_sys::INVALID_HANDLE_VALUE {
-        let errno = windows::Win32Error::get().to_e();
-        return Err(Error::from_code(errno, Tag::open));
+        return Err(Error::from_win32(windows::Win32Error::get(), Tag::open));
     }
     Ok(Fd::from_system(rc))
 }
@@ -7165,10 +7157,7 @@ fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
         // deterministically maps to `ENOENT`, which `directory_exists_at()`
         // branches on), then falls back to `RtlNtStatusToDosError` for
         // unmapped codes.
-        return Err(Error::from_code(
-            windows::translate_nt_status_to_errno(rc),
-            Tag::access,
-        ));
+        return Err(Error::new(rc, Tag::access));
     }
     // `FILE_ATTRIBUTE_READONLY` on a directory is a folder-customization
     // marker (OneDrive sets it) and does not affect directory-ness; only
@@ -8655,9 +8644,7 @@ impl WindowsSymlinkOptions {
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(windows)]
 mod win_symlink_impl {
-    use super::{
-        E, Error, Maybe, Tag, Win32ErrorExt as _, WindowsSymlinkOptions, ZStr, sys_uv, windows,
-    };
+    use super::{E, Error, Maybe, Tag, WindowsSymlinkOptions, ZStr, sys_uv, windows};
     use bun_core::WStr;
     use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -8710,21 +8697,14 @@ mod win_symlink_impl {
                     WindowsSymlinkOptions::denied();
                     continue;
                 }
-                // `to_e()` falls back to `E::UNKNOWN` for Win32 codes not in
-                // the errno table. Filter drivers, network redirectors, and
-                // security software hooking `CreateSymbolicLinkW` can return
-                // codes outside the mapped set; treating those as success
-                // would leave the caller believing a symlink exists when it
-                // does not. Returning an error lets `symlink_or_junction`
-                // fall through to a junction.
-                let e: E = win_err.to_e();
+                let err = Error::from_win32(win_err, Tag::symlink);
                 // Only ENOENT/EEXIST keep `has_failed_to_create_symlink`
                 // unset; every other failure flips the sticky bit so
                 // `symlinkOrJunction` falls through to junctions next time.
-                if !matches!(e, E::NOENT | E::EXIST) {
+                if !matches!(err.get_errno(), E::NOENT | E::EXIST) {
                     WindowsSymlinkOptions::set_has_failed_to_create_symlink(true);
                 }
-                return Err(Error::from_code(e, Tag::symlink));
+                return Err(err);
             }
             return Ok(());
         }

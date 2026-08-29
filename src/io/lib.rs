@@ -2275,7 +2275,7 @@ pub mod closer {
                     fd.uv(),
                     Some(Self::on_close),
                 )
-                .err_enum()
+                .errno()
                 {
                     bun_core::debug_warn!("libuv close() failed = {}", err);
                     drop(bun_core::heap::take(closer));
@@ -2297,7 +2297,7 @@ pub mod closer {
                 );
 
                 #[cfg(debug_assertions)]
-                if let Some(err) = (*closer).io_request.result.err_enum() {
+                if let Some(err) = (*closer).io_request.result.errno() {
                     bun_core::debug_warn!("libuv close() failed = {}", err);
                 }
 

@@ -43,31 +43,6 @@ impl ErrorJsc for Error {
 pub mod TestingAPIs {
     use super::*;
 
-    /// `Error::from_libuv(-magnitude).name()`, so tests can feed libuv code
-    /// magnitudes (4058 for `UV_ENOENT`) and check the errno name they decode
-    /// to. Windows-only.
-    #[bun_jsc::host_fn]
-    pub fn sys_error_name_from_libuv(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let arguments = frame.arguments();
-        if arguments.is_empty() || !arguments[0].is_number() {
-            return Err(global.throw(format_args!(
-                "sysErrorNameFromLibuv: expected 1 number argument"
-            )));
-        }
-        #[cfg(not(windows))]
-        {
-            return Ok(JSValue::UNDEFINED);
-        }
-        #[cfg(windows)]
-        {
-            let err = Error::from_libuv(-arguments[0].to_int32(), bun_sys::Tag::open);
-            return bun_string_jsc::create_utf8_for_js(global, err.name());
-        }
-    }
-
     /// Exposes NTSTATUS -> `bun.sys.E` translation so tests can feed NTSTATUS
     /// values that filter drivers and cloud-sync placeholders return in the
     /// wild (STATUS_CANNOT_DELETE etc.) and verify they map to a sensible

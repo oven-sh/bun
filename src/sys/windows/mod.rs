@@ -409,6 +409,13 @@ pub use bun_windows_sys::Win32Error;
 /// newtype).
 pub use bun_errno::Win32ErrorExt;
 
+/// The errno for the Win32 call that just failed: `Win32Error::get().to_system_errno()`.
+/// Build a `bun_sys::Error` with `Error::from_win32(Win32Error::get(), tag)` instead.
+#[inline]
+pub fn last_errno() -> SystemErrno {
+    Win32Error::get().to_system_errno()
+}
+
 pub use bun_libuv_sys as libuv;
 
 /// True when the process token is a Windows AppContainer (lowbox) token.
@@ -1465,10 +1472,10 @@ pub fn update_stdio_mode_flags(
     let mut original_mode: DWORD = 0;
     if kernel32_2::GetConsoleMode(fd.native(), &mut original_mode) != 0 {
         if kernel32_2::SetConsoleMode(fd.native(), (original_mode | opts.set) & !opts.unset) == 0 {
-            return Err(Win32Error::get().to_system_errno());
+            return Err(last_errno());
         }
     } else {
-        return Err(Win32Error::get().to_system_errno());
+        return Err(last_errno());
     }
     Ok(original_mode)
 }
@@ -1530,7 +1537,7 @@ pub fn become_watcher_manager() -> ! {
     let job = unsafe { externs::CreateJobObjectA(ptr::null_mut(), ptr::null()) };
     if job.is_null() {
         // Print the Win32 error name, not the raw DWORD.
-        let err = Win32Error(kernel32::GetLastError() as u16);
+        let err = Win32Error::get();
         bun_core::Output::panic(format_args!(
             "Could not create watcher Job Object: {:?}",
             err
@@ -1551,7 +1558,7 @@ pub fn become_watcher_manager() -> ! {
         )
     } == 0
     {
-        let err = Win32Error(kernel32::GetLastError() as u16);
+        let err = Win32Error::get();
         bun_core::Output::panic(format_args!(
             "Could not configure watcher Job Object: {:?}",
             err
@@ -1568,7 +1575,7 @@ pub fn become_watcher_manager() -> ! {
                 // before we get here. A proper fix would thread the captured
                 // Win32 code through the error payload, which requires
                 // changing `spawn_watcher_child`'s return type.
-                let last = Win32Error(GetLastError() as u16);
+                let last = Win32Error::get();
                 bun_core::Output::panic(format_args!("Failed to spawn process: {:?}\n", last));
             }
             bun_core::Output::panic(format_args!("Failed to spawn process: {}\n", err));
@@ -1587,7 +1594,7 @@ pub fn become_watcher_manager() -> ! {
         if kernel32_2::GetExitCodeProcess(procinfo.hProcess, &mut exit_code) == 0 {
             // Capture before NtClose — closing the handle may overwrite the
             // thread's last-error.
-            let err = Win32Error(GetLastError() as u16);
+            let err = Win32Error::get();
             let _ = kernel32_2::NtClose(procinfo.hProcess);
             bun_core::Output::panic(format_args!(
                 "Failed to get exit code of child process: {:?}\n",
@@ -2065,31 +2072,22 @@ bun_core::declare_scope!(windowsUserUniqueId, visible);
 
 #[cfg(test)]
 mod tests {
-    use super::{E, SystemErrno, Win32Error, Win32ErrorExt as _, system_volume_device};
+    use super::{E, Win32Error, Win32ErrorExt as _, system_volume_device};
     use crate::{Error, Tag};
 
     /// A Win32 code with no entry in `SystemErrno::init_win32_error`.
     const UNMAPPED: Win32Error = Win32Error(0xFFFE);
 
+    /// `GetLastError()` after a failed Win32 call can return codes not in the
+    /// table (filter drivers, network redirectors, AV hooks), or 0. Reporting
+    /// success for those would swallow the failure.
     #[test]
-    fn to_e_is_total() {
-        assert_eq!(Win32Error::SUCCESS.to_e(), E::SUCCESS);
+    fn to_e_never_success() {
         assert_eq!(Win32Error::FILE_NOT_FOUND.to_e(), E::NOENT);
-        // `GetLastError()` after a failed Win32 call can return codes not in
-        // the table (filter drivers, network redirectors, AV hooks). Reporting
-        // success for those would swallow the failure.
         assert_eq!(UNMAPPED.to_e(), E::UNKNOWN);
-        assert_eq!(SystemErrno::EUNKNOWN.to_e(), E::UNKNOWN);
-    }
-
-    #[test]
-    fn from_win32_never_carries_success() {
+        assert_eq!(Win32Error::SUCCESS.to_e(), E::UNKNOWN);
         assert_eq!(
             Error::from_win32(UNMAPPED, Tag::open).get_errno(),
-            E::UNKNOWN
-        );
-        assert_eq!(
-            Error::from_win32(Win32Error::SUCCESS, Tag::open).get_errno(),
             E::UNKNOWN
         );
         assert_eq!(

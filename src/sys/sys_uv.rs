@@ -8,13 +8,10 @@ use bstr::BStr;
 
 use bun_core::ZStr;
 
+use crate::ReturnCodeExt;
 use crate::Tag;
 use crate::windows::libuv as uv;
 use crate::{E, Fd, FdExt, Mode, PlatformIOVec, PlatformIOVecConst, Stat, StatFS};
-// `ReturnCodeExt::err_enum_e` overlays the libuv→POSIX errno translation;
-// without it the raw `UV_E*` magnitude (e.g. 4058 for UV_ENOENT) would land
-// in `Error.errno` and break callers that compare against `E::NOENT as _`.
-use crate::ReturnCodeExt;
 
 type Result<T> = crate::Result<T>;
 

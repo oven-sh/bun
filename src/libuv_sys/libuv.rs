@@ -2135,7 +2135,7 @@ pub const fn uv_err_to_e_discriminant(code: c_int) -> Option<u16> {
         UV_ECANCELED => 125,      // E::CANCELED
         UV_ECHARSET => 135,       // E::CHARSET
         UV_EOF => 136,            // E::EOF
-        UV_UNKNOWN => 134,        // E::UNKNOWN
+        UV_UNKNOWN => E_UNKNOWN,
         // EAI_* codes — `bun_errno::E::UV_EAI_*` discriminants are defined as
         // `(-UV_EAI_*) as u16`, i.e. the raw magnitude is the discriminant.
         UV_EAI_ADDRFAMILY => (-UV_EAI_ADDRFAMILY) as u16,
@@ -2234,7 +2234,7 @@ pub const fn e_discriminant_to_uv(discriminant: u16) -> Option<c_int> {
         125 => UV_ECANCELED,      // E::CANCELED
         135 => UV_ECHARSET,       // E::CHARSET
         136 => UV_EOF,            // E::EOF
-        134 => UV_UNKNOWN,        // E::UNKNOWN
+        E_UNKNOWN => UV_UNKNOWN,
         d if d == (-UV_EAI_ADDRFAMILY) as u16 => UV_EAI_ADDRFAMILY,
         d if d == (-UV_EAI_AGAIN) as u16 => UV_EAI_AGAIN,
         d if d == (-UV_EAI_BADFLAGS) as u16 => UV_EAI_BADFLAGS,
@@ -2319,13 +2319,6 @@ impl ReturnCode {
             None
         }
     }
-    /// Same translated value as
-    /// [`errno`]; for the typed `bun_sys::E` use
-    /// `bun_sys::ReturnCodeExt::err_enum_e` (layering: `E` lives upstream).
-    #[inline]
-    pub const fn err_enum(self) -> Option<u16> {
-        self.errno()
-    }
     /// Layer-free `< 0` check.
     /// For the tagged `bun_sys::Error` use [`ReturnCodeExt::to_error`].
     #[inline]
@@ -2360,10 +2353,6 @@ impl ReturnCodeI64 {
         } else {
             None
         }
-    }
-    #[inline]
-    pub const fn err_enum(self) -> Option<u16> {
-        self.errno()
     }
     /// `req.result` after a successful `uv_fs_open` is the
     /// CRT fd. Returns the raw `uv_file`; caller wraps with `Fd::from_uv`

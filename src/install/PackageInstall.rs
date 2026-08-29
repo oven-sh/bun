@@ -594,7 +594,7 @@ impl HardLinkWindowsInstallTask {
     }
 
     fn run(&mut self) -> Option<crate::Error> {
-        use bun_sys::windows::{self, Win32ErrorExt as _};
+        use bun_sys::windows;
         // Read scalar fields before borrowing `bytes` so no `&mut self` reborrow
         // overlaps the slice borrows below.
         let src_len = self.src_len;
@@ -657,7 +657,7 @@ impl HardLinkWindowsInstallTask {
             return None;
         }
 
-        Some(windows::Win32Error::get().to_system_errno().into())
+        Some(windows::last_errno().into())
     }
 }
 
@@ -1204,7 +1204,7 @@ impl<'a> PackageInstall<'a> {
 
         #[cfg(windows)]
         {
-            use bun_sys::windows::{self, Win32ErrorExt as _};
+            use bun_sys::windows;
 
             let mut buf = bun_paths::w_path_buffer_pool::get();
             let mut buf2 = bun_paths::w_path_buffer_pool::get();
@@ -1221,7 +1221,7 @@ impl<'a> PackageInstall<'a> {
             } as usize;
             if dest_path_length == 0 || dest_path_length >= buf.len() {
                 let err = crate::Error::Sys(if dest_path_length == 0 {
-                    windows::Win32Error::get().to_system_errno()
+                    windows::last_errno()
                 } else {
                     bun_errno::SystemErrno::ENAMETOOLONG
                 });
@@ -1255,7 +1255,7 @@ impl<'a> PackageInstall<'a> {
             } as usize;
             if cache_path_length == 0 || cache_path_length >= buf2.len() {
                 let err = crate::Error::Sys(if cache_path_length == 0 {
-                    windows::Win32Error::get().to_system_errno()
+                    windows::last_errno()
                 } else {
                     bun_errno::SystemErrno::ENAMETOOLONG
                 });
@@ -1315,7 +1315,7 @@ impl<'a> PackageInstall<'a> {
             while let Some(entry) = walker.next()? {
                 #[cfg(windows)]
                 {
-                    use bun_sys::windows::{self, Win32ErrorExt as _};
+                    use bun_sys::windows;
                     match entry.kind {
                         EntryKind::Directory | EntryKind::File => {}
                         _ => continue,
@@ -1373,6 +1373,7 @@ impl<'a> PackageInstall<'a> {
                                     }
                                 }
 
+                                let err = windows::last_errno();
                                 if let Some(progress) = progress_.as_deref_mut() {
                                     progress.root.end();
                                     progress.refresh();
@@ -1380,7 +1381,7 @@ impl<'a> PackageInstall<'a> {
 
                                 bun_core::pretty_errorln!(
                                     "<r><red>{}<r>: copying file {}",
-                                    windows::Win32Error::get().to_system_errno(),
+                                    err,
                                     bun_core::fmt::fmt_os_path(
                                         entry.path.as_slice(),
                                         Default::default()
@@ -2081,7 +2082,7 @@ impl<'a> PackageInstall<'a> {
         // When we're linking on Windows, we want to avoid keeping the source directory handle open
         #[cfg(windows)]
         {
-            use bun_sys::windows::{self, Win32ErrorExt as _};
+            use bun_sys::windows;
             let mut wbuf = bun_paths::WPathBuffer::uninit();
             // SAFETY: FFI — destination_dir.fd() is an open handle; wbuf is a valid writable
             // WPathBuffer of the passed length.
@@ -2095,7 +2096,7 @@ impl<'a> PackageInstall<'a> {
             } as usize;
             if dest_path_length == 0 || dest_path_length >= wbuf.len() {
                 let err = crate::Error::Sys(if dest_path_length == 0 {
-                    windows::Win32Error::get().to_system_errno()
+                    windows::last_errno()
                 } else {
                     bun_errno::SystemErrno::ENAMETOOLONG
                 });

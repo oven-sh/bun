@@ -1620,11 +1620,14 @@ fn connect_finish<const IS_SSL: bool>(
             // `last_errno()` reads.
             #[cfg(windows)]
             let os_errno = {
-                use bun_sys::windows::Win32ErrorExt as _;
-                let mut e = bun_sys::windows::Win32Error::get().to_system_errno() as c_int;
-                // Winsock AF_UNIX returns WSAECONNREFUSED whether the path exists
-                // or not; Node distinguishes ENOENT via `CreateFile`.
-                if port.is_none() && e == bun_sys::SystemErrno::ECONNREFUSED as c_int {
+                use bun_sys::windows::{Win32Error, Win32ErrorExt as _};
+                let mut e = match Win32Error::get() {
+                    Win32Error::SUCCESS => 0,
+                    code => code.to_system_errno() as c_int,
+                };
+                // A Winsock AF_UNIX connect error does not say whether the path
+                // exists; Node (named pipes, `CreateFile`) reports ENOENT.
+                if port.is_none() {
                     if let Some(UnixOrHost::Unix(path)) = socket_ref.connection.get() {
                         if !bun_sys::exists(path) {
                             e = bun_sys::SystemErrno::ENOENT as c_int;

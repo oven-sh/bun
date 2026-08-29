@@ -1130,11 +1130,6 @@ pub mod ws2_32 {
 
     #[cfg_attr(windows, link(name = "ws2_32"))]
     unsafe extern "system" {
-        /// No preconditions; reads the thread-local Winsock error slot (the
-        /// same slot as `GetLastError`).
-        pub safe fn WSAGetLastError() -> c_int;
-        /// No preconditions; writes the thread-local Winsock error slot.
-        pub safe fn WSASetLastError(err: c_int);
         pub fn recv(s: usize, buf: *mut c_void, len: c_int, flags: c_int) -> c_int;
         pub fn send(s: usize, buf: *const c_void, len: c_int, flags: c_int) -> c_int;
         /// `WSAPoll` (`winsock2.h`). Returns count of ready fds, 0 on timeout,
@@ -1154,8 +1149,6 @@ pub mod ws2_32 {
     /// `POLLWRNORM` (`winsock2.h`).
     pub const POLLWRNORM: i16 = 0x0010;
 }
-pub use ws2_32::WSAGetLastError;
-
 // ──────────────────────────────────────────────────────────────────────────
 // Win32Error — a transparent newtype with associated consts so unmapped
 // codes round-trip and `match` on consts works (structural equality). Only the subset referenced by lower-tier
@@ -1280,9 +1273,11 @@ impl Win32Error {
     pub const WSANO_DATA: Win32Error = Win32Error(11004);
     pub const WSA_QOS_RESERVED_PETYPE: Win32Error = Win32Error(11031);
 
+    /// `GetLastError()`. Win32 error codes fit in 16 bits; a larger
+    /// (HRESULT-shaped) value saturates to `0xFFFF`, which no code uses.
     #[inline]
     pub fn get() -> Win32Error {
-        Win32Error(kernel32::GetLastError() as u16)
+        Win32Error(u16::try_from(kernel32::GetLastError()).unwrap_or(u16::MAX))
     }
 
     #[inline]

@@ -1132,9 +1132,6 @@ impl<'a> SecurityScanSubprocess<'a> {
         let mut json_fds: [uv::uv_file; 2] = [0; 2];
         // SAFETY: FFI — `json_fds` is a 2-element out-array; flags are valid.
         let pipe_rc = unsafe { uv::uv_pipe(&mut json_fds, 0, uv::UV_NONBLOCK_PIPE as i32) };
-        // Use the translating overlay (`ReturnCodeExt::err_enum_e`) — the inherent
-        // `ReturnCode::err_enum()` returns the raw |uv_code| (e.g. 4071 for
-        // UV_EINVAL on Windows) without mapping to POSIX `bun.sys.E`.
         if let Some(e) = pipe_rc.err_enum_e() {
             ipc_output_fds[0].close();
             ipc_output_fds[1].close();

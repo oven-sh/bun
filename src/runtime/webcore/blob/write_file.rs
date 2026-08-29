@@ -992,18 +992,9 @@ mod windows_impl {
             ));
             // SAFETY: `this` is live (libuv invokes us with the req we registered).
             let rc = unsafe { (*this).io_request.result };
-            if let Some(err) = rc.errno() {
+            if let Some(err) = rc.to_error(sys::Tag::write) {
                 // SAFETY: `this` is live; `throw` consumes it.
-                match unsafe {
-                    Self::throw(
-                        this,
-                        sys::Error {
-                            errno: err,
-                            syscall: sys::Tag::write,
-                            ..Default::default()
-                        },
-                    )
-                } {
+                match unsafe { Self::throw(this, err) } {
                     WriteFileWindowsError::WriteFileWindowsDeinitialized => {}
                     WriteFileWindowsError::Js(err) => crate::dispatch::fold(Err(err)),
                 }
@@ -1146,18 +1137,9 @@ mod windows_impl {
                 return Ok(());
             }
 
-            if let Some(err) = rc.errno() {
+            if let Some(err) = rc.to_error(sys::Tag::write) {
                 // SAFETY: caller contract — `this` is live; consumed here.
-                return Err(unsafe {
-                    Self::throw(
-                        this,
-                        sys::Error {
-                            errno: err as _,
-                            syscall: sys::Tag::write,
-                            ..Default::default()
-                        },
-                    )
-                });
+                return Err(unsafe { Self::throw(this, err) });
             }
 
             if rc.int() != 0 {

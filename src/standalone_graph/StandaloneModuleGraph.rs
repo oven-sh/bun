@@ -1746,14 +1746,12 @@ pub(crate) fn inject<'a>(
             out_buf[zname.len()] = 0;
 
             use bun_sys::windows as w;
-            use bun_sys::windows::Win32ErrorExt as _;
             // SAFETY: both buffers NUL-terminated above; `CopyFileW` does not
             // retain the pointers past return.
             if unsafe { w::CopyFileW(in_buf.as_ptr(), out_buf.as_ptr(), w::FALSE) } == w::FALSE {
-                let e = w::Win32Error::get();
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
-                    e.to_system_errno()
+                    w::last_errno()
                 );
                 return None;
             }
@@ -2563,7 +2561,7 @@ pub fn to_executable(
         // Close the file handle before moving (Windows requires this)
         fd.close();
 
-        use bun_sys::windows::{self, Win32ErrorExt as _};
+        use bun_sys::windows;
         // Move the file using MoveFileExW
         // SAFETY: NUL-terminated wide strings constructed above. Pass the
         // full-buffer pointer (not a `[..len]` sub-slice) so the pointer's
@@ -2579,9 +2577,9 @@ pub fn to_executable(
             )
         } == windows::FALSE
         {
-            let werr = windows::Win32Error::get();
+            let err = windows::last_errno();
             let _ = Syscall::unlink(injected.temp_path);
-            if werr.to_system_errno() == bun_sys::SystemErrno::EISDIR {
+            if err == bun_sys::SystemErrno::EISDIR {
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "{} is a directory. Please choose a different --outfile or delete the directory",
                     bstr::BStr::new(outfile)
@@ -2590,7 +2588,7 @@ pub fn to_executable(
             return Ok(CompileResult::fail_fmt(format_args!(
                 "failed to move executable to {}: {}",
                 bstr::BStr::new(dest_path),
-                werr.to_system_errno()
+                err
             )));
         }
 

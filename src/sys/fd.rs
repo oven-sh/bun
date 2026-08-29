@@ -165,8 +165,7 @@ impl FdExt for Fd {
                         // fs_t has no Drop impl, so cleanup
                         // must be explicit (uv_fs_req_cleanup).
                         req.deinit();
-                        rc.to_error(sys::Tag::close)
-                            .map(|e| sys::Error { fd: self, ..e })
+                        rc.to_error(sys::Tag::close).map(|e| e.with_fd(self))
                     }
                     DecodeWindows::Windows(handle) => {
                         unsafe extern "system" {
@@ -178,13 +177,7 @@ impl FdExt for Fd {
                         }
                         match NtClose(handle) {
                             NTSTATUS::SUCCESS => None,
-                            rc => Some(sys::Error {
-                                fd: self,
-                                ..sys::Error::from_code(
-                                    sys::windows::translate_nt_status_to_errno(rc),
-                                    sys::Tag::CloseHandle,
-                                )
-                            }),
+                            rc => Some(sys::Error::new(rc, sys::Tag::CloseHandle).with_fd(self)),
                         }
                     }
                 }

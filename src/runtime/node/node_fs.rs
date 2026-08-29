@@ -30,8 +30,6 @@ use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, Wor
 // `Maybe(T)` shim — `crate::node::Maybe` is the same `Result<T, Error>` alias
 // as `bun_sys::Maybe<T>`, so this is just the file-local extension trait
 // surface that lets `Maybe::<T>::errno_sys*` / `.get_errno()` resolve.
-// `errno_sys*` decode a POSIX return value; Windows arms check the Win32
-// return value and build `sys::Error::from_win32` instead.
 // ──────────────────────────────────────────────────────────────────────────
 pub trait MaybeSysResultExt<R>: Sized {
     fn get_errno(&self) -> E;
@@ -227,6 +225,8 @@ use bun_resolver::fs::FileSystem;
 // `UVFSRequest` aliases `AsyncFSTask` and every `uv::*` reference is gated
 // behind `#[cfg(windows)]`. There is intentionally **no** POSIX stub module
 // here so misuse is a compile error, not a silent null.
+#[cfg(windows)]
+use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
 use bun_sys::windows::{self, libuv as uv};
 
@@ -910,8 +910,7 @@ mod _async_tasks {
             // `req` aliases `this.req` (see create(): `task.req.data = from_mut(task)`); once
             // `this: &mut Self` is live, re-deriving through the raw `req` would create a
             // second overlapping `&mut` (Stacked-Borrows UB). Go through `this.req` instead.
-            this.result =
-                NodeFS::uv_dispatch::<R, A, F>(&mut node_fs, &this.args, this.req.result.int());
+            this.result = NodeFS::uv_dispatch::<R, A, F>(&mut node_fs, &this.args, this.req.result);
             // `sys::Error::path` is `Box<[u8]>` boxed at the
             // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
             let this_ptr: *mut Self = this;
@@ -932,7 +931,7 @@ mod _async_tasks {
             // would overlap it (Stacked-Borrows UB). Go through `this.req` instead — disjoint-field
             // borrow alongside `&this.args` / `this.result =`. Hoist the result read so it isn't
             // evaluated after `&mut this.req` is formed in the same call expression.
-            let rc = this.req.result.int();
+            let rc = this.req.result;
             this.result =
                 NodeFS::uv_dispatch_req::<R, A, F>(&mut node_fs, &this.args, &mut this.req, rc);
             // No `err.clone()` needed — see `uv_callback` above.
@@ -4517,12 +4516,13 @@ impl NodeFS {
     }
 
     #[cfg(windows)]
-    pub(crate) fn uv_close(&mut self, args: &args::Close, rc: i64) -> Maybe<ret::Close> {
-        if rc < 0 {
-            return Err(sys::Error {
-                fd: args.fd,
-                ..sys::Error::from_libuv(rc as c_int, sys::Tag::close)
-            });
+    pub(crate) fn uv_close(
+        &mut self,
+        args: &args::Close,
+        rc: uv::ReturnCodeI64,
+    ) -> Maybe<ret::Close> {
+        if let Some(err) = rc.to_error(sys::Tag::close) {
+            return Err(err.with_fd(args.fd));
         }
         Ok(())
     }
@@ -5285,15 +5285,9 @@ impl NodeFS {
                     None,
                 )
             };
-            return if let Some(e) = rc.errno() {
-                Err(sys::Error {
-                    errno: e,
-                    syscall: sys::Tag::futime,
-                    fd: args.fd,
-                    ..Default::default()
-                })
-            } else {
-                Ok(())
+            return match rc.to_error(sys::Tag::futime) {
+                Some(err) => Err(err.with_fd(args.fd)),
+                None => Ok(()),
             };
         }
         #[cfg(not(windows))]
@@ -5743,13 +5737,8 @@ impl NodeFS {
                     None,
                 )
             };
-            if let Some(errno) = rc.errno() {
-                return Err(sys::Error {
-                    errno,
-                    syscall: sys::Tag::mkdtemp,
-                    path: prefix_buf[..len + 6].into(),
-                    ..Default::default()
-                });
+            if let Some(err) = rc.to_error(sys::Tag::mkdtemp) {
+                return Err(err.with_path(&prefix_buf[..len + 6]));
             }
             // SAFETY: on success libuv populates `req.path` with a NUL-terminated
             // UTF-8 string owned by the request; `UvFsReq::drop` runs
@@ -5794,13 +5783,11 @@ impl NodeFS {
     }
 
     #[cfg(windows)]
-    pub(crate) fn uv_open(&mut self, args: &args::Open, rc: i64) -> Maybe<ret::Open> {
-        if rc < 0 {
-            return Err(
-                sys::Error::from_libuv(rc as c_int, sys::Tag::open).with_path(args.path.slice())
-            );
+    pub(crate) fn uv_open(&mut self, args: &args::Open, rc: uv::ReturnCodeI64) -> Maybe<ret::Open> {
+        if let Some(err) = rc.to_error(sys::Tag::open) {
+            return Err(err.with_path(args.path.slice()));
         }
-        Ok(FD::from_uv(rc as _))
+        Ok(FD::from_uv(rc.to_fd()))
     }
 
     #[cfg(windows)]
@@ -5808,12 +5795,10 @@ impl NodeFS {
         &mut self,
         args: &args::StatFS,
         req: &mut uv::fs_t,
-        rc: i64,
+        rc: uv::ReturnCodeI64,
     ) -> Maybe<ret::StatFS> {
-        if rc < 0 {
-            return Err(
-                sys::Error::from_libuv(rc as c_int, sys::Tag::open).with_path(args.path.slice())
-            );
+        if let Some(err) = rc.to_error(sys::Tag::statfs) {
+            return Err(err.with_path(args.path.slice()));
         }
         // libuv stores
         // a `uv_statfs_t*` in `req.ptr` on success. The struct is unaligned in
@@ -5880,28 +5865,26 @@ impl NodeFS {
     }
 
     #[cfg(windows)]
-    pub(crate) fn uv_read(&mut self, args: &args::Read, rc: i64) -> Maybe<ret::Read> {
-        if rc < 0 {
-            return Err(sys::Error {
-                fd: args.fd,
-                ..sys::Error::from_libuv(rc as c_int, sys::Tag::read)
-            });
+    pub(crate) fn uv_read(&mut self, args: &args::Read, rc: uv::ReturnCodeI64) -> Maybe<ret::Read> {
+        if let Some(err) = rc.to_error(sys::Tag::read) {
+            return Err(err.with_fd(args.fd));
         }
         Ok(ret::Read {
-            bytes_read: rc as u64,
+            bytes_read: rc.int() as u64,
         })
     }
 
     #[cfg(windows)]
-    pub(crate) fn uv_readv(&mut self, args: &args::Readv, rc: i64) -> Maybe<ret::Readv> {
-        if rc < 0 {
-            return Err(sys::Error {
-                fd: args.fd,
-                ..sys::Error::from_libuv(rc as c_int, sys::Tag::readv)
-            });
+    pub(crate) fn uv_readv(
+        &mut self,
+        args: &args::Readv,
+        rc: uv::ReturnCodeI64,
+    ) -> Maybe<ret::Readv> {
+        if let Some(err) = rc.to_error(sys::Tag::readv) {
+            return Err(err.with_fd(args.fd));
         }
         Ok(ret::Readv {
-            bytes_read: rc as u64,
+            bytes_read: rc.int() as u64,
         })
     }
 
@@ -5936,28 +5919,30 @@ impl NodeFS {
     }
 
     #[cfg(windows)]
-    pub(crate) fn uv_write(&mut self, args: &args::Write, rc: i64) -> Maybe<ret::Write> {
-        if rc < 0 {
-            return Err(sys::Error {
-                fd: args.fd,
-                ..sys::Error::from_libuv(rc as c_int, sys::Tag::write)
-            });
+    pub(crate) fn uv_write(
+        &mut self,
+        args: &args::Write,
+        rc: uv::ReturnCodeI64,
+    ) -> Maybe<ret::Write> {
+        if let Some(err) = rc.to_error(sys::Tag::write) {
+            return Err(err.with_fd(args.fd));
         }
         Ok(ret::Write {
-            bytes_written: rc as u64,
+            bytes_written: rc.int() as u64,
         })
     }
 
     #[cfg(windows)]
-    pub(crate) fn uv_writev(&mut self, args: &args::Writev, rc: i64) -> Maybe<ret::Writev> {
-        if rc < 0 {
-            return Err(sys::Error {
-                fd: args.fd,
-                ..sys::Error::from_libuv(rc as c_int, sys::Tag::writev)
-            });
+    pub(crate) fn uv_writev(
+        &mut self,
+        args: &args::Writev,
+        rc: uv::ReturnCodeI64,
+    ) -> Maybe<ret::Writev> {
+        if let Some(err) = rc.to_error(sys::Tag::writev) {
+            return Err(err.with_fd(args.fd));
         }
         Ok(ret::Writev {
-            bytes_written: rc as u64,
+            bytes_written: rc.int() as u64,
         })
     }
 
@@ -7374,18 +7359,13 @@ impl NodeFS {
                     None,
                 )
             };
-            if let Some(errno) = rc.errno() {
-                return Err(sys::Error {
-                    errno,
-                    syscall: sys::Tag::realpath,
-                    path: args.path.slice().into(),
-                    ..Default::default()
-                });
+            if let Some(err) = rc.to_error(sys::Tag::realpath) {
+                return Err(err.with_path(args.path.slice()));
             }
             // `fs_t.ptr` *is* the nullable C
             // string pointer (libuv stores the realpath result directly), so
             // `ptr_as::<c_char>()` yields the value, not a pointer-to-Option.
-            // SAFETY: `rc.errno()` was None ⇒ libuv populated `req.ptr`.
+            // SAFETY: `rc` was not an error ⇒ libuv populated `req.ptr`.
             let ptr: *const c_char = unsafe { req.ptr_as::<c_char>() };
             if ptr.is_null() {
                 return Err(sys::Error {
@@ -7858,15 +7838,9 @@ impl NodeFS {
                     None,
                 )
             };
-            return if let Some(errno) = rc.errno() {
-                Err(sys::Error {
-                    errno,
-                    syscall: sys::Tag::utime,
-                    path: args.path.slice().into(),
-                    ..Default::default()
-                })
-            } else {
-                Ok(())
+            return match rc.to_error(sys::Tag::utime) {
+                Some(err) => Err(err.with_path(args.path.slice())),
+                None => Ok(()),
             };
         }
         #[cfg(not(windows))]
@@ -7895,15 +7869,9 @@ impl NodeFS {
                     None,
                 )
             };
-            return if let Some(errno) = rc.errno() {
-                Err(sys::Error {
-                    errno,
-                    syscall: sys::Tag::lutime,
-                    path: args.path.slice().into(),
-                    ..Default::default()
-                })
-            } else {
-                Ok(())
+            return match rc.to_error(sys::Tag::lutime) {
+                Some(err) => Err(err.with_path(args.path.slice())),
+                None => Ok(()),
             };
         }
         #[cfg(not(windows))]
@@ -8910,7 +8878,7 @@ impl NodeFS {
     pub(crate) fn uv_dispatch<R, A, const F: NodeFSFunctionEnum>(
         &mut self,
         args: &A,
-        rc: i64,
+        rc: uv::ReturnCodeI64,
     ) -> Maybe<R>
     where
         Op<{ F }>: NodeFSDispatch<R, A>,
@@ -8927,7 +8895,7 @@ impl NodeFS {
         &mut self,
         args: &A,
         req: &mut uv::fs_t,
-        rc: i64,
+        rc: uv::ReturnCodeI64,
     ) -> Maybe<R>
     where
         Op<{ F }>: NodeFSDispatch<R, A>,
@@ -8948,11 +8916,16 @@ pub struct Op<const F: NodeFSFunctionEnum>;
 pub trait NodeFSDispatch<R, A> {
     fn run(fs: &mut NodeFS, args: &A, flavor: Flavor) -> Maybe<R>;
     #[cfg(windows)]
-    fn run_uv(_fs: &mut NodeFS, _args: &A, _rc: i64) -> Maybe<R> {
+    fn run_uv(_fs: &mut NodeFS, _args: &A, _rc: uv::ReturnCodeI64) -> Maybe<R> {
         unreachable!("uv_dispatch: not a UVFSRequest variant")
     }
     #[cfg(windows)]
-    fn run_uv_req(_fs: &mut NodeFS, _args: &A, _req: &mut uv::fs_t, _rc: i64) -> Maybe<R> {
+    fn run_uv_req(
+        _fs: &mut NodeFS,
+        _args: &A,
+        _req: &mut uv::fs_t,
+        _rc: uv::ReturnCodeI64,
+    ) -> Maybe<R> {
         unreachable!("uv_dispatch_req: not a req-passing UVFSRequest variant")
     }
 }
@@ -8972,14 +8945,14 @@ macro_rules! node_fs_ops {
                 $(
                     #[cfg(windows)]
                     #[inline]
-                    fn run_uv(fs: &mut NodeFS, args: &$Args, rc: i64) -> Maybe<$Ret> {
+                    fn run_uv(fs: &mut NodeFS, args: &$Args, rc: uv::ReturnCodeI64) -> Maybe<$Ret> {
                         fs.$uv_method(args, rc)
                     }
                 )?
                 $(
                     #[cfg(windows)]
                     #[inline]
-                    fn run_uv_req(fs: &mut NodeFS, args: &$Args, req: &mut uv::fs_t, rc: i64) -> Maybe<$Ret> {
+                    fn run_uv_req(fs: &mut NodeFS, args: &$Args, req: &mut uv::fs_t, rc: uv::ReturnCodeI64) -> Maybe<$Ret> {
                         fs.$uv_req_method(args, req, rc)
                     }
                 )?

@@ -5,9 +5,8 @@ use bun_alloc::ArenaVecExt as _;
 
 use bun_collections::{HashMap, VecExt};
 
-use crate::lexer as js_lexer;
 use crate::p::P;
-use crate::parser::{ARGUMENTS_STR as arguments_str, Ref, is_eval_or_arguments};
+use crate::parser::{ARGUMENTS_STR as arguments_str, Ref};
 use bun_ast::g::{DeclList, Property, PropertyKind};
 use bun_ast::{self as js_ast, B, E, Expr, ExprNodeList, Flags, G, S, Stmt};
 
@@ -41,22 +40,21 @@ impl PrivateLoweredInfo {
 
 type PrivateLoweredMap = HashMap<u32, PrivateLoweredInfo>;
 
-struct FieldInitEntry {
+/// One class element whose evaluation moves out of the class body: a field,
+/// an auto-accessor, or a static block. Instance entries run in the
+/// constructor, static entries run after the decorators are applied. Both
+/// lists keep source order so initializer side effects interleave correctly.
+struct InitEntry {
+    /// Shallow copy of the member. `key` is the hoisted temp for a computed key.
     prop: Property,
-    is_private: bool,
+    /// The WeakMap that backs a lowered private field or an auto-accessor.
+    /// `None` for a public field.
+    storage: Option<Ref>,
     is_accessor: bool,
-}
-
-#[derive(Clone, Copy)]
-enum StaticElementKind {
-    Block,
-    FieldOrAccessor,
-}
-
-#[derive(Clone, Copy)]
-struct StaticElement {
-    kind: StaticElementKind,
-    index: usize,
+    /// Decorated members wrap the initializer in `__runInitializers` and run
+    /// their extra initializers right after.
+    is_decorated: bool,
+    block: Option<js_ast::StoreRef<G::ClassStaticBlock>>,
 }
 
 #[derive(Clone, Copy)]
@@ -122,21 +120,6 @@ fn class_copy(c: &G::Class) -> G::Class {
         has_decorators: c.has_decorators,
         should_lower_standard_decorators: c.should_lower_standard_decorators,
     }
-}
-
-/// Whether a context-inferred name (`export default` → "default", object
-/// property keys, assignment targets) can be attached to a lowered anonymous
-/// class expression as its syntactic binding name. Class bodies are always
-/// strict mode code and the output may be a module, so reserved words
-/// ("default", "let", "await", …), `eval`/`arguments`, and non-identifier
-/// strings would turn `_class = class <name> {}` into a syntax error.
-#[inline]
-fn can_be_class_binding_name(name: &[u8]) -> bool {
-    js_lexer::is_identifier(name)
-        && js_lexer::keyword(name).is_none()
-        && !js_lexer::is_strict_mode_reserved_word(name)
-        && name != b"await"
-        && !is_eval_or_arguments(name)
 }
 
 // ── impl P ───────────────────────────────────────────────────────────────────
@@ -344,23 +327,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         (((5 + 2 * idx) << 1) | 1) as f64
     }
 
-    /// Emit __privateAdd for a given storage ref.
+    /// Emit the `__privateAdd(this, brand)` for a lowered private method.
     fn emit_private_add(
         &mut self,
         is_static: bool,
         storage_ref: Ref,
-        value: Option<Expr>,
         loc: bun_ast::Loc,
         constructor_inject: &mut BumpVec<'_, Stmt>,
         static_blocks: &mut BumpVec<'_, Property>,
     ) {
         let target = self.new_expr(E::This {}, loc);
         let storage = self.use_ref(storage_ref, loc);
-        let call = if let Some(v) = value {
-            self.call_rt(loc, b"__privateAdd", &[target, storage, v])
-        } else {
-            self.call_rt(loc, b"__privateAdd", &[target, storage])
-        };
+        let call = self.call_rt(loc, b"__privateAdd", &[target, storage]);
         if is_static {
             static_blocks.push(self.make_static_block(call, loc));
         } else {
@@ -372,6 +350,78 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 loc,
             ));
         }
+    }
+
+    /// The receiver for a lowered field: `this` in the constructor, the class
+    /// binding in the suffix.
+    fn field_target(&mut self, is_static: bool, class_ref: Ref, class_loc: bun_ast::Loc, l: bun_ast::Loc) -> Expr {
+        if is_static {
+            self.use_ref(class_ref, class_loc)
+        } else {
+            self.new_expr(E::This {}, l)
+        }
+    }
+
+    /// Build the expression that installs one field or auto-accessor on its
+    /// receiver and, for a decorated member, the `__runInitializers` call that
+    /// runs its extra initializers afterwards.
+    ///
+    /// `field_idx` is the member's slot in the `_init` array. It is only read
+    /// when the entry is decorated.
+    fn field_init_exprs(
+        &mut self,
+        entry: &InitEntry,
+        field_idx: usize,
+        init_ref: Ref,
+        class_ref: Ref,
+        class_loc: bun_ast::Loc,
+        l: bun_ast::Loc,
+    ) -> (Expr, Option<Expr>) {
+        let is_static = entry.prop.flags.contains(Flags::Property::IsStatic);
+
+        let value: Option<Expr> = if entry.is_decorated {
+            let mut run_args = BumpVec::with_capacity_in(4, self.arena);
+            run_args.push(self.use_ref(init_ref, l));
+            run_args.push(self.new_expr(E::Number::new(Self::init_flag(field_idx)), l));
+            run_args.push(self.field_target(is_static, class_ref, class_loc, l));
+            if let Some(init_val) = entry.prop.initializer {
+                run_args.push(init_val);
+            }
+            let run_args_list = ExprNodeList::from_bump_vec(run_args);
+            Some(self.call_runtime(l, b"__runInitializers", run_args_list))
+        } else {
+            entry.prop.initializer
+        };
+
+        let target = self.field_target(is_static, class_ref, class_loc, l);
+        let install = if let Some(storage_ref) = entry.storage {
+            let storage = self.use_ref(storage_ref, l);
+            match value {
+                Some(v) => self.call_rt(l, b"__privateAdd", &[target, storage, v]),
+                None => self.call_rt(l, b"__privateAdd", &[target, storage]),
+            }
+        } else if self.options.use_define_for_class_fields {
+            let key = entry.prop.key.expect("infallible: prop has key");
+            match value {
+                Some(v) => self.call_rt(l, b"__publicField", &[target, key, v]),
+                None => self.call_rt(l, b"__publicField", &[target, key]),
+            }
+        } else {
+            let member = self.member_target(target, &entry.prop);
+            let v = value.unwrap_or_else(|| self.new_expr(E::Undefined {}, l));
+            Expr::assign(member, v)
+        };
+
+        let extra = if entry.is_decorated {
+            let i_e = self.use_ref(init_ref, l);
+            let n_e = self.new_expr(E::Number::new(Self::extra_init_flag(field_idx)), l);
+            let t_e = self.field_target(is_static, class_ref, class_loc, l);
+            Some(self.call_rt(l, b"__runInitializers", &[i_e, n_e, t_e]))
+        } else {
+            None
+        };
+
+        (install, extra)
     }
 
     /// Get the method kind code (1=method, 2=getter, 3=setter).
@@ -1139,17 +1189,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 class_name_ref = cn.ref_;
                 class_name_loc = cn.loc;
             } else {
+                // An anonymous class expression has no inner binding: a name
+                // read inside the body resolves to the enclosing scope. The
+                // context name is applied with `__name` (or by the class
+                // decorator call) instead of a synthesized binding.
                 class_name_ref = ecr;
                 class_name_loc = loc;
                 expr_class_is_anonymous = true;
-                if let Some(name) = name_from_context
-                    && can_be_class_binding_name(name)
-                {
-                    class.class_name = Some(js_ast::LocRef {
-                        ref_: p.new_sym(js_ast::symbol::Kind::Other, name),
-                        loc,
-                    });
-                }
             }
         } else {
             class_name_ref = class.class_name.as_ref().unwrap().ref_;
@@ -1195,6 +1241,66 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     value: None,
                 });
             }
+        }
+
+        // Pre-scan. Private members are lowered to WeakMap/WeakSet all together:
+        // a class with decorators needs it for the decorated members, a class
+        // with a private field needs it because the initializer moves out of
+        // the class body, where `C.#x` is a syntax error. Auto-accessors with a
+        // private key keep a native `get #x`/`set #x` pair over their WeakMap.
+        //
+        // Fields leave the class body only when something else must run in
+        // between. Static fields and blocks run after every decorator is
+        // applied, so any decorator in the class moves them. Instance fields
+        // move for a decorated instance member, an auto-accessor, or a lowered
+        // private field. Otherwise they stay native, which keeps their order
+        // and their computed keys in place.
+        let lower_all_private: bool;
+        let lower_instance_fields: bool;
+        let lower_static_fields: bool;
+        {
+            let mut has_private_member = false;
+            let mut has_private_field = false;
+            let mut has_decorated = false;
+            let mut has_instance_private_field = false;
+            let mut has_static_private_field = false;
+            let mut instance_needs_order = false;
+            let mut static_needs_order = class_decorators_len > 0;
+            for cprop in class.properties.slice().iter() {
+                if cprop.kind == PropertyKind::ClassStaticBlock {
+                    continue;
+                }
+                let is_static = cprop.flags.contains(Flags::Property::IsStatic);
+                let is_decorated = cprop.ts_decorators.len_u32() > 0;
+                has_decorated = has_decorated || is_decorated;
+                if is_decorated || (cprop.kind == PropertyKind::AutoAccessor && is_static) {
+                    static_needs_order = true;
+                }
+                if !is_static && (is_decorated || cprop.kind == PropertyKind::AutoAccessor) {
+                    instance_needs_order = true;
+                }
+                if cprop.kind != PropertyKind::AutoAccessor
+                    && matches!(
+                        cprop.key.map(|k| k.data),
+                        Some(js_ast::ExprData::EPrivateIdentifier(_))
+                    )
+                {
+                    has_private_member = true;
+                    if !cprop.flags.contains(Flags::Property::IsMethod) {
+                        has_private_field = true;
+                        if is_static {
+                            has_static_private_field = true;
+                        } else {
+                            has_instance_private_field = true;
+                        }
+                    }
+                }
+            }
+            lower_all_private = has_private_member && (has_decorated || has_private_field);
+            lower_instance_fields =
+                instance_needs_order || (lower_all_private && has_instance_private_field);
+            lower_static_fields =
+                static_needs_order || (lower_all_private && has_static_private_field);
         }
 
         // ── Phase 2: Pre-evaluate decorators/keys ────────
@@ -1266,9 +1372,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
                 pre_eval_stmts.push(p.var_decl(dec_ref, Some(arr), loc));
             }
+            // Decorated members name their key in `__decorateElement`. Fields
+            // and auto-accessors that leave the class body need their key
+            // evaluated once, here, and referenced from the generated code.
+            let leaves_class_body = !prop.flags.contains(Flags::Property::IsMethod)
+                && (prop.kind == PropertyKind::AutoAccessor
+                    || if prop.flags.contains(Flags::Property::IsStatic) {
+                        lower_static_fields
+                    } else {
+                        lower_instance_fields
+                    });
             if prop.flags.contains(Flags::Property::IsComputed)
                 && prop.key.is_some()
-                && prop.ts_decorators.len_u32() > 0
+                && (prop.ts_decorators.len_u32() > 0 || leaves_class_body)
             {
                 computed_key_counter += 1;
                 let key_name: &'a [u8] = if computed_key_counter == 1 {
@@ -1315,8 +1431,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // For named class expressions: swap to expr_class_ref for suffix ops
+        // For named class expressions: swap to expr_class_ref for suffix ops.
+        // The inner name is only bound inside the class body, so static code
+        // that moves to the suffix must reference the outer binding instead.
         let mut original_class_name_for_decorator: Option<&'a [u8]> = None;
+        let mut inner_name_rewrite: Option<RewriteKind> = None;
         if is_expr
             && !expr_class_is_anonymous
             && let Some(ecr) = expr_class_ref
@@ -1327,6 +1446,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .original_name
                     .slice(),
             );
+            inner_name_rewrite = Some(RewriteKind::ReplaceRef {
+                old: class_name_ref,
+                new: ecr,
+            });
             class_name_ref = ecr;
             class_name_loc = loc;
         }
@@ -1372,7 +1495,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // ── Phase 4: Property loop ───────────────────────
         let mut suffix_exprs = BumpVec::<Expr>::new_in(bump);
-        let mut constructor_inject_stmts = BumpVec::<Stmt>::new_in(bump);
+        // `__privateAdd(this, brand)` for lowered instance private methods. They
+        // open the constructor so every initializer can call the methods.
+        let mut instance_brand_adds = BumpVec::<Stmt>::new_in(bump);
         let mut new_properties = BumpVec::<Property>::new_in(bump);
         let mut static_non_field_elements = BumpVec::<Expr>::new_in(bump);
         let mut instance_non_field_elements = BumpVec::<Expr>::new_in(bump);
@@ -1382,61 +1507,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut instance_field_decorate = BumpVec::<Expr>::new_in(bump);
         let mut static_accessor_count: usize = 0;
         let mut instance_accessor_count: usize = 0;
-        let mut static_init_entries = BumpVec::<FieldInitEntry>::new_in(bump);
-        let mut instance_init_entries = BumpVec::<FieldInitEntry>::new_in(bump);
-        let mut static_element_order = BumpVec::<StaticElement>::new_in(bump);
-        let mut extracted_static_blocks =
-            BumpVec::<js_ast::StoreRef<G::ClassStaticBlock>>::new_in(bump);
+        let mut static_entries = BumpVec::<InitEntry>::new_in(bump);
+        let mut instance_entries = BumpVec::<InitEntry>::new_in(bump);
         let mut prefix_stmts = BumpVec::<Stmt>::new_in(bump);
         let mut private_lowered_map: PrivateLoweredMap = PrivateLoweredMap::default();
         let mut accessor_storage_counter: usize = 0;
         let mut emitted_private_adds: HashMap<u32, ()> = HashMap::default();
         let mut static_private_add_blocks = BumpVec::<Property>::new_in(bump);
 
-        // Pre-scan: determine if all private members need lowering
-        let mut lower_all_private = false;
-        {
-            let mut has_any_private = false;
-            let mut has_any_decorated = false;
-            let cprops: &[Property] = class.properties.slice();
-            for cprop in cprops.iter() {
-                if cprop.kind == PropertyKind::ClassStaticBlock {
-                    continue;
-                }
-                if cprop.ts_decorators.len_u32() > 0 {
-                    has_any_decorated = true;
-                    if cprop.key.is_some()
-                        && matches!(
-                            cprop.key.unwrap().data,
-                            js_ast::ExprData::EPrivateIdentifier(_)
-                        )
-                    {
-                        lower_all_private = true;
-                        break;
-                    }
-                }
-                if cprop.key.is_some()
-                    && matches!(
-                        cprop.key.unwrap().data,
-                        js_ast::ExprData::EPrivateIdentifier(_)
-                    )
-                {
-                    has_any_private = true;
-                }
-            }
-            if !lower_all_private && has_any_private && has_any_decorated {
-                lower_all_private = true;
-            }
-        }
-
         let props_slice2: &mut [Property] = class.properties.slice_mut();
         for (prop_idx, prop) in props_slice2.iter_mut().enumerate() {
+            if prop.kind == PropertyKind::ClassStaticBlock {
+                if !lower_static_fields {
+                    new_properties.push(prop_full_copy(prop));
+                } else if let Some(sb) = prop.class_static_block {
+                    static_entries.push(InitEntry {
+                        prop: prop_copy(prop),
+                        storage: None,
+                        is_accessor: false,
+                        is_decorated: false,
+                        block: Some(sb),
+                    });
+                }
+                continue;
+            }
+            let is_static = prop.flags.contains(Flags::Property::IsStatic);
             if prop.ts_decorators.len_u32() == 0 {
                 // ── Non-decorated property ──
                 if lower_all_private
                     && let Some(nk_expr) = prop.key
                     && matches!(nk_expr.data, js_ast::ExprData::EPrivateIdentifier(_))
-                    && prop.kind != PropertyKind::ClassStaticBlock
                     && prop.kind != PropertyKind::AutoAccessor
                 {
                     let npriv_ref = match &nk_expr.data {
@@ -1502,11 +1602,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if !emitted_private_adds.contains_key(&npriv_inner) {
                             emitted_private_adds.insert(npriv_inner, ());
                             p.emit_private_add(
-                                prop.flags.contains(Flags::Property::IsStatic),
+                                is_static,
                                 ws_ref,
-                                None,
                                 loc,
-                                &mut constructor_inject_stmts,
+                                &mut instance_brand_adds,
                                 &mut static_private_add_blocks,
                             );
                         }
@@ -1519,22 +1618,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let wme = p.new_weak_map_expr(loc);
                         prefix_stmts.push(p.var_decl(wm_ref, Some(wme), loc));
 
-                        let init_val = prop
-                            .initializer
-                            .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc));
-                        let this_e = p.new_expr(E::This {}, loc);
-                        let wm_e = p.use_ref(wm_ref, loc);
-                        let call = p.call_rt(loc, b"__privateAdd", &[this_e, wm_e, init_val]);
-                        if !prop.flags.contains(Flags::Property::IsStatic) {
-                            constructor_inject_stmts.push(p.s(
-                                S::SExpr {
-                                    value: call,
-                                    ..Default::default()
-                                },
-                                loc,
-                            ));
+                        let entry = InitEntry {
+                            prop: prop_copy(prop),
+                            storage: Some(wm_ref),
+                            is_accessor: false,
+                            is_decorated: false,
+                            block: None,
+                        };
+                        if is_static {
+                            static_entries.push(entry);
                         } else {
-                            static_private_add_blocks.push(p.make_static_block(call, loc));
+                            instance_entries.push(entry);
                         }
                         continue;
                     }
@@ -1608,6 +1702,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ..Default::default()
                     };
 
+                    // A computed key was hoisted into a temp in Phase 2; the
+                    // getter and the setter both read that temp.
+                    let setter_key = match prop.key.map(|k| k.data) {
+                        Some(js_ast::ExprData::EIdentifier(id))
+                            if computed_key_refs.contains_key(&prop_idx) =>
+                        {
+                            Some(p.use_ref(id.ref_, loc))
+                        }
+                        _ => prop.key,
+                    };
                     let mut getter_flags = prop.flags;
                     getter_flags.insert(Flags::Property::IsMethod);
                     new_properties.push(Property {
@@ -1618,46 +1722,46 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ..Default::default()
                     });
                     new_properties.push(Property {
-                        key: prop.key,
+                        key: setter_key,
                         value: Some(p.new_expr(E::Function { func: set_fn }, loc)),
                         kind: PropertyKind::Set,
                         flags: getter_flags,
                         ..Default::default()
                     });
 
-                    let init_val = prop
-                        .initializer
-                        .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc));
-                    if !prop.flags.contains(Flags::Property::IsStatic) {
-                        let this_e3 = p.new_expr(E::This {}, loc);
-                        let wm_e3 = p.use_ref(wm_ref, loc);
-                        let call = p.call_rt(loc, b"__privateAdd", &[this_e3, wm_e3, init_val]);
-                        constructor_inject_stmts.push(p.s(
-                            S::SExpr {
-                                value: call,
-                                ..Default::default()
-                            },
-                            loc,
-                        ));
+                    let entry = InitEntry {
+                        prop: prop_copy(prop),
+                        storage: Some(wm_ref),
+                        is_accessor: true,
+                        is_decorated: false,
+                        block: None,
+                    };
+                    if is_static {
+                        static_entries.push(entry);
                     } else {
-                        let cn_e = p.use_ref(class_name_ref, class_name_loc);
-                        let wm_e3 = p.use_ref(wm_ref, loc);
-                        suffix_exprs.push(p.call_rt(
-                            loc,
-                            b"__privateAdd",
-                            &[cn_e, wm_e3, init_val],
-                        ));
+                        instance_entries.push(entry);
                     }
                     continue;
                 }
-                // Static blocks → extract to suffix
-                if prop.kind == PropertyKind::ClassStaticBlock {
-                    if let Some(sb) = prop.class_static_block {
-                        static_element_order.push(StaticElement {
-                            kind: StaticElementKind::Block,
-                            index: extracted_static_blocks.len(),
-                        });
-                        extracted_static_blocks.push(sb);
+                // Undecorated field → initialized with the other fields, in order
+                if !prop.flags.contains(Flags::Property::IsMethod)
+                    && if is_static {
+                        lower_static_fields
+                    } else {
+                        lower_instance_fields
+                    }
+                {
+                    let entry = InitEntry {
+                        prop: prop_copy(prop),
+                        storage: None,
+                        is_accessor: false,
+                        is_decorated: false,
+                        block: None,
+                    };
+                    if is_static {
+                        static_entries.push(entry);
+                    } else {
+                        instance_entries.push(entry);
                     }
                     continue;
                 }
@@ -1888,47 +1992,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Categorize the element
             if k >= 4 {
-                let mut prop_shallow = prop_copy(prop);
-                if is_private {
-                    if let Some(ps_ref) = private_storage_ref {
-                        prop_shallow.key = Some(p.new_expr(
-                            E::Identifier {
-                                ref_: ps_ref,
-                                ..Default::default()
-                            },
-                            loc,
-                        ));
-                    }
-                }
-                if let Some(pe_ref) = private_extra_ref {
-                    prop_shallow.value = Some(p.new_expr(
-                        E::Identifier {
-                            ref_: pe_ref,
-                            ..Default::default()
-                        },
-                        loc,
-                    ));
-                }
-
                 let is_accessor = k == 4;
-                let init_entry = FieldInitEntry {
-                    prop: prop_shallow,
-                    is_private,
+                let init_entry = InitEntry {
+                    prop: prop_copy(prop),
+                    // Lowered private members and public auto-accessors live in
+                    // a WeakMap; a public field is defined on the receiver.
+                    storage: if is_private {
+                        private_storage_ref
+                    } else {
+                        private_extra_ref
+                    },
                     is_accessor,
+                    is_decorated: true,
+                    block: None,
                 };
 
-                if prop.flags.contains(Flags::Property::IsStatic) {
+                if is_static {
                     if is_accessor {
                         static_non_field_elements.push(element);
                         static_accessor_count += 1;
                     } else {
                         static_field_decorate.push(element);
                     }
-                    static_element_order.push(StaticElement {
-                        kind: StaticElementKind::FieldOrAccessor,
-                        index: static_init_entries.len(),
-                    });
-                    static_init_entries.push(init_entry);
+                    static_entries.push(init_entry);
                 } else {
                     if is_accessor {
                         instance_non_field_elements.push(element);
@@ -1936,7 +2022,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     } else {
                         instance_field_decorate.push(element);
                     }
-                    instance_init_entries.push(init_entry);
+                    instance_entries.push(init_entry);
                 }
             } else if is_private && private_storage_ref.is_some() {
                 let priv_inner2 = match &key_expr.data {
@@ -1946,15 +2032,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !emitted_private_adds.contains_key(&priv_inner2) {
                     emitted_private_adds.insert(priv_inner2, ());
                     p.emit_private_add(
-                        prop.flags.contains(Flags::Property::IsStatic),
+                        is_static,
                         private_storage_ref.unwrap(),
-                        None,
                         loc,
-                        &mut constructor_inject_stmts,
+                        &mut instance_brand_adds,
                         &mut static_private_add_blocks,
                     );
                 }
-                if prop.flags.contains(Flags::Property::IsStatic) {
+                if is_static {
                     static_non_field_elements.push(element);
                     has_static_private_methods = true;
                 } else {
@@ -1964,7 +2049,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             } else {
                 let new_prop = prop_copy(prop);
                 new_properties.push(new_prop);
-                if prop.flags.contains(Flags::Property::IsStatic) {
+                if is_static {
                     static_non_field_elements.push(element);
                 } else {
                     instance_non_field_elements.push(element);
@@ -1978,24 +2063,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(v) = &mut nprop.value {
                     p.rewrite_private_accesses_in_expr(v, &private_lowered_map);
                 }
+                if let Some(ini) = &mut nprop.initializer {
+                    p.rewrite_private_accesses_in_expr(ini, &private_lowered_map);
+                }
                 if let Some(sb) = nprop.class_static_block_mut() {
                     p.rewrite_private_accesses_in_stmts(sb.stmts.slice_mut(), &private_lowered_map);
                 }
             }
-            for entry in instance_init_entries.iter_mut() {
+            for entry in instance_entries.iter_mut().chain(static_entries.iter_mut()) {
                 if let Some(ini) = &mut entry.prop.initializer {
                     p.rewrite_private_accesses_in_expr(ini, &private_lowered_map);
                 }
-            }
-            for entry in static_init_entries.iter_mut() {
-                if let Some(ini) = &mut entry.prop.initializer {
-                    p.rewrite_private_accesses_in_expr(ini, &private_lowered_map);
+                if let Some(mut sb) = entry.block {
+                    p.rewrite_private_accesses_in_stmts(sb.stmts.slice_mut(), &private_lowered_map);
                 }
-            }
-            for sb_ptr in extracted_static_blocks.iter_mut() {
-                // `StoreRef::DerefMut` — arena-owned, safe under the StoreRef invariant.
-                let sb = &mut **sb_ptr;
-                p.rewrite_private_accesses_in_stmts(sb.stmts.slice_mut(), &private_lowered_map);
             }
             for elem in static_non_field_elements.iter_mut() {
                 p.rewrite_private_accesses_in_expr(elem, &private_lowered_map);
@@ -2087,6 +2168,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let cls_dec_list = ExprNodeList::from_bump_vec(cls_dec_args);
             let dec_call = p.call_runtime(loc, b"__decorateElement", cls_dec_list);
             suffix_exprs.push(p.assign_to(class_name_ref, dec_call, class_name_loc));
+        } else {
+            // With class decorators, `__decorateElement(_init, 0, ...)` defines
+            // `Symbol.metadata` itself. Either way it exists before the static
+            // initializers run.
+            let i_e = p.use_ref(init_ref, loc);
+            let c_e = p.use_ref(class_name_ref, class_name_loc);
+            suffix_exprs.push(p.call_rt(loc, b"__decoratorMetadata", &[i_e, c_e]));
         }
 
         // 6: Static method extra initializers
@@ -2097,106 +2185,91 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             suffix_exprs.push(p.call_rt(loc, b"__runInitializers", &[i_e, n_e, c_e]));
         }
 
-        // 7: Static elements in source order
+        // 7: Static fields, auto-accessors and blocks in source order
         {
+            let replace_this = RewriteKind::ReplaceThis {
+                ref_: class_name_ref,
+                loc: class_name_loc,
+            };
             let mut s_accessor_idx: usize = 0;
             let mut s_field_idx: usize = 0;
-            for elem in static_element_order.iter() {
-                match elem.kind {
-                    StaticElementKind::Block => {
-                        // `StoreRef::DerefMut` — arena-owned, safe under the StoreRef invariant.
-                        let sb = &mut *extracted_static_blocks[elem.index];
-                        let stmts_slice = sb.stmts.slice_mut();
-                        p.rewrite_stmts(
-                            stmts_slice,
-                            RewriteKind::ReplaceThis {
-                                ref_: class_name_ref,
-                                loc: class_name_loc,
-                            },
-                        );
+            for entry in static_entries.iter_mut() {
+                if let Some(mut sb) = entry.block {
+                    let stmts_slice = sb.stmts.slice_mut();
+                    p.rewrite_stmts(stmts_slice, replace_this);
+                    if let Some(rk) = inner_name_rewrite {
+                        p.rewrite_stmts(stmts_slice, rk);
+                    }
 
-                        let all_exprs = stmts_slice
-                            .iter()
-                            .all(|s| matches!(s.data, js_ast::StmtData::SExpr(_)));
+                    let all_exprs = stmts_slice
+                        .iter()
+                        .all(|s| matches!(s.data, js_ast::StmtData::SExpr(_)));
 
-                        if all_exprs {
-                            for sb_stmt in stmts_slice.iter() {
-                                match &sb_stmt.data {
-                                    js_ast::StmtData::SExpr(s) => suffix_exprs.push(s.value),
-                                    _ => unreachable!(),
-                                }
+                    if all_exprs {
+                        for sb_stmt in stmts_slice.iter() {
+                            match &sb_stmt.data {
+                                js_ast::StmtData::SExpr(s) => suffix_exprs.push(s.value),
+                                _ => unreachable!(),
                             }
-                        } else {
-                            // Wrap in IIFE
-                            let stmts_ptr = bun_ast::StoreSlice::new_mut(stmts_slice);
-                            let iife_body = p.new_expr(
-                                E::Arrow {
-                                    body: G::FnBody {
-                                        loc,
-                                        stmts: stmts_ptr,
-                                    },
-                                    is_async: false,
-                                    ..Default::default()
+                        }
+                    } else {
+                        // Wrap in IIFE
+                        let stmts_ptr = bun_ast::StoreSlice::new_mut(stmts_slice);
+                        let iife_body = p.new_expr(
+                            E::Arrow {
+                                body: G::FnBody {
+                                    loc,
+                                    stmts: stmts_ptr,
                                 },
-                                loc,
-                            );
-                            suffix_exprs.push(p.new_expr(
-                                E::Call {
-                                    target: iife_body,
-                                    args: bun_alloc::AstAlloc::vec(),
-                                    ..Default::default()
-                                },
-                                loc,
-                            ));
-                        }
+                                is_async: false,
+                                ..Default::default()
+                            },
+                            loc,
+                        );
+                        suffix_exprs.push(p.new_expr(
+                            E::Call {
+                                target: iife_body,
+                                args: bun_alloc::AstAlloc::vec(),
+                                ..Default::default()
+                            },
+                            loc,
+                        ));
                     }
-                    StaticElementKind::FieldOrAccessor => {
-                        let entry = &static_init_entries[elem.index];
-                        let field_idx: usize = if entry.is_accessor {
-                            let idx = s_accessor_idx;
-                            s_accessor_idx += 1;
-                            idx
-                        } else {
-                            let idx = static_field_base_idx + s_field_idx;
-                            s_field_idx += 1;
-                            idx
-                        };
+                    continue;
+                }
 
-                        let mut run_args = BumpVec::with_capacity_in(4, bump);
-                        run_args.push(p.use_ref(init_ref, loc));
-                        run_args.push(p.new_expr(E::Number::new(Self::init_flag(field_idx)), loc));
-                        run_args.push(p.use_ref(class_name_ref, class_name_loc));
-                        if let Some(init_val) = entry.prop.initializer {
-                            run_args.push(init_val);
-                        }
-                        let run_args_list = ExprNodeList::from_bump_vec(run_args);
-                        let run_init_call =
-                            p.call_runtime(loc, b"__runInitializers", run_args_list);
-
-                        if entry.is_accessor || entry.is_private {
-                            let wm_ref_expr = if entry.is_accessor && !entry.is_private {
-                                entry.prop.value.expect("infallible: prop has value")
-                            } else {
-                                entry.prop.key.expect("infallible: prop has key")
-                            };
-                            let cn_e = p.use_ref(class_name_ref, class_name_loc);
-                            suffix_exprs.push(p.call_rt(
-                                loc,
-                                b"__privateAdd",
-                                &[cn_e, wm_ref_expr, run_init_call],
-                            ));
-                        } else {
-                            let cn_e = p.use_ref(class_name_ref, class_name_loc);
-                            let assign_target = p.member_target(cn_e, &entry.prop);
-                            suffix_exprs.push(Expr::assign(assign_target, run_init_call));
-                        }
-
-                        // Extra initializer
-                        let i_e = p.use_ref(init_ref, loc);
-                        let n_e = p.new_expr(E::Number::new(Self::extra_init_flag(field_idx)), loc);
-                        let c_e = p.use_ref(class_name_ref, class_name_loc);
-                        suffix_exprs.push(p.call_rt(loc, b"__runInitializers", &[i_e, n_e, c_e]));
+                // The initializer leaves the class body, so `this` becomes the
+                // class binding.
+                if let Some(ini) = &mut entry.prop.initializer {
+                    p.rewrite_expr(ini, replace_this);
+                    if let Some(rk) = inner_name_rewrite {
+                        p.rewrite_expr(ini, rk);
                     }
+                }
+
+                let field_idx: usize = if !entry.is_decorated {
+                    0
+                } else if entry.is_accessor {
+                    let idx = s_accessor_idx;
+                    s_accessor_idx += 1;
+                    idx
+                } else {
+                    let idx = static_field_base_idx + s_field_idx;
+                    s_field_idx += 1;
+                    idx
+                };
+
+                let (install, extra) = p.field_init_exprs(
+                    entry,
+                    field_idx,
+                    init_ref,
+                    class_name_ref,
+                    class_name_loc,
+                    loc,
+                );
+                suffix_exprs.push(install);
+                if let Some(extra) = extra {
+                    suffix_exprs.push(extra);
                 }
             }
         }
@@ -2209,14 +2282,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             suffix_exprs.push(p.call_rt(loc, b"__runInitializers", &[i_e, n_e, c_e]));
         }
 
-        // 9: __decoratorMetadata
-        {
-            let i_e = p.use_ref(init_ref, loc);
-            let c_e = p.use_ref(class_name_ref, class_name_loc);
-            suffix_exprs.push(p.call_rt(loc, b"__decoratorMetadata", &[i_e, c_e]));
-        }
-
         // ── Phase 7: Constructor injection ───────────────
+        // Private method brands first, then the method extra initializers,
+        // then every field in source order.
+        let mut constructor_inject_stmts = instance_brand_adds;
         if !instance_non_field_elements.is_empty() || has_instance_private_methods {
             let i_e = p.use_ref(init_ref, loc);
             let n_e = p.new_expr(E::Number::new(5.0), loc);
@@ -2231,12 +2300,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ));
         }
 
-        // Instance field/accessor init + extra-init
+        // Instance fields and auto-accessors in source order
         {
             let mut i_accessor_idx: usize = 0;
             let mut i_field_idx: usize = 0;
-            for entry in instance_init_entries.iter() {
-                let field_idx: usize = if entry.is_accessor {
+            for entry in instance_entries.iter() {
+                let field_idx: usize = if !entry.is_decorated {
+                    0
+                } else if entry.is_accessor {
                     let idx = instance_accessor_base_idx + i_accessor_idx;
                     i_accessor_idx += 1;
                     idx
@@ -2246,49 +2317,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     idx
                 };
 
-                let mut run_args = BumpVec::with_capacity_in(4, bump);
-                run_args.push(p.use_ref(init_ref, loc));
-                run_args.push(p.new_expr(E::Number::new(Self::init_flag(field_idx)), loc));
-                run_args.push(p.new_expr(E::This {}, loc));
-                if let Some(init_val) = entry.prop.initializer {
-                    run_args.push(init_val);
-                }
-                let run_args_list = ExprNodeList::from_bump_vec(run_args);
-                let run_init_call = p.call_runtime(loc, b"__runInitializers", run_args_list);
-
-                if entry.is_accessor || entry.is_private {
-                    let wm_ref_expr = if entry.is_accessor && !entry.is_private {
-                        entry.prop.value.expect("infallible: prop has value")
-                    } else {
-                        entry.prop.key.expect("infallible: prop has key")
-                    };
-                    let t_e = p.new_expr(E::This {}, loc);
-                    let call = p.call_rt(loc, b"__privateAdd", &[t_e, wm_ref_expr, run_init_call]);
-                    constructor_inject_stmts.push(p.s(
-                        S::SExpr {
-                            value: call,
-                            ..Default::default()
-                        },
-                        loc,
-                    ));
-                } else {
-                    let t_e = p.new_expr(E::This {}, loc);
-                    let mt = p.member_target(t_e, &entry.prop);
-                    constructor_inject_stmts.push(Stmt::assign(mt, run_init_call));
-                }
-
-                // Extra initializer
-                let i_e = p.use_ref(init_ref, loc);
-                let n_e = p.new_expr(E::Number::new(Self::extra_init_flag(field_idx)), loc);
-                let t_e = p.new_expr(E::This {}, loc);
-                let call = p.call_rt(loc, b"__runInitializers", &[i_e, n_e, t_e]);
+                let (install, extra) = p.field_init_exprs(
+                    entry,
+                    field_idx,
+                    init_ref,
+                    class_name_ref,
+                    class_name_loc,
+                    loc,
+                );
                 constructor_inject_stmts.push(p.s(
                     S::SExpr {
-                        value: call,
+                        value: install,
                         ..Default::default()
                     },
                     loc,
                 ));
+                if let Some(extra) = extra {
+                    constructor_inject_stmts.push(p.s(
+                        S::SExpr {
+                            value: extra,
+                            ..Default::default()
+                        },
+                        loc,
+                    ));
+                }
             }
         }
 
@@ -2492,7 +2544,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             comma_parts.push(p.assign_to(init_ref, init_start_expr, loc));
 
             // _class = class { ... }
-            let class_expr = p.new_expr(class_copy(class), loc);
+            let mut class_expr = p.new_expr(class_copy(class), loc);
+            if expr_class_is_anonymous
+                && class_decorators_len == 0
+                && let Some(name) = name_from_context
+                && !name.is_empty()
+            {
+                // `const Foo = class {}` names the class through NamedEvaluation,
+                // which the comma chain defeats. A class decorator call sets the
+                // name itself; without one, set it here.
+                let name_expr = p.new_expr(E::EString::init(name), loc);
+                class_expr = p.call_rt(loc, b"__name", &[class_expr, name_expr]);
+            }
             comma_parts.push(p.assign_to(expr_class_ref.unwrap(), class_expr, loc));
 
             comma_parts.extend_from_slice(&suffix_exprs);

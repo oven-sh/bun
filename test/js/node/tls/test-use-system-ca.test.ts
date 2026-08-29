@@ -71,8 +71,9 @@ describe("--use-system-ca", () => {
   });
 });
 
-// On Linux the loader reads what Node's --use-system-ca reads: $SSL_CERT_FILE (else /etc/ssl/cert.pem) and every
-// regular file in $SSL_CERT_DIR (else /etc/ssl/certs). Unlike Node it reports each certificate once.
+// On Linux the loader reads a superset of what Node's --use-system-ca reads ($SSL_CERT_FILE else /etc/ssl/cert.pem, and
+// every regular file in $SSL_CERT_DIR else /etc/ssl/certs) plus the well-known distro bundle/dir paths, and reports
+// each certificate once however many of those alias it.
 describe.skipIf(!isLinux)("tls.getCACertificates('system')", () => {
   const fixtureCert = (name: string) =>
     readFileSync(join(import.meta.dir, "../test/fixtures/keys", `${name}-cert.pem`), "utf8");

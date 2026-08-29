@@ -7112,11 +7112,11 @@ describe.concurrent("bundler", () => {
       stdout: "5 9 2 7",
     },
   });
-  for (const minifySyntax of [false, true]) {
-    // "{ __proto__: x }" sets the prototype while "{ __proto__ }" and
-    // "{ ['__proto__']: x }" define an own property. The renamer gives the
-    // nested locals new names, so a shorthand "__proto__" has to become a
-    // computed key instead of "__proto__: __proto__2".
+  // "{ __proto__: x }" sets the prototype while "{ __proto__ }" and
+  // "{ ['__proto__']: x }" define an own property. The renamer gives the
+  // nested locals new names, so a shorthand "__proto__" has to become a
+  // computed key instead of "__proto__: __proto__2".
+  describe.each([false, true])("ObjectLiteralProtoSetterEdgeCases (minifySyntax: %p)", minifySyntax => {
     itBundled(`default/ObjectLiteralProtoSetterEdgeCases${minifySyntax ? "MinifySyntax" : ""}`, {
       files: {
         "/local-shorthand.js": /* js */ `
@@ -7224,5 +7224,5 @@ describe.concurrent("bundler", () => {
         expect(property("import-normal")).toBe("__proto__: __proto__,");
       },
     });
-  }
+  });
 });

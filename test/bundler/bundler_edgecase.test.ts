@@ -1401,12 +1401,12 @@ describe("bundler", () => {
   // "{ ["__proto__"]: x }" define an own property. Each form has to survive
   // the printer as written, whatever happens to the value (renamed by the
   // bundler, inlined by minify-syntax, or rewritten to a namespace access).
-  for (const [suffix, minify] of [
+  describe.each([
     ["", {}],
     ["MinifySyntax", { minifySyntax: true }],
     ["MinifyIdentifiers", { minifyIdentifiers: true }],
     ["MinifyAll", { minifySyntax: true, minifyIdentifiers: true, minifyWhitespace: true }],
-  ] as const) {
+  ] as const)("ObjectLiteralProtoKeys%s", (suffix, minify) => {
     itBundled(`edgecase/ObjectLiteralProtoKeys${suffix}`, {
       ...minify,
       files: {
@@ -1498,7 +1498,7 @@ describe("bundler", () => {
         }),
       },
     });
-  }
+  });
   // An export alias named "__proto__" is a key of the generated
   // "__export(exports, { ... })" object literal and must stay an own property.
   itBundled("edgecase/ExportNamedProtoNamespace", {

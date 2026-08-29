@@ -211,7 +211,7 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
 fn pregrow_fd_table() {
     // SAFETY: plain fcntl/close on our own descriptors; no other thread exists yet.
     unsafe {
-        let mut lim: libc::rlimit = core::mem::zeroed();
+        let mut lim: libc::rlimit = bun_core::ffi::zeroed();
         if libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut lim) != 0 {
             return;
         }

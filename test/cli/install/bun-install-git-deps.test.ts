@@ -684,6 +684,7 @@ exit 1
       await Promise.all([stdout, stderr, proc.exited]);
       // Read the marker only once every fake git is gone, so that a trap that
       // fires after bun exited still counts.
+      const gone = Date.now() + 10_000;
       const pids = readFileSync(running, "utf8").trim().split("\n").map(Number);
       if (isLinux) {
         // The kernel kills them with bun (PR_SET_PDEATHSIG); `running` still exists.
@@ -695,13 +696,13 @@ exit 1
           }
         };
         while (pids.some(alive)) {
-          if (Date.now() > deadline) throw new Error(`fake gits outlived bun: ${pids.filter(alive)}`);
+          if (Date.now() > gone) throw new Error(`fake gits outlived bun: ${pids.filter(alive)}`);
           await Bun.sleep(10);
         }
       } else {
         rmSync(running, { force: true });
         while (lineCount(exited) < pids.length) {
-          if (Date.now() > deadline) throw new Error(`${lineCount(exited)} of ${pids.length} fake gits exited`);
+          if (Date.now() > gone) throw new Error(`${lineCount(exited)} of ${pids.length} fake gits exited`);
           await Bun.sleep(10);
         }
       }

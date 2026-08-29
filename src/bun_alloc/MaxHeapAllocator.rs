@@ -44,8 +44,7 @@ impl MaxHeapAllocator {
     }
 }
 
-/// RAII guard returned by [`MaxHeapAllocator::scope`]. Holds the allocator
-/// for the duration of the scope and resets it on drop.
+/// RAII guard returned by [`MaxHeapAllocator::scope`]; resets the allocator on drop.
 pub struct MaxHeapScope<'a> {
     inner: &'a mut MaxHeapAllocator,
 }

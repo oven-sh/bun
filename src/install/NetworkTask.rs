@@ -18,8 +18,7 @@ use crate::npm::{self as npm, PackageManifest};
 use crate::{ExtractTarball, PackageManager, PatchTask, TarballStream, Task};
 
 // Adapter so `StringOrTinyString::init_append_if_needed` can intern overflow
-// names into the resolver's filename arena. `FilenameStore` exposes `append`
-// but doesn't itself implement `strings::Appender`.
+// names into the resolver's filename arena.
 pub struct FilenameStoreAppender<'a>(pub(crate) &'a FilenameStore);
 impl strings::Appender for FilenameStoreAppender<'_> {
     fn append(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { X509Certificate, createPrivateKey, createPublicKey, generateKeyPairSync } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { rootCertificates } from "node:tls";
 import path from "node:path";
+import { rootCertificates } from "node:tls";
 
 // Self-signed, valid until 2126. Subject CN=wildcard-san.example.com,
 // subjectAltName: DNS:*.wildcard.example.com, DNS:exact.example.com

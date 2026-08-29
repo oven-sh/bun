@@ -2,9 +2,9 @@ import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { X509Certificate } from "node:crypto";
-import { rootCertificates } from "node:tls";
 import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { rootCertificates } from "node:tls";
 
 describe("--use-system-ca", () => {
   test("flag loads system certificates", async () => {

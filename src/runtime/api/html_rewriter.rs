@@ -1857,13 +1857,14 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
         self.end_from_stream(err.map(StreamError::Error));
         bun_sys::Result::Ok(())
     }
-    unsafe fn close_with_error(
-        this: *mut Self,
+    const CLOSES_WITH_ERROR: bool = true;
+    fn close_with_error(
+        this: bun_ptr::ThisPtr<Self>,
         global: &JSGlobalObject,
         reason: JSValue,
     ) -> bun_sys::Result<()> {
-        // SAFETY: caller contract; `end_from_stream` pins the pipe itself.
-        unsafe { &*this }.end_from_stream(Some(StreamError::JSValue(
+        // `end_from_stream` pins the pipe itself.
+        this.end_from_stream(Some(StreamError::JSValue(
             jsc::strong::Optional::create(reason, global),
         )));
         bun_sys::Result::Ok(())

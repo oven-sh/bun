@@ -491,7 +491,7 @@ impl BlobExt for Blob {
             // request needs out of its blob's store (a fresh +1 ref) first.
             let store = t.blob.store().expect("infallible: store present").clone();
             let s3 = store.data.as_s3();
-            let cred = std::rc::Rc::clone(s3.get_credentials());
+            let cred = s3.get_credentials().clone();
             let path = s3.path();
             let payer = s3.request_payer;
             let cb = Box::new(move |r: crate::webcore::__s3_client::S3DownloadResult<'_>| t.cb(r));

@@ -1,6 +1,6 @@
 import assert from "assert";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe } from "harness";
 import { itBundled } from "./expectBundled";
 
 // An `await using` whose value only has Symbol.dispose: a synchronous throw from
@@ -749,11 +749,9 @@ describe("bundler", () => {
 describe.concurrent("bun run", () => {
   for (const [name, { source, stdout }] of Object.entries(awaitUsingFallbackCases)) {
     test(name, async () => {
-      using dir = tempDir("await-using-fallback", { "entry.ts": source });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "entry.ts"],
+        cmd: [bunExe(), "-e", source],
         env: bunEnv,
-        cwd: String(dir),
         stdout: "pipe",
         stderr: "pipe",
       });

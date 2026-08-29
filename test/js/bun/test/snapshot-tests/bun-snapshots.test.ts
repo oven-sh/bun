@@ -80,4 +80,108 @@ describe("toMatchSnapshot errors", () => {
       expect({ a: 4 }).toMatchSnapshot({ a: expect.any("not a constructor") });
     }).toThrow();
   });
+
+  describe("when formatting the received value throws", () => {
+    // The snapshot formatter reads `$$typeof` off every object (React element
+    // detection), `size` off Maps and Sets, and JSON-stringifies Dates, so
+    // user code on any of those runs while the value is being formatted.
+    const received: [string, () => unknown][] = [
+      [
+        "$$typeof getter on the received value",
+        () => ({
+          get $$typeof(): unknown {
+            throw new Error("boom");
+          },
+        }),
+      ],
+      [
+        // Keep this a single property: until #37331 lands, the property walk
+        // only surfaces an exception thrown while formatting the last key.
+        "$$typeof getter on a nested value",
+        () => ({
+          a: {
+            get $$typeof(): unknown {
+              throw new Error("boom");
+            },
+          },
+        }),
+      ],
+      [
+        "size getter on a Map",
+        () =>
+          Object.defineProperty(new Map(), "size", {
+            get() {
+              throw new Error("boom");
+            },
+          }),
+      ],
+      [
+        "size getter on a Set",
+        () =>
+          Object.defineProperty(new Set(), "size", {
+            get() {
+              throw new Error("boom");
+            },
+          }),
+      ],
+      [
+        "toJSON on a Date",
+        () =>
+          Object.assign(new Date(0), {
+            toJSON() {
+              throw new Error("boom");
+            },
+          }),
+      ],
+    ];
+
+    it.each(received)("toMatchSnapshot throws the error from the %s", (_, makeValue) => {
+      expect(() => expect(makeValue()).toMatchSnapshot()).toThrow("boom");
+    });
+
+    it.each(received)("toMatchInlineSnapshot throws the error from the %s", (_, makeValue) => {
+      // Passing the inline snapshot means a build that does not throw fails on
+      // the mismatch instead of writing into this file.
+      expect(() => expect(makeValue()).toMatchInlineSnapshot(`"never recorded"`)).toThrow("boom");
+    });
+
+    it("throws the exception itself rather than a wrapper", () => {
+      const error = new Error("boom");
+      const value = {
+        get $$typeof(): unknown {
+          throw error;
+        },
+      };
+
+      let thrown: unknown;
+      try {
+        expect(value).toMatchSnapshot();
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBe(error);
+
+      thrown = undefined;
+      try {
+        expect(value).toMatchInlineSnapshot(`"never recorded"`);
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBe(error);
+    });
+
+    it("still throws the formatting error after the property matchers matched", () => {
+      // Fresh object per call: matched property matchers are written into the received object (#3521).
+      const makeValue = () => ({
+        n: 1,
+        get $$typeof(): unknown {
+          throw new Error("boom");
+        },
+      });
+      expect(() => expect(makeValue()).toMatchSnapshot({ n: expect.any(Number) })).toThrow("boom");
+      expect(() => expect(makeValue()).toMatchInlineSnapshot({ n: expect.any(Number) }, `"never recorded"`)).toThrow(
+        "boom",
+      );
+    });
+  });
 });

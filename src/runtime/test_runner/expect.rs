@@ -1154,14 +1154,7 @@ impl Expect {
             }
         }
 
-        if value.jest_snapshot_pretty_format(pretty_value, global_this).is_err() {
-            let mut formatter = ConsoleObject::Formatter::new(global_this);
-            return Err(global_this.throw(format_args!(
-                "Failed to pretty format value: {}",
-                value.to_fmt(&mut formatter),
-            )));
-        }
-        Ok(())
+        value.jest_snapshot_pretty_format(pretty_value, global_this)
     }
 
     pub(crate) fn snapshot(

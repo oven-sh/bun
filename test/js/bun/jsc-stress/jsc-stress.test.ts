@@ -1,37 +1,49 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import path from "path";
 
 const fixturesDir = path.join(import.meta.dir, "fixtures");
 const wasmFixturesDir = path.join(fixturesDir, "wasm");
 
+/** One run of a fixture: the JSC options it runs under, as environment variables. */
+interface FixtureRun {
+  /** The run directive (unless it is `runDefault`) and its flags, for the test name. Empty for a bare `runDefault`. */
+  label: string;
+  env: Record<string, string>;
+}
+
 /**
- * Parse JSC option flags from //@ directives at the top of a test file.
- * Converts --flag=value to BUN_JSC_flag=value environment variables.
+ * Parse the //@ directives at the top of a test file into the runs of that
+ * file, as WebKit's run-jsc-stress-tests does: each `//@ run*` directive is one
+ * run, and each "--flag=value" in it becomes a BUN_JSC_flag=value environment
+ * variable. `requireOptions` flags apply to every run. A file with no run
+ * directive runs once with the default options.
  *
  * Supported directives:
  *   //@ runDefault("--flag=value", ...)
  *   //@ runFTLNoCJIT("--flag=value", ...)
  *   //@ runDefaultWasm("--flag=value", ...)
+ *   //@ runNoJIT
+ *   //@ requireOptions("--flag=value", ...)
  */
-function parseJSCFlags(filePath: string): Record<string, string> {
+function parseJSCFlags(filePath: string): FixtureRun[] {
   const content = fs.readFileSync(filePath, "utf-8");
-  const env: Record<string, string> = {};
+  const required: Record<string, string> = {};
+  const runs: FixtureRun[] = [];
 
   for (const line of content.split("\n")) {
     if (line === "// @bun" || line.trim() === "") continue;
     if (!line.startsWith("//@")) break;
 
-    const match = line.match(/^\/\/@ (runDefault|runFTLNoCJIT|runDefaultWasm|requireOptions)\((.*)\)/);
-    const noJIT = /^\/\/@ runNoJIT\b/.test(line);
-    if (!match && !noJIT) continue;
+    const match = line.match(/^\/\/@ (runDefault|runFTLNoCJIT|runDefaultWasm|requireOptions|runNoJIT)\b(?:\((.*)\))?/);
+    if (!match) continue;
+    const [, mode, argsStr = ""] = match;
 
-    if (noJIT) {
+    const env: Record<string, string> = {};
+    if (mode === "runNoJIT") {
       env["BUN_JSC_useJIT"] = "false";
-      continue;
     }
-    const [, mode, argsStr] = match!;
 
     // runFTLNoCJIT implies these flags (from WebKit's run-jsc-stress-tests)
     if (mode === "runFTLNoCJIT") {
@@ -40,14 +52,29 @@ function parseJSCFlags(filePath: string): Record<string, string> {
     }
 
     // Parse explicit flags: "--key=value"
+    const label: string[] = mode === "runDefault" ? [] : [mode];
     const flagPattern = /"--(\w+)=([^"]+)"/g;
     let flagMatch;
     while ((flagMatch = flagPattern.exec(argsStr)) !== null) {
       env[`BUN_JSC_${flagMatch[1]}`] = flagMatch[2];
+      label.push(`--${flagMatch[1]}=${flagMatch[2]}`);
+    }
+
+    if (mode === "requireOptions") {
+      Object.assign(required, env);
+    } else {
+      runs.push({ label: label.join(" "), env });
     }
   }
 
-  return env;
+  if (runs.length === 0) runs.push({ label: "", env: {} });
+  return runs.map(run => ({ label: run.label, env: { ...required, ...run.env } }));
+}
+
+/** The test name for one run of a fixture. Plain when the fixture has a single run. */
+function runName(fixture: string, run: FixtureRun, runs: FixtureRun[]): string {
+  if (runs.length === 1) return fixture;
+  return `${fixture} [${run.label || "default"}]`;
 }
 
 const jsFixtures = [
@@ -121,6 +148,8 @@ const jsFixtures = [
   "varargs-inlined-simple-exit.js",
   "loop-unrolling.js",
   "licm-no-pre-header.js",
+  // Generators: bulk save/restore of live locals at a suspension point
+  "generator-save-restore-locals.js",
 ];
 
 const wasmFixtures = [
@@ -206,69 +235,56 @@ const fixtureEnv = {
 // `--timeout` (90s in CI, 5s locally) stays in effect.
 const fixtureTimeout = isDebug ? 180_000 : undefined;
 
+/** Run a script with the harness preload. Expects exit 0 and returns its stderr. */
+async function runFixture(scriptPath: string, env: Record<string, string>, cwd?: string): Promise<string> {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--preload", preloadPath, scriptPath],
+    env,
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  if (exitCode !== 0) {
+    console.log("stdout:", stdout);
+    console.log("stderr:", stderr);
+  }
+  expect(exitCode).toBe(0);
+  return stderr;
+}
+
 describe.concurrent("JSC JIT Stress Tests", () => {
   describe("JS (Baseline/DFG/FTL)", () => {
     for (const fixture of jsFixtures) {
-      test(
-        fixture,
-        async () => {
-          const fixturePath = path.join(fixturesDir, fixture);
-          const jscEnv = parseJSCFlags(fixturePath);
-
-          await using proc = Bun.spawn({
-            cmd: [bunExe(), "--preload", preloadPath, fixturePath],
-            env: { ...fixtureEnv, ...jscEnv },
-            stdout: "pipe",
-            stderr: "pipe",
-          });
-
-          const [stdout, stderr, exitCode] = await Promise.all([
-            new Response(proc.stdout).text(),
-            new Response(proc.stderr).text(),
-            proc.exited,
-          ]);
-
-          if (exitCode !== 0) {
-            console.log("stdout:", stdout);
-            console.log("stderr:", stderr);
-          }
-          expect(exitCode).toBe(0);
-        },
-        fixtureTimeout,
-      );
+      const fixturePath = path.join(fixturesDir, fixture);
+      const runs = parseJSCFlags(fixturePath);
+      for (const run of runs) {
+        test(
+          runName(fixture, run, runs),
+          async () => {
+            await runFixture(fixturePath, { ...fixtureEnv, ...run.env });
+          },
+          fixtureTimeout,
+        );
+      }
     }
   });
 
   describe("Wasm (BBQ/OMG)", () => {
     for (const fixture of wasmFixtures) {
-      test(
-        fixture,
-        async () => {
-          const fixturePath = path.join(wasmFixturesDir, fixture);
-          const jscEnv = parseJSCFlags(fixturePath);
-
-          await using proc = Bun.spawn({
-            cmd: [bunExe(), "--preload", preloadPath, fixturePath],
-            env: { ...fixtureEnv, ...jscEnv },
-            cwd: wasmFixturesDir,
-            stdout: "pipe",
-            stderr: "pipe",
-          });
-
-          const [stdout, stderr, exitCode] = await Promise.all([
-            new Response(proc.stdout).text(),
-            new Response(proc.stderr).text(),
-            proc.exited,
-          ]);
-
-          if (exitCode !== 0) {
-            console.log("stdout:", stdout);
-            console.log("stderr:", stderr);
-          }
-          expect(exitCode).toBe(0);
-        },
-        fixtureTimeout,
-      );
+      const fixturePath = path.join(wasmFixturesDir, fixture);
+      const runs = parseJSCFlags(fixturePath);
+      for (const run of runs) {
+        test(
+          runName(fixture, run, runs),
+          async () => {
+            await runFixture(fixturePath, { ...fixtureEnv, ...run.env }, wasmFixturesDir);
+          },
+          fixtureTimeout,
+        );
+      }
     }
   });
 
@@ -286,33 +302,104 @@ describe.concurrent("JSC JIT Stress Tests", () => {
     const hasDollarVM = probe.stdout.toString() === "1";
 
     for (const fixture of ffiFixtures) {
-      test.skipIf(!hasDollarVM)(
-        fixture,
-        async () => {
-          const fixturePath = path.join(ffiFixturesDir, fixture);
-          const jscEnv = parseJSCFlags(fixturePath);
+      const fixturePath = path.join(ffiFixturesDir, fixture);
+      const runs = parseJSCFlags(fixturePath);
+      for (const run of runs) {
+        test.skipIf(!hasDollarVM)(
+          runName(fixture, run, runs),
+          async () => {
+            await runFixture(fixturePath, { ...fixtureEnv, ...run.env, BUN_JSC_useDollarVM: "1" });
+          },
+          fixtureTimeout,
+        );
+      }
+    }
+  });
 
-          await using proc = Bun.spawn({
-            cmd: [bunExe(), "--preload", preloadPath, fixturePath],
-            env: { ...fixtureEnv, ...jscEnv, BUN_JSC_useDollarVM: "1" },
-            stdout: "pipe",
-            stderr: "pipe",
-          });
+  // `bun build --bytecode` stores the bytecode of every generator and async
+  // function in the cache, so the shape of their save/restore code is fixed at
+  // build time by useGeneratorBulkSaveRestore (on: one bulk op per
+  // suspension point, off: one op per live local). A cache built under either
+  // value of the option must load and run under the other.
+  describe("bytecode cache (generator locals)", () => {
+    const fixture = "generator-save-restore-locals.js";
+    // The fixture builds its 70- and 300-local generators with `new Function`,
+    // which the bundler cannot compile into the cache. This second entry writes
+    // them out in full: 70 locals need an out-of-line liveness bit vector and
+    // 300 need wide operands, so both encodings reach the cache.
+    const wideEntry = "wide-locals.js";
+    const entries = {
+      [fixture]: fs.readFileSync(path.join(fixturesDir, fixture), "utf8"),
+      [wideEntry]: [
+        `function check(actual, expected) {`,
+        `  if (actual !== expected) throw new Error(\`bad value: \${actual}, expected \${expected}\`);`,
+        `}`,
+        wideGeneratorSource(70),
+        wideGeneratorSource(300),
+      ].join("\n"),
+    };
+    const option = "BUN_JSC_useGeneratorBulkSaveRestore";
+    for (const buildValue of ["1", "0"]) {
+      for (const runValue of ["1", "0"]) {
+        test(
+          `built with ${option}=${buildValue}, run with ${option}=${runValue}`,
+          async () => {
+            using dir = tempDir("jsc-stress-bytecode", entries);
+            await using build = Bun.spawn({
+              cmd: [bunExe(), "build", "--bytecode", "--target=bun", "--outdir", "out", fixture, wideEntry],
+              env: { ...fixtureEnv, [option]: buildValue },
+              cwd: String(dir),
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const [, buildStderr, buildExitCode] = await Promise.all([
+              build.stdout.text(),
+              build.stderr.text(),
+              build.exited,
+            ]);
+            expect(buildStderr).toBe("");
+            expect(buildExitCode).toBe(0);
 
-          const [stdout, stderr, exitCode] = await Promise.all([
-            new Response(proc.stdout).text(),
-            new Response(proc.stderr).text(),
-            proc.exited,
-          ]);
-
-          if (exitCode !== 0) {
-            console.log("stdout:", stdout);
-            console.log("stderr:", stderr);
-          }
-          expect(exitCode).toBe(0);
-        },
-        fixtureTimeout,
-      );
+            for (const entry of Object.keys(entries)) {
+              expect(fs.existsSync(path.join(String(dir), "out", `${entry}.jsc`))).toBe(true);
+              const stderr = await runFixture(path.join(String(dir), "out", entry), {
+                ...fixtureEnv,
+                [option]: runValue,
+                BUN_JSC_verboseDiskCache: "1",
+              });
+              // The preload is loaded from source (one miss). The bundle must hit.
+              expect(stderr).toContain("[Disk Cache] Cache hit for sourceCode");
+            }
+          },
+          fixtureTimeout,
+        );
+      }
     }
   });
 });
+
+/**
+ * A generator with `count` locals live across two yields, written out in
+ * full, and a check of its values over three runs. `check` is defined by the
+ * caller.
+ */
+function wideGeneratorSource(count: number): string {
+  const names = Array.from({ length: count }, (_, i) => `v${i}`);
+  // Each local starts at its index and is incremented once: the sum is 1 + 2 + ... + count.
+  const expected = (count * (count + 1)) / 2;
+  return [
+    `function* wide${count}() {`,
+    ...names.map((name, i) => `  let ${name} = ${i};`),
+    `  yield 0;`,
+    ...names.map(name => `  ${name} += 1;`),
+    `  yield 1;`,
+    `  return ${names.join(" + ")};`,
+    `}`,
+    `for (let round = 0; round < 3; ++round) {`,
+    `  const iterator = wide${count}();`,
+    `  check(iterator.next().value, 0);`,
+    `  check(iterator.next().value, 1);`,
+    `  check(iterator.next().value, ${expected});`,
+    `}`,
+  ].join("\n");
+}

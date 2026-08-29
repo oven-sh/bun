@@ -1251,14 +1251,26 @@ pub extern "C" fn ${name}__controllerDetached(this: &mut ${name}, controller: JS
 `;
 
     // ZIG_DECL JSC::EncodedJSValue ${name}__close(JSC::JSGlobalObject*, void* sinkPtr, JSC::EncodedJSValue reason)
-    // C++ caller null-checks `ptr` before calling. `*mut`: a failing close can
-    // re-enter the sink (see `JsSinkType::close_with_error`).
+    // C++ caller null-checks `ptr` before calling. `reason` is the empty value
+    // for a clean close, otherwise the failed source's reason. A failing close
+    // gets a `ThisPtr` (it can re-enter and free the sink, see
+    // `JsSinkType::close_with_error`); a clean one the usual `&mut`.
     symbols.push(`${name}__close`);
     templ += `#[allow(dead_code, unreachable_pub, unused)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ${name}__close(global: &JSGlobalObject, this: *mut ${name}, reason: JSValue) -> JSValue {
-    // SAFETY: C++ passes its live, null-checked \`m_sinkPtr\`.
-    unsafe { ${JSSinkT}::js_close(global, this, reason) }
+    // SAFETY: C++ passes its live, null-checked \`m_sinkPtr\`; this borrow ends
+    // before the sink can be re-entered.
+    if let Some(v) = ${JSSinkT}::js_close_pending_error(global, unsafe { &mut *this }) {
+        return v;
+    }
+    if !reason.is_empty() && <${name} as crate::webcore::sink::JsSinkType>::CLOSES_WITH_ERROR {
+        // SAFETY: as above.
+        ${JSSinkT}::js_close_with_error(global, unsafe { bun_ptr::ThisPtr::new(this) }, reason)
+    } else {
+        // SAFETY: as above; a clean \`end\` does not free the sink.
+        ${JSSinkT}::js_close(global, unsafe { &mut *this })
+    }
 }
 
 `;

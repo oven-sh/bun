@@ -2352,8 +2352,9 @@ impl NetworkSink {
             }
             (*this).ended = true;
             (*this).done = true;
-            (*this).pending.result = Writable::Done;
-            (*this).pending.run();
+            let pending = (*this).pending.get_mut_unique();
+            pending.result = Writable::Done;
+            pending.run();
             if !reason.is_empty_or_undefined_or_null() {
                 (*this).upstream_error.set(global, reason);
             }
@@ -2486,12 +2487,13 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
             Self::release_writer_holder(this.as_ptr());
         }
     }
-    unsafe fn close_with_error(
-        this: *mut Self,
+    const CLOSES_WITH_ERROR: bool = true;
+    fn close_with_error(
+        this: bun_ptr::ThisPtr<Self>,
         global: &JSGlobalObject,
         reason: JSValue,
     ) -> bun_sys::Result<()> {
-        Self::fail_from_js_pump(this, global, reason);
+        Self::fail_from_js_pump(this.as_ptr(), global, reason);
         bun_sys::Result::Ok(())
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {

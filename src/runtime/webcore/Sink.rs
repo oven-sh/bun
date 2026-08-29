@@ -335,23 +335,24 @@ pub trait JsSinkType: Sized + JsSinkAbi {
     fn end_from_js(&mut self, global: &JSGlobalObject) -> sys::Result<JSValue>;
     fn flush(&mut self) -> sys::Result<()>;
     fn start(&mut self, config: streams::Start) -> sys::Result<()>;
+    /// Whether [`close_with_error`](Self::close_with_error) replaces the
+    /// clean `end(None)` when the source failed.
+    const CLOSES_WITH_ERROR: bool = false;
     /// The source failed, so the bytes written so far are a truncated body:
     /// `controller.close(error)` with a truthy argument, or the pump's close
-    /// for an errored stream, whose `reason` may be nullish. The default keeps
-    /// the clean end for sinks whose owner handles the pump promise rejection.
+    /// for an errored stream, whose `reason` may be nullish. Only called when
+    /// [`CLOSES_WITH_ERROR`](Self::CLOSES_WITH_ERROR); sinks whose owner
+    /// handles the pump promise rejection keep the default clean end.
     ///
-    /// Raw pointer: failing can re-enter the sink through its owner and may
-    /// free it.
-    ///
-    /// # Safety
-    /// `this` is the cell's live sink.
-    unsafe fn close_with_error(
-        this: *mut Self,
+    /// `ThisPtr`, not `&mut self`: failing can re-enter the sink through its
+    /// owner and may free it.
+    fn close_with_error(
+        _this: bun_ptr::ThisPtr<Self>,
         _global: &JSGlobalObject,
         _reason: JSValue,
     ) -> sys::Result<()> {
-        // SAFETY: caller contract; `end` does not free the sink.
-        unsafe { (*this).end(None) }
+        debug_assert!(false, "close_with_error without CLOSES_WITH_ERROR");
+        sys::Result::Ok(())
     }
 
     /// Allocate the sink a new JS wrapper will own (its `finalize` releases it).
@@ -666,42 +667,49 @@ impl<T: JsSinkType> JSSink<T> {
         this.controller_detached();
     }
 
-    /// `${abi_name}__close` body — called from
-    /// `${controller}__closeWithReason` and `${name}__doClose` in JSSink.cpp
-    /// with a raw `m_sinkPtr` (not a host-fn callframe), so exceptions become
-    /// `.zero`. `reason` is the empty value for a clean close (`close()`, a
-    /// falsy `close(reason)` argument, or the sink's own `close()`), otherwise
-    /// the failed source's reason, which the pump may pass as `undefined`.
-    ///
-    /// # Safety
-    /// `this` is the cell's live sink.
-    pub(crate) unsafe fn js_close(
+    /// `${abi_name}__close`, first step (both close kinds): a pending error is
+    /// thrown instead of closing. Called from `${controller}__closeWithReason`
+    /// and `${name}__doClose` in JSSink.cpp with a raw `m_sinkPtr` (not a
+    /// host-fn callframe), so exceptions become `.zero`.
+    pub(crate) fn js_close_pending_error(
         global: &crate::webcore::jsc::JSGlobalObject,
-        this: *mut T,
+        this: &mut T,
+    ) -> Option<crate::webcore::jsc::JSValue> {
+        bun_core::mark_binding!();
+        let err = this.get_pending_error()?;
+        // `throw_error` sets the pending JS exception and returns the
+        // `JsError` for `?`-propagation; this host fn returns bare
+        // `JSValue`, so report and return ZERO (caller checks exception).
+        let _ = global.vm().throw_error(global, err);
+        Some(crate::webcore::jsc::JSValue::ZERO)
+    }
+
+    /// `${abi_name}__close` for a clean close: `close()`, a falsy
+    /// `close(reason)` argument, the sink's own `close()`, or a failed source
+    /// on a sink without [`CLOSES_WITH_ERROR`](JsSinkType::CLOSES_WITH_ERROR).
+    pub(crate) fn js_close(
+        global: &crate::webcore::jsc::JSGlobalObject,
+        this: &mut T,
+    ) -> crate::webcore::jsc::JSValue {
+        Self::close_result_to_js(global, this.end(None))
+    }
+
+    /// `${abi_name}__close` for a failed source (`reason` may be `undefined`)
+    /// on a sink with [`CLOSES_WITH_ERROR`](JsSinkType::CLOSES_WITH_ERROR).
+    pub(crate) fn js_close_with_error(
+        global: &crate::webcore::jsc::JSGlobalObject,
+        this: bun_ptr::ThisPtr<T>,
         reason: crate::webcore::jsc::JSValue,
+    ) -> crate::webcore::jsc::JSValue {
+        Self::close_result_to_js(global, T::close_with_error(this, global, reason))
+    }
+
+    fn close_result_to_js(
+        global: &crate::webcore::jsc::JSGlobalObject,
+        result: sys::Result<()>,
     ) -> crate::webcore::jsc::JSValue {
         use crate::webcore::jsc::JSValue;
         use bun_sys_jsc::ErrorJsc;
-        bun_core::mark_binding!();
-
-        // SAFETY: caller contract; the borrow ends before `close_with_error`,
-        // which may re-enter or free the sink.
-        if let Some(err) = unsafe { (*this).get_pending_error() } {
-            // `throw_error` sets the pending JS exception and returns the
-            // `JsError` for `?`-propagation; this host fn returns bare
-            // `JSValue`, so report and return ZERO (caller checks exception).
-            let _ = global.vm().throw_error(global, err);
-            return JSValue::ZERO;
-        }
-
-        let result = if reason.is_empty() {
-            // SAFETY: as above; `end` does not free the sink.
-            unsafe { (*this).end(None) }
-        } else {
-            // SAFETY: caller contract.
-            unsafe { T::close_with_error(this, global, reason) }
-        };
-
         // TODO: properly propagate exception upwards
         match result {
             sys::Result::Ok(()) => JSValue::UNDEFINED,

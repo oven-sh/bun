@@ -1431,9 +1431,10 @@ fn spawn_maybe_sync(
             }
             subprocess.finalize_streams();
             subprocess.process_mut().detach();
-            crate::telemetry::discard_native(
+            crate::telemetry::spawn::setup_failed(
                 global_this,
                 subprocess.otel.replace(bun_telemetry::NativeSpan::NONE),
+                if global_this.has_exception() { b"Error" } else { b"OutOfMemoryError" },
             );
             if let Some(ipc_data) = subprocess.ipc_data.take() {
                 // Nothing else holds it yet (no socket wired, no task scheduled).

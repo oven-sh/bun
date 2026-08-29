@@ -67,6 +67,14 @@ pub fn failed(global: &JSGlobalObject, stub: &SpanStub, cmd: &SpawnedCommand<'_>
     });
 }
 
+/// The child was created but Bun could not finish setting it up (stdio
+/// wiring) and detached it; the call throws. `error`: the thrown value's name.
+pub fn setup_failed(global: &JSGlobalObject, span: NativeSpan, error: &[u8]) {
+    super::end_native(global, span, 0, |w| {
+        w.fail(error, b"child detached: stdio setup failed");
+    });
+}
+
 pub fn exited(global: &JSGlobalObject, span: NativeSpan, status: &Status) {
     super::end_native(global, span, 0, |w| match status {
         Status::Exited(e) => {

@@ -2,6 +2,7 @@ import { write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { rm } from "fs/promises";
 import { VerdaccioRegistry, bunExe, bunEnv as env, isIPv6, tempDir, tls } from "harness";
+import { createServer as createTlsServer } from "node:tls";
 import { join } from "path";
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
@@ -1500,7 +1501,7 @@ describe.concurrent("//host/ credential lines are matched against the request UR
   // wire (Bun.serve would hand the test a parsed URL), then answers 404.
   async function rawServer() {
     const requests: Req[] = [];
-    const server = require("node:tls").createServer({ key: tls.key, cert: tls.cert }, (socket: any) => {
+    const server = createTlsServer({ key: tls.key, cert: tls.cert }, (socket: any) => {
       let head = "";
       socket.on("data", (chunk: Buffer) => {
         head += chunk.toString("latin1");

@@ -623,6 +623,61 @@ const extraSections = `
   sk["x y"] += 10;
   out.accessorKeys = [sk["x y"], sk["x-y"], SK["x y"], sk[0]];
 }
+
+// https://github.com/oven-sh/bun/issues/31921: a class with accessors and no
+// decorators. Its private names stay reachable from the static code that
+// leaves the body, and static accessor initializers keep their order against
+// static blocks.
+{
+  log.length = 0;
+  const C1 = class Foo {
+    static #m = function (tag) { return { tag }; };
+    static accessor a = Foo.#m("a").tag;
+  };
+  const C2 = class Foo {
+    static accessor a = 1;
+    static #m = 5;
+    static { L(this.#m); }
+  };
+  const C3 = class {
+    static accessor a = L("a");
+    static { L("block"); }
+    static accessor b = L("b");
+  };
+  out.issue31921 = [C1.a, C2.a, C3.a, C3.b, log.slice()];
+}
+
+// Accessor storage is per member: an instance and a static accessor of one
+// name, a user \`#a\` next to \`accessor a\`, and an enclosing class's private
+// name do not share it. A computed accessor key evaluates once and is shared
+// by the getter and the setter, with and without a decorator in the class.
+{
+  let n = 0;
+  const key = (k) => (n++, k);
+  class N {
+    #a = 1;
+    accessor a = 2;
+    static accessor a = 3;
+    accessor [key("k")] = 4;
+    priv() { return this.#a; }
+  }
+  class M {
+    @dec m() {}
+    accessor [key("k")] = 5;
+  }
+  class Outer {
+    static #a = 6;
+    static make() { return class { static accessor a = Outer.#a; }; }
+  }
+  const nn = new N();
+  nn.a += 10;
+  N.a += 10;
+  nn.k += 10;
+  const mm = new M();
+  mm.k += 10;
+  const desc = Object.getOwnPropertyDescriptor(N.prototype, "k");
+  out.accessorStorage = [nn.a, N.a, nn.priv(), nn.k, mm.k, n, typeof desc.get, typeof desc.set, Outer.make().a];
+}
 `;
 
 const extraExpected = {
@@ -672,6 +727,8 @@ const extraExpected = {
   temporaryNames: ["global init", "global G", "function", 5, true, 42],
   temporaryScopes: ["secret", "outer", "static secret", "outer", "a", "b"],
   accessorKeys: [11, 2, 3, 4],
+  issue31921: ["a", 1, "a", "b", [5, "a", "block", "b"]],
+  accessorStorage: [12, 13, 1, 14, 15, 2, "function", "function", 6],
 };
 
 function buildFixture(cjs: boolean) {

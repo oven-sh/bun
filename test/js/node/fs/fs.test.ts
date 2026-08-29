@@ -11,6 +11,7 @@ import {
   isLinux,
   isPosix,
   isWindows,
+  nodeExe,
   tempDir,
   tempDirWithFiles,
   tmpdirSync,
@@ -4485,13 +4486,14 @@ describe("fs/promises", () => {
   // four tests below. Listings are compared as sets: their order is not part of
   // the contract, and sorting thousands of entries costs seconds in a debug build.
   const oracleRoot = resolve(import.meta.dir, "../");
+  const oracleNode = nodeExe();
   type NodeDirent = { path: string; name: string };
   const direntKey = (parentPath: string, name: string) => parentPath + path.sep + name;
 
   async function nodeReaddir<T extends string | NodeDirent>(options: string): Promise<T[]> {
     await using proc = Bun.spawn({
       cmd: [
-        "node",
+        oracleNode!,
         "-e",
         `const entries = require("fs").readdirSync(${JSON.stringify(oracleRoot)}, ${options});
          process.stdout.write(JSON.stringify(entries.map(v => (typeof v === "string" ? v : { path: v.parentPath, name: v.name }))));`,
@@ -4516,7 +4518,7 @@ describe("fs/promises", () => {
     }).toEqual({ count: expected.length, missing: [], extra: [] });
   }
 
-  it.concurrent(
+  it.concurrent.skipIf(!oracleNode)(
     "readdir(path, {recursive: true}) produces the same result as Node.js",
     async () => {
       const [bun, node] = await Promise.all([
@@ -4529,7 +4531,7 @@ describe("fs/promises", () => {
     100000,
   );
 
-  it.concurrent(
+  it.concurrent.skipIf(!oracleNode)(
     "readdir(path, {withFileTypes: true}) produces the same result as Node.js",
     async () => {
       const [bun, node] = await Promise.all([
@@ -4547,7 +4549,7 @@ describe("fs/promises", () => {
     100000,
   );
 
-  it.concurrent(
+  it.concurrent.skipIf(!oracleNode)(
     "readdir(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js",
     async () => {
       const [bun, node] = await Promise.all([
@@ -4564,7 +4566,7 @@ describe("fs/promises", () => {
     100000,
   );
 
-  it.concurrent(
+  it.concurrent.skipIf(!oracleNode)(
     "readdirSync(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js",
     async () => {
       const pending = nodeReaddir<NodeDirent>("{ withFileTypes: true, recursive: true }");

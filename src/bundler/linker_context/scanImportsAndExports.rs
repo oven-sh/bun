@@ -539,7 +539,9 @@ pub(crate) fn scan_imports_and_exports(
                     _ => {
                         col_ref!(ast_flags_list)[id].contains(AstFlags::FORCE_CJS_TO_ESM)
                             && !aliases.is_empty()
-                            && !aliases.iter().any(|alias| **alias == *b"default")
+                            && !aliases.iter().any(|alias| {
+                                **alias == *b"default" || **alias == *b"module.exports"
+                            })
                     }
                 };
 

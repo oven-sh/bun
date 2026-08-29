@@ -501,7 +501,8 @@ describe("bundler", () => {
   // must still return `module.exports` (not a namespace around it) and import() must have it as `default`, as when the
   // same files run from disk: for `module.exports = value` (an object, a function) and for `exports.x = ...`, which the
   // bundler turns into named exports. The main entry also imports one of them statically, so under --splitting that
-  // entry point's own chunk is only the tail that re-exports the shared code.
+  // entry point's own chunk is only the tail that re-exports the shared code. A module that already exports the
+  // `module.exports` name keeps its own export (a second one would be a syntax error).
   for (const [suffix, options] of [
     ["", {}],
     ["+bytecode", { bytecode: true }],
@@ -521,6 +522,7 @@ describe("bundler", () => {
           rmSync("./object.cjs", { force: true });
           rmSync("./fn.cjs", { force: true });
           rmSync("./named.cjs", { force: true });
+          rmSync("./taken.cjs", { force: true });
           process.chdir(tmpdir());
           const s = (x: string) => x; // keeps the bundler from resolving the specifier at build time
           const obj = require(s("./object.cjs"));
@@ -532,12 +534,14 @@ describe("bundler", () => {
           const ns = await import(s("./named.cjs"));
           console.log(ns.default === named, ns.kind, typeof ns.fn, JSON.stringify(ns.default));
           console.log((await import(s("./object.cjs"))).default === obj, (await import(s("./fn.cjs"))).default === fn);
+          console.log(Object.keys(await import(s("./taken.cjs"))).join(","));
         `,
         "/object.cjs": `module.exports = { hello: "world", nested: { n: 1 } };`,
         "/fn.cjs": `module.exports = function hello() { return "called"; }; module.exports.extra = 2;`,
         "/named.cjs": `exports.kind = "named"; module.exports.fn = function () { return "fn"; };`,
+        "/taken.cjs": `exports["module.exports"] = 1; exports.a = 2;`,
       },
-      entryPointsRaw: ["./entry.ts", "./object.cjs", "./fn.cjs", "./named.cjs"],
+      entryPointsRaw: ["./entry.ts", "./object.cjs", "./fn.cjs", "./named.cjs", "./taken.cjs"],
       outfile: "dist/out",
       run: {
         stdout: [
@@ -546,6 +550,7 @@ describe("bundler", () => {
           '{"kind":"named"} fn',
           'true named function {"kind":"named"}',
           "true true",
+          "a,module.exports",
           "",
         ].join("\n"),
         file: "dist/out",

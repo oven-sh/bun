@@ -1864,9 +1864,9 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
         reason: JSValue,
     ) -> bun_sys::Result<()> {
         // `end_from_stream` pins the pipe itself.
-        this.end_from_stream(Some(StreamError::JSValue(
-            jsc::strong::Optional::create(reason, global),
-        )));
+        this.end_from_stream(Some(StreamError::JSValue(jsc::strong::Optional::create(
+            reason, global,
+        ))));
         bun_sys::Result::Ok(())
     }
     fn end_from_js(&mut self, _global: &JSGlobalObject) -> bun_sys::Result<JSValue> {

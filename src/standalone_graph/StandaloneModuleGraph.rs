@@ -21,7 +21,7 @@ use bun_paths::{self as path, PathBuffer, strings};
 #[cfg(windows)]
 use bun_paths::{OSPathBuffer, WPathBuffer};
 use bun_sourcemap as SourceMap;
-use bun_sys::{self as Syscall, Fd, FdExt as _, Stat};
+use bun_sys::{self as Syscall, E, Fd, FdExt as _, Stat};
 
 bun_core::declare_scope!(StandaloneModuleGraph, hidden);
 
@@ -219,30 +219,30 @@ impl StandaloneModuleGraph {
     }
 
     pub fn find_dir(&self, name: &[u8]) -> bool {
-        self.dir_key(name).is_some()
+        self.dir_key(name).is_ok()
     }
 
-    /// The stored key of directory `name` (posix-separated, no trailing `/`).
-    pub fn dir_key(&self, name: &[u8]) -> Option<&[u8]> {
+    /// The stored key of directory `name` (posix-separated, no trailing `/`),
+    /// or the errno `open(O_DIRECTORY)` gives: `ENOTDIR` for a file, else `ENOENT`.
+    pub fn dir_key(&self, name: &[u8]) -> Result<&[u8], E> {
         if !is_bun_standalone_file_path(name) {
-            return None;
+            return Err(E::ENOENT);
         }
         let mut buf = PathBuffer::uninit();
         let name = Self::normalize_dir_path(name, &mut buf);
-        let index = self.dirs.get_index(name)?;
-        Some(&self.dirs.keys()[index])
+        if let Some(index) = self.dirs.get_index(name) {
+            return Ok(&self.dirs.keys()[index]);
+        }
+        Err(if self.lookup_file(name).is_some() {
+            E::ENOTDIR
+        } else {
+            E::ENOENT
+        })
     }
 
     /// `(entry, is_dir)`; `entry` is the basename, or the `name`-relative path when `recursive`.
-    pub fn readdir(&self, name: &[u8], recursive: bool) -> Option<Vec<(Box<[u8]>, bool)>> {
-        if !is_bun_standalone_file_path(name) {
-            return None;
-        }
-        let mut buf = PathBuffer::uninit();
-        let name = Self::normalize_dir_path(name, &mut buf);
-        if !self.dirs.contains_key(name) {
-            return None;
-        }
+    pub fn readdir(&self, name: &[u8], recursive: bool) -> Result<Vec<(Box<[u8]>, bool)>, E> {
+        let name = self.dir_key(name)?;
         let mut prefix: Vec<u8> = Vec::with_capacity(name.len() + 1);
         prefix.extend_from_slice(name);
         prefix.push(b'/');
@@ -272,7 +272,7 @@ impl StandaloneModuleGraph {
         for (k, v) in seen.iter() {
             out.push((Box::<[u8]>::from(&k[..]), *v));
         }
-        Some(out)
+        Ok(out)
     }
 
     pub fn find_assume_standalone_path(&mut self, name: &[u8]) -> Option<&mut File> {

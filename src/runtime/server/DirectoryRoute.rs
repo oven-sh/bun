@@ -35,6 +35,77 @@ enum Root {
     Embedded(&'static [u8]),
 }
 
+// `Stat` is ~144 bytes; boxing it would add a heap alloc on the hot path.
+#[allow(clippy::large_enum_variant)]
+enum Entry {
+    File(Body),
+    Dir,
+}
+
+impl Root {
+    /// `rel` is canonical (`resolve_subpath`) and relative to the root.
+    fn lookup(&self, rel: &[u8]) -> Option<Entry> {
+        match *self {
+            Root::Disk(root_fd) => {
+                let file = Self::open_beneath(root_fd, rel)?;
+                let stat = file.stat().ok()?;
+                let mode = stat.st_mode as bun_sys::Mode;
+                if bun_sys::S::ISDIR(mode) {
+                    Some(Entry::Dir)
+                } else if bun_sys::S::ISREG(mode) {
+                    Some(Entry::File(Body::Disk(file, stat)))
+                } else {
+                    None
+                }
+            }
+            Root::Embedded(root_key) => {
+                let graph = Graph::get_ref()?;
+                let mut buf = bun_paths::path_buffer_pool::get();
+                let out = &mut buf.0[..];
+                let len = root_key.len() + 1 + rel.len();
+                if len > out.len() {
+                    return None;
+                }
+                out[..root_key.len()].copy_from_slice(root_key);
+                out[root_key.len()] = b'/';
+                out[root_key.len() + 1..len].copy_from_slice(rel);
+                let path = &out[..len];
+                if let Some(file) = graph.find_ref(path) {
+                    Some(Entry::File(Body::Embedded(file)))
+                } else if graph.find_dir(path) {
+                    Some(Entry::Dir)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    /// `openat2(RESOLVE_IN_ROOT|NO_MAGICLINKS)` on Linux, `openat` elsewhere.
+    fn open_beneath(root_fd: Fd, rel: &[u8]) -> Option<File> {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let zrel = resolve_path::z(rel, &mut *buf);
+        // NONBLOCK so opening a FIFO without a writer cannot block the event
+        // loop on POSIX. Not on Windows: there `openat` maps it to omitting
+        // FILE_SYNCHRONOUS_IO_NONALERT, which breaks the synchronous reads
+        // FileResponseStream issues.
+        #[cfg(not(windows))]
+        let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
+        #[cfg(windows)]
+        let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let fd = bun_sys::openat2_in_root(root_fd, zrel, flags, 0).ok()?;
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        let fd = bun_sys::openat(root_fd, zrel, flags, 0).ok()?;
+        // Windows `openat` returns a HANDLE; `FileResponseStream` needs a
+        // libuv fd. `make_lib_uv_owned` is a no-op on POSIX.
+        use bun_sys::FdExt;
+        fd.make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail)
+            .ok()
+            .map(File::from_fd)
+    }
+}
+
 #[derive(bun_ptr::CellRefCounted)]
 pub struct DirectoryRoute {
     ref_count: Cell<u32>,
@@ -103,23 +174,12 @@ impl DirectoryRoute {
     fn open_root(root: &[u8]) -> bun_sys::Result<Root> {
         if let Some(graph) = Graph::get_ref() {
             if bun_standalone_graph::is_bun_standalone_file_path(root) {
-                if let Some(key) = graph.dir_key(root) {
-                    return Ok(Root::Embedded(key));
-                }
-                // `file.txt/` names the file for `open(2)`'s ENOTDIR, not a missing entry.
-                let mut file_path = root;
-                while let Some((&sep, rest)) = file_path.split_last() {
-                    if sep != b'/' && !(cfg!(windows) && sep == b'\\') {
-                        break;
+                return match graph.dir_key(root) {
+                    Ok(key) => Ok(Root::Embedded(key)),
+                    Err(errno) => {
+                        Err(bun_sys::Error::from_code(errno, bun_sys::Tag::open).with_path(root))
                     }
-                    file_path = rest;
-                }
-                let errno = if graph.contains_file(file_path) {
-                    bun_sys::E::ENOTDIR
-                } else {
-                    bun_sys::E::ENOENT
                 };
-                return Err(bun_sys::Error::from_code(errno, bun_sys::Tag::open).with_path(root));
             }
         }
         bun_sys::open_a(
@@ -320,114 +380,31 @@ impl DirectoryRoute {
     /// the slash form so the new request re-enters routing (the served
     /// resource's canonical URL may be owned by a more-specific route).
     fn open_subpath(&self, rel: &[u8], had_trailing_slash: bool) -> Option<Subpath> {
-        match self.root {
-            Root::Disk(root_fd) => self.open_disk_subpath(root_fd, rel, had_trailing_slash),
-            Root::Embedded(root_key) => {
-                Self::find_embedded_subpath(root_key, rel, had_trailing_slash)
-            }
-        }
-    }
-
-    fn open_disk_subpath(
-        &self,
-        root_fd: Fd,
-        rel: &[u8],
-        had_trailing_slash: bool,
-    ) -> Option<Subpath> {
-        let open_and_stat = |p: &[u8]| -> Option<(File, bun_sys::Stat)> {
-            let f = Self::open_beneath(root_fd, p)?;
-            let s = f.stat().ok()?;
-            Some((f, s))
-        };
-        if rel.is_empty() {
-            let (f, s) = open_and_stat(b"index.html")?;
-            return bun_sys::S::ISREG(s.st_mode as bun_sys::Mode)
-                .then_some(Subpath::Found(Body::Disk(f, s), true));
-        }
-        let (file, stat) = open_and_stat(rel)?;
-        let mode = stat.st_mode as bun_sys::Mode;
-        if bun_sys::S::ISDIR(mode) {
-            drop(file);
-            if !had_trailing_slash {
-                return Some(Subpath::RedirectSlash);
-            }
+        let index_in = |dir: &[u8]| -> Option<Subpath> {
             let mut buf = bun_paths::path_buffer_pool::get();
-            let joined = resolve_path::join_string_buf::<resolve_path::platform::Posix>(
-                &mut buf.0[..],
-                &[rel, b"index.html"],
-            );
-            let (f, s) = open_and_stat(joined)?;
-            return bun_sys::S::ISREG(s.st_mode as bun_sys::Mode)
-                .then_some(Subpath::Found(Body::Disk(f, s), true));
-        }
-        // Trailing slash on a regular file is a miss (nginx, npm `send`):
-        // `/file/` would route past an exact `/file` handler in uWS.
-        (bun_sys::S::ISREG(mode) && !had_trailing_slash)
-            .then_some(Subpath::Found(Body::Disk(file, stat), false))
-    }
-
-    /// Looks up `root_key/rel` in the graph. `rel` is canonical (`resolve_subpath`).
-    fn find_embedded_subpath(
-        root_key: &[u8],
-        rel: &[u8],
-        had_trailing_slash: bool,
-    ) -> Option<Subpath> {
-        const INDEX: &[u8] = b"/index.html";
-        let graph = Graph::get_ref()?;
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let out = &mut buf.0[..];
-        if root_key.len() + 1 + rel.len() + INDEX.len() > out.len() {
-            return None;
-        }
-        out[..root_key.len()].copy_from_slice(root_key);
-        let mut len = root_key.len();
-        if !rel.is_empty() {
-            out[len] = b'/';
-            out[len + 1..len + 1 + rel.len()].copy_from_slice(rel);
-            len += 1 + rel.len();
-        }
-        let index_under = move |out: &mut [u8], len: usize| -> Option<Subpath> {
-            out[len..len + INDEX.len()].copy_from_slice(INDEX);
-            let file = graph.find_ref(&out[..len + INDEX.len()])?;
-            Some(Subpath::Found(Body::Embedded(file), true))
+            let index = if dir.is_empty() {
+                b"index.html".as_slice()
+            } else {
+                resolve_path::join_string_buf::<resolve_path::platform::Posix>(
+                    &mut buf.0[..],
+                    &[dir, b"index.html"],
+                )
+            };
+            match self.root.lookup(index)? {
+                Entry::File(body) => Some(Subpath::Found(body, true)),
+                Entry::Dir => None,
+            }
         };
         if rel.is_empty() {
-            return index_under(out, len);
+            return index_in(b"");
         }
-        if let Some(file) = graph.find_ref(&out[..len]) {
-            return (!had_trailing_slash).then_some(Subpath::Found(Body::Embedded(file), false));
+        match self.root.lookup(rel)? {
+            // Trailing slash on a regular file is a miss (nginx, npm `send`):
+            // `/file/` would route past an exact `/file` handler in uWS.
+            Entry::File(body) => (!had_trailing_slash).then_some(Subpath::Found(body, false)),
+            Entry::Dir if !had_trailing_slash => Some(Subpath::RedirectSlash),
+            Entry::Dir => index_in(rel),
         }
-        if !graph.find_dir(&out[..len]) {
-            return None;
-        }
-        if !had_trailing_slash {
-            return Some(Subpath::RedirectSlash);
-        }
-        index_under(out, len)
-    }
-
-    /// `openat2(RESOLVE_IN_ROOT|NO_MAGICLINKS)` on Linux, `openat` elsewhere.
-    fn open_beneath(root_fd: Fd, rel: &[u8]) -> Option<File> {
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let zrel = resolve_path::z(rel, &mut *buf);
-        // NONBLOCK so opening a FIFO without a writer cannot block the event
-        // loop on POSIX. Not on Windows: there `openat` maps it to omitting
-        // FILE_SYNCHRONOUS_IO_NONALERT, which breaks the synchronous reads
-        // FileResponseStream issues.
-        #[cfg(not(windows))]
-        let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
-        #[cfg(windows)]
-        let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        let fd = bun_sys::openat2_in_root(root_fd, zrel, flags, 0).ok()?;
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        let fd = bun_sys::openat(root_fd, zrel, flags, 0).ok()?;
-        // Windows `openat` returns a HANDLE; `FileResponseStream` needs a
-        // libuv fd. `make_lib_uv_owned` is a no-op on POSIX.
-        use bun_sys::FdExt;
-        fd.make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail)
-            .ok()
-            .map(File::from_fd)
     }
 
     fn stat_cache_lookup(&self, rel: &[u8], stat: &bun_sys::Stat) -> (u64, [u8; 32], usize) {
@@ -486,7 +463,11 @@ impl Drop for DirectoryRoute {
 }
 
 /// uWS userdata for an embedded body that needs more than one write.
+#[derive(bun_ptr::CellRefCounted)]
 struct EmbeddedBody {
+    ref_count: Cell<u32>,
+    /// The ref the registered uWS handlers hold; `finish` takes it.
+    owner: Cell<Option<RefPtr<EmbeddedBody>>>,
     route: RefPtr<DirectoryRoute>,
     bytes: &'static [u8],
     idle_timeout: u8,
@@ -504,29 +485,27 @@ impl EmbeddedBody {
             route.on_response_complete(resp);
             return;
         }
-        let this = bun_core::heap::into_raw(Box::new(EmbeddedBody {
+        let body = RefPtr::new(EmbeddedBody {
+            ref_count: Cell::new(1),
+            owner: Cell::new(None),
             route,
             bytes,
             idle_timeout,
-        }));
-        resp.on_writable(Self::on_writable, this);
-        resp.on_aborted(Self::on_aborted, this);
+        });
+        let this = body.this_ptr();
+        this.owner.set(Some(body));
+        resp.on_writable_this(Self::on_writable, this);
+        resp.on_aborted_this(Self::on_aborted, this);
     }
 
-    fn on_writable(this: *mut EmbeddedBody, write_offset: u64, resp: AnyResponse) -> bool {
-        let (bytes, idle_timeout) = {
-            // SAFETY: `this` is the allocation `send` registered; it lives until
-            // `finish`, which only runs after this returns `true` or on abort.
-            let body = unsafe { &*this };
-            (body.bytes, body.idle_timeout)
-        };
-        resp.timeout(idle_timeout);
+    fn on_writable(this: ThisPtr<Self>, write_offset: u64, resp: AnyResponse) -> bool {
+        resp.timeout(this.idle_timeout);
         let offset = usize::try_from(write_offset)
             .unwrap_or(usize::MAX)
-            .min(bytes.len());
+            .min(this.bytes.len());
         if !resp.try_end(
-            &bytes[offset..],
-            bytes.len(),
+            &this.bytes[offset..],
+            this.bytes.len(),
             resp.should_close_connection(),
         ) {
             return false;
@@ -535,16 +514,15 @@ impl EmbeddedBody {
         true
     }
 
-    fn on_aborted(this: *mut EmbeddedBody, resp: AnyResponse) {
+    fn on_aborted(this: ThisPtr<Self>, resp: AnyResponse) {
         Self::finish(this, resp);
     }
 
-    fn finish(this: *mut EmbeddedBody, resp: AnyResponse) {
-        // SAFETY: `this` came from `heap::into_raw` in `send`. uWS delivers at
-        // most one of a completing `on_writable` and `on_aborted`, and
-        // `on_response_complete` clears both handlers, so this runs once.
-        let body = unsafe { bun_core::heap::take(this) };
-        body.route.on_response_complete(resp);
+    /// Releases the owning ref, freeing `this`; callers return without touching it again.
+    fn finish(this: ThisPtr<Self>, resp: AnyResponse) {
+        let owner = this.owner.take().expect("embedded body finished twice");
+        this.route.on_response_complete(resp);
+        drop(owner);
     }
 }
 

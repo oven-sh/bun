@@ -657,6 +657,8 @@ unsafe extern "C" fn alpn_select_thunk<H: AlpnSelectCallback>(
                 || selected.len() > usize::from(u8::MAX)
                 || sel.start < range.start
                 || sel.end > range.end
+                || !alpn_protocols(offered)
+                    .any(|p| p.as_ptr() == selected.as_ptr() && p.len() == selected.len())
             {
                 return SSL_TLSEXT_ERR_ALERT_FATAL;
             }
@@ -706,6 +708,67 @@ pub fn select_next_proto<'a>(prefs: &[u8], offered: &'a [u8]) -> Option<&'a [u8]
         return None;
     }
     alpn_protocols(prefs).find_map(|want| alpn_protocols(offered).find(|got| *got == want))
+}
+
+#[cfg(test)]
+mod alpn_select_tests {
+    use super::*;
+
+    static OFFERED: &[u8] = b"\x02h2\x08http/1.1";
+
+    fn run<H: AlpnSelectCallback>() -> (c_int, *const u8, u8) {
+        let mut out: *const u8 = core::ptr::null();
+        let mut out_len: u8 = 0;
+        // `SSL` is an opaque ZST; the handlers below never touch it.
+        let ssl = core::ptr::NonNull::<SSL>::dangling().as_ptr();
+        // SAFETY: `OFFERED` outlives the call; out-params are locals.
+        let rc = unsafe {
+            alpn_select_thunk::<H>(
+                ssl,
+                &raw mut out,
+                &raw mut out_len,
+                OFFERED.as_ptr(),
+                OFFERED.len() as c_uint,
+                core::ptr::null_mut(),
+            )
+        };
+        (rc, out, out_len)
+    }
+
+    struct Entry;
+    impl AlpnSelectCallback for Entry {
+        fn select<'o>(_: &SSL, offered: &'o [u8]) -> Result<Option<&'o [u8]>, AlpnReject> {
+            Ok(alpn_protocols(offered).nth(1))
+        }
+    }
+
+    struct SubSlice;
+    impl AlpnSelectCallback for SubSlice {
+        fn select<'o>(_: &SSL, offered: &'o [u8]) -> Result<Option<&'o [u8]>, AlpnReject> {
+            Ok(Some(&offered[1..2]))
+        }
+    }
+
+    struct Straddle;
+    impl AlpnSelectCallback for Straddle {
+        fn select<'o>(_: &SSL, offered: &'o [u8]) -> Result<Option<&'o [u8]>, AlpnReject> {
+            Ok(Some(&offered[1..5]))
+        }
+    }
+
+    #[test]
+    fn accepts_exactly_one_offered_entry() {
+        let (rc, out, len) = run::<Entry>();
+        assert_eq!(rc, SSL_TLSEXT_ERR_OK);
+        assert_eq!(len, 8);
+        assert_eq!(out, OFFERED[4..].as_ptr());
+    }
+
+    #[test]
+    fn rejects_a_subslice_that_is_not_an_entry() {
+        assert_eq!(run::<SubSlice>().0, SSL_TLSEXT_ERR_ALERT_FATAL);
+        assert_eq!(run::<Straddle>().0, SSL_TLSEXT_ERR_ALERT_FATAL);
+    }
 }
 
 impl Drop for GeneralNames {

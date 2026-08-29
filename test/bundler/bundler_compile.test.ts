@@ -1609,7 +1609,7 @@ test("a standalone executable does not run a synchronous full GC after loading i
   expect(stdout).toBe("done\n");
   // Heap::notifyIsSafeToCollect logs this at VM creation whenever logGC is on, collection or not, so it proves the
   // option reached the compiled binary without depending on any GC happening.
-  expect(stderr).toMatch(/\[GC<0x[0-9a-f]+>: starting /);
+  expect(stderr).toMatch(/\[GC<(0x)?[0-9a-fA-F]+>: starting /); // %p: "0x7f…" on POSIX, "00007FF6…" on Windows
   expect(stderr).not.toContain("FullCollection");
   expect(exitCode).toBe(0);
 });

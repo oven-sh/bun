@@ -88,8 +88,7 @@ impl Loader {
                 }
             };
 
-            // The body is decoded in place from the file buffer. A blank line right after BEGIN is an
-            // empty header. A blank line after other lines makes them a header, which fails as in BoringSSL.
+            // A blank line right after BEGIN is an empty header. One after other lines makes them a header.
             let mut body_start = lines.pos;
             let mut blank_seen = false;
             let body_end = loop {

@@ -597,6 +597,8 @@ pub(crate) mod on_unhandled_rejection {
         rejection: JSValue,
     ) {
         if let Some(buntest_strong) = bun_test::clone_active_strong() {
+            // The erroring callback's async context may still be installed; `BunTest::run` below runs the next user callback.
+            let _async_context = jsc::ClearedAsyncContextScope::new(global_object);
             // `buntest_strong` released by Rc drop.
             // SAFETY: single-threaded JS VM; `buntest_strong` is the only handle
             // dereferenced for this scope and is dropped before `BunTest::run`

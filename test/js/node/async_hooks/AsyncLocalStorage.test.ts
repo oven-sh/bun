@@ -1478,4 +1478,50 @@ describe.concurrent("unhandledRejection async context", () => {
     expect(stderr).toContain("(fail) rejects inside a store");
     expect(exitCode).not.toBe(0);
   });
+
+  // A timer callback reports its throw before it restores the async context, so the
+  // test runner's uncaught-exception path receives it with the store still installed
+  // and advances into the next hooks and tests from there.
+  test("under `bun test`, a throw from a timer inside a store doesn't leak the store into later hooks and tests", async () => {
+    using dir = tempDir("als-uncaught-timer-buntest", {
+      "probe.test.ts": `
+        import { beforeEach, test } from "bun:test";
+        import { AsyncLocalStorage } from "node:async_hooks";
+        const als = new AsyncLocalStorage();
+
+        beforeEach(() => {
+          console.log("HOOK store:", JSON.stringify(als.getStore() ?? null));
+        });
+
+        test("throws from a timer inside a store", async () => {
+          await new Promise<void>(resolve => {
+            als.run({ id: "leaky-timer" }, () => {
+              setTimeout(() => {
+                resolve();
+                throw new Error("in-timer");
+              }, 1);
+            });
+          });
+        });
+
+        test("next callback observes no leaked store", () => {
+          console.log("PROBE store:", JSON.stringify(als.getStore() ?? null));
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "probe.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).not.toContain("leaky-timer");
+    expect(stdout).toContain("HOOK store: null\nPROBE store: null");
+    expect(stderr).toContain("(pass) next callback observes no leaked store");
+    expect(stderr).toContain("in-timer");
+    expect(exitCode).not.toBe(0);
+  });
 });

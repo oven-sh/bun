@@ -3773,8 +3773,6 @@ impl VirtualMachine {
 
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
             self.unhandled_error_counter += 1;
-            // The test runner may run the next (unwrapped) user callback from here.
-            let _scope = jsc::ClearedAsyncContextScope::new(global_object);
             (self.on_unhandled_rejection)(self, global_object, reason);
             return;
         }

@@ -9,6 +9,7 @@ use bun_io::FileType;
 use bun_paths::resolve_path;
 use bun_ptr::{RefPtr, ThisPtr};
 use bun_resolver::fs::StatHash;
+use bun_standalone_graph::{File as GraphFile, Graph};
 use bun_sys::{self, Fd, File};
 use bun_uws::{AnyRequest, AnyResponse};
 
@@ -28,11 +29,20 @@ struct StatCacheEntry {
     stat_hash: StatHash,
 }
 
+/// Where the served tree lives.
+enum Root {
+    /// An open directory on disk; subpaths are opened beneath it.
+    Disk(Fd),
+    /// A directory embedded in this executable by `bun build --compile`
+    /// (`/$bunfs/...`): its `Graph::dir_key`, which has no trailing `/`.
+    Embedded(&'static [u8]),
+}
+
 #[derive(bun_ptr::CellRefCounted)]
 pub struct DirectoryRoute {
     ref_count: Cell<u32>,
     server: Cell<Option<AnyServer>>,
-    root_fd: Cell<Fd>,
+    root: Root,
     /// Mount prefix with trailing `/` (`"/static/"`, or `"/"` for `"/*"`).
     url_prefix: Box<[u8]>,
     stat_cache: Box<[Cell<StatCacheEntry>]>,
@@ -63,19 +73,16 @@ impl DirectoryRoute {
         debug_assert!(url_prefix.last() == Some(&b'/'));
         debug_assert!(!strings::contains(url_prefix, b"//"));
 
-        let root_fd = match bun_sys::open_a(
-            root,
-            bun_sys::O::DIRECTORY | bun_sys::O::CLOEXEC | bun_sys::O::RDONLY,
-            0,
-        ) {
-            Ok(fd) => fd,
+        let root = match Self::open_root(root) {
+            Ok(root) => root,
             Err(err) => {
                 use bun_sys_jsc::ErrorJsc;
                 return Err(global.throw_value(err.to_js(global)?));
             }
         };
 
-        let slots = if enable_stat_cache {
+        // The cache holds `Last-Modified` strings; embedded files have no mtime.
+        let slots = if enable_stat_cache && matches!(root, Root::Disk(_)) {
             STAT_CACHE_SLOTS
         } else {
             0
@@ -88,11 +95,36 @@ impl DirectoryRoute {
         Ok(RefPtr::new(DirectoryRoute {
             ref_count: Cell::new(1),
             server: Cell::new(None),
-            root_fd: Cell::new(root_fd),
+            root,
             url_prefix: url_prefix.to_vec().into_boxed_slice(),
             stat_cache: stat_cache.into_boxed_slice(),
             stat_cache_path_bytes: Cell::new(0),
         }))
+    }
+
+    /// An embedded `/$bunfs/` path never reaches the disk, like `node:fs` and
+    /// `Bun.file()`: it resolves in the standalone module graph or fails the
+    /// way `open(2)` would.
+    fn open_root(root: &[u8]) -> bun_sys::Result<Root> {
+        if let Some(graph) = Graph::get_ref() {
+            if bun_standalone_graph::is_bun_standalone_file_path(root) {
+                if let Some(key) = graph.dir_key(root) {
+                    return Ok(Root::Embedded(key));
+                }
+                let errno = if graph.contains_file(root) {
+                    bun_sys::E::ENOTDIR
+                } else {
+                    bun_sys::E::ENOENT
+                };
+                return Err(bun_sys::Error::from_code(errno, bun_sys::Tag::open).with_path(root));
+            }
+        }
+        bun_sys::open_a(
+            root,
+            bun_sys::O::DIRECTORY | bun_sys::O::CLOEXEC | bun_sys::O::RDONLY,
+            0,
+        )
+        .map(Root::Disk)
     }
 
     pub fn on_head_request(this: ThisPtr<DirectoryRoute>, req: AnyRequest, resp: AnyResponse) {
@@ -127,8 +159,8 @@ impl DirectoryRoute {
         };
         let rel: &[u8] = &path_buf.0[..rel_len];
 
-        let (file, stat, is_index) = match this.open_subpath(rel, had_trailing_slash) {
-            Some(Subpath::File(f, s, idx)) => (f, s, idx),
+        let (body, is_index) = match this.open_subpath(rel, had_trailing_slash) {
+            Some(Subpath::Found(body, idx)) => (body, idx),
             Some(Subpath::RedirectSlash) => {
                 let mut loc = bun_paths::path_buffer_pool::get();
                 let n = build_slash_redirect(req.url(), &mut loc.0[..]);
@@ -150,13 +182,26 @@ impl DirectoryRoute {
             }
         };
 
-        let size: u64 = u64::try_from(stat.st_size.max(0)).expect("int cast");
+        let size: u64 = match &body {
+            Body::Disk(_, stat) => u64::try_from(stat.st_size.max(0)).expect("int cast"),
+            Body::Embedded(file) => file.utf8_contents().len() as u64,
+        };
 
-        let (last_modified_ms, lm_buf, lm_len) = this.stat_cache_lookup(rel, &stat);
+        // An embedded file has no mtime. Its validator is a strong ETag over
+        // the bytes (the same one `Bun.embeddedFiles` static routes send).
+        let (last_modified_ms, lm_buf, lm_len) = match &body {
+            Body::Disk(_, stat) => this.stat_cache_lookup(rel, stat),
+            Body::Embedded(_) => (0, [0u8; 32], 0),
+        };
         let last_modified = (lm_len > 0).then(|| &lm_buf[..lm_len]);
 
         let mut etag_buf = [0u8; 40];
-        let etag = format_weak_etag(&mut etag_buf, size, last_modified_ms);
+        let etag: &[u8] = match &body {
+            Body::Disk(..) => format_weak_etag(&mut etag_buf, size, last_modified_ms),
+            Body::Embedded(file) => {
+                bun_http_types::ETag::format(file.content_hash(), &mut etag_buf)
+            }
+        };
 
         let range = if method == Method::GET || method == Method::HEAD {
             RangeRequest::from_request(&req, size)
@@ -222,7 +267,11 @@ impl DirectoryRoute {
             }
         };
 
-        if !resp.state().has_written_content_length_header() {
+        // `try_end` frames an in-memory body itself (uWS writes Content-Length
+        // from the total it is given); a streamed body and HEAD write it here.
+        if (method == Method::HEAD || matches!(body, Body::Disk(..)))
+            && !resp.state().has_written_content_length_header()
+        {
             resp.write_header_int(b"content-length", body_len);
             resp.mark_wrote_content_length_header();
         }
@@ -240,18 +289,29 @@ impl DirectoryRoute {
         );
 
         let server = this.server.get().unwrap();
-        FileResponseStream::start(FileResponseStreamOptions {
-            fd: file.into_raw(),
-            auto_close: true,
-            resp,
-            vm: bun_ptr::BackRef::new(server.vm()),
-            file_type: FileType::File,
-            pollable: false,
-            offset: body_offset,
-            length: Some(body_len),
-            idle_timeout: server.config().idle_timeout,
-            owner: StreamOwner::DirectoryRoute(guard.into_route()),
-        });
+        match body {
+            Body::Disk(file, _) => FileResponseStream::start(FileResponseStreamOptions {
+                fd: file.into_raw(),
+                auto_close: true,
+                resp,
+                vm: bun_ptr::BackRef::new(server.vm()),
+                file_type: FileType::File,
+                pollable: false,
+                offset: body_offset,
+                length: Some(body_len),
+                idle_timeout: server.config().idle_timeout,
+                owner: StreamOwner::DirectoryRoute(guard.into_route()),
+            }),
+            Body::Embedded(file) => {
+                let bytes = &file.utf8_contents()[body_offset as usize..][..body_len as usize];
+                EmbeddedBody::send(
+                    guard.into_route(),
+                    resp,
+                    bytes,
+                    server.config().idle_timeout,
+                );
+            }
+        }
     }
 
     /// Open `rel` under the root. For directories: serve `index.html` when the
@@ -259,15 +319,29 @@ impl DirectoryRoute {
     /// the slash form so the new request re-enters routing (the served
     /// resource's canonical URL may be owned by a more-specific route).
     fn open_subpath(&self, rel: &[u8], had_trailing_slash: bool) -> Option<Subpath> {
+        match self.root {
+            Root::Disk(root_fd) => self.open_disk_subpath(root_fd, rel, had_trailing_slash),
+            Root::Embedded(root_key) => {
+                Self::find_embedded_subpath(root_key, rel, had_trailing_slash)
+            }
+        }
+    }
+
+    fn open_disk_subpath(
+        &self,
+        root_fd: Fd,
+        rel: &[u8],
+        had_trailing_slash: bool,
+    ) -> Option<Subpath> {
         let open_and_stat = |p: &[u8]| -> Option<(File, bun_sys::Stat)> {
-            let f = self.open_beneath(p)?;
+            let f = Self::open_beneath(root_fd, p)?;
             let s = f.stat().ok()?;
             Some((f, s))
         };
         if rel.is_empty() {
             let (f, s) = open_and_stat(b"index.html")?;
             return bun_sys::S::ISREG(s.st_mode as bun_sys::Mode)
-                .then_some(Subpath::File(f, s, true));
+                .then_some(Subpath::Found(Body::Disk(f, s), true));
         }
         let (file, stat) = open_and_stat(rel)?;
         let mode = stat.st_mode as bun_sys::Mode;
@@ -283,15 +357,58 @@ impl DirectoryRoute {
             );
             let (f, s) = open_and_stat(joined)?;
             return bun_sys::S::ISREG(s.st_mode as bun_sys::Mode)
-                .then_some(Subpath::File(f, s, true));
+                .then_some(Subpath::Found(Body::Disk(f, s), true));
         }
         // Trailing slash on a regular file is a miss (nginx, npm `send`):
         // `/file/` would route past an exact `/file` handler in uWS.
-        (bun_sys::S::ISREG(mode) && !had_trailing_slash).then_some(Subpath::File(file, stat, false))
+        (bun_sys::S::ISREG(mode) && !had_trailing_slash)
+            .then_some(Subpath::Found(Body::Disk(file, stat), false))
+    }
+
+    /// The embedded counterpart of `open_disk_subpath`: `rel` is looked up as
+    /// `root_key/rel` in the standalone module graph. `rel` is already
+    /// canonical (`resolve_subpath`), so the join is a plain concatenation.
+    fn find_embedded_subpath(
+        root_key: &[u8],
+        rel: &[u8],
+        had_trailing_slash: bool,
+    ) -> Option<Subpath> {
+        const INDEX: &[u8] = b"/index.html";
+        let graph = Graph::get_ref()?;
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let out = &mut buf.0[..];
+        if root_key.len() + 1 + rel.len() + INDEX.len() > out.len() {
+            return None;
+        }
+        out[..root_key.len()].copy_from_slice(root_key);
+        let mut len = root_key.len();
+        if !rel.is_empty() {
+            out[len] = b'/';
+            out[len + 1..len + 1 + rel.len()].copy_from_slice(rel);
+            len += 1 + rel.len();
+        }
+        let index_under = move |out: &mut [u8], len: usize| -> Option<Subpath> {
+            out[len..len + INDEX.len()].copy_from_slice(INDEX);
+            let file = graph.find_ref(&out[..len + INDEX.len()])?;
+            Some(Subpath::Found(Body::Embedded(file), true))
+        };
+        if rel.is_empty() {
+            return index_under(out, len);
+        }
+        if let Some(file) = graph.find_ref(&out[..len]) {
+            return (!had_trailing_slash).then_some(Subpath::Found(Body::Embedded(file), false));
+        }
+        if !graph.find_dir(&out[..len]) {
+            return None;
+        }
+        if !had_trailing_slash {
+            return Some(Subpath::RedirectSlash);
+        }
+        index_under(out, len)
     }
 
     /// `openat2(RESOLVE_IN_ROOT|NO_MAGICLINKS)` on Linux, `openat` elsewhere.
-    fn open_beneath(&self, rel: &[u8]) -> Option<File> {
+    fn open_beneath(root_fd: Fd, rel: &[u8]) -> Option<File> {
         let mut buf = bun_paths::path_buffer_pool::get();
         let zrel = resolve_path::z(rel, &mut *buf);
         // NONBLOCK so opening a FIFO without a writer cannot block the event
@@ -303,9 +420,9 @@ impl DirectoryRoute {
         #[cfg(windows)]
         let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        let fd = bun_sys::openat2_in_root(self.root_fd.get(), zrel, flags, 0).ok()?;
+        let fd = bun_sys::openat2_in_root(root_fd, zrel, flags, 0).ok()?;
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        let fd = bun_sys::openat(self.root_fd.get(), zrel, flags, 0).ok()?;
+        let fd = bun_sys::openat(root_fd, zrel, flags, 0).ok()?;
         // Windows `openat` returns a HANDLE; `FileResponseStream` needs a
         // libuv fd. `make_lib_uv_owned` is a no-op on POSIX.
         use bun_sys::FdExt;
@@ -363,7 +480,75 @@ impl DirectoryRoute {
 
 impl Drop for DirectoryRoute {
     fn drop(&mut self) {
-        drop(File::from_fd(self.root_fd.get()));
+        if let Root::Disk(fd) = self.root {
+            drop(File::from_fd(fd));
+        }
+    }
+}
+
+/// An embedded body that did not fit in the socket's send buffer: the uWS
+/// userdata of `on_writable` / `on_aborted` until the response ends.
+struct EmbeddedBody {
+    route: RefPtr<DirectoryRoute>,
+    bytes: &'static [u8],
+    idle_timeout: u8,
+}
+
+impl EmbeddedBody {
+    /// Send `bytes` as the whole body. Takes over the response's route ref and
+    /// releases it through `on_response_complete` once the body is sent or the
+    /// client goes away.
+    fn send(
+        route: RefPtr<DirectoryRoute>,
+        resp: AnyResponse,
+        bytes: &'static [u8],
+        idle_timeout: u8,
+    ) {
+        if resp.try_end(bytes, bytes.len(), resp.should_close_connection()) {
+            route.on_response_complete(resp);
+            return;
+        }
+        let this = bun_core::heap::into_raw(Box::new(EmbeddedBody {
+            route,
+            bytes,
+            idle_timeout,
+        }));
+        resp.on_writable(Self::on_writable, this);
+        resp.on_aborted(Self::on_aborted, this);
+    }
+
+    fn on_writable(this: *mut EmbeddedBody, write_offset: u64, resp: AnyResponse) -> bool {
+        let (bytes, idle_timeout) = {
+            // SAFETY: `this` is the allocation `send` registered; it lives until
+            // `finish`, which only runs after this returns `true` or on abort.
+            let body = unsafe { &*this };
+            (body.bytes, body.idle_timeout)
+        };
+        resp.timeout(idle_timeout);
+        let offset = usize::try_from(write_offset)
+            .unwrap_or(usize::MAX)
+            .min(bytes.len());
+        if !resp.try_end(
+            &bytes[offset..],
+            bytes.len(),
+            resp.should_close_connection(),
+        ) {
+            return false;
+        }
+        Self::finish(this, resp);
+        true
+    }
+
+    fn on_aborted(this: *mut EmbeddedBody, resp: AnyResponse) {
+        Self::finish(this, resp);
+    }
+
+    fn finish(this: *mut EmbeddedBody, resp: AnyResponse) {
+        // SAFETY: `this` came from `heap::into_raw` in `send`. uWS delivers at
+        // most one of a completing `on_writable` and `on_aborted`, and
+        // `on_response_complete` clears both handlers, so this runs once.
+        let body = unsafe { bun_core::heap::take(this) };
+        body.route.on_response_complete(resp);
     }
 }
 
@@ -391,8 +576,15 @@ impl Drop for ResponseGuard {
 
 // `Stat` is ~144 bytes; boxing it would add a heap alloc on the hot path.
 #[allow(clippy::large_enum_variant)]
+enum Body {
+    Disk(File, bun_sys::Stat),
+    Embedded(&'static GraphFile),
+}
+
+#[allow(clippy::large_enum_variant)]
 enum Subpath {
-    File(File, bun_sys::Stat, bool),
+    /// The file to serve and whether it is a directory's `index.html`.
+    Found(Body, bool),
     RedirectSlash,
 }
 

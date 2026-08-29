@@ -238,6 +238,118 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
     TIMEOUT,
   );
 
+  // https://github.com/oven-sh/bun/issues/40778
+  test(
+    "Bun.serve() { dir } route serves an --asset directory",
+    async () => {
+      // Larger than a fresh socket's send buffer, so the body needs more than
+      // one write and the onWritable continuation runs.
+      const big = Buffer.alloc(4 * 1024 * 1024);
+      for (let i = 0; i < big.length; i++) big[i] = i % 251;
+      using dir = tempDir("bunfs-dir-route", {
+        "index.ts": /* ts */ `
+          const root = import.meta.dir + "/public";
+          function errcode(fn: () => unknown): string {
+            try { fn(); return ""; } catch (e: any) { return e.code; }
+          }
+          using server = Bun.serve({
+            port: 0,
+            routes: { "/static/*": { dir: root } },
+            fetch() { return new Response("fallthrough", { status: 404 }); },
+          });
+          const base = "http://localhost:" + server.port;
+          async function get(path: string, init: RequestInit = {}) {
+            const res = await fetch(base + path, { redirect: "manual", ...init });
+            const body = await res.text();
+            const h = res.headers;
+            return {
+              status: res.status,
+              type: h.get("content-type"),
+              length: h.get("content-length"),
+              etag: h.get("etag"),
+              lastModified: h.get("last-modified"),
+              acceptRanges: h.get("accept-ranges"),
+              contentRange: h.get("content-range"),
+              location: h.get("location"),
+              body,
+            };
+          }
+          const file = await get("/static/a.txt");
+          const bigRes = await fetch(base + "/static/big.bin");
+          const bigBody = Buffer.from(await bigRes.arrayBuffer());
+          const bigExpected = Buffer.from(await Bun.file(root + "/big.bin").arrayBuffer());
+          console.log(JSON.stringify({
+            file,
+            nested: await get("/static/sub/b.css"),
+            percentDecoded: await get("/static/hello%20world.txt"),
+            index: await get("/static/"),
+            subIndex: await get("/static/sub/"),
+            dirRedirect: await get("/static/sub"),
+            fileTrailingSlash: await get("/static/a.txt/"),
+            missing: await get("/static/nope.txt"),
+            head: await get("/static/a.txt", { method: "HEAD" }),
+            range: await get("/static/a.txt", { headers: { range: "bytes=6-10" } }),
+            unsatisfiable: await get("/static/a.txt", { headers: { range: "bytes=100-200" } }),
+            notModified: await get("/static/a.txt", { headers: { "if-none-match": file.etag! } }),
+            staleEtag: (await get("/static/a.txt", { headers: { "if-none-match": '"0000000000000000"' } })).status,
+            big: { status: bigRes.status, length: bigBody.length, matches: bigBody.equals(bigExpected) },
+            missingDir: errcode(() => Bun.serve({ port: 0, routes: { "/x/*": { dir: import.meta.dir + "/nope" } } })),
+            fileAsDir: errcode(() => Bun.serve({ port: 0, routes: { "/x/*": { dir: root + "/a.txt" } } })),
+          }));
+        `,
+        "public/a.txt": "hello asset",
+        "public/hello world.txt": "spaced",
+        "public/index.html": "<h1>root</h1>",
+        "public/sub/b.css": "body{margin:0}",
+        "public/sub/index.html": "<h1>sub</h1>",
+        "public/big.bin": big,
+      });
+
+      await compile(String(dir), ["--asset", "./public"]);
+      const { stdout, stderr, code } = await run(String(dir));
+      expect(stderr.trim()).toBe("");
+      const r = JSON.parse(stdout.trim());
+      const ok = (body: string, type: string, extra: Record<string, unknown> = {}) => ({
+        status: 200,
+        type,
+        length: String(body.length),
+        etag: expect.stringMatching(/^"[0-9a-f]{16}"$/),
+        lastModified: null,
+        acceptRanges: "bytes",
+        contentRange: null,
+        location: null,
+        body,
+        ...extra,
+      });
+      const text = "text/plain;charset=utf-8";
+      const html = "text/html;charset=utf-8";
+      expect(r).toEqual({
+        file: ok("hello asset", text),
+        nested: ok("body{margin:0}", "text/css;charset=utf-8"),
+        percentDecoded: ok("spaced", text),
+        index: ok("<h1>root</h1>", html),
+        subIndex: ok("<h1>sub</h1>", html),
+        dirRedirect: expect.objectContaining({ status: 301, location: "/static/sub/", body: "" }),
+        fileTrailingSlash: expect.objectContaining({ status: 404, body: "" }),
+        missing: expect.objectContaining({ status: 404, body: "" }),
+        head: ok("hello asset", text, { body: "" }),
+        range: {
+          ...ok("asset", text),
+          contentRange: "bytes 6-10/11",
+          status: 206,
+        },
+        unsatisfiable: expect.objectContaining({ status: 416, contentRange: "bytes */11", body: "" }),
+        notModified: expect.objectContaining({ status: 304, etag: r.file.etag, body: "" }),
+        staleEtag: 200,
+        big: { status: 200, length: big.length, matches: true },
+        missingDir: "ENOENT",
+        fileAsDir: "ENOTDIR",
+      });
+      expect(code).toBe(0);
+    },
+    TIMEOUT,
+  );
+
   test(
     "Bun.build({compile: {assets}}) rejects colliding paths",
     async () => {

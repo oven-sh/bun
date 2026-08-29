@@ -219,12 +219,19 @@ impl StandaloneModuleGraph {
     }
 
     pub fn find_dir(&self, name: &[u8]) -> bool {
+        self.dir_key(name).is_some()
+    }
+
+    /// The `dirs` key of directory `name`: posix-separated, no trailing `/`, so
+    /// `key + "/" + child` is a `files` or `dirs` key.
+    pub fn dir_key(&self, name: &[u8]) -> Option<&[u8]> {
         if !is_bun_standalone_file_path(name) {
-            return false;
+            return None;
         }
         let mut buf = PathBuffer::uninit();
         let name = Self::normalize_dir_path(name, &mut buf);
-        self.dirs.contains_key(name)
+        let index = self.dirs.get_index(name)?;
+        Some(&self.dirs.keys()[index])
     }
 
     /// `(entry, is_dir)`; `entry` is the basename, or the `name`-relative path when `recursive`.
@@ -587,6 +594,7 @@ pub struct File {
     pub encoding: Encoding,
     wtf_string: std::sync::OnceLock<BunString>,
     utf8: std::sync::OnceLock<Box<[u8]>>,
+    content_hash: std::sync::OnceLock<u64>,
     // BACKREF into the embedded section; JSC mutates the bytecode buffer in place.
     pub bytecode: *mut [u8],
     pub module_info: *mut [u8],
@@ -634,6 +642,13 @@ impl File {
         self.utf8.get_or_init(|| {
             bun_core::strings::to_utf8_alloc_with_type(self.utf16_units()).into_boxed_slice()
         })
+    }
+
+    /// XXH64 of `utf8_contents()`, computed once.
+    pub fn content_hash(&self) -> u64 {
+        *self
+            .content_hash
+            .get_or_init(|| bun_core::hash::xxhash64(0, self.utf8_contents()))
     }
 
     pub fn stat(&self) -> Stat {
@@ -1039,6 +1054,7 @@ impl StandaloneModuleGraph {
                     encoding: module.encoding,
                     wtf_string: std::sync::OnceLock::new(),
                     utf8: std::sync::OnceLock::new(),
+                    content_hash: std::sync::OnceLock::new(),
                 },
             );
         }

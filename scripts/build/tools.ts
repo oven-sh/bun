@@ -373,8 +373,8 @@ function findLlvmTool(
     required: opts.required,
     hint: llvmInstallHint(os),
   };
+  if (opts.checkVersion) spec.version = toolchainOverride.llvm !== undefined ? "ignore" : LLVM_VERSION_RANGE;
   if (toolchainOverride.llvm !== undefined) spec.pathsOnly = true;
-  else if (opts.checkVersion) spec.version = LLVM_VERSION_RANGE;
   return findTool(spec);
 }
 

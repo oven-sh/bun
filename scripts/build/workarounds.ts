@@ -233,20 +233,24 @@ export const workarounds: Workaround[] = [
  * Call from configure.ts after Config is fully resolved.
  */
 export function checkWorkarounds(cfg: Config): void {
-  // Expiry thresholds are written against the pinned toolchain; an explicitly
-  // supplied one (BUN_TOOLCHAIN_LLVM) may be newer without the tree having
-  // dropped the workaround yet.
-  if (toolchainOverride.llvm !== undefined) return;
+  // Expiry thresholds are written against the pinned toolchains. With an
+  // explicitly supplied one (BUN_TOOLCHAIN_LLVM / BUN_TOOLCHAIN_RUST), which may
+  // be newer than the pin, an expired workaround is reported, not fatal.
+  const overridden = toolchainOverride.llvm !== undefined || toolchainOverride.rust !== undefined;
   for (const w of workarounds) {
     if (!w.applies(cfg)) continue;
     if (!w.expectedToBeFixed(cfg)) continue;
 
-    throw new BuildError(`Workaround '${w.id}' is obsolete — upstream fix is available`, {
-      hint:
-        `${w.description}\n` +
-        `  Tracked: ${w.issue}\n\n` +
-        `${w.cleanup}\n\n` +
-        `If the issue still reproduces, bump the threshold in expectedToBeFixed() in scripts/build/workarounds.ts instead.`,
-    });
+    const title = `Workaround '${w.id}' is obsolete — upstream fix is available`;
+    const hint =
+      `${w.description}\n` +
+      `  Tracked: ${w.issue}\n\n` +
+      `${w.cleanup}\n\n` +
+      `If the issue still reproduces, bump the threshold in expectedToBeFixed() in scripts/build/workarounds.ts instead.`;
+    if (overridden) {
+      console.warn(`note: ${title} (with the overridden toolchain)\n${hint}\n`);
+      continue;
+    }
+    throw new BuildError(title, { hint });
   }
 }

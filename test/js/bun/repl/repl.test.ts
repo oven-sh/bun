@@ -799,13 +799,14 @@ describe.concurrent("Bun REPL", () => {
     });
 
     test('"use strict" still applies when another directive comes first', async () => {
-      const { stdout, exitCode } = await runRepl([
+      // The second line is the sloppy control: `this` is the global object.
+      const { outputs, stderr, exitCode } = await runRepl([
         `"use client"; "use strict"; (function () { return this === undefined; })()`,
+        `"use client"; (function () { return this === undefined; })()`,
         ".exit",
       ]);
-      const output = stripAnsi(stdout);
-      expect(output).toContain("true");
-      expect(output).not.toContain("false");
+      expect(outputs).toEqual(["true", "false"]);
+      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
   });

@@ -333,6 +333,17 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("directive/LegacyOctalPropertyKeyInStrictFunction", {
+    files: {
+      "/entry.js": /* js */ `
+        function h() { "use strict"; return { 010: "key" } }
+      `,
+    },
+    bundleErrors: {
+      "/entry.js": ["Legacy octal literals cannot be used in strict mode"],
+    },
+  });
+
   itBundled("directive/LegacyOctalLiteralInSloppyFunction", {
     files: {
       "/entry.cjs": /* js */ `

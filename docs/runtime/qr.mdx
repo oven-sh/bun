@@ -10,19 +10,19 @@ console.log(Bun.QR.generate("https://bun.com", { format: "text", border: 1 }));
 ```
 
 ```txt
- ▄▄▄▄▄▄▄   ▄▄▄  ▄▄ ▄▄▄▄▄▄▄
- █ ▄▄▄ █ ▀▀ ▀   ▄█ █ ▄▄▄ █
- █ ███ █ ███▄  ▄▄█ █ ███ █
- █▄▄▄▄▄█ ▄▀█▀▄ ▄▀█ █▄▄▄▄▄█
-  ▄ ▄▄▄▄ ██▀▄██ ▀█▄▄ ▄▄ ▄
-  ▄█  ▄▄█▄▀  ▄█ ▄█▀▄▀▀█▀▀▄
- ▀▄▀▀▀ ▄▄▄▀ ▄▄█  ▄ █▄ ▀▀▀█
- █▄ ▄▀▄▄ ▄ █▀ █▀█▀▄  █▄▄█▄
- █ █ ▀ ▄██  ▄▄ ▀▀▄▄▄█▄▀█▄▀
- ▄▄▄▄▄▄▄ ▀ ▀▄▄▄█ █ ▄ █ ▀▀▄
- █ ▄▄▄ █ █  ▄▀▀███▄▄▄█  █
- █ ███ █ ▀▀   ▄ █ ▄▀ ▄▄▄▄█
- █▄▄▄▄▄█ ▀▄ ▄▀▀  ▄▄ ▀▀▄▀▀█
+ ▄▄▄▄▄▄▄ ▄▄▄ ▄▄  ▄ ▄▄▄▄▄▄▄
+ █ ▄▄▄ █ █▄  ▀▄█▀█ █ ▄▄▄ █
+ █ ███ █ █  ▀▀▀█▀  █ ███ █
+ █▄▄▄▄▄█ ▄ ▄▀█▀▄ ▄ █▄▄▄▄▄█
+  ▄▄ ▄ ▄▄▀ ▀█▄▀█▄█ ▄ ▄▄▄▄▄
+ ▀█▄██▀▄▄█▄███▄▀▀ ▄█   ▄▄█
+  ▀▀▄ ▄▄▀▄▄▀ █  ██▄▄▀ ▄ █▄
+ ▄ █▀▀█▄▄▀██ ▀▀▄ ▀█▀▄ ▀▄▄█
+ ▄▀▄█▄█▄▄▄██▀█▀ ▄███▄█▄ ▀
+ ▄▄▄▄▄▄▄ ██  █▀███ ▄ ██ ██
+ █ ▄▄▄ █ ▄█ █ █  █▄▄▄██ ▄▀
+ █ ███ █ ▄▄██▀█▀ █▀ ▀█▀▀▀▄
+ █▄▄▄▄▄█ ▀▀▀  ▄ ██ ▀▄▀▀ █▄
 ```
 
 ## `Bun.QR.generate()`
@@ -47,7 +47,7 @@ const qr = Bun.QR.generate("https://bun.com");
 qr.version; // 2
 qr.size; // 25
 qr.errorCorrection; // "Q"
-qr.mask; // 6
+qr.mask; // 0
 qr.matrix; // Uint8Array(625)
 
 for (let y = 0; y < qr.size; y++) {
@@ -87,7 +87,7 @@ console.log(Bun.QR.generate("otpauth://totp/bun?secret=...", { format: "text", i
 
 ### Image
 
-`format: "image"` draws the symbol at `scale` pixels per module and returns a [`Bun.Image`](/runtime/image). The PNG uses a two-color palette, so the result is small. Chain `Bun.Image` methods to resize it, convert it, or write it to disk.
+`format: "image"` draws the symbol at `scale` pixels per module and returns a [`Bun.Image`](/runtime/image) that holds a PNG. Chain `Bun.Image` methods to resize it, convert it, or write it to disk.
 
 ```ts
 const image = Bun.QR.generate("https://bun.com", { format: "image", scale: 10, border: 4 });
@@ -154,7 +154,7 @@ Bun.QR.parse(qr);
 //   text: "https://bun.com",
 //   version: 2,
 //   errorCorrection: "Q",
-//   mask: 6,
+//   mask: 0,
 //   bytes: Uint8Array(15),
 // }
 

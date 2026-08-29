@@ -875,11 +875,7 @@ impl Image {
                 // BackendUnavailable (and any other backend error) ⇔ no image present.
                 Err(_) => return Ok(JSValue::NULL),
             };
-            let img = Box::new(Image {
-                source: JsCell::new(Source::Owned(bytes)),
-                ..Default::default()
-            });
-            return Ok(img.to_js(global));
+            return Ok(Image::from_owned_bytes_js(global, bytes));
         }
         #[cfg(not(any(target_os = "macos", windows)))]
         {

@@ -94,36 +94,8 @@ impl Default for Options {
     }
 }
 
-fn rgba_pack(c: RGBA) -> u32 {
-    (u32::from(c.red) << 24)
-        | (u32::from(c.green) << 16)
-        | (u32::from(c.blue) << 8)
-        | u32::from(c.alpha)
-}
-
-/// `#rrggbb` (opaque) or `#rrggbbaa`, for SVG `fill=`.
-struct HexColor {
-    buf: [u8; 9],
-    len: usize,
-}
-
-impl HexColor {
-    fn new(c: RGBA) -> Self {
-        const HEX: &[u8; 16] = b"0123456789abcdef";
-        let mut buf = [0u8; 9];
-        buf[0] = b'#';
-        for (i, ch) in [c.red, c.green, c.blue, c.alpha].into_iter().enumerate() {
-            buf[1 + i * 2] = HEX[usize::from(ch >> 4)];
-            buf[2 + i * 2] = HEX[usize::from(ch & 0xF)];
-        }
-        Self {
-            buf,
-            len: if c.alpha == 255 { 7 } else { 9 },
-        }
-    }
-    fn as_bytes(&self) -> &[u8] {
-        &self.buf[..self.len]
-    }
+fn rgba_array(c: RGBA) -> [u8; 4] {
+    [c.red, c.green, c.blue, c.alpha]
 }
 
 fn ecc_name(ecc: Ecc) -> &'static str {
@@ -186,6 +158,19 @@ fn optional_int_option<T: bun_core::Integer>(
             always_allow_zero: false,
         },
     )?))
+}
+
+/// Absent, `undefined` and `null` keep the default, like the enum and color
+/// options; any other value is truthy-coerced.
+fn bool_option(
+    global: &JSGlobalObject,
+    value: JSValue,
+    name: &'static str,
+) -> JsResult<Option<bool>> {
+    Ok(value
+        .get(global, name)?
+        .filter(|v| !v.is_null())
+        .map(JSValue::to_boolean))
 }
 
 fn color_option(
@@ -276,10 +261,10 @@ fn parse_options(global: &JSGlobalObject, value: JSValue) -> JsResult<Options> {
     // No numeric default: an unset mask means "choose by penalty score".
     opts.mask = optional_int_option::<u8>(global, value, "mask", b"options.mask", 0, 7)?;
 
-    if let Some(v) = value.get_boolean_loose(global, "boostErrorCorrection")? {
+    if let Some(v) = bool_option(global, value, "boostErrorCorrection")? {
         opts.boost_ecc = v;
     }
-    if let Some(v) = value.get_boolean_loose(global, "invert")? {
+    if let Some(v) = bool_option(global, value, "invert")? {
         opts.invert = v;
     }
 
@@ -334,10 +319,9 @@ fn generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // Strings try numeric/alnum modes; buffers are byte-mode only. The
     // constructors reject input longer than any symbol can hold before
     // touching the payload.
-    let encoded = (if data_value.is_string() {
-        Segment::make_segments(input)
-    } else {
-        Segment::make_bytes(input).map(|seg| vec![seg])
+    let encoded = (match buffer {
+        StringOrBuffer::Buffer(_) => Segment::make_bytes(input).map(|seg| vec![seg]),
+        _ => Segment::make_segments(input),
     })
     .and_then(|segs: Vec<Segment>| {
         QrCode::encode_segments(
@@ -356,16 +340,22 @@ fn generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
     match opts.format {
         OutputFormat::Svg => {
-            let light = HexColor::new(opts.light);
-            let dark = HexColor::new(opts.dark);
-            let svg = bun_qr::to_svg(&qr, opts.border, light.as_bytes(), dark.as_bytes());
+            let svg = bun_qr::to_svg(
+                &qr,
+                opts.border,
+                rgba_array(opts.light),
+                rgba_array(opts.dark),
+            );
             bun_jsc::bun_string_jsc::create_utf8_for_js(global, &svg)
         }
         OutputFormat::DataUrl => {
             const PREFIX: &[u8] = b"data:image/svg+xml;base64,";
-            let light = HexColor::new(opts.light);
-            let dark = HexColor::new(opts.dark);
-            let svg = bun_qr::to_svg(&qr, opts.border, light.as_bytes(), dark.as_bytes());
+            let svg = bun_qr::to_svg(
+                &qr,
+                opts.border,
+                rgba_array(opts.light),
+                rgba_array(opts.dark),
+            );
             let b64 = bun_base64::encode_alloc(&svg);
             let mut out = Vec::with_capacity(PREFIX.len() + b64.len());
             out.extend_from_slice(PREFIX);
@@ -391,20 +381,12 @@ fn generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                     )
                     .throw());
             }
-            let (rgba, w, h) = bun_qr::to_rgba(
-                &qr,
-                opts.border,
-                opts.scale,
-                rgba_pack(opts.light),
-                rgba_pack(opts.dark),
-            );
-            let png_opts = codecs::EncodeOptions {
-                format: codecs::Format::Png,
-                palette: true,
-                colors: 2,
-                ..Default::default()
-            };
-            let enc = match codecs::encode(&rgba, w, h, png_opts) {
+            // The module matrix already is the index plane, so the source is a
+            // 1-bit indexed PNG with `light`/`dark` as its two palette entries:
+            // no RGBA raster and no quantizer on the JS thread.
+            let (bits, dim) = bun_qr::to_bitmap(&qr, opts.border, opts.scale);
+            let palette = [rgba_array(opts.light), rgba_array(opts.dark)];
+            let enc = match codecs::png::encode_bilevel(&bits, dim, dim, palette) {
                 Ok(e) => e,
                 Err(codecs::Error::OutOfMemory) => return Err(global.throw_out_of_memory()),
                 Err(_) => {

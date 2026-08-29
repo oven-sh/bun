@@ -1,6 +1,70 @@
 import { describe, expect, test } from "bun:test";
+import zlib from "node:zlib";
 
 // https://github.com/oven-sh/bun/issues/34107
+
+// Minimal decoder for the 8-bit RGBA non-interlaced PNG that Bun.Image emits.
+function decodePngRgba(png: Uint8Array): { width: number; height: number; data: Uint8Array } {
+  const dv = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  let off = 8;
+  let width = 0;
+  let height = 0;
+  const idats: Uint8Array[] = [];
+  while (off < png.length) {
+    const len = dv.getUint32(off);
+    const type = String.fromCharCode(png[off + 4], png[off + 5], png[off + 6], png[off + 7]);
+    if (type === "IHDR") {
+      width = dv.getUint32(off + 8);
+      height = dv.getUint32(off + 12);
+      expect([png[off + 16], png[off + 17]]).toEqual([8, 6]); // bit depth 8, truecolor + alpha
+    } else if (type === "IDAT") {
+      idats.push(png.subarray(off + 8, off + 8 + len));
+    } else if (type === "IEND") break;
+    off += 12 + len;
+  }
+  const raw = zlib.inflateSync(Buffer.concat(idats));
+  // Undo the per-row filter (types 0 to 4).
+  const stride = width * 4;
+  const data = new Uint8Array(width * height * 4);
+  let p = 0;
+  for (let y = 0; y < height; y++) {
+    const filter = raw[p++];
+    const row = y * stride;
+    const prev = row - stride;
+    for (let i = 0; i < stride; i++) {
+      const x = raw[p++];
+      const a = i >= 4 ? data[row + i - 4] : 0;
+      const b = y > 0 ? data[prev + i] : 0;
+      const c = y > 0 && i >= 4 ? data[prev + i - 4] : 0;
+      let v = x;
+      if (filter === 1) v = x + a;
+      else if (filter === 2) v = x + b;
+      else if (filter === 3) v = x + ((a + b) >> 1);
+      else if (filter === 4) {
+        const pp = a + b - c;
+        const pa = Math.abs(pp - a);
+        const pb = Math.abs(pp - b);
+        const pc = Math.abs(pp - c);
+        v = x + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c);
+      }
+      data[row + i] = v & 255;
+    }
+  }
+  return { width, height, data };
+}
+
+function pixelColors(image: { width: number; data: Uint8Array }) {
+  const seen = new Set<string>();
+  for (let i = 0; i < image.data.length; i += 4) {
+    seen.add(Array.from(image.data.subarray(i, i + 4)).join(","));
+  }
+  return [...seen].sort();
+}
+
+function pixelAt(image: { width: number; data: Uint8Array }, x: number, y: number) {
+  const i = (y * image.width + x) * 4;
+  return Array.from(image.data.subarray(i, i + 4));
+}
 
 describe("Bun.QR", () => {
   test("exists", () => {
@@ -60,6 +124,12 @@ describe("Bun.QR", () => {
       const qr = Bun.QR.generate("A", { errorCorrection: "L" });
       expect(qr.errorCorrection).toBe("H");
       expect(qr.version).toBe(1);
+      // null and undefined leave the default on, like the other options.
+      expect(Bun.QR.generate("A", { errorCorrection: "L", boostErrorCorrection: null as any }).errorCorrection).toBe(
+        "H",
+      );
+      expect(Bun.QR.generate("A", { errorCorrection: "L", boostErrorCorrection: undefined }).errorCorrection).toBe("H");
+      expect(Bun.QR.generate("A", { errorCorrection: "L", boostErrorCorrection: 0 as any }).errorCorrection).toBe("L");
     });
 
     test("version grows with data length", () => {
@@ -81,6 +151,20 @@ describe("Bun.QR", () => {
         const qr = Bun.QR.generate("hello", { mask: m });
         expect(qr.mask).toBe(m);
       }
+    });
+
+    test("automatic mask matches the reference implementation", () => {
+      // Expected values come from Nayuki's qrcodegen for the same input and
+      // level. Penalty rule 3 counts the quiet zone as light area next to the
+      // first and last run of a line; without that, these pick other masks.
+      const pick = (text: string, errorCorrection: "L" | "M" | "Q" | "H") => {
+        const { version, errorCorrection: ec, mask } = Bun.QR.generate(text, { errorCorrection });
+        return { version, errorCorrection: ec, mask };
+      };
+      expect(pick("https://bun.com", "M")).toEqual({ version: 2, errorCorrection: "Q", mask: 0 });
+      expect(pick("Hello, world!", "M")).toEqual({ version: 1, errorCorrection: "M", mask: 2 });
+      expect(pick("A", "L")).toEqual({ version: 1, errorCorrection: "H", mask: 4 });
+      expect(pick("77777777777777777777", "L")).toEqual({ version: 1, errorCorrection: "Q", mask: 0 });
     });
 
     test("undefined and NaN mask both mean automatic selection", () => {
@@ -107,6 +191,14 @@ describe("Bun.QR", () => {
       const qr = Bun.QR.generate(digits, { errorCorrection: "L", boostErrorCorrection: false });
       expect(qr.version).toBe(40);
       expect(qr.size).toBe(177);
+    });
+
+    test("String objects are encoded like primitive strings", () => {
+      // 20 digits fit version 1 in numeric mode but need version 2 as bytes.
+      const digits = "77777777777777777777";
+      expect(Bun.QR.generate(digits).version).toBe(1);
+      expect(Bun.QR.generate(Buffer.from(digits)).version).toBe(2);
+      expect(Bun.QR.generate(new String(digits) as any).version).toBe(1);
     });
 
     test("empty string encodes", () => {
@@ -144,7 +236,10 @@ describe("Bun.QR", () => {
         dark: { r: 0, g: 0, b: 0, a: 0.5 },
       });
       expect(svg2).toContain('fill="#ff0080"');
-      expect(svg2).toContain('fill="#0000007f"'); // same truncation as Bun.color
+      // Alpha goes in fill-opacity: SVG 1.1 has no #rrggbbaa form. 0.5
+      // truncates to 127/255 the same way it does in Bun.color.
+      expect(svg2).toContain('fill="#000000" fill-opacity="0.498"');
+      expect(svg2).not.toContain("#0000007f");
 
       const svg3 = Bun.QR.generate("x", { format: "svg", dark: 0x336699 });
       expect(svg3).toContain('fill="#336699"');
@@ -224,6 +319,39 @@ describe("Bun.QR", () => {
       expect(webp.subarray(0, 4)).toEqual(new Uint8Array([0x52, 0x49, 0x46, 0x46])); // RIFF
     });
 
+    test("delivered pixels are exactly the two colors, laid out like the matrix", async () => {
+      const qr = Bun.QR.generate("https://bun.com");
+      const cases: [Bun.QR.GenerateOptions, number[], number[]][] = [
+        [{}, [255, 255, 255, 255], [0, 0, 0, 255]],
+        [{ dark: "rebeccapurple" }, [255, 255, 255, 255], [102, 51, 153, 255]],
+        [{ light: "transparent", dark: "#336699" }, [0, 0, 0, 0], [51, 102, 153, 255]],
+      ];
+      for (const [colors, light, dark] of cases) {
+        const scale = 3;
+        const border = 2;
+        const img = Bun.QR.generate("https://bun.com", { format: "image", scale, border, ...colors });
+        const png = decodePngRgba(await img.bytes());
+        expect([png.width, png.height]).toEqual([(qr.size + 2 * border) * scale, (qr.size + 2 * border) * scale]);
+        // No third color: the palette is written directly, nothing is quantized.
+        expect(pixelColors(png)).toEqual([light.join(","), dark.join(",")].sort());
+        // Quiet zone, then the first module of the top-left finder pattern.
+        expect(pixelAt(png, 0, 0)).toEqual(light);
+        expect(pixelAt(png, border * scale, border * scale)).toEqual(dark);
+        // Every pixel of every module has that module's color.
+        const expected = new Uint8Array(png.data.length);
+        for (let py = 0; py < png.height; py++) {
+          for (let px = 0; px < png.width; px++) {
+            const mx = Math.floor(px / scale) - border;
+            const my = Math.floor(py / scale) - border;
+            const inside = mx >= 0 && my >= 0 && mx < qr.size && my < qr.size;
+            const color = inside && qr.matrix[my * qr.size + mx] ? dark : light;
+            expected.set(color, (py * png.width + px) * 4);
+          }
+        }
+        expect(Buffer.from(png.data).equals(Buffer.from(expected))).toBe(true);
+      }
+    });
+
     test("scale option validation", () => {
       expect(() => Bun.QR.generate("x", { format: "image", scale: 0 })).toThrow(RangeError);
       expect(() => Bun.QR.generate("x", { format: "image", scale: 2000 })).toThrow(RangeError);
@@ -265,6 +393,18 @@ describe("Bun.QR", () => {
     test("round-trips numeric and alphanumeric modes", () => {
       expect(Bun.QR.parse(Bun.QR.generate("0123456789")).text).toBe("0123456789");
       expect(Bun.QR.parse(Bun.QR.generate("HELLO WORLD 123")).text).toBe("HELLO WORLD 123");
+    });
+
+    test("round-trips every symbol size class", () => {
+      // Versions 7+ carry version information, and the count of alignment
+      // patterns grows every 7 versions, so the decoder's layout has to match
+      // the encoder's at each step.
+      for (const version of [1, 2, 6, 7, 13, 14, 20, 21, 27, 28, 34, 35, 40]) {
+        const text = `v${version}`;
+        const qr = Bun.QR.generate(text, { minVersion: version, maxVersion: version, errorCorrection: "H" });
+        expect(qr.version).toBe(version);
+        expect(Bun.QR.parse(qr)).toMatchObject({ text, version });
+      }
     });
 
     test("accepts bare Uint8Array", () => {

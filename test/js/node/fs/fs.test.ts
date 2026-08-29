@@ -123,37 +123,28 @@ it.skipIf(isWindows)("fs.chmodSync applies mode bits above 0o777", () => {
   expect(statSync(dirPath).mode & 0o7777).toBe(0o1755);
 });
 
-it.concurrent("fs.writeFile(1, data) should work when its inherited", async () => {
+// The fixture writes "Hello World!\n" to its argument twice: once with
+// writeFileSync and once with writeFile, and exits 0 only from the callback.
+async function writeFileFixture(target: string) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "fs-writeFile-1-fixture.js"), "1"],
+    cmd: [bunExe(), join(import.meta.dir, "fs-writeFile-1-fixture.js"), target],
     env: bunEnv,
-    stdio: ["inherit", "pipe", "inherit"],
+    stdio: ["inherit", "pipe", "pipe"],
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  if (exitCode !== 0) throw new Error("Command failed:\n" + stdout);
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+it.concurrent("fs.writeFile(1, data) should work when its inherited", async () => {
+  expect(await writeFileFixture("1")).toEqual({ stdout: "Hello World!\nHello World!\n", stderr: "", exitCode: 0 });
 });
 
 it.concurrent("fs.writeFile(2, data) should work when its inherited", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "fs-writeFile-1-fixture.js"), "2"],
-    env: bunEnv,
-    stdio: ["inherit", "pipe", "inherit"],
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  if (exitCode !== 0) throw new Error("Command failed:\n" + stdout);
-  expect(exitCode).toBe(0);
+  expect(await writeFileFixture("2")).toEqual({ stdout: "", stderr: "Hello World!\nHello World!\n", exitCode: 0 });
 });
 
 it.concurrent("fs.writeFile(/dev/null, data) should work", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "fs-writeFile-1-fixture.js"), os.devNull],
-    env: bunEnv,
-    stdio: ["inherit", "pipe", "inherit"],
-  });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  if (exitCode !== 0) throw new Error("Command failed:\n" + stdout);
-  expect(exitCode).toBe(0);
+  expect(await writeFileFixture(os.devNull)).toEqual({ stdout: "", stderr: "", exitCode: 0 });
 });
 
 it("fs.openAsBlob", async () => {
@@ -599,9 +590,15 @@ it.concurrent("await readdir #3931", async () => {
     cmd: [bunExe(), join(import.meta.dir, "./repro-3931.js")],
     env: bunEnv,
     cwd: import.meta.dir,
+    stderr: "pipe",
   });
-  const exitCode = await proc.exited;
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // The fixture prints the listing of os.tmpdir(), whose contents vary.
+  expect({ printsArray: stdout.startsWith("["), stderr, exitCode }).toEqual({
+    printsArray: true,
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 it("writeFileSync NOT in append SHOULD truncate the file", () => {
@@ -833,7 +830,7 @@ describe("appendFile honors an explicit 'w' flag", () => {
 // and Linux's generic_write_checks() then clamps the write to the limit and fails
 // the next one with EFBIG. Linux-only: BSD kernels reject the whole write instead,
 // so the byte split is not portable.
-describe.skipIf(!isLinux)("writeFileSync when the write fails partway", () => {
+describe.concurrent.skipIf(!isLinux)("writeFileSync when the write fails partway", () => {
   const fixture = join(import.meta.dir, "fs-writeFile-write-error-fixture.js");
 
   async function runUnderFileSizeLimit(path: string, flag: string) {
@@ -971,12 +968,14 @@ describe("copyFileSync", () => {
 
   it("COPYFILE_EXCL works", () => {
     const tempdir = tmpdirTestMkdir();
+    const dest = tempdir + "/copyFileSync.js";
 
     // that don't exist
-    copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_EXCL);
+    copyFileSync(import.meta.path, dest, fs.constants.COPYFILE_EXCL);
     expect(() => {
-      copyFileSync(import.meta.path, tempdir + "/copyFileSync.js", fs.constants.COPYFILE_EXCL);
-    }).toThrow();
+      copyFileSync(import.meta.path, dest, fs.constants.COPYFILE_EXCL);
+    }).toThrow(expect.objectContaining({ code: "EEXIST", syscall: "copyfile", path: import.meta.path, dest }));
+    expect(readFileSync(dest, "utf8")).toBe(readFileSync(import.meta.path, "utf8"));
   });
 
   it("throws ENOENT with syscall, path and dest for a destination in a missing directory", async () => {
@@ -1001,70 +1000,33 @@ describe("copyFileSync", () => {
   });
 
   if (process.platform === "linux") {
-    describe("should work when copyFileRange is not available", () => {
-      it("on large files", () => {
-        const tempdir = tmpdirTestMkdir();
-        var buffer = new Int32Array(128 * 1024);
+    describe.concurrent("should work when copyFileRange is not available", () => {
+      it.each([
+        ["large", 128 * 1024],
+        ["small", 1024],
+      ])("on %s files", async (_size, length) => {
+        const buffer = new Int32Array(length);
         for (let i = 0; i < buffer.length; i++) {
           buffer[i] = i % 256;
         }
 
-        const hash = Bun.hash(buffer.buffer);
-        const src = tempdir + "/copyFileSync.src.blob";
-        const dest = tempdir + "/copyFileSync.dest.blob";
+        using dir = tempDir("copyfile-no-copy-file-range", { "copyFileSync.src.blob": Buffer.from(buffer.buffer) });
+        const src = join(String(dir), "copyFileSync.src.blob");
+        const dest = join(String(dir), "copyFileSync.dest.blob");
+        expect(existsSync(dest)).toBe(false);
 
-        writeFileSync(src, buffer.buffer);
-        try {
-          expect(existsSync(dest)).toBe(false);
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), join(import.meta.dir, "./fs-fixture-copyFile-no-copy_file_range.js"), src, dest],
+          env: {
+            ...bunEnv,
+            BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1",
+          },
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
 
-          const { exitCode } = spawnSync({
-            stdio: ["inherit", "inherit", "inherit"],
-            cmd: [bunExe(), join(import.meta.dir, "./fs-fixture-copyFile-no-copy_file_range.js"), src, dest],
-            env: {
-              ...bunEnv,
-              BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1",
-            },
-          });
-          expect(exitCode).toBe(0);
-
-          expect(Bun.hash(readFileSync(dest))).toBe(hash);
-        } finally {
-          rmSync(src, { force: true });
-          rmSync(dest, { force: true });
-        }
-      });
-
-      it("on small files", () => {
-        const tempdir = tmpdirTestMkdir();
-        var buffer = new Int32Array(1 * 1024);
-        for (let i = 0; i < buffer.length; i++) {
-          buffer[i] = i % 256;
-        }
-
-        const hash = Bun.hash(buffer.buffer);
-        const src = tempdir + "/copyFileSync.src.blob";
-        const dest = tempdir + "/copyFileSync.dest.blob";
-
-        try {
-          writeFileSync(src, buffer.buffer);
-
-          expect(existsSync(dest)).toBe(false);
-
-          const { exitCode } = spawnSync({
-            stdio: ["inherit", "inherit", "inherit"],
-            cmd: [bunExe(), join(import.meta.dir, "./fs-fixture-copyFile-no-copy_file_range.js"), src, dest],
-            env: {
-              ...bunEnv,
-              BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1",
-            },
-          });
-          expect(exitCode).toBe(0);
-
-          expect(Bun.hash(readFileSync(dest))).toBe(hash);
-        } finally {
-          rmSync(src, { force: true });
-          rmSync(dest, { force: true });
-        }
+        expect(Bun.hash(readFileSync(dest))).toBe(Bun.hash(buffer.buffer));
       });
     });
   }
@@ -1774,7 +1736,7 @@ it("readdir with { encoding: 'buffer' } returns Buffer entries", async () => {
 // then freeing it again in entries.deinit()). A self-referential symlink makes
 // the recursive walk fail with ELOOP after entries have been collected, exercising
 // that cleanup path.
-it.skipIf(isWindows)(
+it.concurrent.skipIf(isWindows)(
   "readdirSync({encoding: 'buffer', recursive: true}) frees entries safely when a subdir fails to open",
   async () => {
     using dir = tempDir("readdir-buffer-error", {
@@ -1804,19 +1766,19 @@ it.skipIf(isWindows)(
       ],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
 
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ELOOP", exitCode: 0 });
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ELOOP", stderr: "", exitCode: 0 });
   },
 );
 
 // The per-task pending_err mutex was acquired via `lock()` (returns `()`) instead of
 // `lock_guard()`, so it was never released: the next failing subtask on the same worker
 // panicked "Deadlock detected" (debug) or blocked forever and the promise never settled.
-it.skipIf(isWindows)("promises.readdir({recursive: true}) settles when multiple subtasks fail", async () => {
+it.concurrent.skipIf(isWindows)("promises.readdir({recursive: true}) settles when multiple subtasks fail", async () => {
   using dir = tempDir("readdir-recursive-multi-error", {
     "keep.txt": "x",
   });
@@ -1842,14 +1804,15 @@ it.skipIf(isWindows)("promises.readdir({recursive: true}) settles when multiple 
     ],
     env: bunEnv,
     stdout: "pipe",
-    stderr: "inherit",
+    stderr: "pipe",
     timeout: 10_000,
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+  expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
     stdout: "rejected ELOOP",
+    stderr: "",
     exitCode: 0,
     signalCode: null,
   });
@@ -1859,7 +1822,7 @@ it.skipIf(isWindows)("promises.readdir({recursive: true}) settles when multiple 
 // directory it found and only settled once that frontier drained. Two symlinks
 // back to the root make the frontier 2^41 directories (the kernel follows 40
 // symlinks before ELOOP), so the promise and the callback never settled.
-it.skipIf(isWindows)(
+it.concurrent.skipIf(isWindows)(
   "readdir({recursive: true}) settles with the first error while symlink loops are still being walked",
   async () => {
     using dir = tempDir("readdir-recursive-loop", {
@@ -1890,14 +1853,15 @@ it.skipIf(isWindows)(
       ],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
       timeout: 10_000,
     });
 
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
       stdout: "promise rejected ELOOP\ncallback rejected ELOOP",
+      stderr: "",
       exitCode: 0,
       signalCode: null,
     });
@@ -1933,7 +1897,7 @@ describe("readSync", () => {
           } as any,
           0,
         ),
-      ).toThrow();
+      ).toThrow(expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_VALUE" }));
       // The coercion side effect really ran: the destination view is detached
       // and its bytes now live in the transferred ArrayBuffer.
       expect(buf.byteLength).toBe(0);
@@ -3393,13 +3357,13 @@ describe("stat", () => {
         String(dir),
       ],
       env: bunEnv,
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    const live = Number(stdout);
-    expect(Number.isFinite(live)).toBe(true);
-    expect(live).toBeLessThan(200);
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    // 800 Buffer paths were passed in; a retained one per call would leave
+    // hundreds alive. Non-numeric output is NaN, which also fails here.
+    expect(Number(stdout)).toBeLessThan(200);
   });
 
   it("file metadata is correct", () => {
@@ -3633,22 +3597,18 @@ describe("rm", () => {
   );
 });
 
+// rmdir(2) on a file fails with ENOTDIR. On Windows, RemoveDirectoryW reports
+// ERROR_DIRECTORY, which maps to ENOENT, as in node.
+const rmdirOnFileCode = isWindows ? "ENOENT" : "ENOTDIR";
+
 describe("rmdir", () => {
-  it("does not remove a file", done => {
-    const path = `${tmpdir()}/${Date.now()}.rm.txt`;
-    writeFileSync(path, "File written successfully", "utf8");
-    expect(existsSync(path)).toBe(true);
-    rmdir(path, err => {
-      try {
-        expect(err).toBeDefined();
-        expect("ENOENT ENOTDIR EPERM").toContain(err!.code);
-        expect(existsSync(path)).toBe(true);
-      } catch (e) {
-        return done(e);
-      } finally {
-        done();
-      }
-    });
+  it("does not remove a file", async () => {
+    using dir = tempDir("rmdir-file", { "file.txt": "File written successfully" });
+    const path = join(String(dir), "file.txt");
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
+    rmdir(path, resolve);
+    expect(await promise).toMatchObject({ code: rmdirOnFileCode, syscall: "rmdir", path });
+    expect(readFileSync(path, "utf8")).toBe("File written successfully");
   });
 
   it("removes a dir", done => {
@@ -3719,13 +3679,10 @@ describe("rmdir", () => {
 
 describe("rmdirSync", () => {
   it("does not remove a file", () => {
-    const path = `${tmpdir()}/${Date.now()}.rm.txt`;
-    writeFileSync(path, "File written successfully", "utf8");
-    expect(existsSync(path)).toBe(true);
-    expect(() => {
-      rmdirSync(path);
-    }).toThrow();
-    expect(existsSync(path)).toBe(true);
+    using dir = tempDir("rmdirsync-file", { "file.txt": "File written successfully" });
+    const path = join(String(dir), "file.txt");
+    expect(() => rmdirSync(path)).toThrow(expect.objectContaining({ code: rmdirOnFileCode, syscall: "rmdir", path }));
+    expect(readFileSync(path, "utf8")).toBe("File written successfully");
   });
   it("removes a dir", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.dir`;
@@ -4524,39 +4481,50 @@ describe("fs/promises", () => {
     expect(files.length).toBeGreaterThan(0);
   });
 
+  // Node's listing of test/js/node (thousands of entries) is the oracle for the
+  // four tests below. Listings are compared as sets: their order is not part of
+  // the contract, and sorting thousands of entries costs seconds in a debug build.
+  const oracleRoot = resolve(import.meta.dir, "../");
+  type NodeDirent = { path: string; name: string };
+  const direntKey = (parentPath: string, name: string) => parentPath + path.sep + name;
+
+  async function nodeReaddir<T extends string | NodeDirent>(options: string): Promise<T[]> {
+    await using proc = Bun.spawn({
+      cmd: [
+        "node",
+        "-e",
+        `const entries = require("fs").readdirSync(${JSON.stringify(oracleRoot)}, ${options});
+         process.stdout.write(JSON.stringify(entries.map(v => (typeof v === "string" ? v : { path: v.parentPath, name: v.name }))));`,
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    return JSON.parse(stdout);
+  }
+
+  // Same entries on both sides, none missing, none extra, none duplicated.
+  // Reports the differences instead of the two full listings.
+  function expectSameEntries(actual: string[], expected: string[]) {
+    const actualSet = new Set(actual);
+    const expectedSet = new Set(expected);
+    expect({
+      count: actual.length,
+      missing: expected.filter(entry => !actualSet.has(entry)),
+      extra: actual.filter(entry => !expectedSet.has(entry)),
+    }).toEqual({ count: expected.length, missing: [], extra: [] });
+  }
+
   it.concurrent(
     "readdir(path, {recursive: true}) produces the same result as Node.js",
     async () => {
-      const full = resolve(import.meta.dir, "../");
-      const [bun, subprocess] = await Promise.all([
-        (async function () {
-          const files = await promises.readdir(full, { recursive: true });
-          files.sort();
-          return files;
-        })(),
-        (async function () {
-          const subprocess = Bun.spawn({
-            cmd: [
-              "node",
-              "-e",
-              `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
-                full,
-              )}, { recursive: true }).sort()), null, 2)`,
-            ],
-            cwd: process.cwd(),
-            stdout: "pipe",
-            stderr: "inherit",
-            stdin: "inherit",
-          });
-          await subprocess.exited;
-          return subprocess;
-        })(),
+      const [bun, node] = await Promise.all([
+        promises.readdir(oracleRoot, { recursive: true }),
+        nodeReaddir<string>("{ recursive: true }"),
       ]);
-
-      expect(subprocess.exitCode).toBe(0);
-      const text = await subprocess.stdout.text();
-      const node = JSON.parse(text);
-      expect(bun).toEqual(node as string[]);
+      expect(node).toContain(relative(oracleRoot, import.meta.path));
+      expectSameEntries(bun, node);
     },
     100000,
   );
@@ -4564,40 +4532,16 @@ describe("fs/promises", () => {
   it.concurrent(
     "readdir(path, {withFileTypes: true}) produces the same result as Node.js",
     async () => {
-      const full = resolve(import.meta.dir, "../");
-      const [bun, subprocess] = await Promise.all([
-        (async function () {
-          const files = await promises.readdir(full, { withFileTypes: true });
-          files.sort();
-          return files;
-        })(),
-        (async function () {
-          const subprocess = Bun.spawn({
-            cmd: [
-              "node",
-              "-e",
-              `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
-                full,
-              )}, { withFileTypes: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort()), null, 2)`,
-            ],
-            cwd: process.cwd(),
-            stdout: "pipe",
-            stderr: "inherit",
-            stdin: "inherit",
-          });
-          await subprocess.exited;
-          return subprocess;
-        })(),
+      const [bun, node] = await Promise.all([
+        promises.readdir(oracleRoot, { withFileTypes: true }),
+        nodeReaddir<NodeDirent>("{ withFileTypes: true }"),
       ]);
-
-      expect(subprocess.exitCode).toBe(0);
-      const text = await subprocess.stdout.text();
-      const node = JSON.parse(text);
-      expect(bun.length).toEqual(node.length);
-      expect([...new Set(node.map(v => v.parentPath ?? v.path))]).toEqual([full]);
-      expect([...new Set(bun.map(v => v.parentPath ?? v.path))]).toEqual([full]);
-      expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
-        node.map(v => join(v.path, v.name)).sort(),
+      // Not recursive: every entry is a direct child of the root.
+      expect(new Set(node.map(v => v.path))).toEqual(new Set([oracleRoot]));
+      expect(node).toContainEqual({ path: oracleRoot, name: path.basename(import.meta.dir) });
+      expectSameEntries(
+        bun.map(v => direntKey(v.parentPath, v.name)),
+        node.map(v => direntKey(v.path, v.name)),
       );
     },
     100000,
@@ -4606,39 +4550,15 @@ describe("fs/promises", () => {
   it.concurrent(
     "readdir(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js",
     async () => {
-      const full = resolve(import.meta.dir, "../");
-      const [bun, subprocess] = await Promise.all([
-        (async function () {
-          const files = await promises.readdir(full, { withFileTypes: true, recursive: true });
-          files.sort((a, b) => a.path.localeCompare(b.path));
-          return files;
-        })(),
-        (async function () {
-          const subprocess = Bun.spawn({
-            cmd: [
-              "node",
-              "-e",
-              `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
-                full,
-              )}, { withFileTypes: true, recursive: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
-            ],
-            cwd: process.cwd(),
-            stdout: "pipe",
-            stderr: "inherit",
-            stdin: "inherit",
-          });
-          await subprocess.exited;
-          return subprocess;
-        })(),
+      const [bun, node] = await Promise.all([
+        promises.readdir(oracleRoot, { withFileTypes: true, recursive: true }),
+        nodeReaddir<NodeDirent>("{ withFileTypes: true, recursive: true }"),
       ]);
-
-      expect(subprocess.exitCode).toBe(0);
-      const text = await subprocess.stdout.text();
-      const node = JSON.parse(text);
-      expect(bun.length).toEqual(node.length);
-      expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
-      expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
-        node.map(v => join(v.path, v.name)).sort(),
+      const nodeKeys = node.map(v => direntKey(v.path, v.name));
+      expect(nodeKeys).toContain(import.meta.path);
+      expectSameEntries(
+        bun.map(v => direntKey(v.parentPath, v.name)),
+        nodeKeys,
       );
     },
     100000,
@@ -4647,39 +4567,14 @@ describe("fs/promises", () => {
   it.concurrent(
     "readdirSync(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js",
     async () => {
-      const full = resolve(import.meta.dir, "../");
-      const [bun, subprocess] = await Promise.all([
-        (async function () {
-          const files = readdirSync(full, { withFileTypes: true, recursive: true });
-          files.sort((a, b) => a.path.localeCompare(b.path));
-          return files;
-        })(),
-        (async function () {
-          const subprocess = Bun.spawn({
-            cmd: [
-              "node",
-              "-e",
-              `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
-                full,
-              )}, { withFileTypes: true, recursive: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
-            ],
-            cwd: process.cwd(),
-            stdout: "pipe",
-            stderr: "inherit",
-            stdin: "inherit",
-          });
-          await subprocess.exited;
-          return subprocess;
-        })(),
-      ]);
-
-      expect(subprocess.exitCode).toBe(0);
-      const text = await subprocess.stdout.text();
-      const node = JSON.parse(text);
-      expect(bun.length).toEqual(node.length);
-      expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
-      expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
-        node.map(v => join(v.path, v.name)).sort(),
+      const pending = nodeReaddir<NodeDirent>("{ withFileTypes: true, recursive: true }");
+      const bun = readdirSync(oracleRoot, { withFileTypes: true, recursive: true });
+      const node = await pending;
+      const nodeKeys = node.map(v => direntKey(v.path, v.name));
+      expect(nodeKeys).toContain(import.meta.path);
+      expectSameEntries(
+        bun.map(v => direntKey(v.parentPath, v.name)),
+        nodeKeys,
       );
     },
     100000,
@@ -4905,17 +4800,11 @@ describe("fs/promises", () => {
   });
 
   describe("rmdir", () => {
-    it("removes a file", async () => {
-      const path = `${tmpdir()}/${Date.now()}.rm.txt`;
-      await writeFile(path, "File written successfully", "utf8");
-      expect(await exists(path)).toBe(true);
-      try {
-        await rmdir(path);
-        expect(() => {}).toThrow();
-      } catch (err: any) {
-        expect("ENOTDIR EPERM ENOENT").toContain(err.code);
-        expect(await exists(path)).toBe(true);
-      }
+    it("does not remove a file", async () => {
+      using dir = tempDir("rmdir-promises-file", { "file.txt": "File written successfully" });
+      const path = join(String(dir), "file.txt");
+      await expect(rmdir(path)).rejects.toMatchObject({ code: rmdirOnFileCode, syscall: "rmdir", path });
+      expect(await readFile(path, "utf8")).toBe("File written successfully");
     });
 
     it("removes a dir", async () => {
@@ -4950,12 +4839,13 @@ describe("fs/promises", () => {
 });
 
 it("fstatSync(decimal)", () => {
-  expect(() => fstatSync(eval("1.0"))).not.toThrow();
-  expect(() => fstatSync(eval("0.0"))).not.toThrow();
-  expect(() => fstatSync(eval("2.0"))).not.toThrow();
-  expect(() => fstatSync(eval("-1.0"))).toThrow();
-  expect(() => fstatSync(eval("Infinity"))).toThrow();
-  expect(() => fstatSync(eval("-Infinity"))).toThrow();
+  expect(fstatSync(eval("1.0"))).toBeInstanceOf(Stats);
+  expect(fstatSync(eval("0.0"))).toBeInstanceOf(Stats);
+  expect(fstatSync(eval("2.0"))).toBeInstanceOf(Stats);
+  const outOfRange = expect.objectContaining({ name: "RangeError", code: "ERR_OUT_OF_RANGE" });
+  expect(() => fstatSync(eval("-1.0"))).toThrow(outOfRange);
+  expect(() => fstatSync(eval("Infinity"))).toThrow(outOfRange);
+  expect(() => fstatSync(eval("-Infinity"))).toThrow(outOfRange);
   expect(() => fstatSync(2147483647 + 1)).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" })); // > max int32 is not valid in most C APIs still.
   expect(() => fstatSync(2147483647)).toThrow(expect.objectContaining({ code: "EBADF" })); // max int32 is a valid fd
 });
@@ -5256,27 +5146,24 @@ describe("utimesSync", () => {
   });
 });
 
-it("createReadStream on a large file emits readable event correctly", () => {
-  return new Promise<void>((resolve, reject) => {
-    const tmp = mkdtempSync(`${tmpdir()}/readable`);
-    // write a 10mb file
-    writeFileSync(`${tmp}/large.txt`, "a".repeat(10 * 1024 * 1024));
-    var stream = createReadStream(`${tmp}/large.txt`);
-    var ended = false;
-    var timer: Timer;
-    stream.on("readable", () => {
-      const v = stream.read();
-      if (ended) {
-        clearTimeout(timer);
-        reject(new Error("readable emitted after end"));
-      } else if (v == null) {
-        ended = true;
-        timer = setTimeout(() => {
-          resolve();
-        }, 20);
-      }
-    });
+it("createReadStream on a large file emits readable event correctly", async () => {
+  using dir = tempDir("readable", { "large.txt": Buffer.alloc(10 * 1024 * 1024, "a") });
+  const stream = createReadStream(join(String(dir), "large.txt"));
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  let bytes = 0;
+  let readableAfterEnd = 0;
+  let ended = false;
+  stream.on("readable", () => {
+    if (ended) readableAfterEnd++;
+    for (let chunk; (chunk = stream.read()) !== null; ) bytes += chunk.length;
   });
+  stream.on("end", () => (ended = true));
+  stream.on("error", reject);
+  // 'close' follows 'end' (autoClose), so a 'readable' emitted after 'end'
+  // has fired by the time the stream closes.
+  stream.on("close", resolve);
+  await promise;
+  expect({ bytes, ended, readableAfterEnd }).toEqual({ bytes: 10 * 1024 * 1024, ended: true, readableAfterEnd: 0 });
 });
 
 describe("fs.write", () => {
@@ -5810,23 +5697,30 @@ describe("error.syscall is node's operation name, not the raw kernel syscall", (
 });
 
 it.if(isWindows)("writing to windows hidden file is possible", () => {
-  const temp = tmpdir();
-  writeFileSync(join(temp, "file.txt"), "FAIL");
-  const status = Bun.spawnSync(["cmd", "/C", "attrib +h file.txt"], {
-    stdio: ["ignore", "ignore", "ignore"],
-    cwd: temp,
+  using dir = tempDir("windows-hidden-file", { "file.txt": "FAIL" });
+  const file = join(String(dir), "file.txt");
+  const status = spawnSync(["cmd", "/C", "attrib +h file.txt"], {
+    stdio: ["ignore", "pipe", "pipe"],
+    cwd: String(dir),
   });
-  expect(status.exitCode).toBe(0);
-  writeFileSync(join(temp, "file.txt"), "Hello World");
-  const content = readFileSync(join(temp, "file.txt"), "utf8");
-  expect(content).toBe("Hello World");
+  expect({ stdout: status.stdout.toString(), stderr: status.stderr.toString(), exitCode: status.exitCode }).toEqual({
+    stdout: "",
+    stderr: "",
+    exitCode: 0,
+  });
+  writeFileSync(file, "Hello World");
+  expect(readFileSync(file, "utf8")).toBe("Hello World");
 });
 
 it("fs.ReadStream allows functions", () => {
   // @ts-expect-error
-  expect(() => new fs.ReadStream(".", function lol() {})).not.toThrow();
+  const withFunction = new fs.ReadStream(".", function lol() {});
   // @ts-expect-error
-  expect(() => new fs.ReadStream(".", {})).not.toThrow();
+  const withObject = new fs.ReadStream(".", {});
+  expect(withFunction).toBeInstanceOf(fs.ReadStream);
+  expect(withObject).toBeInstanceOf(fs.ReadStream);
+  withFunction.destroy();
+  withObject.destroy();
 });
 
 describe.if(isWindows)("windows path handling", () => {
@@ -6087,7 +5981,22 @@ it("fs.statfs (callback) should work with bigint", async () => {
 // sentinel `bsize` (proving the shim actually interposed). glibc-only: the
 // shim relies on ELF symbol interposition and a libc `struct statfs` layout.
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
-it.skipIf(!isGlibc || !cc)("fs.statfsSync preserves values above i32::MAX (#31510)", () => {
+const hasCc = isGlibc && cc !== null;
+
+async function compileSharedObject(source: string, output: string, ...extraArgs: string[]) {
+  await using compile = Bun.spawn({
+    cmd: [cc!, "-shared", "-fPIC", "-o", output, source, ...extraArgs],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([compile.stdout.text(), compile.stderr.text(), compile.exited]);
+  if (exitCode !== 0) {
+    throw new Error(`Failed to build ${path.basename(output)}:\n${stdout}${stderr}`);
+  }
+}
+
+it.concurrent.skipIf(!hasCc)("fs.statfsSync preserves values above i32::MAX (#31510)", async () => {
   const TYPE = 0x9123683e; // BTRFS_SUPER_MAGIC, > i32::MAX: .type also wrapped negative
   const BSIZE = 12288; // sentinel (3 * 4096): proves the shim ran
   const BLOCKS = 3747442852; // > i32::MAX
@@ -6118,13 +6027,7 @@ int statfs64(const char *path, struct statfs64 *buf) { (void)path; FILL(buf); re
   });
 
   const soPath = path.join(String(dir), "shim.so");
-  const compile = Bun.spawnSync({
-    cmd: [cc!, "-shared", "-fPIC", "-o", soPath, path.join(String(dir), "shim.c")],
-    env: bunEnv,
-  });
-  if (compile.exitCode !== 0) {
-    throw new Error(`Failed to build statfs shim:\n${compile.stderr.toString()}`);
-  }
+  await compileSharedObject(path.join(String(dir), "shim.c"), soPath);
 
   const script = `console.log(JSON.stringify((() => {
     const s = require("fs").statfsSync(process.cwd());
@@ -6132,19 +6035,19 @@ int statfs64(const char *path, struct statfs64 *buf) { (void)path; FILL(buf); re
   })()));`;
 
   const existing = bunEnv.LD_PRELOAD;
-  const proc = Bun.spawnSync({
+  await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
     env: { ...bunEnv, LD_PRELOAD: existing ? `${soPath}:${existing}` : soPath },
     cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
   });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
 
-  const stdout = proc.stdout.toString().trim();
-  expect(proc.stderr.toString()).toBe("");
-
-  const result = JSON.parse(stdout);
   // If bsize isn't the sentinel, the shim didn't interpose: fail loudly, don't skip.
-  expect(result).toEqual({ type: TYPE, bsize: BSIZE, blocks: BLOCKS, bfree: BFREE, bavail: BAVAIL });
-  expect(proc.exitCode).toBe(0);
+  expect(JSON.parse(stdout)).toEqual({ type: TYPE, bsize: BSIZE, blocks: BLOCKS, bfree: BFREE, bavail: BAVAIL });
+  expect(exitCode).toBe(0);
 });
 
 // A subdirectory can be removed between the moment the recursive walk lists it
@@ -6158,7 +6061,7 @@ int statfs64(const char *path, struct statfs64 *buf) { (void)path; FILL(buf); re
 // directories are really removed and the kernel itself produces the ENOENT.
 // bun issues getdents64 through libc's syscall(), which is the interposable
 // symbol on this path. glibc-only, same as the statfs shim above.
-it.skipIf(!isGlibc || !cc)("recursive readdir skips a subdirectory that is removed after it was opened", async () => {
+it.concurrent.skipIf(!hasCc)("recursive readdir skips a subdirectory that is removed after it was opened", async () => {
   using dir = tempDir("readdir-vanishing-subdir", {
     "shim.c": `
 #define _GNU_SOURCE
@@ -6270,13 +6173,7 @@ const outcome = async fn => {
   });
 
   const soPath = path.join(String(dir), "shim.so");
-  const compile = Bun.spawnSync({
-    cmd: [cc!, "-shared", "-fPIC", "-o", soPath, path.join(String(dir), "shim.c"), "-ldl"],
-    env: bunEnv,
-  });
-  if (compile.exitCode !== 0) {
-    throw new Error(`Failed to build readdir race shim:\n${compile.stderr.toString()}`);
-  }
+  await compileSharedObject(path.join(String(dir), "shim.c"), soPath, "-ldl");
 
   const existing = bunEnv.LD_PRELOAD;
   await using proc = Bun.spawn({
@@ -6384,49 +6281,43 @@ it("fs.Stat.atime reflects date matching Node.js behavior", () => {
   }
 });
 
-describe('kernel32 long path conversion does not mangle "../../path" into "path"', () => {
-  const tmp1 = tempDirWithFiles("longpath", {
-    "a/b/config": "true",
-  });
-  const tmp2 = tempDirWithFiles("longpath", {
-    "a/b/hello": "true",
-    "config": "true",
-  });
-  const workingDir1 = path.join(tmp1, "a/b");
-  const workingDir2 = path.join(tmp2, "a/b");
-  const nonExistTests = [
-    ["existsSync", 'assert.strictEqual(fs.existsSync("../../config"), false)'],
-    ["accessSync", 'assert.throws(() => fs.accessSync("../../config"), { code: "ENOENT" })'],
-  ];
-  const existTests = [
-    ["existsSync", 'assert.strictEqual(fs.existsSync("../../config"), true)'],
-    ["accessSync", 'assert.strictEqual(fs.accessSync("../../config"), null)'],
-  ];
+describe.concurrent('kernel32 long path conversion does not mangle "../../path" into "path"', () => {
+  // Probes "../../config" relative to the child's cwd, which is the "a/b"
+  // subdirectory of a tree that either has a "config" at its root or not.
+  async function probeFromSubdirectory(tree: Record<string, string>) {
+    using dir = tempDir("longpath", tree);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs");
+         let accessSync = "ok";
+         try { fs.accessSync("../../config"); } catch (e) { accessSync = e.code; }
+         console.log(JSON.stringify({ existsSync: fs.existsSync("../../config"), accessSync }));`,
+      ],
+      cwd: path.join(String(dir), "a/b"),
+      stdio: ["ignore", "pipe", "pipe"],
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { result: JSON.parse(stdout), stderr, exitCode };
+  }
 
-  for (const [name, code] of nonExistTests) {
-    it.concurrent(`${name} (not existing)`, async () => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", code],
-        cwd: workingDir1,
-        stdio: ["ignore", "inherit", "inherit"],
-        env: bunEnv,
-      });
-      const exitCode = await proc.exited;
-      expect(exitCode).toBe(0);
+  it("reports a missing ../../config", async () => {
+    expect(await probeFromSubdirectory({ "a/b/config": "true" })).toEqual({
+      result: { existsSync: false, accessSync: "ENOENT" },
+      stderr: "",
+      exitCode: 0,
     });
-  }
-  for (const [name, code] of existTests) {
-    it.concurrent(`${name} (existing)`, async () => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", code],
-        cwd: workingDir2,
-        stdio: ["ignore", "inherit", "inherit"],
-        env: bunEnv,
-      });
-      const exitCode = await proc.exited;
-      expect(exitCode).toBe(0);
+  });
+
+  it("finds an existing ../../config", async () => {
+    expect(await probeFromSubdirectory({ "a/b/hello": "true", "config": "true" })).toEqual({
+      result: { existsSync: true, accessSync: "ok" },
+      stderr: "",
+      exitCode: 0,
     });
-  }
+  });
 });
 
 it("overflowing mode doesn't crash", () => {
@@ -6534,7 +6425,9 @@ describe("numeric flags produce same result as string flags", () => {
     closeSync(fd);
 
     // Second open with O_EXCL should fail (file already exists).
-    expect(() => openSync(file, numericFlag, 0o666)).toThrow();
+    expect(() => openSync(file, numericFlag, 0o666)).toThrow(
+      expect.objectContaining({ code: "EEXIST", syscall: "open", path: file }),
+    );
   });
 });
 
@@ -6591,7 +6484,10 @@ describe("synchronous I/O string flags", () => {
   });
 });
 
-describe.skipIf(isWindows)("readFileSync on a FIFO larger than the stat size", () => {
+// Every test from here to the end of "a throw from a node-style callback is an
+// uncaughtException" has its own temp directory and most of them spawn a bun
+// process, so they run as one concurrent group.
+describe.concurrent.skipIf(isWindows)("readFileSync on a FIFO larger than the stat size", () => {
   it("does not balloon the read buffer", async () => {
     using dir = tempDir("fs-readfile-fifo", {});
     await using proc = Bun.spawn({
@@ -6610,7 +6506,7 @@ describe.skipIf(isWindows)("readFileSync on a FIFO larger than the stat size", (
   });
 });
 
-it("fs.read keeps filling the caller's view when its ArrayBuffer is transferred while the read is pending", async () => {
+it.concurrent("fs.read keeps filling the caller's view when its ArrayBuffer is transferred mid-read", async () => {
   using dir = tempDir("fs-read-transfer", {
     "data.bin": Buffer.alloc(65536, 0x61).toString(),
   });
@@ -6671,7 +6567,7 @@ it("fs.read keeps filling the caller's view when its ArrayBuffer is transferred 
   expect(exitCode).toBe(0);
 });
 
-it("writevSync does not write bytes from a buffer detached by an index getter during argument conversion", () => {
+it.concurrent("writevSync skips a buffer detached by an index getter during argument conversion", () => {
   using dir = tempDir("fs-writev-detach", {});
   const file = join(String(dir), "out.bin");
 
@@ -6708,7 +6604,7 @@ it("writevSync does not write bytes from a buffer detached by an index getter du
   expect(readFileSync(file, "latin1")).toBe("BBBBBBBB");
 });
 
-it("fs.writev keeps buffers attached while the write is in flight", async () => {
+it.concurrent("fs.writev keeps buffers attached while the write is in flight", async () => {
   using dir = tempDir("fs-writev-pin", {});
   const file = join(String(dir), "out.bin");
   const fd = openSync(file, "w");
@@ -6746,7 +6642,7 @@ it("fs.writev keeps buffers attached while the write is in flight", async () => 
   expect(readFileSync(file, "latin1")).toBe("DDDDDDDD");
 });
 
-it("fs.write keeps the source buffer attached while the write is in flight", async () => {
+it.concurrent("fs.write keeps the source buffer attached while the write is in flight", async () => {
   using dir = tempDir("fs-write-pin", {});
   const file = join(String(dir), "out.bin");
   const fd = openSync(file, "w");
@@ -6772,7 +6668,7 @@ it("fs.write keeps the source buffer attached while the write is in flight", asy
   expect(readFileSync(file, "latin1")).toBe("DDDDDDDD");
 });
 
-it("fs.promises.writeFile keeps the source buffer attached while the write is in flight", async () => {
+it.concurrent("fs.promises.writeFile keeps the source buffer attached while the write is in flight", async () => {
   using dir = tempDir("fs-writefile-pin", {});
   const file = join(String(dir), "out.bin");
   const buf = new Uint8Array(new ArrayBuffer(8)).fill(0x45);
@@ -6795,7 +6691,7 @@ it("fs.promises.writeFile keeps the source buffer attached while the write is in
 
 // A pin stops a detach but not `ArrayBuffer.prototype.resize()`. The pool thread copies the path into
 // its own buffer, so it must read the bytes captured at call time, not the shrunk buffer.
-it("fs.promises.stat reads a Buffer path captured at call time when its resizable ArrayBuffer shrinks in flight", async () => {
+it.concurrent("fs.promises.stat reads the Buffer path captured at call time when it shrinks in flight", async () => {
   // The unfixed build segfaults on the pool thread, so this runs in a child process.
   await using proc = Bun.spawn({
     cmd: [
@@ -6828,7 +6724,7 @@ it("fs.promises.stat reads a Buffer path captured at call time when its resizabl
 
 // A sync call reads the path after the option getters ran. It reads the bytes captured at call time
 // when a getter shrinks the buffer.
-it("sync fs calls read a Buffer path captured at call time when an option getter shrinks its resizable ArrayBuffer", async () => {
+it.concurrent("sync fs calls read the Buffer path captured at call time when an option getter shrinks it", async () => {
   using dir = tempDir("fs-resizable-path", {});
   // The unfixed build segfaults on the main thread, so this runs in a child process.
   await using proc = Bun.spawn({
@@ -6891,14 +6787,16 @@ it("sync fs calls read a Buffer path captured at call time when an option getter
   expect(exitCode).toBe(0);
 });
 
-it.if(isPosix)("realpathSync reports ENAMETOOLONG when cwd plus the path exceeds the system path limit", async () => {
-  using dir = tempDir("fs-realpath-too-long", {});
+it.concurrent.skipIf(!isPosix)(
+  "realpathSync reports ENAMETOOLONG when cwd plus the path exceeds the system path limit",
+  async () => {
+    using dir = tempDir("fs-realpath-too-long", {});
 
-  // The relative path argument is within the per-argument limit, but joining
-  // it onto the (non-root) cwd overflows the internal fixed-size path buffer.
-  // Both realpath variants must surface this as a clean ENAMETOOLONG error
-  // instead of aborting the process.
-  const script = `
+    // The relative path argument is within the per-argument limit, but joining
+    // it onto the (non-root) cwd overflows the internal fixed-size path buffer.
+    // Both realpath variants must surface this as a clean ENAMETOOLONG error
+    // instead of aborting the process.
+    const script = `
     const fs = require("node:fs");
     const longPath = "a".repeat(4090);
     for (const impl of [fs.realpathSync, fs.realpathSync.native]) {
@@ -6911,21 +6809,22 @@ it.if(isPosix)("realpathSync reports ENAMETOOLONG when cwd plus the path exceeds
     }
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(stdout.trim().split("\n")).toEqual(["ENAMETOOLONG", "ENAMETOOLONG"]);
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).toBe("");
+    expect(stdout.trim().split("\n")).toEqual(["ENAMETOOLONG", "ENAMETOOLONG"]);
+    expect(exitCode).toBe(0);
+  },
+);
 
-it("fs.writeFile (callback) keeps the source buffer attached while the write is in flight", async () => {
+it.concurrent("fs.writeFile (callback) keeps the source buffer attached while the write is in flight", async () => {
   using dir = tempDir("fs-writefile-cb-pin", {});
   const file = join(String(dir), "out.bin");
   const buf = new Uint8Array(new ArrayBuffer(8)).fill(0x46);
@@ -6947,7 +6846,7 @@ it("fs.writeFile (callback) keeps the source buffer attached while the write is 
   expect(readFileSync(file, "latin1")).toBe("FFFFFFFF");
 });
 
-it("fs.promises.writeFile keeps a buffer path argument attached while options are read", async () => {
+it.concurrent("fs.promises.writeFile keeps a buffer path argument attached while options are read", async () => {
   using dir = tempDir("fs-writefile-path-pin", {});
   const file = join(String(dir), "out.txt");
   const pathBytes = new TextEncoder().encode(file);
@@ -6972,7 +6871,7 @@ it("fs.promises.writeFile keeps a buffer path argument attached while options ar
   expect(readFileSync(file, "utf8")).toBe("hello world");
 });
 
-describe("fs.close on stdio descriptors", () => {
+describe.concurrent("fs.close on stdio descriptors", () => {
   it.skipIf(isWindows)("closeSync(2) actually closes fd 2 and allows redirect", async () => {
     using dir = tempDir("fs-close-stdio", {
       "redirect-fixture.mjs": `
@@ -7024,29 +6923,24 @@ describe("fs.close on stdio descriptors", () => {
       stderr: "pipe",
       stdout: "pipe",
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe("EBADF");
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // fd 2 is closed before anything is written to it, so the pipe stays empty.
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "EBADF", stderr: "", exitCode: 0 });
   });
 });
 
 // A throw inside a node-style async callback must surface as an
 // uncaughtException, as in node, where these callbacks run off the libuv
 // request completion rather than from a promise reaction.
-describe("a throw from a node-style callback is an uncaughtException", () => {
+describe.concurrent("a throw from a node-style callback is an uncaughtException", () => {
   const dir = tempDirWithFiles("callback-throw-uncaught", { "file.txt": "hello" });
   const file = JSON.stringify(join(dir, "file.txt"));
   const dirLit = JSON.stringify(dir);
 
   async function runScript(source: string) {
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    // Drain stderr too so a noisy child can't fill the pipe and deadlock.
-    const [stdout, , exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    return { stdout: stdout.trim(), exitCode };
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
   }
 
   const cases: Array<[string, string]> = [
@@ -7078,18 +6972,19 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
   ];
 
   it.each(cases)("%s", async (_name, snippet) => {
-    const { stdout, exitCode } = await runScript(`
+    // The 5s timer only fires when the callback's throw goes nowhere; it
+    // turns a hang into a readable failure.
+    const result = await runScript(`
       process.on("uncaughtException", e => { console.log("UNCAUGHT:" + e.message); process.exit(0); });
       process.on("unhandledRejection", e => { console.log("REJECTED:" + (e && e.message)); process.exit(0); });
       setTimeout(() => { console.log("NOTHING"); process.exit(0); }, 5000);
       ${snippet};
     `);
-    expect(stdout).toBe("UNCAUGHT:boom");
-    expect(exitCode).toBe(0);
+    expect(result).toEqual({ stdout: "UNCAUGHT:boom", stderr: "", exitCode: 0 });
   });
 
   it("keeps a non-throwing callback in the same place in the event loop", async () => {
-    const { stdout, exitCode } = await runScript(`
+    const result = await runScript(`
       const fs = require("fs");
       const log = [];
       fs.stat(${file}, (err, st) => {
@@ -7099,12 +6994,11 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
       setImmediate(() => log.push("setImmediate"));
       process.on("exit", () => console.log(log.join(",")));
     `);
-    expect(stdout).toBe("fs-cb:true:true,tick-from-fs-cb,setImmediate");
-    expect(exitCode).toBe(0);
+    expect(result).toEqual({ stdout: "fs-cb:true:true,tick-from-fs-cb,setImmediate", stderr: "", exitCode: 0 });
   });
 
   it("is transparent to fs.Dir callbacks", async () => {
-    const { stdout, exitCode } = await runScript(`
+    const result = await runScript(`
       const odir = require("fs").mkdtempSync(require("os").tmpdir() + "/cb-throw-opendir-");
       require("fs").writeFileSync(odir + "/file.txt", "x");
       require("fs").opendir(odir, (err, dir) => {
@@ -7115,17 +7009,21 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
         });
       });
     `);
-    expect(stdout.split("\n")).toEqual(["file.txt", "closed"]);
-    expect(exitCode).toBe(0);
+    expect(result).toEqual({ stdout: "file.txt\nclosed", stderr: "", exitCode: 0 });
   });
 
   it("leaves a non-callable symlink callback as an ignored handler, like node", async () => {
-    const { stdout, exitCode } = await runScript(`
-      require("fs").symlink(${file}, ${dirLit} + "/lnc", "file", "notafunc");
-      setTimeout(() => console.log("quiet"), 50);
+    // The link is still created; the child waits for it to appear so that a
+    // throw from the completion path would land before the process exits.
+    const result = await runScript(`
+      const fs = require("fs");
+      const link = ${dirLit} + "/lnc";
+      fs.symlink(${file}, link, "file", "notafunc");
+      const poll = () => (fs.existsSync(link) ? console.log("created") : setImmediate(poll));
+      poll();
     `);
-    expect(stdout).toBe("quiet");
-    expect(exitCode).toBe(0);
+    expect(result).toEqual({ stdout: "created", stderr: "", exitCode: 0 });
+    expect(readlinkSync(join(dir, "lnc"))).toBe(join(dir, "file.txt"));
   });
 });
 

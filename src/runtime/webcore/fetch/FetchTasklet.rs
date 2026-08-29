@@ -2374,9 +2374,7 @@ impl FetchTasklet {
         // stored copy.
         let body: &[u8] = result.body;
         let body_owned: Vec<u8> = core::mem::take(&mut result.body_owned);
-        // SAFETY: lifetime erasure for non-body fields; `body` is stored as
-        // `&'static []` so no borrow escapes.
-        task_ref.result = unsafe { result.detach_lifetime() };
+        task_ref.result = result.into_owned();
         // can_stream is a one-shot signal to start the request body stream; don't let a
         // later coalesced result clobber it before the JS thread sees it.
         task_ref.result.can_stream = task_ref.result.can_stream || prev_can_stream;

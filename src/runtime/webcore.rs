@@ -354,7 +354,7 @@ pub enum SinkHandle {
     None,
     ServerResponse(crate::server::AnyRequestContext),
     FetchRequestBody(bun_ptr::BackRef<fetch::FetchRequestBodySink, bun_ptr::Mut>),
-    S3Upload(bun_ptr::BackRef<streams::NetworkSink, bun_ptr::Mut>),
+    S3Upload(bun_ptr::BackRef<streams::NetworkSink, bun_ptr::Root>),
     FileSink(bun_ptr::BackRef<file_sink::FileSink>),
     HTMLRewriter(bun_ptr::BackRef<crate::api::html_rewriter::RewriterPipe>),
     HttpResponse(bun_ptr::BackRef<streams::HTTPResponseSink, bun_ptr::Mut>),
@@ -381,8 +381,7 @@ impl SinkHandle {
             SinkHandle::ServerResponse(any) => any.write_chunk(data),
             // SAFETY: live backref; ByteStream clears sink before free.
             SinkHandle::FetchRequestBody(mut p) => unsafe { p.get_mut() }.write(data),
-            // SAFETY: live backref; ByteStream clears sink before free.
-            SinkHandle::S3Upload(mut p) => unsafe { p.get_mut() }.write(data),
+            SinkHandle::S3Upload(p) => p.write(data),
             SinkHandle::FileSink(p) => p.write(data),
             SinkHandle::HTMLRewriter(p) => p.write(data),
             // SAFETY: live backref; transform detaches before the JSSink is finalized.
@@ -403,8 +402,7 @@ impl SinkHandle {
             SinkHandle::ServerResponse(any) => any.end_chunk(err.as_ref()),
             // SAFETY: live backref; ByteStream clears sink before free.
             SinkHandle::FetchRequestBody(mut p) => unsafe { p.get_mut() }.end_from_stream(err),
-            // Raw-ptr dispatch: may re-borrow and free the sink (see its doc).
-            SinkHandle::S3Upload(p) => streams::NetworkSink::end_from_stream(p.as_ptr(), err),
+            SinkHandle::S3Upload(p) => streams::NetworkSink::end_from_stream(p.this_ptr(), err),
             SinkHandle::FileSink(p) => p.end_from_stream(err),
             SinkHandle::HTMLRewriter(p) => p.end_from_stream(err),
             SinkHandle::HttpResponse(_) => {}

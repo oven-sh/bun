@@ -1196,7 +1196,7 @@ pub mod virtual_machine;
 pub mod vm_handle;
 pub use self::virtual_machine as VirtualMachine;
 pub use self::virtual_machine::InitOptions as VirtualMachineInitOptions;
-pub use self::vm_handle::{ConcurrentPoster, LoopKind, Posted, Ticket, VmHandle};
+pub use self::vm_handle::{ConcurrentPoster, InFlightTicket, LoopKind, Posted, Ticket, VmHandle};
 
 #[path = "ModuleLoader.rs"]
 pub mod module_loader;

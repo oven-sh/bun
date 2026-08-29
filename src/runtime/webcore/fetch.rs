@@ -1722,6 +1722,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 // lifetime is managed by the resolve callback itself).
                 let _ = S3StreamWrapper::resolve(result, ctx.cast::<S3StreamWrapper<'static>>());
             }
+            let s3_stream_ctx = bun_core::heap::into_raw(s3_stream).cast::<libc::c_void>();
             // `dupe()` heap-allocates a fresh intrusive-refcounted copy.
             // `upload_stream` adopts the ref by value (no extra bump) and the
             // MultiPartUpload derefs on completion.
@@ -1738,8 +1739,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 headers.as_ref().and_then(|h| h.get_content_encoding()),
                 proxy_url,
                 credentials_with_options.request_payer,
-                Some(s3_stream_wrapper_resolve),
-                bun_core::heap::into_raw(s3_stream).cast::<libc::c_void>(),
+                Some(Box::new(move |result| {
+                    s3_stream_wrapper_resolve(result, s3_stream_ctx)
+                })),
             )?;
             // url/url_proxy_buffer ownership moved into s3_stream above.
             return Ok(promise_value);

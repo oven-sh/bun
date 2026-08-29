@@ -888,8 +888,8 @@ impl RewriterPipe {
             return;
         }
         match src {
-            SourceHandle::ByteStream(bs) => bs.parent_const().set_sink_owner(JSValue::UNDEFINED),
-            SourceHandle::FileReader(fr) => fr.parent_const().set_sink_owner(JSValue::UNDEFINED),
+            SourceHandle::ByteStream(bs) => bs.parent().set_sink_owner(JSValue::UNDEFINED),
+            SourceHandle::FileReader(fr) => fr.parent().set_sink_owner(JSValue::UNDEFINED),
             _ => {}
         }
         js_HTMLRewriterTransform::input_stream_set_cached(cell, &self.global, JSValue::UNDEFINED);
@@ -901,8 +901,8 @@ impl RewriterPipe {
     /// slot. Only called from terminal paths on the JS thread. Idempotent.
     fn detach_output(&self) {
         if let Some(out) = self.output.take() {
-            out.parent_const().set_owner(JSValue::UNDEFINED);
-            out.parent_const().producer.set(SourceHandle::None);
+            out.parent().set_owner(JSValue::UNDEFINED);
+            out.parent().producer.set(SourceHandle::None);
         }
     }
 
@@ -1365,7 +1365,7 @@ impl RewriterPipe {
             // A reader rooting the output stream now roots the Transform cell
             // too, so the `producer` backref cannot outlive the pipe. Cleared
             // in `detach_output`.
-            bytes.parent_const().set_owner(this.cell.get());
+            bytes.parent().set_owner(this.cell.get());
             this.output.set(Some(bytes));
         }
         js_HTMLRewriterTransform::output_stream_set_cached(

@@ -3283,7 +3283,7 @@ where
                                     this.as_ctx_ptr(),
                                 );
                             } else if matches!(
-                                byte_stream.parent_const().producer.get(),
+                                byte_stream.parent().producer.get(),
                                 WebCore::streams::SourceHandle::HTMLRewriter(_)
                             ) {
                                 // Defer status/headers to the first chunk/end
@@ -4109,7 +4109,7 @@ where
 
                 readable.value.ensure_still_alive();
                 if let Some(bytes) = readable.ptr.bytes() {
-                    let source = bytes.parent_const();
+                    let source = bytes.parent();
                     source.producer.set(WebCore::streams::SourceHandle::None);
                     let mut err = Body::ValueError::Message(BunString::static_(
                         "Request body exceeded maxRequestBodySize",
@@ -4178,7 +4178,7 @@ where
                 let bytes = bun_ptr::BackRef::from(
                     NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
                 );
-                let source = bytes.parent_const();
+                let source = bytes.parent();
                 source.producer.set(WebCore::streams::SourceHandle::None);
                 bytes.on_data(WebCore::streams::Result::TemporaryAndDone(borrowed));
             }
@@ -4330,7 +4330,7 @@ where
             return;
         };
         if let Some(bytes) = readable.ptr.bytes() {
-            let source = bytes.parent_const();
+            let source = bytes.parent();
             source.producer.set(WebCore::streams::SourceHandle::None);
         }
     }

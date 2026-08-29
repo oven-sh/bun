@@ -984,7 +984,7 @@ impl FileReader {
 pub type Source = readable_stream::NewSource<FileReader>;
 
 // Every `FileReader` is the `context` field of a heap-allocated `Source`.
-bun_core::impl_field_parent! { FileReader => Source.context; pub fn shared parent; pub fn shared parent_const; }
+bun_core::impl_field_parent! { FileReader => Source.context; pub fn shared parent; }
 
 impl readable_stream::SourceContext for FileReader {
     const NAME: &'static str = "File";

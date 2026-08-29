@@ -244,7 +244,7 @@ impl<'a> Parser<'a> {
     }
 
     fn load_preload(&mut self, expr: &Expr) -> crate::Result<()> {
-        match &expr.data {
+        let mut preloads: Vec<Box<[u8]>> = match &expr.data {
             ExprData::EArray(array) => {
                 let items = array.items.slice();
                 let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
@@ -256,18 +256,22 @@ impl<'a> Parser<'a> {
                         }
                     }
                 }
-                self.ctx.preloads = preloads;
+                preloads
             }
             ExprData::EString(s) => {
-                if s.len() > 0 {
-                    self.ctx.preloads = vec![estring_to_owned(s, self.bump)];
+                if s.len() == 0 {
+                    return Ok(());
                 }
+                vec![estring_to_owned(s, self.bump)]
             }
-            ExprData::ENull(_) => {}
-            _ => {
-                self.add_error(expr.loc, b"Expected preload to be an array")?;
-            }
-        }
+            ExprData::ENull(_) => return Ok(()),
+            _ => return self.add_error(expr.loc, b"Expected preload to be an array"),
+        };
+        // `ctx.preloads` already holds the `--preload`s when bunfig.toml is
+        // loaded after argument parsing (`bun run`); as in the other load
+        // order, the config's preloads run first and argv's follow.
+        preloads.append(&mut self.ctx.preloads);
+        self.ctx.preloads = preloads;
         Ok(())
     }
 
@@ -359,8 +363,15 @@ impl<'a> Parser<'a> {
             self.load_log_level(&expr)?;
         }
 
+        // Keys with a command-line counterpart are still validated but only
+        // applied when that flag was not given: see `CliOverrides`.
+        let cli = self.ctx.cli_overrides;
+
         if let Some(expr) = json.get(b"define") {
-            self.ctx.args.define = Some(self.parse_define_map(&expr)?);
+            let define = self.parse_define_map(&expr)?;
+            if !cli.define {
+                self.ctx.args.define = Some(define);
+            }
         }
 
         if let Some(expr) = json.get(b"origin") {
@@ -723,9 +734,9 @@ impl<'a> Parser<'a> {
                 }
 
                 if let Some(auto_install_expr) = install_obj.get(b"auto") {
-                    if let ExprData::EString(_) = &auto_install_expr.data {
+                    let auto_install = if let ExprData::EString(_) = &auto_install_expr.data {
                         let key = auto_install_expr.as_string(self.bump).unwrap_or(b"");
-                        self.ctx.debug.global_cache = match GlobalCache::MAP.get(key) {
+                        match GlobalCache::MAP.get(key) {
                             Some(v) => *v,
                             None => {
                                 self.add_error(
@@ -734,19 +745,22 @@ impl<'a> Parser<'a> {
                                 )?;
                                 return Ok(());
                             }
-                        };
+                        }
                     } else if let ExprData::EBoolean(b) = auto_install_expr.data {
-                        self.ctx.debug.global_cache = if b.value {
+                        if b.value {
                             GlobalCache::allow_install
                         } else {
                             GlobalCache::disable
-                        };
+                        }
                     } else {
                         self.add_error(
                             auto_install_expr.loc,
                             b"Invalid auto install setting, must be one of true, false, or \"force\" \"fallback\" \"disable\"",
                         )?;
                         return Ok(());
+                    };
+                    if !cli.auto_install {
+                        self.ctx.debug.global_cache = auto_install;
                     }
                 }
 
@@ -827,13 +841,15 @@ impl<'a> Parser<'a> {
             if let Some(console_expr) = json.get(b"console") {
                 if let Some(depth) = console_expr.get(b"depth") {
                     if let Some(n) = depth.as_number() {
-                        let depth_value = n as u16;
-                        // Treat depth=0 as maxInt(u16) for infinite depth
-                        self.ctx.runtime_options.console_depth = Some(if depth_value == 0 {
-                            u16::MAX
-                        } else {
-                            depth_value
-                        });
+                        if !cli.console_depth {
+                            let depth_value = n as u16;
+                            // Treat depth=0 as maxInt(u16) for infinite depth
+                            self.ctx.runtime_options.console_depth = Some(if depth_value == 0 {
+                                u16::MAX
+                            } else {
+                                depth_value
+                            });
+                        }
                     } else {
                         self.add_error(depth.loc, b"Expected number")?;
                     }
@@ -987,16 +1003,18 @@ impl<'a> Parser<'a> {
         }
         {
             if let Some(jsx) = self.ctx.args.jsx.as_mut() {
-                if !jsx_factory.is_empty() {
+                if !jsx_factory.is_empty() && !cli.jsx_factory {
                     jsx.factory = jsx_factory;
                 }
-                if !jsx_fragment.is_empty() {
+                if !jsx_fragment.is_empty() && !cli.jsx_fragment {
                     jsx.fragment = jsx_fragment;
                 }
-                if !jsx_import_source.is_empty() {
+                if !jsx_import_source.is_empty() && !cli.jsx_import_source {
                     jsx.import_source = jsx_import_source;
                 }
-                jsx.runtime = jsx_runtime;
+                if !cli.jsx_runtime {
+                    jsx.runtime = jsx_runtime;
+                }
                 jsx.development = jsx_dev;
             } else {
                 self.ctx.args.jsx = Some(api::Jsx {
@@ -1020,12 +1038,14 @@ impl<'a> Parser<'a> {
 
         if let Some(expr) = json.get(b"macros") {
             if let ExprData::EBoolean(b) = expr.data {
-                if !b.value {
+                if !b.value && !cli.macros {
                     self.ctx.debug.macros = MacroOptions::Disable;
                 }
             } else {
-                self.ctx.debug.macros =
-                    MacroOptions::Map(parse_macros_json(&expr, self.log, self.source, self.bump));
+                let remaps = parse_macros_json(&expr, self.log, self.source, self.bump);
+                if !cli.macros {
+                    self.ctx.debug.macros = MacroOptions::Map(remaps);
+                }
             }
             bun_analytics::features::macros.fetch_add(1, Ordering::Relaxed);
         }
@@ -1084,10 +1104,12 @@ impl<'a> Parser<'a> {
                 loader_names.push(key.into());
                 loader_values.push(loader.to_api());
             }
-            self.ctx.args.loaders = Some(api::LoaderMap {
-                extensions: loader_names,
-                loaders: loader_values,
-            });
+            if !cli.loaders {
+                self.ctx.args.loaders = Some(api::LoaderMap {
+                    extensions: loader_names,
+                    loaders: loader_values,
+                });
+            }
         }
 
         Ok(())

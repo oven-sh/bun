@@ -916,6 +916,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     let defines_tuple = DefineColonList::resolve(args.options(b"--define"))?;
 
     if !defines_tuple.keys.is_empty() {
+        ctx.cli_overrides.define = true;
         opts.define = Some(api::StringMap {
             keys: defines_tuple
                 .keys
@@ -945,6 +946,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     };
 
     if !loader_tuple.keys.is_empty() {
+        ctx.cli_overrides.loaders = true;
         opts.loaders = Some(api::LoaderMap {
             extensions: loader_tuple
                 .keys
@@ -1170,19 +1172,19 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             bun_options_types::offline_mode::OfflineMode::Online
         });
 
-        if args.flag(b"--no-install") {
-            ctx.debug.global_cache = options::GlobalCache::disable;
+        let auto_install = if args.flag(b"--no-install") {
+            Some(options::GlobalCache::disable)
         } else if args.flag(b"-i") && cmd != CommandTag::RunAsNodeCommand {
             // Under node emulation `-i` is node's --interactive alias, not
             // --install=fallback (auto-install is meaningless there).
-            ctx.debug.global_cache = options::GlobalCache::fallback;
+            Some(options::GlobalCache::fallback)
         } else if let Some(enum_value) = args.option(b"--install") {
             // -i=auto --install=force, --install=disable
             if let Some(result) = options::GlobalCache::MAP.get(enum_value) {
-                ctx.debug.global_cache = *result;
+                Some(*result)
             // -i, --install
             } else if enum_value.is_empty() {
-                ctx.debug.global_cache = options::GlobalCache::force;
+                Some(options::GlobalCache::force)
             } else {
                 Output::err_generic(
                     "Invalid value for --install: \"{}\". Must be either \"auto\", \"fallback\", \"force\", or \"disable\"\n",
@@ -1190,6 +1192,12 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 );
                 Global::exit(1);
             }
+        } else {
+            None
+        };
+        if let Some(auto_install) = auto_install {
+            ctx.debug.global_cache = auto_install;
+            ctx.cli_overrides.auto_install = true;
         }
 
         if let Some(script) = args.option(b"--print") {
@@ -1230,6 +1238,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             };
             // Treat depth=0 as maxInt(u16) for infinite depth
             ctx.runtime_options.console_depth = Some(if depth == 0 { u16::MAX } else { depth });
+            ctx.cli_overrides.console_depth = true;
         }
 
         if let Some(order) = args.option(b"--dns-result-order") {
@@ -1593,6 +1602,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         || jsx_import_source.is_some()
         || jsx_runtime.is_some()
     {
+        ctx.cli_overrides.jsx_factory = jsx_factory.is_some();
+        ctx.cli_overrides.jsx_fragment = jsx_fragment.is_some();
+        ctx.cli_overrides.jsx_import_source = jsx_import_source.is_some();
+        ctx.cli_overrides.jsx_runtime = jsx_runtime.is_some();
         let default_factory: &[u8] = b"";
         let default_fragment: &[u8] = b"";
         let default_import_source: &[u8] = b"";
@@ -1677,6 +1690,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
     if args.flag(b"--no-macros") {
         ctx.debug.macros = MacroOptions::Disable;
+        ctx.cli_overrides.macros = true;
     }
 
     opts.output_dir = output_dir.map(Box::<[u8]>::from);

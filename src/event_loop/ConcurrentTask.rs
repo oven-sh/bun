@@ -224,9 +224,7 @@ macro_rules! boxed_task {
             unsafe fn release_unrun(this: *mut Self) {
                 // SAFETY: `Taskable::release_unrun` contract — `this` came off the
                 // queue under this tag, where only `Task::from_boxed` puts it.
-                <$ty as $crate::BoxedTask>::release_unrun(unsafe {
-                    ::bun_core::heap::take(this)
-                })
+                <$ty as $crate::BoxedTask>::release_unrun(unsafe { ::bun_core::heap::take(this) })
             }
         }
     };

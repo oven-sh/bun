@@ -39,6 +39,12 @@ fn main() {
         );
     }
 
+    println!(
+        "cargo:rerun-if-changed={}",
+        codegen_dir
+            .join("generated_builtin_module_key_index.rs")
+            .display()
+    );
     let resolved_source_tag_rs = codegen_dir.join("generated_resolved_source_tag.rs");
     if !resolved_source_tag_rs.exists() {
         panic!(

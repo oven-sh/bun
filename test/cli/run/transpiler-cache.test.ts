@@ -81,6 +81,36 @@ describe("transpiler cache", () => {
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("a");
     expect(!existsSync(cache_dir)).toBeTrue();
   });
+  test("does not cache a file whose parse logged an error", async () => {
+    // The parser reports the `import` next to `module.exports` after it has
+    // built the AST, and the lexer reports `0foo` while the parser is being
+    // constructed. Nothing may be printed or cached for such a file, or a
+    // later run would serve the broken output from the cache without the error.
+    const filler = "\n//" + Buffer.alloc(5 * 1024, "f").toString();
+    writeFileSync(join(temp_dir, "dep.js"), `export const x = 1;`);
+    writeFileSync(join(temp_dir, "mixed.js"), `import { x } from "./dep.js";\nmodule.exports = { x };` + filler);
+    writeFileSync(join(temp_dir, "first.js"), `\\u0030foo = 1;` + filler);
+    writeFileSync(
+      join(temp_dir, "main.js"),
+      `const out = {};
+       for (const file of ["./mixed.js", "./first.js"]) {
+         try { await import(file); } catch (e) { out["import " + file] = [e.name, e.message]; }
+         try { require(file); } catch (e) { out["require " + file] = [e.name, e.message]; }
+       }
+       console.log(JSON.stringify(out));`,
+    );
+    const mixed = ["BuildMessage", "Cannot use import statement with CommonJS-only features"];
+    const first = ["BuildMessage", 'Invalid identifier: "0foo"'];
+    const expected = JSON.stringify({
+      "import ./mixed.js": mixed,
+      "require ./mixed.js": mixed,
+      "import ./first.js": first,
+      "require ./first.js": first,
+    });
+    expect(await bunRun(join(temp_dir, "main.js"), env)).toSpawn(expected);
+    expect(await bunRun(join(temp_dir, "main.js"), env)).toSpawn(expected);
+    expect(!existsSync(cache_dir)).toBeTrue();
+  });
   test("it is indeed content addressable", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("b");
@@ -308,7 +338,7 @@ test("rejects cached module records containing out-of-range string indices", () 
   //   esm_record_byte_length @ 86, esm_record_hash @ 94. Payload follows @ 102.
   // Serialized module record layout (ModuleInfoStringTable + body, see
   // `ModuleInfoDeserialized::serialize` in src/js_printer/lib.rs):
-  //   table: [offset_width u8][0;3][count u32][(count+1) offsets][bytes]
+  //   table: [offset_width u8][0;3][count u32][(count+1) offsets][pad to even][bytes]
   //   body:  [flags u8][id_width u8][0;2][n_requested u32][n_records u32]
   //          [n_records tag bytes][n_requested tag bytes][string ids @ id_width ...]
   const ESM_RECORD_BYTE_OFFSET_AT = 78;
@@ -329,7 +359,8 @@ test("rejects cached module records containing out-of-range string indices", () 
     const count = data.readUInt32LE(esmOff + 4);
     const offsetsAt = esmOff + 8;
     const total = readUint(offsetsAt + count * offsetWidth, offsetWidth);
-    const bodyAt = offsetsAt + (count + 1) * offsetWidth + total;
+    const offsetsLen = (count + 1) * offsetWidth;
+    const bodyAt = offsetsAt + offsetsLen + (offsetsLen % 2) + total;
     const nRequested = data.readUInt32LE(bodyAt + 4);
     const nRecords = data.readUInt32LE(bodyAt + 8);
     const idsAt = bodyAt + 12 + nRecords + nRequested;

@@ -33,7 +33,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
 import { BuildError } from "./error.ts";
-import { satisfiesRange } from "./tools.ts";
+import { satisfiesRange, toolchainOverride } from "./tools.ts";
 
 /** Read a crate's locked version out of the repo's Cargo.lock. */
 function lockedCrateVersion(cfg: Config, name: string): string | undefined {
@@ -233,16 +233,24 @@ export const workarounds: Workaround[] = [
  * Call from configure.ts after Config is fully resolved.
  */
 export function checkWorkarounds(cfg: Config): void {
+  // Expiry thresholds are written against the pinned toolchains. With an
+  // explicitly supplied one (BUN_TOOLCHAIN_LLVM / BUN_TOOLCHAIN_RUST), which may
+  // be newer than the pin, an expired workaround is reported, not fatal.
+  const overridden = toolchainOverride.llvm !== undefined || toolchainOverride.rust !== undefined;
   for (const w of workarounds) {
     if (!w.applies(cfg)) continue;
     if (!w.expectedToBeFixed(cfg)) continue;
 
-    throw new BuildError(`Workaround '${w.id}' is obsolete — upstream fix is available`, {
-      hint:
-        `${w.description}\n` +
-        `  Tracked: ${w.issue}\n\n` +
-        `${w.cleanup}\n\n` +
-        `If the issue still reproduces, bump the threshold in expectedToBeFixed() in scripts/build/workarounds.ts instead.`,
-    });
+    const title = `Workaround '${w.id}' is obsolete — upstream fix is available`;
+    const hint =
+      `${w.description}\n` +
+      `  Tracked: ${w.issue}\n\n` +
+      `${w.cleanup}\n\n` +
+      `If the issue still reproduces, bump the threshold in expectedToBeFixed() in scripts/build/workarounds.ts instead.`;
+    if (overridden) {
+      console.warn(`note: ${title} (with the overridden toolchain)\n${hint}\n`);
+      continue;
+    }
+    throw new BuildError(title, { hint });
   }
 }

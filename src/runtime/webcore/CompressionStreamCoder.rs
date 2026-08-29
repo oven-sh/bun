@@ -696,15 +696,13 @@ impl CompressionStreamCoder {
     }
 }
 
-/// A chunk's bytes for the pool thread: a pinned ArrayBuffer's backing
-/// store (its pin + GC root is the paired [`PinnedArrayBuffer`] on the JS side)
-/// or an owned copy.
+/// A chunk's bytes for the pool thread: what the paired [`PinnedArrayBuffer`] on the JS side keeps valid, or an owned copy.
 pub(crate) enum AsyncInput {
     Pinned { ptr: *const u8, len: usize },
     Owned(Vec<u8>),
 }
-// SAFETY: `Pinned.ptr` is a backing store pinned + rooted by the paired
-// `PinnedArrayBuffer` for as long as the job lives; read only under the pool borrow.
+// SAFETY: `Pinned.ptr` points at bytes the paired `PinnedArrayBuffer` keeps
+// valid for as long as the job lives; read only under the pool borrow.
 unsafe impl Send for AsyncInput {}
 
 impl AsyncInput {
@@ -718,12 +716,7 @@ impl AsyncInput {
         if !chunk.is_cell() {
             return (Self::Owned(fallback.to_vec()), None);
         }
-        if let Some(buf) = PinnedArrayBuffer::root(global, chunk) {
-            // A resizable non-shared backing can `mprotect()` pages out on
-            // `resize()`; pinning does not block that, so spill to a copy.
-            if buf.resizable && !buf.shared {
-                return (Self::Owned(fallback.to_vec()), None);
-            }
+        if let Some(buf) = PinnedArrayBuffer::root_read_only(global, chunk) {
             return (
                 Self::Pinned {
                     ptr: buf.ptr,
@@ -923,25 +916,15 @@ unsafe extern "C" {
 /// One step of a large `CompressionStream`/`DecompressionStream` chunk, run
 /// off the JS thread.
 pub struct CompressionAsyncCtx {
-    /// Holds one coder reference (taken in `CompressionStreamCoder__transformAsync`,
-    /// released by `Drop`); see [`CompressionStreamCoder::ref_count`]. TransformStream
-    /// serializes writes, so nothing else touches it while the pool has it.
-    coder: *mut CompressionStreamCoder,
+    /// See [`CompressionStreamCoder::ref_count`]. TransformStream serializes
+    /// writes, so nothing else touches the coder while the pool has it.
+    coder: bun_ptr::RefPtr<CompressionStreamCoder>,
     /// Empty on a continuation step: the coder holds the chunk's tail.
     input: AsyncInput,
     finish: bool,
     out: Vec<u8>,
     more: bool,
     error: Option<CodecError>,
-}
-
-impl Drop for CompressionAsyncCtx {
-    fn drop(&mut self) {
-        // SAFETY: `coder` was ref'd in `CompressionStreamCoder__transformAsync`; this ctx owns that
-        // reference and drops it exactly once (in `then`, or when the job is
-        // released unrun).
-        unsafe { bun_ptr::ThreadSafeRefCount::<CompressionStreamCoder>::deref(self.coder) };
-    }
 }
 
 // SAFETY: the coder is `ThreadSafeRefCounted` and only touched by whoever holds
@@ -965,7 +948,8 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // SAFETY: `coder` is kept alive by the reference this ctx holds (the
         // cell's finalizer only releases its own); see the field doc.
-        match unsafe { (*this.coder).step(this.input.slice(), this.finish, &mut this.out) } {
+        match unsafe { (*this.coder.as_ptr()).step(this.input.slice(), this.finish, &mut this.out) }
+        {
             Ok(more) => this.more = more,
             Err(e) => this.error = Some(e),
         }
@@ -1018,14 +1002,12 @@ pub extern "C" fn CompressionStreamCoder__transformAsync(
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
     let (input, pin) = AsyncInput::new(global, chunk, fallback);
-    // SAFETY: `this` is the live coder owned by the calling JS cell; the ctx
-    // takes its own reference (see `CompressionStreamCoder::ref_count`).
-    unsafe { bun_ptr::ThreadSafeRefCount::<CompressionStreamCoder>::ref_(this) };
     let cx = global.js_thread();
     bun_jsc::Job::<CompressionAsyncCtx>::schedule(
         &cx,
         CompressionAsyncCtx {
-            coder: this,
+            // SAFETY: `this` is the live coder owned by the calling JS cell.
+            coder: unsafe { bun_ptr::RefPtr::init_ref(this) },
             input,
             finish,
             out: Vec::new(),

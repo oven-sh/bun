@@ -84,6 +84,8 @@ export interface ToolSpec {
   names: string[];
   /** Extra search paths beyond $PATH. Tried FIRST (more specific). */
   paths?: string[];
+  /** Search only `paths`, never $PATH. */
+  pathsOnly?: boolean;
   /** Version constraint, e.g. `">=21.1.0 <22.0.0"`. */
   version?: string;
   /** How to get the version. `"--version"` (default) or `"version"` (go/zig style). */
@@ -211,7 +213,9 @@ export function clangTargetArch(clang: string): Arch | undefined {
  */
 export function findTool(spec: ToolSpec): FoundTool | undefined {
   const exeSuffix = process.platform === "win32" ? ".exe" : "";
-  const searchPaths = [...(spec.paths ?? []), ...(process.env.PATH ?? "").split(delimiter).filter(p => p.length > 0)];
+  const searchPaths = spec.pathsOnly
+    ? [...(spec.paths ?? [])]
+    : [...(spec.paths ?? []), ...(process.env.PATH ?? "").split(delimiter).filter(p => p.length > 0)];
   const versionArg = spec.versionArg ?? "--version";
   const rejections: Rejection[] = [];
 
@@ -270,12 +274,29 @@ const LLVM_MINOR = "1";
 const LLVM_VERSION_RANGE = `>=${LLVM_MAJOR}.${LLVM_MINOR}.0 <${LLVM_MAJOR}.${LLVM_MINOR}.99`;
 
 /**
+ * Explicit toolchain directories, for building Bun with a self-built LLVM /
+ * Rust (the oven-sh/rust toolchain build trains its PGO profiles this way).
+ * When set they are the ONLY place the corresponding tools are taken from,
+ * and the LLVM version pin above is not enforced — the directory is the pin.
+ *
+ *   BUN_TOOLCHAIN_LLVM   dir containing bin/clang, bin/ld.lld, bin/llvm-ar, …
+ *   BUN_TOOLCHAIN_RUST   rustc sysroot dir containing bin/rustc (and bin/cargo)
+ *   BUN_TOOLCHAIN_CARGO  cargo binary, if not <BUN_TOOLCHAIN_RUST>/bin/cargo
+ */
+export const toolchainOverride = {
+  llvm: process.env.BUN_TOOLCHAIN_LLVM,
+  rust: process.env.BUN_TOOLCHAIN_RUST,
+  cargo: process.env.BUN_TOOLCHAIN_CARGO,
+};
+
+/**
  * Known LLVM install locations per platform. Call ONCE from
  * resolveLlvmToolchain — it contains a spawn on macOS (brew --prefix as
  * fallback) which takes ~100ms, so calling it per-tool would dominate
  * configure time.
  */
 function llvmSearchPaths(os: OS, arch: Arch): string[] {
+  if (toolchainOverride.llvm !== undefined) return [join(toolchainOverride.llvm, "bin")];
   const paths: string[] = [];
 
   if (os === "darwin") {
@@ -352,7 +373,8 @@ function findLlvmTool(
     required: opts.required,
     hint: llvmInstallHint(os),
   };
-  if (opts.checkVersion) spec.version = LLVM_VERSION_RANGE;
+  if (opts.checkVersion) spec.version = toolchainOverride.llvm !== undefined ? "ignore" : LLVM_VERSION_RANGE;
+  if (toolchainOverride.llvm !== undefined) spec.pathsOnly = true;
   return findTool(spec);
 }
 
@@ -646,7 +668,10 @@ export function findRustLld(os: OS): {
   const none = { rustLld: undefined, rustLlvmVersion: undefined, rustSysroot: undefined, rustHostTriple: undefined };
   // Look up rustc the same way findCargo does cargo: $CARGO_HOME/bin first.
   const cargoHome = process.env.CARGO_HOME ?? join(homedir(), ".cargo");
-  const rustc = findTool({ names: ["rustc"], paths: [join(cargoHome, "bin")], required: false })?.path;
+  const rustc =
+    toolchainOverride.rust !== undefined
+      ? join(toolchainOverride.rust, "bin", "rustc")
+      : findTool({ names: ["rustc"], paths: [join(cargoHome, "bin")], required: false })?.path;
   if (rustc === undefined) return none;
 
   // The link-only CI mode runs `findRustLld()` on an agent that downloads
@@ -665,7 +690,7 @@ export function findRustLld(os: OS): {
   // whatever's there.
   const rustup = findTool({ names: ["rustup"], paths: [join(cargoHome, "bin")], required: false })?.path;
   const channel = readRustToolchainChannel();
-  if (rustup !== undefined && channel !== undefined) {
+  if (rustup !== undefined && channel !== undefined && toolchainOverride.rust === undefined) {
     const started = performance.now();
     spawnSync(
       rustup,
@@ -735,6 +760,7 @@ export function findRustLld(os: OS): {
  * same file; keeping the parse local avoids an import cycle.
  */
 function readRustToolchainChannel(): string | undefined {
+  if (toolchainOverride.rust !== undefined) return undefined; // not a rustup toolchain
   // tools.ts lives at `scripts/build/`; the toolchain file is two levels up.
   const path = join(import.meta.dirname, "..", "..", "rust-toolchain.toml");
   if (!existsSync(path)) return undefined;
@@ -757,11 +783,11 @@ export function findCargo(hostOs: OS): CargoToolchain | undefined {
 
   // Search $CARGO_HOME/bin BEFORE $PATH. Some systems have an outdated
   // distro cargo in /usr/bin that shadows rustup's — we want rustup's.
-  const cargo = findTool({
-    names: ["cargo"],
-    paths: [join(cargoHome, "bin")],
-    required: false,
-  })?.path;
+  const cargo =
+    toolchainOverride.cargo ??
+    (toolchainOverride.rust !== undefined
+      ? join(toolchainOverride.rust, "bin", "cargo")
+      : findTool({ names: ["cargo"], paths: [join(cargoHome, "bin")], required: false })?.path);
   if (cargo === undefined) return undefined;
 
   // Suppress unused warning for hostOs — kept in signature for future

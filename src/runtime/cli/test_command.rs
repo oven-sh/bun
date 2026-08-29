@@ -2287,24 +2287,10 @@ impl TestCommand {
 
             match vm.hot_reload {
                 jsc::virtual_machine::HotReload::Hot => {
-                    // SAFETY: `vm` is the process-lifetime main-thread VM; it
-                    // outlives the leaked reloader.
-                    unsafe {
-                        jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
-                            std::ptr::from_mut::<VirtualMachine>(vm),
-                            None,
-                        );
-                    }
+                    jsc::hot_reloader::HotReloader::enable_hot_module_reloading(vm, None);
                 }
                 jsc::virtual_machine::HotReload::Watch => {
-                    // SAFETY: `vm` is the process-lifetime main-thread VM; it
-                    // outlives the leaked reloader.
-                    unsafe {
-                        jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
-                            std::ptr::from_mut::<VirtualMachine>(vm),
-                            None,
-                        );
-                    }
+                    jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(vm, None);
                 }
                 _ => {}
             }

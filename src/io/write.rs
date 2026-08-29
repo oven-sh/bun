@@ -298,6 +298,55 @@ impl fmt::Write for AsFmt<'_> {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// IoWriterAdapter — bun_io::Write → bun_core::io::Writer (vtable head) bridge
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Wrap a `&mut dyn Write` so it can be passed where the concrete
+/// [`bun_core::io::Writer`] vtable header is expected
+/// (`VirtualMachine::print_stack_trace`, `print_errorlike_object`).
+///
+/// `head` is the first `#[repr(C)]` field, so the `*mut io::Writer` the vtable
+/// thunks receive is this struct's own address.
+#[repr(C)]
+pub struct IoWriterAdapter<'a> {
+    head: bun_core::io::Writer,
+    inner: &'a mut dyn Write,
+}
+
+impl<'a> IoWriterAdapter<'a> {
+    pub fn new(inner: &'a mut dyn Write) -> Self {
+        Self {
+            head: bun_core::io::Writer {
+                write_all: Self::thunk_write_all,
+                flush: Self::thunk_flush,
+            },
+            inner,
+        }
+    }
+
+    /// The `io::Writer` view; writes and flushes go to the wrapped sink.
+    #[inline]
+    pub fn interface(&mut self) -> &mut bun_core::io::Writer {
+        // SAFETY: `head` is the first field of this `#[repr(C)]` struct, so the
+        // whole-struct pointer is a valid `*mut io::Writer` (and keeps provenance
+        // over `inner` for the thunks below).
+        unsafe { &mut *core::ptr::from_mut(self).cast::<bun_core::io::Writer>() }
+    }
+
+    fn thunk_write_all(w: *mut bun_core::io::Writer, bytes: &[u8]) -> Result<()> {
+        // SAFETY: only installed by `new`, so `w` is the pointer `interface` produced from `&mut Self`.
+        let this = unsafe { &mut *w.cast::<Self>() };
+        this.inner.write_all(bytes)
+    }
+
+    fn thunk_flush(w: *mut bun_core::io::Writer) -> Result<()> {
+        // SAFETY: as in `thunk_write_all`.
+        let this = unsafe { &mut *w.cast::<Self>() };
+        this.inner.flush()
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
 mod tests {

@@ -5,8 +5,6 @@ use std::sync::Arc;
 use bun_collections::smallvec::SmallVec;
 use bun_core::Output;
 use bun_core::strings;
-#[cfg(windows)]
-use bun_event_loop::Task;
 use bun_io::KeepAlive;
 use bun_jsc::abort_signal::{AbortSubscription, OnAbort};
 use bun_jsc::bun_string_jsc;
@@ -177,11 +175,27 @@ impl FSWatchTask {
         result
     }
 
-    /// The VM is tearing down and nobody will emit these events: drop them and
-    /// the activity unit the batch took.
+    /// The VM is tearing down (or was already closed when the watcher thread
+    /// posted) and nobody will emit these events: drop them and the activity
+    /// unit the batch took.
     #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
     pub(crate) fn release_unrun(self: Box<Self>) {
         self.activity.unref_task();
+    }
+}
+
+// SAFETY: the only task type for `task_tag::FSWatchTask`; the queued
+// carrier owns the box (`ConcurrentTask::create_boxed`).
+unsafe impl bun_event_loop::BoxedTask for FSWatchTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FSWatchTask;
+    fn run(self: Box<Self>) -> bun_event_loop::JsResult<()> {
+        FSWatchTask::run(self)
+    }
+    fn release_unrun(self: Box<Self>) {
+        FSWatchTask::release_unrun(self)
+    }
+    fn refused(self: Box<Self>) {
+        FSWatchTask::release_unrun(self)
     }
 }
 
@@ -269,10 +283,8 @@ impl EventSink {
                 Arc::clone(&self.activity),
                 core::mem::take(&mut self.batch),
             );
-            if let Err(task) = self.vm.post_boxed(self.loop_kind, task) {
-                // VM torn down: nobody will emit these events.
-                task.release_unrun();
-            }
+            // Refused (VM torn down): nobody will emit these events.
+            self.vm.post_boxed(self.loop_kind, task);
             return;
         }
         // closed or detached so just drop the events
@@ -375,11 +387,10 @@ impl FSWatcher {
         let task = FSWatchTask::new(ThreadBound::new(self), Arc::clone(&self.activity), entries);
         let vm = self.global_this.bun_vm();
         #[cfg(not(windows))]
-        if let Err(task) = vm.handle().post_boxed(vm.current_loop_kind(), task) {
-            task.release_unrun();
-        }
+        vm.handle().post_boxed(vm.current_loop_kind(), task);
         #[cfg(windows)]
-        vm.event_loop_mut().enqueue_task(Task::from_boxed(task));
+        vm.event_loop_mut()
+            .enqueue_task(bun_event_loop::BoxedTask::into_task(task));
     }
 
     /// libuv delivers fs events on the JS thread; each becomes its own task.

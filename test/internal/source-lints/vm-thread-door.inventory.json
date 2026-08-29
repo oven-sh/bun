@@ -40,19 +40,10 @@
     ]
   },
   "src/jsc/hot_reloader.rs": {
-    "thread spawn": 1,
-    "unsafe impl Send": [
-      "WatchChangedPaths"
-    ],
-    "unsafe impl Sync": [
-      "WatchChangedPaths"
-    ]
+    "thread spawn": 1
   },
   "src/jsc/web_worker.rs": {
-    "thread spawn": 1,
-    "unsafe impl Send": [
-      "ThreadStart"
-    ]
+    "thread spawn": 1
   },
   "src/jsc/webcore_types.rs": {
     "unsafe impl Send": [
@@ -64,6 +55,14 @@
       "Blob",
       "Bytes",
       "Store"
+    ]
+  },
+  "src/jsc/worker_messaging_proxy.rs": {
+    "unsafe impl Send": [
+      "WorkerMessagingProxy"
+    ],
+    "unsafe impl Sync": [
+      "WorkerMessagingProxy"
     ]
   },
   "src/runtime/api/JSTranspiler.rs": {

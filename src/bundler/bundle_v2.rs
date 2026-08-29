@@ -1458,21 +1458,22 @@ pub mod bv2_impl {
             /// installed after the last fallible step in `BundleV2::init`, so the
             /// box is never dropped while the watcher holds a pointer to it.
             fn __bun_jsc_enable_hot_module_reloading_for_bundler(
-                bv2: core::ptr::NonNull<super::BundleV2<'static>>,
+                bv2: &'static mut super::BundleV2<'static>,
             );
         }
 
         /// `Watcher.enableHotModuleReloading(this, null)` for `bun build --watch`.
         #[inline]
         pub(crate) fn enable_hot_module_reloading_for_bundler(bv2: *mut super::BundleV2<'_>) {
-            let bv2 = core::ptr::NonNull::new(bv2.cast::<super::BundleV2<'static>>())
-                .expect("BundleV2 watcher: bv2 is non-null");
             // SAFETY: link-time-resolved Rust-ABI fn in `bun_jsc::hot_reloader`.
-            // Not `safe fn`: the callee dereferences `bv2`, so it must point to a
-            // live `BundleV2` whose backing allocation outlives the watcher (sole
-            // caller is `BundleV2::init`; the box is leaked on the success path —
-            // see the watch-mode caveat above).
-            unsafe { __bun_jsc_enable_hot_module_reloading_for_bundler(bv2) }
+            // `bv2` is the live boxed `BundleV2` from `BundleV2::init`, leaked on
+            // the success path (see the watch-mode caveat above), so widening it
+            // to `'static` for the process-lifetime watcher holds.
+            unsafe {
+                __bun_jsc_enable_hot_module_reloading_for_bundler(
+                    &mut *bv2.cast::<super::BundleV2<'static>>(),
+                )
+            }
         }
 
         /// Bytecode generation entry point for the linker: marks the calling
@@ -7580,11 +7581,6 @@ pub mod bv2_impl {
             if diff < 0 {
                 this.on_after_decrement_scan_counter();
             }
-        }
-
-        /// To satisfy the interface from NewHotReloader()
-        pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
-            self.transpiler.resolver.bust_dir_cache(path)
         }
     }
 

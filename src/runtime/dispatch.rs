@@ -189,6 +189,15 @@ pub(crate) fn run_task(
             task.ptr.cast::<$ty>()
         };
     }
+    /// `<$ty as BoxedTask>::run` on the queued box, SAFETY spelled once.
+    macro_rules! boxed {
+        ($ty:ty) => {{
+            // SAFETY: §Dispatch — `task.tag` is `<$ty as BoxedTask>::TAG`, set by
+            // `BoxedTask::into_task` together with the `Box<$ty>` it leaked into
+            // `task.ptr`; reclaimed exactly once, here.
+            <$ty as bun_event_loop::BoxedTask>::run(unsafe { Box::from_raw(cast_ptr!($ty)) })
+        }};
+    }
     /// `CompressionStream::<T>::run_from_js_thread` takes `*mut T` (full
     /// allocation provenance — R-2) so its trailing `T::deref()` may free the box.
     macro_rules! compression_arm {
@@ -378,29 +387,26 @@ pub(crate) fn run_task(
 
         // ── hot-reload (early-returns from the drain loop) ───────────────
         task_tag::HotReloadTask => {
-            let t = cast_ptr!(hot_reloader::HotReloadTask);
-            // The task was heap-allocated in `Task::enqueue`; `deinit` frees it.
-            // SAFETY: tag identifies pointee; live Box'd HotReloadTask.
-            unsafe { (*t).run() };
-            // SAFETY: paired with heap::alloc in `Task::enqueue`.
-            unsafe { hot_reloader::HotReloadTask::deinit(t) };
-            return Ok(RunTaskResult::EarlyReturn);
+            // SAFETY: as `boxed!`.
+            let task = unsafe { Box::from_raw(cast_ptr!(hot_reloader::HotReloadTask)) };
+            let reloads = task.reloads();
+            bun_event_loop::BoxedTask::run(task)?;
+            if reloads {
+                return Ok(RunTaskResult::EarlyReturn);
+            }
         }
         task_tag::WatchReloadTask => {
-            let t = cast_ptr!(hot_reloader::WatchReloadTask);
-            // SAFETY: tag identifies pointee; live Box'd WatchReloadTask.
-            unsafe { (*t).run() };
-            // SAFETY: paired with heap::alloc in `Task::enqueue`.
-            unsafe { hot_reloader::WatchReloadTask::deinit(t) };
-            return Ok(RunTaskResult::EarlyReturn);
+            // SAFETY: as `boxed!`.
+            let task = unsafe { Box::from_raw(cast_ptr!(hot_reloader::WatchReloadTask)) };
+            let reloads = task.reloads();
+            bun_event_loop::BoxedTask::run(task)?;
+            if reloads {
+                return Ok(RunTaskResult::EarlyReturn);
+            }
         }
         // ── bake dev-server (cold — hoisted to `run_task_cold`) ──────────
         task_tag::BakeHotReloadEvent => run_task_cold(task),
-        task_tag::FSWatchTask => {
-            // SAFETY: boxed by the watcher's `EventSink` / `enqueue_one`; the
-            // arm consumes it.
-            unsafe { bun_core::heap::take(cast_ptr!(FSWatchTask)) }.run()?;
-        }
+        task_tag::FSWatchTask => boxed!(FSWatchTask)?,
 
         // ── node:fs libuv-request ops (Windows) ──────────────────────────
         #[cfg(windows)]
@@ -585,17 +591,9 @@ const _: () = assert!(
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
-// ── tag ↔ payload for the boxed fs watcher tasks ────────────────────────────
+// ── tag ↔ payload for the boxed fs.watchFile tasks ──────────────────────────
 // The payload types are plain owned boxes with safe `run`/`release_unrun`; the
 // raw-pointer reclaim lives here next to the arms that do the same.
-
-impl bun_event_loop::Taskable for FSWatchTask {
-    const TAG: bun_event_loop::TaskTag = task_tag::FSWatchTask;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the box queued under this tag.
-        FSWatchTask::release_unrun(unsafe { bun_core::heap::take(this) });
-    }
-}
 
 impl bun_event_loop::Taskable for crate::node::node_fs_stat_watcher::StatWatcherHop {
     const TAG: bun_event_loop::TaskTag = task_tag::StatWatcherHop;
@@ -1242,6 +1240,16 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             unsafe { <$ty as Taskable>::release_unrun(task.ptr.cast::<$ty>()) }
         }};
     }
+    /// `<$ty as BoxedTask>::release_unrun` on the queued box, SAFETY spelled once.
+    macro_rules! release_boxed {
+        ($ty:ty) => {{
+            // SAFETY: as `release!`; the tag is `<$ty as BoxedTask>::TAG` and
+            // `task.ptr` the `Box<$ty>` `into_task` leaked.
+            <$ty as bun_event_loop::BoxedTask>::release_unrun(unsafe {
+                Box::from_raw(task.ptr.cast::<$ty>())
+            })
+        }};
+    }
     match task.tag {
         task_tag::AnyTaskJob => {
             // The one erased tag: every payload is a `Job<C>` reached through its header.
@@ -1263,9 +1271,9 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::FetchTaskletPromiseSettle => {
             release!(crate::webcore::fetch::fetch_tasklet::FetchTaskletPromiseSettle)
         }
-        task_tag::FSWatchTask => release!(FSWatchTask),
-        task_tag::HotReloadTask => release!(hot_reloader::HotReloadTask),
-        task_tag::WatchReloadTask => release!(hot_reloader::WatchReloadTask),
+        task_tag::FSWatchTask => release_boxed!(FSWatchTask),
+        task_tag::HotReloadTask => release_boxed!(hot_reloader::HotReloadTask),
+        task_tag::WatchReloadTask => release_boxed!(hot_reloader::WatchReloadTask),
         task_tag::JSBundleCompletionTask => {
             release!(crate::api::js_bundle_completion_task::JSBundleCompletionTask)
         }

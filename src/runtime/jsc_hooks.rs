@@ -16,7 +16,6 @@
 //!   4. `__bun_get_vm_ctx` / `__bun_stdio_blob_store_new` /
 //!      `__bun_http_sync_download_*` — low-tier extern impls.
 
-use bun_core::WTFStringImplExt as _;
 use bun_options_types::LoaderExt as _;
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -1566,15 +1565,12 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
 // WebWorker / Debugger runtime hooks
 // ════════════════════════════════════════════════════════════════════════════
 
-/// Apply the standalone-executable graph's runtime flags to the transpiler.
-///
-/// # Safety
-/// `transpiler` is the worker VM's live `&mut Transpiler` (not yet visible to
-/// any other thread); `graph` is the process-lifetime trait object whose data
-/// pointer is a `bun_standalone_graph::Graph` (the only implementor — set in
+/// Apply the standalone-executable graph's runtime flags to the (worker VM's)
+/// transpiler. `graph` is the process-lifetime trait object whose data pointer
+/// is a `bun_standalone_graph::Graph` (the only implementor — set in
 /// `init_with_module_graph` / inherited from the parent VM).
-unsafe fn apply_standalone_runtime_flags(
-    transpiler: *mut bun_bundler::Transpiler<'static>,
+fn apply_standalone_runtime_flags(
+    transpiler: &mut bun_bundler::Transpiler<'static>,
     graph: &'static dyn bun_resolver::StandaloneModuleGraph,
 ) {
     // SAFETY: per fn contract — sole implementor; trait-object data pointer IS
@@ -1587,30 +1583,20 @@ unsafe fn apply_standalone_runtime_flags(
             .cast::<c_void>()
             .cast::<bun_standalone_graph::Graph>()
     };
-    // SAFETY: per fn contract.
-    crate::run_main::apply_standalone_runtime_flags(unsafe { &mut *transpiler }, graph);
+    crate::run_main::apply_standalone_runtime_flags(transpiler, graph);
 }
 
 /// Scan a Worker's `execArgv` for `--no-addons` and `--no-ffi-cc`. Like the
 /// CLI parser, the scan stops at the first positional.
-///
-/// # Safety
-/// Each `WTFStringImpl` in `exec_argv` is a live WTF string (the C++
-/// `Worker::create` array, kept alive for the worker's lifetime).
-unsafe fn parse_worker_exec_argv_flags(
-    exec_argv: &[bun_core::WTFStringImpl],
-) -> Option<WorkerExecArgvFlags> {
+fn parse_worker_exec_argv_flags(exec_argv: &[bun_core::String]) -> Option<WorkerExecArgvFlags> {
     let mut flags = WorkerExecArgvFlags {
         allow_addons: true,
         allow_ffi_cc: true,
     };
-    for &arg in exec_argv {
-        if arg.is_null() {
-            continue;
-        }
-        // SAFETY: per fn contract — `arg` is a live `WTFStringImpl*`.
-        let owned = unsafe { &*arg }.to_owned_slice_z();
-        let bytes = owned.as_bytes();
+    for arg in exec_argv {
+        let owned = arg.to_utf8();
+        let bytes = owned.slice();
+        // `stop_after_positional_at = 1` — first non-flag token ends parsing.
         if bytes.first() != Some(&b'-') {
             break;
         }
@@ -1861,12 +1847,10 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
 /// Returns `next_test_id` advanced past every ID assigned (the caller writes
 /// it back into `TestReporterAgent::next_test_id`).
 ///
-/// # Safety
-/// `agent` is a live C++ `Inspector::TestReporterAgent::Handle*` (just stored
-/// into `debugger.test_reporter_agent.handle` by the caller). Called on the JS
-/// thread.
-unsafe fn retroactively_report_discovered_tests(
-    agent: *mut bun_jsc::debugger::TestReporterHandle,
+/// `agent` is the live C++ `Inspector::TestReporterAgent::Handle` (just stored
+/// into `debugger.test_reporter_agent.handle` by the caller). JS thread.
+fn retroactively_report_discovered_tests(
+    agent: &mut bun_jsc::debugger::TestReporterHandle,
     next_test_id: i32,
 ) -> i32 {
     use crate::test_runner::bun_test::{DescribeScope, Phase, TestScheduleEntry};
@@ -1910,7 +1894,7 @@ unsafe fn retroactively_report_discovered_tests(
     return max_id;
 
     fn retroactively_report_scope(
-        agent: *mut TestReporterHandle,
+        agent: &mut TestReporterHandle,
         scope: &mut DescribeScope,
         parent_id: i32,
         max_id: &mut i32,
@@ -1928,8 +1912,7 @@ unsafe fn retroactively_report_discovered_tests(
                         let name = bun_core::String::from_bytes(
                             describe.base.name.as_deref().unwrap_or(b"(unnamed)"),
                         );
-                        // SAFETY: `agent` is a live C++ handle (fn contract).
-                        unsafe { &mut *agent }.report_test_found_with_location(
+                        agent.report_test_found_with_location(
                             test_id,
                             &name,
                             TestType::Describe,
@@ -1955,8 +1938,7 @@ unsafe fn retroactively_report_discovered_tests(
                         let name = bun_core::String::from_bytes(
                             test_entry.base.name.as_deref().unwrap_or(b"(unnamed)"),
                         );
-                        // SAFETY: `agent` is a live C++ handle (fn contract).
-                        unsafe { &mut *agent }.report_test_found_with_location(
+                        agent.report_test_found_with_location(
                             test_id,
                             &name,
                             TestType::Test,

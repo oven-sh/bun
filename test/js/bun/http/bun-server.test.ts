@@ -352,6 +352,60 @@ describe.concurrent("Server", () => {
     }
   });
 
+  test("server.fetch(url, { headers: Headers }) copies the headers; the Headers object stays usable across GC", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response(req.headers.get("x-i") ?? "none");
+      },
+    });
+    const url = `http://${server.hostname}:${server.port}/`;
+    const kept: Headers[] = [];
+    for (let i = 0; i < 200; i++) {
+      const headers = new Headers({ "x-i": String(i) });
+      const response = await server.fetch(url, { headers });
+      expect(await response.text()).toBe(String(i));
+      if (i % 2 === 0) kept.push(headers);
+      if (i % 50 === 0) Bun.gc(true);
+    }
+    Bun.gc(true);
+    // The Request built by server.fetch() has been collected; the Headers we
+    // kept must still own their list.
+    expect(kept.map(h => h.get("x-i"))).toEqual(kept.map((_, i) => String(i * 2)));
+  });
+
+  test("server.upgrade(req, { headers }) with a Headers object and with a plain object, across GC", async () => {
+    for (const makeHeaders of [() => new Headers({ "x-up": "1" }), () => ({ "x-up": "1" })]) {
+      let upgraded = 0;
+      using server = Bun.serve({
+        port: 0,
+        fetch(req, srv) {
+          if (srv.upgrade(req, { headers: makeHeaders() })) {
+            upgraded++;
+            return;
+          }
+          return new Response("no upgrade", { status: 400 });
+        },
+        websocket: {
+          open(ws) {
+            ws.close();
+          },
+          message() {},
+        },
+      });
+      for (let i = 0; i < 100; i++) {
+        const ws = new WebSocket(`ws://${server.hostname}:${server.port}/`);
+        const { promise, resolve } = Promise.withResolvers<void>();
+        ws.onclose = () => resolve();
+        ws.onerror = () => resolve();
+        await promise;
+        if (i % 25 === 0) Bun.gc(true);
+      }
+      Bun.gc(true);
+      expect(upgraded).toBe(100);
+    }
+  });
+
   test("server should return a body for a OPTIONS Request", async () => {
     using server = Bun.serve({
       port: 0,

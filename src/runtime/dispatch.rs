@@ -344,6 +344,14 @@ pub(crate) fn run_task(
                 ))
             };
         }
+        task_tag::FetchTaskletDrain => {
+            // SAFETY: posted by `on_write_request_data_drain` with a ref held.
+            unsafe {
+                crate::webcore::fetch::FetchTaskletDrainHop::run(cast_ptr!(
+                    crate::webcore::fetch::FetchTaskletDrainHop
+                ))
+            }?;
+        }
         // `cast_ptr!` yields the heap-allocated S3 task; JS-thread dispatch
         // is the sole owner here.
         task_tag::S3HttpSimpleTask => {
@@ -589,7 +597,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 61,
+    task_tag::COUNT == 62,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1237,6 +1245,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::DuplexUpgradeContext => release!(crate::socket::DuplexUpgradeContext),
         task_tag::FetchTasklet => release!(FetchTasklet),
         task_tag::FetchTaskletDeinit => release!(crate::webcore::fetch::FetchTaskletDeinitHop),
+        task_tag::FetchTaskletDrain => release!(crate::webcore::fetch::FetchTaskletDrainHop),
         task_tag::FetchTaskletPromiseSettle => {
             release!(crate::webcore::fetch::fetch_tasklet::FetchTaskletPromiseSettle)
         }

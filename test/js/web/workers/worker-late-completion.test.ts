@@ -415,3 +415,141 @@ describe.skipIf(isWindows)("terminate() waits for work that cannot be cancelled"
     expect(await proc.exited).toBe(0);
   });
 });
+
+// A fetch() whose request body is still uploading when its worker goes holds
+// references the "fetch in flight" row above never takes: the one
+// start_request_stream holds for the upload, and one per "buffer drained" hop
+// the HTTP thread has posted back. Every one of them has to be dropped by the
+// teardown itself. The upload's ref is dropped by the JSC heap destroying the
+// pump's controller cell for a JS-pumped body (a pull or direct stream), and
+// by the stop phase for a body streaming in from a native source (another
+// response's body, a file), because the progress update that would otherwise
+// cancel that sink is released unrun. A drain hop still queued when the worker
+// goes is released unrun too, and has to drop its ref then. A ref that is not
+// dropped leaves the whole request behind (tasklet, AsyncHTTP, sink, stream
+// buffer); one dropped twice frees it while the HTTP thread still hands it
+// back. The oracle on a debug build is the tasklet's own teardown log line:
+// one `deinit` per fetch the worker made. The ASAN build is a release build
+// without that log; there the rows run for ASAN itself and for LSan, which
+// reports the response-body row's leak (the others stay reachable to it
+// through stale JS heap memory).
+//
+// Each row's upload is mid-flight by construction: the target server holds
+// the request open and the host terminates the worker once the first body
+// chunk has arrived, or (drain row) the body's pull() exits the worker right
+// after handing the chunk over, so the drain hop for it comes back to a
+// worker that is already tearing down.
+describe.skipIf((!isDebug && !isASAN) || isWindows)("a worker goes while a request body is still uploading", () => {
+  const ROWS: { name: string; body: string; fetches: number; terminate: boolean }[] = [
+    {
+      name: "a JS pull stream, terminated",
+      body: `new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(16)); return new Promise(() => {}); } })`,
+      fetches: 1,
+      terminate: true,
+    },
+    {
+      name: "a direct stream, terminated",
+      body: `new ReadableStream({ type: "direct", pull(c) { c.write(new Uint8Array(16)); return new Promise(() => {}); } })`,
+      fetches: 1,
+      terminate: true,
+    },
+    {
+      name: "another response's body, terminated",
+      body: `(await fetch(workerData.upstream)).body`,
+      fetches: 2,
+      terminate: true,
+    },
+    {
+      name: "Bun.file(fifo).stream(), terminated",
+      body: `Bun.file(workerData.fifo).stream()`,
+      fetches: 1,
+      terminate: true,
+    },
+    {
+      name: "a direct stream whose pull() exits the worker after a write",
+      body: `new ReadableStream({ type: "direct", pull(c) { c.write(new Uint8Array(16)); process.exit(0); } })`,
+      fetches: 1,
+      terminate: false,
+    },
+  ];
+  // The host process: the target server (never answers), an upstream whose
+  // body never ends, a FIFO the host keeps open so the worker's reader gets
+  // bytes but never EOF, and the one worker that starts the upload.
+  const host = (row: (typeof ROWS)[number], fifo: string) => `
+    const { Worker } = require("node:worker_threads");
+    const { execFileSync } = require("node:child_process");
+    const fs = require("node:fs");
+    const fifo = ${JSON.stringify(fifo)};
+    execFileSync("mkfifo", [fifo]);
+    const fifoFd = fs.openSync(fifo, "r+");
+    fs.writeSync(fifoFd, Buffer.alloc(64, 1));
+    const firstChunk = Promise.withResolvers();
+    const target = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        await req.body.getReader().read();
+        firstChunk.resolve();
+        return new Promise(() => {});
+      },
+    });
+    const upstream = Bun.serve({
+      port: 0,
+      fetch: () => new Response(new ReadableStream({
+        start(c) { c.enqueue(new Uint8Array(1024)); },
+        pull() { return new Promise(() => {}); },
+      })),
+    });
+    const worker = new Worker(
+      'const { workerData } = require("node:worker_threads");' +
+      '(async () => { const body = ' + ${JSON.stringify(row.body)} + '; fetch(workerData.target, { method: "POST", body }).catch(() => {}); })();',
+      { eval: true, workerData: { target: target.url.href, upstream: upstream.url.href, fifo } },
+    );
+    worker.on("error", e => { console.error("worker error:", e); process.exit(1); });
+    const exited = new Promise(resolve => worker.on("exit", resolve));
+    if (${row.terminate}) {
+      await firstChunk.promise;
+      worker.terminate();
+    }
+    console.log("worker exit code:", await exited);
+    fs.closeSync(fifoFd);
+    target.stop(true);
+    upstream.stop(true);
+  `;
+
+  for (const row of ROWS) {
+    test.concurrent(row.name, async () => {
+      using dir = tempDir("worker-upload-teardown", {});
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", host(row, path.join(String(dir), "fifo"))],
+        env: {
+          ...bunEnv,
+          BUN_DEBUG_FetchTasklet: "1",
+          BUN_DESTRUCT_VM_ON_EXIT: "1",
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+          LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dirname, "../../../leaksan.supp")}`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // The debug log lines share stdout with the host's own line.
+      const output = stdout + stderr;
+      const deinits = isDebug ? (output.match(/^\[fetchtasklet\] deinit$/gm)?.length ?? 0) : "release build";
+      const expectedDeinits = isDebug ? row.fetches : "release build";
+      expect({
+        workerExit: output.match(/^worker exit code: (\d+)$/m)?.[1],
+        deinits,
+        sanitizer: output.includes("Sanitizer"),
+        exitCode,
+        // On a failure, everything the host printed.
+        detail: exitCode === 0 && deinits === expectedDeinits ? "" : output,
+      }).toEqual({
+        workerExit: row.terminate ? "1" : "0",
+        deinits: expectedDeinits,
+        sanitizer: false,
+        exitCode: 0,
+        detail: "",
+      });
+    });
+  }
+});

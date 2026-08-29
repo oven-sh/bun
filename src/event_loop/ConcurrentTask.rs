@@ -74,6 +74,7 @@ pub mod task_tag {
         DuplexUpgradeContext,
         FetchTasklet,
         FetchTaskletDeinit,
+        FetchTaskletDrain,
         FetchTaskletPromiseSettle,
         FSWatchTask,
         GetAddrInfoLibuvComplete,

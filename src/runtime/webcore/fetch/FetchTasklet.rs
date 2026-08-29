@@ -67,6 +67,24 @@ impl FetchTaskletDeinitHop {
     }
 }
 
+/// The "request body buffer drained" hop (`on_write_request_data_drain`):
+/// same pointer, its own tag, carrying a ref that running or releasing it drops.
+#[repr(transparent)]
+pub struct FetchTaskletDrainHop(FetchTasklet);
+impl Taskable for FetchTaskletDrainHop {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTaskletDrain;
+    unsafe fn release_unrun(this: *mut Self) {
+        FetchTasklet::deref(this.cast());
+    }
+}
+impl FetchTaskletDrainHop {
+    /// # Safety
+    /// `this` is the tasklet the hop was posted for, with the hop's ref held; JS thread.
+    pub(crate) unsafe fn run(this: *mut Self) -> ElJsResult<()> {
+        FetchTasklet::resume_request_data_stream(this.cast())
+    }
+}
+
 impl Taskable for FetchTasklet {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTasklet;
     /// A progress hop the HTTP thread posted: it carries the +1 that
@@ -501,8 +519,26 @@ impl FetchTasklet {
     /// waits for before the handle closes.
     ///
     /// # Safety
-    /// `this` is live (registered ⇒ not yet deinit'd); JS thread.
+    /// `this` is live (registered ⇒ not yet deinit'd); JS thread. May free it.
     pub(crate) unsafe fn stop_for_vm_teardown(this: *mut FetchTasklet) {
+        // SAFETY: fn contract; neither call drops a ref.
+        let owes_body_ref = unsafe {
+            let tasklet = &mut *this;
+            tasklet.abort_task();
+            tasklet.detach_native_request_body_sink()
+        };
+        if owes_body_ref {
+            // The upload's ref; it can be the last one.
+            FetchTasklet::deref(this);
+        }
+    }
+
+    /// `bun test --isolate` swap (JS thread): only abort. The VM keeps
+    /// running, so the final progress update still cancels the body sink.
+    ///
+    /// # Safety
+    /// `this` is live (registered ⇒ not yet deinit'd); JS thread.
+    pub(crate) unsafe fn abort_for_test_isolation(this: *mut FetchTasklet) {
         // SAFETY: fn contract.
         unsafe { (*this).abort_task() };
     }
@@ -2089,10 +2125,9 @@ impl FetchTasklet {
     /// This is ALWAYS called from the http thread and we cannot touch the buffer here because is locked
     fn on_write_request_data_drain(this: *mut FetchTasklet) {
         let this_ref = Self::from_raw_ref(this);
-        // ref until the main thread callback is called
+        // The hop's ref.
         this_ref.ref_();
-        // `from_callback` heap-allocates a fresh `ConcurrentTaskItem`.
-        let task = ConcurrentTask::from_callback(this, FetchTasklet::resume_request_data_stream);
+        let task = ConcurrentTask::create_from(this.cast::<FetchTaskletDrainHop>());
         this_ref
             .http_ticket
             .as_ref()
@@ -2101,7 +2136,6 @@ impl FetchTasklet {
     }
 
     /// This is ALWAYS called from the main thread
-    // ConcurrentTask::from_callback expects `fn(*mut T) -> bun_event_loop::JsResult<()>`.
     fn resume_request_data_stream(this: *mut FetchTasklet) -> ElJsResult<()> {
         let this_ref = Self::from_raw_mut(this);
         bun_output::scoped_log!(FetchTasklet, "resumeRequestDataStream");
@@ -2294,6 +2328,29 @@ impl FetchTasklet {
             // `write_end_request(Some(_))` is just the balancing deref.
             self.write_end_request(Some(reason));
         }
+    }
+
+    /// Stop phase: nothing else ends a `ByteStream` / `FileReader` sink at
+    /// teardown (a JS pump's controller cell runs the sink's `finalize`).
+    /// Returns whether the caller must release the sink's ref on the tasklet.
+    fn detach_native_request_body_sink(&mut self) -> bool {
+        let global_this = self.global_this;
+        let Some(sink) = self.sink_mut() else {
+            return false;
+        };
+        if sink.ended
+            || !matches!(
+                sink.source,
+                SourceHandle::ByteStream(_) | SourceHandle::FileReader(_)
+            )
+        {
+            return false;
+        }
+        sink.ended = true;
+        sink.done = true;
+        let owes_ref = sink.task.take().is_some();
+        JSSink::<FetchRequestBodySink>::detach(&mut sink.source, &global_this);
+        owes_ref
     }
 
     pub(crate) fn queue(

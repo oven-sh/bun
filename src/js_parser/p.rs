@@ -4222,6 +4222,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         detail: &[u8],
     ) -> Result<(), crate::Error> {
         let text: &'a [u8] = match feature {
+            StrictModeFeature::DeleteBareName => b"\"delete\" of a bare identifier",
             StrictModeFeature::EvalOrArguments => bun_alloc::arena_format!(
                 in self.arena,
                 "Declarations with the name \"{}\"",

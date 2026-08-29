@@ -1,7 +1,7 @@
 #![warn(unused_must_use)]
 use crate::lexer::T;
 use crate::p::P;
-use crate::parser::{JSXTag, options};
+use crate::parser::{JSXTag, options, parse_jsx_namespaced_name};
 use bun_ast::expr::Data as ExprData;
 use bun_ast::flags;
 use bun_ast::op::Level;
@@ -53,11 +53,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // intentionally skips the increment: no property is pushed there, so
                         // `key_prop_i`/`first_spread_prop_i` stay valid indices into `props`.
                         // Parse the prop name
-                        let key_range = p.lexer.range();
-                        let prop_name_literal = p.lexer.identifier;
+                        let (key_range, prop_name_literal) = parse_jsx_namespaced_name(p)?;
                         let special_prop = E::JSXSpecialProp::from_bytes(prop_name_literal)
                             .unwrap_or(E::JSXSpecialProp::Any);
-                        p.lexer.next_inside_jsx_element()?;
 
                         if special_prop == E::JSXSpecialProp::Key {
                             // <ListItem key>

@@ -168,6 +168,7 @@ pub struct LexerSnapshot<'a> {
     pub(crate) string_literal_raw_format: StringLiteralRawFormat,
     pub(crate) track_comments: bool,
     pub(crate) track_react_suppressions: bool,
+    pub(crate) is_typescript: bool,
     // Vec buffer lengths — restore() truncates back to these.
     pub(crate) all_comments_len: usize,
     pub(crate) comments_to_preserve_before_len: usize,
@@ -240,6 +241,8 @@ pub struct Lexer<'a> {
     pub(crate) temp_buffer_u16: Vec<u16>,
     pub(crate) track_comments: bool,
     pub(crate) track_react_suppressions: bool,
+    /// Set by `P::init`. A `>` or `}` in JSX text is an error for TSX, a warning for JSX.
+    pub(crate) is_typescript: bool,
     pub(crate) all_comments: Vec<Range>,
 }
 
@@ -353,6 +356,7 @@ impl<'a> Lexer<'a> {
             string_literal_raw_format: self.string_literal_raw_format,
             track_comments: self.track_comments,
             track_react_suppressions: self.track_react_suppressions,
+            is_typescript: self.is_typescript,
             all_comments_len: self.all_comments.len(),
             comments_to_preserve_before_len: self.comments_to_preserve_before.len(),
         }
@@ -391,6 +395,7 @@ impl<'a> Lexer<'a> {
         self.string_literal_raw_format = original.string_literal_raw_format;
         self.track_comments = original.track_comments;
         self.track_react_suppressions = original.track_react_suppressions;
+        self.is_typescript = original.is_typescript;
 
         debug_assert!(self.all_comments.len() >= original.all_comments_len);
         debug_assert!(
@@ -2248,6 +2253,7 @@ impl<'a> Lexer<'a> {
             temp_buffer_u16: Vec::new(),
             track_comments: false,
             track_react_suppressions: false,
+            is_typescript: false,
             all_comments: Vec::new(),
         }
     }
@@ -2409,6 +2415,10 @@ impl<'a> Lexer<'a> {
                     self.step();
                     self.token = T::TDot;
                 }
+                0x3A => {
+                    self.step();
+                    self.token = T::TColon;
+                }
                 0x3D => {
                     self.step();
                     self.token = T::TEquals;
@@ -2504,30 +2514,7 @@ impl<'a> Lexer<'a> {
                             self.step();
                         }
 
-                        // Parse JSX namespaces. These are not supported by React or TypeScript
-                        // but someone using JSX syntax in more obscure ways may find a use for
-                        // them. A namespaced name is just always turned into a string so you
-                        // can't use this feature to reference JavaScript identifiers.
-                        if self.code_point == 0x3A {
-                            self.step();
-
-                            if is_identifier_start(self.code_point) {
-                                while is_identifier_continue(self.code_point)
-                                    || self.code_point == 0x2D
-                                {
-                                    self.step();
-                                }
-                            } else {
-                                self.add_syntax_error(
-                                    self.range().end_i(),
-                                    format_args!(
-                                        "Expected identifier after \"{}\" in namespaced JSX name",
-                                        bstr::BStr::new(self.raw())
-                                    ),
-                                )?;
-                            }
-                        }
-
+                        // `a:b` is three tokens here, joined by `parse_jsx_namespaced_name`.
                         self.identifier = self.raw();
                         self.token = T::TIdentifier;
                         break;
@@ -2647,9 +2634,52 @@ impl<'a> Lexer<'a> {
     pub(crate) fn expect_jsx_element_child(&mut self, token: T) -> Result<(), Error> {
         if self.token != token {
             self.expected(token)?;
+            return Err(Error::SyntaxError);
         }
 
         self.next_jsx_element_child()
+    }
+
+    /// `>` or `}` in JSX text: an error like tsc (TS1382/TS1381), a warning for JS like Babel.
+    #[cold]
+    #[inline(never)]
+    fn add_invalid_jsx_text_character(&mut self) {
+        if self.is_log_disabled {
+            return;
+        }
+        let (c, replacement) = if self.code_point == 0x7D {
+            ('}', "{'}'}")
+        } else {
+            ('>', "{'>'}")
+        };
+        let r = Range {
+            loc: bun_ast::usize2loc(self.end),
+            len: 1,
+        };
+        let source = self.source;
+        let kind = if self.is_typescript {
+            bun_ast::Kind::Err
+        } else {
+            bun_ast::Kind::Warn
+        };
+        let log = self.log();
+        if !kind.should_print(log.level) {
+            return;
+        }
+        let notes: Box<[bun_ast::Data]> = Box::new([bun_ast::range_data(
+            None,
+            Range::NONE,
+            bun_ast::alloc_print(format_args!(
+                "Did you mean to escape it as \"{}\" instead?",
+                replacement
+            )),
+        )]);
+        let args = format_args!("The character \"{}\" is not valid inside a JSX element", c);
+        if kind == bun_ast::Kind::Err {
+            log.add_range_error_fmt_with_notes(Some(source), r, notes, args);
+        } else {
+            log.add_range_warning_fmt_with_notes(Some(source), r, notes, args);
+        }
     }
 
     pub(crate) fn next_jsx_element_child(&mut self) -> Result<(), Error> {
@@ -2686,6 +2716,11 @@ impl<'a> Lexer<'a> {
                             }
                             0x7B | 0x3C => {
                                 break 'string_literal;
+                            }
+                            0x7D | 0x3E => {
+                                // Not a JSXTextCharacter: https://facebook.github.io/jsx/
+                                self.add_invalid_jsx_text_character();
+                                self.step();
                             }
                             _ => {
                                 // Non-ASCII strings need the slow path
@@ -2879,19 +2914,6 @@ impl<'a> Lexer<'a> {
     pub(crate) fn expect_inside_jsx_element(&mut self, token: T) -> Result<(), Error> {
         if self.token != token {
             self.expected(token)?;
-            return Err(Error::SyntaxError);
-        }
-
-        self.next_inside_jsx_element()
-    }
-
-    pub(crate) fn expect_inside_jsx_element_with_name(
-        &mut self,
-        token: T,
-        name: &[u8],
-    ) -> Result<(), Error> {
-        if self.token != token {
-            self.expected_string(name)?;
             return Err(Error::SyntaxError);
         }
 

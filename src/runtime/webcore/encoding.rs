@@ -502,9 +502,12 @@ fn byte_length_u8<const ENCODING: u8>(input: &[u8]) -> usize {
     }
 }
 
-/// [`write_u8`] for a UTF-16 source. `input` is a JS string's characters and
-/// `to` an `ArrayBuffer`'s storage, which never share memory (the C++
-/// declarations say so too), so every arm is a plain copy.
+/// [`write_u8`] for a UTF-16 source. `input` and `to` never share memory, so
+/// every arm is a plain copy (as in [`write_u8`]): `input` is always a JS
+/// string's characters (`JSString::view()` in `Buffer.prototype.write` /
+/// `Buffer.fill` / `napi_get_value_string_*`), which JSC keeps immutable and
+/// never backs with `ArrayBuffer` storage, and `to` is typed-array storage or a
+/// NAPI caller's own out-buffer. The C++ declarations carry the same contract.
 pub(crate) fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
     input: &[u16],
     to: &mut [u8],

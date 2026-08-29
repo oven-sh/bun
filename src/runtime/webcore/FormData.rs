@@ -40,6 +40,11 @@ impl AsyncFormDataExt for AsyncFormData {
 
         let js_value = match FormData::to_js(global, data, &self.encoding) {
             Ok(v) => v,
+            Err(crate::Error::JSError) => {
+                scoped_log!(FormData, "AsnycFormData.toJS -> failed ");
+                promise.reject(global, global.take_error(JsError::Thrown))?;
+                return Ok(());
+            }
             Err(e) => {
                 scoped_log!(FormData, "AsnycFormData.toJS -> failed ");
                 promise.reject(
@@ -163,10 +168,15 @@ pub(crate) fn to_js_from_multipart_data(
     struct Wrapper<'a> {
         global: &'a JSGlobalObject,
         form: &'a mut DOMFormData,
+        /// Set once an append threw. The remaining entries are skipped.
+        threw: bool,
     }
 
     impl<'a> Wrapper<'a> {
         fn on_entry(wrap: &mut Self, name: bun_semver::String, field: &Field<'_>, buf: &[u8]) {
+            if wrap.threw {
+                return;
+            }
             let value_str: &[u8] = field.value;
             let key = EncodedSlice::utf8(name.slice(buf));
 
@@ -202,7 +212,7 @@ pub(crate) fn to_js_from_multipart_data(
                     }
                 }
 
-                wrap.form.append_blob(
+                let result = wrap.form.append_blob(
                     wrap.global,
                     &key,
                     (&raw mut blob).cast::<c_void>(),
@@ -210,6 +220,7 @@ pub(crate) fn to_js_from_multipart_data(
                 );
                 // `append_blob` dupes the content type; release this stack-local.
                 blob.detach();
+                wrap.threw = result.is_err();
             } else {
                 let value = EncodedSlice::utf8(
                     // > Each part whose `Content-Disposition` header does not
@@ -221,15 +232,24 @@ pub(crate) fn to_js_from_multipart_data(
                     // > `charset` parameter.
                     strings::without_utf8_bom(value_str),
                 );
-                wrap.form.append(&key, &value);
+                wrap.threw = wrap.form.append(wrap.global, &key, &value).is_err();
             }
         }
     }
 
     {
-        let mut wrap = Wrapper { global, form };
+        let mut wrap = Wrapper {
+            global,
+            form,
+            threw: false,
+        };
 
-        if let Err(e) = for_each_multipart_entry(input, boundary, &mut wrap, Wrapper::on_entry) {
+        let parsed = for_each_multipart_entry(input, boundary, &mut wrap, Wrapper::on_entry);
+        // A pending JS exception wins over a parse error found after it.
+        if wrap.threw {
+            return Err(crate::Error::JSError);
+        }
+        if let Err(e) = parsed {
             scoped_log!(FormData, "failed to parse multipart data");
             return Err(e);
         }

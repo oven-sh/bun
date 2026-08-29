@@ -56,7 +56,7 @@ public:
     }
     ExceptionOr<void> setHref(const String&);
 
-    URLSearchParams& searchParams();
+    ExceptionOr<URLSearchParams&> searchParams();
     void markSearchParamsDirty() { m_searchParamsDirty = true; }
 
     size_t memoryCost() const
@@ -77,7 +77,8 @@ private:
         flushPendingSearchParamsUpdate();
         return m_url;
     }
-    void setFullURL(const URL& fullURL) final { setHref(fullURL.string()); }
+    ExceptionOr<void> setFullURL(const URL&) final;
+    ExceptionOr<void> setURL(URL&&);
     void flushPendingSearchParamsUpdate() const;
 
     URL m_url;

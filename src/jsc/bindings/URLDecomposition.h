@@ -27,6 +27,7 @@
 
 #include "root.h"
 
+#include "ExceptionOr.h"
 #include <wtf/URL.h>
 
 #include <wtf/Forward.h>
@@ -42,38 +43,39 @@ public:
     String origin() const;
 
     WEBCORE_EXPORT String protocol() const;
-    void setProtocol(StringView);
+    ExceptionOr<void> setProtocol(StringView);
 
     String username() const;
-    void setUsername(StringView);
+    ExceptionOr<void> setUsername(StringView);
 
     String password() const;
-    void setPassword(StringView);
+    ExceptionOr<void> setPassword(StringView);
 
     WEBCORE_EXPORT String host() const;
-    void setHost(StringView);
+    ExceptionOr<void> setHost(StringView);
 
     WEBCORE_EXPORT String hostname() const;
-    void setHostname(StringView);
+    ExceptionOr<void> setHostname(StringView);
 
     WEBCORE_EXPORT String port() const;
-    void setPort(StringView);
+    ExceptionOr<void> setPort(StringView);
 
     WEBCORE_EXPORT String pathname() const;
-    void setPathname(StringView);
+    ExceptionOr<void> setPathname(StringView);
 
     WEBCORE_EXPORT String search() const;
-    void setSearch(const String&);
+    ExceptionOr<void> setSearch(const String&);
 
     WEBCORE_EXPORT String hash() const;
-    void setHash(StringView);
+    ExceptionOr<void> setHash(StringView);
 
 protected:
     virtual ~URLDecomposition() = default;
 
 private:
     virtual URL fullURL() const = 0;
-    virtual void setFullURL(const URL&) = 0;
+    // The URL setters forward the result: a query too large for URLSearchParams is the one failure.
+    virtual ExceptionOr<void> setFullURL(const URL&) = 0;
 };
 
 } // namespace WebCore

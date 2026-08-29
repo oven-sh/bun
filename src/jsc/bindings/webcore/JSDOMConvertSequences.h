@@ -88,11 +88,18 @@ struct SequenceTraits<
         T&& element)
     {
         ASSERT(index == sequence.size());
+        bool appended;
         if constexpr (std::is_same_v<std::decay_t<T>, JSC::JSValue>) {
             // `JSValue` should not be stored on the heap.
-            sequence.append(JSC::Strong { JSC::getVM(&lexicalGlobalObject), element });
+            appended = sequence.tryAppend(JSC::Strong { JSC::getVM(&lexicalGlobalObject), element });
         } else {
-            sequence.append(std::forward<T>(element));
+            appended = sequence.tryAppend(std::forward<T>(element));
+        }
+        // Same failure as reserveExact: the Vector cannot grow to hold the element.
+        if (!appended) [[unlikely]] {
+            auto& vm = JSC::getVM(&lexicalGlobalObject);
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            throwTypeError(&lexicalGlobalObject, scope);
         }
     }
 };
@@ -263,6 +270,7 @@ struct SequenceConverter {
                 auto convertedValue = Bun::convertIDL<IDLType>(lexicalGlobalObject, indexValue, elementCtx);
                 RETURN_IF_EXCEPTION(scope, {});
                 Traits::append(lexicalGlobalObject, result, i, WTF::move(convertedValue));
+                RETURN_IF_EXCEPTION(scope, {});
             }
             return result;
         }
@@ -278,6 +286,7 @@ struct SequenceConverter {
             auto convertedValue = Bun::convertIDL<IDLType>(lexicalGlobalObject, indexValue, elementCtx);
             RETURN_IF_EXCEPTION(scope, {});
             Traits::append(lexicalGlobalObject, result, i, WTF::move(convertedValue));
+            RETURN_IF_EXCEPTION(scope, {});
         }
         return result;
     }

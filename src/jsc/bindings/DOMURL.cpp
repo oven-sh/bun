@@ -162,10 +162,28 @@ ExceptionOr<void> DOMURL::setHref(const String& url)
     URL completeURL { URL {}, url };
     if (!completeURL.isValid() || !hasValidParsedHost(completeURL, url))
         return Exception { InvalidURLError, url };
-    m_url = WTF::move(completeURL);
+    return setURL(WTF::move(completeURL));
+}
+
+// The URL component setters ignore a value that does not give a valid URL, per the URL spec.
+ExceptionOr<void> DOMURL::setFullURL(const URL& fullURL)
+{
+    URL completeURL { URL {}, fullURL.string() };
+    if (!completeURL.isValid() || !hasValidParsedHost(completeURL, fullURL.string()))
+        return {};
+    return setURL(WTF::move(completeURL));
+}
+
+// The query is parsed before the URL is stored, so a failure leaves both the URL and the params as they were.
+ExceptionOr<void> DOMURL::setURL(URL&& url)
+{
+    if (m_searchParams) {
+        auto result = m_searchParams->updateFromQuery(url.query());
+        if (result.hasException()) [[unlikely]]
+            return result;
+    }
+    m_url = WTF::move(url);
     m_searchParamsDirty = false;
-    if (m_searchParams)
-        m_searchParams->updateFromAssociatedURL();
     return {};
 }
 
@@ -188,10 +206,14 @@ void DOMURL::flushPendingSearchParamsUpdate() const
         self->m_url.setQuery(WTF::move(serialized));
 }
 
-URLSearchParams& DOMURL::searchParams()
+ExceptionOr<URLSearchParams&> DOMURL::searchParams()
 {
-    if (!m_searchParams)
-        m_searchParams = URLSearchParams::create(search(), this);
+    if (!m_searchParams) {
+        auto searchParams = URLSearchParams::create(search(), this);
+        if (searchParams.hasException()) [[unlikely]]
+            return searchParams.releaseException();
+        m_searchParams = searchParams.releaseReturnValue();
+    }
     return *m_searchParams;
 }
 

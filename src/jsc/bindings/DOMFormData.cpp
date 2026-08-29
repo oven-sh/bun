@@ -30,6 +30,7 @@
 
 #include "config.h"
 #include "DOMFormData.h"
+#include "VectorSizeLimit.h"
 #include "wtf/DebugHeap.h"
 #include <wtf/URLParser.h>
 
@@ -42,16 +43,32 @@ DOMFormData::DOMFormData(ScriptExecutionContext* context)
 {
 }
 
+static size_t maxItems()
+{
+    return Bun::maxVectorSize<DOMFormData::Item>();
+}
+
+static Exception tooManyItems()
+{
+    return Exception { RangeError, "FormData maximum size exceeded"_s };
+}
+
 Ref<DOMFormData> DOMFormData::create(ScriptExecutionContext* context)
 {
     return adoptRef(*new DOMFormData(context));
 }
 
-Ref<DOMFormData> DOMFormData::create(ScriptExecutionContext* context, const StringView& urlEncodedString)
+ExceptionOr<Ref<DOMFormData>> DOMFormData::create(ScriptExecutionContext* context, StringView urlEncodedString)
 {
+    auto form = WTF::URLParser::tryParseURLEncodedForm(urlEncodedString, maxItems());
+    if (!form) [[unlikely]]
+        return tooManyItems();
+
     auto newFormData = adoptRef(*new DOMFormData(context));
-    for (auto& entry : WTF::URLParser::parseURLEncodedForm(urlEncodedString)) {
-        newFormData->append(entry.key, entry.value);
+    for (auto& entry : *form) {
+        auto result = newFormData->append(entry.key, entry.value);
+        if (result.hasException()) [[unlikely]]
+            return result.releaseException();
     }
 
     return newFormData;
@@ -92,15 +109,22 @@ static auto createStringEntry(const String& name, const String& value) -> DOMFor
     };
 }
 
-void DOMFormData::append(const String& name, const String& value)
+ExceptionOr<void> DOMFormData::appendItem(Item&& item)
 {
-    m_items.append(createStringEntry(name, value));
+    if (m_items.size() >= maxItems() || !m_items.tryAppend(WTF::move(item))) [[unlikely]]
+        return tooManyItems();
+    return {};
 }
 
-void DOMFormData::append(const String& name, RefPtr<Blob> blob, const String& filename)
+ExceptionOr<void> DOMFormData::append(const String& name, const String& value)
+{
+    return appendItem(createStringEntry(name, value));
+}
+
+ExceptionOr<void> DOMFormData::append(const String& name, RefPtr<Blob> blob, const String& filename)
 {
     blob->setFileName(replaceUnpairedSurrogatesWithReplacementCharacter(String(filename)));
-    m_items.append({ replaceUnpairedSurrogatesWithReplacementCharacter(String(name)), blob });
+    return appendItem({ replaceUnpairedSurrogatesWithReplacementCharacter(String(name)), blob });
 }
 void DOMFormData::remove(const StringView name)
 {
@@ -141,18 +165,18 @@ bool DOMFormData::has(const StringView name)
     return false;
 }
 
-void DOMFormData::set(const String& name, const String& value)
+ExceptionOr<void> DOMFormData::set(const String& name, const String& value)
 {
-    set(name, { name, value });
+    return set(name, { name, value });
 }
 
-void DOMFormData::set(const String& name, RefPtr<Blob> blob, const String& filename)
+ExceptionOr<void> DOMFormData::set(const String& name, RefPtr<Blob> blob, const String& filename)
 {
     blob->setFileName(filename);
-    set(name, { name, blob });
+    return set(name, { name, blob });
 }
 
-void DOMFormData::set(const String& name, Item&& item)
+ExceptionOr<void> DOMFormData::set(const String& name, Item&& item)
 {
     std::optional<size_t> initialMatchLocation;
 
@@ -171,10 +195,10 @@ void DOMFormData::set(const String& name, Item&& item)
             return item.name == name;
         },
             *initialMatchLocation + 1);
-        return;
+        return {};
     }
 
-    m_items.append(WTF::move(item));
+    return appendItem(WTF::move(item));
 }
 
 DOMFormData::Iterator::Iterator(DOMFormData& target)

@@ -757,6 +757,26 @@ export const dnsCacheSeed = $newRustFunction("runtime/dns_jsc/dns.rs", "internal
   addresses: string[],
 ) => number[];
 
+export const dnsCacheInternals = {
+  /**
+   * Connect-path DNS requests currently allocated: the cached entries plus any
+   * lookup the (full) cache had no room for that is still referenced.
+   * `Bun.dns.getCacheStats().size` only counts the former.
+   */
+  liveRequests: $newRustFunction("runtime/dns_jsc/dns.rs", "internal.liveRequestsForTesting", 0) as () => number,
+  /**
+   * Hold a reference on the cache entry for `hostname`, as a connect does from
+   * its lookup until it settles. A referenced entry cannot be evicted.
+   */
+  acquire: $newRustFunction("runtime/dns_jsc/dns.rs", "internal.acquireCacheEntryForTesting", 1) as (
+    hostname: string,
+  ) => void,
+  /** Drop a reference taken by `acquire`, through the same path a settled connect releases its entry. */
+  release: $newRustFunction("runtime/dns_jsc/dns.rs", "internal.releaseCacheEntryForTesting", 1) as (
+    hostname: string,
+  ) => void,
+};
+
 export const fetchH2Internals = {
   liveCounts: $newRustFunction("http/H2Client.rs", "TestingAPIs.liveCounts", 0) as () => {
     sessions: number;

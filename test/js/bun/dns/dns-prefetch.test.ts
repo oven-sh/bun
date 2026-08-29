@@ -72,3 +72,75 @@ describe("dns.prefetch", () => {
     expect(newStats2.cacheHitsCompleted).toBeGreaterThan(currentStats.cacheHitsCompleted);
   });
 });
+
+// The cache has a fixed number of slots and can only evict entries nothing
+// references. Once every slot is referenced, a lookup for another name still
+// runs, but its request never becomes an entry, and only entries used to get
+// freed: such a request leaked as soon as its last reference went away. Runs in
+// its own process because filling the cache is process-global.
+test("a lookup the full cache has no room for is freed once nothing references it", async () => {
+  const script = /* js */ `
+    const { dnsCacheSeed, dnsCacheInternals } = require("bun:internal-for-testing");
+    const { liveRequests, acquire, release } = dnsCacheInternals;
+    const misses = () => Bun.dns.getCacheStats().cacheMisses;
+    const size = () => Bun.dns.getCacheStats().size;
+
+    // Reference every entry the way a connect that has not settled yet does,
+    // until seeding (which stores entries the way a lookup does) finds nothing
+    // left to evict.
+    const held = [];
+    for (;;) {
+      const host = "held-" + held.length + ".test";
+      try {
+        dnsCacheSeed(host, ["127.0.0.1"]);
+      } catch (e) {
+        if (!e.message.includes("full")) throw e;
+        break;
+      }
+      acquire(host);
+      held.push(host);
+    }
+    const out = { held: held.length, size: { full: size() } };
+
+    // Nothing but its own lookup references a prefetch, so its request has to
+    // go as soon as the lookup lands (on the work pool, hence the wait).
+    let live = liveRequests();
+    let missed = misses();
+    Bun.dns.prefetch("localhost");
+    const deadline = Date.now() + 2_000;
+    while (liveRequests() !== live && Date.now() < deadline) await Bun.sleep(1);
+    out.prefetch = { misses: misses() - missed, leaked: liveRequests() - live };
+
+    // A connect references its request until it settles. Let it settle once the
+    // held entries have been released: the cache is then back under its
+    // high-water mark, which is when a settled request that IS an entry is kept.
+    using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    live = liveRequests();
+    missed = misses();
+    const connecting = Bun.connect({ hostname: "localhost", port: listener.port, socket: { data() {} } });
+    out.connect = { misses: misses() - missed, pending: liveRequests() - live };
+    for (const host of held) release(host);
+    out.size.released = size();
+    using socket = await connecting;
+    out.connect.leaked = liveRequests() - size() - out.prefetch.leaked;
+    console.log(JSON.stringify(out));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+    out: {
+      // MAX_ENTRIES in dns.rs.
+      held: 256,
+      // Releasing drops entries until the cache is under 80% full and keeps
+      // the rest.
+      size: { full: 256, released: 204 },
+      // Each lookup missed (so it allocated a request) with the cache full.
+      // Without the fix both `leaked` are 1: the prefetch's request once its
+      // lookup landed, the connect's once the connect settled.
+      prefetch: { misses: 1, leaked: 0 },
+      connect: { misses: 1, pending: 1, leaked: 0 },
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});

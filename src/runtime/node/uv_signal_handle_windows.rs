@@ -24,7 +24,7 @@ extern "C" fn Bun__UVSignalHandle__init(
     // SAFETY: `signal` is a freshly heap-allocated, properly aligned uv_signal_t and
     // `uv_loop()` returns the VM's live libuv loop.
     let mut rc = unsafe { libuv::uv_signal_init(global.bun_vm().uv_loop(), signal) };
-    if rc.errno().is_some() {
+    if rc.is_err() {
         // SAFETY: `signal` was just allocated via heap::into_raw above and never handed out.
         drop(unsafe { bun_core::heap::take(signal) });
         return core::ptr::null_mut();
@@ -32,7 +32,7 @@ extern "C" fn Bun__UVSignalHandle__init(
 
     // SAFETY: `signal` was successfully initialized by uv_signal_init above.
     rc = unsafe { libuv::uv_signal_start(signal, Some(callback), signal_num) };
-    if rc.errno().is_some() {
+    if rc.is_err() {
         // SAFETY: `signal` is an initialized handle; uv_close will invoke the cb once
         // the handle is fully closed, at which point we free the allocation.
         unsafe { libuv::uv_close(signal.cast(), Some(free_with_default_allocator)) };

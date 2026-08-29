@@ -154,6 +154,9 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     //    for the entire process.
     unsafe { bun_core::init_argv(argc, argv) };
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pregrow_fd_table();
+
     // 1. Crash handler first so anything below gets a usable trace.
     bun_crash_handler::init();
 
@@ -196,6 +199,37 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     crate::cli::Cli::start();
     // `Global::exit` is `-> !`; it coerces to the `c_int` return type.
     Global::exit(0)
+}
+
+/// Linux's `expand_fdtable()` calls `synchronize_rcu()` every time the fd table
+/// doubles (64 → 128 → 256 …) once the process has a second thread, and one RCU
+/// grace period is tens of milliseconds on a many-core machine — a thread that
+/// happens to allocate fd 64 during `bun install` or a burst of `Bun.spawn`
+/// stalls for ~100ms. While we are still single-threaded the same growth is a
+/// memcpy, and the table never shrinks, so size it once here.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn pregrow_fd_table() {
+    // SAFETY: plain fcntl/close on our own descriptors; no other thread exists yet.
+    unsafe {
+        let mut lim: libc::rlimit = core::mem::zeroed();
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut lim) != 0 {
+            return;
+        }
+        let want = core::cmp::min(lim.rlim_cur, 1024) as c_int;
+        if want <= 64 {
+            return;
+        }
+        for src in [2, 1, 0] {
+            let fd = libc::fcntl(src, libc::F_DUPFD_CLOEXEC, want - 1);
+            if fd >= 0 {
+                libc::close(fd);
+                return;
+            }
+            if std::io::Error::last_os_error().raw_os_error() != Some(libc::EBADF) {
+                return;
+            }
+        }
+    }
 }
 
 /// Point the bundled C/C++ dependencies that have an allocator hook at

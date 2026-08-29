@@ -607,10 +607,9 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     pub fn get_native_handle(&self) -> Option<*mut c_void> {
         match self.socket {
             InternalSocket::Connected(s) => sock(s).get_native_handle(),
-            InternalSocket::Connecting(s) => {
-                let h = conn(s).get_native_handle();
-                if h.is_null() { None } else { Some(h) }
-            }
+            // A connecting socket has no fd / `SSL` yet
+            // (`us_connecting_socket_get_native_handle` returns a `-1` sentinel).
+            InternalSocket::Connecting(_) => None,
             InternalSocket::UpgradedDuplex(s) if IS_SSL => duplex(s).ssl().map(|p| p.cast()),
             InternalSocket::UpgradedDuplex(_) => None,
             #[cfg(windows)]
@@ -636,6 +635,25 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             }
             InternalSocket::Connecting(s) => {
                 conn(s).ext::<Option<NonNull<Owner>>>().take().is_some()
+            }
+            _ => false,
+        }
+    }
+
+    /// Point the socket's ext slot at `owner` (or clear it). Every socket in
+    /// a Bun-created group has a one-pointer ext slot (`connect_group`,
+    /// `adopt_group`, the listen/connect paths all size it as
+    /// `Option<NonNull<_>>`), so this writes exactly that pointer. Returns
+    /// `false` for transports without ext storage.
+    pub fn set_ext_owner<Owner>(&self, owner: Option<NonNull<Owner>>) -> bool {
+        match self.socket {
+            InternalSocket::Connected(s) => {
+                *sock(s).ext::<Option<NonNull<Owner>>>() = owner;
+                true
+            }
+            InternalSocket::Connecting(s) => {
+                *conn(s).ext::<Option<NonNull<Owner>>>() = owner;
+                true
             }
             _ => false,
         }

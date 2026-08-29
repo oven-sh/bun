@@ -47,10 +47,6 @@ impl ConnectingSocket {
         us_connecting_socket_get_dns_error(self)
     }
 
-    pub(crate) fn get_native_handle(&mut self) -> *mut c_void {
-        us_connecting_socket_get_native_handle(self)
-    }
-
     pub(crate) fn is_closed(&mut self) -> bool {
         us_connecting_socket_is_closed(self) == 1
     }
@@ -88,9 +84,6 @@ unsafe extern "C" {
     pub(crate) safe fn us_connecting_socket_ext(s: &mut ConnectingSocket) -> *mut c_void;
     pub(crate) safe fn us_connecting_socket_get_error(s: &mut ConnectingSocket) -> i32;
     pub(crate) safe fn us_connecting_socket_get_dns_error(s: &mut ConnectingSocket) -> i32;
-    pub(crate) safe fn us_connecting_socket_get_native_handle(
-        s: &mut ConnectingSocket,
-    ) -> *mut c_void;
     pub(crate) safe fn us_connecting_socket_is_closed(s: &mut ConnectingSocket) -> i32;
     pub(crate) safe fn us_connecting_socket_is_shut_down(s: &mut ConnectingSocket) -> i32;
     pub(crate) safe fn us_connecting_socket_long_timeout(s: &mut ConnectingSocket, seconds: c_uint);

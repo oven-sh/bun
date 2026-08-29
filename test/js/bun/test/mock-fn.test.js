@@ -1157,6 +1157,54 @@ describe("spyOn", () => {
       expect(fn).not.toHaveBeenCalled();
     });
 
+    // A non-function index gets a getter/setter spy, like a named property does.
+    // The sparse entry used to hold the bare mock with the accessor attribute, so the
+    // next read or write of that index crashed the process.
+    test("spyOn works with indexed properties that are not functions", () => {
+      const arr = [];
+      arr[0] = 42;
+
+      const fn = spyOn(arr, 0);
+      expect(arr[0]).toBe(42);
+      expect(fn).toHaveBeenCalledTimes(1);
+      arr[0] = 7;
+      expect(fn).toHaveBeenCalledTimes(2);
+      expect(arr[0]).toBe(42);
+
+      fn.mockRestore();
+      expect(arr[0]).toBe(42);
+      arr[0] = 7;
+      expect(arr[0]).toBe(7);
+      expect(fn).not.toHaveBeenCalled();
+    });
+
+    test("spyOn works with a large sparse index that is not a function", () => {
+      const obj = {};
+      obj[3221225473] = [1.5];
+
+      const fn = spyOn(obj, 3221225473);
+      expect(obj[3221225473]).toEqual([1.5]);
+      obj[3221225473] = 5;
+      expect(obj[3221225473]).toEqual([1.5]);
+      expect(fn).toHaveBeenCalledTimes(3);
+
+      fn.mockRestore();
+      expect(obj[3221225473]).toEqual([1.5]);
+      expect(fn).not.toHaveBeenCalled();
+    });
+
+    test("spyOn works with an index that does not exist yet", () => {
+      const obj = {};
+
+      const fn = spyOn(obj, 5);
+      expect(obj[5]).toBeUndefined();
+      obj[5] = 1;
+      expect(fn).toHaveBeenCalledTimes(2);
+
+      fn.mockRestore();
+      expect(obj[5]).toBeUndefined();
+    });
+
     // The engine serves a function's `prototype` property specially, so it cannot be
     // replaced with a getter/setter spy; historically this crashed the process.
     test("spyOn on a function's prototype property throws instead of crashing", () => {

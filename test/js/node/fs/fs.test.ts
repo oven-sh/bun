@@ -4482,54 +4482,42 @@ describe("fs/promises", () => {
     expect(files.length).toBeGreaterThan(0);
   });
 
-  // Node's listing of test/js/node (thousands of entries) is the oracle for the
-  // four tests below. Listings are compared as sets: their order is not part of
-  // the contract, and sorting thousands of entries costs seconds in a debug build.
-  const oracleRoot = resolve(import.meta.dir, "../");
+  // Node lists the same tree (test/js/node) as the oracle for the four tests below.
   const oracleNode = nodeExe();
-  type NodeDirent = { path: string; name: string };
-  // NUL cannot occur in a file name, so the key keeps the parentPath/name
-  // split visible: a wrong split would still join to the same path.
-  const direntKey = (parentPath: string, name: string) => parentPath + "\0" + name;
-  const thisFileKey = direntKey(import.meta.dir, path.basename(import.meta.path));
-
-  async function nodeReaddir<T extends string | NodeDirent>(options: string): Promise<T[]> {
-    await using proc = Bun.spawn({
-      cmd: [
-        oracleNode!,
-        "-e",
-        `const entries = require("fs").readdirSync(${JSON.stringify(oracleRoot)}, ${options});
-         process.stdout.write(JSON.stringify(entries.map(v => (typeof v === "string" ? v : { path: v.parentPath, name: v.name }))));`,
-      ],
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    return JSON.parse(stdout);
-  }
-
-  // Same entries on both sides, none missing, none extra, none duplicated.
-  // Reports the differences instead of the two full listings.
-  function expectSameEntries(actual: string[], expected: string[]) {
-    const actualSet = new Set(actual);
-    const expectedSet = new Set(expected);
-    expect({
-      count: actual.length,
-      missing: expected.filter(entry => !actualSet.has(entry)),
-      extra: actual.filter(entry => !expectedSet.has(entry)),
-    }).toEqual({ count: expected.length, missing: [], extra: [] });
-  }
 
   it.concurrent.skipIf(!oracleNode)(
     "readdir(path, {recursive: true}) produces the same result as Node.js",
     async () => {
-      const [bun, node] = await Promise.all([
-        promises.readdir(oracleRoot, { recursive: true }),
-        nodeReaddir<string>("{ recursive: true }"),
+      const full = resolve(import.meta.dir, "../");
+      const [bun, subprocess] = await Promise.all([
+        (async function () {
+          const files = await promises.readdir(full, { recursive: true });
+          files.sort();
+          return files;
+        })(),
+        (async function () {
+          const subprocess = Bun.spawn({
+            cmd: [
+              oracleNode!,
+              "-e",
+              `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
+                full,
+              )}, { recursive: true }).sort()), null, 2)`,
+            ],
+            cwd: process.cwd(),
+            stdout: "pipe",
+            stderr: "pipe",
+            stdin: "inherit",
+          });
+          await subprocess.exited;
+          return subprocess;
+        })(),
       ]);
-      expect(node).toContain(relative(oracleRoot, import.meta.path));
-      expectSameEntries(bun, node);
+
+      const [text, stderr] = await Promise.all([subprocess.stdout.text(), subprocess.stderr.text()]);
+      expect({ stderr, exitCode: subprocess.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const node = JSON.parse(text);
+      expect(bun).toEqual(node as string[]);
     },
     100000,
   );
@@ -4537,16 +4525,40 @@ describe("fs/promises", () => {
   it.concurrent.skipIf(!oracleNode)(
     "readdir(path, {withFileTypes: true}) produces the same result as Node.js",
     async () => {
-      const [bun, node] = await Promise.all([
-        promises.readdir(oracleRoot, { withFileTypes: true }),
-        nodeReaddir<NodeDirent>("{ withFileTypes: true }"),
+      const full = resolve(import.meta.dir, "../");
+      const [bun, subprocess] = await Promise.all([
+        (async function () {
+          const files = await promises.readdir(full, { withFileTypes: true });
+          files.sort();
+          return files;
+        })(),
+        (async function () {
+          const subprocess = Bun.spawn({
+            cmd: [
+              oracleNode!,
+              "-e",
+              `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
+                full,
+              )}, { withFileTypes: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort()), null, 2)`,
+            ],
+            cwd: process.cwd(),
+            stdout: "pipe",
+            stderr: "pipe",
+            stdin: "inherit",
+          });
+          await subprocess.exited;
+          return subprocess;
+        })(),
       ]);
-      // Not recursive: every entry is a direct child of the root.
-      expect(new Set(node.map(v => v.path))).toEqual(new Set([oracleRoot]));
-      expect(node).toContainEqual({ path: oracleRoot, name: path.basename(import.meta.dir) });
-      expectSameEntries(
-        bun.map(v => direntKey(v.parentPath, v.name)),
-        node.map(v => direntKey(v.path, v.name)),
+
+      const [text, stderr] = await Promise.all([subprocess.stdout.text(), subprocess.stderr.text()]);
+      expect({ stderr, exitCode: subprocess.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const node = JSON.parse(text);
+      expect(bun.length).toEqual(node.length);
+      expect([...new Set(node.map(v => v.parentPath ?? v.path))]).toEqual([full]);
+      expect([...new Set(bun.map(v => v.parentPath ?? v.path))]).toEqual([full]);
+      expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
+        node.map(v => join(v.path, v.name)).sort(),
       );
     },
     100000,
@@ -4555,15 +4567,39 @@ describe("fs/promises", () => {
   it.concurrent.skipIf(!oracleNode)(
     "readdir(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js",
     async () => {
-      const [bun, node] = await Promise.all([
-        promises.readdir(oracleRoot, { withFileTypes: true, recursive: true }),
-        nodeReaddir<NodeDirent>("{ withFileTypes: true, recursive: true }"),
+      const full = resolve(import.meta.dir, "../");
+      const [bun, subprocess] = await Promise.all([
+        (async function () {
+          const files = await promises.readdir(full, { withFileTypes: true, recursive: true });
+          files.sort((a, b) => a.path.localeCompare(b.path));
+          return files;
+        })(),
+        (async function () {
+          const subprocess = Bun.spawn({
+            cmd: [
+              oracleNode!,
+              "-e",
+              `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
+                full,
+              )}, { withFileTypes: true, recursive: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
+            ],
+            cwd: process.cwd(),
+            stdout: "pipe",
+            stderr: "pipe",
+            stdin: "inherit",
+          });
+          await subprocess.exited;
+          return subprocess;
+        })(),
       ]);
-      const nodeKeys = node.map(v => direntKey(v.path, v.name));
-      expect(nodeKeys).toContain(thisFileKey);
-      expectSameEntries(
-        bun.map(v => direntKey(v.parentPath, v.name)),
-        nodeKeys,
+
+      const [text, stderr] = await Promise.all([subprocess.stdout.text(), subprocess.stderr.text()]);
+      expect({ stderr, exitCode: subprocess.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const node = JSON.parse(text);
+      expect(bun.length).toEqual(node.length);
+      expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
+      expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
+        node.map(v => join(v.path, v.name)).sort(),
       );
     },
     100000,
@@ -4572,14 +4608,39 @@ describe("fs/promises", () => {
   it.concurrent.skipIf(!oracleNode)(
     "readdirSync(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js",
     async () => {
-      const pending = nodeReaddir<NodeDirent>("{ withFileTypes: true, recursive: true }");
-      const bun = readdirSync(oracleRoot, { withFileTypes: true, recursive: true });
-      const node = await pending;
-      const nodeKeys = node.map(v => direntKey(v.path, v.name));
-      expect(nodeKeys).toContain(thisFileKey);
-      expectSameEntries(
-        bun.map(v => direntKey(v.parentPath, v.name)),
-        nodeKeys,
+      const full = resolve(import.meta.dir, "../");
+      const [bun, subprocess] = await Promise.all([
+        (async function () {
+          const files = readdirSync(full, { withFileTypes: true, recursive: true });
+          files.sort((a, b) => a.path.localeCompare(b.path));
+          return files;
+        })(),
+        (async function () {
+          const subprocess = Bun.spawn({
+            cmd: [
+              oracleNode!,
+              "-e",
+              `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
+                full,
+              )}, { withFileTypes: true, recursive: true }).map(v => ({ path: v.parentPath ?? v.path, name: v.name })).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
+            ],
+            cwd: process.cwd(),
+            stdout: "pipe",
+            stderr: "pipe",
+            stdin: "inherit",
+          });
+          await subprocess.exited;
+          return subprocess;
+        })(),
+      ]);
+
+      const [text, stderr] = await Promise.all([subprocess.stdout.text(), subprocess.stderr.text()]);
+      expect({ stderr, exitCode: subprocess.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const node = JSON.parse(text);
+      expect(bun.length).toEqual(node.length);
+      expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
+      expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
+        node.map(v => join(v.path, v.name)).sort(),
       );
     },
     100000,

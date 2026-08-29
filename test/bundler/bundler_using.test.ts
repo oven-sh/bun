@@ -142,7 +142,7 @@ describe.concurrent("bun run", () => {
 });
 
 // Every form is parsed inside an async function by Bun.Transpiler (target bun keeps
-// the syntax) and by JavaScriptCore (`new Function`). The accept/reject verdicts must
+// the syntax) and by JavaScriptCore (indirect `eval`). The accept/reject verdicts must
 // agree. Messages differ, so only the verdict is compared.
 test("Bun.Transpiler and JavaScriptCore agree on where using declarations may appear", () => {
   const forms = [
@@ -211,7 +211,7 @@ test("Bun.Transpiler and JavaScriptCore agree on where using declarations may ap
         }
       }),
     );
-  const jsc = verdicts(code => new Function(code));
+  const jsc = verdicts(code => (0, eval)(`(${code})`));
   expect(Object.values(jsc)).toContain("accepted");
   expect(Object.values(jsc)).toContain("rejected");
   expect(verdicts(code => transpiler.transformSync(code))).toEqual(jsc);

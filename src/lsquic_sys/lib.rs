@@ -180,6 +180,7 @@ unsafe extern "C" {
         out: &mut NqTransportParams,
     ) -> c_int;
     safe fn us_nq_tp_size() -> usize;
+    safe fn us_nq_conn_info_size() -> usize;
 
     safe fn lsquic_stream_id(s: &lsquic_stream) -> u64;
     safe fn lsquic_stream_conn(s: &lsquic_stream) -> *mut lsquic_conn;
@@ -1686,6 +1687,12 @@ pub fn assert_layout() {
         us_nq_driver_size(),
         core::mem::size_of::<DriverNode>(),
         "us_nq_driver_s layout mismatch between node_quic_shim.c and lsquic_sys"
+    );
+    assert_eq!(
+        us_nq_conn_info_size(),
+        core::mem::size_of::<ConnInfo>(),
+        "lsquic_conn_info layout mismatch: Conn::info passes a stack ConnInfo \
+         that lsquic fills with sizeof(struct lsquic_conn_info) bytes"
     );
     assert_eq!(
         us_nq_tp_size(),

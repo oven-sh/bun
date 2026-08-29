@@ -649,7 +649,7 @@ impl S3UploadStreamWrapper {
             S3UploadResult::Success => {
                 let uploaded = JSValue::js_number(self_.task.uploaded_bytes.get() as f64);
                 if let Some(sink) = self_.sink_mut() {
-                    sink.pending.run();
+                    sink.pending.get_mut_unique().run();
                     if settled.is_ok() && sink.flush_promise.has_value() {
                         settled = sink.flush_promise.resolve(&global, JSValue::js_number(0.0));
                     }
@@ -691,8 +691,9 @@ impl S3UploadStreamWrapper {
                     );
                     sink.ended = true;
                     sink.done = true;
-                    sink.pending.result = crate::webcore::streams::Writable::Done;
-                    sink.pending.run();
+                    let pending = sink.pending.get_mut_unique();
+                    pending.result = crate::webcore::streams::Writable::Done;
+                    pending.run();
                     if settled.is_ok() && sink.flush_promise.has_value() {
                         settled = sink.flush_promise.reject(&global, Ok(js_err));
                     }
@@ -1049,7 +1050,8 @@ pub(crate) fn upload_stream(
     let assignment_result: JSValue = NetworkSinkJSSink::assign_to_stream(
         global_this,
         readable_stream.value,
-        NonNull::from(sink),
+        NonNull::from(&mut *sink),
+        |s| sink.source = s,
     );
     assignment_result.ensure_still_alive();
 
@@ -1450,18 +1452,9 @@ pub(crate) fn readable_stream(
     let global_static = GlobalRef::from(global_this);
 
     // Ownership of the heap-allocated NewSource transfers to the JS wrapper (m_ctx) via
-    // `to_readable_stream()`/`to_js()`; the wrapper's finalize() reclaims it.
-    let reader: *mut crate::webcore::byte_stream::Source =
-        crate::webcore::byte_stream::Source::new(crate::webcore::readable_stream::NewSource {
-            context: ByteStream::default(),
-            global_this: Some(bun_ptr::BackRef::new(global_this)),
-            ..Default::default()
-        });
-    // SAFETY: freshly heap-allocated via TrivialNew; exclusive access until handed to JS below.
-    let reader_mut = unsafe { &mut *reader };
-
-    reader_mut.context.setup();
-    let readable_value = reader_mut.to_readable_stream(global_this)?;
+    // `to_readable_stream()`; the wrapper's finalize() releases it.
+    let reader = crate::webcore::byte_stream::Source::new(ByteStream::default(), global_this);
+    let readable_value = reader.to_readable_stream(global_this)?;
 
     let wrapper = S3DownloadStreamWrapper::new(S3DownloadStreamWrapper {
         stream: Default::default(),
@@ -1469,15 +1462,13 @@ pub(crate) fn readable_stream(
         global: global_static,
         task: Cell::new(core::ptr::null_mut()),
     });
-    // SAFETY: `reader` is the live source made above; `wrapper` the live heap allocation.
-    unsafe { (*wrapper).stream.hold(&raw mut reader_mut.context) };
+    // SAFETY: `wrapper` is the live heap allocation made above.
+    unsafe { (*wrapper).stream.hold_source(&reader) };
 
-    reader_mut
+    reader
         .producer
         .set(crate::webcore::streams::SourceHandle::S3DownloadBody(
-            // SAFETY: `wrapper` is the live heap allocation; cleared from the producer slot before
-            // it is freed (`ProducerHold::take`).
-            unsafe { bun_ptr::BackRef::from_raw(wrapper) },
+            bun_ptr::BackRef::from(NonNull::new(wrapper).expect("heap::alloc")),
         ));
 
     let task = download_stream(

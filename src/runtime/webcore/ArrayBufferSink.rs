@@ -66,8 +66,7 @@ impl ArrayBufferSink {
         Ok(JSValue::js_number(0.0))
     }
 
-    /// The sink a new `JSArrayBufferSink` wrapper owns; its `finalize`
-    /// [`destroy`](Self::destroy)s it.
+    /// The sink a new `JSArrayBufferSink` wrapper owns; its `finalize` drops it.
     pub(crate) fn construct() -> core::ptr::NonNull<Self> {
         bun_core::heap::into_raw_nn(Box::new(ArrayBufferSink {
             bytes: Vec::<u8>::default(),
@@ -115,15 +114,6 @@ impl ArrayBufferSink {
         Ok(())
     }
 
-    /// # Safety
-    /// `this` is the allocation `js_construct` leaked into the JS wrapper, whose
-    /// `__finalize` (the sole caller) frees it exactly once, here.
-    pub(crate) unsafe fn destroy(this: *mut Self) {
-        // SAFETY: reclaiming ownership drops `bytes` (Vec<u8> impls Drop) and
-        // frees the box.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
-
     pub(crate) fn end_from_js(
         &mut self,
         _global_this: &JSGlobalObject,
@@ -165,13 +155,18 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
     const HAS_CONSTRUCT: bool = true;
     const HAS_FLUSH_FROM_JS: bool = true;
     const START_TAG: Option<streams::StartTag> = Some(streams::StartTag::ArrayBufferSink);
+    const FINALIZE: crate::webcore::sink::FinalizeReceiver =
+        crate::webcore::sink::FinalizeReceiver::Box;
 
     crate::impl_js_sink_forwarders!();
 
-    fn finalize(this: bun_ptr::ThisPtr<Self>) {
-        // SAFETY: trait contract — `this` is the wrapper's live sink, which
-        // `construct` allocated for it alone; nothing uses it afterwards.
-        unsafe { Self::destroy(this.as_ptr()) };
+    fn finalize(_this: bun_ptr::ThisPtr<Self>) {
+        unreachable!("ArrayBufferSink is released through finalize_boxed");
+    }
+    /// The allocation `construct` leaked into the JS wrapper; dropping it
+    /// frees `bytes` and the box.
+    fn finalize_boxed(self: Box<Self>) {
+        drop(self);
     }
     fn construct() -> core::ptr::NonNull<Self> {
         Self::construct()

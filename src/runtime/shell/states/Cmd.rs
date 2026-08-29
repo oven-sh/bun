@@ -769,21 +769,19 @@ impl Cmd {
                     }
                 } else if crate::webcore::ReadableStream::from_js(jsval, global)?.is_some() {
                     panic!("TODO SHELL READABLE STREAM");
-                } else if let Some(req) = jsval.as_::<crate::webcore::Response>() {
-                    // SAFETY: `as_` returns a live JSC-owned `*mut Response`;
-                    // `get_body_value` is `&self`.
-                    let req = unsafe { &*req };
-                    req.get_body_value().to_blob_if_possible();
+                } else if let Some(req) = jsval.as_class_ref::<crate::webcore::Response>() {
+                    let body = req.body_value();
+                    body.with_mut(|v| v.to_blob_if_possible());
                     if flags.stdin() {
-                        let b = req.get_body_value().use_as_any_blob();
+                        let b = body.with_mut(|v| v.use_as_any_blob());
                         stdio[STDIN_NO].extract_blob(global, b, STDIN_NO as i32)?;
                     }
                     if flags.stdout() {
-                        let b = req.get_body_value().use_as_any_blob();
+                        let b = body.with_mut(|v| v.use_as_any_blob());
                         stdio[STDOUT_NO].extract_blob(global, b, STDOUT_NO as i32)?;
                     }
                     if flags.stderr() {
-                        let b = req.get_body_value().use_as_any_blob();
+                        let b = body.with_mut(|v| v.use_as_any_blob());
                         stdio[STDERR_NO].extract_blob(global, b, STDERR_NO as i32)?;
                     }
                 } else {

@@ -129,7 +129,7 @@ fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
 }
 
 // The #[bun_jsc::host_fn] attribute macro emits the `extern "C"` shim with the
-// correct calling convention and `#[unsafe(no_mangle)]` under the exported name.
+// correct calling convention under the exported name.
 #[bun_jsc::host_fn(export = "Bun__randomUUIDv7")]
 fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_undef::<2>();
@@ -360,8 +360,8 @@ fn bun_random_uuid_v5(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     encoding.encode_with_max_size(global, 32, &uuid.bytes)
 }
 
-#[unsafe(no_mangle)]
-extern "C" fn CryptoObject__create(global: &JSGlobalObject) -> JSValue {
+// HOST_EXPORT(CryptoObject__create, c)
+pub fn crypto_object_create(global: &JSGlobalObject) -> JSValue {
     bun_jsc::mark_binding!();
 
     // Box::new aborts on OOM, so an out-of-memory throw arm is unreachable.

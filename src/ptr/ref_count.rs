@@ -541,6 +541,16 @@ impl<T: AnyRefCounted> RefPtr<T> {
         Self(ptr)
     }
 
+    /// Adopt a freshly boxed `T` (its embedded count is the initial 1) as its
+    /// first `RefPtr`.
+    #[inline]
+    pub fn from_box(boxed: Box<T>) -> Self {
+        let ptr = bun_core::heap::into_raw_nn(boxed);
+        // SAFETY: sole owner of a live heap `T`.
+        debug_assert!(unsafe { T::rc_has_one_ref(ptr.as_ptr()) });
+        Self(ptr)
+    }
+
     /// [`new`](Self::new) for a `T` that stores its own root pointer (to hand
     /// out [`ThisPtr`](crate::ThisPtr)s from `&self` entry points). `init`
     /// receives a [`SelfRoot`](crate::SelfRoot) to store in the value; the

@@ -204,7 +204,7 @@ where
         self.request_body
             .get()
             .as_ref()
-            .map(|h| unsafe { &mut (*h.as_ptr()).value })
+            .map(|h| unsafe { h.value.get_mut() })
     }
     #[inline]
     fn set_signal(&self, sig: *mut AbortSignal) {

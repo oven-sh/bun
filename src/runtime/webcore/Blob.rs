@@ -1318,6 +1318,7 @@ impl BlobExt for Blob {
             global_this,
             readable_stream.value,
             file_sink.this_ptr().into(),
+            |s| file_sink.source.set(s),
         );
 
         assignment_result.ensure_still_alive();
@@ -4262,7 +4263,7 @@ pub(crate) fn write_file_internal(
 
     // TODO: implement a writev() fast path
     let source_blob: Blob = 'brk: {
-        // `Response` and `Request` both expose `get_body_value()` /
+        // `Response` and `Request` both expose `body_value()` /
         // `get_body_readable_stream()` (`BodyMixin`). Every body borrow below
         // is re-derived and scoped so none spans the JS-running calls in the
         // arms.
@@ -4282,7 +4283,7 @@ pub(crate) fn write_file_internal(
             // A stream someone holds a reader on, or has read from, is theirs.
             let existing =
                 body.get_body_readable_stream()
-                    .or_else(|| match body.get_body_value() {
+                    .or_else(|| match body.body_value().get() {
                         BodyValue::Locked(locked) => locked.readable.get(),
                         _ => None,
                     });
@@ -4293,8 +4294,8 @@ pub(crate) fn write_file_internal(
                 }
             }
             // A body that is all here (also behind an untouched `.body` stream) is written as a blob.
-            body.get_body_value().to_blob_if_possible();
-            let tag = match body.get_body_value() {
+            body.body_value().with_mut(|v| v.to_blob_if_possible());
+            let tag = match body.body_value().get() {
                 BodyValue::Error(_) => BodyTag::Error,
                 BodyValue::Locked(_) => BodyTag::Locked,
                 BodyValue::Used => {
@@ -4306,17 +4307,19 @@ pub(crate) fn write_file_internal(
             match tag {
                 BodyTag::Use => {
                     // `use_()` runs no JS.
-                    Ok(ControlFlow::Continue(body.get_body_value().use_()))
+                    Ok(ControlFlow::Continue(
+                        body.body_value().with_mut(|v| v.use_()),
+                    ))
                 }
                 BodyTag::Error => {
-                    let err_js = {
-                        let BodyValue::Error(err_ref) = body.get_body_value() else {
+                    let err_js = body.body_value().with_mut(|v| {
+                        let BodyValue::Error(err_ref) = v else {
                             unreachable!()
                         };
                         err_ref.to_js(global_this)
-                    };
+                    });
                     destination_blob.detach();
-                    let _ = body.get_body_value().use_();
+                    let _ = body.body_value().with_mut(|v| v.use_());
                     Ok(ControlFlow::Break(
                         JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
@@ -4334,9 +4337,11 @@ pub(crate) fn write_file_internal(
                         let aws_options =
                             s3.get_credentials_with_options(options.extra_options, global_this)?;
                         // May run JS.
-                        let _ = body.get_body_value().to_readable_stream(global_this)?;
+                        let _ = body
+                            .body_value()
+                            .with_mut(|v| v.to_readable_stream(global_this))?;
                         let readable_opt = body.get_body_readable_stream().or_else(|| {
-                            let BodyValue::Locked(locked) = body.get_body_value() else {
+                            let BodyValue::Locked(locked) = body.body_value().get() else {
                                 return None;
                             };
                             locked.readable.get()
@@ -4379,24 +4384,27 @@ pub(crate) fn write_file_internal(
                     // A body that is a stream, or that its producer can stream (fetch, the
                     // server, HTMLRewriter): pipe it into the file instead of collecting it in
                     // memory first. The stream also outlives the Response it came from.
-                    let streamable = body.get_body_readable_stream().is_some() || {
-                        let BodyValue::Locked(locked) = body.get_body_value() else {
-                            unreachable!()
-                        };
-                        locked.readable.has() || locked.on_start_streaming.is_some()
-                    };
+                    let streamable = body.get_body_readable_stream().is_some()
+                        || body.body_value().with_mut(|v| {
+                            let BodyValue::Locked(locked) = v else {
+                                unreachable!()
+                            };
+                            locked.readable.has() || locked.on_start_streaming.is_some()
+                        });
                     if streamable {
                         // May run JS.
-                        let _ = body.get_body_value().to_readable_stream(global_this)?;
+                        let _ = body
+                            .body_value()
+                            .with_mut(|v| v.to_readable_stream(global_this))?;
                         let readable = body.get_body_readable_stream().or_else(|| {
-                            let BodyValue::Locked(locked) = body.get_body_value() else {
+                            let BodyValue::Locked(locked) = body.body_value().get() else {
                                 return None;
                             };
                             locked.readable.get()
                         });
                         // `to_readable_stream` may have replaced the value.
                         if let (Some(readable), BodyValue::Locked(_)) =
-                            (readable, body.get_body_value())
+                            (readable, body.body_value().get())
                         {
                             let promise = destination_blob.pipe_readable_stream_to_blob(
                                 global_this,
@@ -4410,17 +4418,26 @@ pub(crate) fn write_file_internal(
                             });
                             if !failed {
                                 // The stream now belongs to the sink.
-                                *body.get_body_value() = BodyValue::Used;
+                                body.body_value().set(BodyValue::Used);
                             }
                             return Ok(ControlFlow::Break(promise));
                         }
                         // The producer settled the body while the stream was being made.
-                        match body.get_body_value() {
-                            BodyValue::Locked(_) => {}
-                            BodyValue::Error(err) => {
-                                let err_js = err.to_js(global_this);
+                        enum Settled {
+                            No,
+                            Error(JSValue),
+                            Value,
+                        }
+                        let settled = body.body_value().with_mut(|v| match v {
+                            BodyValue::Locked(_) => Settled::No,
+                            BodyValue::Error(err) => Settled::Error(err.to_js(global_this)),
+                            _ => Settled::Value,
+                        });
+                        match settled {
+                            Settled::No => {}
+                            Settled::Error(err_js) => {
                                 destination_blob.detach();
-                                let _ = body.get_body_value().use_();
+                                let _ = body.body_value().with_mut(|v| v.use_());
                                 return Ok(ControlFlow::Break(
                                     JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                                         global_this,
@@ -4428,7 +4445,11 @@ pub(crate) fn write_file_internal(
                                     ),
                                 ));
                             }
-                            _ => return Ok(ControlFlow::Continue(body.get_body_value().use_())),
+                            Settled::Value => {
+                                return Ok(ControlFlow::Continue(
+                                    body.body_value().with_mut(|v| v.use_()),
+                                ));
+                            }
                         }
                     }
                     let task = Box::new(WriteFileWaitFromLockedValueTask {
@@ -4442,11 +4463,15 @@ pub(crate) fn write_file_internal(
                         mkdirp_if_not_exists: options.mkdirp_if_not_exists.unwrap_or(true),
                     });
                     let promise = task.promise.value();
-                    let BodyValue::Locked(locked) = body.get_body_value() else {
-                        unreachable!()
-                    };
-                    let producer_hook = locked.on_start_buffering.take().zip(locked.task);
-                    locked.on_receive_value = Some(webcore::body::ReceiveValue::WriteFile(task));
+                    let producer_hook = body.body_value().with_mut(|v| {
+                        let BodyValue::Locked(locked) = v else {
+                            unreachable!()
+                        };
+                        let producer_hook = locked.on_start_buffering.take().zip(locked.task);
+                        locked.on_receive_value =
+                            Some(webcore::body::ReceiveValue::WriteFile(task));
+                        producer_hook
+                    });
                     // Signalled last (see `PendingValue::on_start_buffering`):
                     // the task may run and the body value be replaced inside.
                     if let Some((on_start_buffering, producer_task)) = producer_hook {
@@ -5317,7 +5342,7 @@ impl read_file::ReadFileToJs for ToFormDataWithBytesFn {
 pub enum Any {
     Blob(Blob),
     InternalBlob(Internal),
-    WTFStringImpl(bun_core::WTFStringImpl),
+    WTFStringImpl(bun_core::WTFString),
 }
 
 impl Any {
@@ -5349,8 +5374,7 @@ impl Any {
     pub(crate) fn memory_cost(&self) -> usize {
         match self {
             Any::Blob(blob) => blob.store().map(|s| s.memory_cost()).unwrap_or(0),
-            Any::WTFStringImpl(str) => {
-                let s = super::body::wtf_impl(str);
+            Any::WTFStringImpl(s) => {
                 if s.ref_count() == 1 {
                     s.memory_cost()
                 } else {
@@ -5372,7 +5396,7 @@ impl Any {
     pub(crate) fn fast_size(&self) -> SizeType {
         match self {
             Any::Blob(b) => b.size.get(),
-            Any::WTFStringImpl(s) => super::body::wtf_impl(s).byte_length() as SizeType,
+            Any::WTFStringImpl(s) => s.byte_length() as SizeType,
             Any::InternalBlob(_) => self.slice().len() as SizeType,
         }
     }
@@ -5381,7 +5405,7 @@ impl Any {
     pub(crate) fn size(&self) -> SizeType {
         match self {
             Any::Blob(b) => b.size.get(),
-            Any::WTFStringImpl(s) => super::body::wtf_impl(s).utf8_byte_length() as SizeType,
+            Any::WTFStringImpl(s) => s.utf8_byte_length() as SizeType,
             _ => self.slice().len() as SizeType,
         }
     }
@@ -5499,8 +5523,9 @@ impl Any {
                 str
             }
             Any::WTFStringImpl(impl_) => {
-                let str =
-                    BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
+                // Copy the handle out (a ref) and drop `self`'s (a deref)
+                // rather than moving the whole `Any`.
+                let str = BunString::from(impl_.clone());
                 *self = Any::Blob(Blob::default());
                 if str.length() == 0 {
                     return Ok(JSValue::NULL);
@@ -5571,8 +5596,9 @@ impl Any {
                 Ok(owned)
             }
             Any::WTFStringImpl(impl_) => {
-                let str =
-                    BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
+                // Copy the handle out (a ref) and drop `self`'s (a deref)
+                // rather than moving the whole `Any`.
+                let str = BunString::from(impl_.clone());
                 *self = Any::Blob(Blob::default());
                 str.into_js(global)
             }
@@ -5609,8 +5635,9 @@ impl Any {
                 jsc::ArrayBuffer::from_default_allocator(global, TYPED_ARRAY_VIEW, bytes)
             }
             Any::WTFStringImpl(impl_) => {
-                let str =
-                    BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
+                // Copy the handle out (a ref) and drop `self`'s (a deref)
+                // rather than moving the whole `Any`.
+                let str = BunString::from(impl_.clone());
                 *self = Any::Blob(Blob::default());
 
                 let out_bytes = str.to_utf8();
@@ -5631,7 +5658,7 @@ impl Any {
         match self {
             Any::Blob(blob) => blob.is_detached(),
             Any::InternalBlob(ib) => ib.bytes.is_empty(),
-            Any::WTFStringImpl(s) => super::body::wtf_impl(s).length() == 0,
+            Any::WTFStringImpl(s) => s.length() == 0,
         }
     }
 }
@@ -5666,7 +5693,7 @@ impl Any {
     pub(crate) fn slice(&self) -> &[u8] {
         match self {
             Any::Blob(b) => b.shared_view(),
-            Any::WTFStringImpl(s) => super::body::wtf_impl(s).utf8_slice(),
+            Any::WTFStringImpl(s) => s.utf8_slice(),
             Any::InternalBlob(ib) => ib.slice_const(),
         }
     }
@@ -5696,9 +5723,8 @@ impl Any {
                 ib.bytes.shrink_to_fit();
                 *self = Any::Blob(Blob::default());
             }
-            Any::WTFStringImpl(s) => {
-                // `Any` owns one ref on the WTFStringImpl pointee.
-                super::body::wtf_impl(s).deref();
+            Any::WTFStringImpl(_) => {
+                // Dropping the handle releases `Any`'s ref on the WTFStringImpl.
                 *self = Any::Blob(Blob::default());
             }
         }

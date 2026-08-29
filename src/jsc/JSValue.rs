@@ -940,13 +940,14 @@ impl JSValue {
         }
         T::from_js(self)
     }
-    /// `JSValue.asDirect(T)` — unchecked-prototype downcast.
-    /// Caller must have already verified `is_cell()`; dispatches via
+    /// `JSValue.asDirect(T)` — unchecked-prototype downcast: dispatches via
     /// [`JsClass::from_js_direct`] (skips the prototype-chain walk that `as_`
-    /// performs, so subclasses are *not* matched).
+    /// performs, so subclasses are *not* matched). `None` for non-cells.
     #[inline]
     pub fn as_direct<T: JsClass>(self) -> Option<*mut T> {
-        debug_assert!(self.is_cell());
+        if !self.is_cell() {
+            return None;
+        }
         T::from_js_direct(self)
     }
     /// Safe shared-borrow downcast — `as_<T>()` followed by `&*ptr`.
@@ -978,6 +979,14 @@ impl JSValue {
         // borrow is valid for the caller's frame. We never hand out `&mut`,
         // so aliasing with other `as_class_ref` borrows is fine.
         self.as_::<T>().map(|p| unsafe { &*p })
+    }
+
+    /// [`as_class_ref`](Self::as_class_ref) without the prototype-chain walk
+    /// ([`as_direct`](Self::as_direct)): subclasses are not matched.
+    #[inline]
+    pub fn as_direct_class_ref<T: JsClass>(self) -> Option<&'static T> {
+        // SAFETY: as for `as_class_ref`.
+        self.as_direct::<T>().map(|p| unsafe { &*p })
     }
 
     /// [`as_class_ref`](Self::as_class_ref) as a [`ThisPtr`](bun_ptr::ThisPtr),

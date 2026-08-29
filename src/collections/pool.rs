@@ -346,6 +346,15 @@ where
         }
     }
 
+    /// [`get`](Self::get) that only reuses a pooled node (never allocates).
+    pub fn try_get() -> Option<PoolGuard<'static, T>> {
+        Some(PoolGuard {
+            node: Self::get_if_exists()?,
+            release: Self::release,
+            _marker: PhantomData,
+        })
+    }
+
     /// Return a node to the pool's free list (or free it if the pool is full).
     ///
     /// Takes a raw `*mut Node<T>`, not `&mut Node<T>`: when the pool is already

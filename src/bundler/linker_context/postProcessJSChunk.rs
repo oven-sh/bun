@@ -1061,9 +1061,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                     },
                                     bun_ast::Loc::EMPTY,
                                 ));
-                                items.extend(
-                                    module_exports_clause_items(module_exports_ref).into_iter(),
-                                );
+                                items.extend(module_exports_clause_items(module_exports_ref));
                             }
                         }
 

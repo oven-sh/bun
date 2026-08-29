@@ -670,7 +670,7 @@ export function findRustLld(os: OS): {
   const cargoHome = process.env.CARGO_HOME ?? join(homedir(), ".cargo");
   const rustc =
     toolchainOverride.rust !== undefined
-      ? join(toolchainOverride.rust, "bin", "rustc")
+      ? join(toolchainOverride.rust, "bin", os === "windows" ? "rustc.exe" : "rustc")
       : findTool({ names: ["rustc"], paths: [join(cargoHome, "bin")], required: false })?.path;
   if (rustc === undefined) return none;
 
@@ -690,7 +690,7 @@ export function findRustLld(os: OS): {
   // whatever's there.
   const rustup = findTool({ names: ["rustup"], paths: [join(cargoHome, "bin")], required: false })?.path;
   const channel = readRustToolchainChannel();
-  if (rustup !== undefined && channel !== undefined && toolchainOverride.rust === undefined) {
+  if (rustup !== undefined && channel !== undefined) {
     const started = performance.now();
     spawnSync(
       rustup,
@@ -786,13 +786,9 @@ export function findCargo(hostOs: OS): CargoToolchain | undefined {
   const cargo =
     toolchainOverride.cargo ??
     (toolchainOverride.rust !== undefined
-      ? join(toolchainOverride.rust, "bin", "cargo")
+      ? join(toolchainOverride.rust, "bin", hostOs === "windows" ? "cargo.exe" : "cargo")
       : findTool({ names: ["cargo"], paths: [join(cargoHome, "bin")], required: false })?.path);
   if (cargo === undefined) return undefined;
-
-  // Suppress unused warning for hostOs — kept in signature for future
-  // host-specific path resolution (e.g. %PROGRAMFILES% probing on win32).
-  void hostOs;
 
   return { cargo, cargoHome, rustupHome };
 }

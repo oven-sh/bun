@@ -1496,6 +1496,36 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     };
   }
 
+  // Records each request line and Authorization header exactly as they arrive on the
+  // wire (Bun.serve would hand the test a parsed URL), then answers 404.
+  async function rawServer() {
+    const requests: Req[] = [];
+    const server = require("node:tls").createServer({ key: tls.key, cert: tls.cert }, (socket: any) => {
+      let head = "";
+      socket.on("data", (chunk: Buffer) => {
+        head += chunk.toString("latin1");
+        const end = head.indexOf("\r\n\r\n");
+        if (end === -1) return;
+        const lines = head.slice(0, end).split("\r\n");
+        const auth = lines.find(l => l.toLowerCase().startsWith("authorization:"));
+        requests.push({ path: lines[0].split(" ")[1], auth: auth ? auth.slice("authorization:".length).trim() : null });
+        head = "";
+        socket.end("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+      });
+      socket.on("error", () => {});
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const port = server.address().port;
+    return {
+      requests,
+      host: `127.0.0.1:${port}`,
+      origin: `https://127.0.0.1:${port}`,
+      [Symbol.dispose]() {
+        server.close();
+      },
+    };
+  }
+
   async function install(dir: string, args: string[] = [], extraEnv: Record<string, string> = {}) {
     // bunEnv spreads process.env; the user-level .npmrc of the machine running the
     // tests must not leak in, and the cache must be cold so the tarball is fetched.
@@ -2065,10 +2095,9 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     expect(tarballRequests).toEqual([null]);
   });
 
-  // On the registry's own origin a dot segment cannot change who receives the
-  // credential, so the registry's token follows the tarball as it does on main and in
-  // npm; the guard below only applies to a `.npmrc` line looked up for another host.
-  test.each(["/npm/team-a/../team-b/x.tgz", "/npm/team-a/%2e%2e/team-b/x.tgz", "/npm/team-a/..%2fteam-b/x.tgz"])(
+  // On the registry's own origin the registry's token follows the tarball to its
+  // resolved path, as it does in npm.
+  test.each(["/npm/team-a/../team-b/x.tgz", "/npm/team-a/%2e%2e/team-b/x.tgz"])(
     "a dist.tarball of %s on the registry's origin still carries the registry's credentials",
     async tarballPath => {
       const registryPath = "/npm/team-a";
@@ -2092,9 +2121,10 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     },
   );
 
-  // The request carries the tarball path as written while a key would come from the
-  // resolved path, so a path with any dot segment, `%2f`-split dot segment, or `%5c`
-  // (plain or encoded backslash) is matched against no line at all.
+  // `dist.tarball` is parsed once, by the WHATWG parser, as npm's `new URL()` does: the
+  // path on the wire is the resolved path, and the `.npmrc` line is the one for that
+  // path. No spelling of a dot segment can put one team's token on a request the server
+  // could route to another team's tree, because the request names the tree the key names.
   test.each([
     "/npm/team-a/../team-b/x.tgz",
     "/npm/team-a/./x.tgz",
@@ -2102,22 +2132,47 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     "/npm/team-a/%2E%2E/team-b/x.tgz",
     "/npm/team-a/%2e./team-b/x.tgz",
     "/npm/team-a/.%2e/team-b/x.tgz",
+    "/npm/team-b/..\\team-a/x.tgz",
+    "/npm/team-b\\..\\team-a/x.tgz",
+    "/npm/@scope%2fpkg/-/team-a/x.tgz",
+  ])("a dist.tarball at %s is requested at its resolved path with that path's line", async tarballPath => {
+    using cdn = await rawServer();
+    using registry = mockRegistry("Bearer registry-token", { tarballOrigin: () => cdn.origin, tarballPath });
+    using dir = tempDir("npmrc-url-auth-cdn-dot-segments", {
+      "package.json": packageJson,
+      ".npmrc": [
+        `registry=${registry.origin}/`,
+        `//${registry.host}/:_authToken=registry-token`,
+        `//${cdn.host}/npm/team-a/:_authToken=cdn-a`,
+        `//${cdn.host}/npm/team-b/:_authToken=cdn-b`,
+        "",
+      ].join("\n"),
+    });
+
+    await install(String(dir));
+
+    const resolved = new URL(cdn.origin + tarballPath).pathname;
+    const lineFor = (path: string) =>
+      path.startsWith("/npm/team-a/") ? "Bearer cdn-a" : path.startsWith("/npm/team-b/") ? "Bearer cdn-b" : null;
+    expect(registry.requests[0]).toEqual({ path: "/no-deps", auth: "Bearer registry-token" });
+    expect(cdn.requests.length).toBeGreaterThan(0);
+    expect(cdn.requests).toEqual(cdn.requests.map(() => ({ path: resolved, auth: lineFor(resolved) })));
+  });
+
+  // The one spelling a single parse cannot settle: a dot segment behind an encoded `/` or
+  // `\`, which WHATWG keeps opaque and a decoding server re-routes. Refused outright.
+  test.each([
     "/npm/team-a/..%2Fteam-b/x.tgz",
     "/npm/team-a/%2f../team-b/x.tgz",
     "/npm/team-a/a%2f..%2fteam-b/x.tgz",
     "/npm/team-a/%5c..%5cteam-b/x.tgz",
-    "/npm/team-a/%5C..%5Cteam-b/x.tgz",
-    // A raw backslash: the request keeps it, the key would read it as `/` and resolve
-    // `team-b\..\team-a` back into team-a's line.
-    "/npm/team-b\\..\\team-a/x.tgz",
-    // A tab inside a dot segment: the WHATWG parser drops it and reads `..`; the
-    // request keeps it.
     "/npm/team-a/.\t./team-b/x.tgz",
     "/npm/team-a/%2e\t%2e/team-b/x.tgz",
-  ])("a line scoped to another host's path is not applied to its tarball at %s", async tarballPath => {
-    using cdn = mockRegistry("Bearer cdn-a", { secure: true, tarballPath });
+    "/npm/team-a/%2e%2e%5Cteam-b/x.tgz",
+  ])("a dist.tarball at %s is not requested at all", async tarballPath => {
+    using cdn = await rawServer();
     using registry = mockRegistry("Bearer registry-token", { tarballOrigin: () => cdn.origin, tarballPath });
-    using dir = tempDir("npmrc-url-auth-cdn-dot-segments", {
+    using dir = tempDir("npmrc-url-auth-cdn-encoded-separator", {
       "package.json": packageJson,
       ".npmrc": [
         `registry=${registry.origin}/`,
@@ -2127,22 +2182,21 @@ describe.concurrent("//host/ credential lines are matched against the request UR
       ].join("\n"),
     });
 
-    await install(String(dir));
+    const { stderr, exitCode } = await install(String(dir));
 
-    expect(registry.requests[0]).toEqual({ path: "/no-deps", auth: "Bearer registry-token" });
-    expect(cdn.requests.map(r => r.auth)).not.toContain("Bearer cdn-a");
-    expect(cdn.requests.map(r => r.auth)).not.toContain("Bearer registry-token");
+    expect(cdn.requests).toEqual([]);
+    expect(stderr).toContain("Invalid tarball URL");
+    expect(exitCode).toBe(1);
   });
 
-  // The key is built from the WHATWG serialisation; the request goes to the authority
-  // Bun's fast parser reads. A URL the two read differently must match no line.
-  test("a dist.tarball whose authority the two parsers read differently gets no line", async () => {
-    using cdn = mockRegistry("Bearer registry-token", { secure: true, tarballPath: "/x.tgz" });
+  // `https://<registry>#@<cdn>/x.tgz`: everything after `#` is a fragment, so the
+  // request goes to the registry's root and the cdn is never contacted, let alone
+  // handed the registry's token.
+  test("a dist.tarball with `#@host` in it is requested from the authority before the #", async () => {
+    using cdn = await rawServer();
     using registry = mockRegistry("Bearer registry-token", {
       secure: true,
       tarballPath: "/x.tgz",
-      // `https://<registry>#@<cdn>/x.tgz`: WHATWG stops the authority at `#` (host =
-      // registry); the fast parser reads `<registry>#` as userinfo (host = cdn).
       tarballOrigin: () => `${registry.origin}#@${cdn.host}`,
     });
     using dir = tempDir("npmrc-url-auth-parser-split", {
@@ -2152,8 +2206,11 @@ describe.concurrent("//host/ credential lines are matched against the request UR
 
     await install(String(dir));
 
-    expect(registry.requests[0]).toEqual({ path: "/no-deps", auth: "Bearer registry-token" });
-    expect(cdn.requests.map(r => r.auth)).not.toContain("Bearer registry-token");
+    expect(registry.requests.slice(0, 2)).toEqual([
+      { path: "/no-deps", auth: "Bearer registry-token" },
+      { path: "/", auth: "Bearer registry-token" },
+    ]);
+    expect(cdn.requests).toEqual([]);
   });
 
   // The `..` in the new URL resolves to a sibling of the default registry, so the

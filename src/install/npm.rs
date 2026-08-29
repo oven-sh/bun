@@ -661,24 +661,12 @@ pub mod registry {
             UrlAuth::find_entry(list, url).map(|entry| &entry.credentials)
         }
 
+        /// `url` is a WHATWG serialisation (a `Scope`'s URL, or a tarball URL after
+        /// `NetworkTask::for_tarball` normalised it), so the key names the authority and
+        /// path the request goes to.
         pub(crate) fn find_entry<'a>(list: &'a [UrlAuth], url: &URL) -> Option<&'a UrlAuth> {
-            // The key comes from the WHATWG-resolved path while the request carries
-            // the raw one, so a dot segment could select a key the wire path never
-            // reaches; such a tarball gets no line of its own (the registry's own
-            // credentials still follow it on the registry's origin).
-            if list.is_empty() || !path_is_canonical(query_free_path(url)) {
+            if list.is_empty() {
                 return None;
-            }
-            // The key comes from the WHATWG serialisation while the request goes to
-            // the authority the fast parser read; a URL the two read differently
-            // (`https://a#@b/x.tgz`) gets nothing.
-            if let Ok(whatwg) = URL::from_string(&bun_core::String::borrow_utf8(url.href)) {
-                let whatwg = whatwg.url();
-                if !whatwg.hostname.eq_ignore_ascii_case(url.hostname)
-                    || whatwg.get_port_auto() != url.get_port_auto()
-                {
-                    return None;
-                }
             }
             bun_ini::RegistryKey::from_url(url.href)
                 .walk()
@@ -694,73 +682,56 @@ pub mod registry {
         }
     }
 
-    /// `url.pathname` without its query: `url.path` is query-free too, but collapses a
-    /// one-byte path such as `/r/` to `/`.
-    pub(crate) fn query_free_path<'a>(url: &URL<'a>) -> &'a [u8] {
-        let pathname = url.pathname;
-        &pathname[..strings::index_of_char_usize(pathname, b'?').unwrap_or(pathname.len())]
+    /// `dist.tarball` parsed once, as npm's `new URL()` does: the serialisation the request
+    /// is built from and `.npmrc` lines are keyed by. Refused, not repaired: whitespace or
+    /// a control byte, a URL WHATWG rejects, and a dot segment spelled with `%2f` or `%5c`
+    /// (opaque to WHATWG, but a decoding server routes it to another path than the key's).
+    pub fn normalize_tarball_url(raw: &[u8]) -> Option<Box<[u8]>> {
+        if raw.iter().any(|&b| b <= 0x20 || b == 0x7f) {
+            return None;
+        }
+        let href = URL::from_string(&bun_core::String::borrow_utf8(raw))
+            .ok()?
+            .into_href();
+        if hides_dot_segment(query_free_path(&URL::parse(&href))) {
+            return None;
+        }
+        Some(href)
     }
 
-    /// No control byte, no dot segment (plain, `%2e`-spelled, or after a backslash),
-    /// no `%5c`, and no `%2f` that splits a segment into pieces one of which is a dot
-    /// segment: a path the request sends exactly as the key reads it. A plain `%2f`
-    /// inside a name, the `@scope%2fpkg` form manifests are requested with, is fine.
-    pub(crate) fn path_is_canonical(path: &[u8]) -> bool {
-        // The WHATWG parser drops tab, CR and LF before parsing, so `.\t.` reads as
-        // `..` in the key while the wire path keeps the byte: any control byte is out.
-        if path.iter().any(|b| b.is_ascii_control())
-            || strings::contains_char(path, b'\\')
-            || contains_percent_encoded(path, b'5', b'c')
-        {
-            return false;
-        }
-        strings::split(path, b"/").all(|segment| !is_unsafe_segment(segment))
-    }
-
-    /// `%Xy` anywhere in `bytes`, the hex digit `y` matched case-insensitively.
-    fn contains_percent_encoded(bytes: &[u8], x: u8, y_lower: u8) -> bool {
-        let mut rest = bytes;
-        while let Some(i) = strings::index_of_char_usize(rest, b'%') {
-            rest = &rest[i + 1..];
-            if rest.len() >= 2 && rest[0] == x && rest[1].eq_ignore_ascii_case(&y_lower) {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// A dot segment, or a segment that an encoded `/` (`%2f`) splits into pieces
-    /// one of which is a dot segment.
-    fn is_unsafe_segment(segment: &[u8]) -> bool {
-        if !contains_percent_encoded(segment, b'2', b'f') {
-            return is_dot_segment(segment);
-        }
+    /// A `.` or `..` segment once `%2f` and `%5c` are read as separators.
+    fn hides_dot_segment(path: &[u8]) -> bool {
         let mut start = 0;
         let mut i = 0;
-        while i + 2 < segment.len() {
-            if segment[i] == b'%'
-                && segment[i + 1] == b'2'
-                && segment[i + 2].eq_ignore_ascii_case(&b'f')
-            {
-                if is_dot_segment(&segment[start..i]) {
-                    return true;
-                }
-                i += 3;
+        let mut found = false;
+        let mut check = |segment: &[u8]| {
+            const DOTS: [&[u8]; 6] = [b".", b"..", b"%2e", b"%2e.", b".%2e", b"%2e%2e"];
+            found |= DOTS.iter().any(|dot| segment.eq_ignore_ascii_case(dot));
+        };
+        while i < path.len() {
+            let encoded_separator = path[i] == b'%'
+                && i + 2 < path.len()
+                && matches!(
+                    &path[i + 1..i + 3],
+                    [b'2', b'f' | b'F'] | [b'5', b'c' | b'C']
+                );
+            if path[i] == b'/' || encoded_separator {
+                check(&path[start..i]);
+                i += if encoded_separator { 3 } else { 1 };
                 start = i;
             } else {
                 i += 1;
             }
         }
-        is_dot_segment(&segment[start..])
+        check(&path[start..]);
+        found
     }
 
-    /// WHATWG single-dot and double-dot path segments, including the percent-encoded
-    /// spellings a server would normalize.
-    fn is_dot_segment(segment: &[u8]) -> bool {
-        const DOT_SEGMENTS: [&[u8]; 6] = [b".", b"..", b"%2e", b"%2e.", b".%2e", b"%2e%2e"];
-        DOT_SEGMENTS
-            .iter()
-            .any(|dot| segment.eq_ignore_ascii_case(dot))
+    /// `url.pathname` without its query: `url.path` is query-free too, but collapses a
+    /// one-byte path such as `/r/` to `/`.
+    pub(crate) fn query_free_path<'a>(url: &URL<'a>) -> &'a [u8] {
+        let pathname = url.pathname;
+        &pathname[..strings::index_of_char_usize(pathname, b'?').unwrap_or(pathname.len())]
     }
 
     pub(crate) enum PackageVersionResponse {

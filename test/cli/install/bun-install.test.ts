@@ -12178,7 +12178,7 @@ it("reports an invalid URL for a manifest tarball URL containing a newline", asy
     });
     const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(err).toContain("InvalidURL downloading tarball");
+    expect(err).toContain("Invalid tarball URL");
     expect(tarballRequests).toEqual([]);
     expect(out).not.toContain("1 package installed");
     expect(exitCode).not.toBe(0);
@@ -12230,7 +12230,7 @@ it("reports an invalid URL for a manifest tarball URL containing a space", async
     });
     const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(err).toContain("InvalidURL downloading tarball");
+    expect(err).toContain("Invalid tarball URL");
     expect(out).not.toContain("1 package installed");
     expect(exitCode).not.toBe(0);
   });
@@ -12286,7 +12286,7 @@ it.each([
     });
     const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(err).toContain("InvalidURL downloading tarball");
+    expect(err).toContain("Invalid tarball URL");
     expect(tarballRequests).toEqual([]);
     expect(out).not.toContain("1 package installed");
     expect(exitCode).not.toBe(0);

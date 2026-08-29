@@ -821,6 +821,15 @@ fn fetch_registry_tree(
             },
         )?;
     }
+    // The same serialisation `bun install` requests and keys `.npmrc` lines by.
+    let Some(tarball_url) = bun_install::npm::registry::normalize_tarball_url(&tarball_url) else {
+        Status::clear();
+        Output::err_generic(
+            "invalid tarball URL {} for {}",
+            (bun_fmt::quote(&tarball_url), BStr::new(&label)),
+        );
+        Global::exit(1);
+    };
     let tarball = registry_get(
         pm,
         scope,

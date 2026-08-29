@@ -293,14 +293,11 @@ impl Options {
     /// registry URL resolved to, that key is already reflected in `scope`, behind any
     /// bunfig, env or CLI credential, so `scope` wins; any other key is the tarball's
     /// own and wins as in npm.
-    /// A `.npmrc` line is only looked up for a path the server would resolve as
-    /// written (no `%2f`-split dot segment, no `%5c`); on the registry's own origin a
-    /// dot segment changes nothing about who receives the credential, so the
-    /// registry's credentials follow such a tarball as they do in npm. An `http://`
-    /// tarball on another host never gets a key's credential.
+    /// An `http://` tarball on another host never gets a key's credential.
     pub fn tarball_credentials<'a>(
         &'a self,
         scope: &'a Npm::registry::Scope,
+        // The WHATWG serialisation the request is built from.
         tarball: &bun_url::URL,
     ) -> Option<&'a Npm::registry::Scope> {
         // `dist.tarball` is registry-controlled and `.npmrc` keys carry no scheme, so a
@@ -328,7 +325,12 @@ impl Options {
     /// A `--registry` or env registry at or under the current default registry keeps
     /// the default's credentials, unless `.npmrc` has a line specific to the new
     /// path: then the key walk supplies that line instead, as npm would resolve it.
-    fn inherits_default_credentials(&self, new_url: &bun_url::URL) -> bool {
+    fn inherits_default_credentials(&self, new_registry: &[u8]) -> bool {
+        let owned = bun_url::URL::from_string(&bun_core::String::borrow_utf8(new_registry)).ok();
+        let new_url = &match &owned {
+            Some(owned) => owned.url(),
+            None => bun_url::URL::parse(new_registry),
+        };
         let old_url = self.scope.url.url();
         if !registry_under(new_url, &old_url) {
             return false;
@@ -377,7 +379,6 @@ fn same_origin(url: &bun_url::URL, base: &bun_url::URL) -> bool {
 fn registry_under(url: &bun_url::URL, base: &bun_url::URL) -> bool {
     bun_core::without_trailing_slash(url.host) == bun_core::without_trailing_slash(base.host)
         && (url.is_https() || !base.is_https())
-        && Npm::registry::path_is_canonical(Npm::registry::query_free_path(url))
         && path_under(
             Npm::registry::query_free_path(url),
             Npm::registry::query_free_path(base),
@@ -751,8 +752,7 @@ impl Options {
                         let mut api_registry = Api::NpmRegistry::from_url(registry_);
                         // Credentials in the URL win, as they do for `registry=` in .npmrc.
                         if !api_registry.has_credentials() {
-                            let new_url = bun_url::URL::parse(&api_registry.url);
-                            if self.inherits_default_credentials(&new_url) {
+                            if self.inherits_default_credentials(&api_registry.url) {
                                 api_registry.token = core::mem::take(&mut self.scope.token);
                                 api_registry.auth = core::mem::take(&mut self.scope.auth);
                                 api_registry.credentials_from_url = self.scope.credentials_from_url;
@@ -770,8 +770,7 @@ impl Options {
                 let mut api_registry = Api::NpmRegistry::from_url(cli.registry);
                 // Credentials in the URL win, as they do for `registry=` in .npmrc.
                 if !api_registry.has_credentials() {
-                    let new_url = bun_url::URL::parse(&api_registry.url);
-                    if self.inherits_default_credentials(&new_url) {
+                    if self.inherits_default_credentials(&api_registry.url) {
                         api_registry.token = core::mem::take(&mut self.scope.token);
                         api_registry.auth = core::mem::take(&mut self.scope.auth);
                         api_registry.credentials_from_url = self.scope.credentials_from_url;

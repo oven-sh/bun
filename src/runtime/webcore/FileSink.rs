@@ -194,16 +194,6 @@ impl Options {
     }
 }
 
-impl Drop for FileSink {
-    fn drop(&mut self) {
-        LIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
-        if let Some(global) = self.js_global() {
-            let vm = global.bun_vm().as_mut();
-            AutoFlusher::unregister_deferred_microtask_with_type::<Self>(self, vm);
-        }
-    }
-}
-
 impl FileSink {
     pub(crate) fn memory_cost(&self) -> usize {
         // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(FileSink).

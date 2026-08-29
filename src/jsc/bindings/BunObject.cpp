@@ -815,6 +815,10 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
             JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
             auto bytes = builder.jsonBytes();
             RETURN_IF_EXCEPTION(throwScope, {});
+            if (builder.hasOverflowed()) {
+                throwException(globalObject, throwScope, createError(globalObject, "Heap snapshot is too large to serialize"_s));
+                return {};
+            }
             auto released = bytes.releaseBuffer();
             auto span = released.leakSpan();
             auto buffer = ArrayBuffer::createFromBytes(std::span<const uint8_t> { span.data(), span.size() }, createSharedTask<void(void*)>([](void* p) {
@@ -826,6 +830,10 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshot, (JSC::JSGlobalObject * gl
         JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
         auto json = builder.json();
         RETURN_IF_EXCEPTION(throwScope, {});
+        if (json.isNull()) {
+            throwException(globalObject, throwScope, createError(globalObject, "Heap snapshot is too large to serialize"_s));
+            return {};
+        }
         return JSC::JSValue::encode(jsString(vm, json));
     }
 

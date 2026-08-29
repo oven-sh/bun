@@ -760,9 +760,20 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
         JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
         String snapshot = builder.json();
 
+        // json() returns a null String when the snapshot was too large to
+        // serialize; reject instead of resolving with an empty string.
         ScriptExecutionContext::postTaskTo(parentId, parentLoopKind,
             [reqId, protectedProxy = WTF::move(protectedProxy), snapshot = snapshot.isolatedCopy()](ScriptExecutionContext& parentCtx) {
-                resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [&](VM& vm, JSGlobalObject*) -> JSValue { return jsString(vm, snapshot); });
+                auto handle = protectedProxy->takeCrossVMRequest(reqId);
+                if (!handle || parentCtx.isJSExecutionForbidden())
+                    return;
+                auto& parentVM = parentCtx.vm();
+                auto* parentGlobalObject = parentCtx.globalObject();
+                if (snapshot.isNull()) {
+                    handle->reject(parentVM, JSC::createError(parentGlobalObject, "Heap snapshot is too large to serialize"_s));
+                    return;
+                }
+                handle->resolve(parentGlobalObject, parentVM, jsString(parentVM, snapshot));
             });
     });
     if (!accepted) {

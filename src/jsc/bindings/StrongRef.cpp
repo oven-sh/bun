@@ -77,5 +77,5 @@ extern "C" void Bun__StrongRef__delete(StrongRefImpl* _Nonnull ref)
     // the cursor sits at a full head).
     clientData->m_strongRootBlockCursor = block;
     if (block->clear(decodeStrongRefIndex(ref))) [[unlikely]]
-        StrongRootBlock::release(clientData, vm, block);
+        StrongRootBlock::release(clientData, block);
 }

@@ -136,7 +136,8 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
     // finishChangingPhase / stopTheMutator; see worldShouldBeSuspended in
     // CollectorPhase.cpp) with Concurrent (mutator running) phases. The
     // constraint set is solved only during Fixpoint, so the lambda below never
-    // races the mutator's writes to m_strongRootBlockHead/Free.
+    // races the mutator's writes to m_strongRootBlockHead/Free or the m_next
+    // links (which Bun__StrongRef__delete rewrites from sweep-time destructors).
     //
     // `GreyedByExecution` puts this in the "root" bucket
     // (MarkingConstraintSet::didStartMarking tags it as an unexecuted root for
@@ -147,19 +148,20 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
     //
     // Eden vs. full: `appendUnbarriered` early-returns when `isMarked()`; eden
     // keeps the previous full GC's `m_markingVersion`
-    // (MarkedSpace::beginMarking), so an old-gen head reads as marked and its
+    // (MarkedSpace::beginMarking), so an old-gen block reads as marked and its
     // `visitChildren` does not run on eden. Slots written into such a block
     // since the last GC already fired `WriteBarrier::set` on the block cell
     // (Heap::writeBarrierSlowPath -> addToRememberedSet -> m_mutatorMarkStack),
     // and Fixpoint drains that stack to visit the dirtied block. A full GC
     // bumps `m_markingVersion`, every cell reads unmarked, and the constraint
-    // seeds the whole `m_next` chain. Net: this body is O(1) per collection.
+    // seeds every block. Net: this body is one `isMarked` check per block
+    // (960 handles) per Fixpoint execution.
     //
     // `Concurrent` here means the constraint may run on a GC helper thread via
     // MarkingConstraintSolver::runExecutionThread (MarkingConstraintSet still
     // runs each constraint once per fixpoint iteration, gated by `m_executed`);
-    // it does not mean concurrent with the mutator. The lambda only reads three
-    // pointers and appends to the per-thread visitor, so helper-thread
+    // it does not mean concurrent with the mutator. The lambda only walks the
+    // list and appends to the per-thread visitor, so helper-thread
     // execution is safe. `clientData` outlives the Heap
     // (~VM -> lastChanceToFinalize -> delete clientData), so the capture stays
     // valid for every collection.
@@ -167,7 +169,8 @@ void JSVMClientData::create(VM* vm, void* bunVM, WorkerMessagingProxy* worker)
         "Srb", "Bun StrongRootBlocks",
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([clientData](auto& visitor) {
             JSC::SetRootMarkReasonScope rootScope(visitor, JSC::RootMarkReason::StrongHandles);
-            visitor.appendUnbarriered(clientData->m_strongRootBlockHead);
+            for (auto* block = clientData->m_strongRootBlockHead; block; block = block->next())
+                visitor.appendUnbarriered(block);
             visitor.appendUnbarriered(clientData->m_strongRootBlockFree);
             visitor.appendUnbarriered(clientData->m_strongRootBlockStructure);
         })),

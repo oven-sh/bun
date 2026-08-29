@@ -378,7 +378,7 @@ For a suite with thousands of test files, `bun test` has several knobs that stac
 
 **3. Split across machines: [`--shard=i/n`](/test/parallel#splitting-a-suite-across-ci-machines-with---shard).** Deterministic, no coordinator. Each CI job runs one slice, and each slice still uses `--parallel` locally.
 
-**4. Balance by time, not count: [`--timings`](/test/parallel#balancing-with---timings).** With recorded durations, Bun cuts shards so each gets about the same total time. The split is longest-processing-time style, but keeps path-neighbours together so a worker's module cache stays warm. Each worker starts its slowest file first, and idle workers steal the slowest remaining file. That way, one long file that happened to start last doesn't hold up the run.
+**4. Balance by time, not count: [`--timings`](/test/parallel#balancing-with---timings).** With recorded durations, Bun cuts shards so each gets about the same total time. The split is longest-processing-time style, but keeps path-neighbors together so a worker's module cache stays warm. Each worker starts its slowest file first, and idle workers steal the slowest remaining file. That way, one long file that happened to start last doesn't hold up the run.
 
 **5. Keep the timings fresh automatically: `--update-timings`.** Each shard writes the durations of the files it ran; the next run reads all of them. In GitHub Actions that looks like:
 

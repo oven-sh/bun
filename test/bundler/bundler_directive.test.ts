@@ -99,6 +99,23 @@ describe("bundler", () => {
     },
   });
 
+  // An escaped "use strict" is not a Use Strict Directive. It does not end the
+  // prologue either: the directives after it are still hoisted.
+  itBundled("directive/EscapedUseStrictKeepsThePrologueNoBundle", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        "use\\x20strict";
+        "use client";
+        export const X = () => <div />;
+      `,
+    },
+    bundling: false,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toStartWith('"use client";\nimport ');
+      api.expectFile("/out.js").not.toContain("use strict");
+    },
+  });
+
   itBundled("directive/DirectivesAtEntryChunkTop", {
     files: {
       "/entry.jsx": /* jsx */ `

@@ -1492,17 +1492,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if !str_.prefer_template && expr.value.loc == stmt.loc {
                             is_directive_prologue = true;
 
-                            if str_.eql_comptime(b"use asm") && !p.options.repl_mode {
-                                // Dropped: the output would fail asm.js validation. The REPL keeps it, like node.
-                                skip = true;
-                                stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
-                            } else if str_.eql_comptime(b"use strict")
-                                && !p.source_has_use_strict_token(expr.value.loc)
-                            {
-                                // `"use\x20strict"` cooks to the same value but stays a string statement.
+                            let is_use_strict = str_.eql_comptime(b"use strict");
+                            // `"use\x20strict"` cooks to the same value but is not a Use Strict Directive.
+                            let escaped_use_strict =
+                                is_use_strict && !p.source_has_use_strict_token(expr.value.loc);
+                            if str_.eql_comptime(b"use asm") || escaped_use_strict {
+                                // Dropped outside the REPL: asm.js fails validation after transformation, and the printer cannot keep the escape.
+                                if !p.options.repl_mode {
+                                    skip = true;
+                                    stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
+                                }
                             } else {
                                 let directive_loc = expr.value.loc;
-                                let is_use_strict = str_.eql_comptime(b"use strict");
                                 let bytes = str_.string(p.arena).expect("OOM");
                                 stmt = Stmt::alloc(
                                     S::Directive {

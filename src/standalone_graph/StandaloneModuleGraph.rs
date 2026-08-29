@@ -222,8 +222,7 @@ impl StandaloneModuleGraph {
         self.dir_key(name).is_some()
     }
 
-    /// The `dirs` key of directory `name`: posix-separated, no trailing `/`, so
-    /// `key + "/" + child` is a `files` or `dirs` key.
+    /// The stored key of directory `name` (posix-separated, no trailing `/`).
     pub fn dir_key(&self, name: &[u8]) -> Option<&[u8]> {
         if !is_bun_standalone_file_path(name) {
             return None;

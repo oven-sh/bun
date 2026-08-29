@@ -29,12 +29,9 @@ struct StatCacheEntry {
     stat_hash: StatHash,
 }
 
-/// Where the served tree lives.
 enum Root {
-    /// An open directory on disk; subpaths are opened beneath it.
     Disk(Fd),
-    /// A directory embedded in this executable by `bun build --compile`
-    /// (`/$bunfs/...`): its `Graph::dir_key`, which has no trailing `/`.
+    /// A `/$bunfs/` directory's `Graph::dir_key` (no trailing `/`).
     Embedded(&'static [u8]),
 }
 
@@ -102,9 +99,7 @@ impl DirectoryRoute {
         }))
     }
 
-    /// An embedded `/$bunfs/` path never reaches the disk, like `node:fs` and
-    /// `Bun.file()`: it resolves in the standalone module graph or fails the
-    /// way `open(2)` would.
+    /// A `/$bunfs/` root resolves in the standalone module graph, never on disk.
     fn open_root(root: &[u8]) -> bun_sys::Result<Root> {
         if let Some(graph) = Graph::get_ref() {
             if bun_standalone_graph::is_bun_standalone_file_path(root) {
@@ -187,8 +182,7 @@ impl DirectoryRoute {
             Body::Embedded(file) => file.utf8_contents().len() as u64,
         };
 
-        // An embedded file has no mtime. Its validator is a strong ETag over
-        // the bytes (the same one `Bun.embeddedFiles` static routes send).
+        // An embedded file has no mtime: no Last-Modified, strong ETag over the bytes.
         let (last_modified_ms, lm_buf, lm_len) = match &body {
             Body::Disk(_, stat) => this.stat_cache_lookup(rel, stat),
             Body::Embedded(_) => (0, [0u8; 32], 0),
@@ -267,8 +261,7 @@ impl DirectoryRoute {
             }
         };
 
-        // `try_end` frames an in-memory body itself (uWS writes Content-Length
-        // from the total it is given); a streamed body and HEAD write it here.
+        // `try_end` writes Content-Length itself; a streamed body and HEAD need it here.
         if (method == Method::HEAD || matches!(body, Body::Disk(..)))
             && !resp.state().has_written_content_length_header()
         {
@@ -365,9 +358,7 @@ impl DirectoryRoute {
             .then_some(Subpath::Found(Body::Disk(file, stat), false))
     }
 
-    /// The embedded counterpart of `open_disk_subpath`: `rel` is looked up as
-    /// `root_key/rel` in the standalone module graph. `rel` is already
-    /// canonical (`resolve_subpath`), so the join is a plain concatenation.
+    /// Looks up `root_key/rel` in the graph. `rel` is canonical (`resolve_subpath`).
     fn find_embedded_subpath(
         root_key: &[u8],
         rel: &[u8],
@@ -486,8 +477,7 @@ impl Drop for DirectoryRoute {
     }
 }
 
-/// An embedded body that did not fit in the socket's send buffer: the uWS
-/// userdata of `on_writable` / `on_aborted` until the response ends.
+/// uWS userdata for an embedded body that needs more than one write.
 struct EmbeddedBody {
     route: RefPtr<DirectoryRoute>,
     bytes: &'static [u8],
@@ -495,9 +485,7 @@ struct EmbeddedBody {
 }
 
 impl EmbeddedBody {
-    /// Send `bytes` as the whole body. Takes over the response's route ref and
-    /// releases it through `on_response_complete` once the body is sent or the
-    /// client goes away.
+    /// Owns `route` until `on_response_complete`.
     fn send(
         route: RefPtr<DirectoryRoute>,
         resp: AnyResponse,

@@ -1,7 +1,7 @@
 use core::fmt;
 
 use bun_core::Output;
-use bun_jsc::{js_error_to_write_error, JSGlobalObject, JSValue};
+use bun_jsc::{js_error_to_write_error, JSGlobalObject, JSValue, JsResult};
 
 use super::diff::print_diff::{print_diff_main, DiffConfig};
 use super::pretty_format::{FormatOptions, JestPrettyFormat, MessageLevel};
@@ -16,18 +16,20 @@ pub struct DiffFormatter<'a> {
     pub(crate) not: bool,
 }
 
-impl<'a> fmt::Display for DiffFormatter<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl<'a> DiffFormatter<'a> {
+    /// Renders the diff into `out`. A JS exception raised while a value is
+    /// pretty-printed is returned as the outer `Err`, so a `JsResult` caller
+    /// can propagate it. The `Display` impl collapses it into `fmt::Error`.
+    pub(crate) fn write_to<W: fmt::Write>(&self, out: &mut W) -> JsResult<fmt::Result> {
         let diff_config =
             DiffConfig::default(Output::is_ai_agent(), Output::enable_ansi_colors_stderr());
 
         if let (Some(expected), Some(received)) = (self.expected_string, self.received_string) {
-            print_diff_main(self.not, received, expected, f, &diff_config)?;
-            return Ok(());
+            return Ok(print_diff_main(self.not, received, expected, out, &diff_config));
         }
 
         if self.received.is_none() || self.expected.is_none() {
-            return Ok(());
+            return Ok(Ok(()));
         }
 
         let global_this = self.global_this.expect("DiffFormatter.global_this not set");
@@ -51,8 +53,7 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
                 1,
                 &mut received_buf,
                 fmt_options,
-            )
-            .map_err(js_error_to_write_error)?;
+            )?;
 
             JestPrettyFormat::format(
                 MessageLevel::Debug,
@@ -61,8 +62,7 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
                 1,
                 &mut expected_buf,
                 fmt_options,
-            )
-            .map_err(js_error_to_write_error)?;
+            )?;
         }
 
         let mut received_slice: &[u8] = received_buf.as_slice();
@@ -80,8 +80,13 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
             expected_slice = &expected_slice[..expected_slice.len() - 1];
         }
 
-        print_diff_main(self.not, received_slice, expected_slice, f, &diff_config)?;
-        Ok(())
+        Ok(print_diff_main(self.not, received_slice, expected_slice, out, &diff_config))
+    }
+}
+
+impl<'a> fmt::Display for DiffFormatter<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.write_to(f).map_err(js_error_to_write_error)?
     }
 }
 

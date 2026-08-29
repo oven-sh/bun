@@ -191,19 +191,20 @@ impl StatWatcherScheduler {
         // the per-thread `runtime_state()` (single JS thread; see jsc_hooks.rs).
         // SAFETY: main-thread-only per fn contract; `runtime_state()` is non-null
         // after `bun_runtime::init()`. Raw-ptr-per-field re-entry pattern.
-        let timer_all = unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer };
+        let timer_all = crate::jsc_hooks::timer_all();
         // SAFETY: `this` is live: a scheduler ref is held for the whole call by
         // every caller (`set_interval`'s caller, `timer_callback`'s `&mut self`,
         // `shutdown_for_exit`'s `RareData` ref) or, for `StatWatcherTimerUpdate`
         // (whose `scheduler` is a non-owning `ParentRef`), by the watcher's
         // `RefPtr<StatWatcherScheduler>` held across the hop.
-        let elt = unsafe { core::ptr::addr_of_mut!((*this).event_loop_timer) };
+        let elt = unsafe {
+            crate::timer::TimerRef::from_raw(core::ptr::addr_of_mut!((*this).event_loop_timer))
+        };
 
         // if the interval is 0 means that we stop the timer
         if interval == 0 {
             // if the timer is active we need to remove it
-            // SAFETY: `elt` is the live embedded EventLoopTimer.
-            if unsafe { (*elt).state } == EventLoopTimerState::ACTIVE {
+            if elt.state() == EventLoopTimerState::ACTIVE {
                 timer_all.remove(elt);
             }
             return;
@@ -233,7 +234,6 @@ impl StatWatcherScheduler {
             || self.vm().script_execution_status() != jsc::ScriptExecutionStatus::Running;
 
         self.event_loop_timer.state = EventLoopTimerState::FIRED;
-        self.event_loop_timer.heap = Default::default();
 
         if has_been_cleared || self.is_shutdown.load(Ordering::Relaxed) {
             return;

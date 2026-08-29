@@ -3,112 +3,102 @@
 //!
 //! jsc/runtime crate cycle: the low-tier `bun_jsc::VirtualMachine.timer` is a
 //! `()` placeholder, so this module resolves the timer heap through
-//! [`crate::jsc_hooks::runtime_state`] instead — the same pattern
-//! `TimerObjectInternals` uses.
+//! [`crate::jsc_hooks::timer_all`] instead.
 
-use core::ffi::c_void;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_core::{Timespec, TimespecMockMode};
+use bun_ptr::{BackRef, JsCell};
 
 use crate::jsc::virtual_machine::VirtualMachine;
 use crate::webcore::script_execution_context::Identifier as ScriptExecutionContextIdentifier;
 
-use super::{
-    ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, InHeap, IntrusiveField,
-};
+use super::{All, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, TimerRef};
 
 const NS_PER_S: i64 = bun_core::time::NS_PER_S as i64;
 
 bun_opaque::opaque_ffi! {
     /// This is `WTF::RunLoop::TimerBase` from WebKit — opaque FFI handle.
-    pub(crate) struct RunLoopTimer;
+    pub struct RunLoopTimer;
 }
 
 impl RunLoopTimer {
-    /// Takes `NonNull` (not `&self`) so callers holding the raw FFI handle
-    /// don't need an `unsafe { as_ref() }` just to forward it — `NonNull<T>`
-    /// is ABI-identical to `*mut T` and the extern is `safe fn`.
+    /// Run the C++ timer. Its `fired()` may destroy the `TimerBase` — and with
+    /// it the `WTFTimer` this handle was read from — so callers hold no
+    /// `&WTFTimer` across this call.
     #[inline]
-    fn fire(this: NonNull<RunLoopTimer>) {
+    pub(crate) fn fire(this: NonNull<RunLoopTimer>) {
         WTFTimer__fire(this)
     }
 }
 
-/// A timer created by WTF code and invoked by Bun's event loop.
-pub(crate) struct WTFTimer {
-    // Backref to the owning VirtualMachine (captured from the thread-local VM
-    // in `WTFTimer__create`); never owned here. The C++ `RunLoop::TimerBase`
-    // that owns this wrapper lives on the VM's run loop, so the VM outlives
-    // the timer.
-    vm: NonNull<VirtualMachine>,
+/// A timer created by WTF code and invoked by Bun's event loop. Owned (boxed)
+/// by the C++ `RunLoop::TimerBase` that `WTFTimer__create`d it; `update` /
+/// `cancel` may arrive from any thread.
+pub struct WTFTimer {
+    /// `Timer::All` of the VM whose JS thread created this timer. Live while
+    /// `script_execution_context_id` is valid; a C++ `RunLoop::TimerBase` can
+    /// outlive `RuntimeState` (which holds `All`) on Worker teardown, so
+    /// `cancel`/`Drop` only follow this after that check. Off the JS thread
+    /// only `wtf_arm`/`wtf_disarm`/the `wtf_timers` lock may be used through it.
+    timers: BackRef<All>,
     // FFI handle into WebKit's RunLoop::TimerBase; owned by C++.
     run_loop_timer: NonNull<RunLoopTimer>,
-    pub(crate) event_loop_timer: EventLoopTimer,
-    // Backref into `vm.eventLoop().imminent_gc_timer`. Low tier stores
-    // `AtomicPtr<()>` (PORTING.md §Dispatch); `self` is cast to `*mut ()` at
-    // each compare_exchange (the hook in `dispatch.rs` casts back to
-    // `*mut WTFTimer`).
-    imminent: bun_ptr::BackRef<AtomicPtr<()>>,
-    repeat: bool,
+    /// Linked into `All.wtf_timers`. Unlike every other `JsCell`, this one is
+    /// shared across threads: it is only read or written under that heap's lock.
+    pub(crate) event_loop_timer: JsCell<EventLoopTimer>,
+    /// `vm.eventLoop().imminent_gc_timer`. Low tier stores `AtomicPtr<()>`
+    /// (§Dispatch); `self` is published as `*mut ()` and `__bun_run_wtf_timer`
+    /// (in `dispatch.rs`) recovers the `&WTFTimer`.
+    imminent: BackRef<AtomicPtr<()>>,
     script_execution_context_id: ScriptExecutionContextIdentifier,
 }
 
 bun_event_loop::impl_timer_owner!(WTFTimer; from_timer_ptr => event_loop_timer);
 
 impl WTFTimer {
-    /// Fire the underlying `RunLoop::TimerBase`,
-    /// removing `self` from the timer heap first if it's currently scheduled.
-    /// Reached from `bun_jsc::event_loop` via `__bun_run_wtf_timer`
-    /// (definer in [`crate::dispatch`]).
-    ///
-    /// # Safety
-    /// `this` was published by [`WTFTimer::update`] into
-    /// `imminent_gc_timer` and remains live; `vm` is the live VM that owns
-    /// this timer.
-    pub(crate) unsafe fn run(this: *mut Self, vm: *mut VirtualMachine) {
-        // SAFETY: per fn contract — `this` is live; `ThisPtr` vends only fresh
-        // short-lived `&Self` per Deref so no `&WTFTimer` spans the
-        // `All::wtf_disarm` raw write to `event_loop_timer`.
-        let t = unsafe { bun_ptr::ThisPtr::new(this) };
-        // SAFETY: `vm` is the live VM that owns this timer's heap.
-        unsafe {
-            let state = crate::jsc_hooks::runtime_state_of(vm);
-            (*state)
-                .timer
-                .wtf_disarm(ptr::addr_of_mut!((*this).event_loop_timer));
-        }
-        t.run_without_removing();
+    #[inline]
+    fn timer_ref(&self) -> TimerRef {
+        TimerRef::new(self, |t| &t.event_loop_timer)
     }
 
+    /// The identity `imminent_gc_timer` knows this timer by.
     #[inline]
-    fn run_without_removing(&self) {
-        RunLoopTimer::fire(self.run_loop_timer);
+    fn as_opaque(&self) -> *mut () {
+        ptr::from_ref(self).cast_mut().cast()
+    }
+
+    /// `imminent_gc_timer` named this timer (see `update`): unlink it and hand
+    /// back the C++ timer for the caller (`__bun_run_wtf_timer` in
+    /// [`crate::dispatch`]) to [`RunLoopTimer::fire`] once no `&self` is live.
+    pub(crate) fn take_for_run(&self) -> NonNull<RunLoopTimer> {
+        self.timers.wtf_disarm(self.timer_ref());
+        self.run_loop_timer
     }
 
     #[bun_uws::uws_callback(export = "WTFTimer__isActive", no_catch)]
     pub(crate) fn is_active(&self) -> bool {
-        if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
+        let state = {
+            let _lock = self.timers.wtf_timers.lock();
+            self.event_loop_timer.get().state
+        };
+        if state == EventLoopTimerState::ACTIVE {
             return true;
         }
-        // `imminent` is a `BackRef` into the VM's event loop, which outlives this timer.
-        let loaded = self.imminent.load(Ordering::SeqCst);
-        // Null can never equal `this`, so a single pointer compare suffices.
-        loaded.cast_const().cast::<WTFTimer>() == ptr::from_ref(self)
+        // Null can never equal `self`, so a single pointer compare suffices.
+        self.imminent.load(Ordering::SeqCst) == self.as_opaque()
     }
 
     #[bun_uws::uws_callback(export = "WTFTimer__secondsUntilTimer", no_catch)]
     pub(crate) fn seconds_until_timer(&self) -> f64 {
-        if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
-            let next = &self.event_loop_timer.next;
-            // bun_event_loop carries a local `Timespec` stub; re-pack
-            // into bun_core::Timespec to call `duration`.
-            let until = Timespec {
-                sec: next.sec,
-                nsec: next.nsec,
-            }
-            .duration(&Timespec::now(TimespecMockMode::ForceRealTime));
+        let (state, next) = {
+            let _lock = self.timers.wtf_timers.lock();
+            let timer = self.event_loop_timer.get();
+            (timer.state, timer.next)
+        };
+        if state == EventLoopTimerState::ACTIVE {
+            let until = next.duration(&Timespec::now(TimespecMockMode::ForceRealTime));
             let sec = until.sec as f64;
             let nsec = until.nsec as f64;
             return sec + nsec / NS_PER_S as f64;
@@ -116,31 +106,21 @@ impl WTFTimer {
         f64::INFINITY
     }
 
-    /// # Safety
-    /// `this` must point at a live heap-allocated `WTFTimer`.
-    pub(crate) unsafe fn update(this: *mut Self, seconds: f64, repeat: bool) {
-        let self_opaque = this.cast::<()>();
-        // SAFETY: per fn contract — `this` is live; `ThisPtr` vends only fresh
-        // short-lived `&Self` per Deref. Copy the `BackRef` out so the
-        // subsequent `&AtomicPtr` borrow is detached from `*this`.
-        let t = unsafe { bun_ptr::ThisPtr::new(this) };
-        let imminent_br = t.imminent;
-        let imminent = imminent_br.get();
-
+    pub(crate) fn update(&self, seconds: f64, _repeat: bool) {
         // There's only one of these per VM, and each VM has its own imminent_gc_timer.
         // Only set imminent if it's not already set to avoid overwriting another timer.
         if seconds.partial_cmp(&0.0) != Some(core::cmp::Ordering::Greater) {
-            let _ = imminent.compare_exchange(
+            let _ = self.imminent.compare_exchange(
                 ptr::null_mut(),
-                self_opaque,
+                self.as_opaque(),
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             );
             return;
         }
         // Clear imminent if this timer was the one that set it.
-        let _ = imminent.compare_exchange(
-            self_opaque,
+        let _ = self.imminent.compare_exchange(
+            self.as_opaque(),
             ptr::null_mut(),
             Ordering::SeqCst,
             Ordering::SeqCst,
@@ -161,147 +141,91 @@ impl WTFTimer {
             interval.nsec -= NS_PER_S;
         }
 
-        // SAFETY: `t.vm` owns this timer's heap; `wtf_arm` is safe from any thread.
-        unsafe {
-            let state = crate::jsc_hooks::runtime_state_of(t.vm.as_ptr());
-            (*state)
-                .timer
-                .wtf_arm(ptr::addr_of_mut!((*this).event_loop_timer), &interval);
-            (*this).repeat = repeat;
-        }
+        self.timers.wtf_arm(self.timer_ref(), interval);
     }
 
-    /// # Safety
-    /// `this` must point at a live heap-allocated `WTFTimer`.
-    pub(crate) unsafe fn cancel(this: *mut Self) {
-        // SAFETY: per fn contract — `this` outlives this scope. `ThisPtr` vends
-        // only fresh short-lived `&Self` per Deref.
-        let t = unsafe { bun_ptr::ThisPtr::new(this) };
-
-        if t.script_execution_context_id.valid() {
+    pub(crate) fn cancel(&self) {
+        if self.script_execution_context_id.valid() {
             // Only clear imminent if this timer was the one that set it.
-            let self_opaque = this.cast::<()>();
-            // `imminent` is a `BackRef` into the VM's event loop, which
-            // outlives this timer.
-            let imminent_br = t.imminent;
-            let _ = imminent_br.compare_exchange(
-                self_opaque,
+            let _ = self.imminent.compare_exchange(
+                self.as_opaque(),
                 ptr::null_mut(),
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             );
 
-            // SAFETY: `t.vm` owns this timer's heap; `wtf_disarm` is safe from
-            // any thread and is a no-op for a node that is no longer linked.
-            unsafe {
-                let state = crate::jsc_hooks::runtime_state_of(t.vm.as_ptr());
-                (*state)
-                    .timer
-                    .wtf_disarm(ptr::addr_of_mut!((*this).event_loop_timer));
-            }
+            // No-op for a slot that is no longer linked. Not reached once the
+            // context is gone: `timers` may already be freed by then (see the
+            // field), and nothing walks `wtf_timers` after that point.
+            self.timers.wtf_disarm(self.timer_ref());
         }
     }
 
-    /// `EventLoopTimer.fire` dispatch arm body for `Tag::WTFTimer`.
-    ///
-    /// # Safety
-    /// `this` is the container of an `EventLoopTimer` just popped from
-    /// `All.wtf_timers`; `_vm` is the live per-thread VM.
-    pub(crate) unsafe fn fire(this: *mut Self, _now: &ElTimespec, _vm: *mut VirtualMachine) {
-        // SAFETY: per fn contract — `this` is live; `ThisPtr` vends only fresh
-        // short-lived `&Self` per Deref.
-        let t = unsafe { bun_ptr::ThisPtr::new(this) };
+    /// Timer-heap dispatch arm for `Tag::WTFTimer`: `self`'s slot was just
+    /// popped from `All.wtf_timers`. Hands back the C++ timer for the caller to
+    /// [`RunLoopTimer::fire`] once no `&self` is live.
+    pub(crate) fn take_for_fire(&self) -> NonNull<RunLoopTimer> {
         // Only clear imminent if this timer was the one that set it.
-        let self_opaque = this.cast::<()>();
-        // `imminent` is a `BackRef` into the VM's event loop, which outlives
-        // this timer.
-        let imminent_br = t.imminent;
-        let _ = imminent_br.compare_exchange(
-            self_opaque,
+        let _ = self.imminent.compare_exchange(
+            self.as_opaque(),
             ptr::null_mut(),
             Ordering::SeqCst,
             Ordering::SeqCst,
         );
-        t.run_without_removing();
-    }
-
-    /// # Safety
-    /// `this` must be the unique owner of a `WTFTimer` produced by `WTFTimer__create`.
-    pub(crate) unsafe fn deinit(this: *mut Self) {
-        // SAFETY: per fn contract.
-        unsafe { Self::cancel(this) };
-        // SAFETY: `WTFTimer__create` handed its `Box` over via `heap::into_raw`,
-        // so `heap::take` is the paired reclaim.
-        drop(unsafe { bun_core::heap::take(this) });
+        self.run_loop_timer
     }
 }
 
-/// A `WTF::RunLoop` timer on this thread, backed by this thread's event loop. Null when the thread has no Bun
+impl Drop for WTFTimer {
+    fn drop(&mut self) {
+        self.cancel();
+    }
+}
+
+/// A `WTF::RunLoop` timer on this thread, backed by this thread's event loop. `None` when the thread has no Bun
 /// `VirtualMachine` (a `JSC::VM` on a bundler thread generating bytecode, say): the timer then never fires, which
 /// `RunLoop::TimerBase` accepts.
-///
-/// # Safety
-/// `run_loop_timer` must be a non-null, live `WTF::RunLoop::TimerBase` owned
-/// by the caller for the lifetime of the returned `WTFTimer`.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut c_void {
-    let Some(vm) = VirtualMachine::get_or_null() else {
-        return ptr::null_mut();
-    };
+// HOST_EXPORT(WTFTimer__create, c)
+pub fn create(
+    run_loop_timer: core::ptr::NonNull<crate::timer::wtf_timer::RunLoopTimer>,
+) -> Option<Box<crate::timer::WTFTimer>> {
+    if !VirtualMachine::is_loaded() {
+        return None;
+    }
 
-    // SAFETY: `vm` is the thread-local VirtualMachine; `run_loop_timer` is
-    // non-null per caller contract; `event_loop().imminent_gc_timer` lives as
-    // long as the VM.
-    let this = unsafe {
-        let vm_ref = &*vm;
-        let el = &*vm_ref.event_loop();
-        Box::new(WTFTimer {
-            vm: NonNull::new_unchecked(vm),
-            imminent: bun_ptr::BackRef::new(&el.imminent_gc_timer),
-            event_loop_timer: EventLoopTimer {
-                next: ElTimespec {
-                    sec: i64::MAX,
-                    nsec: 0,
-                },
-                tag: EventLoopTimerTag::WTFTimer,
-                state: EventLoopTimerState::CANCELLED,
-                heap: IntrusiveField::default(),
-                in_heap: InHeap::None,
+    let vm = VirtualMachine::get();
+    Some(Box::new(WTFTimer {
+        timers: BackRef::new(crate::jsc_hooks::timer_all()),
+        imminent: BackRef::new(&vm.event_loop_mut().imminent_gc_timer),
+        event_loop_timer: JsCell::new(EventLoopTimer::new(
+            EventLoopTimerTag::WTFTimer,
+            EventLoopTimerState::CANCELLED,
+            Timespec {
+                sec: i64::MAX,
+                nsec: 0,
             },
-            run_loop_timer: NonNull::new_unchecked(run_loop_timer),
-            repeat: false,
-            script_execution_context_id: ScriptExecutionContextIdentifier(
-                vm_ref.initial_script_execution_context_identifier as u32,
-            ),
-        })
-    };
-
-    bun_core::heap::into_raw(this).cast::<c_void>()
+        )),
+        run_loop_timer,
+        script_execution_context_id: ScriptExecutionContextIdentifier(
+            vm.initial_script_execution_context_identifier as u32,
+        ),
+    }))
 }
 
-/// # Safety
-/// `this` must point at a live `WTFTimer` produced by [`WTFTimer__create`].
-#[unsafe(no_mangle)]
-unsafe extern "C" fn WTFTimer__update(this: *mut WTFTimer, seconds: f64, repeat: bool) {
-    // SAFETY: per fn contract.
-    unsafe { WTFTimer::update(this, seconds, repeat) };
+// HOST_EXPORT(WTFTimer__update, c)
+pub fn update(this: &crate::timer::WTFTimer, seconds: f64, repeat: bool) {
+    this.update(seconds, repeat);
 }
 
-/// # Safety
-/// `this` must be the unique owner of a `WTFTimer` produced by
-/// [`WTFTimer__create`]; it is freed by this call.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn WTFTimer__deinit(this: *mut WTFTimer) {
-    // SAFETY: per fn contract.
-    unsafe { WTFTimer::deinit(this) };
+/// Frees `this`.
+// HOST_EXPORT(WTFTimer__deinit, c)
+pub fn deinit(this: Box<crate::timer::WTFTimer>) {
+    drop(this);
 }
 
-/// # Safety
-/// `this` must point at a live `WTFTimer` produced by [`WTFTimer__create`].
-#[unsafe(no_mangle)]
-unsafe extern "C" fn WTFTimer__cancel(this: *mut WTFTimer) {
-    // SAFETY: per fn contract.
-    unsafe { WTFTimer::cancel(this) };
+// HOST_EXPORT(WTFTimer__cancel, c)
+pub fn cancel(this: &crate::timer::WTFTimer) {
+    this.cancel();
 }
 
 unsafe extern "C" {

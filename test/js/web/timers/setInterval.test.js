@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { bunRun, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows } from "harness";
 import { join } from "path";
 
 it("setInterval", async () => {
@@ -133,3 +133,35 @@ it.concurrent(
   },
   30_000,
 );
+
+it.concurrent("an interval that stops itself via _repeat = null / _idleTimeout = -1 is collectable", async () => {
+  const code = /* js */ `
+    const { heapStats } = require("bun:jsc");
+    const N = 200;
+    let fired = 0;
+    await new Promise(resolve => {
+      for (let i = 0; i < N; i++) {
+        setInterval(function () {
+          if (i % 2) this._repeat = null;
+          else this._idleTimeout = -1;
+          if (++fired === N) resolve();
+        }, 1);
+      }
+    });
+    await new Promise(r => setTimeout(r, 10));
+    Bun.gc(true);
+    await new Promise(r => setTimeout(r, 10));
+    Bun.gc(true);
+    const left = heapStats().objectTypeCounts.Timeout ?? 0;
+    console.log(fired, left < N / 2 ? "collected" : "leaked " + left);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe("200 collected");
+  expect(exitCode).toBe(0);
+});

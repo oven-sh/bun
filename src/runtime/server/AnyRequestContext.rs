@@ -78,7 +78,13 @@ pub trait CtxKind: sealed::Sealed {
 /// `CtxTag::None` for combinations that are never instantiated (a server
 /// whose `(SSL, DEBUG)` differ from the context's), so each tag names exactly
 /// one type.
-const fn ctx_tag_for(server_ssl: bool, server_dbg: bool, ssl: bool, dbg: bool, mux: bool) -> CtxTag {
+const fn ctx_tag_for(
+    server_ssl: bool,
+    server_dbg: bool,
+    ssl: bool,
+    dbg: bool,
+    mux: bool,
+) -> CtxTag {
     if server_ssl != ssl || server_dbg != dbg {
         return CtxTag::None;
     }

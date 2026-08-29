@@ -190,7 +190,7 @@ pub struct Query {
 
 impl Drop for Query {
     fn drop(&mut self) {
-        // SAFETY: the live subordinate ref `DNSServiceGetAddrInfo` returned; its
+        // SAFETY: the live subordinate ref `DNSServiceGetAddrInfoEx` returned; its
         // primary is still alive (`_primary`, dropped after this).
         unsafe { DNSServiceRefDeallocate(self.sub.as_ptr()) }
     }

@@ -1,11 +1,7 @@
 // Hardcoded module "bun:internal-for-testing"
 
-// If you want to test an internal API, add a binding into this file.
-//
-// Then at test time: import ... from "bun:internal-for-testing"
-//
-// In a debug build, the import is always allowed.
-// It is disallowed in release builds unless run in Bun's CI.
+// Add bindings here to test internal APIs via `import ... from "bun:internal-for-testing"`.
+// Always importable in debug builds; release builds allow it only under Bun's CI.
 
 const fmtBinding = $bindgenFn("fmt_jsc.bind.ts", "fmtString");
 
@@ -169,10 +165,9 @@ export const setSyntheticAllocationLimitForTesting: (limit: number) => number = 
   1,
 );
 
-// Shrink the markdown parser's block-metadata cap (in bytes) so its
-// `TooManyBlocks` error is reachable without 4 GiB of input. The cap can only
-// be lowered, never raised past the real limit. Returns the previous value so
-// a test can restore it.
+// Lower the markdown parser's block-metadata cap (bytes) so `TooManyBlocks`
+// is reachable without 4 GiB input; returns the previous value. Never raises
+// past the real limit.
 export const setMaxMarkdownBlockBytesForTesting: (limit: number) => number = $newRustFunction(
   "MarkdownObject.rs",
   "setMaxMarkdownBlockBytesForTesting",
@@ -448,11 +443,9 @@ function nodeGetValidStdio(stdio, sync?) {
 
 let cachedInternalChildProcess;
 
-// Userland access to node-internal modules for vendored node tests that
-// declare `// Flags: --expose-internals` (served via the require interceptor
-// in test/js/node/test/common/index.js). Static requires only — the builtin
-// bundler cannot rewrite variable-path requires. Extend the map as more
-// vendored tests need more internals.
+// Node-internal modules for vendored tests declaring `// Flags: --expose-internals`,
+// served via the require interceptor in test/js/node/test/common/index.js.
+// Static requires only — the builtin bundler cannot rewrite variable-path requires.
 export const exposedInternals = {
   "internal/streams/add-abort-signal": require("internal/streams/add-abort-signal"),
   "internal/util/debuglog": require("internal/util/debuglog"),
@@ -466,6 +459,7 @@ export const exposedInternals = {
   "internal/freelist": require("internal/freelist"),
   // Node's internal/fixed_queue module IS the FixedQueue class.
   "internal/fixed_queue": require("internal/fixed_queue").FixedQueue,
+  "internal/test_runner/snapshot": require("internal/test/snapshot"),
   "internal/assert/myers_diff": require("internal/assert/myers_diff"),
   // Bun's internal/errors only carries aggregateTwoErrors; the ERR_* hierarchy
   // is native, not a JS `codes` table, so nothing else is exposed here.
@@ -513,12 +507,9 @@ export const exposedInternals = {
   // module (src/js/internal/test/binding.ts), not from here.
 };
 
-// State of a web ReadableStream/WritableStream for vendored node tests that
-// read Node's `stream[kState].state` / `.storedError` (served through the
-// internal/webstreams/util shim in test/js/node/test/common/index.js).
-// The stream's closed promise is settled from every terminal transition, so its
-// status is the state. A WritableStream mid-`erroring` still reports "writable":
-// erroring is not terminal, and nothing observable distinguishes the two here.
+// Web stream `[kState].state`/.storedError for vendored node tests (served via
+// the internal/webstreams/util shim). The closed promise's status is the state;
+// WritableStream mid-`erroring` reports "writable" since erroring isn't terminal.
 export function getWebStreamState(stream: ReadableStream | WritableStream): {
   state: string;
   storedError: unknown;

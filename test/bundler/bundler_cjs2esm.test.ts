@@ -667,4 +667,122 @@ describe("bundler", () => {
     cjs2esm: true,
     run: { stdout: "[1,2]" },
   });
+  // https://github.com/oven-sh/bun/issues/12518
+  itBundled("cjs2esm/ObjectAssignModuleExportsDeoptimizes", {
+    files: {
+      "/entry.js": /* js */ `
+        import { createContext, useState, known } from './lib.js';
+        console.log(JSON.stringify([createContext(), useState(), known]));
+      `,
+      "/lib.js": /* js */ `
+        module.exports.known = 1;
+        Object.assign(module.exports, require('./other.js'));
+      `,
+      "/other.js": /* js */ `
+        module.exports.createContext = function() { return 'context'; };
+        module.exports.useState = function() { return 'state'; };
+      `,
+    },
+    cjs2esm: { unhandled: ["/lib.js", "/other.js"] },
+    run: { stdout: '["context","state",1]' },
+  });
+  // https://github.com/oven-sh/bun/issues/12518 — the rehackt pattern
+  itBundled("cjs2esm/ObjectAssignModuleExportsWithDeadHint", {
+    files: {
+      "/entry.js": /* js */ `
+        import { createContext, known } from './lib.js';
+        console.log(JSON.stringify([createContext(), known]));
+      `,
+      "/lib.js": /* js */ `
+        "use strict";
+        if (0) {
+          module.exports = require('./other.js');
+        }
+        module.exports.known = 1;
+        Object.assign(module.exports, require('./other.js'));
+      `,
+      "/other.js": /* js */ `
+        module.exports.createContext = function() { return 'context'; };
+      `,
+    },
+    cjs2esm: { unhandled: ["/lib.js", "/other.js"] },
+    run: { stdout: '["context",1]' },
+  });
+  itBundled("cjs2esm/ObjectAssignModuleExportsNamespaceImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as lib from './lib.js';
+        console.log(JSON.stringify([lib.createContext(), lib.known]));
+      `,
+      "/lib.js": /* js */ `
+        module.exports.known = 1;
+        Object.assign(module.exports, require('./other.js'));
+      `,
+      "/other.js": /* js */ `
+        module.exports.createContext = function() { return 'context'; };
+      `,
+    },
+    cjs2esm: { unhandled: ["/lib.js", "/other.js"] },
+    run: { stdout: '["context",1]' },
+  });
+  itBundled("cjs2esm/ModuleExportsEscapesAsValue", {
+    files: {
+      "/entry.js": /* js */ `
+        import { added, known } from './lib.js';
+        console.log(JSON.stringify([added, known]));
+      `,
+      "/lib.js": /* js */ `
+        module.exports.known = 1;
+        (function(obj) { obj.added = 2; })(module.exports);
+      `,
+    },
+    cjs2esm: { unhandled: ["/lib.js"] },
+    run: { stdout: "[2,1]" },
+  });
+  // https://github.com/oven-sh/bun/issues/14939 — wasm-bindgen output shape
+  itBundled("cjs2esm/ModuleExportsStoredBeforeAssign", {
+    files: {
+      "/entry.js": /* js */ `
+        import { transform } from './wasm.js';
+        console.log(transform());
+      `,
+      "/wasm.js": /* js */ `
+        let imports = {};
+        imports['__wbindgen_placeholder__'] = module.exports;
+        module.exports.transform = function() {
+          return imports['__wbindgen_placeholder__'] === module.exports ? 'ok' : 'bad';
+        };
+      `,
+    },
+    cjs2esm: { unhandled: ["/wasm.js"] },
+    run: { stdout: "ok" },
+  });
+  itBundled("cjs2esm/ModuleExportsComputedIndexDeoptimizes", {
+    files: {
+      "/entry.js": /* js */ `
+        import { added, known } from './lib.js';
+        console.log(JSON.stringify([added, known]));
+      `,
+      "/lib.js": /* js */ `
+        module.exports.known = 1;
+        for (const k of ['added']) module.exports[k] = 2;
+      `,
+    },
+    cjs2esm: { unhandled: ["/lib.js"] },
+    run: { stdout: "[2,1]" },
+  });
+  itBundled("cjs2esm/ModuleExportsPropertyReadStillConverts", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a, b } from './lib.js';
+        console.log(JSON.stringify([a, b]));
+      `,
+      "/lib.js": /* js */ `
+        module.exports.a = 1;
+        module.exports.b = module.exports.a + 1;
+      `,
+    },
+    cjs2esm: true,
+    run: { stdout: "[1,2]" },
+  });
 });

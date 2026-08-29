@@ -342,7 +342,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 return None;
                             }
 
-                            // rewrite `module.exports` to `exports`
+                            // rewrite `module.exports` to `exports` — counts as a use of exports_ref; the ESpecial::ModuleExports arm below balances this when the value is consumed by a property access.
+                            let exports_ref = p.exports_ref;
+                            p.record_usage(exports_ref);
                             return Some(Expr {
                                 data: js_ast::ExprData::ESpecial(E::Special::ModuleExports),
                                 loc: name_loc,
@@ -608,6 +610,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         p.deoptimize_common_js_named_exports();
                                         return None;
                                     }
+
+                                    // Balance record_usage(exports_ref) from the module.exports rewrite above; this property access consumes the value so it's not an escaping use.
+                                    let exports_ref = p.exports_ref;
+                                    p.ignore_usage(exports_ref);
 
                                     // Note: reshaped for borrowck — see exports_ref arm above.
                                     let ref_ = if let Some(existing) =

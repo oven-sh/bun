@@ -260,7 +260,7 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           }
           using server = Bun.serve({
             port: 0,
-            routes: { "/static/*": { dir: root } },
+            routes: { "/static/*": { dir: root }, "/slash/*": { dir: root + "/" } },
             fetch() { return new Response("fallthrough", { status: 404 }); },
           });
           const base = "http://localhost:" + server.port;
@@ -301,6 +301,8 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
             big: { status: bigRes.status, length: bigBody.length, matches: bigBody.equals(bigExpected) },
             missingDir: serveErrcode(import.meta.dir + "/nope"),
             fileAsDir: serveErrcode(root + "/a.txt"),
+            fileAsDirSlash: serveErrcode(root + "/a.txt/"),
+            rootSlash: (await fetch(base + "/slash/a.txt")).status,
           }));
         `,
         "public/a.txt": "hello asset",
@@ -350,6 +352,8 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         big: { status: 200, length: big.length, matches: true },
         missingDir: "ENOENT",
         fileAsDir: "ENOTDIR",
+        fileAsDirSlash: "ENOTDIR",
+        rootSlash: 200,
       });
       expect(code).toBe(0);
     },

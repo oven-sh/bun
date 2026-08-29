@@ -106,7 +106,15 @@ impl DirectoryRoute {
                 if let Some(key) = graph.dir_key(root) {
                     return Ok(Root::Embedded(key));
                 }
-                let errno = if graph.contains_file(root) {
+                // `file.txt/` names the file for `open(2)`'s ENOTDIR, not a missing entry.
+                let mut file_path = root;
+                while let Some((&sep, rest)) = file_path.split_last() {
+                    if sep != b'/' && !(cfg!(windows) && sep == b'\\') {
+                        break;
+                    }
+                    file_path = rest;
+                }
+                let errno = if graph.contains_file(file_path) {
                     bun_sys::E::ENOTDIR
                 } else {
                     bun_sys::E::ENOENT

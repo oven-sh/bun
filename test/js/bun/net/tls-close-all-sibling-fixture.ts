@@ -39,7 +39,9 @@ import tls from "node:tls";
 import { tls as certs, bunEnv, bunExe } from "harness";
 
 const N = 64;
-const STEP_DEADLINE_MS = 30_000;
+// Well inside the test's own timeout, so a stalled step still gets to print
+// the summary with `error` set instead of being killed silently.
+const STEP_DEADLINE_MS = 20_000;
 
 type Scenario = {
   kind: "walk" | "parked";
@@ -182,7 +184,7 @@ const lineWaiters: Array<(line: string) => void> = [];
       else lines.push(line);
     }
   }
-})();
+})().catch(e => report({ error: `child stdout reader failed: ${e}` }));
 function send(cmd: string) {
   child.stdin.write(cmd + "\n");
   child.stdin.flush();

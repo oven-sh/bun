@@ -68,7 +68,9 @@ const ROUNDS = 2;
 const WAVES = 2;
 // MAX_LOW_PRIO_SOCKETS_PER_LOOP_ITERATION in packages/bun-usockets/src/loop.c.
 const BUDGET = 5;
-const STEP_DEADLINE_MS = 30_000;
+// Well inside the test's own timeout, so a stalled step still gets to print
+// the summary with `error` set instead of being killed silently.
+const STEP_DEADLINE_MS = 20_000;
 
 type Wave = { direct: number; parked: number; iterations: number };
 const summary = {
@@ -240,7 +242,7 @@ const lineWaiters: Array<(line: string) => void> = [];
       else lines.push(line);
     }
   }
-})();
+})().catch(e => report({ error: `child stdout reader failed: ${e}` }));
 function send(cmd: string) {
   child.stdin.write(cmd + "\n");
   child.stdin.flush();
@@ -298,10 +300,12 @@ async function round() {
         batch.socks.push(s);
         if (batch.socks.length === batch.expected) batch.allOpen.resolve();
       },
-      close() {
+      close(s) {
         summary.closed++;
         const batch = current;
-        if (!batch || batch.burstIteration < 0) return;
+        // Only the current wave's sockets count toward its split; the primer
+        // and any other socket just land in the total above.
+        if (!batch || batch.burstIteration < 0 || !batch.socks.includes(s)) return;
         const it = iteration();
         batch.lastCloseIteration = it;
         if (it === batch.burstIteration + 1) batch.direct++;

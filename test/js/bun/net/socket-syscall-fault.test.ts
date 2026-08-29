@@ -288,8 +288,11 @@ test.concurrent.skipIf(!fault.available() || !isLinux)(
 // These run in the test process itself, and the send rule slot is process
 // global (one rule per syscall), so they must not overlap each other. They
 // are still `concurrent` so they overlap the fixture tests above, which only
-// wait on child processes; `serialized` chains them behind one another.
+// wait on child processes; `serialized` chains them behind one another. The
+// time a test spends waiting in that chain counts against its own timeout, so
+// each one gets an explicit timeout instead of Bun's 5000ms default.
 describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOTYPE)", () => {
+  const H2_TIMEOUT_MS = 30_000;
   let chain: Promise<unknown> = Promise.resolve();
   function serialized<T>(body: () => Promise<T>): Promise<T> {
     const run = chain.then(body, body);
@@ -351,7 +354,9 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
     client.on("goaway", code => events.push(`session-goaway:${code}`));
     client.on("connect", () => {
       const fd = (client.socket as any)?._handle?.fd ?? -1;
-      expect(fd).toBeGreaterThanOrEqual(0);
+      // Recorded rather than asserted here: a throw inside the listener would
+      // not reach the test body, while an unexpected event fails its toEqual.
+      if (fd < 0) events.push("connect:no-fd");
       fault.set({ syscall: "send", action: "errno", errno: "EPROTOTYPE", after: 0, repeat, fd });
     });
     const req = client.request({ ":path": "/" });
@@ -378,23 +383,26 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
     };
   }
 
-  test.concurrent("transient burst (x8) recovers: HEADERS, SETTINGS ACK and PING ACK all reach the server", () =>
-    serialized(async () => {
-      using h = await connectAndJam(8);
-      const pingAcked = new Promise<void>((resolve, reject) => {
-        h.setOnFrame(f => f === "t6a#0" && resolve());
-        h.client.on("close", () => reject(new Error(`session closed before PING ACK; tape: ${h.frames.join(",")}`)));
-      });
-      await pingAcked;
-      // Client SETTINGS, the request HEADERS (END_STREAM: no body), the ACK of
-      // the server's SETTINGS, then the PING ACK; nothing else, and no
-      // session or stream event.
-      expect({ frames: h.frames, events: h.events, destroyed: h.client.destroyed }).toEqual({
-        frames: ["t4#0", "t1a#1", "t4a#0", "t6a#0"],
-        events: [],
-        destroyed: false,
-      });
-    }),
+  test.concurrent(
+    "transient burst (x8) recovers: HEADERS, SETTINGS ACK and PING ACK all reach the server",
+    () =>
+      serialized(async () => {
+        using h = await connectAndJam(8);
+        const pingAcked = new Promise<void>((resolve, reject) => {
+          h.setOnFrame(f => f === "t6a#0" && resolve());
+          h.client.on("close", () => reject(new Error(`session closed before PING ACK; tape: ${h.frames.join(",")}`)));
+        });
+        await pingAcked;
+        // Client SETTINGS, the request HEADERS (END_STREAM: no body), the ACK of
+        // the server's SETTINGS, then the PING ACK; nothing else, and no
+        // session or stream event.
+        expect({ frames: h.frames, events: h.events, destroyed: h.client.destroyed }).toEqual({
+          frames: ["t4#0", "t1a#1", "t4a#0", "t6a#0"],
+          events: [],
+          destroyed: false,
+        });
+      }),
+    H2_TIMEOUT_MS,
   );
 
   // A fatal-classified errno (EPIPE) latches transport_write_fatal, but the
@@ -464,31 +472,35 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
           server.close();
         }
       }),
+    H2_TIMEOUT_MS,
   );
 
-  test.concurrent("sustained errno (forever) surfaces as session + stream close, not a silent half-alive jam", () =>
-    serialized(async () => {
-      using h = await connectAndJam(-1);
-      // No timers: the bounded retry exhausts within a handful of event-loop
-      // turns of writable retries, then the transport is torn down. A
-      // regression to the silent jam means these events never fire and the
-      // test times out. Manual listeners, not events.once(): that helper
-      // rejects when 'error' fires first, while here an unexpected 'error'
-      // should show up in the recorded event sequence instead.
-      await Promise.all([
-        new Promise<void>(resolve => h.client.once("close", () => resolve())),
-        new Promise<void>(resolve => h.req.once("close", () => resolve())),
-      ]);
-      // The session wrote its SETTINGS before 'connect' armed the rule, so that
-      // is the only frame on the wire. The stream is cancelled (RST_STREAM
-      // code 8) and the session destroyed without an 'error' event: the
-      // deferred close of a dead transport takes the same path as a peer
-      // disconnect.
-      expect({ frames: h.frames, events: h.events, destroyed: h.client.destroyed }).toEqual({
-        frames: ["t4#0"],
-        events: ["stream-close:8", "session-close"],
-        destroyed: true,
-      });
-    }),
+  test.concurrent(
+    "sustained errno (forever) surfaces as session + stream close, not a silent half-alive jam",
+    () =>
+      serialized(async () => {
+        using h = await connectAndJam(-1);
+        // No timers: the bounded retry exhausts within a handful of event-loop
+        // turns of writable retries, then the transport is torn down. A
+        // regression to the silent jam means these events never fire and the
+        // test times out. Manual listeners, not events.once(): that helper
+        // rejects when 'error' fires first, while here an unexpected 'error'
+        // should show up in the recorded event sequence instead.
+        await Promise.all([
+          new Promise<void>(resolve => h.client.once("close", () => resolve())),
+          new Promise<void>(resolve => h.req.once("close", () => resolve())),
+        ]);
+        // The session wrote its SETTINGS before 'connect' armed the rule, so that
+        // is the only frame on the wire. The stream is cancelled (RST_STREAM
+        // code 8) and the session destroyed without an 'error' event: the
+        // deferred close of a dead transport takes the same path as a peer
+        // disconnect.
+        expect({ frames: h.frames, events: h.events, destroyed: h.client.destroyed }).toEqual({
+          frames: ["t4#0"],
+          events: ["stream-close:8", "session-close"],
+          destroyed: true,
+        });
+      }),
+    H2_TIMEOUT_MS,
   );
 });

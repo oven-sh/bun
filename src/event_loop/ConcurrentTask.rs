@@ -225,7 +225,7 @@ macro_rules! boxed_task {
                 // SAFETY: `Taskable::release_unrun` contract — `this` came off the
                 // queue under this tag, where only `Task::from_boxed` puts it.
                 <$ty as $crate::BoxedTask>::release_unrun(unsafe {
-                    ::std::boxed::Box::from_raw(this)
+                    ::bun_core::heap::take(this)
                 })
             }
         }

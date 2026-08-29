@@ -1,4 +1,3 @@
-#include "./root_certs.h"
 #include "./root_certs_header.h"
 #include "./internal/internal.h"
 #include <mutex>
@@ -126,23 +125,20 @@ end:
   return NULL;
 }
 
-// The bundled Mozilla roots, indexed by subject but not parsed: BoringSSL
-// parses one the first time a chain names it (X509_LAZY_CERT_SET, oven-sh/boringssl).
+// The bundled Mozilla roots (embedded as DER by src/runtime/socket/bundled_root_certs.rs), indexed by subject but not
+// parsed: BoringSSL parses one the first time a chain names it (X509_LAZY_CERT_SET, oven-sh/boringssl).
+extern "C" size_t us_bundled_root_certs_der(const uint8_t *const **out_certs, const size_t **out_lens);
+
 X509_LAZY_CERT_SET *us_get_bundled_root_cert_set() {
   static X509_LAZY_CERT_SET *set = nullptr;
   static std::once_flag once;
   std::call_once(once, []() {
-    set = X509_LAZY_CERT_SET_new_static(kBundledRootCerts, kBundledRootCertLens,
-                                        BUNDLED_ROOT_CERT_COUNT);
+    const uint8_t *const *certs;
+    const size_t *lens;
+    size_t count = us_bundled_root_certs_der(&certs, &lens);
+    set = X509_LAZY_CERT_SET_new_static(certs, lens, count);
   });
   return set;
-}
-
-extern "C" size_t us_bundled_root_certs_der(const uint8_t *const **out_certs,
-                                           const size_t **out_lens) {
-  *out_certs = kBundledRootCerts;
-  *out_lens = kBundledRootCertLens;
-  return BUNDLED_ROOT_CERT_COUNT;
 }
 
 // std::call_once, not a flag: concurrent Workers must block until the list is
@@ -178,10 +174,13 @@ static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
       return;
     }
 
+    const uint8_t *const *bundled_certs;
+    const size_t *bundled_lens;
+    size_t bundled_count = us_bundled_root_certs_der(&bundled_certs, &bundled_lens);
     std::unordered_set<std::string_view> bundled;
-    bundled.reserve(BUNDLED_ROOT_CERT_COUNT);
-    for (size_t i = 0; i < BUNDLED_ROOT_CERT_COUNT; i++) {
-      bundled.emplace(reinterpret_cast<const char *>(kBundledRootCerts[i]), kBundledRootCertLens[i]);
+    bundled.reserve(bundled_count);
+    for (size_t i = 0; i < bundled_count; i++) {
+      bundled.emplace(reinterpret_cast<const char *>(bundled_certs[i]), bundled_lens[i]);
     }
 
     std::vector<CRYPTO_BUFFER *> certs;

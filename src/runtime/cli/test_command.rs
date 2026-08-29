@@ -1906,15 +1906,21 @@ impl TestCommand {
             reporter.reporters.only_failures = true; // only-failures defaults to true for ai agents
         }
 
+        // The worker's environment already holds the coordinator's env file values, and `BUN_OPTIONS` in it can carry `--env-file`.
+        if ctx.test_options.test_worker {
+            ctx.args.env_files.clear();
+            ctx.args.disable_default_env_files = true;
+        }
+
         bun_ast::initialize_store();
         // SAFETY: `init` returns the heap-allocated process-lifetime VM; deref once.
         let vm: &mut VirtualMachine = unsafe {
             &mut *VirtualMachine::init(jsc::virtual_machine::InitOptions {
                 // Clone (not take): ParallelRunner::run_as_coordinator → build_worker_argv
                 // reads ctx.args.{conditions,define,loaders,tsconfig_override,drop,
-                // main_fields,extension_order,env_files,feature_flags,preserve_symlinks,
-                // allow_addons,allow_ffi_cc,disable_default_env_files,jsx} after this point to forward
-                // them to workers.
+                // main_fields,extension_order,feature_flags,preserve_symlinks,
+                // allow_addons,allow_ffi_cc,jsx} after this point to forward them
+                // to workers.
                 transform_options: ctx.args.clone(),
                 debugger: core::mem::take(&mut ctx.runtime_options.debugger),
                 log: core::ptr::NonNull::new(ctx.log),

@@ -482,6 +482,56 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  // Runs on debug builds too, same as the Bun.mmap block above.
+  describe("Event and EventTarget", () => {
+    async function checkEventFixture(name: string, lib: string[], source: string) {
+      const checkDir = join(TEMP_DIR, name);
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.include = ["event-check.ts"];
+      tsconfig.compilerOptions.lib = lib;
+      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+      await mkdir(checkDir, { recursive: true });
+      await makeTree(checkDir, {
+        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+        "event-check.ts": source,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    }
+
+    test("lib.dom's composedPath() declaration wins when lib.dom is loaded", async () => {
+      await checkEventFixture(
+        "event-lib-dom-check",
+        ["ESNext", "DOM"],
+        `// lib.dom declares composedPath(): EventTarget[]. The Node-style tuple
+         // declaration must not merge into it (#40574).
+         declare const fullPath: EventTarget[];
+         export const composed: ReturnType<Event["composedPath"]> = fullPath;`,
+      );
+    });
+
+    test("the Node-style composedPath() tuple applies without lib.dom", async () => {
+      await checkEventFixture(
+        "event-no-lib-dom-check",
+        ["ESNext"],
+        `declare const e: Event;
+         export const composed: [EventTarget?] = e.composedPath();`,
+      );
+    });
+  });
+
   describe("Test Globals", () => {
     const code = `
       const test_shouldBeAFunction: Function = test;

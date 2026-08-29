@@ -4372,7 +4372,7 @@ pub mod bv2_impl {
                             // TODO: outbase
                             let pathname =
                                 Fs::PathName::init(bun_paths::resolve_path::relative_platform::<
-                                    bun_paths::resolve_path::platform::Loose,
+                                    bun_paths::resolve_path::platform::Auto,
                                     false,
                                 >(
                                     &self.transpiler.options.root_dir,
@@ -4402,6 +4402,8 @@ pub mod bv2_impl {
                                     !self.transpiler.options.compile_mode.is_executable(),
                                 )
                                 .expect("oom");
+                            // Like a chunk's `final_rel_path`: `/`-separated on every platform.
+                            bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut v);
                             v.into_boxed_slice()
                         };
 

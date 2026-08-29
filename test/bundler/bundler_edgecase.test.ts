@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isBroken, isOhos, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isOhos, tempDir } from "harness";
 import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
@@ -1534,7 +1534,6 @@ describe("bundler", () => {
     },
     target: "bun",
     run: true,
-    todo: isBroken && isWindows,
     timeoutScale: 5,
   });
   itBundled("edgecase/PackageExternalDoNotBundleNodeModules", {
@@ -2832,6 +2831,8 @@ describe("bundler", () => {
       ...deepChainFiles,
     },
     backend: "cli",
+    // (local runs: writing 7000 fixture files is slow on Windows; the build itself is well under a second)
+    timeoutScale: 6,
     run: { stdout: String(deepChainDepth) },
   });
   // Top-level await in the entry makes `validate_tla` / `propagate_async` walk
@@ -2845,6 +2846,7 @@ describe("bundler", () => {
       ...deepChainFiles,
     },
     backend: "cli",
+    timeoutScale: 6,
     onAfterBundle(api) {
       const out = api.readFile("out.js");
       expect(out).toContain(`init_m${deepChainDepth - 2}`);

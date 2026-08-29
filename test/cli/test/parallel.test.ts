@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { mkfifo } from "mkfifo";
+import path from "path";
 
 test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID", async () => {
   // Sleep so worker 0 is busy when workers 1/2 come online and pick up the
@@ -1178,6 +1180,69 @@ test("--parallel forwards --conditions to workers", async () => {
   expect(stderr).toContain("0 fail");
   expect(exitCode).toBe(0);
 });
+
+test("--parallel: workers get the --env-file values and skip the default .env", async () => {
+  const fixture = `import {test,expect} from "bun:test"; test("env", () => { expect(process.env.BUNTEST_CUSTOM).toBe("1"); expect(process.env.BUNTEST_DOTENV).toBeUndefined(); });`;
+  using dir = tempDir("parallel-env-file", {
+    "a.test.js": fixture,
+    "b.test.js": fixture,
+    ".env": "BUNTEST_DOTENV=1\n",
+    ".env.custom": "BUNTEST_CUSTOM=1\n",
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--env-file=.env.custom"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
+// A FIFO can be read once. The coordinator reads it and passes the values to the
+// workers in their environment. A worker that opened the FIFO again would block
+// in open(2), since no writer is left. That environment also carries
+// BUN_OPTIONS, which a worker splices into its own argv.
+for (const route of ["argv", "BUN_OPTIONS"] as const) {
+  test.skipIf(isWindows)(`--parallel: the coordinator reads a FIFO --env-file once (${route})`, async () => {
+    const fixture = `import {test,expect} from "bun:test"; test("env", () => { expect(process.env.BUNTEST_FIFO).toBe("1"); expect(process.env.BUNTEST_DOTENV).toBeUndefined(); });`;
+    using dir = tempDir("parallel-env-file-fifo", {
+      "a.test.js": fixture,
+      "b.test.js": fixture,
+      ".env": "BUNTEST_DOTENV=1\n",
+    });
+    mkfifo(path.join(String(dir), "fifo"));
+    await using writer = Bun.spawn({
+      cmd: ["sh", "-c", "echo BUNTEST_FIFO=1 > fifo"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2", ...(route === "argv" ? ["--env-file=fifo"] : [])],
+      env: {
+        ...bunEnv,
+        BUN_TEST_PARALLEL_SCALE_MS: "0",
+        ...(route === "BUN_OPTIONS" ? { BUN_OPTIONS: "--env-file=fifo" } : {}),
+      },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("PARALLEL");
+    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+    expect(await writer.exited).toBe(0);
+  });
+}
 
 test("--parallel --reporter=junit emits a synthetic suite for crashed files", async () => {
   using dir = tempDir("parallel-junit-crash", {

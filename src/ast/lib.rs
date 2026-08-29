@@ -2231,32 +2231,25 @@ pub struct AddErrorOptions<'a> {
 /// `AddErrorOptions`.
 pub type ErrorOpts<'a> = AddErrorOptions<'a>;
 
-/// Call-site helper: rewrites `<red>..<r>` markup
-/// in the *literal* format string via `bun_core::pretty_fmt!` (compile-time),
-/// then formats. Expands to a `fmt::Arguments` so it drops in wherever a
-/// pre-built `fmt::Arguments` was previously passed to `alloc_print`.
+/// `alloc_print!(fmt, args..)` — markup-aware form of [`alloc_print`]: rewrites
+/// `<red>..<r>` markup in the *literal* format string via `bun_core::pretty_fmt!`
+/// (compile-time), then formats into an owned buffer. Message text with markup
+/// must go through this; a raw `format_args!` passed to the function form
+/// below keeps the tags verbatim.
 ///
-/// Callers that build messages with markup must use this (or `alloc_print!`) so
-/// the tags are converted/stripped; passing a raw `format_args!` through the
-/// function form below leaves the markup verbatim.
-#[macro_export]
-macro_rules! pretty_format_args {
-    ($fmt:literal $(, $arg:expr)* $(,)?) => {{
-        if ::bun_core::Output::ENABLE_ANSI_COLORS_STDERR
-            .load(::core::sync::atomic::Ordering::Relaxed)
-        {
-            ::core::format_args!(::bun_core::pretty_fmt!($fmt, true) $(, $arg)*)
-        } else {
-            ::core::format_args!(::bun_core::pretty_fmt!($fmt, false) $(, $arg)*)
-        }
-    }};
-}
-
-/// `alloc_print!(fmt, args..)` — owned-buffer form of `pretty_format_args!`.
+/// Each branch holds the whole call: a `format_args!` in block-tail position
+/// is dropped with the block (E0716), so it cannot be handed out of an
+/// `if`/`else`. Only one branch executes, so each `$arg` evaluates once.
 #[macro_export]
 macro_rules! alloc_print {
     ($fmt:literal $(, $arg:expr)* $(,)?) => {
-        $crate::alloc_print($crate::pretty_format_args!($fmt $(, $arg)*))
+        if ::bun_core::Output::ENABLE_ANSI_COLORS_STDERR
+            .load(::core::sync::atomic::Ordering::Relaxed)
+        {
+            $crate::alloc_print(::core::format_args!(::bun_core::pretty_fmt!($fmt, true) $(, $arg)*))
+        } else {
+            $crate::alloc_print(::core::format_args!(::bun_core::pretty_fmt!($fmt, false) $(, $arg)*))
+        }
     };
 }
 
@@ -2315,8 +2308,8 @@ pub fn alloc_print(args: fmt::Arguments<'_>) -> Cow<'static, [u8]> {
     // Markup conversion happens over the *format-string literal only*;
     // interpolated values are never inspected for `<..>` markup.
     // With `fmt::Arguments` the literal is opaque, so callers that need markup
-    // conversion must go through `pretty_format_args!` / `alloc_print!` above
-    // (which do the rewrite at the macro call site). The function form here
+    // conversion must go through `alloc_print!` above (which does the rewrite
+    // at the macro call site). The function form here
     // renders `args` verbatim: do NOT run a runtime markup pass over the
     // rendered bytes, or user-supplied argument values containing `<`
     // (`<stdin>`, `Array<string>`, JSX/HTML snippets) get mangled.

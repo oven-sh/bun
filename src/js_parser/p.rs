@@ -6314,14 +6314,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-// `bun_paths::fs::Path` lacks a package-name method
-// (it lives on the resolver `Path`, which `bun_js_parser` cannot depend on), so
-// the slice logic is inlined here. Mirrors `src/resolver/fs.rs::Path::packageName`.
+/// The unscoped npm package of a specifier (`react/x`) or path (`node_modules<sep>react<sep>x.js`).
 fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
-    let mut name_to_use = path.pretty;
-    if let Some(node_modules) = strings::last_index_of(path.text, bun_paths::NODE_MODULES_NEEDLE) {
-        name_to_use = &path.text[node_modules + bun_paths::NODE_MODULES_NEEDLE.len()..];
-    }
+    let (name_to_use, separators): (&[u8], &[u8]) =
+        match strings::last_index_of(path.text, bun_paths::NODE_MODULES_NEEDLE) {
+            Some(node_modules) => (
+                &path.text[node_modules + bun_paths::NODE_MODULES_NEEDLE.len()..],
+                if cfg!(windows) { b"/\\" } else { b"/" },
+            ),
+            None => (path.pretty, b"/"),
+        };
 
     let pkgname = {
         let str = name_to_use;
@@ -6330,17 +6332,15 @@ fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
                 break 'brk str;
             }
             if str[0] == b'@' {
-                if let Some(first_slash) = strings::index_of_char(&str[1..], b'/') {
-                    let first_slash = first_slash as usize;
+                if let Some(first_slash) = strings::index_of_any(&str[1..], separators) {
                     let remainder = &str[1 + first_slash + 1..];
-                    if let Some(last_slash) = strings::index_of_char(remainder, b'/') {
-                        let last_slash = last_slash as usize;
+                    if let Some(last_slash) = strings::index_of_any(remainder, separators) {
                         break 'brk &str[0..first_slash + 1 + last_slash + 1];
                     }
                 }
             }
-            if let Some(first_slash) = strings::index_of_char(str, b'/') {
-                break 'brk &str[0..first_slash as usize];
+            if let Some(first_slash) = strings::index_of_any(str, separators) {
+                break 'brk &str[0..first_slash];
             }
             str
         }

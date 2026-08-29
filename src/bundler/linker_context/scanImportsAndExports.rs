@@ -1523,11 +1523,11 @@ mod __css_validation {
                     data: bun_ast::range_data(
                         Some(&col_ref!(self.all_sources)[source_index as usize]),
                         range,
-                        bun_ast::alloc_print(format_args!(
-                            "The value of {} in the class {} is undefined.",
+                        bun_ast::alloc_print!(
+                            "<r>The value of <b>{}<r> in the class <b>{}<r> is undefined.",
                             bstr::BStr::new(property_name),
                             bstr::BStr::new(local_original_name),
-                        )),
+                        ),
                     )
                     .clone_line_text(self.log.clone_line_text),
                     notes: Box::<[bun_ast::Data]>::from(
@@ -1538,10 +1538,10 @@ mod __css_validation {
                                         [entry.value_ptr.source_index as usize],
                                 ),
                                 entry.value_ptr.range,
-                                bun_ast::alloc_print(format_args!(
+                                bun_ast::alloc_print!(
                                     "The first definition of {} is in this style rule:",
                                     bstr::BStr::new(property_name)
-                                )),
+                                ),
                             ),
                             bun_ast::Data {
                                 text: {

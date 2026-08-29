@@ -438,7 +438,7 @@ mod platform {
     use bun_sys::windows::ntdll;
     use bun_sys::windows::{
         BOOLEAN, FALSE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
-        FILE_DIRECTORY_INFORMATION, IO_STATUS_BLOCK, TRUE, UNICODE_STRING, Win32ErrorExt as _,
+        FILE_DIRECTORY_INFORMATION, IO_STATUS_BLOCK, TRUE, UNICODE_STRING,
     };
 
     // While the official api docs guarantee FILE_BOTH_DIR_INFORMATION to be aligned properly
@@ -633,13 +633,7 @@ mod platform {
 
                     if rc != w::NTSTATUS::SUCCESS {
                         sys::syslog!("NtQueryDirectoryFile({}) = {:#x}", self.dir, rc.0);
-                        let errno = w::Win32Error::from_nt_status(rc)
-                            .to_system_errno()
-                            .unwrap_or(SystemErrno::EUNKNOWN);
-                        return Err(sys::Error::from_code(
-                            errno.to_e(),
-                            Tag::NtQueryDirectoryFile,
-                        ));
+                        return Err(sys::Error::new(rc, Tag::NtQueryDirectoryFile));
                     }
 
                     if io.Information == 0 {

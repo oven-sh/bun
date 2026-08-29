@@ -719,6 +719,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // across worktrees; rustup's directory walk could otherwise resolve a
   // different worktree's `rust-toolchain.toml`.
   if (cfg.rustToolchain !== undefined) env.RUSTUP_TOOLCHAIN = cfg.rustToolchain;
+  if (cfg.rustc !== undefined) env.RUSTC = cfg.rustc;
   // Darwin cross-compile from a non-darwin host: point anything in the dep
   // graph that cares about the Apple SDK at the extracted sysroot. rustc
   // itself doesn't need it for a staticlib, but cc-rs (build scripts

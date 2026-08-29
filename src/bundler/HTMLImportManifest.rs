@@ -42,7 +42,7 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_io::{FmtAdapter, Write};
 use bun_js_printer::Encoding;
-use bun_paths::resolve_path::relative_normalized;
+use bun_paths::resolve_path::{platform, platform_to_posix_in_place, relative_normalized};
 use bun_resolver::fs::FileSystem;
 
 use crate::Graph::Graph;
@@ -197,6 +197,7 @@ pub(crate) fn write<W: Write + ?Sized>(
     // Use the server-side public path here.
     let public_path: &[u8] = &options.public_path;
     let mut temp_buffer: Vec<u8> = Vec::new();
+    let mut input_buffer: Vec<u8> = Vec::new();
 
     for ch in chunks.iter() {
         if ch.entry_point.source_index() == browser_source_index && ch.entry_point.is_entry_point()
@@ -253,11 +254,11 @@ pub(crate) fn write<W: Write + ?Sized>(
             let input: &[u8] = if !ch.entry_point.is_entry_point() {
                 b""
             } else {
-                let path_for_key = relative_normalized::<bun_paths::platform::Posix, false>(
+                source_path_relative_to_root(
+                    &mut input_buffer,
                     root_dir,
                     sources[ch.entry_point.source_index() as usize].path.text,
-                );
-                strings::remove_leading_dot_slash(path_for_key)
+                )
             };
 
             let path: &[u8] = if inject_compiler_filesystem_prefix {
@@ -308,11 +309,11 @@ pub(crate) fn write<W: Write + ?Sized>(
                 }
                 first = false;
 
-                let path_for_key = relative_normalized::<bun_paths::platform::Posix, false>(
+                let path_for_key = source_path_relative_to_root(
+                    &mut input_buffer,
                     root_dir,
                     sources[source_index.get() as usize].path.text,
                 );
-                let path_for_key = strings::remove_leading_dot_slash(path_for_key);
 
                 let path: &[u8] = if inject_compiler_filesystem_prefix {
                     temp_buffer.clear();
@@ -378,4 +379,19 @@ pub mod html_import_manifest {
         *w = &mut buffer[pos..];
         Ok(())
     }
+}
+
+/// The manifest's `input` / asset-key form of a source path: root-relative, `/`-separated.
+fn source_path_relative_to_root<'b>(
+    buf: &'b mut Vec<u8>,
+    root_dir: &[u8],
+    path: &[u8],
+) -> &'b [u8] {
+    buf.clear();
+    buf.extend_from_slice(strings::remove_leading_dot_slash(relative_normalized::<
+        platform::Auto,
+        false,
+    >(root_dir, path)));
+    platform_to_posix_in_place(&mut buf[..]);
+    buf
 }

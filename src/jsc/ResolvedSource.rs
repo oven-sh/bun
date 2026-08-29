@@ -37,11 +37,9 @@ pub struct ResolvedSource {
     pub bytecode_cache: Bytecode,
     /// `Zig::SourceProvider` takes it (nulling the field).
     pub module_info: Option<Box<ModuleInfoDeserialized>>,
-    /// The file path used as the source origin for bytecode cache validation.
-    /// JSC validates bytecode by checking if the origin URL matches exactly what
-    /// was used at build time. If empty, the origin is derived from source_url.
-    /// This is converted to a file:// URL on the C++ side.
-    pub bytecode_origin_path: BunString,
+    /// The file path whose `file://` URL is this module's source origin (what `import()` resolves against and what a
+    /// bytecode cache is validated against). Empty: derived from `source_url` (a builtin gets a `builtin://` origin).
+    pub origin_path: BunString,
 }
 
 /// `ResolvedSource.bytecode_cache`: C++ sees `{ uint8_t* ptr; size_t len; bool owned; }`.

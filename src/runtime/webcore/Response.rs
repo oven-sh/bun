@@ -69,7 +69,7 @@ impl core::ops::Deref for ResponseRef {
 
 impl Drop for ResponseRef {
     fn drop(&mut self) {
-        Response::unref(self.0.as_const_ptr().cast_mut());
+        <Response as bun_ptr::CellRefCounted>::deref_nn(self.0.into());
     }
 }
 
@@ -77,7 +77,7 @@ impl bun_jsc::NativeAbortListener for BodyAbortListener {
     fn on_abort(this: bun_ptr::ThisPtr<Self>, reason: JSValue) {
         reason.ensure_still_alive();
         // Copy out up front: erroring a still-streaming body can re-enter
-        // `Response::unref` via `FetchTasklet::abandon_response_body`
+        // the last `Response` deref via `FetchTasklet::abandon_response_body`
         // and destroy this listener.
         let (response, global) = (this.response, this.global);
         let _keepalive = ResponseRef::retain(response);

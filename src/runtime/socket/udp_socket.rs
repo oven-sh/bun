@@ -1685,30 +1685,29 @@ impl UDPSocket {
         })
     }
 
-    pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box(self, |this| {
-            bun_output::scoped_log!(UdpSocket, "Finalize {:p}", this);
-            this.this_value.with_mut(|r| r.finalize());
-            debug_assert!(this.closed.get() || VirtualMachine::get().is_shutting_down());
-            // VM-shutdown path: `lastChanceToFinalize` can finalize the wrapper
-            // while the underlying poll is still open (the Strong in
-            // `this_value` kept it GC-rooted until now). Close it so the
-            // `us_udp_socket_t` lands on `closed_udp_head` for the post-destruct
-            // `drain_closed_sockets()` sweep instead of leaking; that releases
-            // the handle's ref too. `on_close` only touches `Cell`/`JsCell`
-            // fields; `this_value` is already `Finalized` so its `downgrade()`
-            // is a no-op.
-            if let Some(socket) = this.socket.replace(None) {
-                this.closed.set(true);
-                #[cfg(not(windows))]
-                if let Some(fd) = this.registered_fd.take() {
-                    dgram_remove_fd(fd, DgramFdState::Adopted);
-                }
-                socket.close();
+    /// Runs before the JS wrapper's ref is dropped.
+    pub fn finalize(&self) {
+        bun_output::scoped_log!(UdpSocket, "Finalize {:p}", self);
+        self.this_value.with_mut(|r| r.finalize());
+        debug_assert!(self.closed.get() || VirtualMachine::get().is_shutting_down());
+        // VM-shutdown path: `lastChanceToFinalize` can finalize the wrapper
+        // while the underlying poll is still open (the Strong in
+        // `this_value` kept it GC-rooted until now). Close it so the
+        // `us_udp_socket_t` lands on `closed_udp_head` for the post-destruct
+        // `drain_closed_sockets()` sweep instead of leaking; that releases
+        // the handle's ref too. `on_close` only touches `Cell`/`JsCell`
+        // fields; `this_value` is already `Finalized` so its `downgrade()`
+        // is a no-op.
+        if let Some(socket) = self.socket.replace(None) {
+            self.closed.set(true);
+            #[cfg(not(windows))]
+            if let Some(fd) = self.registered_fd.take() {
+                dgram_remove_fd(fd, DgramFdState::Adopted);
             }
-            this.poll_ref.with_mut(|p| p.disable());
-            // config / this_value drop with the last ref.
-        });
+            socket.close();
+        }
+        self.poll_ref.with_mut(|p| p.disable());
+        // config / this_value drop with the last ref.
     }
 
     // No `#[bun_jsc::host_fn]` — the macro's free-fn shim emits a

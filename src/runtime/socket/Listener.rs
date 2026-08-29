@@ -850,39 +850,38 @@ impl Listener {
         }
     }
 
-    pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box(self, |this| {
-            log!("finalize");
-            let listener = this.listener.replace(ListenerType::None);
-            if !matches!(listener, ListenerType::None) {
-                if let Some(handles) = crate::jsc_hooks::active_handles() {
-                    handles.swap_remove(&crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(
-                        this,
-                    )));
-                }
+    /// Runs before the JS wrapper's ref is dropped.
+    pub fn finalize(&self) {
+        log!("finalize");
+        let listener = self.listener.replace(ListenerType::None);
+        if !matches!(listener, ListenerType::None) {
+            if let Some(handles) = crate::jsc_hooks::active_handles() {
+                handles.swap_remove(&crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(
+                    self,
+                )));
             }
-            if matches!(listener, ListenerType::Uws(_)) {
-                Self::unlink_unix_socket_path(this);
-            }
-            Self::close_listen_socket(listener);
+        }
+        if matches!(listener, ListenerType::Uws(_)) {
+            Self::unlink_unix_socket_path(self);
+        }
+        Self::close_listen_socket(listener);
 
-            this.this_value.with_mut(|r| r.finalize());
-            this.strong_data.with_mut(|s| s.deinit());
-            this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        self.this_value.with_mut(|r| r.finalize());
+        self.strong_data.with_mut(|s| s.deinit());
+        self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
 
-            // Clear the back-pointer before force-closing: this listener is
-            // already releasing its own `poll_ref`/`this_value`, so an accepted
-            // socket's `on_close` must not reach back in and release them a
-            // second time.
-            this.handlers.clear_listener();
-            if this.handlers.active_connections.get() > 0 {
-                this.group.with_mut(|g| g.close_all());
-            }
-            // A Listener torn down without do_stop() still owns its ref;
-            // do_stop() already took it when it ran.
-            this.secure_ctx.set(None);
-            // connection / protos / the handlers `Rc` drop with the last ref.
-        });
+        // Clear the back-pointer before force-closing: this listener is
+        // already releasing its own `poll_ref`/`this_value`, so an accepted
+        // socket's `on_close` must not reach back in and release them a
+        // second time.
+        self.handlers.clear_listener();
+        if self.handlers.active_connections.get() > 0 {
+            self.group.with_mut(|g| g.close_all());
+        }
+        // A Listener torn down without do_stop() still owns its ref;
+        // do_stop() already took it when it ran.
+        self.secure_ctx.set(None);
+        // connection / protos / the handlers `Rc` drop with the last ref.
     }
 
     /// Match Node.js/libuv: unlink the unix socket file before closing the listening fd.

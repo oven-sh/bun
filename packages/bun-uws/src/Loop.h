@@ -19,7 +19,7 @@
 #ifndef UWS_LOOP_H
 #define UWS_LOOP_H
 
-/* The loop is lazily created per-thread */
+/* The loop is lazily created per-thread and run with run() */
 
 #include "LoopData.h"
 #include <libusockets.h>
@@ -189,7 +189,17 @@ public:
         us_wakeup_loop((us_loop_t *) this);
     }
 
+    /* Actively block and run this loop */
+    void run() {
+        us_loop_run((us_loop_t *) this);
+    }
+
 };
+
+/* Can be called from any thread to run the thread local loop */
+inline void run() {
+    Loop::get()->run();
+}
 
 }
 

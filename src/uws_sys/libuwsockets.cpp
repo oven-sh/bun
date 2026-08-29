@@ -344,6 +344,20 @@ extern "C"
     }
   }
 
+  void uws_app_run(int ssl, uws_app_t *app)
+  {
+    if (ssl)
+    {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      uwsApp->run();
+    }
+    else
+    {
+      uWS::App *uwsApp = (uWS::App *)app;
+      uwsApp->run();
+    }
+  }
+
   void uws_app_close(int ssl, uws_app_t *app)
   {
     if (ssl)
@@ -395,6 +409,31 @@ extern "C"
       uwsApp->setOnClientError([handler, user_data](int is_ssl, struct us_socket_t *rawSocket, uint8_t errorCode, char *rawPacket, int rawPacketLength) {
         handler(user_data, is_ssl, rawSocket, errorCode, rawPacket, rawPacketLength);
       });
+    }
+  }
+
+  void uws_app_listen(int ssl, uws_app_t *app, int port,
+                      uws_listen_handler handler, void *user_data)
+  {
+    uws_app_listen_config_t config;
+    config.port = port;
+    config.host = nullptr;
+    config.options = 0;
+
+    if (ssl)
+    {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      uwsApp->listen(port, [handler,
+                            user_data](struct us_listen_socket_t *listen_socket)
+                     { handler((struct us_listen_socket_t *)listen_socket, user_data); });
+    }
+    else
+    {
+      uWS::App *uwsApp = (uWS::App *)app;
+
+      uwsApp->listen(port, [handler,
+                            user_data](struct us_listen_socket_t *listen_socket)
+                     { handler((struct us_listen_socket_t *)listen_socket, user_data); });
     }
   }
 

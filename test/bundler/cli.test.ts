@@ -504,11 +504,11 @@ describe.concurrent("--no-bundle with --outdir", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
+    expect(stdout).toMatch(/app\.js\s+16 bytes/);
+    expect(exitCode).toBe(0);
 
     const out = await Bun.file(path.join(String(dir), "dist", "app.js")).text();
     expect(out).toBe("console.log(1);\n");
-    expect(stdout).toMatch(/app\.js\s+16 bytes/);
-    expect(exitCode).toBe(0);
   });
 
   test("writes multiple entry points", async () => {

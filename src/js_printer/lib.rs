@@ -7435,10 +7435,12 @@ impl WriterContext for BufferWriter {
 pub type BufferPrinter = Writer<BufferWriter>;
 
 impl BufferPrinter {
-    /// Clears the buffer and the byte counter for the next print.
+    /// Clears the buffer, the byte counter, and any error from the previous print.
     pub fn reset(&mut self) {
         self.ctx.reset();
         self.written = 0;
+        self.err = None;
+        self.orig_err = None;
     }
 }
 

@@ -17,6 +17,7 @@
 #include "openssl/bio.h"
 #include "openssl/err.h"
 #include "openssl/pem.h"
+#include "openssl/pool.h"
 #include "openssl/x509.h"
 #include "../../packages/bun-usockets/src/crypto/root_certs_header.h"
 #include "wtf/SIMDUTF.h"
@@ -25,21 +26,24 @@ namespace Bun {
 
 using namespace JSC;
 
-// tls.rootCertificates format: 72-column base64, no trailing newline.
-static WTF::String pemFromDER(std::span<const uint8_t> der)
+// tls.rootCertificates has always been 72-column base64 with no trailing newline; everything that went through
+// PEM_write_bio_X509 (getCACertificates('system' | 'extra')) is 64-column with one.
+enum class PEMStyle { RootCertificates, OpenSSL };
+static WTF::String pemFromDER(std::span<const uint8_t> der, PEMStyle style)
 {
     static constexpr auto header = "-----BEGIN CERTIFICATE-----\n"_s;
-    static constexpr auto footer = "-----END CERTIFICATE-----"_s;
-    static constexpr size_t lineLength = 72;
+    static constexpr auto footer = "-----END CERTIFICATE-----\n"_s;
+    size_t lineLength = style == PEMStyle::RootCertificates ? 72 : 64;
+    size_t footerLength = style == PEMStyle::RootCertificates ? footer.length() - 1 : footer.length();
     size_t bodyLength = simdutf::base64_length_from_binary_with_lines(der.size(), simdutf::base64_default, lineLength);
     std::span<Latin1Character> buffer;
-    auto result = WTF::String::createUninitialized(header.length() + bodyLength + 1 + footer.length(), buffer);
+    auto result = WTF::String::createUninitialized(header.length() + bodyLength + 1 + footerLength, buffer);
     memcpySpan(buffer, header.span8());
     size_t offset = header.length();
     offset += simdutf::binary_to_base64_with_lines(reinterpret_cast<const char*>(der.data()), der.size(), reinterpret_cast<char*>(buffer.data() + offset), lineLength, simdutf::base64_default);
     buffer[offset++] = '\n';
-    memcpySpan(buffer.subspan(offset), footer.span8());
-    ASSERT(offset + footer.length() == buffer.size());
+    memcpySpan(buffer.subspan(offset), footer.span8().first(footerLength));
+    ASSERT(offset + footerLength == buffer.size());
     return result;
 }
 
@@ -53,7 +57,7 @@ JSC_DEFINE_HOST_FUNCTION(getBundledRootCertificates, (JSC::JSGlobalObject * glob
     size_t size = us_bundled_root_certs_der(&certs, &lens);
     auto rootCertificates = JSC::JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), size);
     for (size_t i = 0; i < size; i++) {
-        rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, pemFromDER({ certs[i], lens[i] })));
+        rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, pemFromDER({ certs[i], lens[i] }, PEMStyle::RootCertificates)));
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -111,12 +115,17 @@ JSC_DEFINE_HOST_FUNCTION(getSystemCACertificates, (JSC::JSGlobalObject * globalO
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     VM& vm = globalObject->vm();
 
-    STACK_OF(X509)* root_system_cert_instances = us_get_root_system_cert_instances();
-
-    auto size = sk_X509_num(root_system_cert_instances);
-    if (size < 0) size = 0; // root_system_cert_instances is nullptr
+    const us_system_certs_t& system = us_get_root_system_certs();
 
     JSC::MarkedArgumentBuffer args;
+    for (size_t i = 0, n = system.lazy ? X509_LAZY_CERT_SET_num(system.lazy) : 0; i < n; i++) {
+        const CRYPTO_BUFFER* der = X509_LAZY_CERT_SET_get0_der(system.lazy, i);
+        args.append(JSC::jsString(vm, pemFromDER({ CRYPTO_BUFFER_data(der), CRYPTO_BUFFER_len(der) }, PEMStyle::OpenSSL)));
+    }
+    STACK_OF(X509)* root_system_cert_instances = system.parsed;
+    auto size = sk_X509_num(root_system_cert_instances);
+    if (size < 0) size = 0; // no parsed certificates on this platform
+
     for (auto i = 0; i < size; i++) {
         BIO* bio = BIO_new(BIO_s_mem());
         if (!bio) {

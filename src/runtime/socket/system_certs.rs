@@ -51,18 +51,19 @@ const WELL_KNOWN_DIRS: &[&[u8]] = &[
 ];
 
 struct Loader {
-    certs: *mut boringssl::struct_stack_st_X509,
+    /// One owned `CRYPTO_BUFFER` per distinct certificate, in discovery order.
+    certs: Vec<*mut boringssl::CRYPTO_BUFFER>,
     /// `(st_dev, st_ino)` of every file already read and every directory already walked.
     seen: bun_collections::HashMap<(u64, u64), ()>,
-    /// SHA-256 of every DER encoding already on `certs` (the `X509` keeps the DER itself).
+    /// SHA-256 of every DER encoding already in `certs`.
     ders: bun_collections::HashMap<[u8; 32], ()>,
     buf: Vec<u8>,
 }
 
 impl Loader {
     /// As a `PEM_read_bio_X509` loop would: blocks of other types are skipped, and a block that does not decode or a
-    /// CERTIFICATE that does not parse ends the file. `PEM_bytes_read_bio` is that loop minus the ASN.1 parse, so a
-    /// certificate seen before costs a hash lookup rather than a parse.
+    /// CERTIFICATE that is not shaped like one ends the file. Nothing is parsed here: `PEM_bytes_read_bio` is that
+    /// loop minus the ASN.1 parse, and the certificates go into an `X509_LAZY_CERT_SET`.
     fn load_pem(&mut self, pem: &[u8]) {
         // SAFETY: `pem` outlives `bio`; BoringSSL only reads from it.
         let bio = unsafe { boringssl::BIO_new_mem_buf(pem.as_ptr().cast(), pem.len() as isize) };
@@ -93,24 +94,24 @@ impl Loader {
             let mut digest = [0u8; 32];
             // SAFETY: `der` points at `der_len` readable bytes; `digest` has room for SHA-256.
             unsafe { boringssl::SHA256(der, der_len as usize, digest.as_mut_ptr()) };
-            let mut pushed = true;
+            let mut ok = true;
             if !self.ders.contains_key(&digest) {
-                let mut p = der.cast_const();
-                // SAFETY: `p` points at `der_len` readable bytes.
-                let x509 = unsafe { boringssl::d2i_X509(ptr::null_mut(), &mut p, der_len) };
-                // SAFETY: `self.certs` is the live stack we allocated; on success it owns `x509`.
-                pushed =
-                    !x509.is_null() && unsafe { boringssl::sk_X509_push(self.certs, x509) } != 0;
-                if pushed {
-                    self.ders.insert(digest, ());
-                } else if !x509.is_null() {
-                    // SAFETY: not adopted by the stack.
-                    unsafe { boringssl::X509_free(x509) };
+                // SAFETY: `der` points at `der_len` readable bytes; CRYPTO_BUFFER_new copies them.
+                ok = unsafe { boringssl::X509_LAZY_CERT_SET_can_index(der, der_len as usize) } != 0;
+                if ok {
+                    let buf = unsafe {
+                        boringssl::CRYPTO_BUFFER_new(der, der_len as usize, ptr::null_mut())
+                    };
+                    ok = !buf.is_null();
+                    if ok {
+                        self.certs.push(buf);
+                        self.ders.insert(digest, ());
+                    }
                 }
             }
             // SAFETY: ours to free (see above).
             unsafe { boringssl::OPENSSL_free(der.cast()) };
-            if !pushed {
+            if !ok {
                 break;
             }
         }
@@ -192,20 +193,11 @@ unsafe extern "C" fn no_password(
     0
 }
 
-/// # Safety
-/// `out` must be valid for a write of one pointer. The caller owns the returned `STACK_OF(X509)`.
+/// Returns the system store as a lazily-parsed set (NULL if empty or on error); the caller owns the reference.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn us_load_system_certificates_posix(
-    out: *mut *mut boringssl::struct_stack_st_X509,
-) {
-    let certs = boringssl::sk_X509_new_null();
-    // SAFETY: caller contract.
-    unsafe { *out = certs };
-    if certs.is_null() {
-        return;
-    }
+extern "C" fn us_load_system_certificates_posix() -> *mut boringssl::X509_LAZY_CERT_SET {
     let mut loader = Loader {
-        certs,
+        certs: Vec::new(),
         seen: bun_collections::HashMap::new(),
         ders: bun_collections::HashMap::new(),
         buf: Vec::new(),
@@ -241,4 +233,16 @@ unsafe extern "C" fn us_load_system_certificates_posix(
             }
         }
     }
+
+    let set = if loader.certs.is_empty() {
+        ptr::null_mut()
+    } else {
+        // SAFETY: `certs` holds live buffers; the set takes its own reference to each.
+        unsafe { boringssl::X509_LAZY_CERT_SET_new(loader.certs.as_ptr(), loader.certs.len()) }
+    };
+    for buf in loader.certs {
+        // SAFETY: drop our reference; the set (if any) keeps its own.
+        unsafe { boringssl::CRYPTO_BUFFER_free(buf) };
+    }
+    set
 }

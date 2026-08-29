@@ -255,16 +255,16 @@ static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
 // tls.getCACertificates('system') matches Node.js (which always reads the
 // system store for 'system'). The flag still gates whether these are merged
 // into the *default* store used for connections — see us_get_default_ca_store.
-STACK_OF(X509) *us_get_root_system_cert_instances() {
-  static STACK_OF(X509) *system_certs = nullptr;
+const us_system_certs_t &us_get_root_system_certs() {
+  static us_system_certs_t system_certs;
   static std::once_flag once;
   std::call_once(once, []() {
 #ifdef __APPLE__
-    us_load_system_certificates_macos(&system_certs);
+    us_load_system_certificates_macos(&system_certs.parsed);
 #elif defined(_WIN32)
-    us_load_system_certificates_windows(&system_certs);
+    us_load_system_certificates_windows(&system_certs.parsed);
 #else
-    us_load_system_certificates_posix(&system_certs);
+    system_certs.lazy = us_load_system_certificates_posix();
 #endif
   });
   return system_certs;
@@ -313,13 +313,13 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   }
 
   if (us_should_use_system_ca()) {
-    STACK_OF(X509) *root_system_cert_instances = us_get_root_system_cert_instances();
-    if (root_system_cert_instances) {
-      for (int i = 0; i < sk_X509_num(root_system_cert_instances); i++) {
-        X509 *cert = sk_X509_value(root_system_cert_instances, i);
-        X509_up_ref(cert);
-        X509_STORE_add_cert(store, cert);
-      }
+    const us_system_certs_t &system = us_get_root_system_certs();
+    if (system.lazy != nullptr && !X509_STORE_add_lazy_cert_set(store, system.lazy)) {
+      X509_STORE_free(store);
+      return NULL;
+    }
+    for (size_t i = 0; system.parsed != nullptr && i < sk_X509_num(system.parsed); i++) {
+      X509_STORE_add_cert(store, sk_X509_value(system.parsed, i));
     }
   }
 
@@ -382,5 +382,5 @@ void us_load_system_certificates_windows(STACK_OF(X509) **system_certs) {
 
 #else
 // Linux, FreeBSD and other non-Apple Unix: src/runtime/socket/system_certs.rs
-extern "C" void us_load_system_certificates_posix(STACK_OF(X509) **system_certs);
+extern "C" X509_LAZY_CERT_SET *us_load_system_certificates_posix();
 #endif

@@ -79,6 +79,14 @@ opaque!(
     CRYPTO_BUFFER_POOL
 );
 opaque!(
+    /// `struct crypto_buffer_st` (`typedef ... CRYPTO_BUFFER`).
+    CRYPTO_BUFFER
+);
+opaque!(
+    /// `struct x509_lazy_cert_set_st` (`typedef ... X509_LAZY_CERT_SET`, oven-sh/boringssl).
+    X509_LAZY_CERT_SET
+);
+opaque!(
     /// `struct x509_st` (`typedef ... X509`).
     X509
 );
@@ -1099,6 +1107,19 @@ unsafe extern "C" {
         cb: Option<pem_password_cb>,
         userdata: *mut c_void,
     ) -> c_int;
+    pub fn CRYPTO_BUFFER_new(
+        data: *const u8,
+        len: usize,
+        pool: *mut CRYPTO_BUFFER_POOL,
+    ) -> *mut CRYPTO_BUFFER;
+    pub fn CRYPTO_BUFFER_free(buf: *mut CRYPTO_BUFFER);
+    /// oven-sh/boringssl: a set of DER certificates indexed by subject and parsed on first use. Takes a reference to
+    /// each buffer; NULL if any cannot be indexed (see `X509_LAZY_CERT_SET_can_index`).
+    pub fn X509_LAZY_CERT_SET_new(
+        certs: *const *mut CRYPTO_BUFFER,
+        num_certs: usize,
+    ) -> *mut X509_LAZY_CERT_SET;
+    pub fn X509_LAZY_CERT_SET_can_index(der: *const u8, len: usize) -> c_int;
     pub safe fn X509_get_default_cert_file() -> *const c_char;
     pub safe fn X509_get_default_cert_dir() -> *const c_char;
     pub fn PEM_read_bio_X509(

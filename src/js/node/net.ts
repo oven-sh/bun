@@ -1942,6 +1942,7 @@ Socket.prototype.connect = function connect(...args) {
         // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L1649
         if (!this.connecting && !this.isPaused()) this.read(0);
       });
+      // An adopted fd was already connected synchronously by doConnect() above.
       if (fd == null) this.connecting = true;
     }
     if (fd != null) {

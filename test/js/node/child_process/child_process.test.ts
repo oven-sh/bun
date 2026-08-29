@@ -15,6 +15,7 @@ import {
 } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
 import { getEventListeners, once, setMaxListeners } from "node:events";
+import type { Socket } from "node:net";
 import { promisify } from "node:util";
 import path from "path";
 const debug = process.env.DEBUG ? console.log : () => {};
@@ -589,6 +590,172 @@ describe("spawn()", () => {
       });
       expect(stdout).toBe("ok\n");
       expect(status).toBe(0);
+    });
+
+    // The parent's end of each extra pipe is a net.Socket made with net.connect({ fd }), which adopts
+    // the descriptor synchronously, so it must be connected and writable as soon as spawn() returns.
+    // The request/reply shape below mirrors Playwright's --remote-debugging-pipe (requests on the
+    // browser's fd 3, replies on fd 4).
+    describe("extra pipes (stdio[3+])", () => {
+      // The children below read their pipes with blocking fs.readSync loops: the parent-side socket
+      // is what is under test, and loading fs streams roughly doubles a debug child's startup time.
+      function spawnWithExtraPipes(script: string, count: number) {
+        const child = spawn(bunExe(), ["-e", script], {
+          env: bunEnv,
+          stdio: ["ignore", "ignore", "pipe", ...Array(count).fill("pipe")],
+        });
+        let stderr = "";
+        child.stderr!.setEncoding("utf8");
+        child.stderr!.on("data", chunk => (stderr += chunk));
+        return {
+          child,
+          exited: once(child, "exit"),
+          get stderr() {
+            return stderr;
+          },
+          [Symbol.dispose]() {
+            child.kill();
+          },
+        };
+      }
+
+      // Accumulates the socket's output; nextLine() resolves with everything received so far once
+      // one more "\n"-terminated line has arrived, whether it came in one chunk or several, and
+      // rejects if the pipe ends or errors first (i.e. the child died), carrying its stderr.
+      function readLines(socket: Socket, spawned: { readonly stderr: string }) {
+        let text = "";
+        socket.setEncoding("utf8");
+        socket.on("data", chunk => (text += chunk));
+        return {
+          get text() {
+            return text;
+          },
+          nextLine() {
+            const lines = text.split("\n").length;
+            const { promise, resolve, reject } = Promise.withResolvers<string>();
+            const onData = () => {
+              if (text.split("\n").length === lines) return;
+              cleanup();
+              resolve(text);
+            };
+            const onEnd = () => {
+              cleanup();
+              reject(
+                new Error(
+                  `pipe ended before the next line; received ${JSON.stringify(text)}, stderr: ${spawned.stderr}`,
+                ),
+              );
+            };
+            const onError = (err: Error) => {
+              cleanup();
+              reject(err);
+            };
+            const cleanup = () => {
+              socket.off("data", onData);
+              socket.off("end", onEnd);
+              socket.off("error", onError);
+            };
+            socket.on("data", onData);
+            socket.on("end", onEnd);
+            socket.on("error", onError);
+            return promise;
+          },
+        };
+      }
+
+      const connectionState = (socket: Socket) => ({
+        connecting: socket.connecting,
+        pending: socket.pending,
+        readyState: socket.readyState,
+      });
+      const connected = { connecting: false, pending: false, readyState: "open" };
+
+      it("are connected when spawn() returns and deliver requests on stdio[3] with replies on stdio[4]", async () => {
+        using spawned = spawnWithExtraPipes(
+          `const fs = require("fs"), buf = Buffer.alloc(1024);
+           for (let n; (n = fs.readSync(3, buf)) > 0; ) fs.writeSync(4, "reply:" + buf.toString("utf8", 0, n) + "\\n");
+           fs.writeSync(4, "eof\\n");`,
+          2,
+        );
+        const { child, exited } = spawned;
+        const requests = child.stdio[3] as Socket;
+        const replies = child.stdio[4] as Socket;
+        expect([connectionState(requests), connectionState(replies)]).toEqual([connected, connected]);
+
+        const received = readLines(replies, spawned);
+        const writeErrors: (Error | null)[] = [];
+        // Wait for each reply before sending the next request so the child sees one chunk per write.
+        let reply = received.nextLine();
+        requests.write("Target.getTargets", err => writeErrors.push(err ?? null));
+        expect(await reply).toBe("reply:Target.getTargets\n");
+        reply = received.nextLine();
+        requests.write("Browser.close", err => writeErrors.push(err ?? null));
+        expect(await reply).toBe("reply:Target.getTargets\nreply:Browser.close\n");
+
+        const repliesEnded = once(replies, "end");
+        requests.end();
+        await repliesEnded;
+        const [exitCode] = await exited;
+        expect({ received: received.text, writeErrors, stderr: spawned.stderr, exitCode }).toEqual({
+          received: "reply:Target.getTargets\nreply:Browser.close\neof\n",
+          writeErrors: [null, null],
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      it("carry both directions over a single pipe", async () => {
+        using spawned = spawnWithExtraPipes(
+          `const fs = require("fs"), buf = Buffer.alloc(1024);
+           fs.writeSync(3, "ready\\n");
+           for (let n; (n = fs.readSync(3, buf)) > 0; ) {
+             const request = buf.toString("utf8", 0, n);
+             fs.writeSync(3, "reply:" + request + "\\n");
+             if (request === "bye") break;
+           }`,
+          1,
+        );
+        const { child, exited } = spawned;
+        const pipe = child.stdio[3] as Socket;
+        expect(connectionState(pipe)).toEqual(connected);
+
+        const received = readLines(pipe, spawned);
+        expect(await received.nextLine()).toBe("ready\n");
+        let reply = received.nextLine();
+        pipe.write("hello");
+        expect(await reply).toBe("ready\nreply:hello\n");
+        reply = received.nextLine();
+        pipe.write("bye");
+        expect(await reply).toBe("ready\nreply:hello\nreply:bye\n");
+        const [exitCode] = await exited;
+        expect({ stderr: spawned.stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      });
+
+      it("deliver a write larger than the pipe buffer", async () => {
+        using spawned = spawnWithExtraPipes(
+          `const fs = require("fs"), buf = Buffer.alloc(65536);
+           let bytes = 0;
+           for (let n; (n = fs.readSync(3, buf)) > 0; ) bytes += n;
+           fs.writeSync(4, bytes + "\\n");`,
+          2,
+        );
+        const { child, exited } = spawned;
+        const input = child.stdio[3] as Socket;
+        const received = readLines(child.stdio[4] as Socket, spawned);
+
+        const size = 1024 * 1024;
+        const { promise: written, resolve: onWritten } = Promise.withResolvers<Error | null>();
+        const total = received.nextLine();
+        input.write(Buffer.alloc(size, "x"), err => onWritten(err ?? null));
+        input.end();
+        const [exitCode] = await exited;
+        expect({ total: await total, writeError: await written, stderr: spawned.stderr, exitCode }).toEqual({
+          total: `${size}\n`,
+          writeError: null,
+          stderr: "",
+          exitCode: 0,
+        });
+      });
     });
   });
 

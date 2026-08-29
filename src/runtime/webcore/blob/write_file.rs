@@ -845,7 +845,7 @@ mod windows_impl {
     impl Drop for WriteFileWindows {
         fn drop(&mut self) {
             let fd = self.fd;
-            if fd > 0 && self.owned_fd {
+            if fd >= 0 && self.owned_fd {
                 aio::Closer::close(Fd::from_uv(fd), self.io_request.loop_);
             }
             self.poll_ref.disable();

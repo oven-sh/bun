@@ -204,6 +204,8 @@ using namespace JSC;
     macro(telemetrySpanEnd) \
     macro(telemetrySpanFailNoJS) \
     macro(telemetryTraceSettled) \
+    macro(telemetryObserveSettled) \
+    macro(telemetryReportUnhandled) \
     macro(telemetryWrapTarget) \
     macro(telemetryWrapName) \
     macro(telemetrySetAttribute) \

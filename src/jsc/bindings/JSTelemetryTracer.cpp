@@ -367,9 +367,9 @@ static EncodedJSValue finishTraced(Zig::GlobalObject* globalObject, JSC::ThrowSc
     return JSValue::encode(result);
 }
 
-// End `spanCell` when `promise` settles (websocket async message handlers):
-// the derived promise from telemetryTraceSettled; undefined if `promise` is
-// not a pending JSPromise (caller ends the span now); empty on exception.
+// End `spanCell` when `promise` settles (websocket async message handlers).
+// true when settlement is now being observed; false if `promise` is not a
+// pending JSPromise (caller ends the span now). Empty on exception.
 extern "C" EncodedJSValue Bun__Telemetry__observeSettlement(Zig::GlobalObject* globalObject, EncodedJSValue promiseValue, EncodedJSValue spanCell)
 {
     auto& vm = globalObject->vm();
@@ -378,12 +378,15 @@ extern "C" EncodedJSValue Bun__Telemetry__observeSettlement(Zig::GlobalObject* g
     auto* promise = promiseJS.isCell() ? dynamicDowncast<JSPromise>(promiseJS.asCell()) : nullptr;
     auto* span = toTelemetrySpan(JSValue::decode(spanCell));
     if (!promise || !span || promise->status() != JSPromise::Status::Pending)
-        RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
-    auto* settle = globalObject->getDirect(vm, WebCore::builtinNames(vm).telemetryTraceSettledPrivateName()).getObject();
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(false)));
+    auto* settle = globalObject->getDirect(vm, WebCore::builtinNames(vm).telemetryObserveSettledPrivateName()).getObject();
     MarkedArgumentBuffer args;
     args.append(span);
     args.append(promise);
-    RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, settle, jsUndefined(), args, "telemetryTraceSettled"_s)));
+    args.append(jsBoolean(promise->isHandled()));
+    call(globalObject, settle, jsUndefined(), args, "telemetryObserveSettled"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsBoolean(true));
 }
 
 // Bun.otel.span(name, attributes?, fn?) — without fn: the span, active until

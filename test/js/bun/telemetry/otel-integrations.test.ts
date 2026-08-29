@@ -408,30 +408,44 @@ describe("WebSocket", () => {
     using dir = tempDir("otel-ws-async", {
       "index.js": `
         const { promise, resolve } = Promise.withResolvers();
-        process.on("unhandledRejection", e => resolve("unhandled:" + e.message));
+        let returned;
+        const reported = [];
+        process.on("unhandledRejection", (e, p) => { reported.push(e.message); resolve("unhandled:" + e.message + ":" + (p === returned)); });
         const spans = [];
         Bun.otel.start({ exporters: [{ export(b) { spans.push(...b); } }], instrumentations: ["websocket", "http"] });
         const server = Bun.serve({
           port: 0,
           fetch(req, srv) { if (srv.upgrade(req)) return; return new Response("no"); },
-          websocket: { async message() { await Bun.sleep(20); throw new Error("late"); } },
+          websocket: {
+            message(ws, m) {
+              if (String(m) === "handled") {
+                // the app handles its own rejection: telemetry must not report it
+                const p = (async () => { await Bun.sleep(5); throw new Error("mine"); })();
+                p.catch(() => {});
+                return p;
+              }
+              return (returned = (async () => { await Bun.sleep(20); throw new Error("late"); })());
+            },
+          },
         });
         const ws = new WebSocket("ws://127.0.0.1:" + server.port + "/");
-        ws.onopen = () => ws.send("x");
+        ws.onopen = () => { ws.send("handled"); ws.send("x"); };
         const how = await Promise.race([promise, Bun.sleep(500).then(() => "no-unhandled")]);
         ws.close();
         await Bun.sleep(10);
         await Bun.otel.forceFlush();
-        const m = spans.find(s => s.name === "websocket.message");
-        console.log(JSON.stringify([how, m.status.code, m.events[0]?.attributes["exception.message"], (m.endTime - m.startTime) >= 15]));
+        const m = spans.find(s => s.name === "websocket.message" && s.events[0]?.attributes["exception.message"] === "late");
+        const mine = spans.find(s => s.name === "websocket.message" && s.events[0]?.attributes["exception.message"] === "mine");
+        console.log(JSON.stringify([how, reported, m.status.code, (m.endTime - m.startTime) >= 15, mine.status.code]));
         server.stop(true);
         process.exit(0);
       `,
     });
     await using proc = Bun.spawn({ cmd: [bunExe(), "index.js"], cwd: String(dir), env: bunEnv, stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // the rejection is still reported as unhandled (once), and the span records it
-    expect(stdout.trim()).toBe(JSON.stringify(["unhandled:late", 2, "late", true]));
+    // the un-handled rejection is reported once, for the handler's own promise;
+    // the handled one is not reported; both spans record their error
+    expect(stdout.trim()).toBe(JSON.stringify(["unhandled:late:true", ["late"], 2, true, 2]));
     expect(exitCode).toBe(0);
   });
 

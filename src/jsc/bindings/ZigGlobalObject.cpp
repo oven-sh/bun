@@ -2886,6 +2886,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         { BuiltinName::k_isTelemetrySpan, 1, Bun::jsIsTelemetrySpan },
         { BuiltinName::k_telemetrySpanEnd, 1, Bun::jsTelemetrySpanEndPrivate },
         { BuiltinName::k_telemetrySpanFailNoJS, 2, Bun::jsTelemetrySpanFailNoJSPrivate },
+        { BuiltinName::k_telemetryReportUnhandled, 2, Bun::jsTelemetryReportUnhandledPrivate },
         { BuiltinName::k_telemetrySetAttribute, 3, Bun::jsTelemetrySetAttribute },
         { BuiltinName::k_telemetrySetAttributes, 3, Bun::jsTelemetrySetAttributes },
         { BuiltinName::k_telemetrySetName, 2, Bun::jsTelemetrySetName },
@@ -2921,6 +2922,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectBuiltinFunction(vm, this, builtinNames.telemetryFlattenAttributesPrivateName(), telemetrySpanTelemetryFlattenAttributesCodeGenerator(vm), 0);
     putDirectBuiltinFunction(vm, this, builtinNames.telemetrySpanRecordExceptionImplPrivateName(), telemetrySpanTelemetrySpanRecordExceptionImplCodeGenerator(vm), 0);
     putDirectBuiltinFunction(vm, this, builtinNames.telemetryTraceSettledPrivateName(), telemetrySpanTelemetryTraceSettledCodeGenerator(vm), 0);
+    putDirectBuiltinFunction(vm, this, builtinNames.telemetryObserveSettledPrivateName(), telemetrySpanTelemetryObserveSettledCodeGenerator(vm), 0);
     putDirectBuiltinFunction(vm, this, builtinNames.telemetryErrorTypePrivateName(), telemetrySpanTelemetryErrorTypeCodeGenerator(vm), 0);
     putDirectBuiltinFunction(vm, this, builtinNames.telemetrySpanSetAttributeImplPrivateName(), telemetrySpanTelemetrySpanSetAttributeImplCodeGenerator(vm), 0);
     putDirectBuiltinFunction(vm, this, builtinNames.telemetrySpanSetAttributeIndexedPrivateName(), telemetrySpanTelemetrySpanSetAttributeIndexedCodeGenerator(vm), 0);

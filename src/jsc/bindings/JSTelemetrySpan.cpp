@@ -14,6 +14,7 @@
 #include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSMapInlines.h>
+#include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/Lookup.h>
 #include <JavaScriptCore/MathCommon.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -440,6 +441,19 @@ JSC_DEFINE_HOST_FUNCTION(jsTelemetrySpanFailNoJSPrivate, (JSGlobalObject * lexic
 {
     if (auto* span = toTelemetrySpan(callFrame->argument(0)))
         telemetryFailSpanNoJS(defaultGlobalObject(lexicalGlobalObject), span, callFrame->argument(1));
+    return JSValue::encode(jsUndefined());
+}
+
+extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject*, JSC::JSPromise*);
+
+// $telemetryReportUnhandled(promise, reason): `promise` rejected and the only
+// reaction it had when telemetry attached was telemetry's own, so report it as
+// an unhandled rejection the way the rejection tracker would have.
+JSC_DEFINE_HOST_FUNCTION(jsTelemetryReportUnhandledPrivate, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    JSValue v = callFrame->argument(0);
+    if (auto* promise = v.isCell() ? dynamicDowncast<JSPromise>(v.asCell()) : nullptr)
+        Bun__handleRejectedPromise(defaultGlobalObject(lexicalGlobalObject), promise);
     return JSValue::encode(jsUndefined());
 }
 

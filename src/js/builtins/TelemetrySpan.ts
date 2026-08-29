@@ -284,10 +284,10 @@ export function recordException(this: any, exception: any, time?: unknown) {
   return $telemetrySpanRecordExceptionImpl(this, exception, time);
 }
 
-// Bun.otel.span(name, fn) / Bun.otel.wrap / an async websocket handler
-// returned a promise: the span ends when it settles (failed on rejection), and
-// the caller gets the derived promise, so a rejection the caller does not
-// handle is still reported as unhandled (node's tracePromise shape).
+// Bun.otel.span(name, fn) / Bun.otel.wrap returned a promise: the span ends
+// when it settles (failed on rejection), and the caller gets the derived
+// promise, so a rejection the caller does not handle is still reported as
+// unhandled (node's tracePromise shape).
 $visibility = "Private";
 export function telemetryTraceSettled(span: any, promise: Promise<unknown>) {
   return promise.$then(
@@ -299,6 +299,25 @@ export function telemetryTraceSettled(span: any, promise: Promise<unknown>) {
       $telemetrySpanFailNoJS(span, error);
       $telemetrySpanEnd(span);
       throw error;
+    },
+  );
+}
+
+// A promise whose settlement ends `span` but which nobody receives from us
+// (an async ServerWebSocket handler's return value): end / fail the span and do
+// not manufacture a second rejected promise. Observing marks `promise` handled
+// in JSC, so a rejection nobody else had handled when we attached is reported
+// against `promise` itself, as it would have been without telemetry.
+$visibility = "Private";
+export function telemetryObserveSettled(span: any, promise: Promise<unknown>, wasHandled: boolean) {
+  promise.$then(
+    () => {
+      $telemetrySpanEnd(span);
+    },
+    error => {
+      $telemetrySpanFailNoJS(span, error);
+      $telemetrySpanEnd(span);
+      if (!wasHandled) $telemetryReportUnhandled(promise, error);
     },
   );
 }

@@ -61,12 +61,18 @@ function report(extra: Record<string, unknown> = {}): never {
   process.exit(extra.error ? 1 : 0);
 }
 
+// Rejects when the child exits (set once it is spawned): a step still waiting
+// on it then fails at once with the exit status instead of at its deadline.
+let childGone: Promise<never> | null = null;
+
 function withDeadline<T>(promise: Promise<T>, step: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error(`timed out waiting for ${step}`)), STEP_DEADLINE_MS);
   });
-  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+  return Promise.race(childGone ? [promise, deadline, childGone] : [promise, deadline]).finally(() =>
+    clearTimeout(timer),
+  );
 }
 
 const iteration = () => getEventLoopStats().iteration;
@@ -169,6 +175,11 @@ const child = Bun.spawn({
   stdout: "pipe",
   stderr: "inherit",
 });
+childGone = child.exited.then(code => {
+  throw new Error(`child exited (code ${code}, signal ${child.signalCode}) before the fixture finished`);
+});
+// Only the races in withDeadline consume the rejection.
+childGone.catch(() => {});
 const lines: string[] = [];
 const lineWaiters: Array<(line: string) => void> = [];
 (async () => {

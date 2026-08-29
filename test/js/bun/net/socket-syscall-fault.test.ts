@@ -13,7 +13,9 @@ const skip = !fault.available() || isWindows;
 // on success (or on a step deadline, with `error` set). `stderrTail` is only
 // populated when the fixture did not exit cleanly, so the abort/assertion
 // message shows up in the failure diff next to whatever summary it managed to
-// print.
+// print. Only the low-prio fixture needs fault injection; the sibling fixture
+// needs just `bun:internal-for-testing`, which `bunEnv` unlocks on every
+// build, so it runs on every lane like it did before.
 //
 // The explicit timeout is required: a bare `bun bd test <file>` applies Bun's
 // 5000ms default, and each fixture spawns two Bun processes and takes a few
@@ -98,7 +100,7 @@ test.concurrent.skipIf(skip)(
 // child's sockets received any bytes before the server closed them: none in
 // `walk` (every socket is paused), exactly the 5-per-iteration budget in
 // `parked`, which proves the other 59 were parked when stop(true) ran.
-test.concurrent.skipIf(skip)(
+test.concurrent(
   "TLS server.stop(true): a close handler that closes a sibling does not crash the teardown walk",
   async () => {
     const scenario = (kind: string, flightsReceived: number) => ({

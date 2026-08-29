@@ -151,6 +151,14 @@ describe("Bun.otel", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a span cell is an ordinary object to generic builtins (Array.prototype with a length, JSON, spread)", () => {
+    const s: any = Bun.otel.tracer("t").startSpan("x");
+    s.length = 3;
+    expect([Array.prototype.indexOf.call(s, 1), Array.prototype.includes.call(s, undefined), [...Array.from(s)].length]).toEqual([-1, true, 3]);
+    expect(typeof JSON.stringify(s)).toBe("string");
+    s.end();
+  });
+
   test("Bun.otel.wrap rejects a class (the wrapped function is not a constructor)", () => {
     expect(() => Bun.otel.wrap(class Foo {})).toThrow(TypeError);
     const w = Bun.otel.wrap(function plain() {

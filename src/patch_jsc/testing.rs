@@ -8,9 +8,6 @@ use bun_sys::{Fd, FdExt};
 pub(crate) struct TestingAPIs;
 
 impl TestingAPIs {
-    // `#[bun_jsc::host_fn]` Free-kind shim emits an unqualified
-    // `fn_name(g, f)` call, so it cannot wrap an associated fn. The C-ABI
-    // shim is emitted at module scope below (`__jsc_host_*`).
     pub(crate) fn make_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the VM
         // outlives this call frame.
@@ -176,26 +173,18 @@ impl Drop for ApplyArgs {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// C-ABI host-fn shims
-//
-// `#[bun_jsc::host_fn]` (Free kind) emits an unqualified `fn_name(g, f)` call
-// in its generated shim body, so it can't wrap an associated fn directly.
-// These module-scope thunks forward to `TestingAPIs::*` so the proc-macro can
-// generate the JSC-calling-convention `__jsc_host_*` exports the codegen side
-// links against.
+// Free-fn entry points for `dispatch_js2native.rs`, whose `pub use` cannot
+// name an associated fn.
 // ──────────────────────────────────────────────────────────────────────────
 
-#[bun_jsc::host_fn]
 pub fn patch_make_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     TestingAPIs::make_diff(global, frame)
 }
 
-#[bun_jsc::host_fn]
 pub fn patch_apply(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     TestingAPIs::apply(global, frame)
 }
 
-#[bun_jsc::host_fn]
 pub fn patch_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     TestingAPIs::parse(global, frame)
 }

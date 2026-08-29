@@ -47,7 +47,6 @@ pub mod TestingAPIs {
     /// values that filter drivers and cloud-sync placeholders return in the
     /// wild (STATUS_CANNOT_DELETE etc.) and verify they map to a sensible
     /// errno rather than `UNKNOWN`. Windows-only; returns `undefined` elsewhere.
-    #[bun_jsc::host_fn]
     pub fn translate_nt_status_to_e(
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -76,7 +75,6 @@ pub mod TestingAPIs {
 
     /// Exposes libuv -> `bun.sys.E` translation so tests can feed out-of-range
     /// negative values and verify it does not panic. Windows-only.
-    #[bun_jsc::host_fn]
     pub fn translate_uv_error_to_e(
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -109,7 +107,6 @@ pub mod TestingAPIs {
     /// `libc` crate's `sigaction`/`sigset_t` directly, which already has the
     /// correct per-target layout (bionic included), so this is a sanity check
     /// rather than a fix-carrier.
-    #[bun_jsc::host_fn]
     pub fn sigaction_layout(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         #[cfg(not(unix))]
         {

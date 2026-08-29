@@ -209,7 +209,6 @@ pub fn parse_date(this: &String, global_object: &JSGlobalObject) -> JsResult<f64
 }
 
 // ── escapeRegExp host fns ───────────────────────────────────────────────────
-#[bun_jsc::host_fn]
 pub fn js_escape_reg_exp(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
     let input_value = call_frame.argument(0);
 
@@ -229,7 +228,6 @@ pub fn js_escape_reg_exp(global: &JSGlobalObject, call_frame: &CallFrame) -> JsR
     create_utf8_for_js(global, &buf)
 }
 
-#[bun_jsc::host_fn]
 pub fn js_escape_reg_exp_for_package_name_matching(
     global: &JSGlobalObject,
     call_frame: &CallFrame,
@@ -262,7 +260,6 @@ pub mod unicode_testing_apis {
     /// Exercises the `sentinel = true` path of `toUTF16AllocForReal`, which is
     /// otherwise only reachable from Windows-only `bun build --compile`
     /// metadata code.
-    #[bun_jsc::host_fn]
     pub fn to_utf16_alloc_sentinel(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,

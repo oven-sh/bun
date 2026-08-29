@@ -19,12 +19,6 @@ impl Error {
     }
 }
 
-impl bun_core::output::ErrName for Error {
-    fn name(&self) -> &[u8] {
-        (*self).name().as_bytes()
-    }
-}
-
 impl From<crate::streaming::ArgError> for Error {
     fn from(e: crate::streaming::ArgError) -> Self {
         match e {

@@ -157,10 +157,19 @@ impl JobTranspiler {
     /// Copy `from`'s configuration for a job.
     ///
     /// # Safety
-    /// Everything `from` owns or points at must outlive the copy and must not
-    /// be reconfigured or freed while the copy is in use; the copy is only for
-    /// parsing and printing, which read that configuration and write nothing
-    /// but the per-call arena, log and macro context.
+    /// The copy aliases `from`'s `options`, `resolver` (and its caches), `fs`
+    /// and `env`, and is used on a pool thread while `from`'s own thread keeps
+    /// using `from`. So, for as long as the copy exists: everything `from` owns
+    /// or points at must stay alive and must not be reconfigured (no
+    /// `configure_*`, option/define/loader changes, `set_arena`/`set_log` to
+    /// something the copy could observe, or drop); and both sides must stick
+    /// to what tolerates that overlap — the copy only does a non-shared-buffer
+    /// parse and a print, which read the aliased configuration, reach the
+    /// shared `FileSystem`/resolver caches only through their thread-safe
+    /// entry points, and write nothing but the per-call arena, log and the
+    /// copy's own macro context; `from`'s thread may parse/scan/print
+    /// concurrently under the same restriction but must not hand out
+    /// `fs_mut()`/`log_mut()`/`&mut options` borrows that a job could observe.
     pub unsafe fn new(from: &Transpiler<'static>) -> Self {
         // SAFETY: fn contract; `ManuallyDrop` keeps the copy from freeing what
         // `from` owns.

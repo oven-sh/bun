@@ -968,6 +968,15 @@ impl AnySocket {
         }
     }
 
+    /// The `SSL` handle of a connected TLS socket; `None` for TCP.
+    #[inline]
+    pub fn ssl_mut(&self) -> Option<&mut bun_boringssl_sys::SSL> {
+        match self {
+            AnySocket::SocketTcp(_) => None,
+            AnySocket::SocketTls(s) => s.ssl_mut(),
+        }
+    }
+
     any_socket_forward! {
         fn is_closed(&self) -> bool;
         fn is_shutdown(&self) -> bool;

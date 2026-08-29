@@ -119,7 +119,6 @@ pub mod task_tag {
         ShellAsyncCpTask,
         StreamPending,
         ThreadSafeFunction,
-        ValkeyDeferredClose,
         WindowsNamedPipeContext,
         Write,
         Writev,

@@ -4,8 +4,7 @@ use core::sync::atomic::Ordering;
 
 use crate::{CommonAbortReason, JSGlobalObject, JSValue, VirtualMachineRef as VirtualMachine};
 use bun_event_loop::EventLoopTimer::{
-    EventLoopTimer, InHeap, IntrusiveField, State as TimerState, Tag as TimerTag, TimerFlags,
-    Timespec as ElTimespec,
+    EventLoopTimer, State as TimerState, Tag as TimerTag, TimerFlags, Timespec as ElTimespec,
 };
 
 bun_opaque::opaque_ffi! {
@@ -299,16 +298,14 @@ impl Timeout {
             .add_ms(i64::try_from(milliseconds).expect("AbortSignal.timeout(ms) overflows i64"));
 
         let this: *mut Timeout = bun_core::heap::into_raw(Box::new(Timeout {
-            event_loop_timer: EventLoopTimer {
-                next: ElTimespec {
+            event_loop_timer: EventLoopTimer::new(
+                TimerTag::AbortSignalTimeout,
+                TimerState::CANCELLED,
+                ElTimespec {
                     sec: deadline.sec,
                     nsec: deadline.nsec,
                 },
-                tag: TimerTag::AbortSignalTimeout,
-                state: TimerState::CANCELLED,
-                heap: IntrusiveField::default(),
-                in_heap: InHeap::default(),
-            },
+            ),
             signal: signal_,
             flags: TimerFlags::default(),
             generation: VirtualMachine::get().test_isolation_generation,

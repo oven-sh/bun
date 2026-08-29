@@ -610,7 +610,9 @@ declare module "bun" {
      * requests. A request that resolves to a directory without a trailing
      * `/` is redirected (`301`) to the trailing-slash URL; with the trailing
      * slash, `index.html` from that directory is served. Missing files
-     * return `404`.
+     * return `404`. Only `GET` and `HEAD` serve the file: `OPTIONS` returns
+     * `204` and every other method returns `405`, both with
+     * `Allow: GET, HEAD, OPTIONS`.
      *
      * @example
      * ```ts

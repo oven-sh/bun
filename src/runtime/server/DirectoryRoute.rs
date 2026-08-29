@@ -38,12 +38,22 @@ pub struct DirectoryRoute {
     stat_cache: Box<[Cell<StatCacheEntry>]>,
     /// Sum of `StatCacheEntry.path` capacities, for `memory_cost()`.
     stat_cache_path_bytes: Cell<usize>,
+    /// True when registered for every method (a plain `{ dir }` route value):
+    /// only GET and HEAD serve the file; OPTIONS answers 204 and the rest 405,
+    /// both with an `Allow` list. A method-scoped value (`{ POST: { dir } }`)
+    /// registers only its methods and serves them as-is.
+    any_method: Cell<bool>,
 }
 
 impl DirectoryRoute {
     #[inline]
     pub fn set_server(&self, server: Option<AnyServer>) {
         self.server.set(server);
+    }
+
+    #[inline]
+    pub(crate) fn set_registered_for_any_method(&self, any: bool) {
+        self.any_method.set(any);
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -92,6 +102,7 @@ impl DirectoryRoute {
             url_prefix: url_prefix.to_vec().into_boxed_slice(),
             stat_cache: stat_cache.into_boxed_slice(),
             stat_cache_path_bytes: Cell::new(0),
+            any_method: Cell::new(false),
         }))
     }
 
@@ -100,8 +111,40 @@ impl DirectoryRoute {
     }
 
     pub fn on_request(this: ThisPtr<DirectoryRoute>, req: AnyRequest, resp: AnyResponse) {
-        let method = Method::find(req.method()).unwrap_or(Method::GET);
-        Self::on(this, req, resp, method);
+        let method = Method::find(req.method());
+        if this.any_method.get() && !matches!(method, Some(Method::GET | Method::HEAD)) {
+            Self::on_method_not_allowed(this, req, resp, method == Some(Method::OPTIONS));
+            return;
+        }
+        Self::on(this, req, resp, method.unwrap_or(Method::GET));
+    }
+
+    /// A directory tree implements GET and HEAD only (nginx and Caddy do the
+    /// same): 405 with `Allow`, and 204 with `Allow` for OPTIONS.
+    fn on_method_not_allowed(
+        this: ThisPtr<DirectoryRoute>,
+        mut req: AnyRequest,
+        resp: AnyResponse,
+        is_options: bool,
+    ) {
+        debug_assert!(this.server.get().is_some());
+        let _guard = ResponseGuard {
+            route: Some(RefPtr::from_this(this)),
+            resp,
+        };
+        if let Some(mut server) = this.server.get() {
+            server.on_pending_request();
+            resp.timeout(server.config().idle_timeout);
+        }
+        req.set_yield(false);
+        write_any_status(resp, if is_options { 204 } else { 405 });
+        resp.write_mark();
+        resp.write_header(b"allow", b"GET, HEAD, OPTIONS");
+        if is_options {
+            resp.end_without_body(resp.should_close_connection());
+        } else {
+            resp.end(b"", resp.should_close_connection());
+        }
     }
 
     fn on(this: ThisPtr<DirectoryRoute>, mut req: AnyRequest, resp: AnyResponse, method: Method) {

@@ -853,19 +853,26 @@ where
     }
 
     /// `CellRefCounted` destructor: the last ref was released.
-    fn destroy(this: *mut Self) {
-        bun_ptr::destroy_with(
-            this,
-            |ctx| {
-                ctx.finalize_without_deinit();
-                ctx.teardown()
-            },
-            |ctx, server| {
-                if let Some(server) = server {
-                    Self::release(ctx, server);
-                }
-            },
-        );
+    ///
+    /// # Safety
+    /// Called only by the generated `CellRefCounted::destroy` with the
+    /// allocation root of a context whose refcount just reached zero.
+    unsafe fn destroy(this: *mut Self) {
+        // SAFETY: forwarded from the fn contract.
+        unsafe {
+            bun_ptr::destroy_with(
+                this,
+                |ctx| {
+                    ctx.finalize_without_deinit();
+                    ctx.teardown()
+                },
+                |ctx, server| {
+                    if let Some(server) = server {
+                        Self::release(ctx, server);
+                    }
+                },
+            );
+        }
     }
 
     /// A new `NativePromiseContext` cell owning a ref on this context,

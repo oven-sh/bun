@@ -143,17 +143,15 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
     }
 
     /// Borrow the pointee, or `None` once the owner has finalized it (which
-    /// also releases this handle's weak ref).
-    ///
-    /// The returned `&mut T` is a fresh reborrow of the allocation pointer, so
-    /// it must not overlap any other borrow of the same object — including one
-    /// handed out by a second `WeakPtr`. Finish with it before the next `get`.
-    pub fn get(&mut self) -> Option<&mut T> {
+    /// also releases this handle's weak ref). Shared access only: several
+    /// handles (and the owner) may observe the same allocation at once, so no
+    /// accessor hands out `&mut T`; mutate through the pointee's own `Cell`s.
+    pub fn get(&mut self) -> Option<&T> {
         if let Some(value) = self.raw_ptr {
             // SAFETY: allocation is live while any WeakPtr holds it (see above).
             unsafe {
                 if !(*T::weak_ptr_data(value.as_ptr())).finalized() {
-                    return Some(&mut *value.as_ptr());
+                    return Some(&*value.as_ptr());
                 }
                 self.deref_internal(value);
             }

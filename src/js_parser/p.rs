@@ -203,6 +203,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// parser / visitor / lowerer body at startup.
     pub(crate) jsx_transform: JSXTransformType,
     pub(crate) macro_: MacroState<'a>,
+    pub(crate) zod: crate::zod::ZodState,
     pub(crate) arena: &'a Bump,
     pub(crate) options: ParserOptions<'a>,
     /// Raw pointer alias of `lexer.log`. Rust cannot store two `&'a mut Log` to one allocation
@@ -3660,6 +3661,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(star) = stmt.star_name_loc.to_nullable() {
             let name = self.load_name_from_ref(stmt.namespace_ref);
             stmt.namespace_ref = self.declare_symbol(js_ast::symbol::Kind::Import, star, name)?;
+            self.zod_maybe_track_import(path.text, stmt.namespace_ref, None);
 
             if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
                 if let Some(uses) = &mut self.parse_pass_symbol_uses {
@@ -3754,6 +3756,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
+                // A remapped binding is a macro, not zod.
+                self.zod_maybe_track_import(path.text, r#ref, Some(b"default"));
+
                 if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
                     if let Some(uses) = &mut self.parse_pass_symbol_uses {
                         uses.put(
@@ -3833,6 +3838,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     continue;
                 }
             }
+
+            self.zod_maybe_track_import(path.text, r#ref, Some(alias));
 
             if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
                 if let Some(uses) = &mut self.parse_pass_symbol_uses {
@@ -8668,6 +8675,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             to_expr_wrapper_hoisted: bun_ast::binding::ToExprWrapper::dangling(),
             source,
             macro_: MacroState::init(),
+            zod: crate::zod::ZodState::init(),
             current_scope: scope,
             module_scope: scope,
             scopes_in_order: scope_order,

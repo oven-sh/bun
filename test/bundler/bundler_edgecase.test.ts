@@ -3277,6 +3277,33 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("var arguments = 1;");
     },
   });
+  itBundled("edgecase/UnusedRuntimeHelpersDoNotReserveGlobalNames", {
+    files: {
+      // The bundler runtime carries helpers that reference globals such as Map,
+      // Set and Proxy. This bundle pulls in the CommonJS export helpers and
+      // none of those, so the user's own declarations of those names stay.
+      "/entry.js": /* js */ `
+        import { Map, Set } from "./collections.js";
+        var Proxy = "not the global";
+        console.log(Map().kind, Set().kind, Proxy);
+        export const kinds = [Map().kind, Set().kind];
+      `,
+      "/collections.js": /* js */ `
+        export function Map() { return { kind: "map" }; }
+        export function Set() { return { kind: "set" }; }
+      `,
+    },
+    target: "bun",
+    format: "cjs",
+    run: { stdout: "map set not the global" },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("function Map()");
+      expect(code).toContain("function Set()");
+      expect(code).toContain('var Proxy = "not the global"');
+      expect(code).not.toMatch(/\b(Map|Set|Proxy)2\b/);
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

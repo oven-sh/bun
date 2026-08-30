@@ -1,7 +1,19 @@
 import { Subprocess } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, tmpdirSync } from "harness";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
+import { bunEnv, bunExe, bunRun, isWindows, tmpdirSync } from "harness";
+import { mkfifo } from "mkfifo";
 import { join } from "path";
 
 function dummyFile(size: number, cache_bust: string, value: string | { code: string }) {
@@ -79,6 +91,36 @@ describe("transpiler cache", () => {
     // just re-transpiling.
     writeFileSync(join(temp_dir, "a.js"), dummyFile(4 * 1024 - 1, "1", "a"));
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("a");
+    expect(!existsSync(cache_dir)).toBeTrue();
+  });
+  test("does not cache a file whose parse logged an error", async () => {
+    // The parser reports the `import` next to `module.exports` after it has
+    // built the AST, and the lexer reports `0foo` while the parser is being
+    // constructed. Nothing may be printed or cached for such a file, or a
+    // later run would serve the broken output from the cache without the error.
+    const filler = "\n//" + Buffer.alloc(5 * 1024, "f").toString();
+    writeFileSync(join(temp_dir, "dep.js"), `export const x = 1;`);
+    writeFileSync(join(temp_dir, "mixed.js"), `import { x } from "./dep.js";\nmodule.exports = { x };` + filler);
+    writeFileSync(join(temp_dir, "first.js"), `\\u0030foo = 1;` + filler);
+    writeFileSync(
+      join(temp_dir, "main.js"),
+      `const out = {};
+       for (const file of ["./mixed.js", "./first.js"]) {
+         try { await import(file); } catch (e) { out["import " + file] = [e.name, e.message]; }
+         try { require(file); } catch (e) { out["require " + file] = [e.name, e.message]; }
+       }
+       console.log(JSON.stringify(out));`,
+    );
+    const mixed = ["BuildMessage", "Cannot use import statement with CommonJS-only features"];
+    const first = ["BuildMessage", 'Invalid identifier: "0foo"'];
+    const expected = JSON.stringify({
+      "import ./mixed.js": mixed,
+      "require ./mixed.js": mixed,
+      "import ./first.js": first,
+      "require ./first.js": first,
+    });
+    expect(await bunRun(join(temp_dir, "main.js"), env)).toSpawn(expected);
+    expect(await bunRun(join(temp_dir, "main.js"), env)).toSpawn(expected);
     expect(!existsSync(cache_dir)).toBeTrue();
   });
   test("it is indeed content addressable", async () => {
@@ -198,6 +240,34 @@ describe("transpiler cache", () => {
       chmodSync(join(cache_dir), "777");
     }
   });
+  test.skipIf(isWindows)("a fifo in place of an entry is removed instead of opened", async () => {
+    writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "fifo", "intact"));
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("intact");
+    expect(newCacheCount()).toBe(1);
+    const entry = join(cache_dir, readdirSync(cache_dir).find(f => f.endsWith(".pile"))!);
+    const good = readFileSync(entry);
+    unlinkSync(entry);
+    mkfifo(entry);
+
+    // Opening the fifo for reading would block until a writer showed up,
+    // which never happens. The timeout only turns that hang into a failure.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(temp_dir, "a.js")],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(proc.signalCode).toBeNull();
+    expect(stdout).toBe("intact\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(statSync(entry).isFile()).toBeTrue();
+    expect(readFileSync(entry).equals(good)).toBeTrue();
+  });
   test("does not inline process.env", async () => {
     writeFileSync(
       join(temp_dir, "a.js"),
@@ -308,7 +378,7 @@ test("rejects cached module records containing out-of-range string indices", () 
   //   esm_record_byte_length @ 86, esm_record_hash @ 94. Payload follows @ 102.
   // Serialized module record layout (ModuleInfoStringTable + body, see
   // `ModuleInfoDeserialized::serialize` in src/js_printer/lib.rs):
-  //   table: [offset_width u8][0;3][count u32][(count+1) offsets][bytes]
+  //   table: [offset_width u8][0;3][count u32][(count+1) offsets][pad to even][bytes]
   //   body:  [flags u8][id_width u8][0;2][n_requested u32][n_records u32]
   //          [n_records tag bytes][n_requested tag bytes][string ids @ id_width ...]
   const ESM_RECORD_BYTE_OFFSET_AT = 78;
@@ -329,7 +399,8 @@ test("rejects cached module records containing out-of-range string indices", () 
     const count = data.readUInt32LE(esmOff + 4);
     const offsetsAt = esmOff + 8;
     const total = readUint(offsetsAt + count * offsetWidth, offsetWidth);
-    const bodyAt = offsetsAt + (count + 1) * offsetWidth + total;
+    const offsetsLen = (count + 1) * offsetWidth;
+    const bodyAt = offsetsAt + offsetsLen + (offsetsLen % 2) + total;
     const nRequested = data.readUInt32LE(bodyAt + 4);
     const nRecords = data.readUInt32LE(bodyAt + 8);
     const idsAt = bodyAt + 12 + nRecords + nRequested;

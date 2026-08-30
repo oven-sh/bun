@@ -487,6 +487,26 @@ impl WebSocketProxyTunnel {
     pub(crate) fn has_backpressure(&self) -> bool {
         self.write_buffer.get().is_not_empty()
     }
+
+    pub(crate) fn buffered_amount(&self) -> usize {
+        self.write_buffer.get().size()
+    }
+
+    pub(crate) fn pause_stream(&self) -> bool {
+        match &self.socket {
+            SocketUnion::Tcp(s) => s.pause_stream(),
+            SocketUnion::Ssl(s) => s.pause_stream(),
+            SocketUnion::None => false,
+        }
+    }
+
+    pub(crate) fn resume_stream(&self) -> bool {
+        match &self.socket {
+            SocketUnion::Tcp(s) => s.resume_stream(),
+            SocketUnion::Ssl(s) => s.resume_stream(),
+            SocketUnion::None => false,
+        }
+    }
 }
 
 // HOST_EXPORT(WebSocketProxyTunnel__setConnectedWebSocket, c)

@@ -4,6 +4,7 @@ pub mod error;
 pub use error::{Error, Result};
 
 use core::cell::RefCell;
+use core::mem::MaybeUninit;
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 use bun_core::{self, fmt as bun_fmt};
@@ -512,14 +513,12 @@ impl<'a> URL<'a> {
         !self.hostname.is_empty() && !self.pathname.is_empty()
     }
 
-    #[inline]
-    #[allow(
-        invalid_value,
-        clippy::uninit_assumed_init,
-        clippy::undocumented_unsafe_blocks
-    )]
-    fn join_buf_uninit() -> [u8; 2048] {
-        unsafe { core::mem::MaybeUninit::uninit().assume_init() }
+    /// Stack scratch for `join_normalize`. Longer joins go to the heap.
+    const JOIN_STACK_BUF_LEN: usize = 2048;
+
+    /// Length bound of the unnormalized path `join_normalize` builds.
+    fn join_needed(prefix: &[u8], dirname: &[u8], basename: &[u8], extname: &[u8]) -> usize {
+        b"/".len() + prefix.len() + dirname.len() + b"/".len() + basename.len() + extname.len()
     }
 
     pub(crate) fn join_normalize<'b>(
@@ -564,20 +563,22 @@ impl<'a> URL<'a> {
         for part in &path_parts[0..path_end] {
             total += part.len();
         }
-        let mut buf_stack = Self::join_buf_uninit();
-        let mut buf_heap: Vec<u8>;
-        let buf: &mut [u8] = if total <= buf_stack.len() {
+        let mut buf_stack = [const { MaybeUninit::<u8>::uninit() }; Self::JOIN_STACK_BUF_LEN];
+        let mut buf_heap: Vec<u8> = Vec::new();
+        let buf: &mut [MaybeUninit<u8>] = if total <= Self::JOIN_STACK_BUF_LEN {
             &mut buf_stack
         } else {
-            buf_heap = vec![0u8; total];
-            &mut buf_heap
+            buf_heap.reserve_exact(total);
+            buf_heap.spare_capacity_mut()
         };
         let mut buf_i: usize = 0;
         for part in &path_parts[0..path_end] {
-            buf[buf_i..buf_i + part.len()].copy_from_slice(part);
+            buf[buf_i..buf_i + part.len()].write_copy_of_slice(part);
             buf_i += part.len();
         }
-        resolve_path::normalize_string_buf::<false, platform::Loose, false>(&buf[0..buf_i], out)
+        // SAFETY: the loop above wrote every byte of `buf[..buf_i]`.
+        let joined = unsafe { buf[..buf_i].assume_init_ref() };
+        resolve_path::normalize_string_buf::<false, platform::Loose, false>(joined, out)
     }
 
     pub fn join_write(
@@ -588,11 +589,12 @@ impl<'a> URL<'a> {
         basename: &[u8],
         extname: &[u8],
     ) -> crate::Result<()> {
-        let needed = 2 + prefix.len() + dirname.len() + basename.len() + extname.len();
-        let mut out_stack = Self::join_buf_uninit();
+        let needed = Self::join_needed(prefix, dirname, basename, extname);
+        let mut out_pooled: bun_paths::path_buffer_pool::Guard;
         let mut out_heap: Vec<u8>;
-        let out: &mut [u8] = if needed <= out_stack.len() {
-            &mut out_stack
+        let out: &mut [u8] = if needed <= bun_paths::MAX_PATH_BYTES {
+            out_pooled = bun_paths::path_buffer_pool::get();
+            &mut out_pooled[..]
         } else {
             out_heap = vec![0u8; needed];
             &mut out_heap
@@ -622,20 +624,9 @@ impl<'a> URL<'a> {
             v.extend_from_slice(absolute_path);
             Ok(v.into_boxed_slice())
         } else {
-            let needed = 2 + prefix.len() + dirname.len() + basename.len() + extname.len();
-            let mut out_stack = Self::join_buf_uninit();
-            let mut out_heap: Vec<u8>;
-            let out: &mut [u8] = if needed <= out_stack.len() {
-                &mut out_stack
-            } else {
-                out_heap = vec![0u8; needed];
-                &mut out_heap
-            };
-            let normalized_path = Self::join_normalize(out, prefix, dirname, basename, extname);
-            let mut v = Vec::with_capacity(self.origin.len() + 1 + normalized_path.len());
-            v.extend_from_slice(self.origin);
-            v.extend_from_slice(b"/");
-            v.extend_from_slice(normalized_path);
+            let needed = Self::join_needed(prefix, dirname, basename, extname);
+            let mut v = Vec::with_capacity(self.origin.len() + 1 + needed);
+            self.join_write(&mut v, prefix, dirname, basename, extname)?;
             Ok(v.into_boxed_slice())
         }
     }
@@ -1762,5 +1753,68 @@ impl<'a> Scanner<'a> {
                 value_needs_decoding: false,
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::URL;
+
+    const ORIGIN: &[u8] = b"http://localhost:3000";
+
+    fn join(prefix: &[u8], dirname: &[u8], basename: &[u8], extname: &[u8]) -> Vec<u8> {
+        let url = URL::parse(b"http://localhost:3000/");
+        assert_eq!(url.origin, ORIGIN);
+        let mut out = Vec::new();
+        url.join_write(&mut out, prefix, dirname, basename, extname)
+            .expect("Vec<u8> writes cannot fail");
+        let boxed = url
+            .join_alloc(prefix, dirname, basename, extname, b"/abs/unused")
+            .expect("Vec<u8> writes cannot fail");
+        assert_eq!(&*boxed, &*out, "join_alloc and join_write must agree");
+        out
+    }
+
+    #[test]
+    fn join_normalizes_the_path() {
+        assert_eq!(
+            join(b"_next/", b"/pages//", b"index", b".js"),
+            b"http://localhost:3000/_next/pages/index.js"
+        );
+        assert_eq!(
+            join(b"", b"a/./b/..", b"d", b""),
+            b"http://localhost:3000/a/d"
+        );
+        assert_eq!(join(b"", b"", b"", b""), b"http://localhost:3000/");
+    }
+
+    #[test]
+    fn join_alloc_uplevel_dirname_uses_the_absolute_path() {
+        let url = URL::parse(b"http://localhost:3000/");
+        let boxed = url
+            .join_alloc(b"", b"../pages", b"index", b".js", b"/srv/pages/index.js")
+            .expect("Vec<u8> writes cannot fail");
+        assert_eq!(&*boxed, b"http://localhost:3000/abs:/srv/pages/index.js");
+    }
+
+    #[test]
+    fn join_at_the_stack_buffer_limit() {
+        // `/` plus the basename fills the scratch buffer exactly.
+        let basename = vec![b'a'; URL::JOIN_STACK_BUF_LEN - 1];
+        let mut expected = ORIGIN.to_vec();
+        expected.push(b'/');
+        expected.extend_from_slice(&basename);
+        assert_eq!(join(b"", b"", &basename, b""), expected);
+    }
+
+    #[test]
+    fn join_longer_than_every_stack_buffer() {
+        let len = URL::JOIN_STACK_BUF_LEN.max(bun_paths::MAX_PATH_BYTES) + 1;
+        let basename = vec![b'a'; len];
+        let mut expected = ORIGIN.to_vec();
+        expected.extend_from_slice(b"/dir/");
+        expected.extend_from_slice(&basename);
+        expected.extend_from_slice(b".js");
+        assert_eq!(join(b"", b"dir", &basename, b".js"), expected);
     }
 }

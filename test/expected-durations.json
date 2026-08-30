@@ -3794,12 +3794,6 @@
     "musl": 100,
     "windows": 470
   },
-  "js/bun/sys/error-name-from-libuv.test.ts": {
-    "default": 30,
-    "asan": 70,
-    "musl": 30,
-    "windows": 30
-  },
   "js/bun/sys/fstat-windows-crt-fd-leak.test.ts": {
     "default": 30,
     "asan": 100,

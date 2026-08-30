@@ -143,6 +143,7 @@ fn resolve_s3_blob(
             if matches!(path, crate::node::PathOrFileDescriptor::Fd(_)) {
                 return Err(global.throw_invalid_arguments(format_args!("{error_message}")));
             }
+            // The clone owns a copy of a buffer's bytes; `path` unpins at scope exit.
             let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
             Ok((Box::new(blob), options))
         }
@@ -278,8 +279,6 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
     let credentials = if aws_options.changed_credentials {
         std::mem::take(&mut aws_options.credentials)
     } else {
-        // `Store::S3` holds an `Rc<S3Credentials>`, so the intrusive
-        // allocation can't be shared — deep-clone the value.
         default_credentials.clone()
     };
     let store = blob::Store::init_s3(path, None, credentials).expect("oom");

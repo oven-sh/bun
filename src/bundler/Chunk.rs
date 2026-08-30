@@ -1303,6 +1303,12 @@ pub struct JavaScriptChunk {
     pub parts_in_chunk_in_order: Box<[PartRange]>,
 
     // for code splitting
+    /// The other chunks with top-level side effects that the walk ordering
+    /// this chunk reaches, in the order it finishes their first file with
+    /// side effects: the order the unbundled modules would run them in.
+    /// `compute_cross_chunk_dependencies` sorts this chunk's `import`
+    /// statements by it.
+    pub(crate) reached_chunks_in_order: Box<[u32]>,
     /// Bindings declared in this chunk that another chunk imports; named by `cross_chunk_names`.
     pub(crate) exports_to_other_chunks: ArrayHashMap<Ref, ()>,
     pub(crate) imports_from_other_chunks: ImportsFromOtherChunks,
@@ -1545,26 +1551,33 @@ pub mod cross_chunk_import {
 }
 
 impl CrossChunkImport {
+    /// `evaluation_rank[other]` is the position of `other` in the importing
+    /// chunk's `reached_chunks_in_order` (`u32::MAX` when the walk did not
+    /// reach it). ESM hoists every `import` above the chunk's own code, so
+    /// this order is the only part of the source evaluation order the
+    /// statements can keep.
     pub(crate) fn sorted_cross_chunk_imports(
         list: &mut Vec<CrossChunkImport>,
-        chunks: &mut [Chunk],
+        chunks: &[Chunk],
         imports_from_other_chunks: &mut ImportsFromOtherChunks,
         stable_source_indices: &[u32],
-    ) -> Result<(), crate::Error> {
+        evaluation_rank: &[u32],
+    ) {
         list.clear();
         list.reserve(imports_from_other_chunks.count());
 
         for i in 0..imports_from_other_chunks.count() {
             let chunk_index = imports_from_other_chunks.keys()[i];
-            let chunk = &mut chunks[chunk_index as usize];
 
             debug_assert!({
-                let exports_to_other_chunks = &chunk.content.javascript().exports_to_other_chunks;
+                let exports_to_other_chunks = &chunks[chunk_index as usize]
+                    .content
+                    .javascript()
+                    .exports_to_other_chunks;
                 imports_from_other_chunks.values()[i]
                     .iter()
                     .all(|item| exports_to_other_chunks.contains(&item.r#ref))
             });
-            let _ = chunk;
             let import_items = &mut imports_from_other_chunks.values_mut()[i];
             // Deterministic order; the names are only known after renaming.
             index_sort::sort_slice_by(import_items.slice_mut(), |a, b| {
@@ -1584,8 +1597,10 @@ impl CrossChunkImport {
             });
         }
 
-        index_sort::sort_slice_by(list, |a, b| a.chunk_index.cmp(&b.chunk_index));
-        Ok(())
+        index_sort::sort_slice_by(list, |a, b| {
+            (evaluation_rank[a.chunk_index as usize], a.chunk_index)
+                .cmp(&(evaluation_rank[b.chunk_index as usize], b.chunk_index))
+        });
     }
 }
 

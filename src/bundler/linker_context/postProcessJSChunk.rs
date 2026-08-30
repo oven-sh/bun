@@ -736,11 +736,10 @@ pub(crate) fn post_process_js_chunk(
 }
 
 // `js_printer::print` ties bump/Options/import_records/renamer to a
-// single `'a`, and `Renamer<'r, 'src>` is invariant in `'src` — so the caller's
-// renamer lifetime fixes `'a`. All by-ref params that flow into `print` must
-// share that lifetime.
+// single `'a`, so all by-ref params that flow into `print` share that
+// lifetime.
 pub(crate) fn generate_entry_point_tail_js<'a>(
-    c: &'a mut LinkerContext,
+    c: &'a LinkerContext,
     to_common_js_ref: Ref,
     to_esm_ref: Ref,
     source_index: IndexInt,

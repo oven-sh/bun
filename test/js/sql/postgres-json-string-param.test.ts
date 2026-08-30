@@ -77,8 +77,6 @@ describeWithContainer("postgres json string parameters", { image: "postgres_plai
     await using sql = new SQL(options());
     // .execute() because `expect(query).rejects` on the lazy Query hangs:
     // https://github.com/oven-sh/bun/issues/40949
-    await expect(sql`select ${"not json"}::json as x`.execute()).rejects.toThrow(
-      /invalid input syntax for type json/,
-    );
+    await expect(sql`select ${"not json"}::json as x`.execute()).rejects.toThrow(/invalid input syntax for type json/);
   });
 });

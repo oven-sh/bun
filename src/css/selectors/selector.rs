@@ -1,7 +1,9 @@
 use crate::css_parser as css;
 use crate::css_parser::compat::Feature;
 use crate::css_parser::targets::Targets;
-use crate::css_parser::{PrintErr, Printer, StyleContext, VendorPrefix};
+use crate::css_parser::{
+    HandleCssModule, ParentIsUnused, PrintErr, Printer, StyleContext, VendorPrefix, WsBefore,
+};
 use crate::{CSSStringFns, IdentFns};
 type SymbolList = Vec<bun_ast::Symbol>;
 
@@ -11,6 +13,7 @@ use bun_collections::ArrayHashMap;
 bun_core::declare_scope!(CSS_SELECTORS, visible);
 
 pub(crate) use parser::Component;
+use parser::IsFunction;
 pub use parser::PseudoClass;
 pub use parser::PseudoElement;
 pub use parser::Selector;
@@ -498,7 +501,7 @@ pub(crate) fn is_unused(
     selectors: &[parser::Selector],
     unused_symbols: &ArrayHashMap<Box<[u8]>, ()>,
     symbols: &SymbolList,
-    parent_is_unused: bool,
+    parent_is_unused: ParentIsUnused,
 ) -> bool {
     if unused_symbols.len() == 0 {
         return false;
@@ -517,7 +520,7 @@ fn is_selector_unused(
     selector: &parser::Selector,
     unused_symbols: &ArrayHashMap<Box<[u8]>, ()>,
     symbols: &SymbolList,
-    parent_is_unused: bool,
+    parent_is_unused: ParentIsUnused,
 ) -> bool {
     for component in selector.components.iter() {
         match component {
@@ -554,7 +557,7 @@ fn is_selector_unused(
                 }
             }
             Component::Nesting => {
-                if parent_is_unused {
+                if parent_is_unused == ParentIsUnused::Yes {
                     return true;
                 }
             }
@@ -572,11 +575,13 @@ fn is_selector_unused(
 pub(crate) mod serialize {
     use super::*;
 
+    bun_core::bool_enum!(pub(crate) IsRelative);
+
     pub(crate) fn serialize_selector_list(
         list: &[parser::Selector],
         dest: &mut Printer,
         context: Option<&StyleContext>,
-        is_relative: bool,
+        is_relative: IsRelative,
     ) -> Result<(), PrintErr> {
         dest.write_comma_separated(list, |d, sel| {
             serialize_selector(sel, d, context, is_relative)
@@ -587,9 +592,9 @@ pub(crate) mod serialize {
         selector: &parser::Selector,
         dest: &mut Printer,
         context: Option<&StyleContext>,
-        is_relative_: bool,
+        is_relative_: IsRelative,
     ) -> Result<(), PrintErr> {
-        let mut is_relative = is_relative_;
+        let mut is_relative = is_relative_ == IsRelative::Yes;
 
         #[cfg(debug_assertions)]
         {
@@ -712,7 +717,7 @@ pub(crate) mod serialize {
                     }
 
                     if swap_nesting {
-                        serialize_nesting(dest, context, false)?;
+                        serialize_nesting(dest, context, First::No)?;
                     }
 
                     // Skip step 2, which is an "otherwise".
@@ -761,7 +766,7 @@ pub(crate) mod serialize {
                 } else if has_leading_nesting && should_compile_nesting {
                     // Nesting selector may serialize differently if it is leading, due to type selectors.
                     i += 1;
-                    serialize_nesting(dest, context, true)?;
+                    serialize_nesting(dest, context, First::Yes)?;
                 }
 
                 if i < compound.len() {
@@ -863,7 +868,12 @@ pub(crate) mod serialize {
                     Component::Is(selectors) => {
                         // If there's only one simple selector, serialize it directly.
                         if should_unwrap_is(selectors) {
-                            return serialize_selector(&selectors[0], dest, context, false);
+                            return serialize_selector(
+                                &selectors[0],
+                                dest,
+                                context,
+                                IsRelative::No,
+                            );
                         }
 
                         let vp = dest.vendor_prefix;
@@ -900,13 +910,13 @@ pub(crate) mod serialize {
                     },
                     dest,
                     context,
-                    false,
+                    IsRelative::No,
                 )?;
                 return dest.write_str(b")");
             }
             Component::Has(list) => {
                 dest.write_str(b":has(")?;
-                serialize_selector_list(list, dest, context, true)?;
+                serialize_selector_list(list, dest, context, IsRelative::Yes)?;
                 return dest.write_str(b")");
             }
             Component::NonTsPseudoClass(pseudo) => {
@@ -916,22 +926,28 @@ pub(crate) mod serialize {
                 return serialize_pseudo_element(pseudo, dest, context);
             }
             Component::Nesting => {
-                return serialize_nesting(dest, context, false);
+                return serialize_nesting(dest, context, First::No);
             }
             Component::Class(class) => {
                 dest.write_char(b'.')?;
-                return dest.write_ident_or_ref(*class, dest.css_module.is_some());
+                return dest.write_ident_or_ref(
+                    *class,
+                    HandleCssModule::from_bool(dest.css_module.is_some()),
+                );
             }
             Component::Id(id) => {
                 dest.write_char(b'#')?;
-                return dest.write_ident_or_ref(*id, dest.css_module.is_some());
+                return dest.write_ident_or_ref(
+                    *id,
+                    HandleCssModule::from_bool(dest.css_module.is_some()),
+                );
             }
             Component::Host(selector) => {
                 dest.write_str(b":host")?;
                 if let Some(sel) = selector {
                     dest.write_char(b'(')?;
                     let ctx = dest.ctx;
-                    serialize_selector(sel, dest, ctx, false)?;
+                    serialize_selector(sel, dest, ctx, IsRelative::No)?;
                     dest.write_char(b')')?;
                 }
                 return Ok(());
@@ -939,7 +955,7 @@ pub(crate) mod serialize {
             Component::Slotted(selector) => {
                 dest.write_str(b"::slotted(")?;
                 let ctx = dest.ctx;
-                serialize_selector(selector, dest, ctx, false)?;
+                serialize_selector(selector, dest, ctx, IsRelative::No)?;
                 dest.write_char(b')')?;
             }
             _ => {
@@ -954,10 +970,10 @@ pub(crate) mod serialize {
         dest: &mut Printer,
     ) -> Result<(), PrintErr> {
         match combinator {
-            parser::Combinator::Child => dest.delim(b'>', true)?,
+            parser::Combinator::Child => dest.delim(b'>', WsBefore::Yes)?,
             parser::Combinator::Descendant => dest.write_str(b" ")?,
-            parser::Combinator::NextSibling => dest.delim(b'+', true)?,
-            parser::Combinator::LaterSibling => dest.delim(b'~', true)?,
+            parser::Combinator::NextSibling => dest.delim(b'+', WsBefore::Yes)?,
+            parser::Combinator::LaterSibling => dest.delim(b'~', WsBefore::Yes)?,
             parser::Combinator::Deep => dest.write_str(b" /deep/ ")?,
             parser::Combinator::DeepDescendant => {
                 dest.whitespace()?;
@@ -1107,10 +1123,12 @@ pub(crate) mod serialize {
             // https://html.spec.whatwg.org/multipage/semantics-other.html#selector-autofill
             PseudoClass::Autofill(prefix) => write_prefixed(dest, *prefix, b"autofill")?,
 
-            PseudoClass::Local { selector } => serialize_selector(selector, dest, context, false)?,
+            PseudoClass::Local { selector } => {
+                serialize_selector(selector, dest, context, IsRelative::No)?
+            }
             PseudoClass::Global { selector } => {
                 let css_module = dest.css_module.take();
-                serialize_selector(selector, dest, context, false)?;
+                serialize_selector(selector, dest, context, IsRelative::No)?;
                 dest.css_module = css_module;
             }
 
@@ -1195,12 +1213,12 @@ pub(crate) mod serialize {
             PseudoElement::CueRegion => dest.write_str(b"::cue-region")?,
             PseudoElement::CueFunction { selector } => {
                 dest.write_str(b"::cue(")?;
-                serialize_selector(selector, dest, context, false)?;
+                serialize_selector(selector, dest, context, IsRelative::No)?;
                 dest.write_char(b')')?;
             }
             PseudoElement::CueRegionFunction { selector } => {
                 dest.write_str(b"::cue-region(")?;
-                serialize_selector(selector, dest, context, false)?;
+                serialize_selector(selector, dest, context, IsRelative::No)?;
                 dest.write_char(b')')?;
             }
             PseudoElement::Placeholder(prefix) => {
@@ -1284,10 +1302,12 @@ pub(crate) mod serialize {
     /// bound.
     const MAX_NESTING_EXPANSIONS: u32 = 65_536;
 
+    bun_core::bool_enum!(First);
+
     fn serialize_nesting(
         dest: &mut Printer,
         context: Option<&StyleContext>,
-        first: bool,
+        first: First,
     ) -> Result<(), PrintErr> {
         if let Some(ctx) = context {
             dest.nesting_expansions += 1;
@@ -1302,14 +1322,14 @@ pub(crate) mod serialize {
             // Type selectors are only allowed at the start of a compound selector,
             // so use :is() if that is not the case.
             if ctx.selectors.v.len() == 1
-                && (first
+                && (first == First::Yes
                     || (!has_type_selector(ctx.selectors.v.at(0))
                         && is_simple(ctx.selectors.v.at(0))))
             {
-                serialize_selector(ctx.selectors.v.at(0), dest, ctx.parent, false)?;
+                serialize_selector(ctx.selectors.v.at(0), dest, ctx.parent, IsRelative::No)?;
             } else {
                 dest.write_str(b":is(")?;
-                serialize_selector_list(ctx.selectors.v.slice(), dest, ctx.parent, false)?;
+                serialize_selector_list(ctx.selectors.v.slice(), dest, ctx.parent, IsRelative::No)?;
                 dest.write_char(b')')?;
             }
         } else {
@@ -1499,11 +1519,11 @@ pub(crate) mod tocss_servo {
             }
             Component::Id(s) => {
                 dest.write_char(b'#')?;
-                dest.write_ident_or_ref(*s, dest.css_module.is_some())?;
+                dest.write_ident_or_ref(*s, HandleCssModule::from_bool(dest.css_module.is_some()))?;
             }
             Component::Class(s) => {
                 dest.write_char(b'.')?;
-                dest.write_ident_or_ref(*s, dest.css_module.is_some())?;
+                dest.write_ident_or_ref(*s, HandleCssModule::from_bool(dest.css_module.is_some()))?;
             }
             Component::LocalName(local_name) => {
                 local_name.to_css(dest)?;
@@ -1569,7 +1589,7 @@ pub(crate) mod tocss_servo {
                 }
             }
             Component::Nth(nth_data) => {
-                nth_data.write_start(dest, nth_data.is_function_())?;
+                nth_data.write_start(dest, IsFunction::from_bool(nth_data.is_function_()))?;
                 if nth_data.is_function_() {
                     nth_data.write_affine(dest)?;
                     dest.write_char(b')')?;
@@ -1577,7 +1597,7 @@ pub(crate) mod tocss_servo {
             }
             Component::NthOf(nth_of_data) => {
                 let nth_data = nth_of_data.nth_data();
-                nth_data.write_start(dest, true)?;
+                nth_data.write_start(dest, IsFunction::Yes)?;
                 // A selector must be a function to hold An+B notation
                 debug_assert!(nth_data.is_function);
                 nth_data.write_affine(dest)?;

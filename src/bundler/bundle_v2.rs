@@ -26,8 +26,8 @@ pub use bv2_impl::{DevServerInput, DevServerOutput, ImportTrackerIterator, Impor
 // `bundle_v2::Foo` rather than naming the implementation submodule.
 use self::bake_types as bake;
 pub use bv2_impl::{
-    BuildResult, BundleV2Result, CompletionStruct, DependenciesScanner, DependenciesScannerResult,
-    OnDependenciesAnalyze, singleton,
+    BuildResult, BundleV2Result, CliWatchFlag, CompletionStruct, DependenciesScanner,
+    DependenciesScannerResult, OnDependenciesAnalyze, singleton,
 };
 
 pub use crate::DeferredBatchTask::DeferredBatchTask;
@@ -774,6 +774,8 @@ pub mod bv2_impl {
                     should_continue_running: *mut i32,
                 ) -> i32;
             }
+            bun_core::bool_enum!(pub(crate) IsOnLoad { OnResolve, OnLoad });
+            bun_core::bool_enum!(pub(crate) IsServerSide);
             impl Plugin {
                 /// `Plugin.drainDeferred` — resolve every onLoad
                 /// `.defer()` promise. The
@@ -816,7 +818,7 @@ pub mod bv2_impl {
                 pub(crate) fn has_any_matches(
                     &self,
                     path: &crate::bun_fs::Path,
-                    is_on_load: bool,
+                    is_on_load: IsOnLoad,
                 ) -> bool {
                     let mut namespace_string = if path.is_file() {
                         BunString::EMPTY
@@ -828,7 +830,7 @@ pub mod bv2_impl {
                         self,
                         &mut namespace_string,
                         &mut path_string,
-                        is_on_load,
+                        is_on_load == IsOnLoad::OnLoad,
                     )
                 }
 
@@ -838,7 +840,7 @@ pub mod bv2_impl {
                     namespace: &[u8],
                     context: *mut core::ffi::c_void,
                     default_loader: Loader,
-                    is_server_side: bool,
+                    is_server_side: IsServerSide,
                 ) {
                     let _tracer = bun_core::perf::trace("JSBundler.matchOnLoad");
                     let mut namespace_string = if namespace.is_empty() {
@@ -853,7 +855,7 @@ pub mod bv2_impl {
                         &mut path_string,
                         context,
                         default_loader as u8,
-                        is_server_side,
+                        is_server_side == IsServerSide::Yes,
                     );
                 }
 
@@ -1319,7 +1321,9 @@ pub mod bv2_impl {
                     unsafe { &mut *self.bv2 }.on_load_async(self);
                 }
                 pub fn run_on_js_thread(&mut self) {
-                    let is_server_side = self.bake_graph() != crate::bake_types::Graph::Client;
+                    let is_server_side = IsServerSide::from_bool(
+                        self.bake_graph() != crate::bake_types::Graph::Client,
+                    );
                     let default_loader = self.default_loader;
                     // reshaped for borrowck — capture the erased self
                     // pointer before borrowing fields immutably for the FFI call.
@@ -1353,7 +1357,7 @@ pub mod bv2_impl {
 
     use bun_sourcemap as SourceMap;
 
-    use crate::AstBuilder::AstBuilder;
+    use crate::AstBuilder::{AstBuilder, HotReloading};
     use crate::DeferredBatchTask::DeferredBatchTask;
     use crate::Graph::Graph;
     use crate::LinkerContext;
@@ -1737,8 +1741,11 @@ pub mod bv2_impl {
                 .iter()
                 .map(|s| s.as_bytes().to_vec().into_boxed_slice())
                 .collect();
-            ct.options.conditions =
-                options::ESMConditions::init(Target::Browser.default_conditions(), false, &[])?;
+            ct.options.conditions = options::ESMConditions::init(
+                Target::Browser.default_conditions(),
+                options::AllowAddons::No,
+                &[],
+            )?;
 
             // We need to make sure it has [hash] in the names so we don't get conflicts.
             if this_compile {
@@ -1829,15 +1836,17 @@ pub mod bv2_impl {
         pub(crate) stack: Vec<ReachFrame>,
     }
 
+    bun_core::bool_enum!(pub WasDynamicImport);
+
     #[derive(Copy, Clone)]
     pub enum ReachFrame {
         Enter {
             source_index: Index,
-            was_dynamic_import: bool,
+            was_dynamic_import: WasDynamicImport,
         },
         Leave {
             source_index: Index,
-            was_dynamic_import: bool,
+            was_dynamic_import: WasDynamicImport,
         },
     }
 
@@ -1856,7 +1865,7 @@ pub mod bv2_impl {
         pub(crate) fn visit<const CHECK_DYNAMIC_IMPORTS: bool>(
             &mut self,
             source_index: Index,
-            was_dynamic_import: bool,
+            was_dynamic_import: WasDynamicImport,
         ) {
             debug_assert!(self.stack.is_empty());
             self.stack.push(ReachFrame::Enter {
@@ -1872,7 +1881,7 @@ pub mod bv2_impl {
                     } => {
                         // Each file must come after its dependencies
                         self.reachable.push(source_index);
-                        if CHECK_DYNAMIC_IMPORTS && was_dynamic_import {
+                        if CHECK_DYNAMIC_IMPORTS && was_dynamic_import == WasDynamicImport::Yes {
                             self.dynamic_import_entry_points
                                 .put(source_index.get(), ())
                                 .expect("unreachable");
@@ -1890,7 +1899,7 @@ pub mod bv2_impl {
                 }
 
                 if self.visited.is_set(source_index.get() as usize) {
-                    if CHECK_DYNAMIC_IMPORTS && was_dynamic_import {
+                    if CHECK_DYNAMIC_IMPORTS && was_dynamic_import == WasDynamicImport::Yes {
                         self.dynamic_import_entry_points
                             .put(source_index.get(), ())
                             .expect("unreachable");
@@ -1911,13 +1920,13 @@ pub mod bv2_impl {
                             source_index: Index::init(
                                 self.scb_list.list.items_reference_source_index()[scb_index],
                             ),
-                            was_dynamic_import: false,
+                            was_dynamic_import: WasDynamicImport::No,
                         });
                         self.stack.push(ReachFrame::Enter {
                             source_index: Index::init(
                                 self.scb_list.list.items_ssr_source_index()[scb_index],
                             ),
-                            was_dynamic_import: false,
+                            was_dynamic_import: WasDynamicImport::No,
                         });
                     }
                 }
@@ -2008,7 +2017,7 @@ pub mod bv2_impl {
                             }
                             self.stack.push(ReachFrame::Enter {
                                 source_index: next_source,
-                                was_dynamic_import,
+                                was_dynamic_import: WasDynamicImport::from_bool(was_dynamic_import),
                             });
                         }
                     }
@@ -2059,6 +2068,8 @@ pub mod bv2_impl {
             unsafe { (*self.bv2).decrement_scan_counter() };
         }
     }
+
+    bun_core::bool_enum!(pub CliWatchFlag);
 
     impl<'a> BundleV2<'a> {
         pub(crate) fn find_reachable_files(&mut self) -> Result<Box<[Index]>, Error> {
@@ -2127,15 +2138,15 @@ pub mod bv2_impl {
 
             // If we don't include the runtime, __toESM or __toCommonJS will not get
             // imported and weird things will happen
-            visitor.visit::<false>(Index::RUNTIME, false);
+            visitor.visit::<false>(Index::RUNTIME, WasDynamicImport::No);
 
             if self.transpiler.options.code_splitting {
                 for entry_point in self.graph.entry_points.iter().copied() {
-                    visitor.visit::<true>(entry_point, false);
+                    visitor.visit::<true>(entry_point, WasDynamicImport::No);
                 }
             } else {
                 for entry_point in self.graph.entry_points.iter().copied() {
-                    visitor.visit::<false>(entry_point, false);
+                    visitor.visit::<false>(entry_point, WasDynamicImport::No);
                 }
             }
 
@@ -2654,7 +2665,8 @@ pub mod bv2_impl {
                 out_source_index = Some(Index::init(idx));
 
                 if let Some(secondary) = &resolve_result.path_pair.secondary {
-                    if !secondary.is_disabled && !strings::eql_long(secondary.text, path.text, true)
+                    if !secondary.is_disabled
+                        && !strings::eql_long(secondary.text, path.text, strings::CheckLen::Yes)
                     {
                         self.graph.input_files.items_secondary_path_mut()[idx as usize] =
                             bun_alloc::AstAlloc::vec_from_slice(secondary.text);
@@ -2907,7 +2919,7 @@ pub mod bv2_impl {
             bake_options: Option<BakeOptions<'a>>,
             _alloc: &bun_alloc::Arena,
             event_loop: EventLoop,
-            cli_watch_flag: bool,
+            cli_watch_flag: CliWatchFlag,
             // Raw `NonNull` (not `&mut`): the JS-API path threads `WorkPool::get()`
             // (a `&'static` from `OnceLock`, concurrently read by workers) through
             // here into `ThreadPool::init`, which stores it as `*mut`. Creating a
@@ -3080,7 +3092,7 @@ pub mod bv2_impl {
             // the `?` above is the last early-return in this fn, so the watcher's
             // raw `*mut BundleV2` can't outlive the box it points at (the caller
             // drops the box on every error path until `generate_from_cli` leaks it).
-            if cli_watch_flag {
+            if cli_watch_flag == CliWatchFlag::Yes {
                 // CYCLEBREAK GENUINE: hot_reloader is T6; runtime constructs the
                 // `dispatch::WatcherHandle` (erased owner + `&'static WatcherVTable`)
                 // via this extern hook and writes `bun_watcher`.
@@ -3473,7 +3485,7 @@ pub mod bv2_impl {
             let alloc: &'static bun_alloc::Arena =
                 unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(self.arena()) };
 
-            let hmr = self.transpiler.options.hot_module_reloading;
+            let hmr = HotReloading::from_bool(self.transpiler.options.hot_module_reloading);
             let mut server = AstBuilder::init(alloc, &bake::SERVER_VIRTUAL_SOURCE, hmr)?;
             let mut client = AstBuilder::init(alloc, &bake::CLIENT_VIRTUAL_SOURCE, hmr)?;
 
@@ -4011,7 +4023,7 @@ pub mod bv2_impl {
             transpiler: &'a mut Transpiler<'a>,
             alloc: &'a bun_alloc::Arena,
             event_loop: EventLoop,
-            enable_reloading: bool,
+            enable_reloading: CliWatchFlag,
             reachable_files_count: &mut usize,
             minify_duration: &mut u64,
             source_code_size: &mut u64,
@@ -4136,7 +4148,7 @@ pub mod bv2_impl {
             // reloader's `ctx`) and dereferences it in `on_file_update` after this
             // function returns, so leak the Box to keep the pointee alive.
             // Bounded leak: the next file change `execve()`s the process anyway.
-            if enable_reloading {
+            if enable_reloading == CliWatchFlag::Yes {
                 let _ = Box::into_raw(this);
             } else {
                 this.deinit_without_freeing_arena();
@@ -4163,7 +4175,15 @@ pub mod bv2_impl {
             event_loop: EventLoop,
             entry_points: &[&[u8]],
         ) -> Result<Box<BundleV2<'a>>, Error> {
-            let mut this = BundleV2::init(transpiler, None, alloc, event_loop, false, None, alloc)?;
+            let mut this = BundleV2::init(
+                transpiler,
+                None,
+                alloc,
+                event_loop,
+                CliWatchFlag::No,
+                None,
+                alloc,
+            )?;
             this.unique_key = generate_unique_key();
 
             if this.transpiler.log().has_errors() {
@@ -4198,7 +4218,7 @@ pub mod bv2_impl {
                 Some(bake_options),
                 alloc,
                 event_loop,
-                false,
+                CliWatchFlag::No,
                 None,
                 alloc,
             )?;
@@ -4399,7 +4419,9 @@ pub mod bv2_impl {
                             template
                                 .print(
                                     &mut v,
-                                    !self.transpiler.options.compile_mode.is_executable(),
+                                    options::SanitizeParentDirs::from_bool(
+                                        !self.transpiler.options.compile_mode.is_executable(),
+                                    ),
                                 )
                                 .expect("oom");
                             // Like a chunk's `final_rel_path`: `/`-separated on every platform.
@@ -5798,7 +5820,7 @@ pub mod bv2_impl {
                     import_record.path.text,
                     import_record.path.namespace,
                 );
-                if plugins.has_any_matches(&match_path, false) {
+                if plugins.has_any_matches(&match_path, jsc_api::JSBundler::IsOnLoad::OnResolve) {
                     // This is where onResolve plugins are enqueued
                     bun_core::scoped_log!(
                         Bundle,
@@ -5847,7 +5869,7 @@ pub mod bv2_impl {
             if let Some(plugins) = self.plugins_ref() {
                 let mut temp_path = Fs::Path::init(entry_point);
                 temp_path.namespace = b"file";
-                if plugins.has_any_matches(&temp_path, false) {
+                if plugins.has_any_matches(&temp_path, jsc_api::JSBundler::IsOnLoad::OnResolve) {
                     bun_core::scoped_log!(
                         Bundle,
                         "Entry point '{}' plugin match",
@@ -5924,7 +5946,7 @@ pub mod bv2_impl {
             parse: &mut ParseTask,
         ) -> bool {
             if let Some(plugins) = self.plugins_ref() {
-                if plugins.has_any_matches(&parse.path, true) {
+                if plugins.has_any_matches(&parse.path, jsc_api::JSBundler::IsOnLoad::OnLoad) {
                     // This is where onLoad plugins are enqueued
                     bun_core::scoped_log!(
                         Bundle,
@@ -6629,7 +6651,7 @@ pub mod bv2_impl {
                         && !strings::eql_long(
                             resolve_result.path_pair.primary.text,
                             import_record.path.text,
-                            true,
+                            strings::CheckLen::Yes,
                         )
                     {
                         import_record.path = path_as_static(&resolve_result.path_pair.primary);
@@ -6795,7 +6817,7 @@ pub mod bv2_impl {
                 if let Some(secondary) = &resolve_result.path_pair.secondary {
                     if !secondary.is_disabled
                         && !core::ptr::eq(secondary, path)
-                        && !strings::eql_long(secondary.text, path.text, true)
+                        && !strings::eql_long(secondary.text, path.text, strings::CheckLen::Yes)
                     {
                         resolve_task.secondary_path_for_commonjs_interop = Some(*secondary);
                     }
@@ -7231,7 +7253,7 @@ pub mod bv2_impl {
                     // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
                     result
                         .log
-                        .clone_to_with_recycled(this.transpiler.log_mut(), true);
+                        .clone_to_with_recycled(this.transpiler.log_mut(), bun_ast::Recycled::Yes);
 
                     this.has_any_top_level_await_modules = this.has_any_top_level_await_modules
                         || !result.ast.top_level_await_keyword.is_empty();
@@ -7537,8 +7559,10 @@ pub mod bv2_impl {
                                 .expect("oom");
                         } else if !err.log.msgs.is_empty() {
                             // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
-                            err.log
-                                .clone_to_with_recycled(this.transpiler.log_mut(), true);
+                            err.log.clone_to_with_recycled(
+                                this.transpiler.log_mut(),
+                                bun_ast::Recycled::Yes,
+                            );
                         } else {
                             let step_name = match err.step {
                                 crate::parse_task::Step::Pending => "pending",

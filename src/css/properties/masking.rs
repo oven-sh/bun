@@ -2,6 +2,7 @@
 use crate as css;
 use crate::PrintErr;
 use crate::Printer;
+use crate::WsBefore;
 
 use crate::css_values::image::Image;
 use crate::css_values::length::LengthOrNumber;
@@ -227,7 +228,7 @@ impl Mask {
             self.position.to_css(dest)?;
 
             if self.size != BackgroundSize::default() {
-                dest.delim(b'/', true)?;
+                dest.delim(b'/', WsBefore::Yes)?;
                 self.size.to_css(dest)?;
             }
         }

@@ -19,9 +19,10 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, host_fn};
 use bun_uws::{us_bun_verify_error_t, uws_callback};
 
-use super::ssl_wrapper::SSLWrapper;
+use super::ssl_wrapper::{FastShutdown, SSLWrapper};
 use crate::generated_classes::js_TLSSocket;
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use bun_uws::TlsRole;
 
 bun_output::declare_scope!(UpgradedDuplex, visible);
 
@@ -135,6 +136,8 @@ fn lazy_js_handler(
     callback
 }
 
+bun_core::bool_enum!(pub(crate) WriteOrEnd { End, Write });
+
 impl UpgradedDuplex {
     // SAFETY (all handlers): the SSLWrapper handlers ctx is `self as *mut
     // Self`, live for the wrapper's lifetime.
@@ -207,14 +210,14 @@ impl UpgradedDuplex {
 
         (this.handlers.on_close)(this.handlers.ctx);
         // closes the underlying duplex
-        this.call_write_or_end(None, false);
+        this.call_write_or_end(None, WriteOrEnd::End);
 
         // Early teardown (struct itself is dropped later by parent).
         this.teardown();
         js_wrapper.ensure_still_alive();
     }
 
-    fn call_write_or_end(&self, data: Option<&[u8]>, msg_more: bool) {
+    fn call_write_or_end(&self, data: Option<&[u8]>, msg_more: WriteOrEnd) {
         // No JS duplex to talk to: the zeroed placeholder, or the owning
         // socket's finalizer abandoned it (`abandon_js_side`).
         let duplex = self.origin.get();
@@ -238,7 +241,10 @@ impl UpgradedDuplex {
             }
         }
 
-        let name = if msg_more { "write" } else { "end" };
+        let name = match msg_more {
+            WriteOrEnd::Write => "write",
+            WriteOrEnd::End => "end",
+        };
         let write_or_end = match duplex.get(&global, name) {
             Ok(Some(f)) if f.is_callable() => f,
             _ => return,
@@ -277,7 +283,7 @@ impl UpgradedDuplex {
         // Scenario 2: will not write if a exception is thrown (will be handled by onError)
         // Scenario 3: will be queued in memory and will be flushed later
         // Scenario 4: no write/end function exists (will be handled by onError)
-        self.call_write_or_end(Some(encoded_data), true);
+        self.call_write_or_end(Some(encoded_data), WriteOrEnd::Write);
     }
 
     #[uws_callback(export = "UpgradedDuplex__flush")]
@@ -480,7 +486,7 @@ impl UpgradedDuplex {
     pub(crate) fn start_tls(
         &self,
         ssl_options: &crate::server::server_config::SSLConfig,
-        is_client: bool,
+        is_client: TlsRole,
         verify: ServerVerify,
     ) -> Result<(), crate::Error> {
         let wrapper = super::ssl_wrapper::init(ssl_options, is_client, self.wrapper_handlers())?;
@@ -494,7 +500,7 @@ impl UpgradedDuplex {
     pub(crate) fn start_tls_with_ctx(
         &self,
         ctx: bun_boringssl_sys::OwnedSslCtx,
-        is_client: bool,
+        is_client: TlsRole,
         verify: ServerVerify,
     ) -> Result<(), crate::Error> {
         let wrapper = WrapperType::init_with_ctx(ctx, is_client, self.wrapper_handlers())?;
@@ -530,14 +536,14 @@ impl UpgradedDuplex {
     #[uws_callback(export = "UpgradedDuplex__close")]
     pub(crate) fn close(&self) {
         if let Some(w) = self.wrapper_ref() {
-            let _ = w.shutdown(true);
+            let _ = w.shutdown(FastShutdown::Yes);
         }
     }
 
     #[uws_callback(export = "UpgradedDuplex__shutdown")]
     pub(crate) fn shutdown(&self) {
         if let Some(w) = self.wrapper_ref() {
-            let _ = w.shutdown(false);
+            let _ = w.shutdown(FastShutdown::No);
         }
     }
 

@@ -2,7 +2,7 @@
 use bun_collections::VecExt;
 use bun_core::feature_flags as FeatureFlags;
 
-use crate::p::P;
+use crate::p::{Inverted, P};
 use crate::parser::{self as js_parser, IdentifierOpts, RelocateVars, RelocateVarsMode};
 use bun_ast::ast_result::CommonJSNamedExport;
 use bun_ast::{self as js_ast, Binding, E, Expr, Flags, G, LocRef, S};
@@ -494,7 +494,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::ExprData::EImportMeta(_) => {
                     if name == b"main" {
-                        return Some(p.value_for_import_meta_main(false, target.loc));
+                        return Some(p.value_for_import_meta_main(Inverted::No, target.loc));
                     }
 
                     if name == b"hot" {

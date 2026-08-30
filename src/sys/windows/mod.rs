@@ -1360,20 +1360,21 @@ pub mod rescle {
             None
         };
 
+        use bun_core::strings::{FailIfInvalid, Sentinel, to_utf16_alloc_for_real};
         let title_w = title
-            .map(|t| bun_core::strings::to_utf16_alloc_for_real(t, false, true))
+            .map(|t| to_utf16_alloc_for_real(t, FailIfInvalid::No, Sentinel::Yes))
             .transpose()?;
         let publisher_w = publisher
-            .map(|p| bun_core::strings::to_utf16_alloc_for_real(p, false, true))
+            .map(|p| to_utf16_alloc_for_real(p, FailIfInvalid::No, Sentinel::Yes))
             .transpose()?;
         let version_w = version
-            .map(|v| bun_core::strings::to_utf16_alloc_for_real(v, false, true))
+            .map(|v| to_utf16_alloc_for_real(v, FailIfInvalid::No, Sentinel::Yes))
             .transpose()?;
         let description_w = description
-            .map(|d| bun_core::strings::to_utf16_alloc_for_real(d, false, true))
+            .map(|d| to_utf16_alloc_for_real(d, FailIfInvalid::No, Sentinel::Yes))
             .transpose()?;
         let copyright_w = copyright
-            .map(|cr| bun_core::strings::to_utf16_alloc_for_real(cr, false, true))
+            .map(|cr| to_utf16_alloc_for_real(cr, FailIfInvalid::No, Sentinel::Yes))
             .transpose()?;
 
         // SAFETY: all pointers are NUL-terminated wide strings or null
@@ -1775,6 +1776,8 @@ pub(crate) extern "C" fn Bun__LoadLibraryBunString(str_: &bun_core::String) -> *
 
 pub use bun_windows_sys::externs::windows_enable_stdio_inheritance;
 
+bun_core::bool_enum!(pub ReplaceIfExists);
+
 /// With an open file source_fd, move it into the directory new_dir_fd with the name new_path_w.
 /// Does not close the file descriptor.
 ///
@@ -1785,7 +1788,7 @@ pub fn move_opened_file_at(
     src_fd: Fd,
     new_dir_fd: Fd,
     new_file_name: &[u16],
-    replace_if_exists: bool,
+    replace_if_exists: ReplaceIfExists,
 ) -> bun_sys::Result<()> {
     // FILE_RENAME_INFORMATION_EX and FILE_RENAME_POSIX_SEMANTICS require >= win10_rs1,
     // but FILE_RENAME_IGNORE_READONLY_ATTRIBUTE requires >= win10_rs5. We check >= rs5 here
@@ -1825,7 +1828,7 @@ pub fn move_opened_file_at(
 
     let mut flags: ULONG =
         win32::FILE_RENAME_POSIX_SEMANTICS | win32::FILE_RENAME_IGNORE_READONLY_ATTRIBUTE;
-    if replace_if_exists {
+    if replace_if_exists == ReplaceIfExists::Yes {
         flags |= win32::FILE_RENAME_REPLACE_IF_EXISTS;
     }
     // SAFETY: rename_info is aligned, non-null, and points into uninitialized storage we own;
@@ -1870,7 +1873,7 @@ pub fn move_opened_file_at(
         src_fd,
         new_dir_fd,
         bun_core::fmt::utf16(new_file_name),
-        if replace_if_exists {
+        if replace_if_exists == ReplaceIfExists::Yes {
             "replace_if_exists"
         } else {
             "no flag"
@@ -1900,7 +1903,7 @@ pub(crate) fn rename_at_w(
     old_path_w: &[u16],
     new_dir_fd: Fd,
     new_path_w: &[u16],
-    replace_if_exists: bool,
+    replace_if_exists: ReplaceIfExists,
 ) -> bun_sys::Result<()> {
     let src_fd = 'brk: {
         match bun_sys::open_file_at_windows(

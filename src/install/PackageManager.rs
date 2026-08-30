@@ -203,21 +203,22 @@ pub use super::package_installer::PackageInstaller;
 pub use self::package_manager_directories as directories;
 use directories::attempt_to_create_package_json_and_open;
 pub use directories::{
-    attempt_to_create_package_json, cached_git_folder_name, cached_git_folder_name_print,
-    cached_git_folder_name_print_auto, cached_github_folder_name, cached_github_folder_name_print,
-    cached_github_folder_name_print_auto, cached_npm_package_folder_name,
-    cached_npm_package_folder_name_print, cached_npm_package_folder_print_basename,
-    cached_tarball_folder_name, cached_tarball_folder_name_print, compute_cache_dir_and_subpath,
-    fetch_cache_directory_path, get_cache_directory, get_cache_directory_and_abs_path,
-    get_temporary_directory, global_link_dir, global_link_dir_path, is_folder_in_cache,
-    path_for_cached_npm_path, path_for_resolution, save_lockfile, setup_global_dir,
-    update_lockfile_if_needed, write_yarn_lock,
+    HadAnyDiffs, IncludeCacheVersion, attempt_to_create_package_json, cached_git_folder_name,
+    cached_git_folder_name_print, cached_git_folder_name_print_auto, cached_github_folder_name,
+    cached_github_folder_name_print, cached_github_folder_name_print_auto,
+    cached_npm_package_folder_name, cached_npm_package_folder_name_print,
+    cached_npm_package_folder_print_basename, cached_tarball_folder_name,
+    cached_tarball_folder_name_print, compute_cache_dir_and_subpath, fetch_cache_directory_path,
+    get_cache_directory, get_cache_directory_and_abs_path, get_temporary_directory,
+    global_link_dir, global_link_dir_path, is_folder_in_cache, path_for_cached_npm_path,
+    path_for_resolution, save_lockfile, setup_global_dir, update_lockfile_if_needed,
+    write_yarn_lock,
 };
 
 pub use self::package_manager_enqueue as enqueue;
 pub use enqueue::{
-    GitEnqueueResult, create_extract_task_for_streaming, enqueue_dependency_list,
-    enqueue_dependency_to_root, enqueue_dependency_with_main,
+    GitEnqueueResult, InstallPeer, IsRoot, create_extract_task_for_streaming,
+    enqueue_dependency_list, enqueue_dependency_to_root, enqueue_dependency_with_main,
     enqueue_dependency_with_main_and_success_fn, enqueue_extract_npm_package, enqueue_git_checkout,
     enqueue_git_for_checkout, enqueue_network_task, enqueue_package_for_download,
     enqueue_parse_npm_package, enqueue_patch_task, enqueue_patch_task_pre,
@@ -1075,7 +1076,7 @@ fn configure_env_for_scripts_run(
         &mut this_transpiler_slot,
         env_ptr,
         log_level != package_manager_options::LogLevel::Silent,
-        false,
+        bun_resolver::fs::StoreFd::No,
     )?;
     // SAFETY: the install-tier `RunCommand::configure_env_for_run` shim
     // (lib.rs) `.write()`s the slot via `Transpiler::init` before returning
@@ -1656,7 +1657,7 @@ pub fn init(
         debug_assert!(strings::eql_long(
             &original_package_json_path_buf[..this_cwd.len()],
             this_cwd,
-            true,
+            strings::CheckLen::Yes,
         ));
         original_package_json_path_buf.truncate(this_cwd.len());
         original_package_json_path_buf.push(SEP);
@@ -1806,7 +1807,11 @@ pub fn init(
                             #[cfg(not(windows))]
                             let maybe_workspace_path = child_path;
 
-                            if strings::eql_long(maybe_workspace_path, path_, true) {
+                            if strings::eql_long(
+                                maybe_workspace_path,
+                                path_,
+                                strings::CheckLen::Yes,
+                            ) {
                                 // Intern via the resolver's DirnameStore so the slice is
                                 // process-lifetime (`set_top_level_dir` requires `'static`).
                                 fs.set_top_level_dir(fs.dirname_store().append(parent)?);
@@ -1872,7 +1877,7 @@ pub fn init(
 
     // Returns the resolver's BSSMap-owned
     // `*EntriesOption` slot.
-    let entries_option = match fs.read_directory(fs.top_level_dir(), 0, true)? {
+    let entries_option = match fs.read_directory(fs.top_level_dir(), 0, fs::StoreFd::Yes)? {
         fs::EntriesOption::Entries(e) => {
             // SAFETY: the BSSMap singleton owns `*e` for the process
             // lifetime, and `init()` runs single-threaded before any other
@@ -1908,7 +1913,7 @@ pub fn init(
         &env_probe_keys,
         &[],
         dot_env::DotEnvFileSuffix::Production,
-        false,
+        dot_env::SkipDefaultEnv::No,
     )?;
 
     initialize_store();
@@ -2425,12 +2430,15 @@ fn init_with_runtime_once(
     // leaves `holder::RAW_PTR` null rather than pointing at an uninitialized
     // manager. Returns the resolver's BSSMap-owned `*EntriesOption` slot.
     let fs_instance = FileSystem::instance();
-    let root_dir = match fs_instance.read_directory(fs_instance.top_level_dir(), 0, true)? {
-        // SAFETY: the BSSMap singleton owns `*e` for the process lifetime,
-        // and runtime init runs once on the main thread before any other access.
-        fs::EntriesOption::Entries(e) => unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) },
-        fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
-    };
+    let root_dir =
+        match fs_instance.read_directory(fs_instance.top_level_dir(), 0, fs::StoreFd::Yes)? {
+            // SAFETY: the BSSMap singleton owns `*e` for the process lifetime,
+            // and runtime init runs once on the main thread before any other access.
+            fs::EntriesOption::Entries(e) => unsafe {
+                &mut *std::ptr::from_mut::<fs::DirEntry>(*e)
+            },
+            fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
+        };
 
     let cpu_count: u32 = u32::from(bun_core::get_thread_count());
     allocate_package_manager();

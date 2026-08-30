@@ -69,21 +69,23 @@ pub(crate) fn stop_and_write_profile(
     );
     // Write JSON format if requested and not empty
     if config.json_format && !json_string.is_empty() {
-        write_profile_to_file(&json_string, config, false)?;
+        write_profile_to_file(&json_string, config, CpuProfileFormat::Json)?;
     }
 
     // Write text format if requested and not empty
     if config.md_format && !text_string.is_empty() {
-        write_profile_to_file(&text_string, config, true)?;
+        write_profile_to_file(&text_string, config, CpuProfileFormat::Md)?;
     }
 
     Ok(())
 }
 
+bun_core::bool_enum!(CpuProfileFormat { Json, Md });
+
 fn write_profile_to_file(
     profile_string: &BunString,
     config: &CPUProfilerConfig,
-    is_md_format: bool,
+    is_md_format: CpuProfileFormat,
 ) -> Result<(), ProfilerError> {
     let profile_slice = profile_string.to_utf8();
 
@@ -134,7 +136,7 @@ fn write_profile_to_file(
 fn build_output_path(
     path: &mut AutoAbsPathChecked,
     config: &CPUProfilerConfig,
-    is_md_format: bool,
+    is_md_format: CpuProfileFormat,
 ) -> Result<(), ProfilerError> {
     // Generate filename
     let mut filename_buf = PathBuffer::uninit();
@@ -146,7 +148,10 @@ fn build_output_path(
         'blk: {
             if has_both_formats {
                 // Custom name with both formats - append extension based on format
-                let ext: &[u8] = if is_md_format { b".md" } else { b".cpuprofile" };
+                let ext: &[u8] = match is_md_format {
+                    CpuProfileFormat::Md => b".md",
+                    CpuProfileFormat::Json => b".cpuprofile",
+                };
                 let mut cursor = std::io::Cursor::new(&mut filename_buf[..]);
                 cursor
                     .write_all(config.name)
@@ -176,9 +181,12 @@ fn build_output_path(
 
 fn generate_default_filename(
     buf: &mut PathBuffer,
-    md_format: bool,
+    md_format: CpuProfileFormat,
 ) -> Result<&[u8], ProfilerError> {
-    let extension: &str = if md_format { ".md" } else { ".cpuprofile" };
+    let extension: &str = match md_format {
+        CpuProfileFormat::Md => ".md",
+        CpuProfileFormat::Json => ".cpuprofile",
+    };
     let mut cursor = std::io::Cursor::new(&mut buf[..]);
     write_diagnostic_filename(&mut cursor, "CPU", extension)
         .map_err(|_| ProfilerError::FilenameTooLong)?;

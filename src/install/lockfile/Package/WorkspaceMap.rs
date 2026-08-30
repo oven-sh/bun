@@ -308,7 +308,7 @@ impl WorkspaceMap {
                     if strings::eql_long(
                         resolve_path::dirname::<path::platform::Auto>(abs_package_json_path),
                         root_dir,
-                        true,
+                        strings::CheckLen::Yes,
                     ) {
                         continue;
                     }
@@ -438,11 +438,11 @@ impl WorkspaceMap {
                 let mut walker = match GlobWalker::init_with_cwd(
                     glob_pattern,
                     cwd,
-                    false,
-                    false,
-                    false,
-                    false,
-                    true,
+                    glob::Dot::No,
+                    glob::Absolute::No,
+                    glob::FollowSymlinks::No,
+                    glob::ErrorOnBrokenSymlinks::No,
+                    glob::OnlyFiles::Yes,
                     Some(ignored_workspace_paths),
                 )? {
                     Ok(w) => w,

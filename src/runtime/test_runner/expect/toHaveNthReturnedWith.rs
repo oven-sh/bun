@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::DiffFormatter;
+use super::IsNot;
 use super::throw;
 use super::{Expect, get_signature};
 
@@ -69,13 +70,13 @@ pub(crate) fn to_have_nth_returned_with(
     let mut formatter = super::make_formatter(global);
     let mut formatter2 = super::make_formatter(global);
 
-    let signature = get_signature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", false);
+    let signature = get_signature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", IsNot::No);
 
     if this.flags.get().not() {
         return throw!(
             this,
             global,
-            get_signature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", true),
+            get_signature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", IsNot::Yes),
             "\n\nExpected mock function not to have returned on call {}: <green>{}<r>\nBut it did.\n",
             n,
             expected.to_fmt(&mut formatter),

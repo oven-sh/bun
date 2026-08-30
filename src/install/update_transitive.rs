@@ -12,11 +12,11 @@ use crate::dedupe;
 use crate::dependency::{self, Behavior};
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, PackageIndexEntry};
-use crate::npm::PackageManifest;
+use crate::npm::{ExtendedManifest, PackageManifest};
 use crate::package_manager::Options::LogLevel;
 use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
 use crate::package_manager_real::populate_manifest_cache::{self, Packages};
-use crate::package_manager_real::{PackageUpdateInfo, enqueue_dependency_with_main};
+use crate::package_manager_real::{InstallPeer, PackageUpdateInfo, enqueue_dependency_with_main};
 use crate::update_scope::UpdateScope;
 use crate::{
     DependencyID, DependencyVersionTag, GetJsonOptions, GetJsonResult, PackageID, PackageManager,
@@ -433,7 +433,7 @@ fn reresolve(manager: &mut PackageManager, dep_id: DependencyID) -> crate::Resul
     let mut dep = manager.lockfile.buffers.dependencies[dep_id as usize].clone();
     dep.behavior = dep.behavior.with(Behavior::PEER, false);
     manager.lockfile.buffers.resolutions[dep_id as usize] = invalid_package_id;
-    enqueue_dependency_with_main(manager, dep_id, &dep, invalid_package_id, false)
+    enqueue_dependency_with_main(manager, dep_id, &dep, invalid_package_id, InstallPeer::No)
 }
 
 /// `bun update <name>`: the `plannable_peer_rows` naming a requested package, re-resolved after their manifests are fetched; each is appended to `moved` for `redirect_moved_edges`, and every package in `moved` is registered so the summary prints its update row.
@@ -817,7 +817,7 @@ fn newest_allowed(manager: &mut PackageManager, pkg_id: PackageID) -> Option<Box
         name,
         lockfile.packages.items_name_hash()[pkg],
         Some(&mut false),
-        min_age.is_some(),
+        ExtendedManifest::from_bool(min_age.is_some()),
     )?;
     let manifest_buf: &[u8] = &manifest.string_buf;
     let mut best: Option<Semver::Version> = None;
@@ -1152,7 +1152,7 @@ fn plan_edges(
             scope,
             name,
             Some(&mut expired),
-            min_age.is_some(),
+            ExtendedManifest::from_bool(min_age.is_some()),
         ) else {
             let entry = (Box::from(name), text(inst.current.fmt(buf)));
             if !unchecked.contains(&entry) {

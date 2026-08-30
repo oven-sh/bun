@@ -240,7 +240,10 @@ impl<'a> Writable<'a> {
                 let pipe_ref = FileSink::create(evtloop, result.unwrap());
                 let pipe = Self::pipe_sink_mut(&pipe_ref);
 
-                match pipe.writer.with_mut(|w| w.start(pipe.fd.get(), true)) {
+                match pipe
+                    .writer
+                    .with_mut(|w| w.start(pipe.fd.get(), bun_io::IsPollable::Yes))
+                {
                     bun_sys::Result::Ok(()) => {}
                     bun_sys::Result::Err(_err) => {
                         if let Stdio::ReadableStream(rs) = stdio {

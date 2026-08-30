@@ -1,5 +1,6 @@
 use crate::jsc::JSGlobalObject;
-use crate::mysql::my_sql_value::{DateTime, Time};
+use crate::mysql::my_sql_value::{DateTime, Signedness, Time};
+use crate::shared::UseBigint;
 use crate::shared::sql_data_cell::SQLDataCell;
 use bun_sql::mysql::mysql_types as types;
 use bun_sql::mysql::mysql_types::FieldType;
@@ -12,14 +13,23 @@ bun_core::declare_scope!(MySQLDecodeBinaryValue, visible);
 /// with binary collations (e.g., utf8mb4_bin) which have different character_set values.
 pub(crate) const BINARY_CHARSET: u16 = 63;
 
+bun_core::bool_enum!(
+    /// Return the undecoded wire bytes (`SQLQueryResultMode::Raw`).
+    pub(crate) Raw
+);
+bun_core::bool_enum!(
+    /// Column carries `ColumnFlags::BINARY`.
+    pub(crate) BinaryColumn
+);
+
 pub(crate) fn decode_binary_value<Context: ReaderContext>(
     global_object: &JSGlobalObject,
     field_type: types::FieldType,
     column_length: u32,
-    raw: bool,
-    bigint: bool,
-    unsigned: bool,
-    binary: bool,
+    raw: Raw,
+    bigint: UseBigint,
+    unsigned: Signedness,
+    binary: BinaryColumn,
     character_set: u16,
     reader: NewReader<Context>,
 ) -> crate::Result<SQLDataCell> {
@@ -28,6 +38,10 @@ pub(crate) fn decode_binary_value<Context: ReaderContext>(
         "decodeBinaryValue: {}",
         <&'static str>::from(field_type)
     );
+    let raw = raw == Raw::Yes;
+    let bigint = bigint == UseBigint::Yes;
+    let unsigned = unsigned == Signedness::Unsigned;
+    let binary = binary == BinaryColumn::Yes;
     match field_type {
         FieldType::MYSQL_TYPE_TINY => {
             if raw {

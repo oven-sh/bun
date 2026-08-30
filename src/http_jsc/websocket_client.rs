@@ -20,10 +20,10 @@ use bun_http::websocket::{Opcode, WebsocketHeader};
 use bun_io::KeepAlive;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject};
 use bun_ptr::{BackRef, JsCell, RefPtr, Root, ThisPtr};
-use bun_uws::{self as uws, NewSocketHandler, us_bun_verify_error_t};
+use bun_uws::{self as uws, Fin, NewSocketHandler, us_bun_verify_error_t};
 use bun_uws_sys::us_socket_t;
 
-use self::cpp_websocket::{CppWebSocket, CppWebSocketRef};
+use self::cpp_websocket::{CloneText, CppWebSocket, CppWebSocketRef};
 use self::websocket_deflate::WebSocketDeflate;
 use self::websocket_proxy_tunnel::WebSocketProxyTunnel;
 
@@ -61,6 +61,19 @@ const MAX_CONTROL_PAYLOAD: usize = 125;
 const MAX_CLOSE_REASON: usize = MAX_CONTROL_PAYLOAD - 2;
 /// Outgoing control frame prefix: 2-byte header + 4-byte masking key.
 const CONTROL_HEADER_SIZE: usize = 6;
+
+bun_core::bool_enum!(
+    /// Drop the fifo's backing allocation instead of just discarding its contents.
+    FreeMemory
+);
+bun_core::bool_enum!(
+    /// Flush `send_buffer` to the socket now vs. only append to it.
+    DoWrite
+);
+bun_core::bool_enum!(
+    /// Per-message-deflate (RSV1) payload.
+    Compressed
+);
 
 #[derive(bun_ptr::CellRefCounted)]
 pub struct WebSocket<const SSL: bool> {
@@ -175,8 +188,8 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub(crate) fn clear_data(&self) {
         log!("clearData");
         self.unref_keep_alive();
-        self.clear_receive_buffers(true);
-        self.clear_send_buffers(true);
+        self.clear_receive_buffers(FreeMemory::Yes);
+        self.clear_send_buffers(FreeMemory::Yes);
         self.control_frame_started.set(false);
         self.ping_len.set(0);
         self.close_dispatch_pending.take();
@@ -312,7 +325,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.fail(code);
     }
 
-    fn clear_receive_buffers(&self, free: bool) {
+    fn clear_receive_buffers(&self, free: FreeMemory) {
         // `discard` never rewinds `head`; `reset_head_if_empty` keeps `readable_slice(0)` contiguous.
         {
             let mut receive_buffer = self.receive_buffer.borrow_mut();
@@ -321,7 +334,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             receive_buffer.reset_head_if_empty();
         }
 
-        if free {
+        if free == FreeMemory::Yes {
             self.receive_buffer
                 .replace(LinearFifo::<u8, DynamicBuffer<u8>>::init());
         }
@@ -329,7 +342,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.receive_body_remain.set(0);
     }
 
-    fn clear_send_buffers(&self, free: bool) {
+    fn clear_send_buffers(&self, free: FreeMemory) {
         // see clear_receive_buffers — discard instead of poking
         // private `head`/`count`.
         {
@@ -337,7 +350,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             let len = send_buffer.readable_length();
             send_buffer.discard(len);
         }
-        if free {
+        if free == FreeMemory::Yes {
             self.send_buffer
                 .replace(LinearFifo::<u8, DynamicBuffer<u8>>::init());
         }
@@ -383,7 +396,11 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // this function encodes to UTF-16 if > 127
                 // so we don't need to worry about latin1 non-ascii code points
                 // we avoid trim since we wanna keep the utf8 validation intact
-                let utf16_bytes = match strings::to_utf16_alloc(data, true, false) {
+                let utf16_bytes = match strings::to_utf16_alloc(
+                    data,
+                    strings::FailIfInvalid::Yes,
+                    strings::Sentinel::No,
+                ) {
                     Ok(v) => v,
                     Err(strings::ToUTF16Error::InvalidByteSequence) => {
                         self.terminate(ErrorCode::InvalidUtf8);
@@ -405,11 +422,11 @@ impl<const SSL: bool> WebSocket<SSL> {
                     let utf16 = core::mem::ManuallyDrop::new(utf16);
                     outstring = EncodedSlice::utf16_global(&utf16);
                     jsc::mark_binding!();
-                    out.did_receive_text(false, &outstring);
+                    out.did_receive_text(CloneText::Adopt, &outstring);
                 } else {
                     outstring = EncodedSlice::latin1(data);
                     jsc::mark_binding!();
-                    out.did_receive_text(true, &outstring);
+                    out.did_receive_text(CloneText::Clone, &outstring);
                 }
             }
             Opcode::Binary | Opcode::Ping | Opcode::Pong => {
@@ -435,7 +452,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         data: &[u8],
         left_in_fragment: usize,
         kind: Opcode,
-        is_final: bool,
+        is_final: Fin,
     ) -> usize {
         debug_assert!(data.len() <= left_in_fragment);
 
@@ -443,6 +460,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         if self.receiving_compressed.get() {
             return self.consume_compressed(data, left_in_fragment, kind, is_final);
         }
+        let is_final = is_final == Fin::Yes;
         let frame_complete = data.len() == left_in_fragment;
 
         if is_final && frame_complete {
@@ -453,7 +471,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 return data.len();
             }
             if data.is_empty() {
-                self.dispatch_buffered_message(kind, false);
+                self.dispatch_buffered_message(kind, Compressed::No);
                 return 0;
             }
         }
@@ -467,7 +485,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         if frame_complete {
             self.receive_body_remain.set(0);
             if is_final {
-                self.dispatch_buffered_message(kind, false);
+                self.dispatch_buffered_message(kind, Compressed::No);
             }
         }
         data.len()
@@ -478,7 +496,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         data: &[u8],
         left_in_fragment: usize,
         kind: Opcode,
-        is_final: bool,
+        is_final: Fin,
     ) -> usize {
         if !data.is_empty() {
             bun_core::handle_oom(self.buffer_payload(data));
@@ -486,28 +504,28 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         if data.len() == left_in_fragment {
             self.receive_body_remain.set(0);
-            if is_final {
-                self.dispatch_buffered_message(kind, true);
+            if is_final == Fin::Yes {
+                self.dispatch_buffered_message(kind, Compressed::Yes);
             }
         }
         data.len()
     }
 
     /// Dispatch the message accumulated in `receive_buffer`, then reset the per-message state.
-    fn dispatch_buffered_message(&self, kind: Opcode, compressed: bool) {
+    fn dispatch_buffered_message(&self, kind: Opcode, compressed: Compressed) {
         // Take the fifo first: `dispatch_*` can reach `clear_receive_buffers(true)` and free the readable slice.
         let buf = self
             .receive_buffer
             .replace(LinearFifo::<u8, DynamicBuffer<u8>>::init());
-        if compressed {
+        if compressed == Compressed::Yes {
             self.dispatch_compressed_data(buf.readable_slice(0), kind);
         } else {
             self.dispatch_data(buf.readable_slice(0), kind);
         }
         // Restore the taken fifo so its capacity is kept for the next message.
         self.receive_buffer.replace(buf);
-        self.clear_receive_buffers(false);
-        if compressed {
+        self.clear_receive_buffers(FreeMemory::No);
+        if compressed == Compressed::Yes {
             self.receiving_compressed.set(false);
         }
         self.message_is_compressed.set(false);
@@ -690,7 +708,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         // An empty final message still dispatches ("", ArrayBuffer(0), ...).
         if cursor.body_remain == 0 && cursor.state == ReceiveState::NeedBody && cursor.is_final {
-            let _ = self.consume(b"", 0, cursor.last_data_type, true);
+            let _ = self.consume(b"", 0, cursor.last_data_type, Fin::Yes);
 
             cursor.state = ReceiveState::NeedHeader;
             self.receiving_compressed.set(false);
@@ -821,7 +839,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             chunk,
             cursor.body_remain,
             cursor.last_data_type,
-            cursor.is_final,
+            Fin::from_bool(cursor.is_final),
         );
 
         cursor.body_remain -= consumed;
@@ -882,7 +900,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             };
             // Buffer any data the tunnel couldn't accept
             if wrote < bytes.len() {
-                let _ = self.copy_to_send_buffer(&bytes[wrote..], false);
+                let _ = self.copy_to_send_buffer(&bytes[wrote..], DoWrite::No);
             }
             return true;
         }
@@ -901,19 +919,21 @@ impl<const SSL: bool> WebSocket<SSL> {
                 return false;
             }
 
-            let _ = self
-                .copy_to_send_buffer(&bytes[usize::try_from(wrote).expect("int cast")..], false);
+            let _ = self.copy_to_send_buffer(
+                &bytes[usize::try_from(wrote).expect("int cast")..],
+                DoWrite::No,
+            );
             return true;
         }
 
-        self.copy_to_send_buffer(bytes, true)
+        self.copy_to_send_buffer(bytes, DoWrite::Yes)
     }
 
-    fn copy_to_send_buffer(&self, bytes: &[u8], do_write: bool) -> bool {
+    fn copy_to_send_buffer(&self, bytes: &[u8], do_write: DoWrite) -> bool {
         self.send_data(Copy::Raw(bytes), do_write, Opcode::Binary)
     }
 
-    fn send_data(&self, bytes: Copy<'_>, do_write: bool, opcode: Opcode) -> bool {
+    fn send_data(&self, bytes: Copy<'_>, do_write: DoWrite, opcode: Opcode) -> bool {
         let may_compress = self.deflate.borrow().is_some()
             && matches!(opcode, Opcode::Text | Opcode::Binary)
             && !matches!(bytes, Copy::Raw(_));
@@ -973,7 +993,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             send_buffer.update(frame_size);
         }
 
-        if do_write {
+        if do_write == DoWrite::Yes {
             self.debug_assert_socket_writable();
             return self.send_buffer_out();
         }
@@ -981,7 +1001,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         true
     }
 
-    fn send_data_uncompressed(&self, bytes: Copy<'_>, do_write: bool, opcode: Opcode) -> bool {
+    fn send_data_uncompressed(&self, bytes: Copy<'_>, do_write: DoWrite, opcode: Opcode) -> bool {
         let (write_len, content_byte_len) = bytes.frame_and_content_len();
         debug_assert!(write_len > 0);
 
@@ -997,7 +1017,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             send_buffer.update(write_len);
         }
 
-        if do_write {
+        if do_write == DoWrite::Yes {
             self.debug_assert_socket_writable();
             return self.send_buffer_out();
         }
@@ -1261,7 +1281,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
 
-        let _ = self.send_data(bytes, !self.has_backpressure(), opcode);
+        let _ = self.send_data(bytes, DoWrite::from_bool(!self.has_backpressure()), opcode);
     }
 
     pub(crate) fn write_binary_data(this: ThisPtr<Self>, slice: &[u8], op: u8) {
@@ -1342,7 +1362,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             } else {
                 Copy::Latin1(str.slice())
             },
-            !this.has_backpressure(),
+            DoWrite::from_bool(!this.has_backpressure()),
             opcode,
         );
     }
@@ -1911,7 +1931,7 @@ impl Mask {
 
     fn fill(global_this: &JSGlobalObject, mask_buf: &mut [u8; 4], output: &mut [u8], input: &[u8]) {
         *mask_buf = Self::generate(global_this);
-        let skip_mask = u32::from_ne_bytes(*mask_buf) == 0;
+        let skip_mask = bun_highway::SkipMask::from_bool(u32::from_ne_bytes(*mask_buf) == 0);
         if input.is_empty() {
             bun_core::hint::cold();
             return;
@@ -1923,7 +1943,7 @@ impl Mask {
     /// (borrowck forbids `&mut [u8]` + `&[u8]` aliasing in `fill`).
     fn fill_in_place(global_this: &JSGlobalObject, mask_buf: &mut [u8; 4], buf: &mut [u8]) {
         *mask_buf = Self::generate(global_this);
-        let skip_mask = u32::from_ne_bytes(*mask_buf) == 0;
+        let skip_mask = bun_highway::SkipMask::from_bool(u32::from_ne_bytes(*mask_buf) == 0);
         if buf.is_empty() {
             bun_core::hint::cold();
             return;
@@ -2125,7 +2145,7 @@ impl Copy<'_> {
         content_byte_len: usize,
         opcode: Opcode,
     ) {
-        self.copy_with_compressed_flag(global_this, buf, content_byte_len, opcode, false);
+        self.copy_with_compressed_flag(global_this, buf, content_byte_len, opcode, Compressed::No);
     }
 
     /// Frame an already-deflated payload; `is_first_fragment` controls RSV1.
@@ -2141,7 +2161,7 @@ impl Copy<'_> {
             buf,
             compressed_data.len(),
             opcode,
-            is_first_fragment,
+            Compressed::from_bool(is_first_fragment),
         );
     }
 
@@ -2151,7 +2171,7 @@ impl Copy<'_> {
         buf: &mut [u8],
         content_byte_len: usize,
         opcode: Opcode,
-        compressed: bool,
+        compressed: Compressed,
     ) {
         if let Copy::Raw(raw) = self {
             debug_assert!(buf.len() >= raw.len());
@@ -2162,7 +2182,7 @@ impl Copy<'_> {
 
         let mut header =
             WebsocketHeader::new(WebsocketHeader::pack_length(content_byte_len), true, opcode);
-        header.set_compressed(compressed);
+        header.set_compressed(compressed == Compressed::Yes);
 
         let mut parts = split_frame(buf, content_byte_len);
 

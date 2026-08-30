@@ -67,6 +67,18 @@ use core::fmt;
 pub mod error;
 pub use error::{Error, Result};
 
+bun_core::bool_enum!(
+    /// Whether an install/link operation targets the project (`node_modules/.bin`)
+    /// or the global bin directory.
+    pub Scope { Local, Global }
+);
+
+bun_core::bool_enum!(
+    /// Whether the root package's own dependencies are part of this install
+    /// (false when `--filter` excludes the root workspace).
+    pub InstallRootDependencies
+);
+
 pub mod npm;
 #[path = "PackageManifestMap.rs"]
 pub mod package_manifest_map;
@@ -789,7 +801,7 @@ impl RunCommand {
         this_transpiler: &mut ::core::mem::MaybeUninit<bun_transpiler::Transpiler<'static>>,
         env: Option<*mut bun_dotenv::Loader>,
         _log_errors: bool,
-        store_root_fd: bool,
+        store_root_fd: bun_resolver::fs::StoreFd,
     ) -> Result<*mut (), crate::Error> {
         use bun_core::Global;
 

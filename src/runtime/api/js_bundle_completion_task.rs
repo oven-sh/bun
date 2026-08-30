@@ -14,7 +14,7 @@ use std::io::Write as _;
 
 use bun_alloc::Arena;
 use bun_bundler::bundle_v2::{
-    BundleV2, BundleV2Result, CompletionStruct, FileMap as Bv2FileMap,
+    BundleV2, BundleV2Result, CliWatchFlag, CompletionStruct, FileMap as Bv2FileMap,
     JSBundleCompletionTask as Bv2OpaqueCompletion, JSBundlerPlugin, dispatch,
 };
 use bun_bundler::options::{self, OutputFile, OutputKind, Side};
@@ -1239,7 +1239,15 @@ impl CompletionStruct for JSBundleCompletionTask {
         let worker_pool = NonNull::new(thread_pool);
 
         // `Graph.heap` is a borrow, so reuse the caller-owned `bump`.
-        let mut bv2 = BundleV2::init(transpiler, None, bump, event_loop, false, worker_pool, bump)?;
+        let mut bv2 = BundleV2::init(
+            transpiler,
+            None,
+            bump,
+            event_loop,
+            CliWatchFlag::No,
+            worker_pool,
+            bump,
+        )?;
 
         bv2.plugins = self.plugins();
         bv2.completion = Some(self.as_js_bundle_completion_task());

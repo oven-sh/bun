@@ -38,6 +38,7 @@ pub(crate) const CLIENT_PREFIX: &str = "/_bun/client";
 // blocks and `container_of` submodules name a single type. Re-export so
 // `crate::bake::dev_server::DevServer` (the public path used by `server/`,
 // `dispatch.rs`, …) resolves to that one struct.
+pub(crate) use super::dev_server_body::HadReloadEvent;
 pub use super::dev_server_body::{
     CacheEntry, CurrentBundle, DeferredPromise, DeferredRequest, DevServer, EntryPointList,
     HTMLRouter, Magic, NextBundle, Options, PluginState, RouteIndexAndRecurseFlag, TestingBatch,
@@ -283,7 +284,7 @@ pub use serialized_failure::SerializedFailure;
 /// grows one, this can be replaced by it.
 pub trait ResponseLike {
     fn write_status(&mut self, status: &[u8]);
-    fn end(&mut self, data: &[u8], close_connection: bool);
+    fn end(&mut self, data: &[u8], close_connection: bun_uws::CloseConnection);
     fn as_any_response(&mut self) -> bun_uws::AnyResponse;
 }
 
@@ -295,7 +296,7 @@ impl ResponseLike for bun_uws::AnyResponse {
     fn write_status(&mut self, status: &[u8]) {
         (*self).write_status(status)
     }
-    fn end(&mut self, data: &[u8], close_connection: bool) {
+    fn end(&mut self, data: &[u8], close_connection: bun_uws::CloseConnection) {
         (*self).end(data, close_connection)
     }
     fn as_any_response(&mut self) -> bun_uws::AnyResponse {
@@ -688,7 +689,7 @@ impl HotReloadEvent {
             TestingBatchEvents::EnableAfterBundle => debug_assert!(false),
         }
 
-        if let Err(_err) = dev_ref.start_async_bundle(entry_points, true, timer) {
+        if let Err(_err) = dev_ref.start_async_bundle(entry_points, HadReloadEvent::Yes, timer) {
             return;
         }
     }

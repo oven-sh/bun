@@ -1,5 +1,5 @@
 use crate::css_parser as css;
-use crate::css_parser::{CssResult, PrintErr, Printer};
+use crate::css_parser::{CssResult, PrintErr, Printer, WsBefore};
 use crate::values::angle::Angle;
 use crate::values::length::{Length, LengthValue};
 use crate::values::number::{CSSNumber, CSSNumberFns};
@@ -425,12 +425,12 @@ impl<V: CalcValue> Calc<V> {
                     parse_ident,
                 )
             }),
-            CalcUnit::Sin => Self::parse_trig(input, TrigFnKind::Sin, false, parse_ident),
-            CalcUnit::Cos => Self::parse_trig(input, TrigFnKind::Cos, false, parse_ident),
-            CalcUnit::Tan => Self::parse_trig(input, TrigFnKind::Tan, false, parse_ident),
-            CalcUnit::Asin => Self::parse_trig(input, TrigFnKind::Asin, true, parse_ident),
-            CalcUnit::Acos => Self::parse_trig(input, TrigFnKind::Acos, true, parse_ident),
-            CalcUnit::Atan => Self::parse_trig(input, TrigFnKind::Atan, true, parse_ident),
+            CalcUnit::Sin => Self::parse_trig(input, TrigFnKind::Sin, ToAngle::No, parse_ident),
+            CalcUnit::Cos => Self::parse_trig(input, TrigFnKind::Cos, ToAngle::No, parse_ident),
+            CalcUnit::Tan => Self::parse_trig(input, TrigFnKind::Tan, ToAngle::No, parse_ident),
+            CalcUnit::Asin => Self::parse_trig(input, TrigFnKind::Asin, ToAngle::Yes, parse_ident),
+            CalcUnit::Acos => Self::parse_trig(input, TrigFnKind::Acos, ToAngle::Yes, parse_ident),
+            CalcUnit::Atan => Self::parse_trig(input, TrigFnKind::Atan, ToAngle::Yes, parse_ident),
             CalcUnit::Atan2 => input.parse_nested_block(|i| {
                 let res = Self::parse_atan2(i, parse_ident)?;
                 if let Some(v) = V::try_from_angle(res) {
@@ -680,7 +680,7 @@ impl<V: CalcValue> Calc<V> {
     pub(crate) fn parse_trig(
         input: &mut css::Parser,
         trig_fn_kind: TrigFnKind,
-        to_angle: bool,
+        to_angle: ToAngle,
         parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<Self> {
         let trig_fn = move |x: f32| -> f32 {
@@ -700,7 +700,7 @@ impl<V: CalcValue> Calc<V> {
             let rad: f32 = 'rad: {
                 match &v {
                     Calc::Value(angle) => {
-                        if !to_angle {
+                        if to_angle == ToAngle::No {
                             break 'rad trig_fn(angle.to_radians());
                         }
                     }
@@ -710,7 +710,7 @@ impl<V: CalcValue> Calc<V> {
                 return Err(i.new_custom_error(css::ParserError::invalid_value));
             };
 
-            if to_angle && !rad.is_nan() {
+            if to_angle == ToAngle::Yes && !rad.is_nan() {
                 if let Some(val) = V::try_from_angle(Angle::Rad(rad)) {
                     return Ok(Calc::Value(Box::new(val)));
                 }
@@ -931,11 +931,11 @@ impl<V: CalcValue> Calc<V> {
                 if num.abs() < 1.0 {
                     let div = 1.0 / num;
                     calc.to_css(dest)?;
-                    dest.delim(b'/', true)?;
+                    dest.delim(b'/', WsBefore::Yes)?;
                     CSSNumberFns::to_css(div, dest)?;
                 } else {
                     CSSNumberFns::to_css(num, dest)?;
-                    dest.delim(b'*', true)?;
+                    dest.delim(b'*', WsBefore::Yes)?;
                     calc.to_css(dest)?;
                 }
                 Ok(())
@@ -1083,6 +1083,8 @@ pub enum TrigFnKind {
     Acos,
     Atan,
 }
+
+bun_core::bool_enum!(pub(crate) ToAngle);
 
 /// A CSS math function.
 ///
@@ -1241,9 +1243,9 @@ impl<V> MathFunction<V> {
             MathFunction::Clamp { min, center, max } => {
                 dest.write_str("clamp(")?;
                 min.to_css(dest)?;
-                dest.delim(b',', false)?;
+                dest.delim(b',', WsBefore::No)?;
                 center.to_css(dest)?;
-                dest.delim(b',', false)?;
+                dest.delim(b',', WsBefore::No)?;
                 max.to_css(dest)?;
                 dest.write_char(b')')
             }
@@ -1255,24 +1257,24 @@ impl<V> MathFunction<V> {
                 dest.write_str("round(")?;
                 if *strategy != RoundingStrategy::default() {
                     strategy.to_css(dest)?;
-                    dest.delim(b',', false)?;
+                    dest.delim(b',', WsBefore::No)?;
                 }
                 value.to_css(dest)?;
-                dest.delim(b',', false)?;
+                dest.delim(b',', WsBefore::No)?;
                 interval.to_css(dest)?;
                 dest.write_char(b')')
             }
             MathFunction::Rem { dividend, divisor } => {
                 dest.write_str("rem(")?;
                 dividend.to_css(dest)?;
-                dest.delim(b',', false)?;
+                dest.delim(b',', WsBefore::No)?;
                 divisor.to_css(dest)?;
                 dest.write_char(b')')
             }
             MathFunction::Mod { dividend, divisor } => {
                 dest.write_str("mod(")?;
                 dividend.to_css(dest)?;
-                dest.delim(b',', false)?;
+                dest.delim(b',', WsBefore::No)?;
                 divisor.to_css(dest)?;
                 dest.write_char(b')')
             }

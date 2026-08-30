@@ -163,10 +163,16 @@ impl Taskable for FSWatchTaskPosix {
     }
 }
 
+bun_core::bool_enum!(
+    /// Whether the queued `Event` owns its path payload and must be dropped in
+    /// `clean_entries`.
+    pub NeedsFree
+);
+
 #[cfg(not(windows))]
 pub struct Entry {
     event: Event,
-    needs_free: bool,
+    needs_free: NeedsFree,
 }
 
 #[cfg(not(windows))]
@@ -179,7 +185,7 @@ impl FSWatchTaskPosix {
         self.ctx.as_ref().expect("FSWatchTask.ctx unset").get()
     }
 
-    pub(crate) fn append(&mut self, event: Event, needs_free: bool) {
+    pub(crate) fn append(&mut self, event: Event, needs_free: NeedsFree) {
         if self.count == 8 {
             self.enqueue();
             let ctx = self.ctx;
@@ -227,7 +233,7 @@ impl FSWatchTaskPosix {
     }
 
     pub(crate) fn append_abort(&mut self) {
-        self.append(Event::Abort, false);
+        self.append(Event::Abort, NeedsFree::No);
         self.enqueue();
     }
 
@@ -275,7 +281,7 @@ impl FSWatchTaskPosix {
         for i in 0..self.count as usize {
             // SAFETY: entries [0..count) were written by `append`.
             let needs_free = unsafe { self.entries[i].assume_init_ref() }.needs_free;
-            if needs_free {
+            if needs_free == NeedsFree::Yes {
                 // SAFETY: entries [0..count) were written by `append`; dropped at most once
                 // (count is reset to 0 below).
                 unsafe { self.entries[i].assume_init_drop() };
@@ -334,12 +340,21 @@ impl WatchEventKind {
     }
 }
 
+bun_core::bool_enum!(
+    /// Whether an emitted error also closes the `FSWatcher`.
+    pub CloseWatcher
+);
+bun_core::bool_enum!(
+    /// `fs.watch(path, { recursive })` — watch the whole subtree.
+    pub Recursive
+);
+
 pub enum Event {
     Rename(EventPathString),
     Change(EventPathString),
     Error {
         err: bun_sys::Error,
-        close: bool,
+        close: CloseWatcher,
     },
     /// An event with no filename, surfaced to JS with `null`, matching node:
     /// `Change` when the OS event queue overflowed and changes were lost,
@@ -397,7 +412,7 @@ impl Default for FSWatchTaskWindows {
                     syscall: bun_sys::Tag::watch,
                     ..Default::default()
                 },
-                close: true,
+                close: CloseWatcher::Yes,
             },
             ctx: None,
         }
@@ -559,7 +574,8 @@ impl FSWatcher {
             }
         }
 
-        this.current_task.with_mut(|t| t.append(event, true));
+        this.current_task
+            .with_mut(|t| t.append(event, NeedsFree::Yes));
     }
 
     #[cfg(windows)]
@@ -854,7 +870,7 @@ impl FSWatcher {
 
     /// R-2: see `emit_abort` — `&self` + `Cell` so the trailing `close()`
     /// observes a re-entrant `watcher.close()` from inside the listener.
-    pub(crate) fn emit_error(&self, err: &bun_sys::Error, close: bool) {
+    pub(crate) fn emit_error(&self, err: &bun_sys::Error, close: CloseWatcher) {
         if self.closed.get() {
             return;
         }
@@ -878,7 +894,7 @@ impl FSWatcher {
             }
         }
 
-        if close {
+        if close == CloseWatcher::Yes {
             self.close();
         }
     }
@@ -1176,12 +1192,17 @@ impl FSWatcher {
                 // backend dropped the callback parameters — only one valid
                 // value each), so the call is cfg-split.
                 #[cfg(windows)]
-                let r = path_watcher::watch(vm_ref, file_path, args.recursive, ctx as *mut c_void);
+                let r = path_watcher::watch(
+                    vm_ref,
+                    file_path,
+                    Recursive::from_bool(args.recursive),
+                    ctx as *mut c_void,
+                );
                 #[cfg(not(windows))]
                 let r = path_watcher::watch(
                     vm_ref,
                     file_path,
-                    args.recursive,
+                    Recursive::from_bool(args.recursive),
                     FSWatcher::ON_PATH_UPDATE,
                     FSWatcher::on_update_end,
                     ctx.cast::<c_void>(),

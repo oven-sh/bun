@@ -149,6 +149,8 @@ bitflags::bitflags! {
     }
 }
 
+bun_core::bool_enum!(pub(crate) ForceInline);
+
 impl<'arena> BundledAst<'arena> {
     // The three `ArenaVec` fields prevent `const fn` here, but spell out the
     // defaults directly instead of round-tripping through `Ast::empty_in` +
@@ -335,7 +337,7 @@ impl<'arena> BundledAst<'arena> {
         source: &bun_ast::Source,
         mime_type_: Option<&[u8]>,
         unique_key: Option<&[u8]>,
-        force_inline: bool,
+        force_inline: ForceInline,
     ) {
         {
             // `by_extension` returns an owned MimeType whose `.value` is a Cow; bind it
@@ -352,8 +354,9 @@ impl<'arena> BundledAst<'arena> {
             let contents: &[u8] = &source.contents;
             // TODO: make this configurable
             const COPY_THRESHOLD: usize = 128 * 1024; // 128kb
-            let should_copy =
-                !force_inline && contents.len() >= COPY_THRESHOLD && unique_key.is_some();
+            let should_copy = force_inline == ForceInline::No
+                && contents.len() >= COPY_THRESHOLD
+                && unique_key.is_some();
             if should_copy {
                 return;
             }

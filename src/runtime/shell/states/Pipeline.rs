@@ -130,7 +130,12 @@ impl Pipeline {
                 #[cfg(windows)]
                 let r = bun_sys::pipe();
                 #[cfg(unix)]
-                let r = bun_sys::socketpair_for_shell(libc::AF_UNIX, libc::SOCK_STREAM, 0, false);
+                let r = bun_sys::socketpair_for_shell(
+                    libc::AF_UNIX,
+                    libc::SOCK_STREAM,
+                    0,
+                    bun_sys::IoMode::Blocking,
+                );
                 match r {
                     Ok(p) => pipes.push(p),
                     Err(e) => {

@@ -1,9 +1,10 @@
 use crate as css;
+use crate::css_properties::custom::IsCustomProperty;
 use crate::css_rules::Location;
 use crate::css_values::color::CssColor;
 use crate::css_values::ident::DashedIdent;
 use crate::generics::DeepClone as _;
-use crate::{PrintErr, Printer};
+use crate::{PrintErr, Printer, WsBefore};
 
 use super::ArrayList;
 
@@ -93,23 +94,23 @@ impl FontPaletteValuesProperty {
         match self {
             FontPaletteValuesProperty::FontFamily(f) => {
                 dest.write_str("font-family")?;
-                dest.delim(b':', false)?;
+                dest.delim(b':', WsBefore::No)?;
                 f.to_css(dest)
             }
             FontPaletteValuesProperty::BasePalette(b) => {
                 dest.write_str("base-palette")?;
-                dest.delim(b':', false)?;
+                dest.delim(b':', WsBefore::No)?;
                 b.to_css(dest)
             }
             FontPaletteValuesProperty::OverrideColors(o) => {
                 dest.write_str("override-colors")?;
-                dest.delim(b':', false)?;
+                dest.delim(b':', WsBefore::No)?;
                 css::to_css::from_list(o.as_slice(), dest)
             }
             FontPaletteValuesProperty::Custom(custom) => {
                 custom.name.to_css(dest)?;
-                dest.delim(b':', false)?;
-                custom.value.to_css(dest, true)
+                dest.delim(b':', WsBefore::No)?;
+                custom.value.to_css(dest, IsCustomProperty::Yes)
             }
         }
     }

@@ -14,7 +14,7 @@ use core::sync::atomic::Ordering;
 use bun_alloc::Arena as Bump;
 use bun_ast::{E, Expr, ExprTag, expr::Data as ExprData};
 use bun_parsers::json as json_parser;
-use bun_parsers::toml::TOML;
+use bun_parsers::toml::{RedactLogs, TOML};
 
 use bun_install_types::NodeLinker::FromExprError;
 use bun_options_types::LoaderExt as _;
@@ -1123,7 +1123,7 @@ impl Bunfig {
         let is_toml = ext.len() > 1 && &ext[1..] == b"toml";
 
         let expr = if is_toml {
-            match TOML::parse(source, log, &bump, true) {
+            match TOML::parse(source, log, &bump, RedactLogs::Yes) {
                 Ok(e) => e,
                 Err(e) => {
                     if log.errors + log.warnings == log_count {

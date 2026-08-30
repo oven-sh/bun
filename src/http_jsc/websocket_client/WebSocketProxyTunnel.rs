@@ -28,8 +28,8 @@ use core::cell::{Cell, OnceCell};
 use bun_boringssl as boringssl;
 use bun_io::StreamBuffer;
 use bun_ptr::{BackRef, JsCell, RefPtr, Root, ThisPtr};
-use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
-use bun_uws::{NewSocketHandler, us_bun_verify_error_t};
+use bun_uws::ssl_wrapper::{FastShutdown, Handlers as SslHandlers, SslWrapper};
+use bun_uws::{NewSocketHandler, RejectUnauthorized, us_bun_verify_error_t};
 
 use crate::websocket_client::ErrorCode;
 
@@ -119,7 +119,7 @@ pub struct WebSocketProxyTunnel {
     /// Hostname for SNI (Server Name Indication)
     sni_hostname: Option<Box<[u8]>>,
     /// Whether to reject unauthorized certificates
-    reject_unauthorized: bool,
+    reject_unauthorized: RejectUnauthorized,
 }
 
 use bun_uws::MaybeAnySocket as SocketUnion;
@@ -132,7 +132,7 @@ impl WebSocketProxyTunnel {
         upgrade_client: UpgradeClientRef,
         socket: NewSocketHandler<SSL>,
         sni_hostname: &[u8],
-        reject_unauthorized: bool,
+        reject_unauthorized: RejectUnauthorized,
     ) -> RefPtr<WebSocketProxyTunnel> {
         // `assume_ssl`/`assume_tcp` rebuild the handler around the same
         // `InternalSocket`.
@@ -175,7 +175,7 @@ impl WebSocketProxyTunnel {
         // the `SSLConfig`-taking `init` lives in bun_runtime.
         let wrapper = SslWrapperType::init_from_options(
             &options.as_usockets(),
-            true,
+            bun_uws::TlsRole::Client,
             SslHandlers {
                 ctx: this,
                 on_open: Self::on_open,
@@ -293,7 +293,7 @@ impl WebSocketProxyTunnel {
         }
 
         // Check for SSL errors if we need to reject unauthorized
-        if reject_unauthorized {
+        if reject_unauthorized == RejectUnauthorized::Yes {
             if ssl_error.error_no != 0 {
                 upgrade_client.terminate(ErrorCode::TlsHandshakeFailed);
                 return;
@@ -479,7 +479,7 @@ impl WebSocketProxyTunnel {
     pub(crate) fn shutdown(this: ThisPtr<Self>) {
         let _guard = RefPtr::from_this(this);
         if let Some(w) = this.wrapper.get() {
-            let _ = w.shutdown(true); // Fast shutdown
+            let _ = w.shutdown(FastShutdown::Yes);
         }
     }
 

@@ -41,7 +41,9 @@ pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Res
         return Err(Stopped);
     }
     let vm = global.bun_vm();
-    let _ = vm.as_mut().uncaught_exception(global, ex, false);
+    let _ = vm
+        .as_mut()
+        .uncaught_exception(global, ex, crate::virtual_machine::IsRejection::No);
     if vm.is_shutting_down() {
         return Ok(());
     }

@@ -429,7 +429,7 @@ fn record_deps_in_value(value: &ReactiveValue, state: &mut VisitorState) {
                     crate::optimization::drop_manual_memoization::collect_maybe_memo_dependencies(
                         iv,
                         &state.temporaries,
-                        false,
+                        crate::optimization::drop_manual_memoization::IsOptional::No,
                         state.env,
                     )
                 {

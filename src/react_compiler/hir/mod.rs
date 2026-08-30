@@ -290,6 +290,8 @@ pub struct HirFunction {
     pub aliasing_effects: Option<HirVec<AliasingEffect>>,
 }
 
+bun_core::bool_enum!(pub FunctionNesting { TopLevel, Nested });
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReactFunctionType {
     Component,
@@ -1081,6 +1083,8 @@ pub enum UpdateOperator {
     Increment,
     Decrement,
 }
+
+bun_core::bool_enum!(pub UpdatePosition { Postfix, Prefix });
 
 impl std::fmt::Display for UpdateOperator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

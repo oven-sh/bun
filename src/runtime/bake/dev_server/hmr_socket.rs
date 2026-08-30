@@ -2,12 +2,12 @@ use bun_collections::HashMap;
 use bun_core::strings;
 use bun_core::{Output, feature_flags};
 use bun_uws::AnyWebSocket;
-use bun_uws_sys::{Opcode, SendStatus};
+use bun_uws_sys::{Compress, Fin, Opcode, SendStatus};
 
 use crate::timer::EventLoopTimerState;
 
 use super::source_map_store::{self, RemoveOrUpgradeMode};
-use super::{ConsoleLogKind, DevServer, HmrTopic, IncomingMessageId, MessageId};
+use super::{ConsoleLogKind, DevServer, HadReloadEvent, HmrTopic, IncomingMessageId, MessageId};
 use crate::bake::dev_server_body::HmrTopicBits;
 
 // Struct definition lives in `dev_server/mod.rs` so the public
@@ -50,7 +50,7 @@ impl HmrSocket {
         let mut header = [0u8; 1 + DevServer::CONFIGURATION_HASH_KEY_LEN];
         header[0] = MessageId::Version.char();
         header[1..].copy_from_slice(&dev.configuration_hash_key);
-        let send_status = ws.send(&header, Opcode::Binary, false, true);
+        let send_status = ws.send(&header, Opcode::Binary, Compress::No, Fin::Yes);
         self.underlying = Some(ws);
 
         if send_status != SendStatus::Dropped {
@@ -185,7 +185,7 @@ impl HmrSocket {
                 response[0] = MessageId::SetUrlResponse.char();
                 response[1..].copy_from_slice(&rbi.get().to_ne_bytes());
 
-                let _ = ws.send(&response, Opcode::Binary, false, true);
+                let _ = ws.send(&response, Opcode::Binary, Compress::No, Fin::Yes);
             }
             x if x == IncomingMessageId::TestingBatchEvents as u8 => {
                 // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.
@@ -229,7 +229,7 @@ impl HmrSocket {
                         }
 
                         let timer = std::time::Instant::now();
-                        dev.start_async_bundle(event.entry_points, true, timer)
+                        dev.start_async_bundle(event.entry_points, HadReloadEvent::Yes, timer)
                             // bun.handleOom(err) — Rust aborts on OOM by default
                             .expect("OOM");
 

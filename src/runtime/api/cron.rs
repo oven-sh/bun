@@ -2128,7 +2128,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
                             | PosixFlags::RECEIVED_EOF
                             | PosixFlags::CLOSED_WITHOUT_REPORTING,
                     );
-                    r.start(stdout, true)
+                    r.start(stdout, bun_io::IsPollable::Yes)
                 });
                 if started.is_err() {
                     this.set_err(format_args!("Failed to start reading stdout"));

@@ -55,7 +55,7 @@ use bun_wyhash::hash;
 
 use bun_jsc::VirtualMachineRef as VirtualMachine;
 
-use crate::node::node_fs_watcher::{Event, FSWatcher, WatchEventKind};
+use crate::node::node_fs_watcher::{CloseWatcher, Event, FSWatcher, Recursive, WatchEventKind};
 
 #[cfg(target_os = "macos")]
 use crate::node::fs_events as fsevents;
@@ -165,9 +165,13 @@ impl PathWatcherManager {
     }
 
     /// Build the dedup key into `buf`. Not null-terminated; only used as a hashmap key.
-    fn make_key<'a>(buf: &'a mut [u8], resolved_path: &[u8], recursive: bool) -> &'a [u8] {
+    fn make_key<'a>(buf: &'a mut [u8], resolved_path: &[u8], recursive: Recursive) -> &'a [u8] {
         buf[..resolved_path.len()].copy_from_slice(resolved_path);
-        buf[resolved_path.len()] = if recursive { b'R' } else { b'N' };
+        buf[resolved_path.len()] = if recursive == Recursive::Yes {
+            b'R'
+        } else {
+            b'N'
+        };
         &buf[..resolved_path.len() + 1]
     }
 
@@ -196,7 +200,7 @@ pub struct PathWatcher {
     #[cfg(not(windows))]
     path: ZBox,
     #[cfg(not(windows))]
-    recursive: bool,
+    recursive: Recursive,
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     is_file: bool,
 
@@ -305,7 +309,7 @@ impl PathWatcher {
     }
 
     #[cfg(not(windows))]
-    fn emit_error(&self, err: &sys::Error, close: bool) {
+    fn emit_error(&self, err: &sys::Error, close: CloseWatcher) {
         for &ctx in self.handlers.keys() {
             (FSWatcher::ON_PATH_UPDATE)(
                 Some(ctx),
@@ -423,7 +427,7 @@ impl PathWatcher {
 pub(crate) fn watch(
     vm: &VirtualMachine,
     path: &ZStr,
-    recursive: bool,
+    recursive: Recursive,
     callback: Callback,
     update_end: UpdateEndCallback,
     ctx: *mut c_void,
@@ -562,7 +566,7 @@ pub(crate) fn watch(
                 // SAFETY: watcher live under manager.mutex; `emit_error`/`flush`
                 // take `&self`.
                 unsafe {
-                    (*watcher).emit_error(&err, true);
+                    (*watcher).emit_error(&err, CloseWatcher::Yes);
                     (*watcher).flush();
                 }
                 manager.mutex.unlock();
@@ -767,10 +771,10 @@ impl Linux {
         // Borrowck: clone path to avoid &/&mut overlap on watcher.
         let root = watcher.path.clone();
         Linux::add_one(manager, watcher, &root, b"")?;
-        if watcher.recursive && !watcher.is_file {
+        if watcher.recursive == Recursive::Yes && !watcher.is_file {
             if let Some(err) = Linux::walk_and_add(manager, watcher, &root, b"") {
                 // Partial coverage: emit 'error' but keep the watcher, like node.
-                watcher.emit_error(&err, false);
+                watcher.emit_error(&err, CloseWatcher::No);
                 watcher.flush();
             }
         }
@@ -923,7 +927,7 @@ impl Linux {
                     for &w in watchers.values() {
                         // SAFETY: holding manager.mutex; w is live.
                         unsafe {
-                            (*w).emit_error(&err, true);
+                            (*w).emit_error(&err, CloseWatcher::Yes);
                             (*w).flush();
                         }
                     }
@@ -982,7 +986,9 @@ impl Linux {
                             // SAFETY: o.watcher live under manager.mutex; shared
                             // access only — `emit_unsuppressed` takes `&self`.
                             let w = unsafe { &*o.watcher };
-                            if o.subpath.as_bytes().is_empty() && (w.is_file || !w.recursive) {
+                            if o.subpath.as_bytes().is_empty()
+                                && (w.is_file || w.recursive == Recursive::No)
+                            {
                                 w.emit_unsuppressed(
                                     WatchEventKind::Rename,
                                     path::basename(w.path.as_bytes()),
@@ -1072,7 +1078,7 @@ impl Linux {
                     let (watcher_is_file, watcher_recursive, watcher_path): (bool, bool, &[u8]) = unsafe {
                         (
                             (*owner_watcher).is_file,
-                            (*owner_watcher).recursive,
+                            (*owner_watcher).recursive == Recursive::Yes,
                             &*std::ptr::from_ref::<[u8]>((*owner_watcher).path.as_bytes()),
                         )
                     };
@@ -1180,7 +1186,7 @@ impl Linux {
                         if let Some(err) = add_err {
                             // SAFETY: owner_watcher live under manager.mutex;
                             // `emit_error` takes `&self`.
-                            unsafe { (*owner_watcher).emit_error(&err, false) };
+                            unsafe { (*owner_watcher).emit_error(&err, CloseWatcher::No) };
                         }
                     }
 
@@ -1430,7 +1436,7 @@ impl Kqueue {
         let root = watcher.path.clone();
         let is_file = watcher.is_file;
         Kqueue::add_one(manager, watcher, &root, b"", is_file)?;
-        if watcher.recursive && !watcher.is_file {
+        if watcher.recursive == Recursive::Yes && !watcher.is_file {
             // kqueue needs an open fd per *file* as well as per directory.
             let mut first_err: Option<sys::Error> = None;
             walk_subtree::<false>(&root, b"", &mut |abs, rel, is_file| {
@@ -1442,7 +1448,7 @@ impl Kqueue {
             });
             if let Some(err) = first_err {
                 // Partial coverage: emit 'error' but keep the watcher, like node.
-                watcher.emit_error(&err, false);
+                watcher.emit_error(&err, CloseWatcher::No);
                 watcher.flush();
             }
         }

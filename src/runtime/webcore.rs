@@ -206,7 +206,7 @@ pub(crate) mod headers_ref;
 pub mod blob;
 pub use blob::Any as AnyBlob;
 pub use blob::Internal as InternalBlob;
-pub use blob::{Blob, BlobExt, SizeType as BlobSizeType};
+pub use blob::{Blob, BlobExt, IncludeContentType, SizeType as BlobSizeType};
 
 #[path = "webcore/Body.rs"]
 pub mod body;

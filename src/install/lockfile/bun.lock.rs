@@ -2458,7 +2458,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 if !strings::eql_long(
                     path,
                     workspace_path.slice(lockfile.buffers.string_bytes.as_slice()),
-                    true,
+                    strings::CheckLen::Yes,
                 ) {
                     continue;
                 }
@@ -2761,7 +2761,7 @@ pub(crate) fn parse_into_binary_lockfile(
                                     pkg_path,
                                     pkg_names[workspace_pkg_id as usize]
                                         .slice(lockfile.buffers.string_bytes.as_slice()),
-                                    true,
+                                    strings::CheckLen::Yes,
                                 ));
                             }
 
@@ -3701,7 +3701,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                 if !strings::eql_long(
                     path,
                     workspace_path.slice(lockfile.buffers.string_bytes.as_slice()),
-                    true,
+                    strings::CheckLen::Yes,
                 ) {
                     continue;
                 }

@@ -1,7 +1,8 @@
 use crate as css;
-use crate::css_rules::{CssRule, CssRuleList, Location, MinifyContext};
+use crate::css_rules::{CssRule, CssRuleList, Location, MinifyContext, ParentIsUnused};
 use crate::declaration::DeclarationBlock;
 use crate::error::MinifyErr;
+use crate::properties::Important;
 use crate::selectors::selector;
 use crate::{PrintErr, Printer, VendorPrefix};
 
@@ -91,10 +92,12 @@ impl<R> StyleRule<R> {
 /// (`selectors/selector.rs`) and `MAX_SELECTOR_EXPANSION` (`rules/mod.rs`).
 const MAX_PREFIX_EXPANSION_BYTES: usize = 64 << 20;
 
+bun_core::bool_enum!(IsFinalPrefixPass);
+
 impl<R> StyleRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if self.vendor_prefix.is_empty() {
-            self.to_css_base(dest, true)?;
+            self.to_css_base(dest, IsFinalPrefixPass::Yes)?;
         } else {
             let mut first_rule = true;
             let mut emitted_first_pass = false;
@@ -129,7 +132,10 @@ impl<R> StyleRule<R> {
                     } else {
                         0
                     };
-                    self.to_css_base(dest, remaining_prefixes.is_empty())?;
+                    self.to_css_base(
+                        dest,
+                        IsFinalPrefixPass::from_bool(remaining_prefixes.is_empty()),
+                    )?;
                     if is_duplicate_pass {
                         let emitted = dest.bytes_written().saturating_sub(bytes_before);
                         dest.prefix_expansion_bytes =
@@ -157,7 +163,11 @@ impl<R> StyleRule<R> {
         Ok(())
     }
 
-    fn to_css_base(&self, dest: &mut Printer, is_final_prefix_pass: bool) -> Result<(), PrintErr> {
+    fn to_css_base(
+        &self,
+        dest: &mut Printer,
+        is_final_prefix_pass: IsFinalPrefixPass,
+    ) -> Result<(), PrintErr> {
         use css::error::PrinterErrorKind;
         use css::properties::Property;
 
@@ -183,7 +193,7 @@ impl<R> StyleRule<R> {
                 self.selectors.v.slice(),
                 dest,
                 ctx,
-                false,
+                selector::serialize::IsRelative::No,
             )?;
             dest.whitespace()?;
             dest.write_char(b'{')?;
@@ -192,9 +202,12 @@ impl<R> StyleRule<R> {
             let mut i: usize = 0;
             // A pair of (slice, important) tuples; declarations first, then
             // important declarations.
-            let decls_groups: [(&[Property], bool); 2] = [
-                (self.declarations.declarations.as_slice(), false),
-                (self.declarations.important_declarations.as_slice(), true),
+            let decls_groups: [(&[Property], Important); 2] = [
+                (self.declarations.declarations.as_slice(), Important::No),
+                (
+                    self.declarations.important_declarations.as_slice(),
+                    Important::Yes,
+                ),
             ];
             for (decls, important) in decls_groups {
                 for decl in decls {
@@ -284,7 +297,7 @@ impl<R> StyleRule<R> {
             // they would be duplicated once per ancestor prefix, which grows
             // exponentially with nesting depth.
             let saved_skip = dest.skip_prefixed_nested_rules;
-            let skip_prefixed_nested = saved_skip || !is_final_prefix_pass;
+            let skip_prefixed_nested = saved_skip || is_final_prefix_pass == IsFinalPrefixPass::No;
             // Whether any nested rule is emitted in this pass; if not, don't
             // write the separator between the declarations and the nested
             // rules (nothing would follow it).
@@ -313,7 +326,7 @@ impl<R> StyleRule<R> {
     pub(crate) fn minify(
         &mut self,
         context: &mut MinifyContext<'_, '_>,
-        parent_is_unused: bool,
+        parent_is_unused: ParentIsUnused,
     ) -> Result<bool, MinifyErr>
     where
         R: for<'b> css::generics::DeepClone<'b>,
@@ -368,7 +381,7 @@ impl<R> StyleRule<R> {
         context.handler_context.context = DeclarationContext::None;
 
         if self.rules.v.len() > 0 {
-            self.minify_nested_rules(context, unused)?;
+            self.minify_nested_rules(context, ParentIsUnused::from_bool(unused))?;
             if unused && self.rules.v.len() == 0 {
                 return Ok(true);
             }
@@ -412,7 +425,7 @@ impl<R> StyleRule<R> {
     pub(crate) fn minify_nested_rules(
         &mut self,
         context: &mut MinifyContext<'_, '_>,
-        parent_is_unused: bool,
+        parent_is_unused: ParentIsUnused,
     ) -> Result<(), MinifyErr>
     where
         R: for<'b> css::generics::DeepClone<'b>,

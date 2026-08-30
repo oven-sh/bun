@@ -15,6 +15,8 @@ use bun_sql::shared::Data;
 
 use crate::jsc::webcore::Blob;
 
+bun_core::bool_enum!(pub(crate) Signedness { Signed, Unsigned });
+
 pub(crate) fn field_type_from_js(
     global_object: &JSGlobalObject,
     value: JSValue,
@@ -280,12 +282,13 @@ impl Value {
         value: JSValue,
         global_object: &JSGlobalObject,
         field_type: FieldType,
-        unsigned: bool,
+        unsigned: Signedness,
         roots: &mut MarkedArgumentBuffer,
     ) -> Result<Value, any_mysql_error::Error> {
         if value.is_empty_or_undefined_or_null() {
             return Ok(Value::Null);
         }
+        let unsigned = unsigned == Signedness::Unsigned;
         match field_type {
             FieldType::MYSQL_TYPE_TINY => Ok(Value::Bool(value.to_boolean())),
             FieldType::MYSQL_TYPE_SHORT => {

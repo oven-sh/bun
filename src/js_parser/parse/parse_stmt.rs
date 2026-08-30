@@ -4,7 +4,7 @@ use bun_collections::VecExt;
 use bun_core;
 
 use crate::lexer as js_lexer;
-use crate::p::P;
+use crate::p::{IsVar, P, WasOriginallyBareImport};
 use bun_ast as js_ast;
 
 use js_ast::op::Level;
@@ -546,11 +546,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // arena outlives this fn, so the lifetime-erased view remains valid.
             let mut decls_ptr: bun_ast::StoreSlice<G::Decl> = bun_ast::StoreSlice::EMPTY;
             let init_loc = p.lexer.loc();
-            let mut is_var = false;
+            let mut is_var = IsVar::No;
             match p.lexer.token {
                 // for (var )
                 T::TVar => {
-                    is_var = true;
+                    is_var = IsVar::Yes;
                     p.lexer.next()?;
                     let mut stmt_opts = ParseStatementOptions::default();
                     let decls =
@@ -652,7 +652,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                p.forbid_initializers(decls_ptr.slice(), "of", false)?;
+                p.forbid_initializers(decls_ptr.slice(), "of", IsVar::No)?;
                 p.lexer.next()?;
                 let value = p.parse_expr(Level::Comma)?;
                 p.lexer.expect(T::TCloseParen)?;
@@ -1535,7 +1535,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     let path = p.parse_path()?;
                     p.lexer.expect_or_insert_semicolon()?;
-                    return p.process_import_statement(stmt, path, loc, false);
+                    return p.process_import_statement(
+                        stmt,
+                        path,
+                        loc,
+                        WasOriginallyBareImport::No,
+                    );
                 }
 
                 if Self::IS_TYPESCRIPT_ENABLED {
@@ -1644,7 +1649,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let path = p.parse_path()?;
         p.lexer.expect_or_insert_semicolon()?;
 
-        p.process_import_statement(stmt, path, loc, was_originally_bare_import)
+        p.process_import_statement(
+            stmt,
+            path,
+            loc,
+            WasOriginallyBareImport::from_bool(was_originally_bare_import),
+        )
     }
 
     /// Out-of-line tail for the (uncommon) `label: stmt` form reached from

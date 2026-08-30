@@ -139,6 +139,8 @@ fn can_be_class_binding_name(name: &[u8]) -> bool {
         && !is_eval_or_arguments(name)
 }
 
+bun_core::bool_enum!(ClassKind { Stmt, Expr });
+
 // ── impl P ───────────────────────────────────────────────────────────────────
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -1078,7 +1080,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_ast::StmtData::SClass(c) => c,
             _ => unreachable!(),
         };
-        self.lower_impl(&mut s_class.class, stmt.loc, None, false, Some(stmt), out);
+        self.lower_impl(
+            &mut s_class.class,
+            stmt.loc,
+            None,
+            ClassKind::Stmt,
+            Some(stmt),
+            out,
+        );
     }
 
     pub(crate) fn lower_standard_decorators_expr(
@@ -1089,7 +1098,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Expr {
         let bump = self.arena;
         let mut out = BumpVec::<Stmt>::new_in(bump);
-        self.lower_impl(class, loc, name_from_context, true, None, &mut out);
+        self.lower_impl(
+            class,
+            loc,
+            name_from_context,
+            ClassKind::Expr,
+            None,
+            &mut out,
+        );
         if out.is_empty() {
             return self.new_expr(E::Missing {}, loc);
         }
@@ -1107,11 +1123,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         class: &mut G::Class,
         loc: bun_ast::Loc,
         name_from_context: Option<&'a [u8]>,
-        is_expr: bool,
+        is_expr: ClassKind,
         original_stmt: Option<Stmt>,
         out: &mut BumpVec<'a, Stmt>,
     ) {
         let p = self;
+        let is_expr = is_expr == ClassKind::Expr;
         let bump = p.arena;
 
         // Receiver-capture temporaries created by `rewrite_private_accesses_in_expr`

@@ -84,7 +84,10 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
                 );
             bun_jsc::node_compile_cache::persist_now();
             bun_core::Output::flush();
-            bun_core::reload_process(should_clear_terminal, false);
+            bun_core::reload_process(
+                bun_core::ClearTerminal::from_bool(should_clear_terminal),
+                bun_core::MayReturn::No,
+            );
         }
         vm.exit_handler.requested = true;
         vm.on_exit();

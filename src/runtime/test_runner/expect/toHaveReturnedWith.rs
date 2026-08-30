@@ -4,6 +4,7 @@ use super::DiffFormatter;
 use super::mock;
 use super::throw;
 use super::Expect;
+use super::IsNot;
 
 pub(crate) fn to_have_returned_with(
     this: &Expect,
@@ -62,10 +63,10 @@ pub(crate) fn to_have_returned_with(
     // Handle failure
     let mut formatter = super::make_formatter(global);
 
-    let signature: &str = Expect::get_signature("toHaveReturnedWith", "<green>expected<r>", false);
+    let signature: &str = Expect::get_signature("toHaveReturnedWith", "<green>expected<r>", IsNot::No);
 
     if this.flags.get().not() {
-        let not_signature: &str = Expect::get_signature("toHaveReturnedWith", "<green>expected<r>", true);
+        let not_signature: &str = Expect::get_signature("toHaveReturnedWith", "<green>expected<r>", IsNot::Yes);
         return throw!(
             this,
             global,

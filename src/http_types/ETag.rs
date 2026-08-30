@@ -1,9 +1,11 @@
 use bun_core::strings;
 
+bun_core::bool_enum!(Strength { Strong, Weak });
+
 // Borrows from the input slice; not a persistent heap struct.
 struct Parsed<'a> {
     tag: &'a [u8],
-    is_weak: bool,
+    strength: Strength,
 }
 
 /// Parse a single entity tag from a string, returns the tag without quotes and whether it's weak
@@ -11,9 +13,9 @@ fn parse(tag_str: &[u8]) -> Parsed<'_> {
     let mut str = strings::trim(tag_str, b" \t");
 
     // Check for weak indicator
-    let mut is_weak = false;
+    let mut strength = Strength::Strong;
     if str.starts_with(b"W/") {
-        is_weak = true;
+        strength = Strength::Weak;
         str = &str[2..];
         // bun_string has no multi-char trim_left; inline it (trailing
         // whitespace was already stripped above).
@@ -27,11 +29,11 @@ fn parse(tag_str: &[u8]) -> Parsed<'_> {
         str = &str[1..str.len() - 1];
     }
 
-    Parsed { tag: str, is_weak }
+    Parsed { tag: str, strength }
 }
 
 /// Perform weak comparison between two entity tags according to RFC 9110 Section 8.8.3.2
-fn weak_match(tag1: &[u8], is_weak1: bool, tag2: &[u8], is_weak2: bool) -> bool {
+fn weak_match(tag1: &[u8], is_weak1: Strength, tag2: &[u8], is_weak2: Strength) -> bool {
     let _ = is_weak1;
     let _ = is_weak2;
     // For weak comparison, we only compare the opaque tag values, ignoring weak indicators
@@ -122,12 +124,12 @@ pub fn if_match(
     }
     let Some(etag) = etag else { return false };
     let ours = parse(etag);
-    if ours.is_weak {
+    if ours.strength == Strength::Weak {
         return false;
     }
     for tag_str in split_entity_tags(if_match) {
         let parsed = parse(tag_str);
-        if !parsed.is_weak && parsed.tag == ours.tag {
+        if parsed.strength == Strength::Strong && parsed.tag == ours.tag {
             return true;
         }
     }
@@ -152,9 +154,9 @@ pub fn if_none_match(
         let parsed = parse(tag_str);
         if weak_match(
             our_parsed.tag,
-            our_parsed.is_weak,
+            our_parsed.strength,
             parsed.tag,
-            parsed.is_weak,
+            parsed.strength,
         ) {
             return true; // Condition is false, so we should return 304
         }
@@ -246,7 +248,11 @@ impl Headers {
         let names: &[StringPointer] = entries.items_name();
         let values: &[StringPointer] = entries.items_value();
         for (i, name_ptr) in names.iter().enumerate() {
-            if strings::eql_case_insensitive_ascii(self.as_str(*name_ptr), name, true) {
+            if strings::eql_case_insensitive_ascii(
+                self.as_str(*name_ptr),
+                name,
+                strings::CheckLen::Yes,
+            ) {
                 return Some(self.as_str(values[i]));
             }
         }

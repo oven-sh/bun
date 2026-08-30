@@ -11,7 +11,7 @@ use crate::PrintResult;
 use crate::Token;
 use crate::css_parser::{self, Delimiters, EnumProperty, Parser, ParserOptions, ParserState};
 use crate::error::{BasicParseErrorKind, ParseError, ParserError, ParserErrorKind};
-use crate::printer::Printer;
+use crate::printer::{HandleCssModule, IsDeclaration, Printer, WsBefore};
 
 use crate::values as css_values;
 use css_values::angle::Angle;
@@ -156,7 +156,10 @@ mod ext {
         };
         // SAFETY: arena-owned slice valid for the printer's `'a` lifetime.
         let v: &'static [u8] = unsafe { crate::arena_str(this.v) };
-        dest.write_ident(v, css_module_custom_idents_enabled)
+        dest.write_ident(
+            v,
+            HandleCssModule::from_bool(css_module_custom_idents_enabled),
+        )
     }
 }
 
@@ -296,10 +299,16 @@ pub struct TokenList {
     pub(crate) v: Vec<TokenOrValue>,
 }
 
+bun_core::bool_enum!(pub IsCustomProperty);
+
 impl TokenList {
     // deinit(): body only freed owned `Vec` fields — handled by `Drop` on `Vec`.
 
-    pub fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+    pub fn to_css(
+        &self,
+        dest: &mut Printer,
+        is_custom_property: IsCustomProperty,
+    ) -> PrintResult<()> {
         if !dest.minify && self.v.len() == 1 && self.v[0].is_whitespace() {
             return Ok(());
         }
@@ -317,7 +326,7 @@ impl TokenList {
                 }
                 TokenOrValue::Url(url) => {
                     if dest.dependencies.is_some()
-                        && is_custom_property
+                        && is_custom_property == IsCustomProperty::Yes
                         && !url.is_absolute(dest.get_import_records()?)
                     {
                         let pretty = std::ptr::from_ref::<[u8]>(
@@ -364,7 +373,7 @@ impl TokenList {
                     has_whitespace = false;
                 }
                 TokenOrValue::DashedIdent(v) => {
-                    dest.write_dashed_ident(v, true)?;
+                    dest.write_dashed_ident(v, IsDeclaration::Yes)?;
                     has_whitespace = false;
                 }
                 TokenOrValue::AnimationName(v) => {
@@ -382,7 +391,7 @@ impl TokenList {
                             let ws_before =
                                 !has_whitespace && (*d == b'/' as u32 || *d == b'*' as u32);
                             debug_assert!(*d <= 0x7F);
-                            dest.delim(*d as u8, ws_before)?;
+                            dest.delim(*d as u8, WsBefore::from_bool(ws_before))?;
                             // `delim()` emits no surrounding whitespace when minifying, so
                             // consecutive `/` and `*` delims would be printed adjacently and
                             // form a `/*` or `*/` comment delimiter. Emit a real space when
@@ -406,7 +415,7 @@ impl TokenList {
                         has_whitespace = true;
                     }
                     Token::Comma => {
-                        dest.delim(b',', false)?;
+                        dest.delim(b',', WsBefore::No)?;
                         has_whitespace = true;
                     }
                     Token::CloseParen | Token::CloseSquare | Token::CloseCurly => {
@@ -882,7 +891,7 @@ impl UnresolvedColor {
 
     // deinit(): body only freed owned `TokenList` fields — handled by `Drop`.
 
-    fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+    fn to_css(&self, dest: &mut Printer, is_custom_property: IsCustomProperty) -> PrintResult<()> {
         fn conv(c: f32) -> i32 {
             css_values::color::clamp_unit_f32(c) as i32
         }
@@ -895,11 +904,11 @@ impl UnresolvedColor {
                 {
                     dest.write_str("rgba(")?;
                     css_parser::to_css::integer(conv(*r), dest)?;
-                    dest.delim(b',', false)?;
+                    dest.delim(b',', WsBefore::No)?;
                     css_parser::to_css::integer(conv(*g), dest)?;
-                    dest.delim(b',', false)?;
+                    dest.delim(b',', WsBefore::No)?;
                     css_parser::to_css::integer(conv(*b), dest)?;
-                    dest.delim(b',', false)?;
+                    dest.delim(b',', WsBefore::No)?;
                     alpha.to_css(dest, is_custom_property)?;
                     dest.write_char(b')')?;
                     return Ok(());
@@ -911,7 +920,7 @@ impl UnresolvedColor {
                 css_parser::to_css::integer(conv(*g), dest)?;
                 dest.write_char(b' ')?;
                 css_parser::to_css::integer(conv(*b), dest)?;
-                dest.delim(b'/', true)?;
+                dest.delim(b'/', WsBefore::Yes)?;
                 alpha.to_css(dest, is_custom_property)?;
                 dest.write_char(b')')
             }
@@ -922,11 +931,11 @@ impl UnresolvedColor {
                 {
                     dest.write_str("hsla(")?;
                     CSSNumberFns::to_css(*h, dest)?;
-                    dest.delim(b',', false)?;
+                    dest.delim(b',', WsBefore::No)?;
                     Percentage { v: *s }.to_css(dest)?;
-                    dest.delim(b',', false)?;
+                    dest.delim(b',', WsBefore::No)?;
                     Percentage { v: *l }.to_css(dest)?;
-                    dest.delim(b',', false)?;
+                    dest.delim(b',', WsBefore::No)?;
                     alpha.to_css(dest, is_custom_property)?;
                     dest.write_char(b')')?;
                     return Ok(());
@@ -938,26 +947,26 @@ impl UnresolvedColor {
                 Percentage { v: *s }.to_css(dest)?;
                 dest.write_char(b' ')?;
                 Percentage { v: *l }.to_css(dest)?;
-                dest.delim(b'/', true)?;
+                dest.delim(b'/', WsBefore::Yes)?;
                 alpha.to_css(dest, is_custom_property)?;
                 dest.write_char(b')')
             }
             UnresolvedColor::LightDark { light, dark } => {
                 if !dest.targets.is_compatible(css::compat::Feature::LightDark) {
                     dest.write_str("var(--buncss-light")?;
-                    dest.delim(b',', false)?;
+                    dest.delim(b',', WsBefore::No)?;
                     light.to_css(dest, is_custom_property)?;
                     dest.write_char(b')')?;
                     dest.whitespace()?;
                     dest.write_str("var(--buncss-dark")?;
-                    dest.delim(b',', false)?;
+                    dest.delim(b',', WsBefore::No)?;
                     dark.to_css(dest, is_custom_property)?;
                     return dest.write_char(b')');
                 }
 
                 dest.write_str("light-dark(")?;
                 light.to_css(dest, is_custom_property)?;
-                dest.delim(b',', false)?;
+                dest.delim(b',', WsBefore::No)?;
                 dark.to_css(dest, is_custom_property)?;
                 dest.write_char(b')')
             }
@@ -971,15 +980,15 @@ impl UnresolvedColor {
         depth: usize,
     ) -> Result<UnresolvedColor> {
         use css_values::color::{
-            ComponentParser, HSL, RgbComponents, SRGB, parse_hsl_hwb_components,
-            parse_rgb_components,
+            AllowNone, AllowsLegacy, ComponentParser, HSL, LegacySyntax, RgbComponents, SRGB,
+            parse_hsl_hwb_components, parse_rgb_components,
         };
-        let mut parser = ComponentParser::new(false);
+        let mut parser = ComponentParser::new(AllowNone::No);
         crate::match_ignore_ascii_case! { f, {
             b"rgb" => return input.parse_nested_block(|input2| {
                 parser.parse_relative::<SRGB, UnresolvedColor, _>(input2, |i, p| {
                     let RgbComponents { r, g, b, is_legacy } = parse_rgb_components(i, p)?;
-                    if is_legacy {
+                    if is_legacy == LegacySyntax::Yes {
                         return Err(i.new_custom_error(ParserError::invalid_value));
                     }
                     i.expect_delim(b'/')?;
@@ -989,8 +998,8 @@ impl UnresolvedColor {
             }),
             b"hsl" => return input.parse_nested_block(|input2| {
                 parser.parse_relative::<HSL, UnresolvedColor, _>(input2, |i, p| {
-                    let (h, s, l, is_legacy) = parse_hsl_hwb_components::<HSL>(i, p, false)?;
-                    if is_legacy {
+                    let (h, s, l, is_legacy) = parse_hsl_hwb_components::<HSL>(i, p, AllowsLegacy::No)?;
+                    if is_legacy == LegacySyntax::Yes {
                         return Err(i.new_custom_error(ParserError::invalid_value));
                     }
                     i.expect_delim(b'/')?;
@@ -1076,11 +1085,11 @@ impl Variable {
         Ok(Variable { name, fallback })
     }
 
-    fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+    fn to_css(&self, dest: &mut Printer, is_custom_property: IsCustomProperty) -> PrintResult<()> {
         dest.write_str("var(")?;
         ext::dashed_ident_ref_to_css(&self.name, dest)?;
         if let Some(fallback) = &self.fallback {
-            dest.delim(b',', false)?;
+            dest.delim(b',', WsBefore::No)?;
             fallback.to_css(dest, is_custom_property)?;
         }
         dest.write_char(b')')
@@ -1147,7 +1156,11 @@ impl EnvironmentVariable {
         })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+    pub(crate) fn to_css(
+        &self,
+        dest: &mut Printer,
+        is_custom_property: IsCustomProperty,
+    ) -> PrintResult<()> {
         dest.write_str("env(")?;
         self.name.to_css(dest)?;
 
@@ -1157,7 +1170,7 @@ impl EnvironmentVariable {
         }
 
         if let Some(fallback) = &self.fallback {
-            dest.delim(b',', false)?;
+            dest.delim(b',', WsBefore::No)?;
             fallback.to_css(dest, is_custom_property)?;
         }
 
@@ -1298,7 +1311,7 @@ pub struct Function {
 impl Function {
     // deinit(): body only freed owned `TokenList` field — handled by `Drop`.
 
-    fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+    fn to_css(&self, dest: &mut Printer, is_custom_property: IsCustomProperty) -> PrintResult<()> {
         IdentFns::to_css(&self.name, dest)?;
         dest.write_char(b'(')?;
         self.arguments.to_css(dest, is_custom_property)?;
@@ -1568,7 +1581,7 @@ impl CustomPropertyName {
             CustomPropertyName::Custom(custom) => {
                 // DashedIdent.toCss → dest.writeDashedIdent(ident, true),
                 // which applies CSS-Modules dashed-ident renaming.
-                dest.write_dashed_ident(custom, true)
+                dest.write_dashed_ident(custom, IsDeclaration::Yes)
             }
             CustomPropertyName::Unknown(unknown) => {
                 // SAFETY: arena-owned slice valid for printer lifetime.

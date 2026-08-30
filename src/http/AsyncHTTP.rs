@@ -88,7 +88,7 @@ const fn noop_callback() -> HTTPClientResultCallback {
 ///
 /// # Safety
 /// `href` must have been allocated via the global allocator as a `Box<[u8]>`
-/// and ownership ceded to this module via `is_url_owned = true`.
+/// and ownership ceded to this module via `UrlOwnership::Owned`.
 #[inline]
 unsafe fn free_owned_href(href: &'static [u8]) {
     if !href.is_empty() {
@@ -324,7 +324,7 @@ struct Preconnect {
     // (late-init); `None` is never observed after `preconnect()` populates it.
     async_http: Option<AsyncHTTP<'static>>,
     url: URL<'static>,
-    is_url_owned: bool,
+    is_url_owned: UrlOwnership,
 }
 
 impl Preconnect {
@@ -337,7 +337,7 @@ impl Preconnect {
                 .as_mut()
                 .expect("Preconnect.async_http set in preconnect()")
                 .clear_data();
-            if (*this).is_url_owned {
+            if (*this).is_url_owned == UrlOwnership::Owned {
                 // SAFETY: `is_url_owned` is the caller's promise that `url.href`
                 // is a global-allocator `Box<[u8]>` we now own.
                 free_owned_href((*this).url.href);
@@ -349,9 +349,11 @@ impl Preconnect {
     }
 }
 
-pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
+bun_core::bool_enum!(pub UrlOwnership { Borrowed, Owned });
+
+pub fn preconnect(url: URL<'static>, is_url_owned: UrlOwnership) {
     if !FeatureFlags::IS_FETCH_PRECONNECT_SUPPORTED {
-        if is_url_owned {
+        if is_url_owned == UrlOwnership::Owned {
             // SAFETY: `is_url_owned` is the caller's promise that `url.href` is a
             // global-allocator `Box<[u8]>` we now own.
             unsafe { free_owned_href(url.href) };
@@ -740,7 +742,7 @@ impl<'a> AsyncHTTP<'a> {
                     drop(core::mem::take(&mut client.prev_redirect));
                     drop(core::mem::take(&mut client.compressed_request_body));
                     drop(core::mem::take(&mut client.proxy_authorization));
-                    client.close_proxy_tunnel(false);
+                    client.close_proxy_tunnel(crate::ShutdownTunnel::No);
                     debug_assert!(client.h2.is_none());
                     drop(core::mem::take(&mut client.custom_ssl_ctx));
                     // `state` was `Default` at `ptr::read` time and was

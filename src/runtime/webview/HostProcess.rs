@@ -162,7 +162,7 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
             libc::AF_UNIX as i32,
             libc::SOCK_STREAM as i32,
             0,
-            true, // .nonblocking
+            bun_sys::IoMode::NonBlocking,
         )?;
         // fd0_guard rolls back fds[0] on any error below.
         let fd0_guard = scopeguard::guard(fds[0], |fd| fd.close());

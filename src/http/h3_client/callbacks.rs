@@ -13,7 +13,7 @@ use bstr::BStr;
 use bun_uws::quic;
 
 use super::client_context::ClientContext;
-use super::client_session::{ClientSession, session_mut, stream_mut, stream_ref};
+use super::client_session::{ClientSession, StreamEnded, session_mut, stream_mut, stream_ref};
 use super::encode;
 use super::stream::Stream;
 use crate::h2_client::dispatch::{is_malformed_response_field, is_malformed_response_value};
@@ -260,7 +260,7 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         return;
     }
     stream.status_code = status;
-    session.deliver(stream, false);
+    session.deliver(stream, StreamEnded::No);
 }
 
 extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint, fin: c_int) {
@@ -269,7 +269,9 @@ extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint,
     // SAFETY: lsquic guarantees `data` points to `len` valid bytes (or `(null,0)`).
     let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
     stream.body_buffer.extend_from_slice(slice);
-    stream.session_mut().deliver(stream, fin != 0);
+    stream
+        .session_mut()
+        .deliver(stream, StreamEnded::from_bool(fin != 0));
 
     let Some(stream) = stream_of(s) else { return };
     if fin != 0 || stream.read_paused {
@@ -314,5 +316,5 @@ extern "C" fn on_stream_close(s: *mut quic::Stream) {
         stream.status_code,
         stream.headers_delivered,
     );
-    stream.session_mut().deliver(stream, true);
+    stream.session_mut().deliver(stream, StreamEnded::Yes);
 }

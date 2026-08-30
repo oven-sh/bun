@@ -322,7 +322,7 @@ impl<'a> URL<'a> {
     }
 
     pub fn is_file(&self) -> bool {
-        strings::eql_case_insensitive_ascii(self.protocol, b"file", true)
+        strings::eql_case_insensitive_ascii(self.protocol, b"file", strings::CheckLen::Yes)
     }
 
     /// host + path without the ending slash, protocol, searchParams and hash
@@ -416,15 +416,15 @@ impl<'a> URL<'a> {
     // `protocol` from the input without normalizing, so compare accordingly.
     #[inline]
     pub fn is_https(&self) -> bool {
-        strings::eql_case_insensitive_ascii(self.protocol, b"https", true)
+        strings::eql_case_insensitive_ascii(self.protocol, b"https", strings::CheckLen::Yes)
     }
     #[inline]
     pub fn is_s3(&self) -> bool {
-        strings::eql_case_insensitive_ascii(self.protocol, b"s3", true)
+        strings::eql_case_insensitive_ascii(self.protocol, b"s3", strings::CheckLen::Yes)
     }
     #[inline]
     pub fn is_http(&self) -> bool {
-        strings::eql_case_insensitive_ascii(self.protocol, b"http", true)
+        strings::eql_case_insensitive_ascii(self.protocol, b"http", strings::CheckLen::Yes)
     }
 
     pub fn display_hostname(&self) -> &[u8] {
@@ -1564,7 +1564,11 @@ fn string_pointer_from_strings(parent: &[u8], in_: &[u8]) -> api::StringPointer 
         return api::StringPointer { offset, length };
     } else {
         if let Some(i) = strings::index_of(parent, in_) {
-            debug_assert!(strings::eql_long(&parent[i..][..in_.len()], in_, false));
+            debug_assert!(strings::eql_long(
+                &parent[i..][..in_.len()],
+                in_,
+                strings::CheckLen::No
+            ));
 
             return api::StringPointer {
                 offset: u32::try_from(i).unwrap(),

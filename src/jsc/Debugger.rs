@@ -673,7 +673,12 @@ impl AsyncTaskTracker {
         if self.id == 0 {
             return;
         }
-        did_schedule_async_call(global_object, AsyncCallType::EventListener, self.id, true);
+        did_schedule_async_call(
+            global_object,
+            AsyncCallType::EventListener,
+            self.id,
+            SingleShot::Yes,
+        );
     }
 
     pub fn did_cancel(self, global_object: &JSGlobalObject) {
@@ -746,14 +751,16 @@ unsafe extern "C" {
     safe fn Debugger__willDispatchAsyncCall(global: &JSGlobalObject, call: AsyncCallType, id: u64);
 }
 
+bun_core::bool_enum!(pub SingleShot);
+
 pub fn did_schedule_async_call(
     global_object: &JSGlobalObject,
     call: AsyncCallType,
     id: u64,
-    single_shot: bool,
+    single_shot: SingleShot,
 ) {
     jsc::mark_binding();
-    Debugger__didScheduleAsyncCall(global_object, call, id, single_shot);
+    Debugger__didScheduleAsyncCall(global_object, call, id, single_shot == SingleShot::Yes);
 }
 pub fn did_cancel_async_call(global_object: &JSGlobalObject, call: AsyncCallType, id: u64) {
     jsc::mark_binding();

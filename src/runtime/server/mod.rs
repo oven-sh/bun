@@ -32,6 +32,7 @@ use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 use bun_uws_sys::app::c as uws_app_c;
 
+use bun_jsc::virtual_machine::IsRejection;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 // ─── httplog ─────────────────────────────────────────────────────────────────
@@ -215,6 +216,8 @@ bitflags::bitflags! {
 /// a future variant ever pushes the index past the end, so this is a perf knob,
 /// not a correctness invariant.
 const N_HTTP_METHODS: usize = 36;
+
+bun_core::bool_enum!(pub StopMode { Graceful, Abrupt });
 
 pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub(crate) app: Option<*mut uws_sys::NewApp<SSL>>,
@@ -736,7 +739,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // Abort the request very early.
                 if len > server.config.max_request_body_size {
                     resp_ref.write_status(b"413 Request Entity Too Large");
-                    resp_ref.end_without_body(true);
+                    resp_ref.end_without_body(uws::CloseConnection::Yes);
                     return None;
                 }
 
@@ -1324,7 +1327,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // answer it natively as above.
             if !result.is_empty() && !result.is_termination_exception() {
                 // SAFETY: `vm` is the process-static VirtualMachine.
-                let _ = unsafe { (*vm).uncaught_exception(global, result, false) };
+                let _ = unsafe { (*vm).uncaught_exception(global, result, IsRejection::No) };
             }
             server_body::respond_stopped_503(resp);
             // SAFETY: same `this`; balances `on_pending_request` above.
@@ -1431,7 +1434,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     (*vm).uncaught_exception(
                         global,
                         *err,
-                        matches!(http_result, HttpResult::Rejection(_)),
+                        IsRejection::from_bool(matches!(http_result, HttpResult::Rejection(_))),
                     )
                 };
 
@@ -1446,9 +1449,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             {
                                 if raw.state().is_http_status_called() {
                                     raw.write_status(b"500 Internal Server Error");
-                                    raw.end_without_body(true);
+                                    raw.end_without_body(uws::CloseConnection::Yes);
                                 } else {
-                                    raw.end_stream(true);
+                                    raw.end_stream(uws::CloseConnection::Yes);
                                 }
                             }
                         }
@@ -1648,8 +1651,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.poll_ref.unref(self.vm.loop_ctx());
     }
 
-    pub(crate) fn stop_listening(&mut self, abrupt: bool) {
+    pub(crate) fn stop_listening(&mut self, abrupt: StopMode) {
         // httplog!("stopListening", .{});
+        let abrupt = abrupt == StopMode::Abrupt;
 
         if let Some(handles) = crate::jsc_hooks::active_handles() {
             handles.swap_remove(&crate::jsc_hooks::ActiveHandle::Server(AnyServer::from(
@@ -1750,7 +1754,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 if let Some(app) = self.app {
                     self.deinit_running.set(true);
                     // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                    let _closed = bun_opaque::opaque_deref_mut(app).close_idle_connections(true);
+                    let _closed = bun_opaque::opaque_deref_mut(app)
+                        .close_idle_connections(uws::CloseWhenIdle::Yes);
                     self.deinit_running.set(false);
                 }
             }
@@ -1779,7 +1784,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
-    pub(crate) fn stop(&mut self, abrupt: bool) {
+    pub(crate) fn stop(&mut self, abrupt: StopMode) {
         if self.config.allow_hot && !self.config.id.is_empty() {
             // `hot_map()` is reached via the thread-local VM singleton (raw ptr
             // deref) and does not borrow `self`, so it cannot overlap with the
@@ -2449,15 +2454,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // path: uWS keeps the last registration for a method and path, and
             // static routes register after user routes.
             let path_has_user_head_route =
-                self.user_routes
-                    .iter()
-                    .any(|route| match &route.route.method {
+                server_config::PathHasUserHeadRoute::from_bool(self.user_routes.iter().any(
+                    |route| match &route.route.method {
                         server_config::RouteMethod::Specific(method) => {
                             *method == http_method::Method::HEAD
                                 && route.route.path.as_bytes() == &*entry.path
                         }
                         server_config::RouteMethod::Any => false,
-                    });
+                    },
+                ));
 
             // Each `p`/`r` is the live `RefPtr<_>` stored in `entry.route`;
             // `app`/`h2_app`/`h3_app` are the live uWS app handles owned by `self`.
@@ -2892,7 +2897,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let server_name = unsafe { bun_core::ffi::cstr(name_ptr) };
                 // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                 if bun_opaque::opaque_deref_mut(app)
-                    .add_server_name_with_options(server_name, &ssl_options, false)
+                    .add_server_name_with_options(
+                        server_name,
+                        &ssl_options,
+                        uws::ApplyClientCertPolicy::No,
+                    )
                     .is_err()
                 {
                     if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
@@ -2975,7 +2984,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
                 // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                 if bun_opaque::opaque_deref_mut(app)
-                    .add_server_name_with_options(sni_name, &sni_opts, true)
+                    .add_server_name_with_options(
+                        sni_name,
+                        &sni_opts,
+                        uws::ApplyClientCertPolicy::Yes,
+                    )
                     .is_err()
                 {
                     if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
@@ -3381,7 +3394,7 @@ mod trampoline {
         // S008: `Response<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         let resp = bun_opaque::opaque_deref_mut(res.cast::<uws_sys::NewAppResponse<SSL>>());
         resp.write_status(b"404 Not Found");
-        resp.end(b"", false);
+        resp.end(b"", uws::CloseConnection::No);
     }
 
     pub(super) extern "C" fn on_request<const SSL: bool, const DEBUG: bool>(
@@ -3964,7 +3977,7 @@ impl AnyServer {
         any_server_dispatch_mut!(self, |s| s.on_static_request_complete())
     }
 
-    pub(crate) fn stop(&mut self, abrupt: bool) {
+    pub(crate) fn stop(&mut self, abrupt: StopMode) {
         any_server_dispatch_mut!(self, |s| s.stop(abrupt))
     }
 
@@ -3987,7 +4000,7 @@ impl AnyServer {
         topic: &[u8],
         message: &[u8],
         opcode: uws::Opcode,
-        compress: bool,
+        compress: uws::Compress,
     ) -> uws::SendStatus {
         any_server_dispatch!(self, |s| match s.app {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` via

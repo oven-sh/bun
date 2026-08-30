@@ -1,5 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
+use super::IsNot;
 use super::throw;
 
 pub(crate) fn to_have_been_called(
@@ -30,7 +31,7 @@ pub(crate) fn to_have_been_called(
 
     // handle failure
     if not {
-        let signature = Expect::get_signature("toHaveBeenCalled", "", true);
+        let signature = Expect::get_signature("toHaveBeenCalled", "", IsNot::Yes);
         return throw!(
             this,
             global,
@@ -44,7 +45,7 @@ pub(crate) fn to_have_been_called(
         );
     }
 
-    let signature = Expect::get_signature("toHaveBeenCalled", "", false);
+    let signature = Expect::get_signature("toHaveBeenCalled", "", IsNot::No);
     throw!(
         this,
         global,

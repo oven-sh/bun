@@ -43,6 +43,8 @@ pub struct CowSliceZ<T: 'static, const Z: bool> {
     debug: Option<NonNull<DebugData>>,
 }
 
+bun_core::bool_enum!(pub Ownership { Borrowed, Owned });
+
 /// `packed struct(usize) { len: u(BITS-1), is_owned: bool }`
 #[repr(transparent)]
 #[derive(Clone, Copy)]
@@ -53,9 +55,16 @@ impl Flags {
     const LEN_MASK: usize = !Self::IS_OWNED_BIT;
 
     #[inline]
-    const fn new(len: usize, is_owned: bool) -> Self {
+    const fn new(len: usize, is_owned: Ownership) -> Self {
         debug_assert!(len <= Self::LEN_MASK);
-        Self((len & Self::LEN_MASK) | if is_owned { Self::IS_OWNED_BIT } else { 0 })
+        Self(
+            (len & Self::LEN_MASK)
+                | if matches!(is_owned, Ownership::Owned) {
+                    Self::IS_OWNED_BIT
+                } else {
+                    0
+                },
+        )
     }
 
     #[inline]
@@ -134,7 +143,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         let ptr = bun_core::heap::into_raw(data).cast::<T>();
         Self {
             ptr,
-            flags: Flags::new(len, true),
+            flags: Flags::new(len, Ownership::Owned),
             #[cfg(debug_assertions)]
             debug: Some(DebugData::new_boxed()),
         }
@@ -173,7 +182,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         Self {
             // SAFETY: const semantics are enforced by is_owned flag
             ptr: data.as_ptr().cast_mut(),
-            flags: Flags::new(data.len(), false),
+            flags: Flags::new(data.len(), Ownership::Borrowed),
             #[cfg(debug_assertions)]
             debug: None,
         }
@@ -247,7 +256,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         }
         Self {
             ptr: self.ptr,
-            flags: Flags::new(self.flags.len(), false),
+            flags: Flags::new(self.flags.len(), Ownership::Borrowed),
             #[cfg(debug_assertions)]
             debug: self.debug,
         }

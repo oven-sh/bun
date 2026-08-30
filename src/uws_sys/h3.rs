@@ -6,7 +6,7 @@ use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
 use crate::SocketAddress;
-use crate::response::{State, WriteResult};
+use crate::response::{CloseConnection, FirstBodyWrite, FlushImmediately, State, WriteResult};
 use crate::socket_context::BunSocketContextOptions;
 use crate::thunk;
 use crate::{AnyRequest, AnyResponse};
@@ -83,22 +83,42 @@ impl Request {
 bun_opaque::opaque_ffi! { pub struct Response; }
 
 impl Response {
-    pub fn end(&mut self, data: &[u8], close_connection: bool) {
+    pub fn end(&mut self, data: &[u8], close_connection: CloseConnection) {
         // SAFETY: self is a live FFI handle; data ptr/len valid for read
-        unsafe { c::uws_h3_res_end(self, data.as_ptr(), data.len(), close_connection) }
+        unsafe {
+            c::uws_h3_res_end(
+                self,
+                data.as_ptr(),
+                data.len(),
+                close_connection == CloseConnection::Yes,
+            )
+        }
     }
-    pub(crate) fn try_end(&mut self, data: &[u8], total: usize, close_connection: bool) -> bool {
+    pub(crate) fn try_end(
+        &mut self,
+        data: &[u8],
+        total: usize,
+        close_connection: CloseConnection,
+    ) -> bool {
         // SAFETY: self is a live FFI handle; data ptr/len valid for read
-        unsafe { c::uws_h3_res_try_end(self, data.as_ptr(), data.len(), total, close_connection) }
+        unsafe {
+            c::uws_h3_res_try_end(
+                self,
+                data.as_ptr(),
+                data.len(),
+                total,
+                close_connection == CloseConnection::Yes,
+            )
+        }
     }
-    pub fn end_without_body(&mut self, close_connection: bool) {
-        c::uws_h3_res_end_without_body(self, close_connection)
+    pub fn end_without_body(&mut self, close_connection: CloseConnection) {
+        c::uws_h3_res_end_without_body(self, close_connection == CloseConnection::Yes)
     }
-    pub(crate) fn end_stream(&mut self, close_connection: bool) {
-        c::uws_h3_res_end_stream(self, close_connection)
+    pub(crate) fn end_stream(&mut self, close_connection: CloseConnection) {
+        c::uws_h3_res_end_stream(self, close_connection == CloseConnection::Yes)
     }
-    pub(crate) fn end_send_file(&mut self, write_offset: u64, close_connection: bool) {
-        c::uws_h3_res_end_sendfile(self, write_offset, close_connection)
+    pub(crate) fn end_send_file(&mut self, write_offset: u64, close_connection: CloseConnection) {
+        c::uws_h3_res_end_sendfile(self, write_offset, close_connection == CloseConnection::Yes)
     }
     /// H3 streams tear down through the QUIC engine; the TCP close-when-idle
     /// gate has no equivalent here.
@@ -112,7 +132,7 @@ impl Response {
             WriteResult::Backpressure(len)
         }
     }
-    pub(crate) fn try_write_body(&mut self, data: &[u8], _is_first: bool) -> usize {
+    pub(crate) fn try_write_body(&mut self, data: &[u8], _is_first: FirstBodyWrite) -> usize {
         // node:http (the only caller) never reaches HTTP/3; fall through to
         // the copying write for AnyResponse dispatch parity.
         let _ = self.write(data);
@@ -150,8 +170,8 @@ impl Response {
     pub(crate) fn write_informational(&mut self, _data: &[u8]) {
         // node:http (the only caller) never reaches HTTP/3; kept for AnyResponse dispatch parity.
     }
-    pub(crate) fn flush_headers(&mut self, immediate: bool) {
-        c::uws_h3_res_flush_headers(self, immediate)
+    pub(crate) fn flush_headers(&mut self, immediate: FlushImmediately) {
+        c::uws_h3_res_flush_headers(self, immediate == FlushImmediately::Yes)
     }
     pub(crate) fn pause(&mut self) {
         c::uws_h3_res_pause(self)
@@ -174,8 +194,8 @@ impl Response {
     pub(crate) fn state(&mut self) -> State {
         c::uws_h3_res_state(self)
     }
-    pub(crate) fn should_close_connection(&mut self) -> bool {
-        self.state().is_http_connection_close()
+    pub(crate) fn should_close_connection(&mut self) -> CloseConnection {
+        CloseConnection::from_bool(self.state().is_http_connection_close())
     }
     /// `us_quic_on_close` frees the stream right after its close callback: a live handle is never closed.
     pub(crate) fn is_closed(&self) -> bool {

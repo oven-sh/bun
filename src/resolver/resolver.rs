@@ -264,6 +264,7 @@ pub use crate::data_url::DataURL;
 pub use crate::dir_info as DirInfo;
 pub use crate::dir_info::DirInfoRef;
 pub use ::bun_options_types::global_cache::GlobalCache;
+use ::bun_options_types::global_cache::HasNodeModulesFolder;
 
 // Sibling resolver modules. They retain the same item names so cross-references
 // inside `impl Resolver` resolve unchanged.
@@ -510,7 +511,7 @@ pub struct Resolver<'a> {
     // `&Loader` across that `&mut Loader` would be aliased-&mut UB; a raw
     // pointer carries no aliasing guarantee.
     pub env_loader: Option<NonNull<DotEnv::Loader>>,
-    pub store_fd: bool,
+    pub store_fd: Fs::StoreFd,
 
     pub standalone_module_graph: Option<&'a dyn StandaloneModuleGraph>,
 
@@ -592,6 +593,9 @@ impl Drop for ResolverLogScope {
         unsafe { *self.slot = self.prev };
     }
 }
+
+bun_core::bool_enum!(pub(crate) ForbidImports);
+bun_core::bool_enum!(EnableLogging);
 
 impl<'a> Resolver<'a> {
     /// Per-worker constructor — replaces the bundler's prior bitwise
@@ -931,7 +935,7 @@ impl<'a> Resolver<'a> {
             package_manager: None,
             on_wake_package_manager: Default::default(),
             env_loader: None,
-            store_fd: false,
+            store_fd: Fs::StoreFd::No,
             standalone_module_graph: None,
             prefer_module_field: true,
             custom_dir_paths: None,
@@ -1612,7 +1616,7 @@ impl<'a> Resolver<'a> {
                     // length so `buf` can be re-borrowed for null-termination below.
                     let out_len = self.fs_ref().abs_buf(&parts, &mut buf).len();
 
-                    let store_fd = self.store_fd;
+                    let store_fd = self.store_fd == Fs::StoreFd::Yes;
 
                     if !query.entry().cache().fd.is_valid() && store_fd {
                         buf[out_len] = 0;
@@ -2125,7 +2129,10 @@ impl<'a> Resolver<'a> {
         let prev_extension_order = self.extension_order;
         // NOTE: defer restore reshaped — restored before each return
         if strings::path_contains_node_modules_folder(abs_path) {
-            self.extension_order = self.opts.extension_order.kind(kind, true);
+            self.extension_order = self
+                .opts
+                .extension_order
+                .kind(kind, options::IsNodeModules::Yes);
         }
 
         // Re-append the separator the join stripped so "." resolves like "./".
@@ -2235,7 +2242,7 @@ impl<'a> Resolver<'a> {
                                     kind,
                                     source_dir_info,
                                     global_cache,
-                                    false,
+                                    ForbidImports::No,
                                     &mut node_module,
                                 )
                                 .is_success()
@@ -2474,7 +2481,7 @@ impl<'a> Resolver<'a> {
         // to `&DirInfo` per use so overlapping shared reads are sound.
         _dir_info: DirInfoRef,
         global_cache: GlobalCache,
-        forbid_imports: bool,
+        forbid_imports: ForbidImports,
         out: &mut MatchResult,
     ) -> MatchStatus {
         let mut dir_info: DirInfoRef = _dir_info;
@@ -2536,7 +2543,10 @@ impl<'a> Resolver<'a> {
         if let Some(_dir_info_package_json) = dir_info_package_json {
             let package_json = _dir_info_package_json.package_json().unwrap();
 
-            if import_path.starts_with(b"#") && !forbid_imports && package_json.imports.is_some() {
+            if import_path.starts_with(b"#")
+                && forbid_imports == ForbidImports::No
+                && package_json.imports.is_some()
+            {
                 let r = self.load_package_imports(
                     import_path,
                     _dir_info_package_json,
@@ -2569,7 +2579,7 @@ impl<'a> Resolver<'a> {
         let esm_ = crate::package_json::Package::parse(import_path, bufs!(esm_subpath));
 
         let source_dir_info = dir_info;
-        let mut any_node_modules_folder = false;
+        let mut any_node_modules_folder = HasNodeModulesFolder::No;
         let use_node_module_resolver = global_cache != GlobalCache::force;
 
         // Then check for the package in any enclosing "node_modules" directories
@@ -2582,7 +2592,7 @@ impl<'a> Resolver<'a> {
                     if !(dir_info.has_node_modules() || is_self_reference) {
                         break 'node_modules;
                     }
-                    any_node_modules_folder = true;
+                    any_node_modules_folder = HasNodeModulesFolder::Yes;
                     let abs_path: &[u8] = if is_self_reference {
                         dir_info.abs_path
                     } else {
@@ -2618,7 +2628,10 @@ impl<'a> Resolver<'a> {
                                 ast::ImportKind::Url
                                 | ast::ImportKind::AtConditional
                                 | ast::ImportKind::At => options::ExtOrder::Css,
-                                _ => self.opts.extension_order.kind(kind, true),
+                                _ => self
+                                    .opts
+                                    .extension_order
+                                    .kind(kind, options::IsNodeModules::Yes),
                             };
 
                             if let Some(package_json) = pkg_dir_info.package_json() {
@@ -2912,8 +2925,11 @@ impl<'a> Resolver<'a> {
                         }
 
                         for (dependency_id, dependency) in dependencies_list.iter().enumerate() {
-                            if !strings::eql_long(dependency.name.slice(string_buf), esm.name, true)
-                            {
+                            if !strings::eql_long(
+                                dependency.name.slice(string_buf),
+                                esm.name,
+                                strings::CheckLen::Yes,
+                            ) {
                                 continue;
                             }
 
@@ -3395,7 +3411,7 @@ impl<'a> Resolver<'a> {
                 unsafe { &mut *existing }.data.clear();
             }
 
-            if self.store_fd {
+            if self.store_fd == Fs::StoreFd::Yes {
                 new_entry.fd = open_dir;
             }
             // NOTE: see `dir_info_cached_maybe_log` — `DirEntry.data` holds a `NonNull`,
@@ -3643,9 +3659,12 @@ impl<'a> Resolver<'a> {
                     if kind == ast::ImportKind::At || kind == ast::ImportKind::AtConditional {
                         self.extension_order
                     } else {
-                        self.opts
-                            .extension_order
-                            .kind(kind, resolved_dir_info.is_inside_node_modules())
+                        self.opts.extension_order.kind(
+                            kind,
+                            options::IsNodeModules::from_bool(
+                                resolved_dir_info.is_inside_node_modules(),
+                            ),
+                        )
                     };
 
                 let base = bun_paths::basename(abs_esm_path);
@@ -3976,7 +3995,14 @@ impl<'a> Resolver<'a> {
         out: &mut MatchResult,
     ) -> MatchStatus {
         if is_package_path(import_path) {
-            self.load_node_modules(import_path, kind, source_dir_info, global_cache, false, out)
+            self.load_node_modules(
+                import_path,
+                kind,
+                source_dir_info,
+                global_cache,
+                ForbidImports::No,
+                out,
+            )
         } else {
             let Some(resolved) = self.fs_ref().abs_buf_checked(
                 &[source_dir_info.abs_path, import_path],
@@ -4001,7 +4027,7 @@ impl<'a> Resolver<'a> {
             unsafe { &mut *self.fs() },
             file,
             dirname_fd,
-            false,
+            Fs::UseSharedBuffer::No,
             None,
             None,
         )?;
@@ -4123,16 +4149,18 @@ impl<'a> Resolver<'a> {
     }
 
     fn dir_info_cached(&mut self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
-        self.dir_info_cached_maybe_log(true, path)
+        self.dir_info_cached_maybe_log(EnableLogging::Yes, path)
     }
 
     pub fn read_dir_info(&mut self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
-        self.dir_info_cached_maybe_log(false, path)
+        self.dir_info_cached_maybe_log(EnableLogging::No, path)
     }
 
     /// Like `readDirInfo`, but returns `null` instead of throwing an error.
     pub fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef> {
-        self.dir_info_cached_maybe_log(false, path).ok().flatten()
+        self.dir_info_cached_maybe_log(EnableLogging::No, path)
+            .ok()
+            .flatten()
     }
 
     // NOTE: `follow_symlinks` is `true` at every call
@@ -4141,7 +4169,7 @@ impl<'a> Resolver<'a> {
     // monomorphizes to a single copy instead of two faulted in at startup.
     fn dir_info_cached_maybe_log(
         &mut self,
-        enable_logging: bool,
+        enable_logging: EnableLogging,
         raw_input_path: &[u8],
     ) -> crate::CrateResult<Option<DirInfoRef>> {
         // `self.mutex` is `&'static Mutex` (Copy) — bind it first so the guard
@@ -4233,7 +4261,7 @@ impl<'a> Resolver<'a> {
     #[inline(never)]
     fn dir_info_cached_miss(
         &mut self,
-        enable_logging: bool,
+        enable_logging: EnableLogging,
         input_path: &[u8],
         top_result: allocators::Result,
     ) -> crate::CrateResult<Option<DirInfoRef>> {
@@ -4385,7 +4413,7 @@ impl<'a> Resolver<'a> {
         // `Fs.FileSystem.setMaxFd()` which can flip `needToCloseFiles()`
         // mid-walk. Reach the RealFS via the `&'static` singleton accessor
         // instead of capturing a raw `*mut RealFS` (the read is `&self`-only).
-        let close_dirs_store_fd = self.store_fd;
+        let close_dirs_store_fd = self.store_fd == Fs::StoreFd::Yes;
         scopeguard::defer! {
             let n = open_dir_count.get();
             if n > 0 && (!close_dirs_store_fd || Fs::FileSystem::get().fs.need_to_close_files()) {
@@ -4515,7 +4543,7 @@ impl<'a> Resolver<'a> {
                             self.dir_cache_mut().mark_not_found(queue_top.result);
                             rfs!().entries.mark_not_found(cached_dir_entry_result);
                             if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                                if enable_logging {
+                                if enable_logging == EnableLogging::Yes {
                                     let pretty = queue_top_unsafe_path;
                                     let _ = self.log_mut().add_error_fmt(
                                         None,
@@ -4662,7 +4690,11 @@ impl<'a> Resolver<'a> {
                     // NOTE: bun_collections::StringHashMap exposes `clear`, which drops all entries.
                     unsafe { &mut *existing }.data.clear();
                 }
-                new_entry.fd = if self.store_fd { open_dir } else { FD::INVALID };
+                new_entry.fd = if self.store_fd == Fs::StoreFd::Yes {
+                    open_dir
+                } else {
+                    FD::INVALID
+                };
                 // NOTE: `DirEntry.data` is a `HashMap`
                 // (`NonNull` inside), so a zeroed slot is UB and `*ptr = new_entry` would drop it.
                 // Box `new_entry` directly for the fresh case; assign-into only for `in_place`.
@@ -4786,7 +4818,7 @@ impl<'a> Resolver<'a> {
                 .iter()
                 .zip(tsconfig.paths.values().iter())
             {
-                if strings::eql_long(key, path, true) {
+                if strings::eql_long(key, path, strings::CheckLen::Yes) {
                     for original_path in value.iter() {
                         let mut absolute_original_path: &[u8] = original_path;
 
@@ -5023,7 +5055,7 @@ impl<'a> Resolver<'a> {
                 kind,
                 dir_info,
                 global_cache,
-                true,
+                ForbidImports::Yes,
                 out,
             );
         }
@@ -6265,7 +6297,7 @@ impl<'a> Resolver<'a> {
                         let entries_fd = entries!().fd;
                         if entries_fd.is_valid()
                             && !lookup.entry().cache().fd.is_valid()
-                            && self.store_fd
+                            && self.store_fd == Fs::StoreFd::Yes
                         {
                             // Every cached-`Entry` rewrite takes the per-entry mutex.
                             let _entry_guard = lookup.entry().mutex.lock_guard();

@@ -81,7 +81,7 @@ fn is_readme_os_path(name: &[OSPathChar]) -> bool {
 
 use crate::cli::init_command::InitCommand;
 use crate::cli::open;
-use crate::run_command::RunCommand as Run;
+use crate::run_command::{RunCommand as Run, ScriptShell, Silent};
 
 type SHA1Digest = [u8; sha::SHA1::DIGEST];
 type SHA512Digest = [u8; sha::SHA512::DIGEST];
@@ -526,6 +526,9 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
     }
 }
 
+bun_core::bool_enum!(CloseDir);
+bun_core::bool_enum!(UsesWorkspaces);
+
 impl PublishCommand {
     pub(crate) fn exec(ctx: Command::Context) -> Result<(), Error> {
         bun_core::prettyln!(
@@ -699,9 +702,9 @@ impl PublishCommand {
                     &abs_workspace_path,
                     script_env,
                     &[],
-                    context.manager.options.log_level == LogLevel::Silent,
+                    Silent::from_bool(context.manager.options.log_level == LogLevel::Silent),
                     // SAFETY: see above.
-                    unsafe { &*cmd_ctx_ptr }.debug.use_system_shell,
+                    ScriptShell::from_bool(unsafe { &*cmd_ctx_ptr }.debug.use_system_shell),
                 ) {
                     if matches!(e, crate::Error::MissingShell) {
                         Output::err_generic(
@@ -723,9 +726,9 @@ impl PublishCommand {
                     &abs_workspace_path,
                     script_env,
                     &[],
-                    context.manager.options.log_level == LogLevel::Silent,
+                    Silent::from_bool(context.manager.options.log_level == LogLevel::Silent),
                     // SAFETY: see above.
-                    unsafe { &*cmd_ctx_ptr }.debug.use_system_shell,
+                    ScriptShell::from_bool(unsafe { &*cmd_ctx_ptr }.debug.use_system_shell),
                 ) {
                     if matches!(e, crate::Error::MissingShell) {
                         Output::err_generic(
@@ -914,7 +917,7 @@ impl PublishCommand {
             } else {
                 None
             },
-            ctx.uses_workspaces,
+            UsesWorkspaces::from_bool(ctx.uses_workspaces),
             ctx.manager.options.publish_config.auth_type,
         )?;
 
@@ -964,13 +967,21 @@ impl PublishCommand {
                         let mut iter = strings::split(www_authenticate, b",");
                         while let Some(part) = iter.next() {
                             let trimmed = strings::trim(part, &strings::WHITESPACE_CHARS);
-                            if strings::eql_case_insensitive_ascii(trimmed, b"ipaddress", true) {
+                            if strings::eql_case_insensitive_ascii(
+                                trimmed,
+                                b"ipaddress",
+                                strings::CheckLen::Yes,
+                            ) {
                                 Output::err_generic(
                                     "login is not allowed from your IP address",
                                     (),
                                 );
                                 Global::crash();
-                            } else if strings::eql_case_insensitive_ascii(trimmed, b"otp", true) {
+                            } else if strings::eql_case_insensitive_ascii(
+                                trimmed,
+                                b"otp",
+                                strings::CheckLen::Yes,
+                            ) {
                                 break 'prompt_for_otp true;
                             }
                         }
@@ -1019,7 +1030,7 @@ impl PublishCommand {
                     registry,
                     Some(publish_req_body.len()),
                     Some(&otp),
-                    ctx.uses_workspaces,
+                    UsesWorkspaces::from_bool(ctx.uses_workspaces),
                     ctx.manager.options.publish_config.auth_type,
                 )?;
 
@@ -1245,7 +1256,7 @@ impl PublishCommand {
                     registry,
                     None,
                     None,
-                    ctx.uses_workspaces,
+                    UsesWorkspaces::from_bool(ctx.uses_workspaces),
                     ctx.manager.options.publish_config.auth_type,
                 )?;
 
@@ -1776,14 +1787,14 @@ impl PublishCommand {
                     }
                 };
 
-                let mut dirs: Vec<(Fd, Box<[u8]>, bool)> = Vec::new();
+                let mut dirs: Vec<(Fd, Box<[u8]>, CloseDir)> = Vec::new();
 
-                dirs.push((bin_dir, normalized_bin_dir.as_bytes().into(), false));
+                dirs.push((bin_dir, normalized_bin_dir.as_bytes().into(), CloseDir::No));
 
                 while let Some(dir_info) = dirs.pop() {
                     let (dir, dir_subpath, close_dir) = dir_info;
                     let _close = scopeguard::guard(dir, move |d| {
-                        if close_dir {
+                        if close_dir == CloseDir::Yes {
                             let _ = d.close();
                         }
                     });
@@ -1845,7 +1856,7 @@ impl PublishCommand {
                             else {
                                 continue;
                             };
-                            dirs.push((subdir, subpath.as_bytes().into(), true));
+                            dirs.push((subdir, subpath.as_bytes().into(), CloseDir::Yes));
                         }
                     }
                 }
@@ -1873,9 +1884,10 @@ impl PublishCommand {
         registry: &Npm::Registry::Scope,
         maybe_json_len: Option<usize>,
         maybe_otp: Option<&[u8]>,
-        uses_workspaces: bool,
+        uses_workspaces: UsesWorkspaces,
         auth_type: Option<AuthType>,
     ) -> Result<http::HeaderBuilder, AllocError> {
+        let uses_workspaces = uses_workspaces == UsesWorkspaces::Yes;
         let mut headers = http::HeaderBuilder::default();
         let npm_auth_type: &[u8] = if maybe_otp.is_none() {
             if let Some(auth) = auth_type {
@@ -2059,8 +2071,11 @@ impl PublishCommand {
             // reserved spare capacity; `fill_spare` commits exactly that count.
             let count = unsafe {
                 bun_core::vec::fill_spare(&mut buf, encoded_tarball_len, |spare| {
-                    let n =
-                        simdutf::base64::encode_raw(&ctx.tarball_bytes, spare.as_mut_ptr(), false);
+                    let n = simdutf::base64::encode_raw(
+                        &ctx.tarball_bytes,
+                        spare.as_mut_ptr(),
+                        simdutf::base64::Alphabet::Standard,
+                    );
                     (n, n)
                 })
             };

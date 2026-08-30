@@ -132,22 +132,22 @@ impl DisplayPair {
 
         // 8 keys → if-chain over `eql_case_insensitive_ascii::<true>` (phf values
         // would have to be const-eval, and `VendorPrefix` bitflags are not).
-        use bun_core::eql_case_insensitive_ascii as eq;
-        let inside = if eq(ident, b"inline-block", true) {
+        use bun_core::{CheckLen, eql_case_insensitive_ascii as eq};
+        let inside = if eq(ident, b"inline-block", CheckLen::Yes) {
             DisplayInside::FlowRoot
-        } else if eq(ident, b"inline-table", true) {
+        } else if eq(ident, b"inline-table", CheckLen::Yes) {
             DisplayInside::Table
-        } else if eq(ident, b"inline-flex", true) {
+        } else if eq(ident, b"inline-flex", CheckLen::Yes) {
             DisplayInside::Flex(VendorPrefix::NONE)
-        } else if eq(ident, b"-webkit-inline-flex", true) {
+        } else if eq(ident, b"-webkit-inline-flex", CheckLen::Yes) {
             DisplayInside::Flex(VendorPrefix::WEBKIT)
-        } else if eq(ident, b"-ms-inline-flexbox", true) {
+        } else if eq(ident, b"-ms-inline-flexbox", CheckLen::Yes) {
             DisplayInside::Flex(VendorPrefix::MS)
-        } else if eq(ident, b"-webkit-inline-box", true) {
+        } else if eq(ident, b"-webkit-inline-box", CheckLen::Yes) {
             DisplayInside::Box(VendorPrefix::WEBKIT)
-        } else if eq(ident, b"-moz-inline-box", true) {
+        } else if eq(ident, b"-moz-inline-box", CheckLen::Yes) {
             DisplayInside::Box(VendorPrefix::MOZ)
-        } else if eq(ident, b"inline-grid", true) {
+        } else if eq(ident, b"inline-grid", CheckLen::Yes) {
             DisplayInside::Grid
         } else {
             return Err(location.new_unexpected_token_error(css::Token::Ident(ident)));
@@ -242,26 +242,26 @@ impl DisplayInside {
         let ident = input.expect_ident_cloned()?;
 
         // 10 keys → if-chain over `eql_case_insensitive_ascii::<true>`.
-        use bun_core::eql_case_insensitive_ascii as eq;
-        Ok(if eq(ident, b"flow", true) {
+        use bun_core::{CheckLen, eql_case_insensitive_ascii as eq};
+        Ok(if eq(ident, b"flow", CheckLen::Yes) {
             DisplayInside::Flow
-        } else if eq(ident, b"flow-root", true) {
+        } else if eq(ident, b"flow-root", CheckLen::Yes) {
             DisplayInside::FlowRoot
-        } else if eq(ident, b"table", true) {
+        } else if eq(ident, b"table", CheckLen::Yes) {
             DisplayInside::Table
-        } else if eq(ident, b"flex", true) {
+        } else if eq(ident, b"flex", CheckLen::Yes) {
             DisplayInside::Flex(VendorPrefix::NONE)
-        } else if eq(ident, b"-webkit-flex", true) {
+        } else if eq(ident, b"-webkit-flex", CheckLen::Yes) {
             DisplayInside::Flex(VendorPrefix::WEBKIT)
-        } else if eq(ident, b"-ms-flexbox", true) {
+        } else if eq(ident, b"-ms-flexbox", CheckLen::Yes) {
             DisplayInside::Flex(VendorPrefix::MS)
-        } else if eq(ident, b"-webkit-box", true) {
+        } else if eq(ident, b"-webkit-box", CheckLen::Yes) {
             DisplayInside::Box(VendorPrefix::WEBKIT)
-        } else if eq(ident, b"-moz-box", true) {
+        } else if eq(ident, b"-moz-box", CheckLen::Yes) {
             DisplayInside::Box(VendorPrefix::MOZ)
-        } else if eq(ident, b"grid", true) {
+        } else if eq(ident, b"grid", CheckLen::Yes) {
             DisplayInside::Grid
-        } else if eq(ident, b"ruby", true) {
+        } else if eq(ident, b"ruby", CheckLen::Yes) {
             DisplayInside::Ruby
         } else {
             return Err(location.new_unexpected_token_error(css::Token::Ident(ident)));

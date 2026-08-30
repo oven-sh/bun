@@ -176,7 +176,9 @@ fn is_subscription_command(name: &[u8]) -> bool {
         b"SUNSUBSCRIBE",
     ]
     .iter()
-    .any(|c| bun_core::strings::eql_case_insensitive_ascii(name, c, true))
+    .any(|c| {
+        bun_core::strings::eql_case_insensitive_ascii(name, c, bun_core::strings::CheckLen::Yes)
+    })
 }
 
 /// Promise for a Valkey command

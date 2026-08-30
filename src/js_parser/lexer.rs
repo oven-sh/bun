@@ -243,6 +243,8 @@ pub struct Lexer<'a> {
     pub(crate) all_comments: Vec<Range>,
 }
 
+bun_core::bool_enum!(ForPragma);
+
 impl<'a> LexerLog<'a> for Lexer<'a> {
     type Err = Error;
     #[inline]
@@ -1570,7 +1572,7 @@ impl<'a> Lexer<'a> {
                         }
                         0x2F => {
                             self.scan_single_line_comment();
-                            self.scan_comment_text(false);
+                            self.scan_comment_text(ForPragma::No);
                             continue;
                         }
                         0x2A => {
@@ -1580,7 +1582,7 @@ impl<'a> Lexer<'a> {
                             // `next()` (`scan_single_line_comment` is outlined the
                             // same way).
                             self.scan_multi_line_comment_body()?;
-                            self.scan_comment_text(true);
+                            self.scan_comment_text(ForPragma::Yes);
                             continue;
                         }
                         _ => {
@@ -1890,7 +1892,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn scan_comment_text(&mut self, for_pragma: bool) {
+    fn scan_comment_text(&mut self, for_pragma: ForPragma) {
         let text = &self.contents[self.start..self.end];
         let has_legal_annotation = text.len() > 2 && text[2] == b'!';
         let is_multiline_comment = text.len() > 1 && text[1] == b'*';
@@ -1948,7 +1950,7 @@ impl<'a> Lexer<'a> {
             });
         }
 
-        if !for_pragma {
+        if for_pragma == ForPragma::No {
             return;
         }
 
@@ -1960,8 +1962,11 @@ impl<'a> Lexer<'a> {
             match c {
                 b'@' | b'#' => {
                     let chunk = rest;
-                    let offset =
-                        self.scan_pragma(self.start + i + (text.len() - rest.len()), chunk, false);
+                    let offset = self.scan_pragma(
+                        self.start + i + (text.len() - rest.len()),
+                        chunk,
+                        AllowNewline::No,
+                    );
 
                     rest = &rest[
                         // The min is necessary because the file could end
@@ -2087,7 +2092,8 @@ impl<'a> Lexer<'a> {
                     0x23 | 0x40 => {
                         let pragma_trigger_pos = self.end;
                         let chunk = js_ast::StoreStr::new(self.remaining());
-                        self.current += self.scan_pragma(pragma_trigger_pos, chunk.slice(), true);
+                        self.current +=
+                            self.scan_pragma(pragma_trigger_pos, chunk.slice(), AllowNewline::Yes);
                         continue;
                     }
                     _ => {
@@ -2115,7 +2121,7 @@ impl<'a> Lexer<'a> {
         &mut self,
         offset_for_errors: usize,
         chunk: &[u8],
-        allow_newline: bool,
+        allow_newline: AllowNewline,
     ) -> usize {
         if !self.has_pure_comment_before {
             if strings::has_prefix_with_word_boundary(chunk, b"__PURE__") {
@@ -3418,6 +3424,8 @@ pub(crate) fn latin1_identifier_continue_length_scalar(name: &[u8]) -> usize {
     name.len()
 }
 
+bun_core::bool_enum!(pub(crate) AllowNewline);
+
 pub struct PragmaArg;
 
 impl PragmaArg {
@@ -3475,7 +3483,7 @@ impl PragmaArg {
         offset_: usize,
         pragma: &[u8],
         text_: &[u8],
-        allow_newline: bool,
+        allow_newline: AllowNewline,
     ) -> Option<js_ast::Span> {
         let mut text = &text_[pragma.len()..];
         let mut iter = CodepointIterator::init(text);
@@ -3502,7 +3510,9 @@ impl PragmaArg {
         let _ = iter.next(&mut cursor);
 
         let mut i: usize = 0;
-        while !is_whitespace(cursor.c) && (!allow_newline || !Self::is_newline(cursor.c)) {
+        while !is_whitespace(cursor.c)
+            && (allow_newline == AllowNewline::No || !Self::is_newline(cursor.c))
+        {
             i += cursor.width as usize;
             if i >= text.len() {
                 break;

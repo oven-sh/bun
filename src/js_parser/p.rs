@@ -191,6 +191,16 @@ pub enum ReactRefreshExportKind {
     Default,
 }
 
+bun_core::bool_enum!(pub(crate) IsInternal);
+bun_core::bool_enum!(pub(crate) IsSpread);
+bun_core::bool_enum!(pub(crate) WasOriginallyBareImport);
+bun_core::bool_enum!(pub(crate) IsVar);
+bun_core::bool_enum!(pub(crate) IsEnumScope);
+bun_core::bool_enum!(pub(crate) Inverted);
+bun_core::bool_enum!(IsYesBranch);
+bun_core::bool_enum!(pub(crate) AllValuesArePure);
+bun_core::bool_enum!(pub(crate) ShouldHoistFns);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // P — the parser struct.
 // `'a` covers borrowed init() params (log/define/source) AND the arena (`bump`).
@@ -1589,14 +1599,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                return self.new_expr(E::ImportIdentifier::new(ident.ref_, true), loc);
+                return self.new_expr(
+                    E::ImportIdentifier::new(ident.ref_, E::WasOriginallyIdentifier::Yes),
+                    loc,
+                );
             }
         }
 
         // Substitute an EImportIdentifier now if this is an import item
         if self.is_import_item.contains_key(&ref_) {
             return self.new_expr(
-                E::ImportIdentifier::new(ref_, opts.was_originally_identifier()),
+                E::ImportIdentifier::new(
+                    ref_,
+                    E::WasOriginallyIdentifier::from_bool(opts.was_originally_identifier()),
+                ),
                 loc,
             );
         }
@@ -1785,7 +1801,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         symbols: &Sym,
         additional_stmt: Option<Stmt>,
         prefix: &'static [u8],
-        is_internal: bool,
+        is_internal: IsInternal,
         tag: bun_ast::PartTag,
     ) -> Result<(), crate::Error>
     where
@@ -1797,6 +1813,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let import_record_i =
             self.add_import_record_by_range(ImportKind::Stmt, bun_ast::Range::NONE, import_path);
         {
+            let is_internal = is_internal == IsInternal::Yes;
             let import_record = &mut self.import_records.items_mut()[import_record_i as usize];
             if is_internal {
                 import_record.path.namespace = b"runtime";
@@ -3301,7 +3318,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let res = self.convert_expr_to_binding_and_initializer(
                         &mut item,
                         invalid_loc,
-                        is_spread,
+                        IsSpread::from_bool(is_spread),
                     );
 
                     items.push(bun_ast::ArrayBinding {
@@ -3361,8 +3378,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         continue;
                     }
                     let value = item.value.as_mut().unwrap();
-                    let tup =
-                        self.convert_expr_to_binding_and_initializer(value, invalid_loc, false);
+                    let tup = self.convert_expr_to_binding_and_initializer(
+                        value,
+                        invalid_loc,
+                        IsSpread::No,
+                    );
                     let initializer = tup.expr.or(item.initializer);
                     let is_spread = item.kind == js_ast::g::PropertyKind::Spread
                         || item.flags.contains(Flags::Property::IsSpread);
@@ -3407,7 +3427,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         _expr: &mut ExprNodeIndex,
         invalid_log: &mut LocList,
-        is_spread: bool,
+        is_spread: IsSpread,
     ) -> ExprBindingTuple {
         let mut initializer: Option<ExprNodeIndex> = None;
         // `Expr` is `Copy`; read it by value so the `EBinary` arm can switch
@@ -3424,7 +3444,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let bind = self.convert_expr_to_binding(expr, invalid_log);
         if let Some(initial) = initializer {
             let equals_range = self.source.range_of_operator_before(initial.loc, b"=");
-            if is_spread {
+            if is_spread == IsSpread::Yes {
                 self.log().add_range_error(
                     Some(self.source),
                     equals_range,
@@ -3508,7 +3528,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt_: S::Import,
         path: ParsedPath<'a>,
         loc: bun_ast::Loc,
-        was_originally_bare_import: bool,
+        was_originally_bare_import: WasOriginallyBareImport,
     ) -> Result<Stmt, crate::Error> {
         let is_macro =
             Self::ALLOW_MACROS && (path.is_macro || crate::Macro::is_macro_path(path.text));
@@ -3636,7 +3656,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .flags
             .set(
                 bun_ast::ImportRecordFlags::WAS_ORIGINALLY_BARE_IMPORT,
-                was_originally_bare_import,
+                was_originally_bare_import == WasOriginallyBareImport::Yes,
             );
         self.import_records.items_mut()[stmt.import_record_index as usize]
             .flags
@@ -4069,13 +4089,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         decls: &[G::Decl],
         loop_type: &'static str,
-        is_var: bool,
+        is_var: IsVar,
     ) -> Result<(), crate::Error> {
         match decls.len() {
             0 => {}
             1 => {
                 if let Some(value) = &decls[0].value {
-                    if is_var && matches!(decls[0].binding.data, js_ast::b::B::BIdentifier(_)) {
+                    if is_var == IsVar::Yes
+                        && matches!(decls[0].binding.data, js_ast::b::B::BIdentifier(_))
+                    {
                         // This is a weird special case. Initializers are allowed in "var"
                         // statements with identifier bindings.
                         return Ok(());
@@ -4156,8 +4178,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         name: &[u8],
         is_export: bool,
-        is_enum_scope: bool,
+        is_enum_scope: IsEnumScope,
     ) -> js_ast::StoreRef<js_ast::TSNamespaceScope> {
+        let is_enum_scope = is_enum_scope == IsEnumScope::Yes;
         let map: Option<js_ast::StoreRef<js_ast::TSNamespaceMemberMap>> = 'brk: {
             // Merge with a sibling namespace from the same scope
             if let Some(existing_member) = self.current_scope().members.get(name) {
@@ -4611,7 +4634,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let inner_index = self.allocated_names.len();
             debug_assert!(inner_index <= u32::MAX as usize);
             self.allocated_names.push(name);
-            Ref::init(inner_index as u32, self.source.index.0, false)
+            Ref::init(
+                inner_index as u32,
+                self.source.index.0,
+                js_ast::IsSourceContentsSlice::No,
+            )
         }
     }
 
@@ -5225,7 +5252,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline]
-    pub(crate) fn value_for_import_meta_main(&mut self, inverted: bool, loc: bun_ast::Loc) -> Expr {
+    pub(crate) fn value_for_import_meta_main(
+        &mut self,
+        inverted: Inverted,
+        loc: bun_ast::Loc,
+    ) -> Expr {
+        let inverted = inverted == Inverted::Yes;
         if let Some(known) = self.options.import_meta_main_value {
             return Expr {
                 loc,
@@ -5423,10 +5455,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             js_ast::ExprData::EIf(ex) => {
                 return self.expr_can_be_removed_if_unused_without_dce_check(&ex.test)
-                    && (self.is_side_effect_free_unbound_identifier_ref(ex.yes, ex.test, true)
-                        || self.expr_can_be_removed_if_unused_without_dce_check(&ex.yes))
-                    && (self.is_side_effect_free_unbound_identifier_ref(ex.no, ex.test, false)
-                        || self.expr_can_be_removed_if_unused_without_dce_check(&ex.no));
+                    && (self.is_side_effect_free_unbound_identifier_ref(
+                        ex.yes,
+                        ex.test,
+                        IsYesBranch::Yes,
+                    ) || self.expr_can_be_removed_if_unused_without_dce_check(&ex.yes))
+                    && (self.is_side_effect_free_unbound_identifier_ref(
+                        ex.no,
+                        ex.test,
+                        IsYesBranch::No,
+                    ) || self.expr_can_be_removed_if_unused_without_dce_check(&ex.no));
             }
             js_ast::ExprData::EArray(ex) => {
                 for item in ex.items.slice() {
@@ -5534,16 +5572,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Special-case "||" to make sure "typeof x === 'undefined' || x" can be removed
                 js_ast::op::Code::BinLogicalOr => {
                     return self.expr_can_be_removed_if_unused_without_dce_check(&ex.left)
-                        && (self
-                            .is_side_effect_free_unbound_identifier_ref(ex.right, ex.left, false)
-                            || self.expr_can_be_removed_if_unused_without_dce_check(&ex.right));
+                        && (self.is_side_effect_free_unbound_identifier_ref(
+                            ex.right,
+                            ex.left,
+                            IsYesBranch::No,
+                        ) || self.expr_can_be_removed_if_unused_without_dce_check(&ex.right));
                 }
                 // Special-case "&&" to make sure "typeof x !== 'undefined' && x" can be removed
                 js_ast::op::Code::BinLogicalAnd => {
                     return self.expr_can_be_removed_if_unused_without_dce_check(&ex.left)
-                        && (self
-                            .is_side_effect_free_unbound_identifier_ref(ex.right, ex.left, true)
-                            || self.expr_can_be_removed_if_unused_without_dce_check(&ex.right));
+                        && (self.is_side_effect_free_unbound_identifier_ref(
+                            ex.right,
+                            ex.left,
+                            IsYesBranch::Yes,
+                        ) || self.expr_can_be_removed_if_unused_without_dce_check(&ex.right));
                 }
                 // For "==" and "!=", pretend the operator was actually "===" or "!==". If
                 // we know that we can convert it to "==" or "!=", then we can consider the
@@ -5599,7 +5641,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         value: Expr,
         guard_condition: Expr,
-        is_yes_branch_: bool,
+        is_yes_branch_: IsYesBranch,
     ) -> bool {
         let js_ast::ExprData::EIdentifier(id) = value.data else {
             return false;
@@ -5610,7 +5652,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let js_ast::ExprData::EBinary(binary) = guard_condition.data else {
             return false;
         };
-        let mut is_yes_branch = is_yes_branch_;
+        let mut is_yes_branch = is_yes_branch_ == IsYesBranch::Yes;
 
         match binary.op {
             js_ast::op::Code::BinStrictEq
@@ -5980,7 +6022,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         original_name_ref: Ref,
         arg_ref: Ref,
         stmts_inside_closure: &'a mut [Stmt],
-        all_values_are_pure: bool,
+        all_values_are_pure: AllValuesArePure,
     ) -> Result<(), crate::Error> {
         let mut name_ref = original_name_ref;
 
@@ -6136,7 +6178,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let closure = self.s(
             S::SExpr {
                 value: call,
-                does_not_affect_tree_shaking: all_values_are_pure,
+                does_not_affect_tree_shaking: all_values_are_pure == AllValuesArePure::Yes,
             },
             stmt_loc,
         );
@@ -6182,7 +6224,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn runtime_identifier(&mut self, loc: bun_ast::Loc, name: &'static [u8]) -> Expr {
         let ref_ = self.runtime_identifier_ref(name);
         self.record_usage(ref_);
-        self.new_expr(E::ImportIdentifier::new(ref_, false), loc)
+        self.new_expr(
+            E::ImportIdentifier::new(ref_, E::WasOriginallyIdentifier::No),
+            loc,
+        )
     }
 
     pub(crate) fn call_runtime(
@@ -7802,7 +7847,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         hashbang: &'a [u8],
     ) -> Result<Box<js_ast::Ast<'a>>, crate::Error> {
         use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
-        use crate::scan::scan_imports::ImportScanner;
+        use crate::scan::scan_imports::{ImportScanner, WillTransformToCommonJs};
 
         let arena = self.arena;
 
@@ -7851,7 +7896,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let _ = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, true>(
                     self,
                     part.stmts.slice_mut(),
-                    wrap_mode != WrapMode::None,
+                    WillTransformToCommonJs::from_bool(wrap_mode != WrapMode::None),
                     Some(&mut hmr_transform_ctx),
                 )?;
             }
@@ -7861,7 +7906,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let _ = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, true>(
                     self,
                     last_stmts.slice_mut(),
-                    wrap_mode != WrapMode::None,
+                    WillTransformToCommonJs::from_bool(wrap_mode != WrapMode::None),
                     Some(&mut hmr_transform_ctx),
                 )?;
             }
@@ -7897,7 +7942,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let result = match ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, false>(
                         self,
                         part.stmts.slice_mut(),
-                        wrap_mode != WrapMode::None,
+                        WillTransformToCommonJs::from_bool(wrap_mode != WrapMode::None),
                         None,
                     ) {
                         Ok(r) => r,
@@ -8859,7 +8904,7 @@ impl LowerUsingDeclarationsContext {
         &mut self,
         p: &mut P<'a, T, S_>,
         stmts: &'a mut [Stmt],
-        should_hoist_fns: bool,
+        should_hoist_fns: ShouldHoistFns,
     ) -> ListManaged<'a, Stmt> {
         let mut result = BumpVec::new_in(p.arena);
         let mut exports = BumpVec::<js_ast::ClauseItem>::new_in(p.arena);
@@ -8902,7 +8947,7 @@ impl LowerUsingDeclarationsContext {
                     continue;
                 }
                 js_ast::StmtData::SFunction(_) => {
-                    if should_hoist_fns {
+                    if should_hoist_fns == ShouldHoistFns::Yes {
                         // Hoist function declarations for cross-file ESM references
                         result.push(stmt);
                         continue;

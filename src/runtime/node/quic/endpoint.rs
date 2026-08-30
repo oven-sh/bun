@@ -17,10 +17,11 @@ use bun_uws as uws;
 use crate::jsc_hooks::timer_all_mut as timer_all;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
+use super::Side;
 use super::callbacks;
 use super::ffi::lsquic_callback;
 use super::now_ns;
-use super::session::{self, QuicSession, SOCKADDR_IN_LEN, SOCKADDR_IN6_LEN, StoredAddr};
+use super::session::{self, CloseKind, QuicSession, SOCKADDR_IN_LEN, SOCKADDR_IN6_LEN, StoredAddr};
 use super::stream;
 use super::tls::{TlsConfig, TlsContext};
 
@@ -317,11 +318,15 @@ impl QuicEndpoint {
     fn mark_driver_pending(&self) {
         self.nq_driver.with_mut(|d| d.pending = 1);
     }
+}
 
+bun_core::bool_enum!(DeferCloses);
+
+impl QuicEndpoint {
     /// Runs a driver pass, or hands `pending` back when one cannot run now.
     /// `defer_closes` distinguishes the microtask-drain pass, which must not
     /// let a session end mid-chain, from the loop_pre/loop_post pass.
-    fn run_driver_pass(&self, defer_closes: bool) {
+    fn run_driver_pass(&self, defer_closes: DeferCloses) {
         if self.closed.get() {
             return;
         }
@@ -336,7 +341,7 @@ impl QuicEndpoint {
         // SAFETY: `global_ptr` is the realm that created this endpoint and
         // outlives it; null was ruled out above.
         let global = unsafe { &*global_ptr };
-        self.defer_closes.set(defer_closes);
+        self.defer_closes.set(defer_closes == DeferCloses::Yes);
         self.process(global);
         self.defer_closes.set(false);
     }
@@ -361,7 +366,7 @@ impl QuicEndpoint {
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Bun__nodeQuic__drainEndpoint(owner: *mut c_void) {
     // SAFETY: guaranteed by this function's contract.
-    unsafe { QuicEndpoint::from_driver_owner(owner) }.run_driver_pass(true);
+    unsafe { QuicEndpoint::from_driver_owner(owner) }.run_driver_pass(DeferCloses::Yes);
 }
 
 /// One process pass per loop turn (loop_pre/loop_post): the writes a JS turn
@@ -372,7 +377,7 @@ pub(crate) unsafe extern "C" fn Bun__nodeQuic__drainEndpoint(owner: *mut c_void)
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Bun__nodeQuic__processEndpoint(owner: *mut c_void) {
     // SAFETY: guaranteed by this function's contract.
-    unsafe { QuicEndpoint::from_driver_owner(owner) }.run_driver_pass(false);
+    unsafe { QuicEndpoint::from_driver_owner(owner) }.run_driver_pass(DeferCloses::No);
 }
 
 bun_event_loop::impl_timer_owner!(QuicEndpoint; from_timer_ptr => event_loop_timer);
@@ -669,7 +674,7 @@ lsquic_callback! {
                     // (connect() then immediate close()). Report the peer's
                     // own code so `closed` settles the way node's does.
                     session.push_event(session::SessionEvent::PeerClose {
-                        app_error: false,
+                        app_error: CloseKind::Transport,
                         code: error_code & !PEER_CLOSE_BIT,
                         reason: Vec::new(),
                     });
@@ -682,7 +687,7 @@ lsquic_callback! {
                     // dropped packets): node's server surfaces the idle death
                     // of a handshaking session as a clean close, not an error.
                     session.push_event(session::SessionEvent::PeerClose {
-                        app_error: false,
+                        app_error: CloseKind::Transport,
                         code: 0,
                         reason: Vec::new(),
                     });
@@ -697,7 +702,7 @@ lsquic_callback! {
                     b"handshake failed"
                 };
                 session.push_event(session::SessionEvent::PeerClose {
-                    app_error: false,
+                    app_error: CloseKind::Transport,
                     code,
                     reason: reason.to_vec(),
                 });
@@ -1728,7 +1733,7 @@ impl QuicEndpoint {
             core::ptr::from_ref(self).cast_mut(),
             endpoint_handle,
             null_mut(),
-            true,
+            Side::Server,
         )?;
         let applied = self.apply_server_session_options(global, session);
         self.sessions.with_mut(|v| v.push(session));
@@ -1751,7 +1756,7 @@ impl QuicEndpoint {
             return false;
         };
         session.push_event(session::SessionEvent::PeerClose {
-            app_error: false,
+            app_error: CloseKind::Transport,
             code: CRYPTO_ERROR_HANDSHAKE_FAILURE,
             reason: b"handshake failed".to_vec(),
         });
@@ -1882,7 +1887,7 @@ impl QuicEndpoint {
             core::ptr::from_ref(self).cast_mut(),
             endpoint_handle,
             conn,
-            true,
+            Side::Server,
         ) {
             Ok((session, _handle)) => {
                 if let Err(err) = self.apply_server_session_options(global, session) {
@@ -1908,8 +1913,8 @@ impl QuicEndpoint {
         }
     }
 
-    pub(super) fn configured_alpn(&self, is_server: bool) -> Option<Vec<u8>> {
-        let alpn = if is_server {
+    pub(super) fn configured_alpn(&self, is_server: Side) -> Option<Vec<u8>> {
+        let alpn = if is_server == Side::Server {
             self.server_alpn.get()
         } else {
             self.client_alpn.get()
@@ -1922,8 +1927,8 @@ impl QuicEndpoint {
         }
     }
 
-    pub(super) fn is_http(&self, is_server: bool) -> bool {
-        if is_server {
+    pub(super) fn is_http(&self, is_server: Side) -> bool {
+        if is_server == Side::Server {
             self.server_is_http.get()
         } else {
             self.client_is_http.get()
@@ -1972,11 +1977,12 @@ impl QuicEndpoint {
 
     fn build_engine(
         &self,
-        is_server: bool,
+        is_server: Side,
         config: &TlsConfig,
         options: JSValue,
         global: &JSGlobalObject,
     ) -> JsResult<*mut lsquic::lsquic_engine> {
+        let is_server = is_server == Side::Server;
         let tls = TlsContext::new(config).map_err(|e| global.throw(format_args!("tls: {}", e)))?;
         // Node accepts a list, so own ALPN on the SSL_CTX and pass NULL here.
         let alpn_cstr = TlsContext::alpn_cstr(config);
@@ -2235,7 +2241,7 @@ impl QuicEndpoint {
                     self.origin_blob.with_mut(|b| *b = blob);
                 }
             }
-            let mut config = TlsConfig::from_js(global, tls, true)?;
+            let mut config = TlsConfig::from_js(global, tls, Side::Server)?;
             if config.alpn.is_empty() {
                 // Node's default ALPN is `h3`.
                 config.alpn = b"\x02h3".to_vec();
@@ -2247,7 +2253,7 @@ impl QuicEndpoint {
                     self.sni_contexts.with_mut(|m| *m = built);
                 }
             }
-            let engine = self.build_engine(true, &config, options, global)?;
+            let engine = self.build_engine(Side::Server, &config, options, global)?;
             self.server_engine.set(engine);
         }
         // SAFETY: state buffer is live.
@@ -2288,9 +2294,9 @@ impl QuicEndpoint {
             return self.connect_verneg_probe(global, frame.this(), remote, version, min_version);
         }
         let tls = options.get(global, "tls")?.unwrap_or(JSValue::UNDEFINED);
-        let config = TlsConfig::from_js(global, tls, false)?;
+        let config = TlsConfig::from_js(global, tls, Side::Client)?;
         if self.client_engine.get().is_null() {
-            let engine = self.build_engine(false, &config, options, global)?;
+            let engine = self.build_engine(Side::Client, &config, options, global)?;
             self.client_engine.set(engine);
         } else {
             if alpn_cstr_is_http(&TlsContext::alpn_cstr(&config)) != self.client_is_http.get() {
@@ -2350,7 +2356,7 @@ impl QuicEndpoint {
             core::ptr::from_ref(self).cast_mut(),
             frame.this(),
             null_mut(),
-            false,
+            Side::Client,
         )?;
         // `TlsConfig::from_js` defaults servername to "localhost\0" (Node parity).
         let sni = config.servername.as_ref();
@@ -2440,7 +2446,7 @@ impl QuicEndpoint {
             core::ptr::from_ref(self).cast_mut(),
             this_value,
             null_mut(),
-            false,
+            Side::Client,
         )?;
         let mut dcid = [0u8; VERNEG_PROBE_CID_LEN];
         let mut scid = [0u8; VERNEG_PROBE_CID_LEN];
@@ -2586,7 +2592,7 @@ impl QuicEndpoint {
             if !value.is_object() {
                 continue;
             }
-            let mut config = TlsConfig::from_js(global, value, true)?;
+            let mut config = TlsConfig::from_js(global, value, Side::Server)?;
             if config.alpn.is_empty() {
                 config.alpn = alpn.to_vec();
             }

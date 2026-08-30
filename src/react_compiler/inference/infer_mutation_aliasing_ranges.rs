@@ -26,8 +26,9 @@ use crate::hir::visitors::{
     for_each_instruction_value_operand_mut, for_each_terminal_operand_mut,
 };
 use crate::hir::{
-    AliasingEffect, BlockId, Effect, EvaluationOrder, FunctionId, HirFunction, IdentifierId,
-    InstructionValue, MutationReason, Place, SourceLocation, is_jsx_type, is_primitive_type,
+    AliasingEffect, BlockId, Effect, EvaluationOrder, FunctionId, FunctionNesting, HirFunction,
+    IdentifierId, InstructionValue, MutationReason, Place, SourceLocation, is_jsx_type,
+    is_primitive_type,
 };
 
 // =============================================================================
@@ -107,6 +108,9 @@ impl Node {
 struct AliasingState {
     nodes: IndexMap<IdentifierId, Node>,
 }
+
+bun_core::bool_enum!(MutationScope { Local, Transitive });
+bun_core::bool_enum!(RecordErrors);
 
 impl AliasingState {
     fn new() -> Self {
@@ -238,13 +242,15 @@ impl AliasingState {
         index: usize,
         start: IdentifierId,
         end: Option<EvaluationOrder>, // None for simulated mutations
-        transitive: bool,
+        transitive: MutationScope,
         start_kind: MutationKind,
         loc: Option<SourceLocation>,
         reason: Option<MutationReason>,
         env: &mut Environment,
-        should_record_errors: bool,
+        should_record_errors: RecordErrors,
     ) {
+        let transitive = transitive == MutationScope::Transitive;
+        let should_record_errors = should_record_errors == RecordErrors::Yes;
         #[derive(Clone)]
         struct QueueEntry {
             place: IdentifierId,
@@ -456,7 +462,7 @@ fn append_function_errors(env: &mut Environment, function_id: FunctionId) {
 pub(crate) fn infer_mutation_aliasing_ranges(
     func: &mut HirFunction,
     env: &mut Environment,
-    is_function_expression: bool,
+    is_function_expression: FunctionNesting,
 ) -> Result<Vec<AliasingEffect>, CompilerDiagnostic> {
     let mut function_effects: Vec<AliasingEffect> = Vec::new();
 
@@ -475,7 +481,7 @@ pub(crate) fn infer_mutation_aliasing_ranges(
     struct PendingMutation {
         index: usize,
         id: EvaluationOrder,
-        transitive: bool,
+        transitive: MutationScope,
         kind: MutationKind,
         place: Place,
         reason: Option<MutationReason>,
@@ -490,7 +496,8 @@ pub(crate) fn infer_mutation_aliasing_ranges(
 
     let mut index: usize = 0;
 
-    let should_record_errors = !is_function_expression && env.enable_validations();
+    let should_record_errors =
+        is_function_expression == FunctionNesting::TopLevel && env.enable_validations();
 
     // Create nodes for params, context vars, and return
     for param in &func.params {
@@ -586,7 +593,7 @@ pub(crate) fn infer_mutation_aliasing_ranges(
                         mutations.push(PendingMutation {
                             index: index,
                             id: instr_eval_order,
-                            transitive: true,
+                            transitive: MutationScope::Transitive,
                             kind: if is_transitive_conditional {
                                 MutationKind::Conditional
                             } else {
@@ -601,7 +608,7 @@ pub(crate) fn infer_mutation_aliasing_ranges(
                         mutations.push(PendingMutation {
                             index: index,
                             id: instr_eval_order,
-                            transitive: false,
+                            transitive: MutationScope::Local,
                             kind: MutationKind::Definite,
                             reason: reason.clone(),
                             place: value.clone(),
@@ -612,7 +619,7 @@ pub(crate) fn infer_mutation_aliasing_ranges(
                         mutations.push(PendingMutation {
                             index: index,
                             id: instr_eval_order,
-                            transitive: false,
+                            transitive: MutationScope::Local,
                             kind: MutationKind::Conditional,
                             reason: None,
                             place: value.clone(),
@@ -699,7 +706,7 @@ pub(crate) fn infer_mutation_aliasing_ranges(
             mutation.place.loc,
             mutation.reason.clone(),
             env,
-            should_record_errors,
+            RecordErrors::from_bool(should_record_errors),
         );
     }
 
@@ -1010,7 +1017,7 @@ pub(crate) fn infer_mutation_aliasing_ranges(
         let block = func.body.blocks.get_mut(&block_id).unwrap();
         match &mut block.terminal {
             crate::hir::Terminal::Return { value, .. } => {
-                value.effect = if is_function_expression {
+                value.effect = if is_function_expression == FunctionNesting::Nested {
                     Effect::Read
                 } else {
                     Effect::Freeze
@@ -1066,12 +1073,12 @@ pub(crate) fn infer_mutation_aliasing_ranges(
             mutation_index,
             into.identifier,
             None, // simulated mutation
-            true,
+            MutationScope::Transitive,
             MutationKind::Conditional,
             into.loc,
             None,
             env,
-            false, // never record errors for simulated mutations
+            RecordErrors::No, // never record errors for simulated mutations
         );
 
         for j in 0..tracked.len() {

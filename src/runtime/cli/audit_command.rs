@@ -17,9 +17,9 @@ use bun_libdeflate_sys::libdeflate;
 use bun_parsers::json as bun_json;
 use bun_url::URL;
 
-use crate::cli::Command;
 use crate::cli::install_command::InstallCommand;
 use crate::cli::package_manager_command::PackageManagerCommand;
+use crate::cli::{Command, JsonOutput};
 
 // Boxed to avoid a struct lifetime param; the
 // clones are per-vulnerability, terminal-UI-bound, and not perf-relevant.
@@ -152,7 +152,7 @@ impl AuditCommand {
                 return Err(err.into());
             }
         };
-        let json_output = manager.options.json_output;
+        let json_output = JsonOutput::from_bool(manager.options.json_output);
         if fix {
             return Self::audit_fix(
                 ctx,
@@ -171,10 +171,11 @@ impl AuditCommand {
     fn audit(
         _ctx: Command::Context,
         pm: &mut PackageManager,
-        json_output: bool,
+        json_output: JsonOutput,
         audit_level: Option<AuditLevel>,
         ignore_list: &[&[u8]],
     ) -> Result<u32, bun_alloc::AllocError> {
+        let json_output = json_output == JsonOutput::Yes;
         if !json_output && pm.options.should_print_command_name() {
             print_command_name(false);
         }
@@ -236,11 +237,12 @@ impl AuditCommand {
     fn audit_fix(
         ctx: Command::Context,
         pm: &mut PackageManager,
-        json_output: bool,
+        json_output: JsonOutput,
         audit_level: Option<AuditLevel>,
         ignore_list: &[&[u8]],
         original_cwd: &[u8],
     ) -> crate::Result<core::convert::Infallible> {
+        let json_output = json_output == JsonOutput::Yes;
         if !json_output && pm.options.should_print_command_name() {
             print_command_name(true);
         }

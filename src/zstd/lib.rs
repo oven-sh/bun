@@ -334,7 +334,7 @@ pub fn decompress_alloc(src: &[u8]) -> core::result::Result<Vec<u8>, ZstdError> 
             .map_err(|_| ZstdError::OutOfMemory)?;
         let mut reader = ZstdReaderArrayList::init(src, &mut list)?;
 
-        reader.read_all(true)?;
+        reader.read_all(Chunk::Last)?;
         drop(reader);
         return Ok(list);
     }
@@ -354,7 +354,7 @@ pub fn get_decompressed_size(src: &[u8]) -> usize {
     unsafe { c::ZSTD_findDecompressedSize(src.as_ptr().cast::<c_void>(), src.len()) as usize }
 }
 
-pub use bun_core::compress::State;
+pub use bun_core::compress::{Chunk, State};
 
 /// Minimum spare output capacity offered to `ZSTD_decompressStream` per call.
 const STREAMING_OUTPUT_STEP: usize = 4096;
@@ -413,7 +413,8 @@ impl<'a> ZstdReaderArrayList<'a> {
         }
     }
 
-    pub(crate) fn read_all(&mut self, is_done: bool) -> core::result::Result<(), ZstdError> {
+    pub(crate) fn read_all(&mut self, is_done: Chunk) -> core::result::Result<(), ZstdError> {
+        let is_done = is_done == Chunk::Last;
         if self.state == State::End || self.state == State::Error {
             return Ok(());
         }
@@ -565,13 +566,14 @@ impl StreamingDecoder {
 
     /// Consume all of `input`, appending decompressed bytes to `out`
     /// (growing in 4096-byte steps). Returns `ShortRead` when more input is
-    /// required and `is_done` is false.
+    /// required and `is_done` is [`Chunk::More`].
     pub fn decompress(
         &mut self,
         input: &[u8],
         out: &mut Vec<u8>,
-        is_done: bool,
+        is_done: Chunk,
     ) -> core::result::Result<(), ZstdError> {
+        let is_done = is_done == Chunk::Last;
         if matches!(self.state, State::End | State::Error) {
             return Ok(());
         }

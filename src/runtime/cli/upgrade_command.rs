@@ -174,6 +174,8 @@ static Bun__githubURL: SyncCStr = SyncCStr(
 
 pub(crate) struct UpgradeCommand;
 
+bun_core::bool_enum!(pub(crate) UseProfile);
+
 impl UpgradeCommand {
     const DEFAULT_GITHUB_HEADERS: &'static [u8] = b"Acceptapplication/vnd.github.v3+json";
 
@@ -181,8 +183,9 @@ impl UpgradeCommand {
         env_loader: &mut DotEnv::Loader,
         refresher: Option<&mut Progress::Progress>,
         mut progress: Option<&mut Progress::Node>,
-        use_profile: bool,
+        use_profile: UseProfile,
     ) -> crate::Result<Option<Version>> {
+        let use_profile = use_profile == UseProfile::Yes;
         let mut headers_buf: Vec<u8> = Self::DEFAULT_GITHUB_HEADERS.to_vec();
 
         let mut header_entries: headers::EntryList = headers::EntryList::default();
@@ -573,7 +576,7 @@ impl UpgradeCommand {
                 Some(unsafe { &mut *refresher }),
                 // SAFETY: progress points into the same leaked allocation (see above).
                 Some(unsafe { &mut *progress }),
-                use_profile,
+                UseProfile::from_bool(use_profile),
             )?
             else {
                 return Ok(());

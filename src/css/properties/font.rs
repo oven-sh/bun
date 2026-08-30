@@ -14,7 +14,7 @@ use crate::PrintResult;
 use crate::compat::Feature;
 use crate::css_parser as css;
 use crate::error::ParserError;
-use crate::printer::Printer;
+use crate::printer::{Printer, WsBefore};
 use bun_alloc::ArenaVecExt as _;
 
 use crate::values as css_values;
@@ -799,7 +799,7 @@ impl Font {
         self.size.to_css(dest)?;
 
         if self.line_height != LineHeight::default() {
-            dest.delim(b'/', true)?;
+            dest.delim(b'/', WsBefore::Yes)?;
             self.line_height.to_css(dest)?;
         }
 
@@ -809,7 +809,7 @@ impl Font {
         for (idx, val) in self.family.slice_const().iter().enumerate() {
             val.to_css(dest)?;
             if idx < len - 1 {
-                dest.delim(b',', false)?;
+                dest.delim(b',', WsBefore::No)?;
             }
         }
         Ok(())
@@ -983,9 +983,11 @@ impl FontHandler {
         if !self.flushed_properties.contains(FontProperty::FONT_FAMILY) {
             family = compatible_font_family(
                 family,
-                !context
-                    .targets
-                    .should_compile_same(Feature::FontFamilySystemUi),
+                SystemUiSupported::from_bool(
+                    !context
+                        .targets
+                        .should_compile_same(Feature::FontFamilySystemUi),
+                ),
             );
         }
 
@@ -1100,13 +1102,15 @@ const DEFAULT_SYSTEM_FONTS: &[&[u8]] = &[
     b"Helvetica Neue",
 ];
 
+bun_core::bool_enum!(SystemUiSupported);
+
 #[inline]
 fn compatible_font_family(
     _family: Option<Vec<FontFamily>>,
-    is_supported: bool,
+    is_supported: SystemUiSupported,
 ) -> Option<Vec<FontFamily>> {
     let mut family = _family;
-    if is_supported {
+    if is_supported == SystemUiSupported::Yes {
         return family;
     }
 

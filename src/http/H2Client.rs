@@ -62,6 +62,7 @@ pub mod stream;
 
 pub use client_session::ClientSession;
 pub(crate) use client_session::SessionPtr;
+pub use encode::EndStream;
 pub use pending_connect::PendingConnect;
 pub use stream::Stream;
 
@@ -121,7 +122,7 @@ mod bridge {
         pub(crate) fn h2_handle_response_body(
             &mut self,
             buf: &[u8],
-            is_only_buffer: bool,
+            is_only_buffer: crate::OnlyBuffer,
         ) -> crate::Result<bool> {
             self.handle_response_body(buf, is_only_buffer)
         }

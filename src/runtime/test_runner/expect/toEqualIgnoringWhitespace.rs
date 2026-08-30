@@ -1,5 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
+use super::IsNot;
 use super::throw;
 
 // Matches ' ' and '\t'..'\r' (0x09–0x0D) — includes VT (0x0B), which Rust's
@@ -99,7 +100,7 @@ pub(crate) fn to_equal_ignoring_whitespace(
     let value_fmt = value.to_fmt(&mut formatter2);
 
     if not {
-        let signature = Expect::get_signature("toEqualIgnoringWhitespace", "<green>expected<r>", true);
+        let signature = Expect::get_signature("toEqualIgnoringWhitespace", "<green>expected<r>", IsNot::Yes);
         return throw!(
             this,
             global,
@@ -109,7 +110,7 @@ pub(crate) fn to_equal_ignoring_whitespace(
         );
     }
 
-    let signature = Expect::get_signature("toEqualIgnoringWhitespace", "<green>expected<r>", false);
+    let signature = Expect::get_signature("toEqualIgnoringWhitespace", "<green>expected<r>", IsNot::No);
     throw!(
         this,
         global,

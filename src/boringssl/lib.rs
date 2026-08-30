@@ -219,7 +219,7 @@ fn unfqdn(name: &[u8]) -> &[u8] {
 
 #[inline]
 fn eq_nocase(a: &[u8], b: &[u8]) -> bool {
-    strings::eql_case_insensitive_ascii(a, b, true)
+    strings::eql_case_insensitive_ascii(a, b, strings::CheckLen::Yes)
 }
 
 /// Wildcard interpretation for [`match_hostname`]'s left-most label.
@@ -490,15 +490,20 @@ pub mod host_check {
     pub const NEVER_CHECK_SUBJECT: u32 = 0x20;
 }
 
+bun_core::bool_enum!(Subdomains {
+    MultiLabel,
+    SingleLabel
+});
+
 /// OpenSSL: a `host` starting with `.` matches any certificate name that ends
 /// with that suffix; `SINGLE_LABEL_SUBDOMAINS` restricts the stripped prefix to
 /// a single label.
-fn match_dot_subdomain(pattern: &[u8], host: &[u8], single_label: bool) -> bool {
+fn match_dot_subdomain(pattern: &[u8], host: &[u8], single_label: Subdomains) -> bool {
     if pattern.len() < host.len() || strings::index_of_char(pattern, 0).is_some() {
         return false;
     }
     let skip = &pattern[..pattern.len() - host.len()];
-    if single_label && strings::index_of_char(skip, b'.').is_some() {
+    if single_label == Subdomains::SingleLabel && strings::index_of_char(skip, b'.').is_some() {
         return false;
     }
     eq_nocase(&pattern[skip.len()..], host)
@@ -568,7 +573,7 @@ pub unsafe extern "C" fn Bun__X509__checkHost(
         strip_trailing_dot: false,
     };
     let dot_host = host.len() > 1 && host[0] == b'.';
-    let single_label = flags & host_check::SINGLE_LABEL_SUBDOMAINS != 0;
+    let single_label = Subdomains::from_bool(flags & host_check::SINGLE_LABEL_SUBDOMAINS != 0);
 
     let matches = |name: &[u8]| {
         if dot_host {

@@ -221,10 +221,10 @@ impl TarballStream {
         // For GitHub/URL/local tarballs we need a SHA-512 to record in the
         // lockfile even when there is no expected value to verify against,
         // matching `ExtractTarball.run`.
-        let compute_if_missing = matches!(
+        let compute_if_missing = integrity::ComputeIfMissing::from_bool(matches!(
             tarball.resolution.tag,
             ResolutionTag::Github | ResolutionTag::RemoteTarball | ResolutionTag::LocalTarball
-        );
+        ));
 
         let npm_mode = tarball.resolution.tag != ResolutionTag::Github;
         // An existing lockfile bun-tag keys the cache lookup; prefer it over the root dir name.
@@ -308,9 +308,10 @@ impl TarballStream {
     pub(crate) unsafe fn on_chunk(
         this: *mut Self,
         chunk: &[u8],
-        is_last: bool,
+        is_last: bun_core::compress::Chunk,
         err: Option<crate::Error>,
     ) {
+        let is_last = is_last == bun_core::compress::Chunk::Last;
         let drain_threshold = Self::drain_threshold();
         // SAFETY: see fn-level # Safety — `this` is live, raw-ptr field
         // projection only (no `&mut TarballStream` formed).

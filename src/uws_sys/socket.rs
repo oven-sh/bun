@@ -19,6 +19,7 @@ use bun_core::{Fd, ZStr};
 
 #[cfg(windows)]
 use crate::WindowsNamedPipe;
+use crate::socket_group::Ipc;
 use crate::{
     CloseCode, ConnectResult, ConnectingSocket, LIBUS_SOCKET_ALLOW_HALF_OPEN,
     LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SocketKind, SslCtx, UpgradedDuplex,
@@ -186,6 +187,8 @@ macro_rules! on_socket {
 // ──────────────────────────────────────────────────────────────────────────
 // NewSocketHandler<IS_SSL>
 // ──────────────────────────────────────────────────────────────────────────
+
+bun_core::bool_enum!(pub AllowHalfOpen);
 
 /// The const generic only
 /// selects `*SSL` vs fd for `get_native_handle`; it is NOT forwarded to C —
@@ -732,7 +735,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         k: SocketKind,
         handle: Fd,
         this: *mut This,
-        is_ipc: bool,
+        is_ipc: Ipc,
     ) -> Option<Self> {
         // The dispatch trampolines read the ext slot as `Option<NonNull<_>>`
         // (8 bytes, null-niche optimized), so size and write must match that
@@ -767,9 +770,9 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         raw_host: &[u8],
         port: c_int,
         owner: *mut Owner,
-        allow_half_open: bool,
+        allow_half_open: AllowHalfOpen,
     ) -> Result<Self, ConnectError> {
-        let opts: c_int = if allow_half_open {
+        let opts: c_int = if allow_half_open == AllowHalfOpen::Yes {
             LIBUS_SOCKET_ALLOW_HALF_OPEN
         } else {
             0
@@ -827,9 +830,9 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         ssl_ctx: Option<*mut SslCtx>,
         path: &[u8],
         owner: *mut Owner,
-        allow_half_open: bool,
+        allow_half_open: AllowHalfOpen,
     ) -> Result<Self, ConnectError> {
-        let opts: c_int = if allow_half_open {
+        let opts: c_int = if allow_half_open == AllowHalfOpen::Yes {
             LIBUS_SOCKET_ALLOW_HALF_OPEN
         } else {
             0

@@ -175,6 +175,9 @@ impl Flags {
     }
 }
 
+bun_core::bool_enum!(pub IsNot);
+bun_core::bool_enum!(pub(crate) Silent);
+
 impl Expect {
     /// R-2 helper: read-modify-write the packed `Cell<Flags>` through `&self`.
     #[inline]
@@ -213,8 +216,9 @@ impl Expect {
     pub(crate) fn get_signature(
         matcher_name: &'static str,
         args: &'static str,
-        not: bool,
+        not: IsNot,
     ) -> &'static str {
+        let not = not == IsNot::Yes;
         // Rust has no compile-time string concat across runtime call sites
         // (all ~188 callers pass literals, but the `not` bool is runtime in
         // some), so emulate via a process-lifetime intern table: each unique
@@ -241,7 +245,7 @@ impl Expect {
         }
         let render = |enabled: bool| -> Box<str> {
             #[allow(clippy::disallowed_methods)] // `args` is a `'static` template literal
-            let params = Output::pretty_fmt_rt(args.as_bytes(), enabled);
+            let params = Output::pretty_fmt_rt(args.as_bytes(), Output::AnsiColors::from_bool(enabled));
             if enabled {
                 if not {
                     format!(
@@ -425,7 +429,7 @@ impl Expect {
         value.ensure_still_alive();
 
         #[allow(clippy::disallowed_methods)] // template is a runtime parameter
-        let matcher_params = Output::pretty_fmt_rt(matcher_params_fmt, Output::enable_ansi_colors_stderr());
+        let matcher_params = Output::pretty_fmt_rt(matcher_params_fmt, Output::AnsiColors::from_bool(Output::enable_ansi_colors_stderr()));
         Self::process_promise(
             &self.custom_label,
             self.flags.get(),
@@ -433,7 +437,7 @@ impl Expect {
             value,
             bstr::BStr::new(matcher_name),
             matcher_params,
-            false,
+            Silent::No,
         )
     }
 
@@ -473,7 +477,7 @@ impl Expect {
 
     /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
     /// If no flags, returns the original value
-    /// If either flag is set, waits for the result, and returns either it as a JSValue, or null if the expectation failed (in which case if silent is false, also throws a js exception)
+    /// If either flag is set, waits for the result, and returns either it as a JSValue, or null if the expectation failed (in which case `Silent::No` also throws a js exception)
     pub(crate) fn process_promise(
         custom_label: &bun_core::String,
         flags: Flags,
@@ -481,8 +485,9 @@ impl Expect {
         value: JSValue,
         matcher_name: impl fmt::Display,
         matcher_params: impl fmt::Display,
-        silent: bool,
+        silent: Silent,
     ) -> JsResult<JSValue> {
+        let silent = silent == Silent::Yes;
         match flags.promise() {
             resolution @ (Promise::Resolves | Promise::Rejects) => {
                 if let Some(promise) = value.as_any_promise() {
@@ -609,7 +614,7 @@ impl Expect {
         // (note that matcher_name/matcher_args are not used because silent=true)
         // SAFETY: value is a valid in/out-ptr provided by C++ caller
         let v = unsafe { *value };
-        match Self::process_promise(&bun_core::String::EMPTY, flags, global_this, v, "", "", true) {
+        match Self::process_promise(&bun_core::String::EMPTY, flags, global_this, v, "", "", Silent::Yes) {
             Ok(new) => {
                 // SAFETY: value is a valid in/out-ptr provided by C++ caller
                 unsafe { *value = new };
@@ -778,7 +783,7 @@ impl Expect {
         if pass { return Ok(JSValue::UNDEFINED); }
 
         if not {
-            let signature = Self::get_signature("pass", "", true);
+            let signature = Self::get_signature("pass", "", IsNot::Yes);
             return throw!(this, global_this, signature, "\n\n{}\n", message);
         }
 
@@ -818,7 +823,7 @@ impl Expect {
         if not { pass = !pass; }
         if pass { return Ok(JSValue::UNDEFINED); }
 
-        let signature = Self::get_signature("fail", "", true);
+        let signature = Self::get_signature("fail", "", IsNot::Yes);
         throw!(this, global_this, signature, "\n\n{}\n", message)
     }
 }
@@ -1026,7 +1031,7 @@ impl Expect {
         let this = self;
         // jest counts inline snapshots towards the snapshot counter for some reason
         let Some(runner) = Jest::runner() else {
-            let signature = Self::get_signature(fn_name, "", false);
+            let signature = Self::get_signature(fn_name, "", IsNot::No);
             return throw!(this, global_this, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n");
         };
         match runner.snapshots.add_count(this, b"") {
@@ -1050,7 +1055,7 @@ impl Expect {
             let mut buf = vec![0u8; saved_value.len()];
             let trim_res = Self::trim_leading_whitespace_for_inline_snapshot(saved_value, &mut buf);
 
-            if strings::eql_long(&pretty_value, trim_res.trimmed, true) {
+            if strings::eql_long(&pretty_value, trim_res.trimmed, strings::CheckLen::Yes) {
                 runner.snapshots.passed += 1;
                 return Ok(JSValue::UNDEFINED);
             } else if update {
@@ -1060,7 +1065,7 @@ impl Expect {
                 end_indent = trim_res.end_indent.map(Box::<[u8]>::from);
             } else {
                 runner.snapshots.failed += 1;
-                let signature = Self::get_signature(fn_name, "<green>expected<r>", false);
+                let signature = Self::get_signature(fn_name, "<green>expected<r>", IsNot::No);
                 let diff_format = DiffFormatter {
                     received_string: Some(&pretty_value),
                     expected_string: Some(trim_res.trimmed),
@@ -1076,7 +1081,7 @@ impl Expect {
         if needs_write {
             if crate::cli::ci_info::is_ci() {
                 if !update {
-                    let signature = Self::get_signature(fn_name, "", false);
+                    let signature = Self::get_signature(fn_name, "", IsNot::No);
                     // Only creating new snapshots can reach here (updating with mismatches errors earlier with diff)
                     return throw!(
                         this, global_this, signature,
@@ -1086,7 +1091,7 @@ impl Expect {
                 }
             }
             let Some(buntest_strong) = this.bun_test() else {
-                let signature = Self::get_signature(fn_name, "", false);
+                let signature = Self::get_signature(fn_name, "", IsNot::No);
                 return throw!(this, global_this, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n");
             };
             let buntest = buntest_strong.get();
@@ -1099,7 +1104,7 @@ impl Expect {
             let fget_source_path_text = runner.files.items_source()[file_id as usize].path.text;
 
             if !srcloc.str.eql_utf8(fget_source_path_text) {
-                let signature = Self::get_signature(fn_name, "", false);
+                let signature = Self::get_signature(fn_name, "", IsNot::No);
                 return throw!(
                     this, global_this, signature,
                     "\n\n<b>Matcher error<r>: Inline snapshot matchers must be called from the test file:\n  Expected to be called from file: <green>{:?}<r>\n  {} called from file: <red>{:?}<r>\n",
@@ -1136,7 +1141,7 @@ impl Expect {
     ) -> JsResult<()> {
         if let Some(_prop_matchers) = property_matchers {
             if !value.is_object() {
-                let signature = Self::get_signature(fn_name, "<green>properties<r><d>, <r>hint", false);
+                let signature = Self::get_signature(fn_name, "<green>properties<r><d>, <r>hint", IsNot::No);
                 return throw!(self, global_this, signature, "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n").map(drop);
             }
 
@@ -1144,7 +1149,7 @@ impl Expect {
 
             if !value.jest_deep_match(prop_matchers, global_this, true)? {
                 // TODO: print diff with properties from propertyMatchers
-                let signature = Self::get_signature(fn_name, "<green>propertyMatchers<r>", false);
+                let signature = Self::get_signature(fn_name, "<green>propertyMatchers<r>", IsNot::No);
                 let mut formatter = ConsoleObject::Formatter::new(global_this);
                 return throw!(
                     self, global_this, signature,
@@ -1233,13 +1238,13 @@ impl Expect {
             // clone to owned to release the &mut borrow on runner.snapshots
             // before mutating passed/failed counters below.
             let saved_value: Vec<u8> = saved_value.to_vec();
-            if strings::eql_long(&pretty_value, &saved_value, true) {
+            if strings::eql_long(&pretty_value, &saved_value, strings::CheckLen::Yes) {
                 runner.snapshots.passed += 1;
                 return Ok(JSValue::UNDEFINED);
             }
 
             runner.snapshots.failed += 1;
-            let signature = Self::get_signature(fn_name, "<green>expected<r>", false);
+            let signature = Self::get_signature(fn_name, "<green>expected<r>", IsNot::No);
             let diff_format = DiffFormatter {
                 received_string: Some(&pretty_value),
                 expected_string: Some(&saved_value),
@@ -1437,14 +1442,14 @@ impl Expect {
 
     /// Execute the custom matcher for the given args (the left value + the args passed to the matcher call).
     /// This function is called both for symmetric and asymmetric matching.
-    /// If silent=false, throws an exception in JS if the matcher result didn't result in a pass (or if the matcher result is invalid).
+    /// If `Silent::No`, throws an exception in JS if the matcher result didn't result in a pass (or if the matcher result is invalid).
     pub(crate) fn execute_custom_matcher(
         global_this: &JSGlobalObject,
         matcher_name: &bun_core::String,
         matcher_fn: JSValue,
         args: &[JSValue],
         flags: Flags,
-        silent: bool,
+        silent: Silent,
     ) -> JsResult<bool> {
         // prepare the this object
         // JsClass::to_js takes `self` by value and boxes internally.
@@ -1509,7 +1514,7 @@ impl Expect {
         }
 
         if flags.not() { pass = !pass; }
-        if pass || silent { return Ok(pass); }
+        if pass || silent == Silent::Yes { return Ok(pass); }
 
         // handle failure
         let message_text: bun_core::String = if message.is_undefined() {
@@ -1592,7 +1597,7 @@ impl Expect {
             value,
             &matcher_name,
             &matcher_params,
-            false,
+            Silent::No,
         )?;
         value.ensure_still_alive();
 
@@ -1608,7 +1613,7 @@ impl Expect {
             matcher_args.push(*arg);
         }
 
-        let _ = Self::execute_custom_matcher(global_this, &matcher_name, matcher_fn, &matcher_args, expect.flags.get(), false)?;
+        let _ = Self::execute_custom_matcher(global_this, &matcher_name, matcher_fn, &matcher_args, expect.flags.get(), Silent::No)?;
 
         Ok(this_value)
     }
@@ -2006,7 +2011,7 @@ impl Expect {
             return Ok(JSValue::UNDEFINED);
         }
         let mut formatter = make_formatter(global);
-        let signature = Self::get_signature(matcher_name, "", not);
+        let signature = Self::get_signature(matcher_name, "", IsNot::from_bool(not));
         throw!(
             this, global, signature,
             "\n\nReceived: <red>{}<r>\n",
@@ -2072,7 +2077,7 @@ impl Expect {
 
         let mut f1 = make_formatter(global);
         let mut f2 = make_formatter(global);
-        let signature = Self::get_signature(matcher_name, "<green>expected<r>", not);
+        let signature = Self::get_signature(matcher_name, "<green>expected<r>", IsNot::from_bool(not));
         if not {
             throw!(
                 this, global, signature,
@@ -2193,7 +2198,7 @@ impl Expect {
         let received = outcome.received_override.unwrap_or(value);
         let mut f1 = make_formatter(global);
         let mut f2 = make_formatter(global);
-        let signature = Self::get_signature(matcher_name, "<green>expected<r>", not);
+        let signature = Self::get_signature(matcher_name, "<green>expected<r>", IsNot::from_bool(not));
         if not {
             throw!(
                 this, global, signature,
@@ -2599,7 +2604,7 @@ impl ExpectCustomAsymmetricMatcher {
             matcher_args.push(captured_args.get_index(global_this, i as u32)?);
         }
 
-        Expect::execute_custom_matcher(global_this, &matcher_name, matcher_fn, &matcher_args, this.flags, true)
+        Expect::execute_custom_matcher(global_this, &matcher_name, matcher_fn, &matcher_args, this.flags, Silent::Yes)
     }
 
     /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue
@@ -2997,7 +3002,7 @@ pub mod mock {
                 return Err(match kind {
                     MockKind::CallsWithSig => throw!(
                         this, global,
-                        Self::get_signature(matcher_name, matcher_params, false),
+                        Self::get_signature(matcher_name, matcher_params, IsNot::No),
                         "\n\nMatcher error: <red>received<r> value must be a mock function\nReceived: {}",
                         value.to_fmt(&mut formatter),
                     )

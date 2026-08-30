@@ -4,6 +4,7 @@ use crate::Error;
 
 use crate::lexer::T;
 use crate::p::P;
+use crate::parse::IncludeRaw;
 use crate::parser::DeferredErrors;
 use crate::scan::scan_side_effects::SideEffects;
 use bun_ast::expr::EFlags;
@@ -311,7 +312,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
         let head = E::Str::new(p.lexer.raw_template_contents());
-        let (parts, _tail_loc) = p.parse_template_parts(true)?;
+        let (parts, _tail_loc) = p.parse_template_parts(IncludeRaw::Yes)?;
         let tag = *left;
         let loc = left.loc;
         *left = p.new_expr(

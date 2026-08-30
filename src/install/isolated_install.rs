@@ -44,12 +44,12 @@ use crate::bun_bunfig::Arguments as Command;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{self, Lockfile};
-use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
+use crate::package_manager::{self, InstallPeer, PackageManager, WorkspaceFilter, run_tasks};
 use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_task as Task;
 use crate::{
-    self as install, DependencyID, PackageID, PackageInstall, PackageNameHash, Resolution,
-    invalid_dependency_id, invalid_package_id,
+    self as install, DependencyID, InstallRootDependencies, PackageID, PackageInstall,
+    PackageNameHash, Resolution, invalid_dependency_id, invalid_package_id,
 };
 use store::{Entry as StoreEntry, EntryColumns as _, Node as StoreNode, NodeColumns as _};
 
@@ -177,7 +177,7 @@ impl<'a, 'b> Wait<'a, 'b> {
         if let Err(err) = run_tasks::run_tasks::<StoreRunTasksCallbacks>(
             pkg_manager,
             self.installer,
-            true,
+            InstallPeer::Yes,
             log_level,
         ) {
             self.err = Some(err);
@@ -216,7 +216,7 @@ pub(crate) enum Timings {
 pub(crate) fn build_store(
     manager: &PackageManager,
     lockfile: &Lockfile,
-    install_root_dependencies: bool,
+    install_root_dependencies: InstallRootDependencies,
     workspace_filters: &[WorkspaceFilter],
     packages_to_install: Option<&[PackageID]>,
     timings: Timings,
@@ -1135,7 +1135,7 @@ pub(crate) fn build_store(
 pub(crate) fn install_isolated_packages(
     manager: &mut PackageManager,
     command_ctx: Command::Context,
-    install_root_dependencies: bool,
+    install_root_dependencies: InstallRootDependencies,
     workspace_filters: &[WorkspaceFilter],
     packages_to_install: Option<&[PackageID]>,
 ) -> Result<crate::package_install::Summary, AllocError> {

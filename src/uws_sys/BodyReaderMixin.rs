@@ -2,7 +2,7 @@ use core::marker::PhantomData;
 use core::mem;
 
 use crate::AnyResponse;
-use crate::response::Response;
+use crate::response::{CloseConnection, Response};
 
 /// Response types that can drive a `BodyReaderMixin`: must support registering
 /// data/abort callbacks and converting to `AnyResponse`.
@@ -196,7 +196,7 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         r.clear_on_writable();
 
         r.write_status(b"500 Internal Server Error");
-        r.end_without_body(true);
+        r.end_without_body(CloseConnection::Yes);
 
         // SAFETY: wrap is the original heap-allocated pointer; the &mut to
         // mixin.body above has ended; on_error may heap::take it.
@@ -213,7 +213,7 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         r.clear_on_writable();
 
         r.write_status(b"400 Bad Request");
-        r.end_without_body(true);
+        r.end_without_body(CloseConnection::Yes);
 
         // SAFETY: wrap is the original heap-allocated pointer; the &mut to
         // mixin.body above has ended; on_error may heap::take it.

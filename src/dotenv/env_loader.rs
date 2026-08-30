@@ -162,6 +162,16 @@ static NODE_PATH_TO_USE_SET_ONCE: bun_core::RwLock<Option<Box<[u8]>>> = bun_core
 // PORTING.md §Concurrency: OnceLock — set once from CLI flag, read many.
 pub static HAS_NO_CLEAR_SCREEN_CLI_FLAG: OnceLock<bool> = OnceLock::new();
 
+bun_core::bool_enum!(
+    /// Which proxy variable pair to consult: `https_proxy` or `http_proxy`.
+    pub HttpScheme { Https, Http }
+);
+
+bun_core::bool_enum!(
+    /// Skip the implicit `.env*` files (only explicit `--env-file`s are loaded).
+    pub SkipDefaultEnv
+);
+
 impl Loader {
     /// Shared "empty-ish" predicate for proxy env vars: an unset/empty value,
     /// or a literal empty-quote pair left over from shell `export FOO=""` /
@@ -323,7 +333,11 @@ impl Loader {
     }
 
     pub fn get_http_proxy_for(&self, url: &URL<'_>) -> Option<URL<'_>> {
-        self.get_http_proxy(url.is_http(), Some(url.hostname), Some(url.host))
+        self.get_http_proxy(
+            HttpScheme::from_bool(url.is_http()),
+            Some(url.hostname),
+            Some(url.host),
+        )
     }
 
     pub fn has_http_proxy(&self) -> bool {
@@ -338,14 +352,14 @@ impl Loader {
     /// `host` is the host with port if present (e.g., "localhost:3000")
     pub fn get_http_proxy(
         &self,
-        is_http: bool,
+        is_http: HttpScheme,
         hostname: Option<&[u8]>,
         host: Option<&[u8]>,
     ) -> Option<URL<'_>> {
         // TODO: When Web Worker support is added, make sure to intern these strings
         let mut http_proxy: Option<URL<'_>> = None;
 
-        let proxy = if is_http {
+        let proxy = if is_http == HttpScheme::Http {
             self.get_lower_then_upper(b"http_proxy", b"HTTP_PROXY")
         } else {
             self.get_lower_then_upper(b"https_proxy", b"HTTPS_PROXY")
@@ -418,7 +432,11 @@ impl Loader {
             if has_port {
                 // Entry has a port, do exact match against host:port
                 if let Some(h) = host {
-                    if strings::eql_case_insensitive_ascii(h, no_proxy_entry, true) {
+                    if strings::eql_case_insensitive_ascii(
+                        h,
+                        no_proxy_entry,
+                        strings::CheckLen::Yes,
+                    ) {
                         return true;
                     }
                 }
@@ -426,7 +444,11 @@ impl Loader {
                 // Entry is hostname/IPv6 only, match exact or dot-boundary suffix (case-insensitive)
                 let entry_len = no_proxy_entry.len();
                 if hn.len() == entry_len {
-                    if strings::eql_case_insensitive_ascii(hn, no_proxy_entry, true) {
+                    if strings::eql_case_insensitive_ascii(
+                        hn,
+                        no_proxy_entry,
+                        strings::CheckLen::Yes,
+                    ) {
                         return true;
                     }
                 } else if hn.len() > entry_len
@@ -434,7 +456,7 @@ impl Loader {
                     && strings::eql_case_insensitive_ascii(
                         &hn[hn.len() - entry_len..],
                         no_proxy_entry,
-                        true,
+                        strings::CheckLen::Yes,
                     )
                 {
                     return true;
@@ -648,7 +670,7 @@ impl Loader {
         dir: &D,
         env_files: &[&[u8]],
         suffix: DotEnvFileSuffix,
-        skip_default_env: bool,
+        skip_default_env: SkipDefaultEnv,
     ) -> crate::Result<()> {
         // `suffix` is a runtime arg (avoids unstable adt_const_params; cold path).
         let start = bun_core::time::nano_timestamp();
@@ -667,7 +689,7 @@ impl Loader {
             //
             // See https://github.com/oven-sh/bun/issues/9635#issuecomment-2021350123
             // for more details on how this edge case works.
-            if !skip_default_env {
+            if skip_default_env == SkipDefaultEnv::No {
                 self.load_default_files(suffix, dir, &mut value_buffer)?;
             }
         }
@@ -977,6 +999,11 @@ struct Parser<'a> {
 // there (NBSP is C2 A0), and trimming it byte-wise corrupts multi-byte sequences.
 const WHITESPACE_CHARS: &[u8] = b"\t\x0B\x0C \n\r";
 
+bun_core::bool_enum!(
+    /// Whether `$`-expansion produced anything different from the input.
+    Expanded { Unchanged, Changed }
+);
+
 impl<'a> Parser<'a> {
     fn skip_line(&mut self) {
         if let Some(i) = strings::index_of_any(&self.src[self.pos..], b"\n\r") {
@@ -1147,7 +1174,7 @@ impl<'a> Parser<'a> {
             return Ok(None);
         }
         self.value_buffer.clear();
-        if !Self::expand_into(map, value, self.value_buffer, 0) {
+        if Self::expand_into(map, value, self.value_buffer, 0) == Expanded::Unchanged {
             return Ok(None);
         }
         Ok(Some(self.value_buffer.as_slice()))
@@ -1157,7 +1184,7 @@ impl<'a> Parser<'a> {
     /// `${...}` locates its matching `}` by depth (`${` opens, `}` closes,
     /// `\x` skipped); malformed forms fall through as literal text. The `:-`
     /// default clause is expanded recursively.
-    fn expand_into(map: &Map, value: &[u8], out: &mut Vec<u8>, depth: u8) -> bool {
+    fn expand_into(map: &Map, value: &[u8], out: &mut Vec<u8>, depth: u8) -> Expanded {
         #[inline]
         fn is_ident(b: u8) -> bool {
             matches!(b, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')
@@ -1252,7 +1279,7 @@ impl<'a> Parser<'a> {
             out.push(b'$');
             pos += 1;
         }
-        changed
+        Expanded::from_bool(changed)
     }
 
     fn parse<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(

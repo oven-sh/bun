@@ -314,6 +314,8 @@ pub struct CreateFlags {
     pub read: bool,
 }
 
+bun_core::bool_enum!(pub SymlinkKind { File, Directory });
+
 impl Dir {
     /// Single-level `mkdirat` (mode 0o755) relative to
     /// this dir. Unlike `make_path`, does NOT create intermediate directories
@@ -336,7 +338,12 @@ impl Dir {
     /// `is_directory` flag is a no-op on POSIX;
     /// on Windows it selects junction vs. file-symlink and
     /// callers route through `sys_uv::symlink_uv` instead.
-    pub fn sym_link(&self, target: &[u8], link_name: &[u8], _is_directory: bool) -> Maybe<()> {
+    pub fn sym_link(
+        &self,
+        target: &[u8],
+        link_name: &[u8],
+        _is_directory: SymlinkKind,
+    ) -> Maybe<()> {
         let mut tbuf = bun_paths::PathBuffer::default();
         let tlen = target.len().min(tbuf.0.len() - 1);
         tbuf.0[..tlen].copy_from_slice(&target[..tlen]);

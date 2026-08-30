@@ -157,6 +157,9 @@ pub fn is_bun_standalone_file_path(str_: &[u8]) -> bool {
     }
 }
 
+bun_core::bool_enum!(pub Recursive);
+bun_core::bool_enum!(pub DirEntryKind { File, Dir });
+
 impl StandaloneModuleGraph {
     // `&mut` only for `File::sourcemap` (`LazySourceMap::load`); every other
     // per-`File` access goes through `get_ref()` / `find_ref()`.
@@ -227,8 +230,12 @@ impl StandaloneModuleGraph {
         self.dirs.contains_key(name)
     }
 
-    /// `(entry, is_dir)`; `entry` is the basename, or the `name`-relative path when `recursive`.
-    pub fn readdir(&self, name: &[u8], recursive: bool) -> Option<Vec<(Box<[u8]>, bool)>> {
+    /// `(entry, kind)`; `entry` is the basename, or the `name`-relative path when `recursive`.
+    pub fn readdir(
+        &self,
+        name: &[u8],
+        recursive: Recursive,
+    ) -> Option<Vec<(Box<[u8]>, DirEntryKind)>> {
         if !is_bun_standalone_file_path(name) {
             return None;
         }
@@ -241,28 +248,28 @@ impl StandaloneModuleGraph {
         prefix.extend_from_slice(name);
         prefix.push(b'/');
 
-        let mut seen: StringArrayHashMap<bool> = StringArrayHashMap::new();
-        let mut push = |key: &[u8], is_dir: bool| {
+        let mut seen: StringArrayHashMap<DirEntryKind> = StringArrayHashMap::new();
+        let mut push = |key: &[u8], kind: DirEntryKind| {
             if key.len() <= prefix.len() || !key.starts_with(&prefix) {
                 return;
             }
             let rel = &key[prefix.len()..];
-            if recursive {
-                let _ = seen.put(rel, is_dir);
+            if recursive == Recursive::Yes {
+                let _ = seen.put(rel, kind);
             } else if let Some(sep) = strings::index_of_char(rel, b'/') {
-                let _ = seen.put(&rel[..sep as usize], true);
+                let _ = seen.put(&rel[..sep as usize], DirEntryKind::Dir);
             } else {
-                let _ = seen.put(rel, is_dir);
+                let _ = seen.put(rel, kind);
             }
         };
         for key in self.files.keys() {
-            push(key, false);
+            push(key, DirEntryKind::File);
         }
         for key in self.dirs.keys() {
-            push(key, true);
+            push(key, DirEntryKind::Dir);
         }
 
-        let mut out: Vec<(Box<[u8]>, bool)> = Vec::with_capacity(seen.count());
+        let mut out: Vec<(Box<[u8]>, DirEntryKind)> = Vec::with_capacity(seen.count());
         for (k, v) in seen.iter() {
             out.push((Box::<[u8]>::from(&k[..]), *v));
         }
@@ -671,9 +678,10 @@ impl File {
                             self.source_hash,
                         );
                     }
-                    Encoding::Latin1 => {
-                        BunString::create_static_external(self.contents.as_bytes(), true)
-                    }
+                    Encoding::Latin1 => BunString::create_static_external(
+                        self.contents.as_bytes(),
+                        bun_core::WTFEncoding::Latin1,
+                    ),
                     Encoding::Utf16 => {
                         let units = self.utf16_units();
                         if self.source_hash != 0 {
@@ -2282,7 +2290,7 @@ pub(crate) fn download_to_path(
                     )
                     .map_err(|_| crate::Error::InvalidResponse)?;
                     gunzip
-                        .read_all(true)
+                        .read_all(bun_zlib::Chunk::Last)
                         .map_err(|_| crate::Error::InvalidResponse)?;
                     Ok(())
                 })();

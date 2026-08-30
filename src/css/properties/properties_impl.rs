@@ -3,6 +3,7 @@ use crate as css;
 use css::PrintErr;
 use css::Printer;
 use css::VendorPrefix;
+use css::WsBefore;
 use css::css_properties::CustomPropertyName;
 use css::css_properties::{Property, PropertyId, PropertyIdTag};
 
@@ -83,15 +84,18 @@ pub(super) mod property_id_mixin {
 pub(super) mod property_mixin {
     use super::*;
 
+    bun_core::bool_enum!(pub Important);
+
     /// Serializes the CSS property, with an optional `!important` flag.
     pub(crate) fn to_css(
         this: &Property,
         dest: &mut Printer,
-        important: bool,
+        important: Important,
     ) -> Result<(), PrintErr> {
+        let important = important == Important::Yes;
         if let Property::Custom(custom) = this {
             custom.name.to_css(dest)?;
-            dest.delim(b':', false)?;
+            dest.delim(b':', WsBefore::No)?;
             this.value_to_css(dest)?;
             if important {
                 dest.whitespace()?;
@@ -110,7 +114,7 @@ pub(super) mod property_mixin {
             |d, p| {
                 p.to_css(d)?;
                 d.write_str(name)?;
-                d.delim(b':', false)?;
+                d.delim(b':', WsBefore::No)?;
                 this.value_to_css(d)?;
                 if important {
                     d.whitespace()?;

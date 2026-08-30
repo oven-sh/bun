@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Expect;
+use super::IsNot;
 use super::get_signature;
 use super::throw;
 
@@ -21,7 +22,7 @@ pub(crate) fn to_match_snapshot(
 
     let not = this.flags.get().not();
     if not {
-        let signature = get_signature("toMatchSnapshot", "", true);
+        let signature = get_signature("toMatchSnapshot", "", IsNot::Yes);
         return throw!(
             this,
             global,
@@ -31,7 +32,7 @@ pub(crate) fn to_match_snapshot(
     }
 
     let Some(buntest_strong) = this.bun_test() else {
-        let signature = get_signature("toMatchSnapshot", "", true);
+        let signature = get_signature("toMatchSnapshot", "", IsNot::Yes);
         return throw!(
             this,
             global,
@@ -62,7 +63,7 @@ pub(crate) fn to_match_snapshot(
         _ => {
             if !arguments[0].is_object() {
                 let signature =
-                    get_signature("toMatchSnapshot", "<green>properties<r><d>, <r>hint", false);
+                    get_signature("toMatchSnapshot", "<green>properties<r><d>, <r>hint", IsNot::No);
                 return throw!(
                     this,
                     global,

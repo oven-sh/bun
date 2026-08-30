@@ -4,8 +4,10 @@ use core::ptr::null_mut;
 use bun_boringssl_sys as ssl;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc};
 
+use super::Side;
+
 pub(super) struct TlsConfig {
-    pub is_server: bool,
+    pub is_server: Side,
     pub alpn: Vec<u8>,
     pub servername: Option<Vec<u8>>,
     pub certs_pem: Vec<Vec<u8>>,
@@ -87,7 +89,7 @@ impl TlsConfig {
     pub(super) fn from_js(
         global: &JSGlobalObject,
         tls: JSValue,
-        is_server: bool,
+        is_server: Side,
     ) -> JsResult<Self> {
         let mut config = TlsConfig {
             is_server,
@@ -473,7 +475,7 @@ impl TlsContext {
             if config.keylog {
                 ssl::SSL_CTX_set_keylog_callback(ctx, Some(keylog_cb));
             }
-            if config.is_server {
+            if config.is_server == Side::Server {
                 if config.verify_client {
                     // SSL_VERIFY_PEER alone matches Node's TLS 1.3 semantics (see QuicSession::maybe_report_handshake).
                     ssl::SSL_CTX_set_verify(ctx, ssl::SSL_VERIFY_PEER, None);

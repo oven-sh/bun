@@ -470,7 +470,8 @@ pub mod fault_inject {
     }
 }
 pub use socket::{
-    AnySocket, ConnectError, InternalSocket, NewSocketHandler, SocketHandler, SocketTCP, SocketTLS,
+    AllowHalfOpen, AnySocket, ConnectError, InternalSocket, NewSocketHandler, SocketHandler,
+    SocketTCP, SocketTLS,
 };
 
 // ───────────────────────────── re-exports ────────────────────────────────────
@@ -483,17 +484,24 @@ pub use socket_kind::SocketKind;
 #[cfg(windows)]
 pub use timer::Timer;
 
+pub use app::{ApplyClientCertPolicy, CloseWhenIdle};
 pub use body_reader_mixin::BodyReaderMixin;
 pub use connecting_socket::ConnectingSocket;
 pub use listen_socket::ListenSocket;
 pub use request::{AnyRequest, Request};
 pub use response::c::uws_res;
-pub use response::{AnyResponse, SocketAddress, WebSocketUpgradeContext};
+pub use response::{
+    AnyResponse, CloseConnection, FirstBodyWrite, FlushImmediately, SocketAddress,
+    WebSocketUpgradeContext,
+};
 pub use socket_context::BunSocketContextOptions;
 pub use socket_group::ConnectResult;
-pub use socket_group::SocketGroup;
-pub use us_socket::{CloseCode, UsIoVec, us_socket_stream_buffer_t, us_socket_t};
-pub use web_socket::{AnyWebSocket, RawWebSocket, WebSocketBehavior};
+pub use socket_group::{Ipc, SocketGroup};
+pub use us_socket::{
+    CloseCode, RejectUnauthorized, RequestCert, TlsRole, UsIoVec, us_socket_stream_buffer_t,
+    us_socket_t,
+};
+pub use web_socket::{AnyWebSocket, Compress, Fin, RawWebSocket, WebSocketBehavior};
 
 /// Legacy aliases for `App<SSL>` / `Response<SSL>`.
 pub type NewApp<const SSL: bool> = app::App<SSL>;

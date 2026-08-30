@@ -605,10 +605,10 @@ impl<'a> Task<'a> {
 fn read_and_extract(
     tarball: &ExtractTarball,
     tarball_path: &[u8],
-    normalize: bool,
+    normalize: NormalizePath,
     log: &mut Log,
 ) -> crate::Result<ExtractData> {
-    let bytes = if normalize {
+    let bytes = if normalize == NormalizePath::Yes {
         // Resolves
         // a user-provided relative path against `bun.fs.FileSystem.instance.top_level_dir`
         // (the absolute project root cached at startup — NOT the live process cwd).
@@ -697,11 +697,17 @@ pub struct GitCheckoutRequest {
     pub(crate) env: &'static dot_env::Map,
 }
 
+bun_core::bool_enum!(
+    /// Whether `LocalTarballRequest::tarball_path` is a user-provided path to
+    /// resolve against the project root (`Yes`) or already absolute (`No`).
+    pub NormalizePath
+);
+
 pub struct LocalTarballRequest {
     pub(crate) tarball: ExtractTarball,
     /// Resolved by `enqueue_local_tarball` on the main thread; the worker must not read the lockfile.
     pub(crate) tarball_path: StringOrTinyString,
-    /// When true, `tarball_path` is a user-provided path resolved relative to
-    /// cwd. When false, it is already an absolute path.
-    pub(crate) normalize: bool,
+    /// When `NormalizePath::Yes`, `tarball_path` is a user-provided path resolved relative to
+    /// cwd. When `NormalizePath::No`, it is already an absolute path.
+    pub(crate) normalize: NormalizePath,
 }

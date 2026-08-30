@@ -3,7 +3,7 @@ use crate::css_parser::CssResult as Result;
 use crate::dependencies::UrlDependency;
 use crate::generics::DeepClone as _;
 use crate::values::color::ColorFallbackKind;
-use crate::values::gradient::Gradient;
+use crate::values::gradient::{Gradient, IsPrefixed};
 use crate::values::resolution::Resolution;
 use crate::values::url::Url;
 use crate::{PrintErr, VendorPrefix};
@@ -313,7 +313,7 @@ impl ImageSet {
     fn to_css(&self, dest: &mut css::Printer) -> core::result::Result<(), PrintErr> {
         self.vendor_prefix.to_css(dest)?;
         dest.write_str("image-set(")?;
-        let prefixed = self.vendor_prefix != VendorPrefix::NONE;
+        let prefixed = IsPrefixed::from_bool(self.vendor_prefix != VendorPrefix::NONE);
         dest.write_comma_separated(self.options.iter(), |d, opt| opt.to_css(d, prefixed))?;
         dest.write_char(b')')
     }
@@ -421,9 +421,9 @@ impl ImageSetOption {
     fn to_css(
         &self,
         dest: &mut css::Printer,
-        is_prefixed: bool,
+        is_prefixed: IsPrefixed,
     ) -> core::result::Result<(), PrintErr> {
-        if matches!(self.image, Image::Url(_)) && !is_prefixed {
+        if matches!(self.image, Image::Url(_)) && is_prefixed == IsPrefixed::No {
             let Image::Url(url) = &self.image else {
                 unreachable!()
             };

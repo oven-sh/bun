@@ -49,7 +49,7 @@ pub mod ssl_wrapper {
     /// tier can keep passing `&SSLConfig` directly.
     pub(crate) fn init<T: Copy>(
         ssl_options: &crate::server::server_config::SSLConfig,
-        is_client: bool,
+        is_client: bun_uws::TlsRole,
         handlers: Handlers<T>,
     ) -> Result<SSLWrapper<T>, crate::Error> {
         SSLWrapper::<T>::init_from_options(&ssl_options.as_usockets(), is_client, handlers)

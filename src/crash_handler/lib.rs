@@ -1205,7 +1205,7 @@ mod draft {
                     );
                     Output::flush();
 
-                    bun_core::reload_process(false, true);
+                    bun_core::reload_process(bun_core::ClearTerminal::No, bun_core::MayReturn::Yes);
                 }
             }
             t @ (1 | 2) => {

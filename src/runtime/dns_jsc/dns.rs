@@ -4805,12 +4805,12 @@ impl Resolver {
                 // direction armed would busy-loop on level-triggered writable
                 // once the socket connects. Full resync is the simplest
                 // correct path and c-ares DNS fds are short-lived.
-                let _ = poll.unregister(loop_, false);
+                let _ = poll.unregister(loop_, Async::ForceUnregister::No);
                 if readable {
-                    let _ = poll.register(loop_, Async::PollKind::Readable, false);
+                    let _ = poll.register(loop_, Async::PollKind::Readable, Async::OneShot::No);
                 }
                 if writable {
-                    let _ = poll.register(loop_, Async::PollKind::Writable, false);
+                    let _ = poll.register(loop_, Async::PollKind::Writable, Async::OneShot::No);
                 }
             } else {
                 // Only adding directions (or no change). register() issues a
@@ -4818,10 +4818,10 @@ impl Resolver {
                 // on kqueue EV_ADD creates a separate (ident, filter) knote
                 // without disturbing the existing one.
                 if readable && !have_readable {
-                    let _ = poll.register(loop_, Async::PollKind::Readable, false);
+                    let _ = poll.register(loop_, Async::PollKind::Readable, Async::OneShot::No);
                 }
                 if writable && !have_writable {
-                    let _ = poll.register(loop_, Async::PollKind::Writable, false);
+                    let _ = poll.register(loop_, Async::PollKind::Writable, Async::OneShot::No);
                 }
             }
         }

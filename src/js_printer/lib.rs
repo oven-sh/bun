@@ -875,6 +875,7 @@ pub mod analyze_transpiled_module {
 pub type RuntimeTranspilerCacheRef = core::ptr::NonNull<bun_ast::RuntimeTranspilerCache>;
 
 use bun_core::fmt::hex2_upper; // remaining `\xHH` site below
+pub use bun_core::printer::{AsciiOnly, Json};
 use bun_core::printer::{
     FIRST_ASCII, FIRST_HIGH_SURROGATE, LAST_ASCII, LAST_LOW_SURROGATE, bmp_escape,
     surrogate_pair_escape,
@@ -889,7 +890,7 @@ const ASCII_ONLY_ALWAYS_ON_UNLESS_MINIFYING: bool = true;
 // single monomorphization instead of one per (ascii_only × quote_char × …) combo —
 // see the comment on `write_pre_quoted_string`.
 #[inline]
-pub(crate) fn can_print_without_escape(c: i32, ascii_only: bool) -> bool {
+pub(crate) fn can_print_without_escape(c: i32, ascii_only: AsciiOnly) -> bool {
     if c <= LAST_ASCII as i32 {
         c >= FIRST_ASCII as i32
             && c != i32::from(b'\\')
@@ -898,7 +899,7 @@ pub(crate) fn can_print_without_escape(c: i32, ascii_only: bool) -> bool {
             && c != i32::from(b'`')
             && c != i32::from(b'$')
     } else {
-        !ascii_only
+        ascii_only == AsciiOnly::No
             && c != 0xFEFF
             && c != 0x2028
             && c != 0x2029
@@ -909,7 +910,9 @@ pub(crate) fn can_print_without_escape(c: i32, ascii_only: bool) -> bool {
 const INDENTATION_SPACE_BUF: [u8; 128] = [b' '; 128];
 const INDENTATION_TAB_BUF: [u8; 128] = [b'\t'; 128];
 
-pub(crate) fn best_quote_char_for_string<T>(str: &[T], allow_backtick: bool) -> u8
+bun_core::bool_enum!(pub(crate) AllowBacktick);
+
+pub(crate) fn best_quote_char_for_string<T>(str: &[T], allow_backtick: AllowBacktick) -> u8
 where
     T: Copy + Into<u32>,
 {
@@ -941,7 +944,7 @@ where
         i += 1;
     }
 
-    if allow_backtick && backtick_cost < single_cost.min(double_cost) {
+    if allow_backtick == AllowBacktick::Yes && backtick_cost < single_cost.min(double_cost) {
         return b'`';
     }
     if single_cost < double_cost {
@@ -1028,7 +1031,13 @@ pub fn write_pre_quoted_string<
 where
     W: Write + ?Sized,
 {
-    write_pre_quoted_string_inner::<W, ENCODING>(text_in, writer, QUOTE_CHAR, ASCII_ONLY, JSON)
+    write_pre_quoted_string_inner::<W, ENCODING>(
+        text_in,
+        writer,
+        QUOTE_CHAR,
+        AsciiOnly::from_bool(ASCII_ONLY),
+        Json::from_bool(JSON),
+    )
 }
 
 /// `quote_char` / `ascii_only` / `json` are runtime args (were `const`): the
@@ -1041,12 +1050,13 @@ pub fn write_pre_quoted_string_inner<W, const ENCODING: Encoding>(
     text_in: &[u8],
     writer: &mut W,
     quote_char: u8,
-    ascii_only: bool,
-    json: bool,
+    ascii_only: AsciiOnly,
+    json: Json,
 ) -> crate::Result<()>
 where
     W: Write + ?Sized,
 {
+    let json = json == Json::Yes;
     debug_assert!(
         !(json && quote_char != b'"'),
         "for json, quote_char must be '\"'"
@@ -1233,7 +1243,7 @@ where
 pub fn quote_for_json(
     text: &[u8],
     bytes: &mut MutableString,
-    ascii_only: bool,
+    ascii_only: AsciiOnly,
 ) -> crate::Result<()> {
     // `ascii_only` is threaded at runtime so
     // the heavy escaper isn't monomorphized per ascii_only/quote-char combo.
@@ -1247,7 +1257,13 @@ pub fn quote_for_json(
     // source. The writer still grows on demand if this under-shoots.
     bytes.grow_if_needed(text.len() + (text.len() >> 3) + 8)?;
     bytes.append_char(b'"')?;
-    write_pre_quoted_string_inner::<_, { Encoding::Utf8 }>(text, bytes, b'"', ascii_only, true)?;
+    write_pre_quoted_string_inner::<_, { Encoding::Utf8 }>(
+        text,
+        bytes,
+        b'"',
+        ascii_only,
+        Json::Yes,
+    )?;
     bytes.append_char(b'"').expect("unreachable");
     Ok(())
 }
@@ -1257,7 +1273,7 @@ pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(
     writer: &mut W,
 ) -> crate::Result<()> {
     writer.write_all(b"\"")?;
-    write_pre_quoted_string_inner::<_, ENCODING>(input, writer, b'"', false, true)?;
+    write_pre_quoted_string_inner::<_, ENCODING>(input, writer, b'"', AsciiOnly::No, Json::Yes)?;
     writer.write_all(b"\"")?;
     Ok(())
 }
@@ -1378,7 +1394,7 @@ impl<'a> Options<'a> {
     pub(crate) fn require_or_import_meta_for_source(
         &self,
         id: u32,
-        was_unwrapped_require: bool,
+        was_unwrapped_require: WasUnwrappedRequire,
     ) -> RequireOrImportMeta {
         if self
             .require_or_import_meta_for_source_callback
@@ -1430,11 +1446,16 @@ impl<'a> Default for Options<'a> {
 
 use bun_ast::{Indentation, IndentationCharacter};
 
+bun_core::bool_enum!(pub IsExport);
+
+bun_core::bool_enum!(pub(crate) HasRestArg);
+bun_core::bool_enum!(pub(crate) IsArrow);
+
 // `is_export` gates whether printing a binding also records an export entry
 // in ModuleInfo; dead-code elimination drops it when MAY_HAVE_MODULE_INFO is false.
 #[derive(Clone, Copy, Default)]
 pub struct TopLevelAndIsExport {
-    pub is_export: bool,
+    pub is_export: IsExport,
 }
 
 /// Downstream-compat: `print_json` callers pass this. Only the fields any caller actually sets are surfaced
@@ -1464,17 +1485,19 @@ pub struct RequireOrImportMeta {
     pub was_unwrapped_require: bool,
 }
 
+bun_core::bool_enum!(pub WasUnwrappedRequire);
+
 // Clone/Copy: bitwise OK — `ctx` is a non-owning opaque backref the caller
 // keeps alive for the print pass; `callback` is POD.
 #[derive(Clone, Copy)]
 pub struct RequireOrImportMetaCallback {
     pub(crate) ctx: Option<NonNull<()>>,
-    pub(crate) callback: fn(*mut (), u32, bool) -> RequireOrImportMeta,
+    pub(crate) callback: fn(*mut (), u32, WasUnwrappedRequire) -> RequireOrImportMeta,
 }
 
 impl Default for RequireOrImportMetaCallback {
     fn default() -> Self {
-        fn noop(_: *mut (), _: u32, _: bool) -> RequireOrImportMeta {
+        fn noop(_: *mut (), _: u32, _: WasUnwrappedRequire) -> RequireOrImportMeta {
             RequireOrImportMeta::default()
         }
         Self {
@@ -1490,12 +1513,16 @@ pub trait RequireOrImportMetaSource {
     fn require_or_import_meta_for_source(
         &mut self,
         id: u32,
-        was_unwrapped_require: bool,
+        was_unwrapped_require: WasUnwrappedRequire,
     ) -> RequireOrImportMeta;
 }
 
 impl RequireOrImportMetaCallback {
-    pub(crate) fn call(&self, id: u32, was_unwrapped_require: bool) -> RequireOrImportMeta {
+    pub(crate) fn call(
+        &self,
+        id: u32,
+        was_unwrapped_require: WasUnwrappedRequire,
+    ) -> RequireOrImportMeta {
         (self.callback)(self.ctx.unwrap().as_ptr(), id, was_unwrapped_require)
     }
 
@@ -1503,7 +1530,7 @@ impl RequireOrImportMetaCallback {
         fn thunk<T: RequireOrImportMetaSource>(
             p: *mut (),
             id: u32,
-            was_unwrapped_require: bool,
+            was_unwrapped_require: WasUnwrappedRequire,
         ) -> RequireOrImportMeta {
             // SAFETY: `p` was constructed from `&mut T` in `init` below; caller guarantees
             // `ctx` outlives this `RequireOrImportMetaCallback`, so the cast-back
@@ -2002,7 +2029,7 @@ pub(crate) mod __gated_printer {
                 match statement {
                     None => self.print_require_or_import_expr(
                         import.import_record_index,
-                        false,
+                        WasUnwrappedRequire::No,
                         &[],
                         Expr::EMPTY,
                         Level::Lowest,
@@ -2023,7 +2050,7 @@ pub(crate) mod __gated_printer {
                         self.print_equals();
                         self.print_require_or_import_expr(
                             import.import_record_index,
-                            false,
+                            WasUnwrappedRequire::No,
                             &[],
                             Expr::EMPTY,
                             Level::Lowest,
@@ -2073,7 +2100,7 @@ pub(crate) mod __gated_printer {
                     match statement {
                         None => self.print_require_or_import_expr(
                             import.import_record_index,
-                            false,
+                            WasUnwrappedRequire::No,
                             &[],
                             Expr::EMPTY,
                             Level::Lowest,
@@ -2428,7 +2455,7 @@ pub(crate) mod __gated_printer {
                 self.print_space_before_identifier();
                 self.print_identifier(alias);
             } else {
-                self.print_string_literal_utf8(alias, false);
+                self.print_string_literal_utf8(alias, AllowBacktick::No);
             }
         }
 
@@ -2436,9 +2463,9 @@ pub(crate) mod __gated_printer {
             &mut self,
             open_paren_loc: Option<bun_ast::Loc>,
             args: &[G::Arg],
-            has_rest_arg: bool,
+            has_rest_arg: HasRestArg,
             // is_arrow can be used for minifying later
-            _is_arrow: bool,
+            _is_arrow: IsArrow,
         ) {
             let wrap = true;
 
@@ -2455,7 +2482,7 @@ pub(crate) mod __gated_printer {
                     self.print_space();
                 }
 
-                if has_rest_arg && i + 1 == args.len() {
+                if has_rest_arg == HasRestArg::Yes && i + 1 == args.len() {
                     self.print(b"...");
                 }
 
@@ -2476,8 +2503,8 @@ pub(crate) mod __gated_printer {
             self.print_fn_args(
                 Some(func.open_parens_loc),
                 slice_of(func.args),
-                func.flags.contains(G::FnFlags::HasRestArg),
-                false,
+                HasRestArg::from_bool(func.flags.contains(G::FnFlags::HasRestArg)),
+                IsArrow::No,
             );
             self.print_space();
             self.print_block(func.body.loc, slice_of(func.body.stmts), None);
@@ -2528,7 +2555,10 @@ pub(crate) mod __gated_printer {
             self.print(b"}");
         }
 
-        pub(crate) fn best_quote_char_for_e_string(str: &E::String, allow_backtick: bool) -> u8 {
+        pub(crate) fn best_quote_char_for_e_string(
+            str: &E::String,
+            allow_backtick: AllowBacktick,
+        ) -> u8 {
             if IS_JSON {
                 return b'"';
             }
@@ -2580,8 +2610,8 @@ pub(crate) mod __gated_printer {
                 text,
                 &mut writer,
                 quote,
-                ASCII_ONLY,
-                false,
+                AsciiOnly::from_bool(ASCII_ONLY),
+                Json::No,
             );
         }
 
@@ -2593,8 +2623,8 @@ pub(crate) mod __gated_printer {
                 slice,
                 &mut writer,
                 quote,
-                ASCII_ONLY,
-                false,
+                AsciiOnly::from_bool(ASCII_ONLY),
+                Json::No,
             );
         }
 
@@ -2641,7 +2671,7 @@ pub(crate) mod __gated_printer {
         #[inline(never)]
         pub(crate) fn print_require_error(&mut self, text: &[u8]) {
             self.print(b"(()=>{throw new Error(\"Cannot require module \"+");
-            self.print_string_literal_utf8(text, false);
+            self.print_string_literal_utf8(text, AllowBacktick::No);
             self.print(b");})()");
         }
 
@@ -2665,7 +2695,7 @@ pub(crate) mod __gated_printer {
         pub(crate) fn print_require_or_import_expr(
             &mut self,
             import_record_index: u32,
-            was_unwrapped_require: bool,
+            was_unwrapped_require: WasUnwrappedRequire,
             leading_interior_comments: &[G::Comment],
             import_options: Expr,
             level_: Level,
@@ -2776,7 +2806,7 @@ pub(crate) mod __gated_printer {
                     self.print_symbol(self.options.hmr_ref);
                     self.print(b".require(");
                     let path = &input_files[record.source_index.get() as usize].path;
-                    self.print_string_literal_utf8(path.pretty, false);
+                    self.print_string_literal_utf8(path.pretty, AllowBacktick::No);
                     self.print(b")");
                 } else if !meta.was_unwrapped_require {
                     // Call the wrapper
@@ -2871,7 +2901,7 @@ pub(crate) mod __gated_printer {
                         self.print(b".require(");
                     }
                     let path = &record.path;
-                    self.print_string_literal_utf8(path.pretty, false);
+                    self.print_string_literal_utf8(path.pretty, AllowBacktick::No);
                     self.print(b")");
                     if wrap {
                         self.print(b")");
@@ -2930,7 +2960,7 @@ pub(crate) mod __gated_printer {
                 self.print_symbol(self.options.hmr_ref);
                 self.print(b".dynamicImport(");
                 let path = &record.path;
-                self.print_string_literal_utf8(path.pretty, false);
+                self.print_string_literal_utf8(path.pretty, AllowBacktick::No);
             }
 
             if !import_options.is_missing() {
@@ -2966,7 +2996,7 @@ pub(crate) mod __gated_printer {
         pub(crate) fn print_string_literal_e_string(
             &mut self,
             str: &E::String,
-            allow_backtick: bool,
+            allow_backtick: AllowBacktick,
         ) {
             let quote = Self::best_quote_char_for_e_string(str, allow_backtick);
             self.print(quote);
@@ -2974,7 +3004,11 @@ pub(crate) mod __gated_printer {
             self.print(quote);
         }
 
-        pub(crate) fn print_string_literal_utf8(&mut self, str: &[u8], allow_backtick: bool) {
+        pub(crate) fn print_string_literal_utf8(
+            &mut self,
+            str: &[u8],
+            allow_backtick: AllowBacktick,
+        ) {
             // WTF-8 = UTF-8 plus surrogate code points (U+D800..U+DFFF as
             // `ED A0 80`..`ED BF BF`), so validate UTF-8 shape minus the
             // surrogate exclusion.
@@ -3327,7 +3361,7 @@ pub(crate) mod __gated_printer {
                         );
                         self.print_string_literal_utf8(
                             self.import_record(*index as usize).path.pretty,
-                            true,
+                            AllowBacktick::Yes,
                         );
                     }
                 },
@@ -3379,7 +3413,7 @@ pub(crate) mod __gated_printer {
                                 self.print(key);
                             } else {
                                 self.print(b"[");
-                                self.print_string_literal_utf8(key, false);
+                                self.print_string_literal_utf8(key, AllowBacktick::No);
                                 self.print(b"]");
                             }
                         } else {
@@ -3537,7 +3571,7 @@ pub(crate) mod __gated_printer {
                 ExprData::ERequireString(e) => {
                     self.print_require_or_import_expr(
                         e.import_record_index,
-                        e.unwrapped_id.is_some(),
+                        WasUnwrappedRequire::from_bool(e.unwrapped_id.is_some()),
                         &[],
                         Expr::EMPTY,
                         level,
@@ -3565,7 +3599,7 @@ pub(crate) mod __gated_printer {
                     self.print(b"(");
                     self.print_string_literal_utf8(
                         self.import_record(e.import_record_index as usize).path.text,
-                        true,
+                        AllowBacktick::Yes,
                     );
                     self.print(b")");
 
@@ -3605,7 +3639,7 @@ pub(crate) mod __gated_printer {
                     } else {
                         self.print_require_or_import_expr(
                             e.import_record_index,
-                            false,
+                            WasUnwrappedRequire::No,
                             &[], // e.leading_interior_comments,
                             e.options,
                             level,
@@ -3657,7 +3691,7 @@ pub(crate) mod __gated_printer {
                         } else {
                             self.print(b"[");
                         }
-                        self.print_string_literal_utf8(&e.name, false);
+                        self.print_string_literal_utf8(&e.name, AllowBacktick::No);
                         self.print(b"]");
                     }
 
@@ -3756,8 +3790,8 @@ pub(crate) mod __gated_printer {
                     self.print_fn_args(
                         if e.is_async { None } else { Some(expr.loc) },
                         &e.args,
-                        e.has_rest_arg,
-                        true,
+                        HasRestArg::from_bool(e.has_rest_arg),
+                        IsArrow::Yes,
                     );
                     self.print_whitespacer(ws!(b" => "));
 
@@ -3994,7 +4028,7 @@ pub(crate) mod __gated_printer {
                         return;
                     }
 
-                    self.print_string_literal_e_string(&e, true);
+                    self.print_string_literal_e_string(&e, AllowBacktick::Yes);
                 }
                 ExprData::ETemplate(e) => {
                     // Print from a thread-local shallow copy of the template
@@ -4292,7 +4326,7 @@ pub(crate) mod __gated_printer {
                             } else {
                                 self.print(b"[");
                                 // TODO: addSourceMappingForName
-                                self.print_string_literal_utf8(alias, false);
+                                self.print_string_literal_utf8(alias, AllowBacktick::No);
                                 self.print(b"]");
                             }
 
@@ -4548,7 +4582,7 @@ pub(crate) mod __gated_printer {
                 self.print_identifier(namespace.alias.slice());
             } else {
                 self.print(b"[");
-                self.print_string_literal_utf8(namespace.alias.slice(), false);
+                self.print_string_literal_utf8(namespace.alias.slice(), AllowBacktick::No);
                 self.print(b"]");
             }
         }
@@ -4635,7 +4669,7 @@ pub(crate) mod __gated_printer {
                         self.print_indent();
                     }
                     let key = E::String::init(prop.key.slice());
-                    self.print_string_literal_e_string(&key, false);
+                    self.print_string_literal_e_string(&key, AllowBacktick::No);
                     self.print(b":");
                     self.print_space();
                     self.print_json_value(&prop.value);
@@ -4696,7 +4730,7 @@ pub(crate) mod __gated_printer {
                 E::JsonValue::Number(n) => self.print_number(n.value(), Level::Lowest),
                 E::JsonValue::String(s) => {
                     let s = E::String::init(s.slice());
-                    self.print_string_literal_e_string(&s, false);
+                    self.print_string_literal_e_string(&s, AllowBacktick::No);
                 }
                 E::JsonValue::Object(o) => self.print_object_json(o.get()),
                 E::JsonValue::Array(a) => self.print_array_json(a.get()),
@@ -4876,7 +4910,7 @@ pub(crate) mod __gated_printer {
                             self.print_identifier(key_str.slice8());
                         } else {
                             allow_shorthand = false;
-                            self.print_string_literal_e_string(&key_str, false);
+                            self.print_string_literal_e_string(&key_str, AllowBacktick::No);
                         }
 
                         // Use a shorthand property if the names are the same
@@ -4954,7 +4988,7 @@ pub(crate) mod __gated_printer {
                             }
                         }
                     } else {
-                        let c = best_quote_char_for_string(key_str.slice16(), false);
+                        let c = best_quote_char_for_string(key_str.slice16(), AllowBacktick::No);
                         self.print(c);
                         self.print_string_characters_utf16(key_str.slice16(), c);
                         self.print(c);
@@ -5024,7 +5058,7 @@ pub(crate) mod __gated_printer {
                     self.print_space_before_identifier();
                     self.add_source_mapping(binding.loc);
                     self.print_symbol(b.r#ref);
-                    if Self::MAY_HAVE_MODULE_INFO && tlm.is_export {
+                    if Self::MAY_HAVE_MODULE_INFO && tlm.is_export == IsExport::Yes {
                         // reshaped for borrowck — fetch name before borrowing module_info.
                         let local_name = self.name_for_symbol(b.r#ref);
                         if let Some(mi) = self.module_info() {
@@ -5139,7 +5173,7 @@ pub(crate) mod __gated_printer {
                                                         == self.name_for_symbol(id.r#ref)
                                                     {
                                                         if Self::MAY_HAVE_MODULE_INFO
-                                                            && tlm.is_export
+                                                            && tlm.is_export == IsExport::Yes
                                                         {
                                                             if let Some(mi) = self.module_info() {
                                                                 let name_id = mi.str(str.slice8());
@@ -5155,7 +5189,10 @@ pub(crate) mod __gated_printer {
                                                     }
                                                 }
                                             } else {
-                                                self.print_string_literal_utf8(str.slice8(), false);
+                                                self.print_string_literal_utf8(
+                                                    str.slice8(),
+                                                    AllowBacktick::No,
+                                                );
                                             }
                                         } else if self.can_print_identifier_utf16(str.slice16()) {
                                             self.print_space_before_identifier();
@@ -5171,7 +5208,9 @@ pub(crate) mod __gated_printer {
                                                     str.slice16(),
                                                     self.name_for_symbol(id.r#ref),
                                                 ) {
-                                                    if Self::MAY_HAVE_MODULE_INFO && tlm.is_export {
+                                                    if Self::MAY_HAVE_MODULE_INFO
+                                                        && tlm.is_export == IsExport::Yes
+                                                    {
                                                         // reshaped for borrowck — bump access first.
                                                         let str8 = bun_core::handle_oom(
                                                             str.string(self.bump),
@@ -5679,7 +5718,7 @@ pub(crate) mod __gated_printer {
                     self.print_indent();
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
-                    self.print_decl_stmt(s.is_export, s.kind, s.decls.slice());
+                    self.print_decl_stmt(IsExport::from_bool(s.is_export), s.kind, s.decls.slice());
                 }
                 StmtData::SIf(s) => {
                     self.print_indent();
@@ -6276,7 +6315,7 @@ pub(crate) mod __gated_printer {
                     self.print_indent();
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
-                    self.print_string_literal_utf8(s.value.slice(), false);
+                    self.print_string_literal_utf8(s.value.slice(), AllowBacktick::No);
                     self.print_semicolon_after_statement();
                 }
                 StmtData::SBreak(s) => {
@@ -6343,7 +6382,7 @@ pub(crate) mod __gated_printer {
                 unreachable!();
             }
 
-            let quote = best_quote_char_for_string(import_record.path.text, false);
+            let quote = best_quote_char_for_string(import_record.path.text, AllowBacktick::No);
             if import_record
                 .flags
                 .contains(ImportRecordFlags::PRINT_NAMESPACE_IN_PATH)
@@ -6554,11 +6593,11 @@ pub(crate) mod __gated_printer {
 
         pub(crate) fn print_decl_stmt(
             &mut self,
-            is_export: bool,
+            is_export: IsExport,
             kind: S::Kind,
             decls: &[G::Decl],
         ) {
-            if is_export {
+            if is_export == IsExport::Yes {
                 self.print(b"export ");
             }
             let tlm: TopLevelAndIsExport = if Self::MAY_HAVE_MODULE_INFO {
@@ -6786,7 +6825,7 @@ pub(crate) mod __gated_printer {
             self.indent();
             self.print_indent();
 
-            self.print_string_literal_utf8(source.path.pretty, false);
+            self.print_string_literal_utf8(source.path.pretty, AllowBacktick::No);
 
             let stmts = slice_of(part.stmts);
             let func = &stmts[0]
@@ -6814,8 +6853,8 @@ pub(crate) mod __gated_printer {
                 self.print_fn_args(
                     Some(func.open_parens_loc),
                     slice_of(func.args),
-                    func.flags.contains(G::FnFlags::HasRestArg),
-                    false,
+                    HasRestArg::from_bool(func.flags.contains(G::FnFlags::HasRestArg)),
+                    IsArrow::No,
                 );
                 self.print_space();
                 self.print(b"{\n");
@@ -6850,7 +6889,7 @@ pub(crate) mod __gated_printer {
                         self.print_indent();
                         let import = stmt.data.s_import().unwrap();
                         let record = self.import_record(import.import_record_index as usize);
-                        self.print_string_literal_utf8(record.path.pretty, false);
+                        self.print_string_literal_utf8(record.path.pretty, AllowBacktick::No);
 
                         let item_count = u32::from(import.default_name.is_some())
                             + u32::try_from(slice_of(import.items).len()).expect("int cast");
@@ -6868,7 +6907,10 @@ pub(crate) mod __gated_printer {
                             }
                             for item in slice_of(import.items).iter() {
                                 self.print(b" ");
-                                self.print_string_literal_utf8(item.alias.slice(), false);
+                                self.print_string_literal_utf8(
+                                    item.alias.slice(),
+                                    AllowBacktick::No,
+                                );
                                 self.print(b",");
                             }
                         }
@@ -6892,7 +6934,7 @@ pub(crate) mod __gated_printer {
                             self.print(b" ");
                         }
                         len += key.len();
-                        self.print_string_literal_utf8(key, false);
+                        self.print_string_literal_utf8(key, AllowBacktick::No);
                         self.print(b",");
                     }
                     self.unindent();
@@ -6912,7 +6954,7 @@ pub(crate) mod __gated_printer {
                     had_any_stars = true;
                     self.print_newline();
                     self.print_indent();
-                    self.print_string_literal_utf8(record.path.pretty, false);
+                    self.print_string_literal_utf8(record.path.pretty, AllowBacktick::No);
                     self.print(b",");
                 }
                 self.unindent();
@@ -6929,8 +6971,8 @@ pub(crate) mod __gated_printer {
                 self.print_fn_args(
                     Some(func.open_parens_loc),
                     slice_of(func.args),
-                    func.flags.contains(G::FnFlags::HasRestArg),
-                    false,
+                    HasRestArg::from_bool(func.flags.contains(G::FnFlags::HasRestArg)),
+                    IsArrow::No,
                 );
                 self.print(b" => {\n");
                 self.indent();
@@ -7501,7 +7543,9 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
     let mut builder = SourceMap::chunk::Builder {
         source_map: SourceMap::chunk::SourceMapFormat::init(
             // opts.source_map_allocator orelse opts.allocator — allocator dropped
-            IS_BUN_PLATFORM && generate_source_map == GenerateSourceMap::Lazy,
+            SourceMap::chunk::PrependCount::from_bool(
+                IS_BUN_PLATFORM && generate_source_map == GenerateSourceMap::Lazy,
+            ),
         ),
         cover_lines_without_mappings: true,
         approximate_input_line_count: tree.approximate_newline_count,

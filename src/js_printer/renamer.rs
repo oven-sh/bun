@@ -10,7 +10,7 @@ use bun_ast::lexer_tables::{
 };
 use bun_ast::symbol;
 use bun_ast::symbol::SlotNamespace;
-use bun_ast::{Ref, Symbol};
+use bun_ast::{IsSourceContentsSlice, Ref, Symbol};
 use bun_collections::hive_array::Fallback as HiveArrayFallback;
 use bun_collections::{HashMap, StringHashMap, VecExt};
 use bun_core::Output;
@@ -674,7 +674,10 @@ impl NumberRenamer {
             sorted.sort_unstable();
 
             for &inner_index in sorted.iter() {
-                self.assign_name(s, Ref::init(inner_index, source_index, false));
+                self.assign_name(
+                    s,
+                    Ref::init(inner_index, source_index, IsSourceContentsSlice::No),
+                );
             }
         }
 
@@ -1022,7 +1025,8 @@ impl NumberScope {
         // `is_simple_ascii_identifier` is ASCII-restricted. The hot ASCII path
         // skips the byte compare via `!normalized`; the rare non-ASCII path
         // falls back to it.
-        if !collided && (!normalized || strings::eql_long(name, input_name, true)) {
+        if !collided && (!normalized || strings::eql_long(name, input_name, strings::CheckLen::Yes))
+        {
             // `input_name` is `Symbol::original_name.slice()` — an AST-arena
             // slice that outlives the renamer (see [`NameKey`] doc). No copy.
             let prev = self

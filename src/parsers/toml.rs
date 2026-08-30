@@ -86,12 +86,17 @@ struct KeySeg<'a> {
 // Each scan mode returns its own narrow token type: a token that is illegal
 // at a grammar position cannot be produced there.
 
+bun_core::bool_enum!(
+    /// `[table]` or `[[array-of-tables]]`.
+    HeaderKind { Table, ArrayOfTables }
+);
+
 /// What begins a top-level expression.
 enum LineStart<'a> {
     Eof,
     /// `[` (`aot` for `[[`) at `pos`.
     TableOpen {
-        aot: bool,
+        aot: HeaderKind,
         pos: usize,
     },
     Key(KeySeg<'a>),
@@ -155,12 +160,17 @@ enum ArrayItem<'a> {
 
 pub struct TOML;
 
+bun_core::bool_enum!(
+    /// Omit key text and source bytes from diagnostics (for files that may hold secrets).
+    pub RedactLogs
+);
+
 impl TOML {
     pub fn parse<'a>(
         source: &'a Source,
         log: &mut Log,
         bump: &'a Bump,
-        redact_logs: bool,
+        redact_logs: RedactLogs,
     ) -> crate::Result<Expr> {
         source.check_parseable_len(log, "TOML document")?;
         let mut parser = Parser {
@@ -225,6 +235,11 @@ fn loc_of(pos: usize) -> Loc {
 
 // ── scanner ─────────────────────────────────────────────────────────────────
 
+bun_core::bool_enum!(
+    /// `"""` / `'''` strings versus their single-line forms.
+    Multiline
+);
+
 /// Owns the byte cursor. The only component that reads source bytes; every
 /// public method scans one token (or one fixed construct) for one grammar
 /// position and skips exactly the leading trivia that position allows.
@@ -234,7 +249,7 @@ struct Scanner<'a, 'log> {
     bump: &'a Bump,
     source: &'a Source,
     log: &'log mut Log,
-    redact: bool,
+    redact: RedactLogs,
 }
 
 impl<'a, 'log> Scanner<'a, 'log> {
@@ -251,7 +266,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
                 source: Some(self.source),
                 loc: loc_of(pos),
                 len: 0,
-                redact_sensitive_information: self.redact,
+                redact_sensitive_information: self.redact == RedactLogs::Yes,
             },
         );
         PErr::Syntax
@@ -265,7 +280,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
         key: &[u8],
         after: &'static str,
     ) -> PErr {
-        if self.redact {
+        if self.redact == RedactLogs::Yes {
             self.err_fmt(pos, format_args!("{}{}", before, after))
         } else {
             self.err_fmt(
@@ -278,7 +293,9 @@ impl<'a, 'log> Scanner<'a, 'log> {
     fn err_char(&mut self, pos: usize, what: &'static str) -> PErr {
         match self.src.get(pos).copied() {
             None => self.err_fmt(pos, format_args!("{} end of file", what)),
-            Some(_) if self.redact => self.err_fmt(pos, format_args!("{} (redacted)", what)),
+            Some(_) if self.redact == RedactLogs::Yes => {
+                self.err_fmt(pos, format_args!("{} (redacted)", what))
+            }
             Some(c) if c.is_ascii_graphic() => {
                 self.err_fmt(pos, format_args!("{} '{}'", what, c as char))
             }
@@ -293,7 +310,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
         while end < self.src.len() && is_bare_key_char(self.peek_at(end)) && end - pos < 64 {
             end += 1;
         }
-        if self.redact || end == pos {
+        if self.redact == RedactLogs::Yes || end == pos {
             return self.err(pos, b"Strings must be quoted");
         }
         self.err_fmt(
@@ -421,8 +438,8 @@ impl<'a, 'log> Scanner<'a, 'log> {
             let pos = self.pos;
             self.pos += 1;
             // `array-table-open = %x5B.5B`: the second bracket is adjacent.
-            let aot = self.peek() == b'[';
-            if aot {
+            let aot = HeaderKind::from_bool(self.peek() == b'[');
+            if aot == HeaderKind::ArrayOfTables {
                 self.pos += 1;
             }
             return Ok(LineStart::TableOpen { aot, pos });
@@ -435,11 +452,11 @@ impl<'a, 'log> Scanner<'a, 'log> {
         let pos = self.pos;
         match self.peek() {
             b'"' => {
-                let (text, _) = self.scan_basic_string(false)?;
+                let (text, _) = self.scan_basic_string(Multiline::No)?;
                 Ok(KeySeg { text, pos })
             }
             b'\'' => {
-                let (text, _) = self.scan_literal_string(false)?;
+                let (text, _) = self.scan_literal_string(Multiline::No)?;
                 Ok(KeySeg { text, pos })
             }
             c if is_bare_key_char(c) => {
@@ -481,7 +498,8 @@ impl<'a, 'log> Scanner<'a, 'log> {
 
     /// After a key segment in a header: `ws` then `.` or the closing
     /// bracket(s). `]]` must be adjacent (`array-table-close = %x5D.5D`).
-    fn scan_header_sep(&mut self, aot: bool) -> PResult<HeaderSep> {
+    fn scan_header_sep(&mut self, aot: HeaderKind) -> PResult<HeaderSep> {
+        let aot = aot == HeaderKind::ArrayOfTables;
         self.skip_ws();
         match self.peek() {
             b'.' => {
@@ -605,17 +623,17 @@ impl<'a, 'log> Scanner<'a, 'log> {
         let data = match self.peek() {
             b'"' => {
                 let (text, is_ascii) = if self.src[self.pos..].starts_with(b"\"\"\"") {
-                    self.scan_basic_string(true)?
+                    self.scan_basic_string(Multiline::Yes)?
                 } else {
-                    self.scan_basic_string(false)?
+                    self.scan_basic_string(Multiline::No)?
                 };
                 ValueData::String { text, is_ascii }
             }
             b'\'' => {
                 let (text, is_ascii) = if self.src[self.pos..].starts_with(b"'''") {
-                    self.scan_literal_string(true)?
+                    self.scan_literal_string(Multiline::Yes)?
                 } else {
-                    self.scan_literal_string(false)?
+                    self.scan_literal_string(Multiline::No)?
                 };
                 ValueData::String { text, is_ascii }
             }
@@ -1146,7 +1164,8 @@ impl<'a, 'log> Scanner<'a, 'log> {
     /// Returns (decoded bytes, is_ascii). The content borrows the source
     /// until an escape, CRLF normalization, or quote-run handling forces a
     /// copy — most strings have neither.
-    fn scan_basic_string(&mut self, multiline: bool) -> PResult<(&'a [u8], bool)> {
+    fn scan_basic_string(&mut self, multiline: Multiline) -> PResult<(&'a [u8], bool)> {
+        let multiline = multiline == Multiline::Yes;
         let open_pos = self.pos;
         self.pos += if multiline { 3 } else { 1 };
 
@@ -1367,7 +1386,8 @@ impl<'a, 'log> Scanner<'a, 'log> {
 
     /// Returns (decoded bytes, is_ascii). Literal strings have no escapes, so
     /// the content borrows the source unless CRLF normalization forces a copy.
-    fn scan_literal_string(&mut self, multiline: bool) -> PResult<(&'a [u8], bool)> {
+    fn scan_literal_string(&mut self, multiline: Multiline) -> PResult<(&'a [u8], bool)> {
+        let multiline = multiline == Multiline::Yes;
         let open_pos = self.pos;
         self.pos += if multiline { 3 } else { 1 };
 
@@ -1531,7 +1551,7 @@ impl<'a, 'log> Parser<'a, 'log> {
     fn parse_table_header(
         &mut self,
         root: *mut E::Object,
-        aot: bool,
+        aot: HeaderKind,
         header_pos: usize,
     ) -> PResult<*mut E::Object> {
         let mut path: ArenaVec<'a, KeySeg<'a>> = ArenaVec::with_capacity_in(0, self.bump);
@@ -1551,9 +1571,10 @@ impl<'a, 'log> Parser<'a, 'log> {
         &mut self,
         root: *mut E::Object,
         path: &[KeySeg<'a>],
-        is_aot: bool,
+        is_aot: HeaderKind,
         header_pos: usize,
     ) -> PResult<*mut E::Object> {
+        let is_aot = is_aot == HeaderKind::ArrayOfTables;
         let mut cur: *mut E::Object = root;
         for (i, seg) in path.iter().enumerate() {
             let last = i + 1 == path.len();

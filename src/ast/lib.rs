@@ -162,6 +162,8 @@ pub enum RefTag {
     Symbol = 3,
 }
 
+bun_core::bool_enum!(pub IsSourceContentsSlice);
+
 /// Packed-u64 symbol reference: `{inner_index: u28, user: u3, tag: u2, source_index: u31}`.
 ///
 /// LSB-first packing for the `tag`/`source_index` fields, with 3 bits stolen
@@ -287,11 +289,14 @@ impl Ref {
         i == Self::INNER_MASK as u32 // maxInt(u31)
     }
 
-    pub fn init(inner_index: u32, source_index: u32, is_source_contents_slice: bool) -> Ref {
-        let tag = if is_source_contents_slice {
-            RefTag::SourceContentsSlice
-        } else {
-            RefTag::AllocatedName
+    pub fn init(
+        inner_index: u32,
+        source_index: u32,
+        is_source_contents_slice: IsSourceContentsSlice,
+    ) -> Ref {
+        let tag = match is_source_contents_slice {
+            IsSourceContentsSlice::Yes => RefTag::SourceContentsSlice,
+            IsSourceContentsSlice::No => RefTag::AllocatedName,
         };
         Self::pack(inner_index, tag, source_index)
     }
@@ -1354,6 +1359,13 @@ impl Range {
 // Log
 // ───────────────────────────────────────────────────────────────────────────
 
+bun_core::bool_enum!(
+    /// Whether the source contents backing the messages are recycled (so line
+    /// text must be deep-copied when cloning into another `Log`).
+    pub Recycled
+);
+bun_core::bool_enum!(pub Redact);
+
 pub struct Log {
     pub warnings: u32,
     pub errors: u32,
@@ -1540,19 +1552,19 @@ impl Log {
             },
             text,
             Box::default(),
-            false,
+            Redact::No,
         )
     }
 
     // `to_js`/`to_js_aggregate_error`/`to_js_array` live in `bun_logger_jsc`.
 
-    pub fn clone_to_with_recycled(&mut self, other: &mut Log, recycled: bool) {
+    pub fn clone_to_with_recycled(&mut self, other: &mut Log, recycled: Recycled) {
         let dest_start = other.msgs.len();
         other.msgs.extend(self.msgs.iter().map(Msg::clone));
         other.warnings += self.warnings;
         other.errors += self.errors;
 
-        if recycled {
+        if recycled == Recycled::Yes {
             let mut string_builder = StringBuilder;
             let mut notes_count: usize = 0;
             for msg in &self.msgs {
@@ -1575,7 +1587,7 @@ impl Log {
         }
     }
 
-    pub fn append_to_with_recycled(&mut self, other: &mut Log, recycled: bool) {
+    pub fn append_to_with_recycled(&mut self, other: &mut Log, recycled: Recycled) {
         self.clone_to_with_recycled(other, recycled);
         self.msgs.clear();
         self.msgs.shrink_to_fit();
@@ -1586,7 +1598,7 @@ impl Log {
     }
 
     pub fn append_to_maybe_recycled(&mut self, other: &mut Log, source: &Source) {
-        self.append_to_with_recycled(other, source.contents_is_recycled)
+        self.append_to_with_recycled(other, Recycled::from_bool(source.contents_is_recycled))
     }
 
     // TODO: remove `deinit` because it does not de-initialize the log; it clears it
@@ -1618,7 +1630,7 @@ impl Log {
         r: Range,
         text: Cow<'static, [u8]>,
         notes: Box<[Data]>,
-        redact_sensitive_information: bool,
+        redact_sensitive_information: Redact,
     ) {
         match kind {
             Kind::Err => self.errors += 1,
@@ -1632,7 +1644,7 @@ impl Log {
             kind,
             data,
             notes,
-            redact_sensitive_information,
+            redact_sensitive_information: redact_sensitive_information == Redact::Yes,
             ..Default::default()
         })
     }
@@ -1746,7 +1758,7 @@ impl Log {
         args: fmt::Arguments<'_>,
     ) {
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Err, source, r, text, Box::default(), false)
+        self.add_formatted_msg(Kind::Err, source, r, text, Box::default(), Redact::No)
     }
 
     #[inline]
@@ -1758,7 +1770,7 @@ impl Log {
         args: fmt::Arguments<'_>,
     ) {
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Err, source, r, text, notes, false)
+        self.add_formatted_msg(Kind::Err, source, r, text, notes, Redact::No)
     }
 
     #[inline]
@@ -1778,7 +1790,7 @@ impl Log {
             },
             text,
             Box::default(),
-            false,
+            Redact::No,
         )
     }
 
@@ -1795,7 +1807,7 @@ impl Log {
             },
             text,
             Box::default(),
-            opts.redact_sensitive_information,
+            Redact::from_bool(opts.redact_sensitive_information),
         )
     }
 
@@ -1858,7 +1870,7 @@ impl Log {
             },
             text,
             Box::default(),
-            false,
+            Redact::No,
         )
     }
 
@@ -1921,7 +1933,7 @@ impl Log {
             return;
         }
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Warn, source, r, text, Box::default(), false)
+        self.add_formatted_msg(Kind::Warn, source, r, text, Box::default(), Redact::No)
     }
 
     #[cold]
@@ -1959,7 +1971,7 @@ impl Log {
         args: fmt::Arguments<'_>,
     ) {
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Warn, source, r, text, notes, false)
+        self.add_formatted_msg(Kind::Warn, source, r, text, notes, Redact::No)
     }
 
     #[cold]

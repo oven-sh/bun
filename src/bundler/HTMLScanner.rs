@@ -1,4 +1,5 @@
 use core::marker::PhantomData;
+use core::ops::ControlFlow;
 use std::borrow::Cow;
 
 use crate::Error;
@@ -171,13 +172,13 @@ pub(crate) trait HTMLProcessorHandler {
     // Only required when VISIT_DOCUMENT_TAGS == true; `run` only calls
     // these when visiting document tags, so the defaults are never
     // reached for handlers that don't visit document tags.
-    fn on_body_tag(&mut self, _element: &mut Element<'_, '_>) -> bool {
+    fn on_body_tag(&mut self, _element: &mut Element<'_, '_>) -> ControlFlow<()> {
         unreachable!()
     }
-    fn on_head_tag(&mut self, _element: &mut Element<'_, '_>) -> bool {
+    fn on_head_tag(&mut self, _element: &mut Element<'_, '_>) -> ControlFlow<()> {
         unreachable!()
     }
-    fn on_html_tag(&mut self, _element: &mut Element<'_, '_>) -> bool {
+    fn on_html_tag(&mut self, _element: &mut Element<'_, '_>) -> ControlFlow<()> {
         unreachable!()
     }
 }
@@ -354,7 +355,7 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                                 _ => (*this_ptr).on_html_tag(element),
                             }
                         };
-                        if stop {
+                        if stop.is_break() {
                             // The exact text lol-html's C API attached to a
                             // LOL_HTML_STOP directive (c-api/rewriter_builder.rs).
                             Err("The rewriter has been stopped.".into())

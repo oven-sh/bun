@@ -847,6 +847,8 @@ impl Default for ExprOrLetStmt {
     }
 }
 
+bun_core::bool_enum!(pub(crate) IsAsync);
+
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AsyncPrefixExpression {

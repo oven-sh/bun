@@ -6,6 +6,7 @@ use crate::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSGlobalObjectSqlExt as _, JSValue, JsRef, JsResult,
     VirtualMachine, VirtualMachineSqlExt as _,
 };
+use crate::shared::IsLast;
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_jsc::JsCell;
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
@@ -229,7 +230,10 @@ impl JSMySQLQuery {
             }
         });
 
-        if !self.query.with_mut(|q| q.result(is_last_result)) {
+        if !self
+            .query
+            .with_mut(|q| q.result(IsLast::from_bool(is_last_result)))
+        {
             return;
         }
 

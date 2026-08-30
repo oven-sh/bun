@@ -20,8 +20,9 @@ use bun_core::ZStr;
 #[cfg(windows)]
 pub use bun_uws_sys::Timer;
 pub use bun_uws_sys::{
-    AnyWebSocket, BodyReaderMixin, ConnectingSocket, NewApp, RawWebSocket, Request,
-    WebSocketBehavior, us_socket_stream_buffer_t, us_socket_t, uws_res,
+    AnyWebSocket, ApplyClientCertPolicy, BodyReaderMixin, CloseWhenIdle, Compress,
+    ConnectingSocket, Fin, NewApp, RawWebSocket, Request, WebSocketBehavior,
+    us_socket_stream_buffer_t, us_socket_t, uws_res,
 };
 
 /// `#[uws_callback]` — wraps a `&self`/`&mut self` method in an `extern "C"`
@@ -168,6 +169,7 @@ pub mod ssl_wrapper {
         };
     }
 
+    use crate::TlsRole;
     use crate::us_bun_verify_error_t;
 
     bun_core::define_scoped_log!(log, SSLWrapper, hidden);
@@ -363,6 +365,8 @@ pub mod ssl_wrapper {
         InvalidOptions,
     }
 
+    bun_core::bool_enum!(pub FastShutdown);
+
     #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
     pub enum WriteDataError {
         ConnectionClosed,
@@ -374,7 +378,7 @@ pub mod ssl_wrapper {
         /// Takes ownership of `ctx` (dropped on `Err`).
         pub fn init_with_ctx(
             ctx: boring_sys::OwnedSslCtx,
-            is_client: bool,
+            is_client: TlsRole,
             handlers: Handlers<T>,
         ) -> Result<Self, InitError> {
             bun_boringssl::load();
@@ -396,7 +400,7 @@ pub mod ssl_wrapper {
             // https://boringssl.googlesource.com/boringssl/+/HEAD/PORTING.md#TLS-renegotiation
             // SAFETY: ssl is valid for the duration of this block; all calls are simple property setters.
             unsafe {
-                if is_client {
+                if is_client == TlsRole::Client {
                     // Set the renegotiation mode to explicit so that we can
                     // renegotiate on the client side if needed (better
                     // performance than ssl_renegotiate_freely). BoringSSL:
@@ -485,7 +489,7 @@ pub mod ssl_wrapper {
             }
 
             let flags = Flags::default();
-            flags.set_is_client(is_client);
+            flags.set_is_client(is_client == TlsRole::Client);
 
             Ok(Self {
                 handlers: Cell::new(handlers),
@@ -505,7 +509,7 @@ pub mod ssl_wrapper {
         /// an extension in the higher tier.
         pub fn init_from_options(
             ctx_opts: &crate::SocketContext::BunSocketContextOptions,
-            is_client: bool,
+            is_client: TlsRole,
             handlers: Handlers<T>,
         ) -> Result<Self, InitError> {
             bun_boringssl::load();
@@ -588,7 +592,8 @@ pub mod ssl_wrapper {
         /// complete the 2-step shutdown ASAP. Caution: never reuse a socket if
         /// fast_shutdown = true, this will also fully close both read and
         /// write directions.
-        pub fn shutdown(&self, fast_shutdown: bool) -> bool {
+        pub fn shutdown(&self, fast_shutdown: FastShutdown) -> bool {
+            let fast_shutdown = fast_shutdown == FastShutdown::Yes;
             let Some(ssl) = self.ssl.get() else {
                 return false;
             };
@@ -884,7 +889,7 @@ pub mod ssl_wrapper {
                     // we received a shutdown
                     self.flags.set_received_ssl_shutdown(true);
                     // 2-step shutdown
-                    let _ = self.shutdown(false);
+                    let _ = self.shutdown(FastShutdown::No);
                     self.trigger_close_callback();
 
                     return false;
@@ -909,7 +914,7 @@ pub mod ssl_wrapper {
                     // See: https://www.openssl.org/docs/manmaster/man3/SSL_shutdown.html
                     self.flags.set_received_ssl_shutdown(true);
                     // 2-step shutdown
-                    let _ = self.shutdown(false);
+                    let _ = self.shutdown(FastShutdown::No);
                     self.handle_end_of_renegotiation();
                     return false;
                 }
@@ -1035,7 +1040,7 @@ pub mod ssl_wrapper {
                             // See: https://www.openssl.org/docs/manmaster/man3/SSL_shutdown.html
                             self.flags.set_received_ssl_shutdown(true);
                             // 2-step shutdown
-                            let _ = self.shutdown(false);
+                            let _ = self.shutdown(FastShutdown::No);
                             self.handle_end_of_renegotiation();
                         }
                         if err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL
@@ -1333,7 +1338,7 @@ impl InternalLoopDataExt for InternalLoopData {
 
 /// Alias for the per-group C vtable struct under its pre-merge name.
 pub use bun_uws_sys::socket_group::VTable as SocketGroupVTable;
-pub use bun_uws_sys::{ConnectResult, SocketGroup};
+pub use bun_uws_sys::{ConnectResult, Ipc, SocketGroup};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SocketContext::BunSocketContextOptions
@@ -1366,6 +1371,8 @@ pub use bun_uws_sys::SocketKind;
 /// the dispatch tag `DispatchKind`. Same enum.
 pub type DispatchKind = SocketKind;
 
+pub use bun_uws_sys::{RejectUnauthorized, RequestCert, TlsRole};
+
 pub use bun_uws_sys::CloseCode;
 /// Legacy alias — `bun_uws_sys::CloseCode` is the one canonical `#[repr(i32)]`
 /// enum (`normal`/`failure`/`fast_shutdown`, with `Normal`/`Failure`/
@@ -1380,7 +1387,8 @@ pub type CloseKind = CloseCode;
 // here again; an earlier "thin placeholder" that grew full bodies has been
 // deleted.
 pub use bun_uws_sys::socket::{
-    AnySocket, ConnectError, InternalSocket, NewSocketHandler, SocketHandler, SocketTCP, SocketTLS,
+    AllowHalfOpen, AnySocket, ConnectError, InternalSocket, NewSocketHandler, SocketHandler,
+    SocketTCP, SocketTLS,
 };
 
 /// Runtime-tagged TCP/TLS socket with a `None` arm for the "no active socket"
@@ -1446,3 +1454,4 @@ pub type Response<const SSL: bool> = bun_uws_sys::response::Response<SSL>;
 pub use bun_uws_sys::AnyResponse;
 
 pub use bun_uws_sys::response::WriteResult;
+pub use bun_uws_sys::response::{CloseConnection, FirstBodyWrite, FlushImmediately};

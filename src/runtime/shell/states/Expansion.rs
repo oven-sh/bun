@@ -436,7 +436,14 @@ impl Expansion {
             cwd = me.base.shell().cwd().to_vec();
         }
         let walker = match bun_glob::BunGlobWalkerZ::init_with_cwd(
-            &pattern, &cwd, false, false, false, false, false, None,
+            &pattern,
+            &cwd,
+            bun_glob::Dot::No,
+            bun_glob::Absolute::No,
+            bun_glob::FollowSymlinks::No,
+            bun_glob::ErrorOnBrokenSymlinks::No,
+            bun_glob::OnlyFiles::No,
+            None,
         ) {
             Ok(Ok(w)) => w,
             Ok(Err(e)) => {

@@ -300,18 +300,20 @@ impl BodyMixin for Response {
     }
 }
 
+bun_core::bool_enum!(pub(crate) Redirected);
+
 impl Response {
     pub(crate) fn init(
         response_init: Init,
         body: Body,
         url: BunString,
-        redirected: bool,
+        redirected: Redirected,
     ) -> Response {
         Response {
             init: JsCell::new(response_init),
             body: JsCell::new(body),
             url: JsCell::new(url),
-            redirected: Cell::new(redirected),
+            redirected: Cell::new(redirected == Redirected::Yes),
             ..Default::default()
         }
     }

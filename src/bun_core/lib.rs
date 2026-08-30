@@ -35,8 +35,50 @@ pub mod compress {
         End,
         Error,
     }
+
+    crate::bool_enum!(
+        /// Whether the input handed to a streaming decompressor is the last
+        /// chunk. With `More`, running out of input yields `ShortRead`; with
+        /// `Last`, it is a truncated-stream error.
+        pub Chunk { More, Last }
+    );
 }
 pub mod heap;
+
+/// Declares a two-variant `Copy` enum to use in place of a `bool` flag, so
+/// call sites read `f(x, CheckLen::Yes)` instead of `f(x, true)`.
+///
+/// ```ignore
+/// bun_core::bool_enum!(pub CheckLen);                  // CheckLen::{No, Yes}
+/// bun_core::bool_enum!(pub LinkKind { Link, Image });  // false-variant first
+/// ```
+///
+/// The false-like variant is always discriminant 0 and the `Default`, as with
+/// `bool`. `from_bool` exists for flags computed at runtime (parsed options,
+/// JS values, FFI); literal call sites should name the variant. There is
+/// deliberately no `Into<bool>`.
+#[macro_export]
+macro_rules! bool_enum {
+    ($(#[$m:meta])* $vis:vis $Name:ident) => {
+        $crate::bool_enum!($(#[$m])* $vis $Name { No, Yes });
+    };
+    ($(#[$m:meta])* $vis:vis $Name:ident { $False:ident, $True:ident $(,)? }) => {
+        $(#[$m])*
+        #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+        $vis enum $Name {
+            #[default]
+            $False,
+            $True,
+        }
+        impl $Name {
+            #[inline]
+            #[allow(dead_code)]
+            pub const fn from_bool(b: bool) -> Self {
+                if b { Self::$True } else { Self::$False }
+            }
+        }
+    };
+}
 
 pub mod debug;
 pub mod env;
@@ -55,7 +97,8 @@ pub use ::bstr::{BStr, BString, ByteSlice};
 pub use string::string_joiner::StringJoiner;
 pub use string::{
     EncodedSlice, HashedString, MutableString, NodeEncoding, SmolStr, String, StringBuilder,
-    StringView, Utf8Bytes, Utf8WithString, WTFStringImpl, WTFStringImplExt, WTFStringImplStruct,
+    StringView, Utf8Bytes, Utf8WithString, WTFEncoding, WTFStringImpl, WTFStringImplExt,
+    WTFStringImplStruct,
 };
 pub use string::{
     STRING_ALLOCATION_LIMIT, cheap_prefix_normalizer, escape_reg_exp, identifier, lexer,
@@ -1209,6 +1252,8 @@ pub use crate::string::immutable::{
 /// duplicates an `immutable` scanner; when both layers need the same helper,
 /// the single implementation lives here and `immutable` re-exports it.
 pub(crate) mod strings_impl {
+    pub use crate::string::immutable::CheckLen;
+
     // ─── UTF-16 surrogate-pair encoding (ICU U16_LEAD / U16_TRAIL) ─────────────
     // Defined here in
     // bun_core (not bun_string) so the WTF-8 fallback transcoder below and any
@@ -1315,8 +1360,8 @@ pub(crate) mod strings_impl {
     /// hot path (CSS parser, HTTP header matching). A `b` shorter than `a` is
     /// rejected instead of read past.
     #[inline]
-    pub fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], check_len: bool) -> bool {
-        if check_len {
+    pub fn eql_case_insensitive_ascii(a: &[u8], b: &[u8], check_len: CheckLen) -> bool {
+        if check_len == CheckLen::Yes {
             if a.len() != b.len() {
                 return false;
             }
@@ -1358,7 +1403,11 @@ pub(crate) mod strings_impl {
         }
         let mut start = 0usize;
         while start + needle.len() <= haystack.len() {
-            if eql_case_insensitive_ascii(&haystack[start..start + needle.len()], needle, false) {
+            if eql_case_insensitive_ascii(
+                &haystack[start..start + needle.len()],
+                needle,
+                CheckLen::No,
+            ) {
                 return true;
             }
             start += 1;
@@ -1943,7 +1992,7 @@ pub(crate) mod strings_impl {
 
     #[inline]
     pub fn eql_case_insensitive_ascii_check_length(a: &[u8], b: &[u8]) -> bool {
-        eql_case_insensitive_ascii(a, b, true)
+        eql_case_insensitive_ascii(a, b, CheckLen::Yes)
     }
 
     /// Haystacks are 6-12
@@ -1953,7 +2002,7 @@ pub(crate) mod strings_impl {
     pub fn eql_any_case_insensitive_ascii(needle: &[u8], haystack: &[&[u8]]) -> bool {
         haystack
             .iter()
-            .any(|h| eql_case_insensitive_ascii(needle, h, true))
+            .any(|h| eql_case_insensitive_ascii(needle, h, CheckLen::Yes))
     }
 
     pub(crate) fn starts_with_uuid(s: &[u8]) -> bool {

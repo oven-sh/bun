@@ -440,6 +440,7 @@ pub use windows_event_loop::Store;
 pub use posix_event_loop::Flags as PollFlag;
 /// Mirrors poll kind enum used by process.rs.
 pub use posix_event_loop::Flags as PollKind;
+pub use posix_event_loop::{ForceUnregister, OneShot};
 
 /// `file_poll` module — real one lives in {posix,windows}_event_loop.rs.
 pub mod file_poll {
@@ -481,7 +482,7 @@ pub mod write;
 pub use write::{AsFmt, DiscardingWriter, FixedBufferStream, FmtAdapter, IntLe, Result, Write};
 
 pub use max_buf as MaxBuf;
-pub use pipes::{Chunk, FileType, ReadState};
+pub use pipes::{Chunk, CloseFd, FileType, IsPollable, ReadState, ReceivedHup};
 
 // `BufferedReader` parent callback dispatch. Each variant's `link_impl_*!` (in
 // `bun_runtime`/`bun_install`) forwards to that type's `BufferedReaderParent`
@@ -664,7 +665,7 @@ pub use source::Source;
 
 pub use pipe_reader::{BufferedReader, BufferedReaderParent, PosixFlags};
 
-pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};
+pub use open_for_writing_mod::{ForceSync, open_for_writing, open_for_writing_impl};
 
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -991,7 +992,7 @@ impl IoRequestLoop {
                                 Flags::PollReadable,
                                 readable.tag,
                                 watcher_fd,
-                                true,
+                                OneShot::Yes,
                                 readable.fd,
                             ) {
                                 Err(err) => {
@@ -1005,7 +1006,7 @@ impl IoRequestLoop {
                                 Flags::PollWritable,
                                 writable.tag,
                                 watcher_fd,
-                                true,
+                                OneShot::Yes,
                                 writable.fd,
                             ) {
                                 Err(err) => {
@@ -1691,14 +1692,14 @@ impl Poll {
         flag: Flags,
         tag: PollableTag,
         watcher_fd: Fd,
-        one_shot: bool,
+        one_shot: OneShot,
         fd: Fd,
     ) -> sys::Result<()> {
         log!("register: {:?} ({})", flag as u8, fd);
 
         debug_assert!(fd != Fd::INVALID);
 
-        if one_shot {
+        if one_shot == OneShot::Yes {
             self.flags.insert(Flags::OneShot);
         }
 
@@ -1847,7 +1848,11 @@ impl FilePollRef {
         unsafe { &mut *loop_ }
     }
     #[inline]
-    pub(crate) fn unregister(self, loop_: *mut bun_uws_sys::Loop, force: bool) -> sys::Result<()> {
+    pub(crate) fn unregister(
+        self,
+        loop_: *mut bun_uws_sys::Loop,
+        force: ForceUnregister,
+    ) -> sys::Result<()> {
         let loop_ = Self::uws_loop_mut(loop_);
         #[cfg(not(windows))]
         {

@@ -1,6 +1,7 @@
 use crate::Error;
 use bun_core::MutableString;
 use bun_core::Output;
+use bun_core::compress::Chunk;
 
 use crate::{CertificateInfo, Decompressor, Encoding, HTTPRequestBody, HTTPResponseMetadata};
 
@@ -217,7 +218,7 @@ impl<'a> InternalState<'a> {
     }
 
     /// Mark the body complete and drive `process_body_buffer` one last time
-    /// with `is_final_chunk = true` so a compressed stream that never reached
+    /// with `Chunk::Last` so a compressed stream that never reached
     /// stream-end is rejected. Call from every site that flips
     /// `received_last_chunk` on an end-of-body signal that arrives with no
     /// accompanying body bytes (h1 FIN, proxy-tunnel close, h2/h3 END_STREAM).
@@ -225,13 +226,13 @@ impl<'a> InternalState<'a> {
     pub(crate) fn finalize_body_on_eof(&mut self) -> Result<(), Error> {
         self.flags.received_last_chunk = true;
         let buffer_snap = core::mem::take(&mut self.get_body_buffer().list);
-        self.process_body_buffer(buffer_snap, true).map(drop)
+        self.process_body_buffer(buffer_snap, Chunk::Last).map(drop)
     }
 
     pub(crate) fn decompress_bytes(
         &mut self,
         buffer: &[u8],
-        is_final_chunk: bool,
+        is_final_chunk: Chunk,
     ) -> Result<(), Error> {
         // A response that declared a Content-Encoding but sent zero body bytes
         // (e.g. an empty chunked gzip response) has nothing to decompress.
@@ -252,7 +253,7 @@ impl<'a> InternalState<'a> {
 
             'libdeflate: {
                 use bun_libdeflate_sys::libdeflate as bun_libdeflate;
-                if !(is_final_chunk
+                if !(is_final_chunk == Chunk::Last
                     && !self.flags.is_libdeflate_fast_path_disabled
                     && self.encoding.can_use_lib_deflate()
                     && self.is_done())
@@ -365,7 +366,7 @@ impl<'a> InternalState<'a> {
                 self.encoding,
                 buffer,
                 &mut self.decoded_body,
-                is_done,
+                Chunk::from_bool(is_done),
             ) {
                 if is_done || err != crate::Error::ShortRead {
                     bun_core::pretty_errorln!(
@@ -390,7 +391,7 @@ impl<'a> InternalState<'a> {
     pub(crate) fn process_body_buffer(
         &mut self,
         mut buffer: Vec<u8>,
-        is_final_chunk: bool,
+        is_final_chunk: Chunk,
     ) -> Result<bool, Error> {
         if self.flags.is_redirect_pending {
             // Caller moved the bytes out of the body buffer; put them back so the

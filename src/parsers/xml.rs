@@ -713,13 +713,25 @@ enum FrameKind {
     Declarations,
 }
 
+bun_core::bool_enum!(
+    /// General (`&name;`) or parameter (`%name;`) entity.
+    EntityKind { General, Parameter }
+);
+
+bun_core::bool_enum!(
+    /// Where a general entity reference stands: element content or an attribute value.
+    RefContext { Content, Attribute }
+);
+
+bun_core::bool_enum!(Endian { Little, Big });
+
 struct Frame<'a, U: Unit> {
     src: &'a [U],
     pos: usize,
     id: u32,
     kind: FrameKind,
     /// The entity this frame is the replacement text of: (name, is-parameter).
-    entity: Option<(&'a [U], bool)>,
+    entity: Option<(&'a [U], EntityKind)>,
     /// Where diagnostics for tokens read from this frame point: the position
     /// of the outermost reference in the document.
     report_pos: usize,
@@ -736,7 +748,7 @@ struct Scanner<'a, 'log, U: Unit> {
     pos: usize,
     frame_id: u32,
     frame_kind: FrameKind,
-    frame_entity: Option<(&'a [U], bool)>,
+    frame_entity: Option<(&'a [U], EntityKind)>,
     frame_report_pos: usize,
     suspended: Vec<Frame<'a, U>>,
     next_frame_id: u32,
@@ -1052,7 +1064,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         &mut self,
         text: &'a [U],
         kind: FrameKind,
-        entity: (&'a [U], bool),
+        entity: (&'a [U], EntityKind),
         ref_pos: usize,
     ) -> PResult<()> {
         if self.suspended.len() >= MAX_ENTITY_DEPTH {
@@ -1112,7 +1124,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         &mut self,
         name: &'a [U],
         ref_pos: usize,
-        in_attribute: bool,
+        in_attribute: RefContext,
     ) -> PResult<Resolved<'a, U>> {
         if let Some(c) = predefined_entity(name) {
             return Ok(Resolved::Byte(c));
@@ -1120,12 +1132,13 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         match self.entities.general.get(name).copied() {
             Some(EntityValue::Internal(text)) => Ok(Resolved::Text(text)),
             // WFC: No External Entity References.
-            Some(EntityValue::External) if in_attribute => Err(self.err_named(
-                ref_pos,
-                "Attribute values cannot reference external entity",
-                name,
-                "",
-            )),
+            Some(EntityValue::External) if in_attribute == RefContext::Attribute => Err(self
+                .err_named(
+                    ref_pos,
+                    "Attribute values cannot reference external entity",
+                    name,
+                    "",
+                )),
             // A non-validating processor may decline to include an external
             // entity but must let the application know it was there
             // (§4.4.3): the reference is kept as written.
@@ -1161,9 +1174,12 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
     fn include_parameter_entity(&mut self, name: &'a [U], ref_pos: usize) -> PResult<()> {
         self.saw_pe_reference = true;
         match self.entities.parameter.get(name).copied() {
-            Some(EntityValue::Internal(text)) => {
-                self.push_frame(text, FrameKind::Declarations, (name, true), ref_pos)
-            }
+            Some(EntityValue::Internal(text)) => self.push_frame(
+                text,
+                FrameKind::Declarations,
+                (name, EntityKind::Parameter),
+                ref_pos,
+            ),
             Some(_) => {
                 self.saw_unread_pe = true;
                 Ok(())
@@ -1200,14 +1216,14 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
             } else if matches!(self.encoding, InputEncoding::Text | InputEncoding::Latin1) {
                 // A JS string is characters, not bytes: nothing to detect.
             } else if bytes.starts_with(b"\xFE\xFF") {
-                self.transcode_utf16(&bytes[2..], true)?;
+                self.transcode_utf16(&bytes[2..], Endian::Big)?;
             } else if bytes.starts_with(b"\xFF\xFE") {
-                self.transcode_utf16(&bytes[2..], false)?;
+                self.transcode_utf16(&bytes[2..], Endian::Little)?;
             } else if bytes.starts_with(b"\x00<") {
-                self.transcode_utf16(bytes, true)?;
+                self.transcode_utf16(bytes, Endian::Big)?;
                 self.needs_utf16_declaration = true;
             } else if bytes.starts_with(b"<\x00") {
-                self.transcode_utf16(bytes, false)?;
+                self.transcode_utf16(bytes, Endian::Little)?;
                 self.needs_utf16_declaration = true;
             }
         }
@@ -1243,7 +1259,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         }
     }
 
-    fn transcode_utf16(&mut self, payload: &[u8], big_endian: bool) -> PResult<()> {
+    fn transcode_utf16(&mut self, payload: &[u8], big_endian: Endian) -> PResult<()> {
         let (pairs, rest) = payload.as_chunks::<2>();
         if !rest.is_empty() {
             return Err(self.err(payload.len(), "UTF-16 input has an odd number of bytes"));
@@ -1251,7 +1267,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         let units: Vec<u16> = pairs
             .iter()
             .map(|&p| {
-                if big_endian {
+                if big_endian == Endian::Big {
                     u16::from_be_bytes(p)
                 } else {
                     u16::from_le_bytes(p)
@@ -1622,11 +1638,14 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                     } else {
                         let name = self
                             .scan_reference_name("Expected an entity name after '&' but found")?;
-                        match self.resolve_general_entity(name, ref_pos, true)? {
+                        match self.resolve_general_entity(name, ref_pos, RefContext::Attribute)? {
                             Resolved::Byte(byte) => b.push(U::ascii(byte)),
-                            Resolved::Text(text) => {
-                                self.push_frame(text, FrameKind::Literal, (name, false), ref_pos)?
-                            }
+                            Resolved::Text(text) => self.push_frame(
+                                text,
+                                FrameKind::Literal,
+                                (name, EntityKind::General),
+                                ref_pos,
+                            )?,
                             Resolved::Unexpanded => Self::push_reference(b, name),
                         }
                     }
@@ -1697,9 +1716,12 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                     }
                     self.saw_pe_reference = true;
                     match self.entities.parameter.get(name).copied() {
-                        Some(EntityValue::Internal(text)) => {
-                            self.push_frame(text, FrameKind::Literal, (name, true), ref_pos)?
-                        }
+                        Some(EntityValue::Internal(text)) => self.push_frame(
+                            text,
+                            FrameKind::Literal,
+                            (name, EntityKind::Parameter),
+                            ref_pos,
+                        )?,
                         Some(_) => {
                             return Err(self.err_named(
                                 ref_pos,
@@ -2336,11 +2358,14 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                     } else {
                         let name = self
                             .scan_reference_name("Expected an entity name after '&' but found")?;
-                        match self.resolve_general_entity(name, ref_pos, false)? {
+                        match self.resolve_general_entity(name, ref_pos, RefContext::Content)? {
                             Resolved::Byte(byte) => b.push(U::ascii(byte)),
-                            Resolved::Text(text) => {
-                                self.push_frame(text, FrameKind::Content, (name, false), ref_pos)?
-                            }
+                            Resolved::Text(text) => self.push_frame(
+                                text,
+                                FrameKind::Content,
+                                (name, EntityKind::General),
+                                ref_pos,
+                            )?,
                             Resolved::Unexpanded => Self::push_reference(b, name),
                         }
                         start = self.pos;
@@ -2538,7 +2563,8 @@ impl<'a> Tape<'a> {
         let (first, count) = tape.append_props(props, locs);
         self.props.truncate(mark);
         // SAFETY: as above — the tape's own pointer, and it outlives the node.
-        let object = unsafe { E::ObjectJSON::new(self.tape, first, count, false, loc) };
+        let object =
+            unsafe { E::ObjectJSON::new(self.tape, first, count, E::IsSingleLine::No, loc) };
         let Data::EObjectJSON(row) = Expr::init(object, loc).data else {
             unreachable!()
         };
@@ -2571,7 +2597,7 @@ impl<'a> Tape<'a> {
         // SAFETY: see `object_from`.
         let (first, count) = unsafe { tape.as_mut() }.append_items(items, locs);
         // SAFETY: see `object_from`.
-        let array = unsafe { E::ArrayJSON::new(tape, first, count, false, loc) };
+        let array = unsafe { E::ArrayJSON::new(tape, first, count, E::IsSingleLine::No, loc) };
         let Data::EArrayJSON(row) = Expr::init(array, loc).data else {
             unreachable!()
         };
@@ -3090,6 +3116,16 @@ impl<'a, U: Unit> AttList<'a, U> {
 /// `Parser::attribute_names`.
 const LINEAR_ATTRIBUTE_LIMIT: usize = 8;
 
+bun_core::bool_enum!(
+    /// The declaration an `ExternalID` belongs to; a NOTATION also admits a bare `PublicID`.
+    ForNotation
+);
+
+bun_core::bool_enum!(
+    /// What an ATTLIST `( x | y )` group lists: name tokens (an enumeration) or notation names.
+    EnumerationOf { Nmtokens, NotationNames }
+);
+
 /// Elements open at once. Parsing is iterative, so this is not about the
 /// native stack; it bounds memory on hostile input and keeps the (recursive)
 /// consumers of the result safe. `Bun.XML.parse` reports it as a `RangeError`.
@@ -3498,7 +3534,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         if matches!(self.scanner.tok.kind, Kind::Name(n) if eq_ascii(n, b"SYSTEM") || eq_ascii(n, b"PUBLIC"))
         {
             self.require_spaced()?;
-            self.parse_external_id(false)?;
+            self.parse_external_id(ForNotation::No)?;
             self.scanner.has_external_subset = true;
         }
         match self.scanner.tok.kind {
@@ -3522,7 +3558,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
     /// also a `PublicID` without system identifier; the current token is
     /// `SYSTEM` or `PUBLIC`. The identifiers are checked and dropped (nothing
     /// external is read). Ends on the token after the last literal.
-    fn parse_external_id(&mut self, notation: bool) -> PResult<()> {
+    fn parse_external_id(&mut self, notation: ForNotation) -> PResult<()> {
         if matches!(self.scanner.tok.kind, Kind::Name(n) if eq_ascii(n, b"SYSTEM")) {
             self.advance_literal(Literal::System)?;
             if !matches!(self.scanner.tok.kind, Kind::Literal(_)) {
@@ -3541,7 +3577,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
             self.require_spaced()?;
             return self.advance();
         }
-        if notation {
+        if notation == ForNotation::Yes {
             return Ok(());
         }
         Err(self.unexpected("a quoted system identifier after the public identifier"))
@@ -3787,12 +3823,12 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                         return Err(self.unexpected("'(' after NOTATION"));
                     }
                     self.require_spaced()?;
-                    self.parse_enumeration(true)?;
+                    self.parse_enumeration(EnumerationOf::NotationNames)?;
                     false
                 }
                 Kind::ParenOpen => {
                     self.require_spaced()?;
-                    self.parse_enumeration(false)?;
+                    self.parse_enumeration(EnumerationOf::Nmtokens)?;
                     false
                 }
                 _ => return Err(self.unexpected("an attribute type (CDATA, ID, IDREF, IDREFS, ENTITY, ENTITIES, NMTOKEN, NMTOKENS, NOTATION or an enumeration)")),
@@ -3840,7 +3876,8 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
     /// `'(' S? x (S? '|' S? x)* S? ')'` where `x` is a `Name` (NOTATION
     /// types, `names`) or an `Nmtoken` (enumerations); the current token is
     /// `(`. Ends on `)`.
-    fn parse_enumeration(&mut self, names: bool) -> PResult<()> {
+    fn parse_enumeration(&mut self, names: EnumerationOf) -> PResult<()> {
+        let names = names == EnumerationOf::NotationNames;
         loop {
             self.advance()?;
             match self.scanner.tok.kind {
@@ -3889,7 +3926,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
             }
             Kind::Name(n) if eq_ascii(n, b"SYSTEM") || eq_ascii(n, b"PUBLIC") => {
                 self.require_spaced()?;
-                self.parse_external_id(false)?;
+                self.parse_external_id(ForNotation::No)?;
                 if matches!(self.scanner.tok.kind, Kind::Name(n) if eq_ascii(n, b"NDATA")) {
                     self.require_spaced()?;
                     if parameter {
@@ -3934,7 +3971,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
             return Err(self.unexpected("SYSTEM or PUBLIC in the notation declaration"));
         }
         self.require_spaced()?;
-        self.parse_external_id(true)?;
+        self.parse_external_id(ForNotation::Yes)?;
         self.expect_gt("'>' to end the notation declaration")
     }
 

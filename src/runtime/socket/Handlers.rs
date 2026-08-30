@@ -7,7 +7,7 @@ use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::generated::{
     SocketConfig as GeneratedSocketConfig, SocketConfigHandlers as GeneratedSocketConfigHandlers,
 };
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{IsRejection, VirtualMachine};
 use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsResult, Strong};
 use bun_sys::Fd;
 use bun_uws as uws;
@@ -279,11 +279,11 @@ impl Handlers {
 
         if on_error.is_empty() {
             // SAFETY: `bun_vm()` is non-null for a Bun-owned global; single JS thread.
-            let _ =
-                global_object
-                    .bun_vm()
-                    .as_mut()
-                    .uncaught_exception(&global_object, args[1], false);
+            let _ = global_object.bun_vm().as_mut().uncaught_exception(
+                &global_object,
+                args[1],
+                IsRejection::No,
+            );
             return Ok(());
         }
 

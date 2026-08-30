@@ -108,7 +108,7 @@ pub enum Protocol {
 
 pub use bun_http_types::Encoding::Encoding;
 pub use header_value_iterator::{
-    HeaderValueIterator, connection_header_keep_alive, upgrade_header_is_not_h2,
+    ConnectionHeader, HeaderValueIterator, connection_header_keep_alive, upgrade_header_is_not_h2,
 };
 pub use init_error::InitError;
 
@@ -741,13 +741,13 @@ fn no_proxy_matches(no_proxy_text: &[u8], hostname: &[u8], host: &[u8]) -> bool 
         };
 
         if has_port {
-            if strings::eql_case_insensitive_ascii(host, entry, true) {
+            if strings::eql_case_insensitive_ascii(host, entry, strings::CheckLen::Yes) {
                 return true;
             }
         } else {
             let entry_len = entry.len();
             if hostname.len() == entry_len {
-                if strings::eql_case_insensitive_ascii(hostname, entry, true) {
+                if strings::eql_case_insensitive_ascii(hostname, entry, strings::CheckLen::Yes) {
                     return true;
                 }
             } else if hostname.len() > entry_len
@@ -755,7 +755,7 @@ fn no_proxy_matches(no_proxy_text: &[u8], hostname: &[u8], host: &[u8]) -> bool 
                 && strings::eql_case_insensitive_ascii(
                     &hostname[hostname.len() - entry_len..],
                     entry,
-                    true,
+                    strings::CheckLen::Yes,
                 )
             {
                 return true;
@@ -895,7 +895,7 @@ impl<'a> HTTPClient<'a> {
 
 impl Drop for HTTPClient<'_> {
     fn drop(&mut self) {
-        self.close_proxy_tunnel(false);
+        self.close_proxy_tunnel(ShutdownTunnel::No);
         // The session detaches `h2` before any terminal callback, so this should
         // be None by the time the result callback's deinit path runs.
         debug_assert!(self.h2.is_none());
@@ -961,6 +961,7 @@ use bstr::BStr;
 use bun_boringssl as boringssl;
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::StringBuilder;
+use bun_core::compress::Chunk;
 use bun_core::{FeatureFlags, Global, Output};
 use bun_core::{String as BunString, Tag as BunStringTag, strings};
 use bun_http_types::ETag::StringPointer;
@@ -1194,11 +1195,16 @@ fn unregister_abort_tracker_for_socket(socket: uws::InternalSocket) {
     }
 }
 
+bun_core::bool_enum!(pub(crate) AllowProxyUrl);
+
 /// Returns the hostname to use for TLS SNI and certificate verification.
 /// Priority: tls_props.server_name > client.url.hostname. The Host request
 /// header is an HTTP field only and never selects the TLS peer identity.
-pub(crate) fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: bool) -> &'c [u8] {
-    if allow_proxy_url {
+pub(crate) fn get_tls_hostname<'c>(
+    client: &'c HTTPClient<'_>,
+    allow_proxy_url: AllowProxyUrl,
+) -> &'c [u8] {
+    if allow_proxy_url == AllowProxyUrl::Yes {
         if let Some(proxy) = &client.http_proxy {
             return proxy.hostname;
         }
@@ -1373,11 +1379,11 @@ pub(crate) fn print_request(
     protocol: Protocol,
     request: &picohttp::Request<'_>,
     url: &[u8],
-    ignore_insecure: bool,
+    ignore_insecure: picohttp::IgnoreInsecure,
     body: &[u8],
-    curl: bool,
+    verbose: HTTPVerboseLevel,
 ) {
-    if curl {
+    if verbose == HTTPVerboseLevel::Curl {
         let request_ = picohttp::Request {
             method: request.method,
             path: url,
@@ -1401,8 +1407,12 @@ pub(crate) fn print_request(
     );
     for header in request.headers {
         let name = header.name();
-        if strings::eql_case_insensitive_ascii(name, b"authorization", true)
-            || strings::eql_case_insensitive_ascii(name, b"proxy-authorization", true)
+        if strings::eql_case_insensitive_ascii(name, b"authorization", strings::CheckLen::Yes)
+            || strings::eql_case_insensitive_ascii(
+                name,
+                b"proxy-authorization",
+                strings::CheckLen::Yes,
+            )
         {
             let value = header.value();
             let scheme_len = strings::index_of_char_usize(value, b' ').map_or(0, |i| i + 1);
@@ -1544,6 +1554,11 @@ pub(crate) fn get_cert_error_from_no(error_no: i32) -> crate::Error {
     })
 }
 
+bun_core::bool_enum!(pub(crate) ShutdownTunnel);
+bun_core::bool_enum!(ClearProxyTunneling);
+bun_core::bool_enum!(pub(crate) IntoShared);
+bun_core::bool_enum!(pub(crate) OnlyBuffer);
+
 // ── HTTPClient field accessors ──────────────────────────────────────────
 // These helpers centralize the unsafe deref of the `Option<NonNull<_>>`
 // fields so the state-machine bodies stay readable.
@@ -1585,9 +1600,9 @@ impl<'a> HTTPClient<'a> {
     /// Detach the proxy tunnel, if one is attached, and drop this client's ref
     /// on it.
     #[inline]
-    pub(crate) fn close_proxy_tunnel(&mut self, shutdown: bool) {
+    pub(crate) fn close_proxy_tunnel(&mut self, shutdown: ShutdownTunnel) {
         if let Some(t) = self.proxy_tunnel.take() {
-            if shutdown {
+            if shutdown == ShutdownTunnel::Yes {
                 proxy_tunnel::ProxyTunnel::shutdown(t.as_non_null());
             }
             proxy_tunnel::raw_as_mut(t.as_ptr()).detach_socket();
@@ -1595,7 +1610,7 @@ impl<'a> HTTPClient<'a> {
     }
     /// Common tail of `fail` / `fail_from_h2` / `complete_connecting_process`:
     /// build the result, reset request state, and dispatch the callback.
-    fn dispatch_result_and_reset(&mut self, clear_proxy_tunneling: bool) {
+    fn dispatch_result_and_reset(&mut self, clear_proxy_tunneling: ClearProxyTunneling) {
         let callback = self.result_callback;
         let result = self.to_result();
         self.state.reset();
@@ -1612,7 +1627,7 @@ impl<'a> HTTPClient<'a> {
         self.state.request_stage = RequestStage::Fail;
         self.state.response_stage = ResponseStage::Fail;
         self.state.stage = Stage::Fail;
-        if clear_proxy_tunneling {
+        if clear_proxy_tunneling == ClearProxyTunneling::Yes {
             self.flags.proxy_tunneling = false;
         }
         callback.run(self.parent_async_http(), result);
@@ -1678,7 +1693,7 @@ impl<'a> HTTPClient<'a> {
         &mut self,
         socket: HttpSocket<IS_SSL>,
         ssl: &mut boringssl::c::SSL,
-        allow_proxy_url: bool,
+        allow_proxy_url: AllowProxyUrl,
     ) -> bool {
         if self.flags.reject_unauthorized {
             // SAFETY: `ssl` is a live `&mut SSL` for the open TLS socket whose
@@ -1697,7 +1712,8 @@ impl<'a> HTTPClient<'a> {
                     // (Node semantics). For the HTTPS proxy's own handshake, use
                     // the native SAN check — a pinning callback written for the
                     // target would reject the proxy's certificate.
-                    let is_proxy_certificate = allow_proxy_url && self.http_proxy.is_some();
+                    let is_proxy_certificate =
+                        allow_proxy_url == AllowProxyUrl::Yes && self.http_proxy.is_some();
                     if !is_proxy_certificate && self.signals.get(signals::Field::CertErrors) {
                         // clone the relevant data
                         // SAFETY: x509 is a live *mut X509 borrowed from cert_chain; null out-ptr requests size-only
@@ -1811,7 +1827,8 @@ impl<'a> HTTPClient<'a> {
                 .unwrap_or(core::ptr::null_mut());
             // SAFETY: ssl_ptr is a live *mut SSL for the just-opened TLS socket
             if !ssl_ptr.is_null() && unsafe { boringssl::c::SSL_is_init_finished(ssl_ptr) } == 0 {
-                let raw_hostname = get_tls_hostname(self, self.http_proxy.is_some());
+                let raw_hostname =
+                    get_tls_hostname(self, AllowProxyUrl::from_bool(self.http_proxy.is_some()));
 
                 // Build a NUL-terminated SNI string only when the hostname is not an
                 // IP literal (RFC 6066 forbids IP SNI). ALPN/SCT/OCSP must still be
@@ -2089,7 +2106,7 @@ impl<'a> HTTPClient<'a> {
             {
                 return;
             }
-            self.dispatch_result_and_reset(false);
+            self.dispatch_result_and_reset(ClearProxyTunneling::No);
         }
     }
 
@@ -2102,7 +2119,7 @@ impl<'a> HTTPClient<'a> {
             self.fail(crate::Error::Aborted);
             return;
         }
-        self.close_proxy_tunnel(true);
+        self.close_proxy_tunnel(ShutdownTunnel::Yes);
         let in_progress = self.state.stage != Stage::Done
             && self.state.stage != Stage::Fail
             && !self.state.flags.is_redirect_pending;
@@ -2264,7 +2281,11 @@ impl<'a> HTTPClient<'a> {
                 // (order-independent) without the cancellation.
                 combined = combined.wrapping_add(h.final_());
                 any = true;
-                if strings::eql_case_insensitive_ascii(name, b"proxy-authorization", true) {
+                if strings::eql_case_insensitive_ascii(
+                    name,
+                    b"proxy-authorization",
+                    strings::CheckLen::Yes,
+                ) {
                     user_provided_auth = true;
                 }
             }
@@ -2386,11 +2407,11 @@ impl<'a> HTTPClient<'a> {
                     if will_append {
                         override_connection_header = true;
                         match connection_header_keep_alive(self.header_str(header_values[i])) {
-                            Some(false) => {
+                            Some(ConnectionHeader::Close) => {
                                 connection_close_requested = true;
                                 self.flags.disable_keepalive = true;
                             }
-                            Some(true) if !connection_close_requested => {
+                            Some(ConnectionHeader::KeepAlive) if !connection_close_requested => {
                                 self.flags.disable_keepalive = false;
                             }
                             _ => {}
@@ -2584,7 +2605,7 @@ impl<'a> HTTPClient<'a> {
         // original host. Close the tunnel on redirect; only pool the raw socket.
         if self.proxy_tunnel.is_some() {
             bun_core::scoped_log!(fetch, "close the tunnel");
-            self.close_proxy_tunnel(true);
+            self.close_proxy_tunnel(ShutdownTunnel::Yes);
             GenHttpContext::<IS_SSL>::close_socket(socket);
         } else if keep_alive_possible
             && self.is_request_fully_sent()
@@ -2623,7 +2644,7 @@ impl<'a> HTTPClient<'a> {
         bun_core::scoped_log!(fetch, "doRedirect state reset");
         // also reset proxy to redirect
         self.flags.proxy_tunneling = false;
-        self.close_proxy_tunnel(false);
+        self.close_proxy_tunnel(ShutdownTunnel::No);
         self.flags.protocol = Protocol::Http1_1;
         self.reevaluate_proxy_for_redirect();
 
@@ -2857,7 +2878,7 @@ impl<'a> HTTPClient<'a> {
     /// `state.flags.body_compressed`.
     ///
     /// [`spill_compressed_body`]: Self::spill_compressed_body
-    pub(crate) fn compress_body_for_send(&mut self, into_shared: bool) -> crate::Result<()> {
+    pub(crate) fn compress_body_for_send(&mut self, into_shared: IntoShared) -> crate::Result<()> {
         let Some(opt) = self.compress else {
             return Ok(());
         };
@@ -2875,7 +2896,9 @@ impl<'a> HTTPClient<'a> {
         let out =
             compress_body::compress_into(deflater, input, &opt, &mut self.compressed_request_body)?;
         let slice: &[u8] = match out {
-            compress_body::CompressOutput::Shared(n) if into_shared => &deflater.shared_buffer[..n],
+            compress_body::CompressOutput::Shared(n) if into_shared == IntoShared::Yes => {
+                &deflater.shared_buffer[..n]
+            }
             compress_body::CompressOutput::Shared(n) => {
                 self.compressed_request_body
                     .extend_from_slice(&deflater.shared_buffer[..n]);
@@ -2934,7 +2957,7 @@ impl<'a> HTTPClient<'a> {
         &mut self,
         socket: HttpSocket<IS_SSL>,
     ) -> crate::Result<InitialRequestPayloadResult> {
-        self.compress_body_for_send(true)?;
+        self.compress_body_for_send(IntoShared::Yes)?;
 
         let mut temporary_send_buffer = self.get_request_body_send_buffer();
 
@@ -3002,9 +3025,9 @@ impl<'a> HTTPClient<'a> {
                 Protocol::Http1_1,
                 &request,
                 self.url.href,
-                !self.flags.reject_unauthorized,
+                picohttp::IgnoreInsecure::from_bool(!self.flags.reject_unauthorized),
                 self.request_body(),
-                self.verbose == HTTPVerboseLevel::Curl,
+                self.verbose,
             );
         }
 
@@ -3419,7 +3442,7 @@ impl<'a> HTTPClient<'a> {
                     self.set_timeout(&socket);
                     // Proxy-tunnel writes can be partial across event-loop ticks
                     // — compress straight into the Vec.
-                    if let Err(e) = self.compress_body_for_send(false) {
+                    if let Err(e) = self.compress_body_for_send(IntoShared::No) {
                         self.close_and_fail::<IS_SSL>(e, socket);
                         return;
                     }
@@ -3759,7 +3782,7 @@ impl<'a> HTTPClient<'a> {
         }
 
         if self.state.response_stage == ResponseStage::Body {
-            let report_progress = match self.handle_response_body(to_read, true) {
+            let report_progress = match self.handle_response_body(to_read, OnlyBuffer::Yes) {
                 Ok(b) => b,
                 Err(err) => {
                     self.close_and_fail::<IS_SSL>(err, socket);
@@ -3837,7 +3860,8 @@ impl<'a> HTTPClient<'a> {
                     self.set_timeout(&socket);
                 }
 
-                let report_progress = match self.handle_response_body(incoming_data, false) {
+                let report_progress = match self.handle_response_body(incoming_data, OnlyBuffer::No)
+                {
                     Ok(b) => b,
                     Err(err) => {
                         self.close_and_fail::<IS_SSL>(err, socket);
@@ -3889,7 +3913,7 @@ impl<'a> HTTPClient<'a> {
             self.flags
                 .defer_terminal_dispatch_until_connecting_is_complete = false;
             if self.state.stage == Stage::Fail {
-                self.dispatch_result_and_reset(true);
+                self.dispatch_result_and_reset(ClearProxyTunneling::Yes);
             } else if self.flags.is_preconnect_only && self.state.stage == Stage::Done {
                 // Deferred preconnect success (see `on_preconnect`).
                 self.dispatch_preconnect_result();
@@ -3949,7 +3973,7 @@ impl<'a> HTTPClient<'a> {
         self.unregister_abort_tracker();
         self.resolve_pending_h2(PendingH2Resolution::LeaderFailed);
 
-        self.close_proxy_tunnel(true);
+        self.close_proxy_tunnel(ShutdownTunnel::Yes);
         if self.state.stage != Stage::Done && self.state.stage != Stage::Fail {
             self.state.request_stage = RequestStage::Fail;
             self.state.response_stage = ResponseStage::Fail;
@@ -3960,7 +3984,7 @@ impl<'a> HTTPClient<'a> {
                 .flags
                 .defer_terminal_dispatch_until_connecting_is_complete
             {
-                self.dispatch_result_and_reset(true);
+                self.dispatch_result_and_reset(ClearProxyTunneling::Yes);
             }
         }
     }
@@ -4169,7 +4193,7 @@ impl<'a> HTTPClient<'a> {
             } else {
                 if self.proxy_tunnel.is_some() {
                     bun_core::scoped_log!(fetch, "close the tunnel");
-                    self.close_proxy_tunnel(true);
+                    self.close_proxy_tunnel(ShutdownTunnel::Yes);
                 }
                 GenHttpContext::<IS_SSL>::close_socket(socket);
             }
@@ -4437,7 +4461,7 @@ impl<'a> HTTPClient<'a> {
     pub(crate) fn handle_response_body(
         &mut self,
         incoming_data: &[u8],
-        is_only_buffer: bool,
+        is_only_buffer: OnlyBuffer,
     ) -> crate::Result<bool> {
         debug_assert!(self.state.transfer_encoding == Encoding::Identity);
         let content_length = self.state.content_length;
@@ -4447,7 +4471,7 @@ impl<'a> HTTPClient<'a> {
             self.state.flags.allow_keepalive = false;
         }
         // is it exactly as much as we need?
-        if is_only_buffer
+        if is_only_buffer == OnlyBuffer::Yes
             && let Some(len) = content_length
             && incoming_data.len() >= len
         {
@@ -4473,7 +4497,7 @@ impl<'a> HTTPClient<'a> {
         // we can ignore the body data in redirects
         if !self.state.flags.is_redirect_pending {
             if self.state.encoding.is_compressed() {
-                self.state.decompress_bytes(incoming_data, true)?;
+                self.state.decompress_bytes(incoming_data, Chunk::Last)?;
             } else {
                 self.state
                     .get_body_buffer()
@@ -4528,7 +4552,7 @@ impl<'a> HTTPClient<'a> {
         let is_streaming = self.signals.get(signals::Field::ResponseBodyStreaming)
             || self.signals.body_receive_mode.is_some();
         if is_done || is_streaming || content_length.is_none() {
-            let is_final_chunk = is_done;
+            let is_final_chunk = Chunk::from_bool(is_done);
             // Move the body buffer's bytes out — process_body_buffer takes `&mut self.state`
             // and may mutate `compressed_body` (via decompress_bytes' reset) or `decoded_body`,
             // so any `&` into `self.state` held across the call would be aliased UB.
@@ -4622,7 +4646,7 @@ impl<'a> HTTPClient<'a> {
                     // Move the
                     // bytes out so no `&` into self.state aliases the `&mut self.state` call.
                     let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
-                    return self.state.process_body_buffer(buffer_snap, false);
+                    return self.state.process_body_buffer(buffer_snap, Chunk::More);
                 }
 
                 return Ok(false);
@@ -4633,7 +4657,7 @@ impl<'a> HTTPClient<'a> {
                 // Move the
                 // bytes out so no `&` into self.state aliases the `&mut self.state` call.
                 let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
-                let _ = self.state.process_body_buffer(buffer_snap, true)?;
+                let _ = self.state.process_body_buffer(buffer_snap, Chunk::Last)?;
 
                 self.report_progress(buffer_len);
 
@@ -4700,7 +4724,7 @@ impl<'a> HTTPClient<'a> {
                     // the bytes out so no `&` into self.state aliases the `&mut self.state`
                     // taken by process_body_buffer (which mutates compressed_body/decoded_body).
                     let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
-                    return self.state.process_body_buffer(buffer_snap, false);
+                    return self.state.process_body_buffer(buffer_snap, Chunk::More);
                 }
 
                 Ok(false)
@@ -4822,8 +4846,8 @@ impl<'a> HTTPClient<'a> {
                 h if h == hash_header_const(b"Connection") => {
                     // `close` on any field line, any status, is sticky (RFC 9110 §5.3, RFC 9112 §9.6).
                     match connection_header_keep_alive(header.value()) {
-                        Some(false) => self.state.flags.allow_keepalive = false,
-                        Some(true) => has_keep_alive_token = true,
+                        Some(ConnectionHeader::Close) => self.state.flags.allow_keepalive = false,
+                        Some(ConnectionHeader::KeepAlive) => has_keep_alive_token = true,
                         None => {}
                     }
                 }
@@ -4960,10 +4984,17 @@ impl<'a> HTTPClient<'a> {
                         } else {
                             &location[0..i]
                         };
-                        let is_http =
-                            strings::eql_case_insensitive_ascii(protocol_name, b"http", true);
+                        let is_http = strings::eql_case_insensitive_ascii(
+                            protocol_name,
+                            b"http",
+                            strings::CheckLen::Yes,
+                        );
                         if is_http
-                            || strings::eql_case_insensitive_ascii(protocol_name, b"https", true)
+                            || strings::eql_case_insensitive_ascii(
+                                protocol_name,
+                                b"https",
+                                strings::CheckLen::Yes,
+                            )
                         {
                         } else {
                             return Err(crate::Error::UnsupportedRedirectProtocol);
@@ -5015,7 +5046,7 @@ impl<'a> HTTPClient<'a> {
                         is_same_origin = strings::eql_case_insensitive_ascii(
                             strings::without_trailing_slash(new_url.origin),
                             strings::without_trailing_slash(self.url.origin),
-                            true,
+                            strings::CheckLen::Yes,
                         );
                         self.url = new_url;
                         // connected_url still borrows from the previous hop's buffer
@@ -5033,8 +5064,11 @@ impl<'a> HTTPClient<'a> {
                             return Err(crate::Error::RedirectURLTooLong);
                         }
 
-                        let is_http =
-                            strings::eql_case_insensitive_ascii(protocol_name, b"http", true);
+                        let is_http = strings::eql_case_insensitive_ascii(
+                            protocol_name,
+                            b"http",
+                            strings::CheckLen::Yes,
+                        );
 
                         if is_http {
                             string_builder.count(b"http:");
@@ -5070,7 +5104,7 @@ impl<'a> HTTPClient<'a> {
                         is_same_origin = strings::eql_case_insensitive_ascii(
                             strings::without_trailing_slash(new_url.origin),
                             strings::without_trailing_slash(self.url.origin),
-                            true,
+                            strings::CheckLen::Yes,
                         );
                         self.url = new_url;
                         debug_assert!(self.prev_redirect.is_empty());
@@ -5098,7 +5132,7 @@ impl<'a> HTTPClient<'a> {
                         is_same_origin = strings::eql_case_insensitive_ascii(
                             strings::without_trailing_slash(self.url.origin),
                             strings::without_trailing_slash(original_url.origin),
-                            true,
+                            strings::CheckLen::Yes,
                         );
                         debug_assert!(self.prev_redirect.is_empty());
                         self.prev_redirect = core::mem::replace(&mut self.redirect, new_url);

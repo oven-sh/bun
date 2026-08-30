@@ -8,7 +8,7 @@ use crate::webcore::blob::BlobExt;
 use bun_ast::Target;
 use bun_bundler::BundleV2;
 use bun_bundler::options;
-use bun_collections::{StringMap, StringSet};
+use bun_collections::{DupeKeys, StringMap, StringSet};
 use bun_core::MutableString;
 use bun_core::Output;
 use bun_core::String as BunString;
@@ -171,7 +171,7 @@ pub mod js_bundler {
                 react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
                 react_compiler_parse_test_pragmas: false,
                 react_compiler_output_mode: None,
-                define: StringMap::init(false),
+                define: StringMap::init(DupeKeys::No),
                 loaders: None,
                 dir: OwnedString::default(),
                 outdir: OwnedString::default(),
@@ -449,7 +449,7 @@ pub mod js_bundler {
             // is rejected by rustc (E0509). Construct default then mutate instead.
             let mut this = Config::default();
             // `define` defaults to `StringMap::init(false)`; only the flag differs.
-            this.define.dupe_keys = true;
+            this.define.dupe_keys = DupeKeys::Yes;
             // errdefer this.deinit(allocator) — handled by `impl Drop for Config` on `?` paths.
             // errdefer if (plugins.*) |plugin| plugin.deinit() — scopeguard below.
             let mut plugins = scopeguard::guard(plugins, |p| {
@@ -539,8 +539,8 @@ pub mod js_bundler {
                             function,
                             config,
                             onstart_promise_array,
-                            is_last,
-                            false,
+                            IsLast::from_bool(is_last),
+                            IsBake::No,
                         )?
                     };
 
@@ -1655,6 +1655,9 @@ pub mod js_bundler {
         ) -> JSValue;
     }
 
+    bun_core::bool_enum!(pub IsLast);
+    bun_core::bool_enum!(pub IsBake);
+
     /// JSC-aware methods on the C++ `JSBundlerPlugin` opaque. The opaque type
     /// itself is owned by `bun_bundler` (lower tier, no JSC dep), so these are
     /// added as an extension trait rather than an inherent `impl`.
@@ -1681,8 +1684,8 @@ pub mod js_bundler {
             object: JSValue,
             config: JSValue,
             onstart_promises_array: JSValue,
-            is_last: bool,
-            is_bake: bool,
+            is_last: IsLast,
+            is_bake: IsBake,
         ) -> JsResult<JSValue>;
         fn set_config(&mut self, config: *mut c_void);
         /// Thin FFI forward; the host-call wrapper / exception check is the
@@ -1763,8 +1766,8 @@ pub mod js_bundler {
             object: JSValue,
             config: JSValue,
             onstart_promises_array: JSValue,
-            is_last: bool,
-            is_bake: bool,
+            is_last: IsLast,
+            is_bake: IsBake,
         ) -> JsResult<JSValue> {
             jsc::mark_binding();
             let _tracer = bun_core::perf::trace("JSBundler.addPlugin");
@@ -1778,8 +1781,8 @@ pub mod js_bundler {
                     object,
                     config,
                     onstart_promises_array,
-                    JSValue::from(is_last),
-                    JSValue::from(is_bake),
+                    JSValue::from(is_last == IsLast::Yes),
+                    JSValue::from(is_bake == IsBake::Yes),
                 )
             })
         }

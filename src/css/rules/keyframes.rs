@@ -2,7 +2,7 @@ use crate as css;
 use crate::css_rules::Location;
 use crate::css_values::ident::{CustomIdent, is_reserved_custom_ident};
 use crate::css_values::percentage::Percentage;
-use crate::{DeclarationBlock, PrintErr, Printer, VendorPrefix};
+use crate::{DeclarationBlock, HandleCssModule, PrintErr, Printer, VendorPrefix};
 
 use super::ArrayList;
 
@@ -28,15 +28,15 @@ impl KeyframesName {
         fn write_ident<'a>(
             dest: &mut Printer<'a>,
             v: &'a [u8],
-            handle_css_module: bool,
+            handle_css_module: HandleCssModule,
         ) -> core::result::Result<(), PrintErr> {
             dest.write_ident(v, handle_css_module)
         }
 
         let css_module_animation_enabled = if let Some(css_module) = &dest.css_module {
-            css_module.config.animation
+            HandleCssModule::from_bool(css_module.config.animation)
         } else {
-            false
+            HandleCssModule::No
         };
 
         match self {

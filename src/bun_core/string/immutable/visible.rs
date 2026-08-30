@@ -9,6 +9,8 @@
 pub mod visible {
     pub mod width {
         pub mod exclude_ansi_colors {
+            crate::bool_enum!(pub AmbiguousWidth { Narrow, Wide });
+
             unsafe extern "C" {
                 fn Bun__visibleWidthExcludeANSI_latin1(
                     ptr: *const u8,
@@ -30,13 +32,13 @@ pub mod visible {
 
             /// Visible terminal width of Latin-1 bytes, treating ANSI escape
             /// sequences as zero-width.
-            pub(crate) fn latin1(input: &[u8], ambiguous_as_wide: bool) -> usize {
+            pub(crate) fn latin1(input: &[u8], ambiguous_as_wide: AmbiguousWidth) -> usize {
                 // SAFETY: `input` is a live slice for the duration of the call.
                 unsafe {
                     Bun__visibleWidthExcludeANSI_latin1(
                         input.as_ptr(),
                         input.len(),
-                        ambiguous_as_wide,
+                        ambiguous_as_wide == AmbiguousWidth::Wide,
                     )
                 }
             }
@@ -50,13 +52,13 @@ pub mod visible {
 
             /// Visible terminal width of a UTF-16 string, treating ANSI escape
             /// sequences as zero-width.
-            pub(crate) fn utf16(input: &[u16], ambiguous_as_wide: bool) -> usize {
+            pub(crate) fn utf16(input: &[u16], ambiguous_as_wide: AmbiguousWidth) -> usize {
                 // SAFETY: `input` is a live slice for the duration of the call.
                 unsafe {
                     Bun__visibleWidthExcludeANSI_utf16(
                         input.as_ptr(),
                         input.len(),
-                        ambiguous_as_wide,
+                        ambiguous_as_wide == AmbiguousWidth::Wide,
                     )
                 }
             }

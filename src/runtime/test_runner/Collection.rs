@@ -8,7 +8,7 @@ use bun_core::Timespec;
 
 use crate::test_runner::bun_test::{
     self, BunTest, BunTestPtr, BunTestRoot, DescribeScope, HandleUncaughtExceptionResult,
-    RefDataValue, StepResult,
+    HasDoneParameter, RefDataValue, StepResult,
 };
 use crate::test_runner::bun_test::debug::group;
 use crate::test_runner::jest::Jest;
@@ -238,7 +238,7 @@ impl Collection {
                 buntest_strong,
                 global_this,
                 callback.get(),
-                false,
+                HasDoneParameter::No,
                 RefDataValue::Collection { active_scope: previous_scope },
                 &Timespec::EPOCH,
             ) {

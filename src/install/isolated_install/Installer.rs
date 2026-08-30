@@ -1,7 +1,7 @@
 use core::sync::atomic::{AtomicU8, Ordering};
 use std::io::Write as _;
 
-use bun_ast::Log;
+use bun_ast::{Log, Recycled};
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
@@ -22,7 +22,7 @@ use crate::postinstall_optimizer::PostinstallOptimizer;
 use crate::resolution;
 use crate::{
     self as install, DependencyID, Lockfile, PackageID, PackageManager, PackageNameHash,
-    Resolution, TaskCallbackContext, TruncatedPackageNameHash, bin, invalid_dependency_id,
+    Resolution, Scope, TaskCallbackContext, TruncatedPackageNameHash, bin, invalid_dependency_id,
 };
 // Bring `items_<field>()` column accessors into scope for
 // `MultiArrayList<Package>` / `Slice<Package>`.
@@ -315,7 +315,7 @@ impl<'a> Installer<'a> {
 
         if let crate::patch_install::Callback::Apply(apply) = &mut patch_task.callback {
             if apply.logger.has_errors() {
-                apply.logger.clone_to_with_recycled(log, true);
+                apply.logger.clone_to_with_recycled(log, Recycled::Yes);
             }
         }
     }
@@ -1827,7 +1827,7 @@ impl Task {
                         skipped_due_to_missing_bin: false,
                     };
 
-                    bin_linker.link(false);
+                    bin_linker.link(Scope::Local);
 
                     if target_node_modules_path.is_some()
                         && (bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some())
@@ -1844,7 +1844,7 @@ impl Task {
                             );
                         }
 
-                        bin_linker.link(false);
+                        bin_linker.link(Scope::Local);
                     }
 
                     if let Some(err) = bin_linker.err {
@@ -2265,7 +2265,9 @@ impl<'a> Installer<'a> {
 
             dest.set_length(base_len);
             let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
-            if entry_node_modules_name.is_some_and(|name| strings::eql_long(dep_name, name, true)) {
+            if entry_node_modules_name
+                .is_some_and(|name| strings::eql_long(dep_name, name, strings::CheckLen::Yes))
+            {
                 // same name as the entry itself: nest one node_modules deeper to avoid the collision
                 let _ = dest.append(b"node_modules"); // OOM/capacity: fire-and-forget
                 let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
@@ -2401,7 +2403,7 @@ impl<'a> Installer<'a> {
                 skipped_due_to_missing_bin: false,
             };
 
-            bin_linker.link(false);
+            bin_linker.link(Scope::Local);
 
             if target_node_modules_path.is_some()
                 && (bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some())
@@ -2417,7 +2419,7 @@ impl<'a> Installer<'a> {
                     );
                 }
 
-                bin_linker.link(false);
+                bin_linker.link(Scope::Local);
             }
 
             if let Some(err) = bin_linker.err {

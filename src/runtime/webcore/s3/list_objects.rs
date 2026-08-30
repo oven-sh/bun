@@ -1,7 +1,7 @@
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 // Shared S3 option-string ladder (get_truthy → is_string → from_js → to_utf8).
-use super::__s3_credentials_jsc::get_truthy_string_utf8;
+use super::__s3_credentials_jsc::{Strict, get_truthy_string_utf8};
 use super::s3::xml_response;
 use bun_core::Utf8Bytes;
 
@@ -235,16 +235,19 @@ pub(crate) fn get_list_objects_options_from_js(
     }
 
     if let Some(slice) =
-        get_truthy_string_utf8(list_options, global_this, b"continuationToken", false)?
+        get_truthy_string_utf8(list_options, global_this, b"continuationToken", Strict::No)?
     {
         list_objects_options.continuation_token = Some(slice);
     }
 
-    if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"delimiter", false)? {
+    if let Some(slice) =
+        get_truthy_string_utf8(list_options, global_this, b"delimiter", Strict::No)?
+    {
         list_objects_options.delimiter = Some(slice);
     }
 
-    if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"encodingType", false)?
+    if let Some(slice) =
+        get_truthy_string_utf8(list_options, global_this, b"encodingType", Strict::No)?
     {
         list_objects_options.encoding_type = Some(slice);
     }
@@ -261,11 +264,13 @@ pub(crate) fn get_list_objects_options_from_js(
         }
     }
 
-    if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"prefix", false)? {
+    if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"prefix", Strict::No)? {
         list_objects_options.prefix = Some(slice);
     }
 
-    if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"startAfter", false)? {
+    if let Some(slice) =
+        get_truthy_string_utf8(list_options, global_this, b"startAfter", Strict::No)?
+    {
         list_objects_options.start_after = Some(slice);
     }
 

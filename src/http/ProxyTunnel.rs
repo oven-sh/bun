@@ -11,8 +11,10 @@ use crate::http_cert_error::HTTPCertError;
 use crate::http_context::{HTTPSocket, PeerVerification};
 use crate::internal_state::{HTTPStage, Stage};
 use crate::ssl_config::SSLConfig;
-use crate::ssl_wrapper::{Handlers as SSLWrapperHandlers, InitError, SSLWrapper, WriteDataError};
-use crate::{AlpnOffer, HTTPClient};
+use crate::ssl_wrapper::{
+    FastShutdown, Handlers as SSLWrapperHandlers, InitError, SSLWrapper, WriteDataError,
+};
+use crate::{AllowProxyUrl, AlpnOffer, HTTPClient, OnlyBuffer};
 
 bun_core::declare_scope!(http_proxy_tunnel, visible);
 
@@ -207,7 +209,7 @@ fn on_open(ctx: *mut HTTPClient) {
     // `&mut ProxyTunnel` — see ALIASING NOTE.
     let _guard = ProxyTunnel::ref_guard(proxy_nn);
     if let Some(ssl_ptr) = ProxyTunnel::wrapper_ssl(proxy_nn) {
-        let _hostname = crate::get_tls_hostname(this, false);
+        let _hostname = crate::get_tls_hostname(this, AllowProxyUrl::No);
 
         // SAFETY: `ssl_ptr` is the live SSL handle from the tunnel's SSLWrapper.
         let ssl = unsafe { &mut *ssl_ptr.as_ptr() };
@@ -270,7 +272,7 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
             if decoded_data.is_empty() {
                 return;
             }
-            let report_progress = match this.handle_response_body(decoded_data, false) {
+            let report_progress = match this.handle_response_body(decoded_data, OnlyBuffer::No) {
                 Ok(v) => v,
                 Err(err) => {
                     // `this` is dead (NLL); reenter via raw ptr so on_close's
@@ -377,7 +379,7 @@ fn on_handshake(
             let ssl = unsafe { &mut *ssl_ptr.as_ptr() };
             match ProxyTunnel::socket_of(proxy_nn) {
                 &Socket::Ssl(socket) => {
-                    if !this.check_server_identity::<true>(socket, ssl, false) {
+                    if !this.check_server_identity::<true>(socket, ssl, AllowProxyUrl::No) {
                         scoped_log!(
                             http_proxy_tunnel,
                             "ProxyTunnel onHandshake checkServerIdentity failed"
@@ -390,7 +392,7 @@ fn on_handshake(
                     }
                 }
                 &Socket::Tcp(socket) => {
-                    if !this.check_server_identity::<false>(socket, ssl, false) {
+                    if !this.check_server_identity::<false>(socket, ssl, AllowProxyUrl::No) {
                         scoped_log!(
                             http_proxy_tunnel,
                             "ProxyTunnel onHandshake checkServerIdentity failed"
@@ -568,7 +570,7 @@ impl ProxyTunnel {
         let custom_options = ssl_options.as_usockets_for_client_verification();
         let wrapper = match ProxyTunnelWrapper::init_from_options(
             &custom_options,
-            true,
+            uws::TlsRole::Client,
             SSLWrapperHandlers {
                 on_open,
                 on_data,
@@ -636,7 +638,7 @@ impl ProxyTunnel {
         // across the reentrant call.
         if let Some(wrapper) = ProxyTunnel::wrapper_ref(this.as_ptr()) {
             // fast shutdown the connection
-            let _ = wrapper.shutdown(true);
+            let _ = wrapper.shutdown(FastShutdown::Yes);
         }
     }
 
@@ -645,7 +647,7 @@ impl ProxyTunnel {
         // tunnel and the caller's `&mut` borrows are NLL-dead before this call.
         if let Some(wrapper) = unsafe { &*addr_of!((*this.as_ptr()).wrapper) } {
             // fast shutdown the connection
-            let _ = wrapper.shutdown(true);
+            let _ = wrapper.shutdown(FastShutdown::Yes);
         }
     }
 

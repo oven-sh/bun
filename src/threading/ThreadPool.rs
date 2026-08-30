@@ -500,6 +500,8 @@ where
     }
 }
 
+bun_core::bool_enum!(TryCurrent);
+
 impl ThreadPool {
     /// Loop over an array of tasks and invoke `run_fn` on each one in a different thread.
     /// **Blocks the calling thread** until all tasks are completed.
@@ -602,7 +604,7 @@ impl ThreadPool {
         // `tasks` drops here after all worker threads have finished touching it.
     }
 
-    fn schedule_impl(&self, batch: &Batch, try_current: bool) {
+    fn schedule_impl(&self, batch: &Batch, try_current: TryCurrent) {
         let Batch { len, head, tail } = *batch;
         // Sanity check
         if len == 0 {
@@ -617,7 +619,7 @@ impl ThreadPool {
         };
 
         let current: *mut Thread = 'blk: {
-            if !try_current {
+            if try_current == TryCurrent::No {
                 break 'blk ptr::null_mut();
             }
             let Some(current) = NonNull::new(Thread::current()) else {
@@ -650,12 +652,12 @@ impl ThreadPool {
 
     /// Schedule a batch of tasks to be executed by some thread on the thread pool.
     pub fn schedule(&self, batch: Batch) {
-        self.schedule_impl(&batch, false);
+        self.schedule_impl(&batch, TryCurrent::No);
     }
 
     /// This function should only be called from threads that are part of the thread pool.
     pub fn schedule_inside_thread_pool(&self, batch: Batch) {
-        self.schedule_impl(&batch, true);
+        self.schedule_impl(&batch, TryCurrent::Yes);
     }
 
     fn force_spawn(&self) {

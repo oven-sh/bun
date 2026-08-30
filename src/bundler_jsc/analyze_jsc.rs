@@ -100,7 +100,7 @@ fn to_js_module_record(
     let mut ids = res.ids();
     for &tag in body.requested_tags {
         // bit 0: ModulePhase::Defer; bits 1..: fetch-parameter kind.
-        let phase_defer = tag & 1 != 0;
+        let phase_defer = ModulePhase::from_bool(tag & 1 != 0);
         let key = ready(ids.next_id()?)?;
         match ids.next_fetch(tag >> 1)? {
             RequestedModuleValue::None => module_record.add_requested_module_null_attributes_ptr(
@@ -470,6 +470,8 @@ impl JSModuleRecord {
     }
 }
 
+bun_core::bool_enum!(ModulePhase { Evaluation, Defer });
+
 // Thin method shims over the raw `*mut JSModuleRecord` returned by `create`.
 // These take `*mut Self` raw-ptr receivers to avoid materializing `&mut` aliases.
 trait JSModuleRecordExt {
@@ -504,32 +506,32 @@ trait JSModuleRecordExt {
         self,
         ia: *mut IdentifierArray,
         module_name: StringID,
-        phase_defer: bool,
+        phase_defer: ModulePhase,
     );
     fn add_requested_module_java_script(
         self,
         ia: *mut IdentifierArray,
         module_name: StringID,
-        phase_defer: bool,
+        phase_defer: ModulePhase,
     );
     fn add_requested_module_web_assembly(
         self,
         ia: *mut IdentifierArray,
         module_name: StringID,
-        phase_defer: bool,
+        phase_defer: ModulePhase,
     );
     fn add_requested_module_json(
         self,
         ia: *mut IdentifierArray,
         module_name: StringID,
-        phase_defer: bool,
+        phase_defer: ModulePhase,
     );
     fn add_requested_module_host_defined(
         self,
         ia: *mut IdentifierArray,
         module_name: StringID,
         host_defined_import_type: StringID,
-        phase_defer: bool,
+        phase_defer: ModulePhase,
     );
     fn add_import_entry_single(
         self,
@@ -632,7 +634,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         self,
         ia: *mut IdentifierArray,
         module_name: StringID,
-        phase_defer: bool,
+        phase_defer: ModulePhase,
     ) {
         // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
         unsafe {
@@ -640,7 +642,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
                 self,
                 ia,
                 module_name,
-                phase_defer,
+                phase_defer == ModulePhase::Defer,
             )
         }
     }
@@ -649,11 +651,16 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         self,
         ia: *mut IdentifierArray,
         module_name: StringID,
-        phase_defer: bool,
+        phase_defer: ModulePhase,
     ) {
         // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
         unsafe {
-            JSC_JSModuleRecord__addRequestedModuleJavaScript(self, ia, module_name, phase_defer)
+            JSC_JSModuleRecord__addRequestedModuleJavaScript(
+                self,
+                ia,
+                module_name,
+                phase_defer == ModulePhase::Defer,
+            )
         }
     }
     #[inline]
@@ -661,11 +668,16 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         self,
         ia: *mut IdentifierArray,
         module_name: StringID,
-        phase_defer: bool,
+        phase_defer: ModulePhase,
     ) {
         // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
         unsafe {
-            JSC_JSModuleRecord__addRequestedModuleWebAssembly(self, ia, module_name, phase_defer)
+            JSC_JSModuleRecord__addRequestedModuleWebAssembly(
+                self,
+                ia,
+                module_name,
+                phase_defer == ModulePhase::Defer,
+            )
         }
     }
     #[inline]
@@ -673,10 +685,17 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         self,
         ia: *mut IdentifierArray,
         module_name: StringID,
-        phase_defer: bool,
+        phase_defer: ModulePhase,
     ) {
         // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
-        unsafe { JSC_JSModuleRecord__addRequestedModuleJSON(self, ia, module_name, phase_defer) }
+        unsafe {
+            JSC_JSModuleRecord__addRequestedModuleJSON(
+                self,
+                ia,
+                module_name,
+                phase_defer == ModulePhase::Defer,
+            )
+        }
     }
     #[inline]
     fn add_requested_module_host_defined(
@@ -684,7 +703,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
         ia: *mut IdentifierArray,
         module_name: StringID,
         host_defined_import_type: StringID,
-        phase_defer: bool,
+        phase_defer: ModulePhase,
     ) {
         // SAFETY: `self` is the non-null record from `JSModuleRecord::create`; `ia` (the VM's shared slots or the caller's `OwnedIdentifierArray`) outlives the call.
         unsafe {
@@ -693,7 +712,7 @@ impl JSModuleRecordExt for *mut JSModuleRecord {
                 ia,
                 module_name,
                 host_defined_import_type,
-                phase_defer,
+                phase_defer == ModulePhase::Defer,
             )
         }
     }

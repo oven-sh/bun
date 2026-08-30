@@ -402,6 +402,8 @@ impl ShellArgs {
 /// Only used by the construction path (`Interpreter::init`).
 pub(crate) type ShellResult<T> = Result<T, ShellErr>;
 
+bun_core::bool_enum!(RunFrom { File, Source });
+
 impl Interpreter {
     /// Lex `src` (ASCII or Unicode), build a `Parser`, and return the root
     /// `ast::Script`. Tokens and AST nodes are bump-allocated into `arena`.
@@ -596,7 +598,7 @@ impl Interpreter {
             // On failure, deref root_io + deinit root_shell + free.
             if let Err(e) = interpreter
                 .root_shell
-                .with_mut(|rs| rs.change_cwd_impl(c, true))
+                .with_mut(|rs| rs.change_cwd_impl(c, InInit::Yes))
             {
                 // `deinit_from_exec` performs the full teardown (drops
                 // `root_io` Arcs, frees env maps, closes `cwd_fd`, consumes
@@ -619,7 +621,8 @@ impl Interpreter {
         self.root_io.set(IO::default());
         // Free buffered IO, env
         // maps, cwd fd; do NOT free the struct itself (it's embedded).
-        self.root_shell.with_mut(|rs| rs.deinit_embedded(true));
+        self.root_shell
+            .with_mut(|rs| rs.deinit_embedded(FreeBufferedIo::Yes));
     }
 
     /// Standalone-shell entrypoint for `bun <file>.sh`: parse `src` (already
@@ -634,7 +637,14 @@ impl Interpreter {
         path: &[u8],
         src: &[u8],
     ) -> crate::Result<ExitCode> {
-        Self::init_and_run_impl(ctx, mini, bun_paths::basename(path), src, None, false)
+        Self::init_and_run_impl(
+            ctx,
+            mini,
+            bun_paths::basename(path),
+            src,
+            None,
+            RunFrom::File,
+        )
     }
 
     /// Standalone-shell entrypoint for `bun run <script>` / `bun exec` when
@@ -652,7 +662,7 @@ impl Interpreter {
         src: &[u8],
         cwd: Option<&[u8]>,
     ) -> crate::Result<ExitCode> {
-        Self::init_and_run_impl(ctx, mini, path_for_errors, src, cwd, true)
+        Self::init_and_run_impl(ctx, mini, path_for_errors, src, cwd, RunFrom::Source)
     }
 
     /// Shared body for `init_and_run_from_file` / `init_and_run_from_source`.
@@ -665,8 +675,9 @@ impl Interpreter {
         label: &[u8],
         src: &[u8],
         cwd: Option<&[u8]>,
-        from_source: bool,
+        from_source: RunFrom,
     ) -> crate::Result<ExitCode> {
+        let from_source = from_source == RunFrom::Source;
         if from_source {
             bun_analytics::features::standalone_shell.fetch_add(1, Ordering::Relaxed);
         }
@@ -1395,7 +1406,8 @@ impl Interpreter {
             // `root_io` holds `Arc<IOReader>`/`Arc<IOWriter>`; replacing with
             // default drops the refs.
             self.root_io.set(IO::default());
-            self.root_shell.with_mut(|rs| rs.deinit_embedded(false));
+            self.root_shell
+                .with_mut(|rs| rs.deinit_embedded(FreeBufferedIo::No));
         }
 
         // Note: free the parse arena eagerly. `bun_alloc::Arena` is
@@ -1486,7 +1498,8 @@ impl Interpreter {
                     }
                 }
                 this.root_io.set(IO::default());
-                this.root_shell.with_mut(|rs| rs.deinit_embedded(true));
+                this.root_shell
+                    .with_mut(|rs| rs.deinit_embedded(FreeBufferedIo::Yes));
             }
             CleanupState::RuntimeCleaned => {
                 // `finish()` already cleaned up via
@@ -1741,6 +1754,9 @@ pub enum ShellExecEnvKind {
     Pipeline,
 }
 
+bun_core::bool_enum!(pub(crate) FreeBufferedIo);
+bun_core::bool_enum!(pub(crate) InInit);
+
 impl ShellExecEnv {
     pub(crate) fn memory_cost(&self) -> usize {
         let mut size = core::mem::size_of::<ShellExecEnv>();
@@ -1894,12 +1910,12 @@ impl ShellExecEnv {
 
     /// Teardown for the *embedded* root env (held by value in `Interpreter`).
     /// `deinit_impl(this: *mut)` covers the heap-allocated subshell case.
-    pub(crate) fn deinit_embedded(&mut self, free_buffered_io: bool) {
+    pub(crate) fn deinit_embedded(&mut self, free_buffered_io: FreeBufferedIo) {
         log!(
             "[ShellExecEnv] deinit 0x{:x}",
             std::ptr::from_ref(self) as usize
         );
-        if free_buffered_io {
+        if free_buffered_io == FreeBufferedIo::Yes {
             if let Bufio::Owned(o) = &mut self._buffered_stdout {
                 o.clear_and_free();
             }
@@ -1931,14 +1947,14 @@ impl ShellExecEnv {
         let prev = self.prev_cwd();
         let n = prev.len();
         buf[..n].copy_from_slice(prev);
-        self.change_cwd_impl(&buf[..n], false)
+        self.change_cwd_impl(&buf[..n], InInit::No)
     }
 
-    /// Thin `in_init = false` wrapper. Accepts the un-terminated slice and
+    /// Thin `InInit::No` wrapper. Accepts the un-terminated slice and
     /// lets `change_cwd_impl` re-NUL into its join buffer.
     #[inline]
     pub(crate) fn change_cwd(&mut self, new_cwd: &[u8]) -> bun_sys::Result<()> {
-        self.change_cwd_impl(new_cwd, false)
+        self.change_cwd_impl(new_cwd, InInit::No)
     }
 
     /// Resolves `new_cwd_` (absolute, or relative to current `cwd()`), opens it
@@ -1948,7 +1964,7 @@ impl ShellExecEnv {
     pub(crate) fn change_cwd_impl(
         &mut self,
         new_cwd_: &[u8],
-        in_init: bool,
+        in_init: InInit,
     ) -> bun_sys::Result<()> {
         let is_abs = bun_paths::is_absolute(new_cwd_);
 
@@ -2033,7 +2049,7 @@ impl ShellExecEnv {
         // erases the slice lifetime into a packed ptr) before taking
         // `&mut self.export_env`.
         use crate::shell::env_str::EnvStr;
-        if !in_init {
+        if in_init == InInit::No {
             let oldpwd = EnvStr::init_slice(self.prev_cwd());
             self.export_env
                 .insert(EnvStr::init_slice(b"OLDPWD"), oldpwd);

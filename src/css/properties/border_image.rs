@@ -5,6 +5,7 @@ use crate::Result;
 use css::PrintErr;
 use css::Printer;
 use css::SmallList;
+use css::WsBefore;
 
 use crate::generics::IsCompatible as _;
 use css::VendorPrefix;
@@ -169,14 +170,14 @@ impl BorderImage {
             dest.write_str(" ")?;
             slice.to_css(dest)?;
             if has_width || has_outset {
-                dest.delim(b'/', true)?;
+                dest.delim(b'/', WsBefore::Yes)?;
             }
             if has_width {
                 width.to_css(dest)?;
             }
 
             if has_outset {
-                dest.delim(b'/', true)?;
+                dest.delim(b'/', WsBefore::Yes)?;
                 outset.to_css(dest)?;
             }
         }

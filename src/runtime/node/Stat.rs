@@ -180,8 +180,13 @@ pub(crate) fn create_stats_for_ino(
     // SAFETY: all-zero is a valid PosixStat (repr(C) POD with no NonNull/NonZero fields).
     let mut stat_: PosixStat = bun_core::ffi::zeroed();
     stat_.ino = ino_arg.to_uint64_no_truncate();
-    Stats::init(&stat_, big_arg.to_boolean()).to_js_newly_created(global)
+    Stats::init(&stat_, StatsKind::from_bool(big_arg.to_boolean())).to_js_newly_created(global)
 }
+
+bun_core::bool_enum!(
+    /// `Stats` (JS numbers) vs `BigIntStats` — the `bigint` option.
+    pub StatsKind { Number, BigInt }
+);
 
 /// Union between `Stats` and `BigIntStats` where the type can be decided at runtime
 pub enum Stats {
@@ -191,8 +196,8 @@ pub enum Stats {
 
 impl Stats {
     #[inline]
-    pub(crate) fn init(stat_: &PosixStat, big: bool) -> Stats {
-        if big {
+    pub(crate) fn init(stat_: &PosixStat, big: StatsKind) -> Stats {
+        if big == StatsKind::BigInt {
             Stats::Big(StatsBig::init(stat_))
         } else {
             Stats::Small(StatsSmall::init(stat_))

@@ -14,14 +14,15 @@ use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 
 use crate::lockfile::tree;
-use crate::{DependencyID, ExtractData, PackageID};
+use crate::{DependencyID, ExtractData, InstallRootDependencies, PackageID};
 // Bring the `items_<field>{,_mut}()` column accessors for
 // `MultiArrayList::Slice<Package>` into scope.
 use crate::PackageManager;
 use crate::bin_real as bin;
-use crate::package_install;
+use crate::package_install::{self, SkipDelete};
 use crate::package_installer::{NodeModulesFolder, PackageInstaller, TreeContext};
 use crate::package_manager::{self, WorkspaceFilter};
+use crate::package_manager_real::InstallPeer;
 use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_real::run_tasks;
 use crate::package_manager_task as Task;
@@ -51,7 +52,7 @@ pub(crate) fn install_hoisted_packages(
     this: &mut PackageManager,
     ctx: Command::Context,
     workspace_filters: &[WorkspaceFilter],
-    install_root_dependencies: bool,
+    install_root_dependencies: InstallRootDependencies,
     log_level: package_manager::Options::LogLevel,
     packages_to_install: Option<&[PackageID]>,
 ) -> crate::Result<package_install::Summary> {
@@ -207,12 +208,12 @@ pub(crate) fn install_hoisted_packages(
         }
     };
 
-    let mut skip_delete = new_node_modules;
+    let mut skip_delete = SkipDelete::from_bool(new_node_modules);
     let mut skip_verify_installed_version_number = new_node_modules;
 
     if this.options.enable.force_install() {
         skip_verify_installed_version_number = true;
-        skip_delete = false;
+        skip_delete = SkipDelete::No;
     }
 
     let mut summary = package_install::Summary::default();
@@ -457,7 +458,7 @@ pub(crate) fn install_hoisted_packages(
                     run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
                         this,
                         &mut installer,
-                        true,
+                        InstallPeer::Yes,
                         log_level,
                     )?;
                     if !this.options.do_.install_packages() {
@@ -475,7 +476,7 @@ pub(crate) fn install_hoisted_packages(
             run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
                 this,
                 &mut installer,
-                true,
+                InstallPeer::Yes,
                 log_level,
             )?;
             if !this.options.do_.install_packages() {
@@ -505,7 +506,7 @@ pub(crate) fn install_hoisted_packages(
                     if let Err(err) = run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
                         manager,
                         closure.installer,
-                        true,
+                        InstallPeer::Yes,
                         log_level,
                     ) {
                         closure.err = Some(err);

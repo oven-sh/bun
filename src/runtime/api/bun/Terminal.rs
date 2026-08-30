@@ -458,7 +458,7 @@ impl Terminal {
         // Start writer with the write fd - adds a ref
         match terminal
             .writer
-            .with_mut(|w| w.start(pty_result.write_fd, true))
+            .with_mut(|w| w.start(pty_result.write_fd, bun_io::IsPollable::Yes))
         {
             sys::Result::Ok(()) => terminal.ref_(),
             sys::Result::Err(_) => {
@@ -485,7 +485,7 @@ impl Terminal {
         // Start reader with the read fd - adds a ref
         match terminal
             .reader
-            .with_mut(|r| r.start(pty_result.read_fd, true))
+            .with_mut(|r| r.start(pty_result.read_fd, bun_io::IsPollable::Yes))
         {
             sys::Result::Err(_) => {
                 // Reader never started: closeInternal skips reader.close() but
@@ -1033,9 +1033,9 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
     };
 
     // Set non-blocking on master side fds (for async I/O in the event loop)
-    let _ = sys::update_nonblocking(master_fd_desc, true);
-    let _ = sys::update_nonblocking(read_fd, true);
-    let _ = sys::update_nonblocking(write_fd, true);
+    let _ = sys::update_nonblocking(master_fd_desc, sys::IoMode::NonBlocking);
+    let _ = sys::update_nonblocking(read_fd, sys::IoMode::NonBlocking);
+    let _ = sys::update_nonblocking(write_fd, sys::IoMode::NonBlocking);
     // Note: slave_fd stays blocking - child processes expect blocking I/O
 
     // Set close-on-exec on master side fds only
@@ -1632,8 +1632,8 @@ fn get_termios(fd: Fd) -> Option<Termios> {
 
 /// Set terminal attributes using tcsetattr (TCSANOW = immediate)
 #[cfg(unix)]
-fn set_termios(fd: Fd, termios_p: &Termios) -> bool {
-    sys::posix::tcsetattr(fd.native(), sys::posix::TCSA::Now, termios_p).is_ok()
+fn set_termios(fd: Fd, termios_p: &Termios) -> Result<(), sys::Error> {
+    sys::posix::tcsetattr(fd.native(), sys::posix::TCSA::Now, termios_p)
 }
 
 impl Terminal {

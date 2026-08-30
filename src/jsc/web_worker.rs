@@ -350,7 +350,7 @@ impl WebWorker {
         // its own thread; the worker never dereferences `parent`.
         // SAFETY: `parent` is the calling thread's live VM.
         let parent_ref = unsafe { &*parent };
-        let store_fd = parent_ref.transpiler.resolver.store_fd;
+        let store_fd = parent_ref.transpiler.resolver.store_fd == bun_resolver::fs::StoreFd::Yes;
         let mut transform_options = (*parent_ref.transpiler.options.transform_options).clone();
         if !inherit_exec_argv {
             let hooks = runtime_hooks().expect("RuntimeHooks not installed");
@@ -842,7 +842,11 @@ impl WebWorker {
                 Bun__Worker__loadNodeWorkerThreadsModule(global)
             }) {
                 let exception = global.take_exception(err);
-                let _ = vm.as_mut().uncaught_exception(global, exception, false);
+                let _ = vm.as_mut().uncaught_exception(
+                    global,
+                    exception,
+                    crate::virtual_machine::IsRejection::No,
+                );
                 if !self.exit_called.load(Ordering::Relaxed) {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }
@@ -895,7 +899,7 @@ impl WebWorker {
                 let handled = vm.as_mut().uncaught_exception(
                     vm.global(),
                     (*promise).result(vm.jsc_vm()),
-                    is_rejection,
+                    crate::virtual_machine::IsRejection::from_bool(is_rejection),
                 );
                 if handled {
                     EntryOutcome::Continue
@@ -934,7 +938,7 @@ impl WebWorker {
             vm.global().vm().release_weak_refs();
             // `Arena = bumpalo::Bump` has no collect; global mimalloc
             // handles reclamation.
-            let _ = vm.global().vm().run_gc(false);
+            let _ = vm.global().vm().run_gc(crate::GcMode::Async);
         }
 
         // Always do a first tick so we call CppTask without delay after

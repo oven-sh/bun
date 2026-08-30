@@ -13,8 +13,9 @@ use crate::prefixes::Feature as PrefixFeature;
 use crate::targets::Targets;
 
 use super::CSSWideKeyword;
-use super::custom::{CustomProperty, CustomPropertyName, UnparsedProperty};
+use super::custom::{CustomProperty, CustomPropertyName, IsCustomProperty, UnparsedProperty};
 use super::properties_impl;
+use super::properties_impl::property_mixin::Important;
 
 // Leaf property modules.
 use super::align;
@@ -2420,10 +2421,11 @@ impl Property {
             Property::ViewTransitionClass(v) => css::generic::to_css(v, dest),
             Property::ViewTransitionGroup(v) => css::generic::to_css(v, dest),
             Property::All(v) => css::generic::to_css(v, dest),
-            Property::Unparsed(u) => u.value.to_css(dest, false),
-            Property::Custom(c) => c
-                .value
-                .to_css(dest, matches!(c.name, CustomPropertyName::Custom(..))),
+            Property::Unparsed(u) => u.value.to_css(dest, IsCustomProperty::No),
+            Property::Custom(c) => c.value.to_css(
+                dest,
+                IsCustomProperty::from_bool(matches!(c.name, CustomPropertyName::Custom(..))),
+            ),
         }
     }
 
@@ -3889,7 +3891,11 @@ impl Property {
         UnparsedProperty::parse(property_id, input, options).map(Property::Unparsed)
     }
 
-    pub fn to_css(&self, dest: &mut css::Printer, important: bool) -> Result<(), css::PrintErr> {
+    pub fn to_css(
+        &self,
+        dest: &mut css::Printer,
+        important: Important,
+    ) -> Result<(), css::PrintErr> {
         properties_impl::property_mixin::to_css(self, dest, important)
     }
 

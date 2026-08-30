@@ -1,6 +1,7 @@
 use bun_ptr::{RefPtr, ThisPtr};
 
 use super::WebSocketProxyTunnel;
+use super::websocket_upgrade_client::TargetTls;
 
 /// WebSocketProxy encapsulates proxy state for WebSocket connections through HTTP/HTTPS proxies.
 /// This struct holds only the fields needed after the initial CONNECT request.
@@ -10,7 +11,7 @@ pub(crate) struct WebSocketProxy {
     /// Target hostname for SNI during TLS handshake
     target_host: Box<[u8]>,
     /// Whether target uses TLS (wss://)
-    target_is_https: bool,
+    target_is_https: TargetTls,
     /// WebSocket upgrade request to send after CONNECT succeeds
     websocket_request_buf: Box<[u8]>,
     /// TLS tunnel for wss:// through HTTP proxy.
@@ -23,7 +24,7 @@ impl WebSocketProxy {
     // params are owned (caller transfers ownership; freed in deinit)
     pub(crate) fn init(
         target_host: Box<[u8]>,
-        target_is_https: bool,
+        target_is_https: TargetTls,
         websocket_request_buf: Box<[u8]>,
     ) -> WebSocketProxy {
         WebSocketProxy {
@@ -41,7 +42,7 @@ impl WebSocketProxy {
 
     /// Check if the target uses HTTPS (wss://)
     pub(crate) fn is_target_https(&self) -> bool {
-        self.target_is_https
+        self.target_is_https == TargetTls::Tls
     }
 
     /// Get the TLS tunnel for wss:// through HTTP proxy

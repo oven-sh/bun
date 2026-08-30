@@ -213,7 +213,7 @@ fn unlink(ctx: &mut ContextData) -> crate::Result<()> {
                 err: None,
                 skipped_due_to_missing_bin: false,
             };
-            bin_linker.unlink(true);
+            bin_linker.unlink(bun_install::Scope::Global);
         }
 
         // delete it if it exists

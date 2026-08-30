@@ -466,7 +466,7 @@ impl CreateCommand {
                     tarball_bytes.list.as_slice(),
                     &mut tarball_buf_list,
                 )?;
-                gunzip.read_all(true)?;
+                gunzip.read_all(Zlib::Chunk::Last)?;
                 drop(gunzip);
 
                 node.name =
@@ -1079,7 +1079,11 @@ impl CreateCommand {
 
         if !create_options.skip_git {
             if !create_options.skip_install {
-                GitHandler::spawn(destination, path_env, create_options.verbose);
+                GitHandler::spawn(
+                    destination,
+                    path_env,
+                    Verbose::from_bool(create_options.verbose),
+                );
             } else {
                 if create_options.verbose {
                     create_options.skip_git =
@@ -1292,7 +1296,10 @@ impl CreateCommand {
         let create_options = CreateOptions::parse(ctx)?;
         let positionals = &create_options.positionals;
         if positionals.is_empty() {
-            crate::cli::command::tag_print_help(crate::Command::Tag::CreateCommand, false);
+            crate::cli::command::tag_print_help(
+                crate::Command::Tag::CreateCommand,
+                crate::cli::ShowAllFlags::No,
+            );
             Global::crash();
         }
 
@@ -2362,8 +2369,10 @@ static SUCCESS: AtomicU32 = AtomicU32::new(0);
 static THREAD: bun_core::RacyCell<Option<std::thread::JoinHandle<()>>> =
     bun_core::RacyCell::new(None);
 
+bun_core::bool_enum!(Verbose);
+
 impl GitHandler {
-    fn spawn(destination: &[u8], path: &[u8], verbose: bool) {
+    fn spawn(destination: &[u8], path: &[u8], verbose: Verbose) {
         SUCCESS.store(0, Ordering::Relaxed);
 
         // Own copies so the spawned closure is `'static` without any lifetime
@@ -2383,9 +2392,9 @@ impl GitHandler {
         unsafe { *THREAD.get() = Some(thread) };
     }
 
-    fn spawn_thread(destination: &[u8], path: &[u8], verbose: bool) {
+    fn spawn_thread(destination: &[u8], path: &[u8], verbose: Verbose) {
         Output::Source::configure_named_thread(bun_core::zstr!("git"));
-        let outcome = if verbose {
+        let outcome = if verbose == Verbose::Yes {
             Self::run::<true>(destination, path).unwrap_or(false)
         } else {
             Self::run::<false>(destination, path).unwrap_or(false)

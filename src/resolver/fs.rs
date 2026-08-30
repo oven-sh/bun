@@ -94,6 +94,8 @@ impl strings::Appender for FilenameStoreAppender {
 // `EntryKindResolver` trait so this block does not depend on `crate::fs::RealFS`.
 // ══════════════════════════════════════════════════════════════════════════
 
+bun_core::bool_enum!(pub StoreFd);
+
 /// Decouples `Entry::kind`/`symlink` (the lazy-stat path) from the concrete
 /// `RealFS` type; the inline-`fs::RealFS` in `lib.rs` impls this by forwarding
 /// to `RealFS::kind`.
@@ -103,7 +105,7 @@ pub trait EntryKindResolver {
         dir: &[u8],
         base: &[u8],
         existing_fd: Fd,
-        store_fd: bool,
+        store_fd: StoreFd,
     ) -> crate::CrateResult<EntryCache>;
 }
 
@@ -212,7 +214,7 @@ impl Entry {
     // borrow while a `&mut Entry` (borrowed out of `RealFS.entries`) is live.
     // Generic over `R: EntryKindResolver` so this block is independent of
     // which `RealFS` copy `fs` points at (see file-top comment).
-    pub unsafe fn kind<R: EntryKindResolver>(&self, fs: *mut R, store_fd: bool) -> EntryKind {
+    pub unsafe fn kind<R: EntryKindResolver>(&self, fs: *mut R, store_fd: StoreFd) -> EntryKind {
         if self.need_stat.load(Ordering::Acquire) {
             let _guard = self.mutex.lock_guard();
             // Relaxed: every write happens under `mutex`, which we hold.
@@ -248,7 +250,7 @@ impl Entry {
     pub(crate) unsafe fn symlink<R: EntryKindResolver>(
         &self,
         fs: *mut R,
-        store_fd: bool,
+        store_fd: StoreFd,
     ) -> &'static [u8] {
         if self.need_stat.load(Ordering::Acquire) {
             let _guard = self.mutex.lock_guard();
@@ -705,20 +707,31 @@ unsafe impl Send for Entry {}
 //     `use_shared_buffer`/`stream` at runtime and want only the bytes.
 // ══════════════════════════════════════════════════════════════════════════
 
+bun_core::bool_enum!(pub UseSharedBuffer);
+bun_core::bool_enum!(pub Stream);
+
 /// Runtime-bool → const-generic dispatcher for `cache::Fs::read_file{,_shared}`.
 /// Returns just the contents (`Cow::Borrowed` ⇢ shared-buffer arm,
 /// `Cow::Owned` ⇢ heap arm); callers `.map(Contents::from)` to tag provenance.
 pub fn read_file_contents<'buf>(
     file: &bun_sys::File,
-    use_shared_buffer: bool,
+    use_shared_buffer: UseSharedBuffer,
     shared: &'buf mut MutableString,
-    stream: bool,
+    stream: Stream,
 ) -> crate::CrateResult<Cow<'buf, [u8]>> {
     match (use_shared_buffer, stream) {
-        (true, true) => read_file_with_handle_impl::<true, true>(None, file, shared),
-        (true, false) => read_file_with_handle_impl::<true, false>(None, file, shared),
-        (false, true) => read_file_with_handle_impl::<false, true>(None, file, shared),
-        (false, false) => read_file_with_handle_impl::<false, false>(None, file, shared),
+        (UseSharedBuffer::Yes, Stream::Yes) => {
+            read_file_with_handle_impl::<true, true>(None, file, shared)
+        }
+        (UseSharedBuffer::Yes, Stream::No) => {
+            read_file_with_handle_impl::<true, false>(None, file, shared)
+        }
+        (UseSharedBuffer::No, Stream::Yes) => {
+            read_file_with_handle_impl::<false, true>(None, file, shared)
+        }
+        (UseSharedBuffer::No, Stream::No) => {
+            read_file_with_handle_impl::<false, false>(None, file, shared)
+        }
     }
     .map(|p| p.contents)
 }

@@ -1,5 +1,6 @@
 use crate as css;
 use crate::css_rules::Location;
+use crate::properties::Important;
 use crate::{DeclarationBlock, PrintErr, Printer};
 
 use super::ArrayList;
@@ -142,9 +143,12 @@ impl PageRule {
         let len = self.declarations.len() + self.rules.len();
 
         // Both declaration fields are property lists; iterate as (slice, important) pairs.
-        let decls_groups: [(&[crate::css_parser::Property], bool); 2] = [
-            (self.declarations.declarations.as_slice(), false),
-            (self.declarations.important_declarations.as_slice(), true),
+        let decls_groups: [(&[crate::css_parser::Property], Important); 2] = [
+            (self.declarations.declarations.as_slice(), Important::No),
+            (
+                self.declarations.important_declarations.as_slice(),
+                Important::Yes,
+            ),
         ];
         for (decls, important) in decls_groups {
             for decl in decls {

@@ -1,9 +1,9 @@
 //! CSS [media queries](https://drafts.csswg.org/mediaqueries/).
 
 use crate as css;
-use crate::css_properties::custom::EnvironmentVariable;
+use crate::css_properties::custom::{EnvironmentVariable, IsCustomProperty};
 use crate::css_values::ident::{DashedIdent, Ident};
-use crate::{Parser, PrintErr, Printer, Result};
+use crate::{Parser, PrintErr, Printer, Result, WsBefore};
 use bun_alloc::ArenaPtr;
 
 // Strings here borrow parser input/arena memory but the structs carry no lifetime
@@ -887,7 +887,7 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
             }
             QueryFeature::Plain { name, value } => {
                 name.to_css(dest)?;
-                dest.delim(b':', false)?;
+                dest.delim(b':', WsBefore::No)?;
                 value.to_css(dest)?;
             }
             QueryFeature::Range {
@@ -1034,14 +1034,14 @@ impl MediaFeatureComparison {
             // Suspect but intentional: emits '-' for `Equal`, diverging from
             // the spec `=` and from this enum's strum tag. Preserved
             // byte-for-byte; revisit if upstream fixes.
-            MediaFeatureComparison::Equal => dest.delim(b'-', true),
-            MediaFeatureComparison::GreaterThan => dest.delim(b'>', true),
+            MediaFeatureComparison::Equal => dest.delim(b'-', WsBefore::Yes),
+            MediaFeatureComparison::GreaterThan => dest.delim(b'>', WsBefore::Yes),
             MediaFeatureComparison::GreaterThanEqual => {
                 dest.whitespace()?;
                 dest.write_str(">=")?;
                 dest.whitespace()
             }
-            MediaFeatureComparison::LessThan => dest.delim(b'<', true),
+            MediaFeatureComparison::LessThan => dest.delim(b'<', WsBefore::Yes),
             MediaFeatureComparison::LessThanEqual => {
                 dest.whitespace()?;
                 dest.write_str("<=")?;
@@ -1077,7 +1077,7 @@ impl MediaFeatureValue {
             MediaFeatureValue::Resolution(res) => res.to_css(dest),
             MediaFeatureValue::Ratio(ratio) => ratio.to_css(dest),
             MediaFeatureValue::Ident(id) => id.to_css(dest),
-            MediaFeatureValue::Env(env) => env.to_css(dest, false),
+            MediaFeatureValue::Env(env) => env.to_css(dest, IsCustomProperty::No),
         }
     }
 
@@ -1220,7 +1220,7 @@ fn write_min_max<FeatureId: FeatureIdTrait>(
         name.to_css(dest)?;
     }
 
-    dest.delim(b':', false)?;
+    dest.delim(b':', WsBefore::No)?;
 
     // `MediaFeatureValue: Clone`, so clone-by-value before adjusting.
     let adjusted: Option<MediaFeatureValue> = match operator {
@@ -1645,7 +1645,7 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
     fn parse_name_first(input: &mut Parser, options: &css::ParserOptions) -> Result<Self> {
         let (name, legacy_op) = MediaFeatureName::<FeatureId>::parse(input)?;
 
-        let operator = match input.try_parse(|i| consume_operation_or_colon(i, true)) {
+        let operator = match input.try_parse(|i| consume_operation_or_colon(i, AllowColon::Yes)) {
             Ok(operator) => operator,
             Err(_) => return Ok(QueryFeature::Boolean { name }),
         };
@@ -1696,7 +1696,7 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
 
         // Now we can parse the first value.
         let value = MediaFeatureValue::parse(input, name.value_type(), options)?;
-        let operator = consume_operation_or_colon(input, false)?;
+        let operator = consume_operation_or_colon(input, AllowColon::No)?;
 
         // Skip over the feature name again.
         {
@@ -1708,7 +1708,9 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
             return Err(input.new_custom_error(css::ParserError::invalid_media_query));
         }
 
-        if let Ok(end_operator_) = input.try_parse(|i| consume_operation_or_colon(i, false)) {
+        if let Ok(end_operator_) =
+            input.try_parse(|i| consume_operation_or_colon(i, AllowColon::No))
+        {
             let start_operator = operator.unwrap();
             let end_operator = end_operator_.unwrap();
             // Start and end operators must be matching.
@@ -1755,20 +1757,22 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
     }
 }
 
+bun_core::bool_enum!(AllowColon);
+
 /// Consumes an operation or a colon, or returns an error.
 ///
 /// Returns `Ok(None)`
 /// when a colon was consumed (and `allow_colon`); `Ok(Some(op))` for `<`/`>`/`=`.
 fn consume_operation_or_colon(
     input: &mut Parser,
-    allow_colon: bool,
+    allow_colon: AllowColon,
 ) -> Result<Option<MediaFeatureComparison>> {
     let location = input.current_source_location();
     let first_delim: u32 = {
         let loc = input.current_source_location();
         let next_token = *input.next()?;
         match next_token {
-            css::Token::Colon if allow_colon => return Ok(None),
+            css::Token::Colon if allow_colon == AllowColon::Yes => return Ok(None),
             css::Token::Delim(oper) => oper,
             _ => return Err(loc.new_unexpected_token_error(next_token)),
         }

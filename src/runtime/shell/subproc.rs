@@ -863,7 +863,7 @@ impl ShellSubprocess {
                 &raw mut (*subprocess).stdout,
                 subprocess,
                 event_loop,
-                !spawn_args.lazy,
+                ReadStart::from_bool(!spawn_args.lazy),
             )
         } {
             let sys_err = err.to_shell_system_error();
@@ -879,7 +879,7 @@ impl ShellSubprocess {
                 &raw mut (*subprocess).stderr,
                 subprocess,
                 event_loop,
-                !spawn_args.lazy,
+                ReadStart::from_bool(!spawn_args.lazy),
             )
         } {
             let sys_err = err.to_shell_system_error();
@@ -1147,6 +1147,8 @@ pub enum Readable {
     Buffer(Box<[u8]>),
 }
 
+bun_core::bool_enum!(ReadStart { Lazy, Eager });
+
 impl Readable {
     /// If the slot is a `Pipe`, start its `BufferedReader` against `process`
     /// and (when `eager`) immediately drain it. Factors out the per-stream
@@ -1162,7 +1164,7 @@ impl Readable {
         slot: *mut Readable,
         process: *mut ShellSubprocess,
         event_loop: EventLoopHandle,
-        eager: bool,
+        eager: ReadStart,
     ) -> bun_sys::Result<()> {
         // The reader must outlive the re-entrant calls below even if they
         // drop this slot's `Arc`; clone it as a keepalive.
@@ -1176,7 +1178,7 @@ impl Readable {
         // re-entrant reader callbacks only hold raw `*mut PipeReader`, and
         // each `&mut` below is scoped to its own call.
         unsafe { (*p).start(process, event_loop) }?;
-        if eager {
+        if eager == ReadStart::Eager {
             // SAFETY: as above.
             unsafe { (*p).read_all() };
         }
@@ -1779,7 +1781,10 @@ impl PipeReader {
         }
 
         #[cfg(not(windows))]
-        match self.reader.start(self.stdio_result.unwrap(), true) {
+        match self
+            .reader
+            .start(self.stdio_result.unwrap(), bun_io::IsPollable::Yes)
+        {
             bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
             bun_sys::Result::Ok(()) => {
                 // `reader.start` reports a poll-registration failure through

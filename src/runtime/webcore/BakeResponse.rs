@@ -1,7 +1,7 @@
 use core::ffi::{c_int, c_void};
 
 use crate::webcore::Response;
-use crate::webcore::response::{HeadersRef, Init};
+use crate::webcore::response::{HeadersRef, Init, Redirected};
 use bun_core::String as BunString;
 use bun_jsc::{CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsResult};
 
@@ -202,7 +202,7 @@ fn construct_render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
         },
         crate::webcore::Body::new(crate::webcore::BodyValue::Empty),
         BunString::EMPTY,
-        false,
+        Redirected::No,
     ));
 
     // Ownership of the allocation transfers to the JS wrapper.

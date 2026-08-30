@@ -819,11 +819,13 @@ pub struct AllocatorConfiguration {
     pub long_running: bool,
 }
 
+crate::bool_enum!(pub Force);
+
 #[inline]
-pub fn mimalloc_cleanup(force: bool) {
+pub fn mimalloc_cleanup(force: Force) {
     if USE_MIMALLOC {
         // `mi_collect` is declared `safe fn` in `bun_mimalloc_sys` (no preconditions).
-        bun_alloc::mimalloc::mi_collect(force);
+        bun_alloc::mimalloc::mi_collect(force == Force::Yes);
     }
 }
 // Versions are now handled by build-generated header (bun_dependency_versions.h)

@@ -331,7 +331,7 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
         match unsafe { &mut *poll }.register(
             handle.loop_mut(),
             crate::file_poll::Pollable::Process,
-            true,
+            crate::OneShot::Yes,
         ) {
             bun_sys::Result::Ok(()) => {
                 // Do not keep the event loop alive on this poll's behalf — the

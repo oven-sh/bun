@@ -13,6 +13,9 @@ bun_opaque::opaque_ffi! {
     pub struct Socket;
 }
 
+bun_core::bool_enum!(pub BufferKind { Send, Recv });
+bun_core::bool_enum!(pub Membership { Add, Drop });
+
 impl Socket {
     pub fn create(
         loop_: *mut Loop,
@@ -136,8 +139,8 @@ impl Socket {
     /// SO_RCVBUF / SO_SNDBUF. `size == 0` reads the current value, non-zero sets
     /// it (without re-reading, like libuv). Returns 0 and writes the resulting
     /// value to `out`, or the failing setsockopt/getsockopt result.
-    pub fn buffer_size(&mut self, is_recv: bool, size: i32, out: &mut c_int) -> c_int {
-        us_udp_socket_buffer_size(self, is_recv as c_int, size, out)
+    pub fn buffer_size(&mut self, is_recv: BufferKind, size: i32, out: &mut c_int) -> c_int {
+        us_udp_socket_buffer_size(self, (is_recv == BufferKind::Recv) as c_int, size, out)
     }
 
     /// Underlying socket descriptor.
@@ -179,9 +182,9 @@ impl Socket {
         &mut self,
         address: &sockaddr_storage,
         iface: Option<&sockaddr_storage>,
-        drop: bool,
+        drop: Membership,
     ) -> c_int {
-        us_udp_socket_set_membership(self, address, iface, drop as c_int)
+        us_udp_socket_set_membership(self, address, iface, (drop == Membership::Drop) as c_int)
     }
 
     pub fn set_source_specific_membership(
@@ -189,9 +192,15 @@ impl Socket {
         source: &sockaddr_storage,
         group: &sockaddr_storage,
         iface: Option<&sockaddr_storage>,
-        drop: bool,
+        drop: Membership,
     ) -> c_int {
-        us_udp_socket_set_source_specific_membership(self, source, group, iface, drop as c_int)
+        us_udp_socket_set_source_specific_membership(
+            self,
+            source,
+            group,
+            iface,
+            (drop == Membership::Drop) as c_int,
+        )
     }
 }
 

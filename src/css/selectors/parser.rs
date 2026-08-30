@@ -2461,11 +2461,14 @@ pub struct NthSelectorData {
     pub(crate) b: i32,
 }
 
+bun_core::bool_enum!(pub(crate) OfType);
+bun_core::bool_enum!(pub(crate) IsFunction);
+
 impl NthSelectorData {
     /// Returns selector data for :only-{child,of-type}
-    pub(crate) fn only(of_type: bool) -> NthSelectorData {
+    pub(crate) fn only(of_type: OfType) -> NthSelectorData {
         NthSelectorData {
-            ty: if of_type {
+            ty: if of_type == OfType::Yes {
                 NthType::OnlyOfType
             } else {
                 NthType::OnlyChild
@@ -2477,9 +2480,9 @@ impl NthSelectorData {
     }
 
     /// Returns selector data for :first-{child,of-type}
-    pub(crate) fn first(of_type: bool) -> NthSelectorData {
+    pub(crate) fn first(of_type: OfType) -> NthSelectorData {
         NthSelectorData {
-            ty: if of_type {
+            ty: if of_type == OfType::Yes {
                 NthType::OfType
             } else {
                 NthType::Child
@@ -2491,9 +2494,9 @@ impl NthSelectorData {
     }
 
     /// Returns selector data for :last-{child,of-type}
-    pub(crate) fn last(of_type: bool) -> NthSelectorData {
+    pub(crate) fn last(of_type: OfType) -> NthSelectorData {
         NthSelectorData {
-            ty: if of_type {
+            ty: if of_type == OfType::Yes {
                 NthType::LastOfType
             } else {
                 NthType::LastChild
@@ -2507,8 +2510,9 @@ impl NthSelectorData {
     pub(crate) fn write_start(
         &self,
         dest: &mut Printer,
-        is_function: bool,
+        is_function: IsFunction,
     ) -> Result<(), PrintErr> {
+        let is_function = is_function == IsFunction::Yes;
         dest.write_str(match self.ty {
             NthType::Child => {
                 if is_function {
@@ -3126,7 +3130,7 @@ pub(crate) fn parse_type_selector<Impl: BunSelectorImpl>(
     state: SelectorParsingState,
     sink: &mut SelectorBuilder<Impl>,
 ) -> CResult<bool> {
-    let result = match parse_qualified_name::<Impl>(parser, input, false) {
+    let result = match parse_qualified_name::<Impl>(parser, input, InAttrSelector::No) {
         Ok(v) => v,
         Err(e) => {
             if matches!(
@@ -3397,7 +3401,7 @@ pub(crate) fn parse_attribute_selector<Impl: BunSelectorImpl>(
     let (namespace, local_name): (Option<N<Impl>>, Str) = 'brk: {
         input.skip_whitespace();
 
-        let qname = parse_qualified_name::<Impl>(parser, input, true)?;
+        let qname = parse_qualified_name::<Impl>(parser, input, InAttrSelector::Yes)?;
         match qname {
             OptionalQName::None(t) => {
                 return Err(input.new_custom_error(
@@ -3652,18 +3656,18 @@ pub(crate) fn parse_simple_pseudo_class<Impl: BunSelectorImpl>(
 
     if state.allows_tree_structural_pseudo_classes() {
         crate::match_ignore_ascii_case! { name, {
-            b"first-child" => return Ok(GenericComponent::Nth(NthSelectorData::first(false))),
-            b"last-child" => return Ok(GenericComponent::Nth(NthSelectorData::last(false))),
-            b"only-child" => return Ok(GenericComponent::Nth(NthSelectorData::only(false))),
+            b"first-child" => return Ok(GenericComponent::Nth(NthSelectorData::first(OfType::No))),
+            b"last-child" => return Ok(GenericComponent::Nth(NthSelectorData::last(OfType::No))),
+            b"only-child" => return Ok(GenericComponent::Nth(NthSelectorData::only(OfType::No))),
             b"root" => return Ok(GenericComponent::Root),
             b"empty" => return Ok(GenericComponent::Empty),
             b"scope" => return Ok(GenericComponent::Scope),
             b"host" => if parser.parse_host() {
                 return Ok(GenericComponent::Host(None));
             },
-            b"first-of-type" => return Ok(GenericComponent::Nth(NthSelectorData::first(true))),
-            b"last-of-type" => return Ok(GenericComponent::Nth(NthSelectorData::last(true))),
-            b"only-of-type" => return Ok(GenericComponent::Nth(NthSelectorData::only(true))),
+            b"first-of-type" => return Ok(GenericComponent::Nth(NthSelectorData::first(OfType::Yes))),
+            b"last-of-type" => return Ok(GenericComponent::Nth(NthSelectorData::last(OfType::Yes))),
+            b"only-of-type" => return Ok(GenericComponent::Nth(NthSelectorData::only(OfType::Yes))),
             _ => {},
         } }
     }
@@ -3672,7 +3676,7 @@ pub(crate) fn parse_simple_pseudo_class<Impl: BunSelectorImpl>(
     // https://w3c.github.io/csswg-drafts/css-view-transitions-1/#pseudo-root
     if state.contains(SelectorParsingState::AFTER_VIEW_TRANSITION) {
         if strings::eql_case_insensitive_ascii_check_length(name, b"only-child") {
-            return Ok(GenericComponent::Nth(NthSelectorData::only(false)));
+            return Ok(GenericComponent::Nth(NthSelectorData::only(OfType::No)));
         }
     }
 
@@ -3861,6 +3865,8 @@ pub(crate) enum QNamePrefix<Impl: SelectorImpl> {
     ExplicitNamespace(Impl::NamespacePrefix, Impl::NamespaceUrl), // `prefix|foo`
 }
 
+bun_core::bool_enum!(pub(crate) InAttrSelector);
+
 /// * `Err(())`: Invalid selector, abort
 /// * `Ok(None(token))`: Not a simple selector, could be something else. `input` was not consumed,
 ///                      but the token is still returned.
@@ -3868,7 +3874,7 @@ pub(crate) enum QNamePrefix<Impl: SelectorImpl> {
 pub(crate) fn parse_qualified_name<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
-    in_attr_selector: bool,
+    in_attr_selector: InAttrSelector,
 ) -> CResult<OptionalQName<Impl>> {
     let start = input.state();
 
@@ -3908,7 +3914,7 @@ pub(crate) fn parse_qualified_name<Impl: BunSelectorImpl>(
                 );
             } else {
                 input.reset(&after_ident);
-                if in_attr_selector {
+                if in_attr_selector == InAttrSelector::Yes {
                     return Ok(OptionalQName::Some(
                         QNamePrefix::ImplicitNoNamespace,
                         Some(value),
@@ -3936,7 +3942,7 @@ pub(crate) fn parse_qualified_name<Impl: BunSelectorImpl>(
                 // Reshaped for borrowck — clone token before reset.
                 let result_cloned = result.cloned();
                 input.reset(&after_star);
-                if in_attr_selector {
+                if in_attr_selector == InAttrSelector::Yes {
                     let t = result_cloned?;
                     return Err(after_star
                         .source_location()
@@ -3977,7 +3983,7 @@ fn parse_qualified_name_default_namespace_helper<Impl: BunSelectorImpl>(
 fn parse_qualified_name_eplicit_namespace_helper<Impl: BunSelectorImpl>(
     input: &mut CssParser,
     namespace: QNamePrefix<Impl>,
-    in_attr_selector: bool,
+    in_attr_selector: InAttrSelector,
 ) -> CResult<OptionalQName<Impl>> {
     let location = input.current_source_location();
     let t = *input.next_including_whitespace()?;
@@ -3985,12 +3991,12 @@ fn parse_qualified_name_eplicit_namespace_helper<Impl: BunSelectorImpl>(
         Token::Ident(local_name) => return Ok(OptionalQName::Some(namespace, Some(*local_name))),
         // `*` is only a valid local name outside of attribute selectors;
         // `[ns|*]` must fall through to the `InvalidQualNameInAttr` error below.
-        Token::Delim(c) if *c == b'*' as u32 && !in_attr_selector => {
+        Token::Delim(c) if *c == b'*' as u32 && in_attr_selector == InAttrSelector::No => {
             return Ok(OptionalQName::Some(namespace, None));
         }
         _ => {}
     }
-    if in_attr_selector {
+    if in_attr_selector == InAttrSelector::Yes {
         let e = SelectorParseErrorKind::InvalidQualNameInAttr(t);
         return Err(location.new_custom_error(e));
     }

@@ -2,6 +2,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::JSValueTestExt;
 
 use super::Expect;
+use super::IsNot;
 use super::throw;
 
 pub(crate) fn to_match(
@@ -60,7 +61,7 @@ pub(crate) fn to_match(
     let value_fmt = value.to_fmt(&mut formatter2);
 
     if not {
-        let signature = Expect::get_signature("toMatch", "<green>expected<r>", true);
+        let signature = Expect::get_signature("toMatch", "<green>expected<r>", IsNot::Yes);
         return throw!(
             this,
             global,
@@ -75,7 +76,7 @@ pub(crate) fn to_match(
         );
     }
 
-    let signature = Expect::get_signature("toMatch", "<green>expected<r>", false);
+    let signature = Expect::get_signature("toMatch", "<green>expected<r>", IsNot::No);
     throw!(
         this,
         global,

@@ -207,7 +207,7 @@ impl Integrity {
                     .expect("infallible: size matches");
                 // SAFETY: engine is null (default).
                 unsafe { Crypto::SHA1::hash(bytes, ptr, core::ptr::null_mut()) };
-                strings::eql_long(ptr, &sum[0..LEN], true)
+                strings::eql_long(ptr, &sum[0..LEN], strings::CheckLen::Yes)
             }
             Tag::SHA512 => {
                 const LEN: usize = SHA512_DIGEST_LEN;
@@ -216,7 +216,7 @@ impl Integrity {
                     .expect("infallible: size matches");
                 // SAFETY: engine is null (default).
                 unsafe { Crypto::SHA512::hash(bytes, ptr, core::ptr::null_mut()) };
-                strings::eql_long(ptr, &sum[0..LEN], true)
+                strings::eql_long(ptr, &sum[0..LEN], strings::CheckLen::Yes)
             }
             Tag::SHA256 => {
                 const LEN: usize = SHA256_DIGEST_LEN;
@@ -225,7 +225,7 @@ impl Integrity {
                     .expect("infallible: size matches");
                 // SAFETY: engine is null (default).
                 unsafe { Crypto::SHA256::hash(bytes, ptr, core::ptr::null_mut()) };
-                strings::eql_long(ptr, &sum[0..LEN], true)
+                strings::eql_long(ptr, &sum[0..LEN], strings::CheckLen::Yes)
             }
             Tag::SHA384 => {
                 const LEN: usize = SHA384_DIGEST_LEN;
@@ -234,7 +234,7 @@ impl Integrity {
                     .expect("infallible: size matches");
                 // SAFETY: engine is null (default).
                 unsafe { Crypto::SHA384::hash(bytes, ptr, core::ptr::null_mut()) };
-                strings::eql_long(ptr, &sum[0..LEN], true)
+                strings::eql_long(ptr, &sum[0..LEN], strings::CheckLen::Yes)
             }
             _ => false,
         }
@@ -345,8 +345,13 @@ pub(crate) enum Hasher {
     Sha512(Crypto::SHA512),
 }
 
+bun_core::bool_enum!(
+    /// Whether to compute a SHA-512 when `expected` carries no supported hash.
+    pub(crate) ComputeIfMissing
+);
+
 impl Streaming {
-    pub(crate) fn init(expected: &Integrity, compute_if_missing: bool) -> Streaming {
+    pub(crate) fn init(expected: &Integrity, compute_if_missing: ComputeIfMissing) -> Streaming {
         Streaming {
             expected: *expected,
             hasher: match expected.tag {
@@ -355,7 +360,7 @@ impl Streaming {
                 Tag::SHA384 => Hasher::Sha384(Crypto::SHA384::init()),
                 Tag::SHA512 => Hasher::Sha512(Crypto::SHA512::init()),
                 _ => {
-                    if compute_if_missing {
+                    if compute_if_missing == ComputeIfMissing::Yes {
                         Hasher::Sha512(Crypto::SHA512::init())
                     } else {
                         Hasher::None
@@ -441,7 +446,11 @@ impl Streaming {
             return false;
         }
         let len = self.expected.tag.digest_len();
-        strings::eql_long(&computed.value[0..len], &self.expected.value[0..len], true)
+        strings::eql_long(
+            &computed.value[0..len],
+            &self.expected.value[0..len],
+            strings::CheckLen::Yes,
+        )
     }
 }
 

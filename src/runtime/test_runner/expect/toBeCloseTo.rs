@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Expect;
+use super::IsNot;
 use super::get_signature;
 use super::throw;
 
@@ -85,7 +86,7 @@ impl Expect {
         let received_fmt = received_.to_fmt(&mut formatter2);
 
         if not {
-            let signature = get_signature("toBeCloseTo", "<green>expected<r>, precision", true);
+            let signature = get_signature("toBeCloseTo", "<green>expected<r>, precision", IsNot::Yes);
             return throw!(
                 this,
                 global,
@@ -95,7 +96,7 @@ impl Expect {
             );
         }
 
-        let signature = get_signature("toBeCloseTo", "<green>expected<r>, precision", false);
+        let signature = get_signature("toBeCloseTo", "<green>expected<r>, precision", IsNot::No);
         throw!(
             this,
             global,

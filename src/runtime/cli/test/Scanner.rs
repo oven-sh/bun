@@ -232,7 +232,7 @@ impl<'a> Scanner<'a> {
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
         // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.
         unsafe { &mut (*fs_ptr).fs }
-            .read_directory_with_iterator(name, handle, 0, false, iter)
+            .read_directory_with_iterator(name, handle, 0, fs::StoreFd::No, iter)
             .map_err(Into::into)
     }
 
@@ -334,7 +334,7 @@ impl<'a> Scanner<'a> {
         // SAFETY: `self.fs` is the process singleton.
         let real_fs = unsafe { &raw mut (*self.fs).fs };
         // SAFETY: caller holds `entries_mutex`; the direct path is single-threaded.
-        match unsafe { entry.kind(real_fs, false) } {
+        match unsafe { entry.kind(real_fs, fs::StoreFd::No) } {
             fs::EntryKind::Dir => {
                 if (!name.is_empty() && name[0] == b'.') || name == b"node_modules" {
                     return;

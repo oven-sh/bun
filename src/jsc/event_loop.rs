@@ -286,6 +286,8 @@ impl Drop for EventLoopEnterNoCheckpointGuard {
     }
 }
 
+bun_core::bool_enum!(pub AllowDrainMicrotask);
+
 impl EventLoop {
     /// Before your code enters JavaScript at the top of the event loop, call
     /// `loop.enter()`. If running a single callback, prefer `runCallback` instead.
@@ -374,13 +376,16 @@ impl EventLoop {
 
     pub fn exit_maybe_drain_microtasks(
         &mut self,
-        allow_drain_microtask: bool,
+        allow_drain_microtask: AllowDrainMicrotask,
     ) -> Result<(), Stopped> {
         let count = self.entered_event_loop_count;
         bun_core::scoped_log!(EventLoop, "exit() = {}", count - 1);
 
         let inside_deferred = self.vm_ref().is_inside_deferred_task_queue.get();
-        let result = if allow_drain_microtask && count == 1 && !inside_deferred {
+        let result = if allow_drain_microtask == AllowDrainMicrotask::Yes
+            && count == 1
+            && !inside_deferred
+        {
             self.drain_microtasks()
         } else {
             Ok(())

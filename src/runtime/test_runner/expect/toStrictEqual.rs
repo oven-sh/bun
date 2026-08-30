@@ -3,6 +3,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::throw;
 use super::DiffFormatter;
 use super::Expect;
+use super::IsNot;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
@@ -43,11 +44,11 @@ impl Expect {
         };
 
         if not {
-            let signature = Expect::get_signature("toStrictEqual", "<green>expected<r>", true);
+            let signature = Expect::get_signature("toStrictEqual", "<green>expected<r>", IsNot::Yes);
             return throw!(this, global, signature, "\n\n{}\n", diff_formatter);
         }
 
-        let signature = Expect::get_signature("toStrictEqual", "<green>expected<r>", false);
+        let signature = Expect::get_signature("toStrictEqual", "<green>expected<r>", IsNot::No);
         throw!(this, global, signature, "\n\n{}\n", diff_formatter)
     }
 }

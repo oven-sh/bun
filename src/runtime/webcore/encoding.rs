@@ -328,8 +328,8 @@ pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding)
 
         // The output is strictly larger than the input, so the owned
         // allocation cannot be reused; drop it at end of scope.
-        Encoding::Base64url => encode_base64_to_bun_string(&input, true),
-        Encoding::Base64 => encode_base64_to_bun_string(&input, false),
+        Encoding::Base64url => encode_base64_to_bun_string(&input, bun_base64::Alphabet::UrlSafe),
+        Encoding::Base64 => encode_base64_to_bun_string(&input, bun_base64::Alphabet::Standard),
     }
 }
 
@@ -367,7 +367,11 @@ fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
             str
         }
         Encoding::Buffer | Encoding::Utf8 => {
-            let converted = match strings::to_utf16_alloc(input, false, false) {
+            let converted = match strings::to_utf16_alloc(
+                input,
+                strings::FailIfInvalid::No,
+                strings::Sentinel::No,
+            ) {
                 Ok(v) => v,
                 Err(_) => return BunString::DEAD,
             };
@@ -410,9 +414,9 @@ fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
             str
         }
 
-        Encoding::Base64url => encode_base64_to_bun_string(input, true),
+        Encoding::Base64url => encode_base64_to_bun_string(input, bun_base64::Alphabet::UrlSafe),
 
-        Encoding::Base64 => encode_base64_to_bun_string(input, false),
+        Encoding::Base64 => encode_base64_to_bun_string(input, bun_base64::Alphabet::Standard),
     }
 }
 
@@ -423,10 +427,11 @@ fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
 /// buffer wrapped in an external WTF string, because cycling large blocks
 /// through WTF's string allocator on every call is measurably more expensive
 /// than letting mimalloc reuse them.
-fn encode_base64_to_bun_string(input: &[u8], url_safe: bool) -> BunString {
+fn encode_base64_to_bun_string(input: &[u8], url_safe: bun_base64::Alphabet) -> BunString {
     // Output size above which the external-string strategy is used.
     const EXTERNAL_MIN_LEN: usize = 32 * 1024;
 
+    let url_safe = url_safe == bun_base64::Alphabet::UrlSafe;
     let to_len = if url_safe {
         bun_base64::url_safe_encode_len(input)
     } else {
@@ -548,7 +553,11 @@ pub(crate) fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
         Encoding::Hex => Ok(strings::decode_hex_to_bytes_truncate(to, input)),
 
         Encoding::Base64 | Encoding::Base64url => {
-            let is_urlsafe = matches!(encoding_from_u8(ENCODING), Encoding::Base64url);
+            let is_urlsafe = if matches!(encoding_from_u8(ENCODING), Encoding::Base64url) {
+                bun_base64::Alphabet::UrlSafe
+            } else {
+                bun_base64::Alphabet::Standard
+            };
             Ok(bun_base64::decode_lenient(to, input, is_urlsafe))
         }
     }
@@ -714,7 +723,11 @@ fn construct_from_u8<const ENCODING: u8>(input: &[u8]) -> Vec<u8> {
                 return Vec::new();
             }
 
-            let is_urlsafe = matches!(encoding_from_u8(ENCODING), Encoding::Base64url);
+            let is_urlsafe = if matches!(encoding_from_u8(ENCODING), Encoding::Base64url) {
+                bun_base64::Alphabet::UrlSafe
+            } else {
+                bun_base64::Alphabet::Standard
+            };
             let outlen = bun_base64::decode_lenient_len(slice.len());
             // Decode into uninitialized spare capacity: the decoder only ever
             // writes to the destination, and only the `wrote` bytes it

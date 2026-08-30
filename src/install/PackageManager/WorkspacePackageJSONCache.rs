@@ -66,7 +66,7 @@ impl MapEntry {
     /// invokes this to restore the invariant `root == parse(source)`.
     pub(crate) fn reparse_root(&mut self, log: &mut Log) -> Result<(), Error> {
         let json_bump = bun_alloc::Arena::new();
-        let parsed = parse_package_json(&self.source, log, &json_bump, false)?;
+        let parsed = parse_package_json(&self.source, log, &json_bump, GuessIndentation::No)?;
         self.root = bun_core::handle_oom(parsed.root.deep_clone(&json_bump));
         self.json_arena = json_bump;
         Ok(())
@@ -75,16 +75,18 @@ impl MapEntry {
 
 pub type Map = StringHashMap<MapEntry>;
 
+bun_core::bool_enum!(GuessIndentation);
+
 fn parse_package_json(
     source: &Source,
     log: &mut Log,
     bump: &bun_alloc::Arena,
-    guess_indentation: bool,
+    guess_indentation: GuessIndentation,
 ) -> Result<json::JsonResult, crate::Error> {
     Ok(json::parse_package_json_utf8_with_opts(
         json::JSONOptions {
             json_warn_duplicate_keys: false,
-            guess_indentation,
+            guess_indentation: guess_indentation == GuessIndentation::Yes,
             ..json::PACKAGE_JSON_OPTS
         },
         source,
@@ -188,7 +190,12 @@ impl WorkspacePackageJSONCache {
         }
 
         let json_bump = bun_alloc::Arena::new();
-        let parsed = match parse_package_json(&source, log, &json_bump, opts.guess_indentation) {
+        let parsed = match parse_package_json(
+            &source,
+            log,
+            &json_bump,
+            GuessIndentation::from_bool(opts.guess_indentation),
+        ) {
             Ok(p) => p,
             Err(err) => {
                 return GetResult::ParseErr(err);

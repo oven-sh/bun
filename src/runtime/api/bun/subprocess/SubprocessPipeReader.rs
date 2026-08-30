@@ -18,6 +18,11 @@ use super::{StdioKind, StdioResult, Subprocess};
 
 pub type IOReader = BufferedReader;
 
+bun_core::bool_enum!(
+    /// Defer poll/`uv_read_start` until JS first pulls, so the kernel pipe buffer backpressures the child.
+    pub(crate) LazyStart
+);
+
 #[derive(Default)]
 pub enum State {
     #[default]
@@ -146,8 +151,9 @@ impl PipeReader {
         &mut self,
         process: NonNull<Subprocess<'static>>,
         event_loop: NonNull<EventLoop>,
-        lazy: bool,
+        lazy: LazyStart,
     ) {
+        let lazy = lazy == LazyStart::Yes;
         self.r#ref();
         self.process = Some(ParentRef::from(process));
         self.event_loop = event_loop.into();
@@ -204,7 +210,9 @@ impl PipeReader {
             // outlives the guard's drop on return.
             let _guard = unsafe { RefPtr::init_ref(std::ptr::from_mut::<PipeReader>(self)) };
 
-            let _ = self.reader.start(self.stdio_result.unwrap(), true);
+            let _ = self
+                .reader
+                .start(self.stdio_result.unwrap(), bun_io::IsPollable::Yes);
 
             #[cfg(unix)]
             {

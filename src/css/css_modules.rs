@@ -48,7 +48,7 @@ impl<'a> CssModule<'a> {
                 hashes.push(hash(
                     bump,
                     format_args!("{}", bstr::BStr::new(source)),
-                    matches!(config.pattern.segments.at(0), Segment::Hash),
+                    AtStart::from_bool(matches!(config.pattern.segments.at(0), Segment::Hash)),
                 ));
             }
             break 'hashes hashes;
@@ -158,7 +158,7 @@ impl<'a> CssModule<'a> {
                 bstr::BStr::new(name),
                 bstr::BStr::new(key)
             ),
-            false,
+            AtStart::No,
         );
 
         // Build `--{the_hash}` as a bump Vec — a plain concat
@@ -288,6 +288,8 @@ impl Default for Pattern {
     }
 }
 
+bun_core::bool_enum!(pub ReplaceDots);
+
 impl Pattern {
     /// Write the substituted pattern to a destination.
     pub(crate) fn write(
@@ -295,26 +297,26 @@ impl Pattern {
         hash_: &[u8],
         path: &[u8],
         local: &[u8],
-        mut writefn: impl FnMut(&[u8], /* replace_dots: */ bool),
+        mut writefn: impl FnMut(&[u8], ReplaceDots),
     ) {
         for segment in self.segments.slice() {
             match segment {
                 Segment::Literal(s) => {
-                    writefn(s, false);
+                    writefn(s, ReplaceDots::No);
                 }
                 Segment::Name => {
                     let stem = bun_paths::stem(path);
                     if bun_core::index_of(stem, b".").is_some() {
-                        writefn(stem, true);
+                        writefn(stem, ReplaceDots::Yes);
                     } else {
-                        writefn(stem, false);
+                        writefn(stem, ReplaceDots::No);
                     }
                 }
                 Segment::Local => {
-                    writefn(local, false);
+                    writefn(local, ReplaceDots::No);
                 }
                 Segment::Hash => {
-                    writefn(hash_, false);
+                    writefn(hash_, ReplaceDots::No);
                 }
             }
         }
@@ -329,21 +331,26 @@ impl Pattern {
         local: &[u8],
     ) -> &'a [u8] {
         let mut res: BumpVec<'a, u8> = BumpVec::new_in(bump);
-        self.write(hash_, path, local, |slice: &[u8], replace_dots: bool| {
-            res.extend_from_slice(prefix);
-            if replace_dots {
-                let start = res.len();
-                res.extend_from_slice(slice);
-                let end = res.len();
-                for c in &mut res[start..end] {
-                    if *c == b'.' {
-                        *c = b'-';
+        self.write(
+            hash_,
+            path,
+            local,
+            |slice: &[u8], replace_dots: ReplaceDots| {
+                res.extend_from_slice(prefix);
+                if replace_dots == ReplaceDots::Yes {
+                    let start = res.len();
+                    res.extend_from_slice(slice);
+                    let end = res.len();
+                    for c in &mut res[start..end] {
+                        if *c == b'.' {
+                            *c = b'-';
+                        }
                     }
+                    return;
                 }
-                return;
-            }
-            res.extend_from_slice(slice);
-        });
+                res.extend_from_slice(slice);
+            },
+        );
         res.into_bump_slice()
     }
 
@@ -356,20 +363,25 @@ impl Pattern {
         local: &[u8],
     ) -> &'a [u8] {
         let mut res = res_;
-        self.write(hash_, path, local, |slice: &[u8], replace_dots: bool| {
-            if replace_dots {
-                let start = res.len();
-                res.extend_from_slice(slice);
-                let end = res.len();
-                for c in &mut res[start..end] {
-                    if *c == b'.' {
-                        *c = b'-';
+        self.write(
+            hash_,
+            path,
+            local,
+            |slice: &[u8], replace_dots: ReplaceDots| {
+                if replace_dots == ReplaceDots::Yes {
+                    let start = res.len();
+                    res.extend_from_slice(slice);
+                    let end = res.len();
+                    for c in &mut res[start..end] {
+                        if *c == b'.' {
+                            *c = b'-';
+                        }
                     }
+                    return;
                 }
-                return;
-            }
-            res.extend_from_slice(slice);
-        });
+                res.extend_from_slice(slice);
+            },
+        );
 
         res.into_bump_slice()
     }
@@ -422,12 +434,14 @@ pub enum CssModuleReference<'a> {
     },
 }
 
+bun_core::bool_enum!(pub(crate) AtStart);
+
 /// LAYERING: canonical implementation lives in `bun_base64::wyhash_url_safe`
 /// (a leaf crate) so `bun_bundler::LinkerContext::mangle_local_css` can call
 /// the *same* hasher without depending on `bun_css`. Re-export here so
 /// in-crate callers (`dependencies.rs`, `rules/import.rs`) keep the
 /// `css_modules::hash` path.
 #[inline]
-pub(crate) fn hash<'a>(bump: &'a Bump, args: Arguments<'_>, at_start: bool) -> &'a [u8] {
-    bun_base64::wyhash_url_safe(bump, args, at_start)
+pub(crate) fn hash<'a>(bump: &'a Bump, args: Arguments<'_>, at_start: AtStart) -> &'a [u8] {
+    bun_base64::wyhash_url_safe(bump, args, at_start == AtStart::Yes)
 }

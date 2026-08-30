@@ -4,6 +4,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
 use bun_core::strings;
 
 use super::{get_signature, throw, Expect};
+use super::IsNot;
 
 struct ExpectedEntry<'a> {
     global_this: &'a JSGlobalObject,
@@ -111,7 +112,7 @@ pub(crate) fn to_contain_equal(
     let value_fmt = value.to_fmt(&mut formatter);
     let expected_fmt = expected.to_fmt(&mut formatter2);
     if not {
-        let signature: &str = get_signature("toContainEqual", "<green>expected<r>", true);
+        let signature: &str = get_signature("toContainEqual", "<green>expected<r>", IsNot::Yes);
         return throw!(
             this,
             global,
@@ -121,7 +122,7 @@ pub(crate) fn to_contain_equal(
         );
     }
 
-    let signature: &str = get_signature("toContainEqual", "<green>expected<r>", false);
+    let signature: &str = get_signature("toContainEqual", "<green>expected<r>", IsNot::No);
     throw!(
         this,
         global,

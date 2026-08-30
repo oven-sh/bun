@@ -42,4 +42,10 @@ pub mod shared {
 
     pub use cached_structure::CachedStructure;
     pub(crate) use query_binding_iterator::QueryBindingIterator;
+    pub use query_ctor_args::{SimpleQuery, UseBigint};
+
+    bun_core::bool_enum!(
+        /// Whether a result delivered to a query is the final one (vs. a partial response).
+        pub IsLast
+    );
 }

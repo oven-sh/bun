@@ -1,5 +1,5 @@
 use crate::css_rules::Location;
-use crate::properties::custom::TokenList;
+use crate::properties::custom::{IsCustomProperty, TokenList};
 use crate::{PrintErr, Printer};
 
 /// An unknown at-rule, stored as raw tokens.
@@ -25,13 +25,13 @@ impl UnknownAtRule {
 
         if !self.prelude.v.is_empty() {
             dest.write_char(b' ')?;
-            self.prelude.to_css(dest, false)?;
+            self.prelude.to_css(dest, IsCustomProperty::No)?;
         }
 
         if let Some(block) = &self.block {
             dest.block(|d| {
                 d.newline()?;
-                block.to_css(d, false)
+                block.to_css(d, IsCustomProperty::No)
             })
         } else {
             dest.write_char(b';')

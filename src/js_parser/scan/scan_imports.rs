@@ -25,6 +25,8 @@ fn raw_str(s: &'static [u8]) -> js_ast::StoreStr {
     js_ast::StoreStr::new(s)
 }
 
+bun_core::bool_enum!(pub(crate) WillTransformToCommonJs);
+
 impl<'a> ImportScanner<'a> {
     // Only the parser P is handled here — the bundler scans imports via its own
     // path and does not go through this function.
@@ -36,7 +38,7 @@ impl<'a> ImportScanner<'a> {
     >(
         p: &mut P<'p, TYPESCRIPT, SCAN_ONLY>,
         stmts: &'a mut [Stmt],
-        will_transform_to_common_js: bool,
+        will_transform_to_common_js: WillTransformToCommonJs,
         // Const generics can't gate a param type on a const, so use Option and
         // debug-assert presence matches the const.
         mut hot_module_reloading_context: Option<&mut ConvertESMExportsForHmr>,
@@ -687,7 +689,9 @@ impl<'a> ImportScanner<'a> {
                     // exports.default =
                     // But only if it's anonymous
                     // This monomorphization is the parser `P` only (see fn-level TODO).
-                    if !HOT_MODULE_RELOADING_TRANSFORMATIONS && will_transform_to_common_js {
+                    if !HOT_MODULE_RELOADING_TRANSFORMATIONS
+                        && will_transform_to_common_js == WillTransformToCommonJs::Yes
+                    {
                         let expr = core::mem::take(&mut st.value).to_expr();
                         // Arena allocation that persists in the AST.
                         let export_default_args = p.arena.alloc_slice_fill_default::<Expr>(2);

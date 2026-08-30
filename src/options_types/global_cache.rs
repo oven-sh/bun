@@ -19,6 +19,8 @@ bun_core::comptime_string_map! {
     };
 }
 
+bun_core::bool_enum!(pub HasNodeModulesFolder);
+
 impl GlobalCache {
     /// The map type is a zero-sized handle, so this is the same map as the
     /// module-level `MAP` static.
@@ -28,11 +30,11 @@ impl GlobalCache {
         self == GlobalCache::force
     }
 
-    pub fn can_use(self, has_a_node_modules_folder: bool) -> bool {
+    pub fn can_use(self, has_a_node_modules_folder: HasNodeModulesFolder) -> bool {
         // When there is a node_modules folder, we default to false
         // When there is NOT a node_modules folder, we default to true
         // That is the difference between these two branches.
-        if has_a_node_modules_folder {
+        if has_a_node_modules_folder == HasNodeModulesFolder::Yes {
             match self {
                 GlobalCache::fallback | GlobalCache::allow_install | GlobalCache::force => true,
                 GlobalCache::read_only | GlobalCache::disable | GlobalCache::auto => false,

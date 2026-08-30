@@ -391,7 +391,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // runtime bunfs references to out-of-root entrypoints resolve.
             chunk
                 .template
-                .print(&mut rel_path, !c.options.compile_mode.is_executable())
+                .print(
+                    &mut rel_path,
+                    options::SanitizeParentDirs::from_bool(!c.options.compile_mode.is_executable()),
+                )
                 .expect("write to Vec<u8>");
             path::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_path);
 

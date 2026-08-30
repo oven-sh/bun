@@ -75,6 +75,15 @@ pub mod flags {
     }
 }
 
+bun_core::bool_enum!(
+    /// The ACK flag on a PING/SETTINGS frame.
+    pub Ack
+);
+bun_core::bool_enum!(
+    /// The PADDED flag on a DATA/HEADERS/PUSH_PROMISE frame.
+    pub Padded
+);
+
 /// RFC 9113 §7 error codes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u32)]

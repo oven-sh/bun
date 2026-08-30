@@ -11,6 +11,8 @@ use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use std::borrow::Cow;
 
+use crate::api::h2::connection::Side;
+use crate::api::h2::wire::Ack;
 use crate::api::socket::{TCPSocket, TLSSocket};
 use crate::node::{Encoding, StringOrBuffer};
 use crate::socket::NativeCallbacks;
@@ -18,7 +20,9 @@ use crate::webcore::AutoFlusher;
 use bstr::BStr;
 use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, VecExt};
 use bun_core::strings;
+use bun_http::h2::EndStream;
 use bun_http::lshpack;
+use bun_http::lshpack::NeverIndex;
 use bun_jsc::AbortSignal;
 use bun_jsc::ErrorCode as JscErrorCode;
 use bun_jsc::abort_signal::AbortListener;
@@ -351,13 +355,13 @@ impl UInt31WithReserved {
         self.0
     }
     #[inline]
-    fn write(self, writer: &mut impl WireWriter) -> bool {
+    fn write(self, writer: &mut impl WireWriter) -> bun_io::Result<()> {
         let mut value: u32 = self.uint31();
         if self.reserved() {
             value |= 0x8000_0000;
         }
         value = value.swap_bytes();
-        writer.write_all(&value.to_ne_bytes()).is_ok()
+        writer.write_all(&value.to_ne_bytes())
     }
 }
 
@@ -377,10 +381,10 @@ const _: () = assert!(core::mem::size_of::<StreamPriority>() == StreamPriority::
 impl StreamPriority {
     pub(crate) const BYTE_SIZE: usize = 5;
     #[inline]
-    fn write(self, writer: &mut impl WireWriter) -> bool {
+    fn write(self, writer: &mut impl WireWriter) -> bun_io::Result<()> {
         let mut swap = self;
         swap.stream_identifier = swap.stream_identifier.swap_bytes();
-        writer.write_all(bytemuck::bytes_of(&swap)).is_ok()
+        writer.write_all(bytemuck::bytes_of(&swap))
     }
 }
 
@@ -397,7 +401,7 @@ pub struct FrameHeader {
 impl FrameHeader {
     pub const BYTE_SIZE: usize = 9;
     #[inline]
-    fn write(&self, writer: &mut impl WireWriter, frames_sent: &Cell<u64>) -> bool {
+    fn write(&self, writer: &mut impl WireWriter, frames_sent: &Cell<u64>) -> bun_io::Result<()> {
         frames_sent.set(frames_sent.get() + 1);
         let mut buf = [0u8; Self::BYTE_SIZE];
         buf[0] = ((self.length >> 16) & 0xFF) as u8;
@@ -406,7 +410,7 @@ impl FrameHeader {
         buf[3] = self.type_;
         buf[4] = self.flags;
         buf[5..9].copy_from_slice(&self.stream_identifier.to_be_bytes());
-        writer.write_all(&buf).is_ok()
+        writer.write_all(&buf)
     }
     /// Decode a complete 9-byte big-endian frame header.
     ///
@@ -1098,7 +1102,7 @@ pub struct H2FrameParser {
     /// nghttp2 servers reject a GOAWAY naming a client-initiated id with a connection
     /// PROTOCOL_ERROR (node's last_proc_stream_id semantics).
     last_peer_stream_id: Cell<u32>,
-    is_server: Cell<bool>,
+    side: Cell<Side>,
     /// A frame callback left an exception pending in this batch (`Sink::should_stop`).
     left_exception: Cell<bool>,
     // we buffer requests until we get the first settings ACK
@@ -1400,6 +1404,12 @@ impl PendingQueue {
 
 // PendingQueue::deinit handled by Drop on Vec<PendingFrame>
 
+bun_core::bool_enum!(CallbackDeferred);
+bun_core::bool_enum!(
+    /// Whether `send_go_away` also dispatches `onError` to JS after writing the frame.
+    pub(crate) EmitError
+);
+
 #[derive(Default)]
 struct PendingFrame {
     end_stream: bool,         // end_stream flag
@@ -1468,7 +1478,9 @@ impl Stream {
                     length: 0,
                 };
                 owned_frame = Some(frame);
-                break 'brk data_header.write(&mut writer, &client.frames_sent_legacy);
+                break 'brk data_header
+                    .write(&mut writer, &client.frames_sent_legacy)
+                    .is_ok();
             } else {
                 let max_size = frame_remaining
                     .min(
@@ -1655,8 +1667,9 @@ impl Stream {
         client: &H2FrameParser,
         bytes: &[u8],
         callback: JSValue,
-        end_stream: bool,
+        end_stream: EndStream,
     ) {
+        let end_stream = end_stream == EndStream::Yes;
         let global_this = client.global_this;
 
         // Note: `dispatch_write_callback()` below re-enters JS, which can
@@ -1745,13 +1758,20 @@ impl Stream {
                 // SAFETY: `this` is the live `&mut self`; no borrow of `*this`
                 // is held here (the `last_frame` raw pointer is unused past
                 // this point).
-                return unsafe { (*this).queue_frame(client, more_data, callback, end_stream) };
+                return unsafe {
+                    (*this).queue_frame(
+                        client,
+                        more_data,
+                        callback,
+                        EndStream::from_bool(end_stream),
+                    )
+                };
             }
         }
         bun_output::scoped_log!(
             H2FrameParser,
             "{} queued {} {}",
-            if client.is_server.get() {
+            if client.is_server() {
                 "server"
             } else {
                 "client"
@@ -1945,6 +1965,11 @@ impl AbortListener for SignalRef {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl H2FrameParser {
+    #[inline]
+    fn is_server(&self) -> bool {
+        self.side.get() == Side::Server
+    }
+
     /// Encodes a single header into the ArrayList, growing if needed.
     /// Returns the number of bytes written, or error on failure.
     ///
@@ -1954,7 +1979,7 @@ impl H2FrameParser {
         encoded_headers: &mut Vec<u8>,
         name: &[u8],
         value: &[u8],
-        never_index: bool,
+        never_index: NeverIndex,
     ) -> crate::Result<usize> {
         let old_len = encoded_headers.len();
         let required = old_len + name.len() + value.len() + HPACK_ENTRY_OVERHEAD;
@@ -1987,7 +2012,7 @@ impl H2FrameParser {
         dst_offset: usize,
         name: &[u8],
         value: &[u8],
-        never_index: bool,
+        never_index: NeverIndex,
     ) -> crate::Result<usize> {
         self.hpack.with_mut(|hpack| {
             if let Some(hpack) = hpack.as_mut() {
@@ -2048,7 +2073,7 @@ impl H2FrameParser {
                 ErrorCode::MAX_PENDING_SETTINGS_ACK,
                 b"Maximum number of pending settings acknowledgements",
                 self.last_stream_id.get(),
-                true,
+                EmitError::Yes,
             );
             return false;
         }
@@ -2170,8 +2195,9 @@ impl H2FrameParser {
         rst_code: ErrorCode,
         debug_data: &[u8],
         last_stream_id: u32,
-        emit_error: bool,
+        emit_error: EmitError,
     ) {
+        let emit_error = emit_error == EmitError::Yes;
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_GOAWAY {} code {} debug_data {} emitError {}",
@@ -2267,7 +2293,8 @@ impl H2FrameParser {
         }
     }
 
-    pub(crate) fn send_ping(&self, ack: bool, payload: &[u8]) {
+    pub(crate) fn send_ping(&self, ack: Ack, payload: &[u8]) {
+        let ack = ack == Ack::Yes;
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_PING ack {} payload {}",
@@ -3341,7 +3368,7 @@ impl H2FrameParser {
         if stream_identifier > self.last_stream_id.get() {
             self.last_stream_id.set(stream_identifier);
         }
-        let peer_parity: u32 = if self.is_server.get() { 1 } else { 0 };
+        let peer_parity: u32 = if self.is_server() { 1 } else { 0 };
         if stream_identifier % 2 == peer_parity
             && stream_identifier > self.last_peer_stream_id.get()
         {
@@ -3459,7 +3486,7 @@ impl H2FrameParser {
     fn ensure_engine(&self) {
         if self.engine.borrow().is_none() {
             let mut conn = crate::api::h2::connection::Connection::new(
-                self.is_server.get(),
+                self.side.get(),
                 self.rewrite_local_settings(),
             );
             // The engine is created lazily on the first inbound read, by which point settings()
@@ -3808,7 +3835,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.dispatch(JSH2FrameParser::Gc::onRemoteSettings, js);
     }
 
-    fn on_ping(&self, payload: &[u8], is_ack: bool) {
+    fn on_ping(&self, payload: &[u8], is_ack: Ack) {
+        let is_ack = is_ack == Ack::Yes;
         if is_ack {
             // node (Http2Session::HandlePingFrame): a PING ACK with no outstanding ping is
             // unsolicited and treated as a connection error (NGHTTP2_ERR_PROTO -> NghttpError
@@ -3979,7 +4007,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         let _ = self.handle_received_stream_id(stream_id);
     }
 
-    fn on_header(&self, _stream_id: u32, name: &[u8], value: &[u8], never_index: bool) {
+    fn on_header(&self, _stream_id: u32, name: &[u8], value: &[u8], never_index: NeverIndex) {
         // Accumulate raw bytes; the whole block is materialized into JS values in one
         // native call at on_headers_complete (see H2HeadersMaterializer.cpp).
         self.hdr_block.with_mut(|b| {
@@ -3988,7 +4016,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         });
         self.hdr_meta.with_mut(|m| {
             let mut packed_name_len = name.len() as u32;
-            if never_index {
+            if never_index == NeverIndex::Yes {
                 packed_name_len |= 0x8000_0000;
             }
             m.push(packed_name_len);
@@ -3996,7 +4024,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         });
     }
 
-    fn on_headers_complete(&self, stream_id: u32, end_stream: bool, flags: u8) {
+    fn on_headers_complete(&self, stream_id: u32, end_stream: EndStream, flags: u8) {
+        let end_stream = end_stream == EndStream::Yes;
         // Bridge: the JS endAfterHeaders getter reads the legacy stream's end_after_headers flag.
         if let Some(stream) = self.streams.get().get(&stream_id).copied() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
@@ -4114,7 +4143,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 ErrorCode::ENHANCE_YOUR_CALM,
                 b"ENHANCE_YOUR_CALM",
                 self.last_stream_id.get(),
-                true,
+                EmitError::Yes,
             );
         }
     }
@@ -4679,7 +4708,7 @@ impl H2FrameParser {
                             ErrorCode(error_code as u32),
                             &copied,
                             last_stream_id,
-                            false,
+                            EmitError::No,
                         );
                         return Ok(JSValue::UNDEFINED);
                     }
@@ -4687,7 +4716,13 @@ impl H2FrameParser {
             }
         }
 
-        this.send_go_away(0, ErrorCode(error_code as u32), b"", last_stream_id, false);
+        this.send_go_away(
+            0,
+            ErrorCode(error_code as u32),
+            b"",
+            last_stream_id,
+            EmitError::No,
+        );
         Ok(JSValue::UNDEFINED)
     }
 
@@ -4711,7 +4746,7 @@ impl H2FrameParser {
 
         if let Some(array_buffer) = payload_arg.as_array_buffer(global_object) {
             let slice = array_buffer.slice();
-            this.send_ping(false, slice);
+            this.send_ping(Ack::No, slice);
             return Ok(JSValue::TRUE);
         }
 
@@ -5069,7 +5104,7 @@ impl H2FrameParser {
                 ErrorCode::PROTOCOL_ERROR,
                 b"Stream with self dependency",
                 this.last_stream_id.get(),
-                true,
+                EmitError::Yes,
             );
             return Ok(JSValue::FALSE);
         }
@@ -5131,7 +5166,7 @@ impl H2FrameParser {
         // counts; budget it identically so a flood of refused streams still tears the session
         // down. Server-side only: a client's GOAWAY sweep resets its own unprocessed streams
         // with REFUSED_STREAM and must not consume the budget.
-        if error_code == ErrorCode::REFUSED_STREAM.0 && this.is_server.get() {
+        if error_code == ErrorCode::REFUSED_STREAM.0 && this.is_server() {
             this.rejected_streams.set(this.rejected_streams.get() + 1);
             if this.max_rejected_streams.get() <= this.rejected_streams.get() {
                 this.send_go_away(
@@ -5139,7 +5174,7 @@ impl H2FrameParser {
                     ErrorCode::ENHANCE_YOUR_CALM,
                     b"ENHANCE_YOUR_CALM",
                     this.last_stream_id.get(),
-                    true,
+                    EmitError::Yes,
                 );
                 return Ok(JSValue::UNDEFINED);
             }
@@ -5217,7 +5252,7 @@ impl H2FrameParser {
         payload: &[u8],
         callback: JSValue,
         options: SendDataOptions,
-    ) -> (u8, bool) {
+    ) -> (u8, CallbackDeferred) {
         let SendDataOptions {
             close,
             suppress_half_closed_local_dispatch,
@@ -5226,11 +5261,7 @@ impl H2FrameParser {
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_DATA {} sendData({}, {}, {})",
-            if self.is_server.get() {
-                "server"
-            } else {
-                "client"
-            },
+            if self.is_server() { "server" } else { "client" },
             stream.id,
             payload.len(),
             close
@@ -5255,7 +5286,7 @@ impl H2FrameParser {
             };
             if self.has_backpressure() || self.outbound_queue_size.get() > 0 {
                 enqueued = true;
-                stream.queue_frame(self, b"", callback, close);
+                stream.queue_frame(self, b"", callback, EndStream::from_bool(close));
             } else {
                 let mut writer = self.to_writer();
                 let _ = data_header.write(&mut writer, &self.frames_sent_legacy);
@@ -5309,7 +5340,7 @@ impl H2FrameParser {
                         } else {
                             JSValue::UNDEFINED
                         },
-                        offset >= payload.len() && close,
+                        EndStream::from_bool(offset >= payload.len() && close),
                     );
                 } else {
                     let padding = stream.get_padding(size, max_size - 1);
@@ -5420,10 +5451,10 @@ impl H2FrameParser {
         }
 
         let mut settled_state: u8 = 0;
-        let mut callback_deferred = false;
+        let mut callback_deferred = CallbackDeferred::No;
         if !enqueued {
             if defer_write_callback && callback.is_callable() {
-                callback_deferred = true;
+                callback_deferred = CallbackDeferred::Yes;
             } else {
                 self.dispatch_write_callback(callback);
             }
@@ -5743,7 +5774,7 @@ impl H2FrameParser {
                     &mut encoded_headers,
                     validated_name,
                     value,
-                    never_index,
+                    NeverIndex::from_bool(never_index),
                 ) {
                     Ok(_) => Ok(None),
                     Err(crate::Error::Alloc(bun_alloc::AllocError)) => {
@@ -5768,7 +5799,7 @@ impl H2FrameParser {
                             ErrorCode::NO_ERROR,
                             b"",
                             this.last_stream_id.get(),
-                            true,
+                            EmitError::Yes,
                         );
                         Ok(Some(JSValue::UNDEFINED))
                     }
@@ -6038,7 +6069,7 @@ impl H2FrameParser {
         // the write callback was not (and will not be) invoked by the engine; the JS caller
         // completes the Writable callback asynchronously.
         let mut result = settled_state as u32;
-        if callback_deferred {
+        if callback_deferred == CallbackDeferred::Yes {
             result |= WRITE_FLUSHED_WITHOUT_CALLBACK;
         }
         Ok(JSValue::js_number(result as f64))
@@ -6048,7 +6079,7 @@ impl H2FrameParser {
     /// saturates; callers that open the stream reject anything above `MAX_STREAM_ID`.
     fn get_next_stream_id(&self) -> u32 {
         let stream_id = self.last_stream_id.get();
-        if self.is_server.get() {
+        if self.is_server() {
             if stream_id.is_multiple_of(2) {
                 stream_id.saturating_add(2)
             } else {
@@ -6075,7 +6106,7 @@ impl H2FrameParser {
         // `id <= 0` check and truncates to 0 here; 0 (and 1 on a client) has no predecessor,
         // so the subtraction saturates to the initial state instead of wrapping.
         let next_stream_id = stream_id_arg.to_u32();
-        let last_stream_id = if this.is_server.get() {
+        let last_stream_id = if this.is_server() {
             if next_stream_id.is_multiple_of(2) {
                 next_stream_id.saturating_sub(2)
             } else {
@@ -6127,7 +6158,7 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        if !this.is_server.get() {
+        if !this.is_server() {
             return Err(
                 global_object.throw(format_args!("Push streams can only be created by servers"))
             );
@@ -6240,7 +6271,7 @@ impl H2FrameParser {
                             &mut encoded_headers,
                             validated_name,
                             value,
-                            never_index,
+                            NeverIndex::from_bool(never_index),
                         )
                         .is_err()
                     {
@@ -6486,7 +6517,7 @@ impl H2FrameParser {
             // the lifetime of the entry. Separate heap allocation from `this`, so no aliasing.
             let stream = unsafe { &mut *stream_ptr };
             // this is the oposite logic of emitErrorToallStreams, in this case we wanna to cancel this streams
-            if this.is_server.get() {
+            if this.is_server() {
                 if stream.id % 2 == 0 {
                     continue;
                 }
@@ -6647,7 +6678,7 @@ impl H2FrameParser {
                             continue;
                         }
 
-                        if this.is_server.get() {
+                        if this.is_server() {
                             if !is_valid_response_pseudo_header(validated_name) {
                                 return Err(global_object.err(JscErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name))).throw());
                             }
@@ -6715,7 +6746,7 @@ impl H2FrameParser {
                         &mut encoded_headers,
                         validated_name,
                         value,
-                        never_index,
+                        NeverIndex::from_bool(never_index),
                     ) {
                         if matches!(err, crate::Error::Alloc(_)) {
                             return Err(global_object
@@ -6782,7 +6813,7 @@ impl H2FrameParser {
                         continue;
                     }
 
-                    if this.is_server.get() {
+                    if this.is_server() {
                         if !is_valid_response_pseudo_header(validated_name) {
                             return Err(global_object
                                 .err(
@@ -6885,7 +6916,7 @@ impl H2FrameParser {
                             &mut encoded_headers,
                             validated_name,
                             value,
-                            never_index,
+                            NeverIndex::from_bool(never_index),
                         ) {
                             if matches!(err, crate::Error::Alloc(_)) {
                                 return Err(global_object
@@ -6955,7 +6986,7 @@ impl H2FrameParser {
                         &mut encoded_headers,
                         validated_name,
                         value,
-                        never_index,
+                        NeverIndex::from_bool(never_index),
                     ) {
                         if matches!(err, crate::Error::Alloc(_)) {
                             return Err(global_object
@@ -7042,7 +7073,7 @@ impl H2FrameParser {
                     if end_stream_js.as_boolean() {
                         end_stream = true;
                         // will end the stream after trailers
-                        if !wait_for_trailers || this.is_server.get() {
+                        if !wait_for_trailers || this.is_server() {
                             flags |= HeadersFrameFlags::END_STREAM as u8;
                         }
                     }
@@ -7568,7 +7599,7 @@ impl H2FrameParser {
             strict_single_value_fields: Cell::new(true),
             last_stream_id: Cell::new(0),
             last_peer_stream_id: Cell::new(0),
-            is_server: Cell::new(false),
+            side: Cell::new(Side::Client),
             left_exception: Cell::new(false),
             write_buffer: JsCell::new(Vec::<u8>::default()),
             write_buffer_offset: Cell::new(0),
@@ -7741,7 +7772,7 @@ impl H2FrameParser {
             is_server = type_js.is_number() && type_js.to_u32() == 0;
         }
 
-        this_ref.is_server.set(is_server);
+        this_ref.side.set(Side::from_bool(is_server));
         JSH2FrameParser::Gc::context.set(this_value, global_object, context_obj);
 
         this_ref

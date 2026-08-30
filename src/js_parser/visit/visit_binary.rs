@@ -2,7 +2,7 @@
 use bun_collections::VecExt;
 use core::cmp::Ordering;
 
-use crate::p::P;
+use crate::p::{Inverted, P};
 use crate::parser::{ExprIn, float_to_int32, prefill};
 use crate::scan::scan_side_effects::SideEffects;
 use bun_ast::fold_string_addition::{FoldStringAdditionKind, fold_string_addition};
@@ -239,7 +239,7 @@ impl BinaryExpressionVisitor {
                     Equality::RequireMainAndModule => {
                         p.ignore_usage_of_runtime_require();
                         p.ignore_usage(p.module_ref);
-                        return p.value_for_import_meta_main(false, v.loc);
+                        return p.value_for_import_meta_main(Inverted::No, v.loc);
                     }
                     Equality::Equal => return p.new_expr(E::Boolean { value: true }, v.loc),
                     Equality::NotEqual => return p.new_expr(E::Boolean { value: false }, v.loc),
@@ -269,7 +269,7 @@ impl BinaryExpressionVisitor {
                     Equality::RequireMainAndModule => {
                         p.ignore_usage(p.module_ref);
                         p.ignore_usage_of_runtime_require();
-                        return p.value_for_import_meta_main(false, v.loc);
+                        return p.value_for_import_meta_main(Inverted::No, v.loc);
                     }
                     Equality::Equal => return p.new_expr(E::Boolean { value: true }, v.loc),
                     Equality::NotEqual => return p.new_expr(E::Boolean { value: false }, v.loc),
@@ -292,7 +292,7 @@ impl BinaryExpressionVisitor {
                     Equality::RequireMainAndModule => {
                         p.ignore_usage(p.module_ref);
                         p.ignore_usage_of_runtime_require();
-                        return p.value_for_import_meta_main(true, v.loc);
+                        return p.value_for_import_meta_main(Inverted::Yes, v.loc);
                     }
                     Equality::Equal => return p.new_expr(E::Boolean { value: false }, v.loc),
                     Equality::NotEqual => return p.new_expr(E::Boolean { value: true }, v.loc),
@@ -319,7 +319,7 @@ impl BinaryExpressionVisitor {
                     Equality::RequireMainAndModule => {
                         p.ignore_usage(p.module_ref);
                         p.ignore_usage_of_runtime_require();
-                        return p.value_for_import_meta_main(true, v.loc);
+                        return p.value_for_import_meta_main(Inverted::Yes, v.loc);
                     }
                     Equality::Equal => return p.new_expr(E::Boolean { value: false }, v.loc),
                     Equality::NotEqual => return p.new_expr(E::Boolean { value: true }, v.loc),

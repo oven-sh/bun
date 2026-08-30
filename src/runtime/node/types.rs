@@ -861,7 +861,7 @@ pub trait PathLikeExt {
     fn from_bun_string(
         global: &JSGlobalObject,
         str: bun_core::String,
-        will_be_async: bool,
+        will_be_async: Flavor,
     ) -> JsResult<PathLike<'static>>
     where
         Self: Sized;
@@ -1178,9 +1178,9 @@ impl PathLikeExt for PathLike<'_> {
     fn from_bun_string(
         global: &JSGlobalObject,
         str: bun_core::String,
-        will_be_async: bool,
+        will_be_async: Flavor,
     ) -> JsResult<PathLike<'static>> {
-        let path = path_like_from_string(global, str, will_be_async)?;
+        let path = path_like_from_string(global, str, will_be_async == Flavor::Async)?;
         match Valid::path_too_long(path.slice()) {
             Some(err) => Err(global.throw_value(err.to_error_instance(global))),
             None => Ok(path),
@@ -1352,6 +1352,8 @@ unsafe extern "C" fn append_buffer_span(
     out.views.push(element);
 }
 
+bun_core::bool_enum!(pub PinBuffers);
+
 impl VectorArrayBuffer {
     /// Collect an array of ArrayBufferViews into iovecs. Every element is read
     /// before any raw pointer is taken, so user code run by an indexed read (a
@@ -1364,8 +1366,9 @@ impl VectorArrayBuffer {
     pub fn from_js(
         global_object: &JSGlobalObject,
         val: JSValue,
-        pin: bool,
+        pin: PinBuffers,
     ) -> JsResult<VectorArrayBuffer> {
+        let pin = pin == PinBuffers::Yes;
         let mut out = VectorArrayBuffer {
             value: val,
             buffers: Vec::new(),

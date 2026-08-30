@@ -10,6 +10,7 @@ use bun_threading::{Mutex, Semaphore, UnboundedQueue};
 // Both siblings are wired into `crate::node`, and intra-crate module cycles
 // are fine in Rust, so import the real shapes instead of mirroring them.
 use super::node_fs_watcher::Event;
+use super::node_fs_watcher::Recursive;
 use super::node_fs_watcher::WatchEventKind;
 
 type CFAbsoluteTime = f64;
@@ -577,7 +578,7 @@ impl FSEventsLoop {
                 // Do not emit events from subdirectories (without option set)
                 if path.is_empty()
                     || (bun_core::strings::index_of_char_usize(path, b'/').is_some()
-                        && !handle.recursive)
+                        && handle.recursive == Recursive::No)
                 {
                     continue;
                 }
@@ -854,7 +855,7 @@ pub struct FSEventsWatcher {
     pub callback: Callback,
     pub(crate) flush_callback: UpdateEndCallback,
     pub(crate) loop_: core::cell::Cell<Option<&'static FSEventsLoop>>,
-    pub(crate) recursive: bool,
+    pub(crate) recursive: Recursive,
     pub ctx: *mut c_void,
 }
 
@@ -865,7 +866,7 @@ impl FSEventsWatcher {
     fn init(
         loop_: &'static FSEventsLoop,
         path: &[u8],
-        recursive: bool,
+        recursive: Recursive,
         callback: Callback,
         update_end: UpdateEndCallback,
         ctx: *mut c_void,
@@ -902,7 +903,7 @@ impl Drop for FSEventsWatcher {
 
 pub(crate) fn watch(
     path: &[u8],
-    recursive: bool,
+    recursive: Recursive,
     callback: Callback,
     update_end: UpdateEndCallback,
     ctx: *mut c_void,

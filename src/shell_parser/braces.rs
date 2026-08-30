@@ -522,16 +522,18 @@ impl From<ParserError> for crate::Error {
 
 pub(crate) type ExpandError = ParserError;
 
+bun_core::bool_enum!(pub ContainsNested);
+
 /// `out` is preallocated by using the result from `calculateExpandedAmount`
 pub fn expand(
     bump: &Bump,
     tokens: &mut [Token],
     out: &mut [Vec<u8>],
-    contains_nested: bool,
+    contains_nested: ContainsNested,
 ) -> Result<(), ExpandError> {
     check_brace_group_count(tokens)?;
     let mut out_key_counter: usize = 1;
-    if !contains_nested {
+    if contains_nested == ContainsNested::No {
         let expansions_table = build_expansion_table_alloc(tokens)?;
 
         return expand_flat(
@@ -1030,7 +1032,7 @@ type Chars<const E: Encoding> = ShellCharIter<E>;
 
 pub struct LexerOutput {
     pub tokens: Vec<Token>,
-    pub contains_nested: bool,
+    pub contains_nested: ContainsNested,
 }
 
 pub(crate) type BraceLexerError = AllocError;
@@ -1058,7 +1060,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
     }
 
     // FIXME: implement rollback on invalid brace
-    fn tokenize_impl(&mut self) -> Result<bool, BraceLexerError> {
+    fn tokenize_impl(&mut self) -> Result<ContainsNested, BraceLexerError> {
         // Unclosed brace expansion algorithm
         // {hi,hey
         // *xx*xxx
@@ -1139,7 +1141,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
         self.flatten_tokens()?;
         self.tokens.push(Token::Eof);
 
-        Ok(self.contains_nested)
+        Ok(ContainsNested::from_bool(self.contains_nested))
     }
 
     fn flatten_tokens(&mut self) -> Result<(), AllocError> {

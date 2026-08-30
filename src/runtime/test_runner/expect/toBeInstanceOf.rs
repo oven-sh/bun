@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Expect;
+use super::IsNot;
 use super::get_signature;
 use super::throw;
 
@@ -58,7 +59,7 @@ pub(crate) fn to_be_instance_of(
     if not {
         // `expected_line`/`received_line` are inlined here because Rust `concat!`
         // only accepts literals (and `format_args!` needs a literal anyway).
-        let signature = get_signature("toBeInstanceOf", "<green>expected<r>", true);
+        let signature = get_signature("toBeInstanceOf", "<green>expected<r>", IsNot::Yes);
         return throw!(
             this,
             global,
@@ -68,7 +69,7 @@ pub(crate) fn to_be_instance_of(
         );
     }
 
-    let signature = get_signature("toBeInstanceOf", "<green>expected<r>", false);
+    let signature = get_signature("toBeInstanceOf", "<green>expected<r>", IsNot::No);
     throw!(
         this,
         global,

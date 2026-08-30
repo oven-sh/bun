@@ -3,7 +3,7 @@ use core::fmt;
 use bun_core::Output;
 use bun_jsc::{JSGlobalObject, JSValue};
 
-use super::diff::print_diff::{print_diff_main, DiffConfig};
+use super::diff::print_diff::{print_diff_main, DiffConfig, IsAgent};
 use super::pretty_format::{FormatOptions, JestPrettyFormat, MessageLevel};
 
 #[derive(Default)]
@@ -18,8 +18,10 @@ pub struct DiffFormatter<'a> {
 
 impl<'a> fmt::Display for DiffFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let diff_config =
-            DiffConfig::default(Output::is_ai_agent(), Output::enable_ansi_colors_stderr());
+        let diff_config = DiffConfig::default(
+            IsAgent::from_bool(Output::is_ai_agent()),
+            Output::AnsiColors::from_bool(Output::enable_ansi_colors_stderr()),
+        );
 
         if let (Some(expected), Some(received)) = (self.expected_string, self.received_string) {
             print_diff_main(self.not, received, expected, f, &diff_config)?;

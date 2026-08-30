@@ -299,7 +299,8 @@ fn search_bin<'a>(
     {
         if try_as_spelled {
             // SAFETY: caller wrote NUL at buf[path_size]
-            if bun_sys::exists_os_path(WStr::from_buf(&buf[..], path_size), true) {
+            if bun_sys::exists_os_path(WStr::from_buf(&buf[..], path_size), bun_sys::FileOnly::Yes)
+            {
                 return Some(&mut buf[..path_size]);
             }
         }
@@ -311,7 +312,7 @@ fn search_bin<'a>(
                 buf[path_size + 1..end].copy_from_slice(ext);
                 buf[end] = 0;
                 // SAFETY: buf[end] == 0 written above
-                if bun_sys::exists_os_path(WStr::from_buf(&buf[..], end), true) {
+                if bun_sys::exists_os_path(WStr::from_buf(&buf[..], end), bun_sys::FileOnly::Yes) {
                     return Some(&mut buf[..end]);
                 }
             }

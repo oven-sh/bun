@@ -6,7 +6,7 @@ use crate::cli::test_command::CommandLineReporter;
 use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_core::Output;
 use bun_jsc::bun_string_jsc;
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{IsRejection, VirtualMachine};
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, RegularExpression,
 };
@@ -620,7 +620,7 @@ pub(crate) mod on_unhandled_rejection {
             buntest.on_uncaught_exception(
                 global_object,
                 Some(rejection),
-                true,
+                IsRejection::Yes,
                 &current_state_data,
             );
             buntest.add_result(current_state_data);
@@ -635,7 +635,7 @@ pub(crate) mod on_unhandled_rejection {
                     buntest.on_uncaught_exception(
                         global_object,
                         Some(global_object.take_exception(e)),
-                        false,
+                        IsRejection::No,
                         &phase,
                     );
                 }
@@ -653,16 +653,18 @@ pub(crate) mod on_unhandled_rejection {
     }
 }
 
+bun_core::bool_enum!(ShouldWrite);
+
 fn consume_arg(
     global_this: &JSGlobalObject,
-    should_write: bool,
+    should_write: ShouldWrite,
     str_idx: &mut usize,
     args_idx: &mut usize,
     array_list: &mut Vec<u8>,
     arg: JSValue,
     fallback: &[u8],
 ) -> JsResult<()> {
-    if should_write {
+    if should_write == ShouldWrite::Yes {
         let owned_slice = arg.to_utf8(global_this)?;
         array_list.extend_from_slice(owned_slice.slice());
     } else {
@@ -753,7 +755,7 @@ pub(crate) fn format_label(
                 b's' => {
                     consume_arg(
                         global_this,
-                        !current_arg.is_empty() && current_arg.js_type().is_string(),
+                        ShouldWrite::from_bool(!current_arg.is_empty() && current_arg.js_type().is_string()),
                         &mut idx,
                         &mut args_idx,
                         &mut list,
@@ -764,7 +766,7 @@ pub(crate) fn format_label(
                 b'i' => {
                     consume_arg(
                         global_this,
-                        current_arg.is_any_int(),
+                        ShouldWrite::from_bool(current_arg.is_any_int()),
                         &mut idx,
                         &mut args_idx,
                         &mut list,
@@ -775,7 +777,7 @@ pub(crate) fn format_label(
                 b'd' => {
                     consume_arg(
                         global_this,
-                        current_arg.is_number(),
+                        ShouldWrite::from_bool(current_arg.is_number()),
                         &mut idx,
                         &mut args_idx,
                         &mut list,
@@ -786,7 +788,7 @@ pub(crate) fn format_label(
                 b'f' => {
                     consume_arg(
                         global_this,
-                        current_arg.is_number(),
+                        ShouldWrite::from_bool(current_arg.is_number()),
                         &mut idx,
                         &mut args_idx,
                         &mut list,

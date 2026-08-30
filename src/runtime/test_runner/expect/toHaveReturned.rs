@@ -3,6 +3,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::mock;
 use super::throw;
 use super::Expect;
+use super::IsNot;
 
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum Mode {
@@ -83,7 +84,7 @@ fn to_have_returned_times_fn(
         return Ok(JSValue::UNDEFINED);
     }
 
-    let signature = Expect::get_signature(mode.tag_name(), "<green>expected<r>", not);
+    let signature = Expect::get_signature(mode.tag_name(), "<green>expected<r>", IsNot::from_bool(not));
     let (str_, spc): (&'static str, &'static str) = match mode {
         Mode::ToHaveReturned => match not {
             false => (">= ", "   "),

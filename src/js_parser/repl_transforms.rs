@@ -15,6 +15,7 @@ use bun_ast::stmt::Data as StmtData;
 use bun_ast::{B, Binding, E, Expr, ExprNodeList, G, S, Stmt};
 
 use crate::p::P;
+use crate::parser::IsAsync;
 
 impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// Apply REPL-mode transforms to the AST.
@@ -80,17 +81,22 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
 
         // Apply transform with is_async based on presence of top-level await
-        self.repl_transform_with_hoisting(parts, all_stmts, bump, has_top_level_await)
+        self.repl_transform_with_hoisting(
+            parts,
+            all_stmts,
+            bump,
+            IsAsync::from_bool(has_top_level_await),
+        )
     }
 
     /// Transform code with hoisting and IIFE wrapper
-    /// `is_async`: true for async IIFE (when top-level await present), false for sync IIFE
+    /// `IsAsync::Yes` for async IIFE (when top-level await present), `IsAsync::No` for sync IIFE
     fn repl_transform_with_hoisting<'bump>(
         &mut self,
         parts: &mut BumpVec<'bump, js_ast::Part>,
         all_stmts: &[Stmt],
         bump: &'bump Bump,
-        is_async: bool,
+        is_async: IsAsync,
     ) -> Result<(), bun_alloc::AllocError> {
         if all_stmts.is_empty() {
             return Ok(());
@@ -495,7 +501,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     loc: bun_ast::Loc::EMPTY,
                     stmts: bun_ast::StoreSlice::new_mut(inner_slice),
                 },
-                is_async,
+                is_async: is_async == IsAsync::Yes,
                 ..Default::default()
             },
             bun_ast::Loc::EMPTY,

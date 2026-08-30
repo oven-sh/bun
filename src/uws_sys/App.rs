@@ -7,12 +7,16 @@ use bun_http_types::Method::Method;
 
 use crate::response::Response;
 use crate::socket_context::BunSocketContextOptions;
+use crate::web_socket::Compress;
 use crate::web_socket::c::uws_ws;
 use crate::{
     AnyRequest, AnyResponse, ListenSocket as UwsListenSocket, Opcode, Request, SendStatus,
     WebSocketBehavior, thunk, us_socket_t, uws_res,
 };
 use bun_ptr::ThisPtr;
+
+bun_core::bool_enum!(pub CloseWhenIdle);
+bun_core::bool_enum!(pub ApplyClientCertPolicy);
 
 // This file provides Rust bindings for the uWebSockets App class.
 // It wraps the C API exposed in libuwsockets.cpp which provides a C interface
@@ -107,8 +111,12 @@ impl<const SSL: bool> App<SSL> {
     /// right now are additionally marked to close as soon as their in-flight
     /// work completes. Never touches WebSockets or the listen socket.
     /// Returns the number of connections closed.
-    pub fn close_idle_connections(&mut self, close_when_idle: bool) -> usize {
-        c::uws_app_close_idle(Self::SSL_FLAG, self.as_raw(), i32::from(close_when_idle))
+    pub fn close_idle_connections(&mut self, close_when_idle: CloseWhenIdle) -> usize {
+        c::uws_app_close_idle(
+            Self::SSL_FLAG,
+            self.as_raw(),
+            i32::from(close_when_idle == CloseWhenIdle::Yes),
+        )
     }
 
     pub fn create(opts: &BunSocketContextOptions) -> Option<*mut Self> {
@@ -159,7 +167,7 @@ impl<const SSL: bool> App<SSL> {
         topic: &[u8],
         message: &[u8],
         opcode: Opcode,
-        compress: bool,
+        compress: Compress,
     ) -> SendStatus {
         // SAFETY: self is a valid *mut uws_app_t; slices are valid for the call.
         unsafe {
@@ -171,7 +179,7 @@ impl<const SSL: bool> App<SSL> {
                 message.as_ptr(),
                 message.len(),
                 opcode,
-                compress,
+                compress == Compress::Yes,
             )
         }
     }
@@ -373,7 +381,7 @@ impl<const SSL: bool> App<SSL> {
         topic: &[u8],
         message: &[u8],
         opcode: Opcode,
-        compress: bool,
+        compress: Compress,
     ) -> SendStatus {
         // SAFETY: self is a valid app; slices valid for the call.
         unsafe {
@@ -385,7 +393,7 @@ impl<const SSL: bool> App<SSL> {
                 message.as_ptr(),
                 message.len(),
                 opcode,
-                compress,
+                compress == Compress::Yes,
             )
         }
     }
@@ -394,7 +402,7 @@ impl<const SSL: bool> App<SSL> {
         &mut self,
         hostname_pattern: &core::ffi::CStr,
         opts: &BunSocketContextOptions,
-        apply_client_cert_policy: bool,
+        apply_client_cert_policy: ApplyClientCertPolicy,
     ) -> Result<(), AddServerNameError> {
         // SAFETY: self is a valid app; hostname_pattern is NUL-terminated.
         let rc = unsafe {
@@ -403,7 +411,7 @@ impl<const SSL: bool> App<SSL> {
                 std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 hostname_pattern.as_ptr(),
                 *opts,
-                i32::from(apply_client_cert_policy),
+                i32::from(apply_client_cert_policy == ApplyClientCertPolicy::Yes),
             )
         };
         if rc != 0 {

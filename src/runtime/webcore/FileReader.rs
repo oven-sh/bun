@@ -394,10 +394,14 @@ impl FileReader {
             }
             self.reader().set_limit(self.max_size);
             let start_result = if let Some(offset) = self.start_offset {
-                self.reader()
-                    .start_file_offset(self.fd.get(), pollable, offset)
+                self.reader().start_file_offset(
+                    self.fd.get(),
+                    bun_io::IsPollable::from_bool(pollable),
+                    offset,
+                )
             } else {
-                self.reader().start(self.fd.get(), pollable)
+                self.reader()
+                    .start(self.fd.get(), bun_io::IsPollable::from_bool(pollable))
             };
             if let Err(e) = start_result {
                 if need_io_ref {

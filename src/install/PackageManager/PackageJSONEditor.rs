@@ -595,7 +595,11 @@ fn edit_update_entries(
                                     }
 
                                     let workspace_dep_name = workspace_dep.name.slice(string_buf);
-                                    if !strings::eql_long(workspace_dep_name, key_str, true) {
+                                    if !strings::eql_long(
+                                        workspace_dep_name,
+                                        key_str,
+                                        strings::CheckLen::Yes,
+                                    ) {
                                         continue;
                                     }
 
@@ -808,7 +812,11 @@ pub(crate) fn edit_catalogs_after_update(
                     .unwrap_or(&info.original_version_literal),
             );
 
-            changed |= !strings::eql_long(new_literal, &info.original_version_literal, true);
+            changed |= !strings::eql_long(
+                new_literal,
+                &info.original_version_literal,
+                strings::CheckLen::Yes,
+            );
 
             dep.value = Some(Expr::allocate(
                 arena,
@@ -1004,7 +1012,11 @@ pub(crate) fn edit(
                                     // `bun update <name>` edits the slot in place; the rebuild below re-sorts the keys.
                                     if request.package_id != INVALID_PACKAGE_ID
                                         && manager.subcommand != Subcommand::Update
-                                        && strings::eql_long(list, dependency_list, true)
+                                        && strings::eql_long(
+                                            list,
+                                            dependency_list,
+                                            strings::CheckLen::Yes,
+                                        )
                                         && !keep_catalog_reference
                                     {
                                         replacing += 1;
@@ -1446,7 +1458,7 @@ pub(crate) fn edit(
                                     if strings::eql_long(
                                         installed,
                                         &entry.original_version_literal,
-                                        true,
+                                        strings::CheckLen::Yes,
                                     ) {
                                         break 'npm arena_dup(arena, installed);
                                     }

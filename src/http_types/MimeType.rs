@@ -294,6 +294,8 @@ pub const JSON: MimeType =
 pub const TEXT: MimeType = MimeType::init_comptime(b"text/plain;charset=utf-8", Category::Html);
 pub const WASM: MimeType = MimeType::init_comptime(b"application/wasm", Category::Wasm);
 
+bun_core::bool_enum!(pub Dupe);
+
 impl MimeType {
     const fn init_comptime(str: &'static [u8], t: Category) -> MimeType {
         MimeType {
@@ -302,7 +304,8 @@ impl MimeType {
         }
     }
 
-    pub fn init(str_: &[u8], dupe: bool, allocated: Option<&mut bool>) -> MimeType {
+    pub fn init(str_: &[u8], dupe: Dupe, allocated: Option<&mut bool>) -> MimeType {
+        let dupe = dupe == Dupe::Yes;
         let mut str = str_;
         if let Some(slash) = strings::index_of_char_usize(str, b'/') {
             let category_ = &str[0..slash];
@@ -459,7 +462,7 @@ pub fn by_extension_no_default(ext_without_leading_dot: &[u8]) -> Option<MimeTyp
 // TODO: use a precomputed static hash map for this
 // its too many branches to use ComptimeStringMap
 pub fn by_name(name: &[u8]) -> MimeType {
-    MimeType::init(name, false, None)
+    MimeType::init(name, Dupe::No, None)
 }
 
 // Duplicate keys are rejected at compile time. The original table

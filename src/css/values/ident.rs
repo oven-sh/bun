@@ -1,6 +1,8 @@
 use crate::SmallList;
 use crate::css_parser as css;
-use crate::css_parser::{CssResult, Parser, PrintErr, Printer, Token};
+use crate::css_parser::{
+    CssResult, HandleCssModule, IsDeclaration, Parser, PrintErr, Printer, Token,
+};
 
 use bun_ast::Ref;
 use bun_core::strings;
@@ -169,7 +171,7 @@ impl DashedIdentReference {
                 return dest.serialize_name(name);
             }
         }
-        dest.write_dashed_ident(&self.ident, false)
+        dest.write_dashed_ident(&self.ident, IsDeclaration::No)
     }
 }
 
@@ -196,7 +198,7 @@ impl DashedIdent {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        dest.write_dashed_ident(self, true)
+        dest.write_dashed_ident(self, IsDeclaration::Yes)
     }
 }
 
@@ -263,6 +265,8 @@ pub(crate) fn debug_ident<'a>(_raw: &'a [u8], _arena: &'a bun_alloc::Arena) -> D
     }
 }
 
+bun_core::bool_enum!(IdentOrRefKind { Ident, Ref });
+
 impl IdentOrRef {
     #[inline]
     fn ptrbits(self) -> u64 {
@@ -280,9 +284,9 @@ impl IdentOrRef {
     }
 
     #[inline]
-    fn pack(ptrbits: u64, ref_bit: bool, len: u64) -> Self {
+    fn pack(ptrbits: u64, ref_bit: IdentOrRefKind, len: u64) -> Self {
         let mut v: u128 = (ptrbits as u128) & PTRBITS_MASK;
-        if ref_bit {
+        if ref_bit == IdentOrRefKind::Ref {
             v |= REF_BIT;
         }
         v |= (len as u128) << 64;
@@ -294,13 +298,13 @@ impl IdentOrRef {
         let (ptr, len) = (s.as_ptr() as usize as u64, s.len() as u64);
         // narrowing usize→u63 is checked in debug
         debug_assert!(ptr & (1u64 << 63) == 0);
-        Self::pack(ptr, false, len)
+        Self::pack(ptr, IdentOrRefKind::Ident, len)
     }
 
     pub(crate) fn from_ref(r: Ref, debug_ident: DebugIdent<'_>) -> Self {
         let len: u64 = r.to_raw_bits();
         #[cfg(not(debug_assertions))]
-        let this = Self::pack(0, true, len);
+        let this = Self::pack(0, IdentOrRefKind::Ref, len);
 
         #[cfg(debug_assertions)]
         let this = {
@@ -309,7 +313,7 @@ impl IdentOrRef {
             let heap_ptr: &mut *const [u8] = bump.alloc(std::ptr::from_ref::<[u8]>(slice));
             let addr = std::ptr::from_mut::<*const [u8]>(heap_ptr) as usize as u64;
             debug_assert!(addr & (1u64 << 63) == 0);
-            Self::pack(addr, true, len)
+            Self::pack(addr, IdentOrRefKind::Ref, len)
         };
         #[cfg(not(debug_assertions))]
         {
@@ -441,16 +445,16 @@ impl CustomIdent {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        Self::to_css_with_options(self, dest, true)
+        Self::to_css_with_options(self, dest, HandleCssModule::Yes)
     }
 
     /// Write the custom ident to CSS.
     pub(crate) fn to_css_with_options(
         &self,
         dest: &mut Printer,
-        enabled_css_modules: bool,
+        enabled_css_modules: HandleCssModule,
     ) -> Result<(), PrintErr> {
-        let css_module_custom_idents_enabled = enabled_css_modules
+        let css_module_custom_idents_enabled = enabled_css_modules == HandleCssModule::Yes
             && if let Some(css_module) = &dest.css_module {
                 css_module.config.custom_idents
             } else {
@@ -459,7 +463,10 @@ impl CustomIdent {
         // SAFETY: arena-owned slice valid for the printer's `'a` lifetime
         // (`arena_str` yields an unbounded borrow, which coerces to `'a`).
         let v = unsafe { crate::arena_str(self.v) };
-        dest.write_ident(v, css_module_custom_idents_enabled)
+        dest.write_ident(
+            v,
+            HandleCssModule::from_bool(css_module_custom_idents_enabled),
+        )
     }
 }
 

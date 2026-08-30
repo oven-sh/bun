@@ -56,10 +56,10 @@ impl ImportWatcher {
     }
 
     #[inline]
-    pub fn add_file_by_path_slow(&mut self, file_path: &[u8]) -> bool {
+    pub fn add_file_by_path_slow(&mut self, file_path: &[u8]) -> bun_sys::Result<()> {
         match self {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w.add_file_by_path_slow(file_path),
-            ImportWatcher::None => true,
+            ImportWatcher::None => Ok(()),
         }
     }
 
@@ -597,8 +597,10 @@ where
             Output::flush();
             flush_changed_paths_for_reload();
             bun_core::reload_process(
-                CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
-                false,
+                bun_core::ClearTerminal::from_bool(
+                    CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
+                ),
+                bun_core::MayReturn::No,
             );
             unreachable!();
         }
@@ -662,8 +664,10 @@ fn arm_watch_reload_grace_timer() {
         crate::node_compile_cache::persist_now();
         Output::flush();
         bun_core::reload_process(
-            CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
-            false,
+            bun_core::ClearTerminal::from_bool(
+                CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
+            ),
+            bun_core::MayReturn::No,
         );
         unreachable!();
     };

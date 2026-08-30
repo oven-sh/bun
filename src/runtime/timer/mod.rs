@@ -153,7 +153,7 @@ macro_rules! impl_timer_object {
                         global,
                         ::bun_jsc::Debugger::AsyncCallType::DOMTimer,
                         super::ID { id, kind: kind.big() }.async_id(),
-                        kind != super::Kind::SetInterval,
+                        ::bun_jsc::Debugger::SingleShot::from_bool(kind != super::Kind::SetInterval),
                     );
                 }
                 js_value

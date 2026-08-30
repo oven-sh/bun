@@ -402,7 +402,10 @@ fn get_help_simple(param: &Param<Help>) -> &'static [u8] {
 #[allow(clippy::disallowed_methods)] // template is a runtime help-string parameter
 fn pretty_help_desc(param: &Param<Help>) -> std::borrow::Cow<'static, [u8]> {
     if Output::enable_ansi_colors_stdout() {
-        std::borrow::Cow::Owned(bun_core::output::pretty_fmt_runtime(param.id.msg, true))
+        std::borrow::Cow::Owned(bun_core::output::pretty_fmt_runtime(
+            param.id.msg,
+            bun_core::output::AnsiColors::Enabled,
+        ))
     } else {
         std::borrow::Cow::Borrowed(param.id.msg_plain)
     }

@@ -43,34 +43,39 @@ pub struct StructuralIndex<'c> {
     src_off: usize,
     kernel_state: [u64; 3],
 
-    use_scalar: bool,
+    producer: Producer,
     s_i: usize,
     s_prev_scalar: bool,
     s_pending_escape: bool,
     s_skip: usize,
 }
 
+bun_core::bool_enum!(
+    /// Which indexer produces the structural index: the Highway SIMD kernel or the scalar fallback.
+    pub(crate) Producer { Simd, Scalar }
+);
+
 impl<'c> StructuralIndex<'c> {
     pub fn new(contents: &'c [u8]) -> Self {
-        Self::with_producer(contents, !bun_core::env::IS_NATIVE)
+        Self::with_producer(contents, Producer::from_bool(!bun_core::env::IS_NATIVE))
     }
 
-    fn with_producer(contents: &'c [u8], use_scalar: bool) -> Self {
+    fn with_producer(contents: &'c [u8], producer: Producer) -> Self {
         if contents.len() > i32::MAX as usize {
-            let mut idx = Self::empty(contents, use_scalar);
+            let mut idx = Self::empty(contents, producer);
             idx.index_error = Some(IndexError::DocumentTooLarge);
             idx.done = true;
             return idx;
         }
         let win_cap = contents.len().min(REFILL_INPUT) + 66 + SENTINELS + LOOKBEHIND;
         let dirty_words = (contents.len().div_ceil(64)).div_ceil(64) + 1;
-        let mut idx = Self::empty(contents, use_scalar);
+        let mut idx = Self::empty(contents, producer);
         idx.win = Vec::with_capacity(win_cap);
         idx.dirty = vec![0; dirty_words];
         idx
     }
 
-    fn empty(contents: &'c [u8], use_scalar: bool) -> Self {
+    fn empty(contents: &'c [u8], producer: Producer) -> Self {
         StructuralIndex {
             contents,
             win: Vec::new(),
@@ -82,7 +87,7 @@ impl<'c> StructuralIndex<'c> {
             done: false,
             src_off: 0,
             kernel_state: [0; 3],
-            use_scalar,
+            producer,
             s_i: 0,
             s_prev_scalar: false,
             s_pending_escape: false,
@@ -120,7 +125,7 @@ impl<'c> StructuralIndex<'c> {
 
     fn refill_once(&mut self) {
         let len = self.contents.len();
-        if bun_core::env::IS_NATIVE && !self.use_scalar {
+        if bun_core::env::IS_NATIVE && self.producer == Producer::Simd {
             if self.src_off >= len {
                 return self.finish();
             }
@@ -136,7 +141,7 @@ impl<'c> StructuralIndex<'c> {
                 &mut self.kernel_state,
             );
             if chunk_flags & FLAG_ODDITY != 0 {
-                self.use_scalar = true;
+                self.producer = Producer::Scalar;
                 self.s_skip = self.base + self.win.len();
                 self.dirty.fill(0);
                 return;
@@ -348,7 +353,7 @@ mod tests {
         if simd.index_error.is_some() {
             return None;
         }
-        let mut scalar = StructuralIndex::with_producer(contents, true);
+        let mut scalar = StructuralIndex::with_producer(contents, Producer::Scalar);
         let (ci, cf) = collect(&mut scalar);
         if scalar.index_error.is_some() {
             return None;
@@ -425,13 +430,13 @@ mod tests {
                 doc.push_str(&tail);
                 let mut streamed = StructuralIndex::new(doc.as_bytes());
                 let (si, sf) = collect(&mut streamed);
-                let mut scalar = StructuralIndex::with_producer(doc.as_bytes(), true);
+                let mut scalar = StructuralIndex::with_producer(doc.as_bytes(), Producer::Scalar);
                 let (ci, cf) = collect(&mut scalar);
                 assert_eq!(si, ci, "prefix {prefix:?} oddity {oddity:?}");
                 assert_eq!(sf, cf);
                 let mut clean = StructuralIndex::new(strict.as_bytes());
                 collect(&mut clean);
-                assert!(!clean.use_scalar || !bun_core::env::IS_NATIVE);
+                assert!(clean.producer == Producer::Simd || !bun_core::env::IS_NATIVE);
             }
         }
     }

@@ -649,7 +649,7 @@ impl VersionExt for Version {
                 strings::eql_long(
                     self.literal.slice(lhs_buf),
                     rhs.literal.slice(rhs_buf),
-                    true,
+                    strings::CheckLen::Yes,
                 ) || self.npm().eql(rhs.npm(), lhs_buf, rhs_buf)
             }
             Tag::Folder | Tag::DistTag => self.literal.eql(rhs.literal, lhs_buf, rhs_buf),

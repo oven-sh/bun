@@ -1,5 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::DiffFormatter;
+use super::IsNot;
 use super::throw;
 use super::{get_signature, Expect};
 
@@ -13,7 +14,7 @@ pub(crate) fn to_match_object(
     let args = frame.arguments();
 
     if !received_object.is_object() {
-        let signature: &str = get_signature("toMatchObject", "<green>expected<r>", not);
+        let signature: &str = get_signature("toMatchObject", "<green>expected<r>", IsNot::from_bool(not));
         return throw!(
             this, global, signature,
             "\n\n<b>Matcher error<r>: <red>received<r> value must be a non-null object\n",
@@ -21,7 +22,7 @@ pub(crate) fn to_match_object(
     }
 
     if args.len() < 1 || !args[0].is_object() {
-        let signature: &str = get_signature("toMatchObject", "", not);
+        let signature: &str = get_signature("toMatchObject", "", IsNot::from_bool(not));
         return throw!(
             this, global, signature,
             "\n\n<b>Matcher error<r>: <green>expected<r> value must be a non-null object\n",
@@ -50,10 +51,10 @@ pub(crate) fn to_match_object(
     };
 
     if not {
-        let signature: &str = get_signature("toMatchObject", "<green>expected<r>", true);
+        let signature: &str = get_signature("toMatchObject", "<green>expected<r>", IsNot::Yes);
         return throw!(this, global, signature, "\n\n{}\n", diff_formatter);
     }
 
-    let signature: &str = get_signature("toMatchObject", "<green>expected<r>", false);
+    let signature: &str = get_signature("toMatchObject", "<green>expected<r>", IsNot::No);
     throw!(this, global, signature, "\n\n{}\n", diff_formatter)
 }

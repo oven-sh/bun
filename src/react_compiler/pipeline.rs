@@ -23,6 +23,7 @@
 use std::collections::HashSet;
 
 use crate::diagnostics::CompilerError;
+use crate::hir::FunctionNesting;
 use crate::hir::ReactFunctionType;
 use crate::hir::environment::{Environment, OutputMode};
 use crate::hir::environment_config::EnvironmentConfig;
@@ -423,7 +424,7 @@ fn run_hir_passes(
 
     timed!(
         "InferMutationAliasingEffects",
-        crate::inference::infer_mutation_aliasing_effects(hir, env, false)
+        crate::inference::infer_mutation_aliasing_effects(hir, env, FunctionNesting::TopLevel)
     )?;
 
     if env.output_mode == OutputMode::Ssr {
@@ -445,7 +446,7 @@ fn run_hir_passes(
 
     timed!(
         "InferMutationAliasingRanges",
-        crate::inference::infer_mutation_aliasing_ranges(hir, env, false)
+        crate::inference::infer_mutation_aliasing_ranges(hir, env, FunctionNesting::TopLevel)
     )?;
 
     if env.enable_validations() {

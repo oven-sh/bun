@@ -1,4 +1,4 @@
-use crate::css_parser::{CssResult as Result, Parser, PrintErr, Printer};
+use crate::css_parser::{CssResult as Result, Parser, PrintErr, Printer, WsBefore};
 use crate::values::number::{CSSNumber, CSSNumberFns};
 
 /// A CSS [`<ratio>`](https://www.w3.org/TR/css-values-4/#ratios) value,
@@ -38,7 +38,7 @@ impl Ratio {
     pub(crate) fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         CSSNumberFns::to_css(self.numerator, dest)?;
         if self.denominator != 1.0 {
-            dest.delim(b'/', true)?;
+            dest.delim(b'/', WsBefore::Yes)?;
             CSSNumberFns::to_css(self.denominator, dest)?;
         }
         Ok(())

@@ -253,13 +253,13 @@ pub mod namespaces {
     ];
 
     pub fn get(namespace: &[u8]) -> Option<&'static [u8; 16]> {
-        if strings::eql_case_insensitive_ascii(namespace, b"dns", true) {
+        if strings::eql_case_insensitive_ascii(namespace, b"dns", strings::CheckLen::Yes) {
             Some(DNS)
-        } else if strings::eql_case_insensitive_ascii(namespace, b"url", true) {
+        } else if strings::eql_case_insensitive_ascii(namespace, b"url", strings::CheckLen::Yes) {
             Some(URL)
-        } else if strings::eql_case_insensitive_ascii(namespace, b"oid", true) {
+        } else if strings::eql_case_insensitive_ascii(namespace, b"oid", strings::CheckLen::Yes) {
             Some(OID)
-        } else if strings::eql_case_insensitive_ascii(namespace, b"x500", true) {
+        } else if strings::eql_case_insensitive_ascii(namespace, b"x500", strings::CheckLen::Yes) {
             Some(X500)
         } else {
             None

@@ -27,10 +27,18 @@ pub(crate) fn from_binary(bytes: &[u8]) -> f64 {
 /// timestamptz in text format. Returns `Some(±f64::INFINITY)` for those two
 /// spellings (case-insensitive), `None` otherwise.
 pub(crate) fn parse_infinity(bytes: &[u8]) -> Option<f64> {
-    if bun_core::strings::eql_case_insensitive_ascii(bytes, b"infinity", true) {
+    if bun_core::strings::eql_case_insensitive_ascii(
+        bytes,
+        b"infinity",
+        bun_core::strings::CheckLen::Yes,
+    ) {
         return Some(f64::INFINITY);
     }
-    if bun_core::strings::eql_case_insensitive_ascii(bytes, b"-infinity", true) {
+    if bun_core::strings::eql_case_insensitive_ascii(
+        bytes,
+        b"-infinity",
+        bun_core::strings::CheckLen::Yes,
+    ) {
         return Some(f64::NEG_INFINITY);
     }
     None

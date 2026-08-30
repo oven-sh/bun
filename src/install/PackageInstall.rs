@@ -742,6 +742,12 @@ impl UninstallTask {
 
 // ───────────────────────────── impl PackageInstall ─────────────────────────────
 
+bun_core::bool_enum!(
+    /// Skip removing an existing destination before installing (fresh
+    /// `node_modules`, nothing to delete).
+    pub SkipDelete
+);
+
 impl<'a> PackageInstall<'a> {
     ///
     fn verify_patch_hash(&mut self, patch: Patch, root_node_modules_dir: &Dir) -> bool {
@@ -806,7 +812,7 @@ impl<'a> PackageInstall<'a> {
         strings::eql_long(
             repo.resolved.slice(&self.lockfile.buffers.string_bytes),
             &bun_tag_file.bytes,
-            true,
+            strings::CheckLen::Yes,
         )
     }
 
@@ -2014,13 +2020,13 @@ impl<'a> PackageInstall<'a> {
 
     pub(crate) fn install_from_link(
         &mut self,
-        skip_delete: bool,
+        skip_delete: SkipDelete,
         destination_dir: &Dir,
     ) -> InstallResult {
         let dest_path = self.destination_dir_subpath;
         // If this fails, we don't care.
         // we'll catch it the next error
-        if !skip_delete && dest_path.as_bytes() != b"." {
+        if skip_delete == SkipDelete::No && dest_path.as_bytes() != b"." {
             self.uninstall_before_install(destination_dir);
         }
 
@@ -2276,7 +2282,7 @@ impl<'a> PackageInstall<'a> {
 
     pub(crate) fn install(
         &mut self,
-        skip_delete: bool,
+        skip_delete: SkipDelete,
         destination_dir: &Dir,
         method_: Method,
         resolution_tag: resolution::Tag,
@@ -2285,7 +2291,7 @@ impl<'a> PackageInstall<'a> {
 
         // If this fails, we don't care.
         // we'll catch it the next error
-        if !skip_delete && self.destination_dir_subpath.as_bytes() != b"." {
+        if skip_delete == SkipDelete::No && self.destination_dir_subpath.as_bytes() != b"." {
             self.uninstall_before_install(destination_dir);
         }
 

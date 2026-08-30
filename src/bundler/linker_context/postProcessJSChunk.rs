@@ -1,7 +1,7 @@
 use crate::LinkerContext;
 use crate::analyze_transpiled_module::ModuleInfo;
 use crate::bundle_v2::bake_types::{HmrRuntimeSide, get_hmr_runtime};
-use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
+use crate::linker_context_mod::{CanHaveShifts, GenerateChunkCtx, LinkerOptionsMode};
 use crate::mal_prelude::*;
 use crate::options;
 use crate::options_impl::TargetExt as _;
@@ -656,7 +656,8 @@ pub(crate) fn post_process_js_chunk(
                     [chunk.entry_point.source_index() as usize]
                     .path;
                 let mut buf = MutableString::init_empty();
-                let _ = js_printer::quote_for_json(input.pretty, &mut buf, true); // fmt::Result into Vec<u8> is infallible
+                let _ =
+                    js_printer::quote_for_json(input.pretty, &mut buf, js_printer::AsciiOnly::Yes); // fmt::Result into Vec<u8> is infallible
                 let quoted = buf.take_slice();
                 line_offset.advance(&quoted);
                 j.push_owned(quoted.into_boxed_slice());
@@ -711,10 +712,10 @@ pub(crate) fn post_process_js_chunk(
         .set(crate::chunk::Flags::IS_EXECUTABLE, is_executable);
 
     if c.options.source_maps != options::SourceMapOption::None {
-        let can_have_shifts = matches!(
+        let can_have_shifts = CanHaveShifts::from_bool(matches!(
             chunk.intermediate_output,
             crate::chunk::IntermediateOutput::Pieces(_)
-        );
+        ));
         // Copy the `ParentRef` out (not `c.resolver()`) so the arg borrows the
         // local, not `c`, avoiding the split-borrow with
         // `c.generate_source_map_for_chunk(&mut self, …)`.

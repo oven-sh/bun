@@ -6,6 +6,7 @@ use bun_jsc::JsClass;
 use bun_core::strings;
 
 use super::Expect;
+use super::IsNot;
 use super::ExpectAny;
 use super::expect_any_js;
 use super::get_signature;
@@ -67,7 +68,7 @@ pub(crate) fn to_throw(
     let did_throw = result_.is_some();
 
     if not {
-        let signature: &'static str = get_signature("toThrow", "<green>expected<r>", true);
+        let signature: &'static str = get_signature("toThrow", "<green>expected<r>", IsNot::Yes);
 
         if !did_throw {
             return Ok(JSValue::UNDEFINED);
@@ -77,7 +78,7 @@ pub(crate) fn to_throw(
         let mut formatter = Formatter::new(global).with_quote_strings(true);
 
         if expected_value.is_empty() || expected_value.is_undefined() {
-            let signature_no_args: &'static str = get_signature("toThrow", "", true);
+            let signature_no_args: &'static str = get_signature("toThrow", "", IsNot::Yes);
             if let Some(err) = result.to_error() {
                 let name: JSValue = err
                     .get_truthy(global, "name")?
@@ -233,7 +234,7 @@ pub(crate) fn to_throw(
             // error: message from received error does not match expected string
             let mut formatter = Formatter::new(global).with_quote_strings(true);
 
-            let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
+            let signature: &'static str = get_signature("toThrow", "<green>expected<r>", IsNot::No);
 
             let mut formatter2 = super::make_formatter(global);
             if let Some(received_message) = received_message_opt {
@@ -273,7 +274,7 @@ pub(crate) fn to_throw(
 
             let mut formatter2 = super::make_formatter(global);
             if let Some(received_message) = received_message_opt {
-                let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
+                let signature: &'static str = get_signature("toThrow", "<green>expected<r>", IsNot::No);
                 return throw!(
                     this,
                     global,
@@ -284,7 +285,7 @@ pub(crate) fn to_throw(
                 );
             }
 
-            let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
+            let signature: &'static str = get_signature("toThrow", "<green>expected<r>", IsNot::No);
             return throw!(
                 this,
                 global,
@@ -296,7 +297,7 @@ pub(crate) fn to_throw(
         }
 
         if Expect::is_asymmetric_matcher(expected_value) {
-            let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
+            let signature: &'static str = get_signature("toThrow", "<green>expected<r>", IsNot::No);
             let is_equal = result.jest_strict_deep_equals(expected_value, global)?;
 
             if is_equal {
@@ -319,7 +320,7 @@ pub(crate) fn to_throw(
         debug_assert!(expected_value.is_object());
 
         if let Some(expected_message) = expected_value.fast_get(global, bun_jsc::BuiltinName::Message)? {
-            let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
+            let signature: &'static str = get_signature("toThrow", "<green>expected<r>", IsNot::No);
 
             if let Some(received_message) = received_message_opt {
                 if received_message.is_same_value(expected_message, global)? {
@@ -360,7 +361,7 @@ pub(crate) fn to_throw(
         let mut formatter = Formatter::new(global).with_quote_strings(true);
         let expected_class = expected_value.get_class_name(global)?;
         let received_class = result.get_class_name(global)?;
-        let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
+        let signature: &'static str = get_signature("toThrow", "<green>expected<r>", IsNot::No);
 
         if let Some(received_message) = received_message_opt {
             return throw!(
@@ -393,7 +394,7 @@ pub(crate) fn to_throw(
     // received_line = "Received function did not throw\nReceived value: <red>{f}<r>\n"
 
     if expected_value.is_empty() || expected_value.is_undefined() {
-        let signature: &'static str = get_signature("toThrow", "", false);
+        let signature: &'static str = get_signature("toThrow", "", IsNot::No);
         return throw!(
             this,
             global,
@@ -403,7 +404,7 @@ pub(crate) fn to_throw(
         );
     }
 
-    let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
+    let signature: &'static str = get_signature("toThrow", "<green>expected<r>", IsNot::No);
 
     if expected_value.is_string() {
         return throw!(

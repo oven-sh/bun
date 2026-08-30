@@ -6,7 +6,7 @@ use std::rc::{Rc, Weak};
 use bun_collections::LinearFifo;
 use bun_core::{Output, Timespec};
 use bun_jsc::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong, JsClass as _};
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{IsRejection, VirtualMachine};
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_ptr::RefPtr;
 use super::jest::{Jest, FileId, FileColumns as _};
@@ -648,6 +648,9 @@ pub struct BunTest {
 
 bun_event_loop::impl_timer_owner!(BunTest; from_timer_ptr => timer);
 
+bun_core::bool_enum!(PromiseSettle { Then, Catch });
+bun_core::bool_enum!(pub(crate) HasDoneParameter);
+
 impl BunTest {
     /// `bun_test_root` must point at the stable global `BunTestRoot` storage
     /// that outlives the returned `BunTest`.
@@ -735,7 +738,7 @@ impl BunTest {
     fn bun_test_then_or_catch(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
-        is_catch: bool,
+        is_catch: PromiseSettle,
     ) -> JsResult<()> {
         let _g = group_begin!();
 
@@ -764,10 +767,10 @@ impl BunTest {
         // (which itself calls `.get()` for a single field write).
         let this = this_strong.get();
 
-        if is_catch {
-            this.on_uncaught_exception(global_this, Some(result), true, &refdata.phase);
+        if is_catch == PromiseSettle::Catch {
+            this.on_uncaught_exception(global_this, Some(result), IsRejection::Yes, &refdata.phase);
         }
-        if !has_one_ref && !is_catch {
+        if !has_one_ref && is_catch == PromiseSettle::Then {
             bun_core::scoped_log!(bun_test_group, "bunTestThenOrCatch -> refdata has multiple refs; don't add result until the last ref");
             return Ok(());
         }
@@ -784,12 +787,12 @@ impl BunTest {
     // (see the gated `Bun__TestScope__Describe2__*` statics below), so the
     // attribute is dropped here — these are plain JsResult fns.
     fn bun_test_then(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        Self::bun_test_then_or_catch(global_this, callframe, false)?;
+        Self::bun_test_then_or_catch(global_this, callframe, PromiseSettle::Then)?;
         Ok(JSValue::UNDEFINED)
     }
 
     fn bun_test_catch(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        Self::bun_test_then_or_catch(global_this, callframe, true)?;
+        Self::bun_test_then_or_catch(global_this, callframe, PromiseSettle::Catch)?;
         Ok(JSValue::UNDEFINED)
     }
 
@@ -815,7 +818,7 @@ impl BunTest {
         } else {
             // error is only reported for the first done() call
             if was_error {
-                let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
+                let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, IsRejection::No);
             }
         }
         // SAFETY: see above — `this` is a live `*mut DoneCallback`.
@@ -869,7 +872,7 @@ impl BunTest {
                 Phase::Collection => {}
                 Phase::Execution => {
                     if let Err(e) = (*this).execution.handle_timeout(global) {
-                        (*this).on_uncaught_exception(global, Some(global.take_exception(e)), false, &RefDataValue::Done);
+                        (*this).on_uncaught_exception(global, Some(global.take_exception(e)), IsRejection::No, &RefDataValue::Done);
                     }
                 }
                 Phase::Done => {}
@@ -877,7 +880,7 @@ impl BunTest {
         }
         if let Err(e) = Self::run(this_strong, global) {
             // SAFETY: re-derive after `run` returned; no `&mut` was held across it.
-            unsafe { (*this).on_uncaught_exception(global, Some(global.take_exception(e)), false, &RefDataValue::Done) };
+            unsafe { (*this).on_uncaught_exception(global, Some(global.take_exception(e)), IsRejection::No, &RefDataValue::Done) };
         }
     }
 
@@ -1104,7 +1107,7 @@ impl BunTest {
         this_strong: &BunTestPtr,
         global_this: &JSGlobalObject,
         cfg_callback: JSValue,
-        cfg_done_parameter: bool,
+        cfg_done_parameter: HasDoneParameter,
         cfg_data: RefDataValue,
         timeout: &Timespec,
     ) -> Option<RefDataValue> {
@@ -1121,14 +1124,14 @@ impl BunTest {
         let mut done_arg: JSValue = JSValue::ZERO;
         let mut done_callback: JSValue = JSValue::ZERO;
 
-        if cfg_done_parameter {
+        if cfg_done_parameter == HasDoneParameter::Yes {
             bun_core::scoped_log!(bun_test_group, "callTestCallback -> appending done callback param: data {}", cfg_data);
             done_callback = DoneCallback::create_unbound(global_this);
             done_arg = match DoneCallback::bind(done_callback, global_this) {
                 Ok(v) => v,
                 Err(e) => {
                     // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point.
-                    unsafe { (*this).on_uncaught_exception(global_this, Some(global_this.take_exception(e)), false, &cfg_data) };
+                    unsafe { (*this).on_uncaught_exception(global_this, Some(global_this.take_exception(e)), IsRejection::No, &cfg_data) };
                     JSValue::ZERO // failed to bind done callback
                 }
             };
@@ -1147,7 +1150,7 @@ impl BunTest {
             Err(_) => {
                 global_this.clear_termination_exception();
                 // SAFETY: re-derive after JS callback returned; no outer `&mut` was held across it.
-                unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), false, &cfg_data) };
+                unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), IsRejection::No, &cfg_data) };
                 bun_core::scoped_log!(bun_test_group, "callTestCallback -> error");
                 JSValue::ZERO
             }
@@ -1247,7 +1250,7 @@ impl BunTest {
                         let value = bun_jsc::JSPromise::opaque_mut(promise).result(global_this.vm());
                         // SAFETY: re-derive via `UnsafeCell` after the JS/microtask
                         // drain above; sole `&mut` at this point.
-                        unsafe { (*this).on_uncaught_exception(global_this, Some(value), true, &cfg_data) };
+                        unsafe { (*this).on_uncaught_exception(global_this, Some(value), IsRejection::Yes, &cfg_data) };
 
                         // We previously marked it as handled above.
 
@@ -1272,7 +1275,7 @@ impl BunTest {
         &mut self,
         global_this: &JSGlobalObject,
         exception: Option<JSValue>,
-        is_rejection: bool,
+        is_rejection: IsRejection,
         user_data: &RefDataValue,
     ) {
         let _g = group_begin!();
@@ -1541,7 +1544,7 @@ impl RunTestsTask {
             bt.on_uncaught_exception(
                 &this.global_this,
                 Some(this.global_this.take_exception(e)),
-                false,
+                IsRejection::No,
                 &this.phase,
             );
         }
@@ -1677,12 +1680,13 @@ pub struct BaseScope {
     /// only available if using junit reporter, otherwise 0
     pub(crate) line_no: u32,
 }
+bun_core::bool_enum!(pub(crate) HasCallback);
 impl BaseScope {
     pub(crate) fn init(
         cfg: BaseScopeCfg,
         name_not_owned: Option<&[u8]>,
         parent: Option<*mut DescribeScope>,
-        has_callback: bool,
+        has_callback: HasCallback,
     ) -> BaseScope {
         // SAFETY: `parent` is a live backref into the describe tree; single-threaded,
         // and the parent outlives this child during construction.
@@ -1701,14 +1705,14 @@ impl BaseScope {
                 cfg.self_mode
             },
             only: if cfg.self_only { Only::Yes } else { Only::No },
-            has_callback,
+            has_callback: has_callback == HasCallback::Yes,
             test_id_for_debugger: cfg.test_id_for_debugger,
             line_no: cfg.line_no,
         }
     }
 
-    pub(crate) fn propagate(&mut self, has_callback: bool) {
-        self.has_callback = has_callback;
+    pub(crate) fn propagate(&mut self, has_callback: HasCallback) {
+        self.has_callback = has_callback == HasCallback::Yes;
         if let Some(parent) = self.parent {
             // SAFETY: parent backref valid; tree is single-threaded and parent
             // outlives child. Borrows are scoped to each call.
@@ -1791,8 +1795,8 @@ impl DescribeScope {
         name_not_owned: Option<&[u8]>,
         base: BaseScopeCfg,
     ) -> &mut DescribeScope {
-        let mut child = Self::create(BaseScope::init(base, name_not_owned, Some(std::ptr::from_mut(self)), false));
-        child.base.propagate(false);
+        let mut child = Self::create(BaseScope::init(base, name_not_owned, Some(std::ptr::from_mut(self)), HasCallback::No));
+        child.base.propagate(HasCallback::No);
         self.entries.push(TestScheduleEntry::Describe(child));
         match self.entries.last_mut().unwrap() {
             TestScheduleEntry::Describe(d) => &mut **d,
@@ -1809,7 +1813,7 @@ impl DescribeScope {
         phase: AddedInPhase,
     ) -> JsResult<&mut ExecutionEntry> {
         let mut entry = ExecutionEntry::create(name_not_owned, callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
-        let has_cb = entry.callback.is_some();
+        let has_cb = HasCallback::from_bool(entry.callback.is_some());
         entry.base.propagate(has_cb);
         self.entries.push(TestScheduleEntry::TestCallback(entry));
         match self.entries.last_mut().unwrap() {
@@ -1900,7 +1904,7 @@ impl ExecutionEntry {
         phase: AddedInPhase,
     ) -> Box<ExecutionEntry> {
         let mut entry = Box::new(ExecutionEntry {
-            base: BaseScope::init(base, name_not_owned, parent, cb.is_some()),
+            base: BaseScope::init(base, name_not_owned, parent, HasCallback::from_bool(cb.is_some())),
             callback: None,
             timeout: cfg.timeout,
             has_done_parameter: cfg.has_done_parameter,

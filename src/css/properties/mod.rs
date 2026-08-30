@@ -140,6 +140,7 @@ mod properties_impl;
 
 pub use self::custom::CustomPropertyName;
 pub use self::properties_generated::{Property, PropertyId, PropertyIdTag};
+pub use self::properties_impl::property_mixin::Important;
 
 /// A [CSS-wide keyword](https://drafts.csswg.org/css-cascade-5/#defaulting-keywords).
 // The `DefineEnumProperty` derive emits `EnumProperty` +

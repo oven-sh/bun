@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Expect;
+use super::IsNot;
 use super::get_signature;
 use super::throw;
 
@@ -79,7 +80,7 @@ pub(crate) fn to_have_length(
 
     // handle failure
     if not {
-        let signature: &str = get_signature("toHaveLength", "<green>expected<r>", true);
+        let signature: &str = get_signature("toHaveLength", "<green>expected<r>", IsNot::Yes);
         return throw!(
             this,
             global,
@@ -88,7 +89,7 @@ pub(crate) fn to_have_length(
         );
     }
 
-    let signature: &str = get_signature("toHaveLength", "<green>expected<r>", false);
+    let signature: &str = get_signature("toHaveLength", "<green>expected<r>", IsNot::No);
     throw!(
         this,
         global,

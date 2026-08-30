@@ -319,20 +319,22 @@ impl ServerConfig {
     }
 }
 
+bun_core::bool_enum!(pub(crate) PathHasUserHeadRoute);
+
 pub(crate) fn apply_static_route<const SSL: bool, T: StaticRouteLike>(
     server: AnyServer,
     app: &mut uws::NewApp<SSL>,
     entry: ThisPtr<T>,
     path: &[u8],
     method: http_method::Optional,
-    path_has_user_head_route: bool,
+    path_has_user_head_route: PathHasUserHeadRoute,
 ) {
     entry.set_server(server);
 
     // Only answer HEAD from an entry that serves GET (HEAD must mirror GET,
     // RFC 9110 section 9.3.2) or HEAD itself, and never displace an explicit HEAD
     // handler route: uWS keeps the last registration for the same method and path.
-    if !path_has_user_head_route && serves_head(&method) {
+    if path_has_user_head_route == PathHasUserHeadRoute::No && serves_head(&method) {
         app.method_this(Method::HEAD, path, T::on_head_request, entry);
     }
     match method {
@@ -398,11 +400,11 @@ pub(crate) fn apply_static_route_mux<T: StaticRouteLike, A: MuxApp>(
     entry: ThisPtr<T>,
     path: &[u8],
     method: http_method::Optional,
-    path_has_user_head_route: bool,
+    path_has_user_head_route: PathHasUserHeadRoute,
 ) {
     entry.set_server(server);
 
-    if !path_has_user_head_route && serves_head(&method) {
+    if path_has_user_head_route == PathHasUserHeadRoute::No && serves_head(&method) {
         app.method_this(Method::HEAD, path, T::on_head_request, entry);
     }
     match method {

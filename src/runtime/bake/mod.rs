@@ -226,7 +226,7 @@ impl Framework {
 
         out.options.conditions = bun_bundler::options::ESMConditions::init(
             out.options.target.default_conditions(),
-            out.options.target.is_server_side(),
+            bun_bundler::options::AllowAddons::from_bool(out.options.target.is_server_side()),
             bundler_options.conditions.keys(),
         )?;
         if renderer == Graph::Server && self.server_components.is_some() {
@@ -297,21 +297,33 @@ impl Framework {
                 bundler_options.define.values.len()
             );
             use bun_bundler::DefineDataExt;
+            use bun_bundler::defines::{MethodCallMustBeReplacedWithUndefined, Valueless};
             for (k, v) in bundler_options
                 .define
                 .keys
                 .iter()
                 .zip(bundler_options.define.values.iter())
             {
-                let parsed =
-                    bun_bundler::defines::DefineData::parse(k, v, false, false, log, arena)?;
+                let parsed = bun_bundler::defines::DefineData::parse(
+                    k,
+                    v,
+                    Valueless::No,
+                    MethodCallMustBeReplacedWithUndefined::No,
+                    log,
+                    arena,
+                )?;
                 out.options.define.insert(k, parsed)?;
             }
 
             for drop_item in bundler_options.drop.keys() {
                 if !drop_item.is_empty() {
                     let parsed = bun_bundler::defines::DefineData::parse(
-                        drop_item, b"", true, true, log, arena,
+                        drop_item,
+                        b"",
+                        Valueless::Yes,
+                        MethodCallMustBeReplacedWithUndefined::Yes,
+                        log,
+                        arena,
                     )?;
                     out.options.define.insert(drop_item, parsed)?;
                 }

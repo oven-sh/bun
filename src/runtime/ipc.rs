@@ -497,7 +497,7 @@ mod json {
             // .dead if `json_data` exceeds max length
             let s = BunString::create_external::<*mut bool>(
                 json_data,
-                true,
+                bun_core::WTFEncoding::Latin1,
                 &raw mut was_ascii_string_freed,
                 json_ipc_data_string_free_cb,
             );
@@ -883,6 +883,8 @@ enum CloseFrom {
     Deinit,
 }
 
+bun_core::bool_enum!(Notify);
+
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum AckNack {
     Ack,
@@ -1102,7 +1104,7 @@ impl SendQueue {
                         self.windows.with_mut(|w| w.try_close_after_write = true);
                     } else {
                         log!("SendQueue#closeSocket -> close now");
-                        self.windows_close(from != CloseFrom::Deinit);
+                        self.windows_close(Notify::from_bool(from != CloseFrom::Deinit));
                     }
                 }
                 #[cfg(not(windows))]
@@ -1111,21 +1113,21 @@ impl SendQueue {
                         CloseReason::Normal => bun_uws::CloseCode::Normal,
                         CloseReason::Failure => bun_uws::CloseCode::Failure,
                     });
-                    self.socket_closed_notify(from != CloseFrom::Deinit);
+                    self.socket_closed_notify(Notify::from_bool(from != CloseFrom::Deinit));
                 }
             }
             None => {
-                self.socket_closed_notify(from != CloseFrom::Deinit);
+                self.socket_closed_notify(Notify::from_bool(from != CloseFrom::Deinit));
             }
         }
         let _ = reason; // suppress unused on windows
     }
 
     fn socket_closed(&self) {
-        self.socket_closed_notify(true);
+        self.socket_closed_notify(Notify::Yes);
     }
 
-    fn socket_closed_notify(&self, notify: bool) {
+    fn socket_closed_notify(&self, notify: Notify) {
         log!("SendQueue#_socketClosed");
         #[cfg(windows)]
         {
@@ -1147,7 +1149,11 @@ impl SendQueue {
         // can reach this path again with the socket already `.closed`; the
         // owner is about to free the memory that backs `this`, so scheduling
         // a task that points back into it would use-after-free.
-        if notify && was_open && !self.pending_after_close.get() && !self.close_event_sent.get() {
+        if notify == Notify::Yes
+            && was_open
+            && !self.pending_after_close.get()
+            && !self.close_event_sent.get()
+        {
             self.pending_after_close.set(true);
             self.schedule_deferred();
         }
@@ -1218,11 +1224,11 @@ impl SendQueue {
         // SAFETY: recorded at configure time by this live SendQueue; the pipe
         // leaves the list when `windows_close` issues its uv_close.
         let this = unsafe { &*this.cast::<SendQueue>() };
-        this.windows_close(true);
+        this.windows_close(Notify::Yes);
     }
 
     #[cfg(windows)]
-    fn windows_close(&self, notify: bool) {
+    fn windows_close(&self, notify: Notify) {
         log!("SendQueue#_windowsClose");
         let SocketUnion::Open(pipe) = *self.socket.get() else {
             return;
@@ -1871,7 +1877,7 @@ impl SendQueue {
             bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()));
         // SAFETY: ipc_pipe just allocated above.
         if let Some(err) =
-            unsafe { (*ipc_pipe).init(uv::Loop::get(), true) }.to_error(bun_sys::Tag::pipe)
+            unsafe { (*ipc_pipe).init(uv::Loop::get(), uv::Ipc::Yes) }.to_error(bun_sys::Tag::pipe)
         {
             // SAFETY: ipc_pipe was heap-allocated above and init failed before libuv took ownership.
             let _ = unsafe { bun_core::heap::take(ipc_pipe) };

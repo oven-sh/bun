@@ -1172,6 +1172,8 @@ pub struct Pipe {
     pipe: pipe_u,
 }
 
+bun_core::bool_enum!(pub Ipc);
+
 impl Pipe {
     #[inline]
     pub fn ipc_remote_pid(&self) -> DWORD {
@@ -1182,9 +1184,9 @@ impl Pipe {
     /// in higher tiers map to `bun_sys::Result` themselves so this crate stays
     /// free of `bun_sys`.
     #[inline]
-    pub fn init(&mut self, loop_: *mut Loop, ipc: bool) -> ReturnCode {
+    pub fn init(&mut self, loop_: *mut Loop, ipc: Ipc) -> ReturnCode {
         // SAFETY: `self` is a valid `uv_pipe_t`-sized allocation.
-        let rc = unsafe { uv_pipe_init(loop_, self, if ipc { 1 } else { 0 }) };
+        let rc = unsafe { uv_pipe_init(loop_, self, if ipc == Ipc::Yes { 1 } else { 0 }) };
         if rc.0 == 0 {
             open_handles::add_pipe(self);
         }

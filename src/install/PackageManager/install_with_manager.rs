@@ -12,7 +12,8 @@ use bun_semver::String as SemverString;
 use crate::GetJsonResult as WorkspacePackageJsonCacheResult;
 use crate::Subcommand;
 use crate::dependency::{DependencyExt as _, Tag as DependencyVersionTag};
-use crate::lockfile::{self, Lockfile, reachable};
+use crate::lockfile::package::scripts::AddNodeGypRebuildScript;
+use crate::lockfile::{self, Lockfile, PrintNameVersion, reachable};
 use crate::resolution::Tag as ResolutionTag;
 use crate::update_transitive::{
     DirectDependencies, TransitiveUpdate, enqueue_peer_rows, moved_targets_after_clean,
@@ -29,6 +30,7 @@ use crate::PackageManager;
 use crate::config_version::ConfigVersion;
 use crate::hoisted_install::install_hoisted_packages;
 use crate::isolated_install::install_isolated_packages;
+use crate::lifecycle_script_runner::{Foreground, Optional};
 use crate::lockfile_real::package::Diff;
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::lockfile_real::{Printer, printer as LockfilePrinter};
@@ -41,9 +43,11 @@ use bun_install_types::NodeLinker::NodeLinker;
 // to avoid one giant `impl PackageManager` block.
 use crate::package_manager_real::run_tasks::{RunTasksCallbacks, run_tasks};
 use crate::package_manager_real::{
-    UpdateRequest, enqueue_dependency_list, enqueue_dependency_with_main, enqueue_patch_task_pre,
-    save_lockfile, setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
+    HadAnyDiffs, InstallPeer, UpdateRequest, enqueue_dependency_list, enqueue_dependency_with_main,
+    enqueue_patch_task_pre, save_lockfile, setup_global_dir, update_lockfile_if_needed,
+    write_yarn_lock,
 };
+use crate::{InstallRootDependencies, Scope};
 
 use super::security_scanner;
 
@@ -107,7 +111,7 @@ pub fn install_with_manager(
     manager.options.enable.set(
         Enable::FORCE_SAVE_LOCKFILE,
         manager.options.enable.force_save_lockfile()
-            || changed_config_version
+            || changed_config_version == lockfile::ConfigVersionChanged::Yes
             || (matches!(load_result, lockfile::LoadResult::Ok { .. })
                 // if migrated always save a new lockfile
                 && (load_result.ok().migrated != lockfile::Migrated::None
@@ -517,7 +521,7 @@ pub fn install_with_manager(
                                     dependency_i as u32,
                                     &dependency,
                                     invalid_package_id,
-                                    false,
+                                    InstallPeer::No,
                                 ) {
                                     add_dependency_error(manager, &dependency, err);
                                 }
@@ -557,7 +561,7 @@ pub fn install_with_manager(
                                 dep_id,
                                 &dep,
                                 invalid_package_id,
-                                false,
+                                InstallPeer::No,
                             ) {
                                 add_dependency_error(manager, &dep, err);
                             }
@@ -585,7 +589,7 @@ pub fn install_with_manager(
                                     dependency_i,
                                     &dependency,
                                     resolution,
-                                    false,
+                                    InstallPeer::No,
                                 ) {
                                     add_dependency_error(manager, &dependency, err);
                                 }
@@ -762,7 +766,7 @@ pub fn install_with_manager(
                 continue;
             }
             let scripts = packages.items_scripts()[pkg_i];
-            let add_node_gyp = !scripts.has_any();
+            let add_node_gyp = AddNodeGypRebuildScript::from_bool(!scripts.has_any());
             let (first_index, _, entries) =
                 scripts.get_script_entries(string_bytes, ResolutionTag::Workspace, add_node_gyp);
 
@@ -804,8 +808,10 @@ pub fn install_with_manager(
                 } else if !(manager
                     .lockfile
                     .has_meta_hash_changed(
-                        PackageManager::verbose_install()
-                            || manager.options.do_.print_meta_hash_string(),
+                        PrintNameVersion::from_bool(
+                            PackageManager::verbose_install()
+                                || manager.options.do_.print_meta_hash_string(),
+                        ),
                         packages_len_before_install,
                     )
                     .unwrap_or(false))
@@ -848,7 +854,7 @@ pub fn install_with_manager(
             ctx,
             &load_result,
             save_format,
-            had_any_diffs,
+            HadAnyDiffs::from_bool(had_any_diffs),
             lockfile_before_install,
             packages_len_before_install,
             log_level,
@@ -936,7 +942,10 @@ pub fn install_with_manager(
                 )?
             } else {
                 manager.lockfile.has_meta_hash_changed(
-                    PackageManager::verbose_install() || manager.options.do_.print_meta_hash_string(),
+                    PrintNameVersion::from_bool(
+                        PackageManager::verbose_install()
+                            || manager.options.do_.print_meta_hash_string(),
+                    ),
                     packages_len_before_install.min(manager.lockfile.packages.len()),
                 )?
             };
@@ -962,7 +971,7 @@ pub fn install_with_manager(
             manager,
             &load_result,
             save_format,
-            had_any_diffs,
+            HadAnyDiffs::from_bool(had_any_diffs),
             lockfile_before_install.get(),
             packages_len_before_install,
             log_level,
@@ -980,7 +989,10 @@ pub fn install_with_manager(
         write_yarn_lock_with_progress(manager, log_level)?;
     }
 
-    if manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global {
+    if manager.options.do_.run_scripts()
+        && install_root_dependencies == InstallRootDependencies::Yes
+        && !manager.options.global
+    {
         run_root_lifecycle_scripts(manager, ctx, log_level)?;
     }
 
@@ -989,7 +1001,7 @@ pub fn install_with_manager(
             manager,
             ctx,
             &install_summary,
-            did_meta_hash_change,
+            MetaHashChanged::from_bool(did_meta_hash_change),
             requests_removed_from_lockfile,
             log_level,
         )?;
@@ -1051,9 +1063,12 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
             // concrete `RunTasksCallbacks` impl; `extract_ctx` collapses to `()` so we
             // do NOT pass `this` as both receiver and ctx (would alias `&mut`).
             let log_level = this.options.log_level;
-            if let Err(err) =
-                run_tasks::<InstallWaitCallbacks>(this, &mut (), CHECK_PEERS, log_level)
-            {
+            if let Err(err) = run_tasks::<InstallWaitCallbacks>(
+                this,
+                &mut (),
+                InstallPeer::from_bool(CHECK_PEERS),
+                log_level,
+            ) {
                 closure.err = Some(err);
                 return true;
             }
@@ -1132,13 +1147,15 @@ fn wait_for_peers(this: &mut PackageManager) -> crate::Result<()> {
 // monolithic body required: every other output section (tree, added, removed,
 // failures, fallback timestamp, blocked-scripts) lives in its own
 // `#[cold] #[inline(never)]` helper that LLVM places in `.text.unlikely`.
+bun_core::bool_enum!(MetaHashChanged);
+
 #[cold]
 #[inline(never)]
 fn print_install_summary(
     this: &mut PackageManager,
     ctx: Command::Context,
     install_summary: &PackageInstallSummary,
-    did_meta_hash_change: bool,
+    did_meta_hash_change: MetaHashChanged,
     requests_removed_from_lockfile: u32,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
@@ -1165,7 +1182,7 @@ fn print_install_summary(
             this.summary.remove = requests_removed_from_lockfile;
         }
 
-        if !did_meta_hash_change {
+        if did_meta_hash_change == MetaHashChanged::No {
             this.summary.remove = 0;
             this.summary.add = 0;
             this.summary.update = 0;
@@ -1201,7 +1218,7 @@ fn print_install_summary(
                 );
                 Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
                 printed_timestamp = true;
-                print_blocked_packages_info(install_summary, this.options.global);
+                print_blocked_packages_info(install_summary, Scope::from_bool(this.options.global));
             } else {
                 bun_core::pretty!(
                     "<r><green>Done<r>! Checked {} package{}<r> <d>(no changes)<r> ",
@@ -1214,7 +1231,7 @@ fn print_install_summary(
                 );
                 Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
                 printed_timestamp = true;
-                print_blocked_packages_info(install_summary, this.options.global);
+                print_blocked_packages_info(install_summary, Scope::from_bool(this.options.global));
             }
         }
 
@@ -1305,7 +1322,7 @@ fn print_summary_installed(
         if pkgs_installed == 1 { "" } else { "s" },
     );
     Output::print_start_end_stdout(start_time, nano_timestamp());
-    print_blocked_packages_info(install_summary, this.options.global);
+    print_blocked_packages_info(install_summary, Scope::from_bool(this.options.global));
 
     if this.summary.remove > 0 {
         bun_core::pretty!("Removed: <cyan>{}<r>\n", this.summary.remove);
@@ -1348,7 +1365,7 @@ fn print_summary_removed(
         if this.summary.remove == 1 { "" } else { "s" },
     );
     Output::print_start_end_stdout(start_time, nano_timestamp());
-    print_blocked_packages_info(install_summary, this.options.global);
+    print_blocked_packages_info(install_summary, Scope::from_bool(this.options.global));
 }
 
 #[cold]
@@ -1371,7 +1388,7 @@ fn print_summary_timing_fallback(start_time: i128) {
 
 #[cold]
 #[inline(never)]
-fn print_blocked_packages_info(summary: &PackageInstallSummary, global: bool) {
+fn print_blocked_packages_info(summary: &PackageInstallSummary, global: Scope) {
     let packages_count = summary.packages_with_blocked_scripts.len();
     let mut scripts_count: usize = 0;
     for count in summary.packages_with_blocked_scripts.values() {
@@ -1388,7 +1405,7 @@ fn print_blocked_packages_info(summary: &PackageInstallSummary, global: bool) {
             "\n\n<d>Blocked {} postinstall{}. Run `bun pm {}untrusted` for details.<r>\n",
             scripts_count,
             if scripts_count > 1 { "s" } else { "" },
-            if global { "-g " } else { "" },
+            if global == Scope::Global { "-g " } else { "" },
         );
     } else {
         bun_core::pretty!("<r>\n");
@@ -1398,10 +1415,10 @@ fn print_blocked_packages_info(summary: &PackageInstallSummary, global: bool) {
 pub(crate) fn get_workspace_filters(
     manager: &mut PackageManager,
     original_cwd: &[u8],
-) -> crate::Result<(Vec<WorkspaceFilter>, bool)> {
+) -> crate::Result<(Vec<WorkspaceFilter>, InstallRootDependencies)> {
     let ids = if manager.subcommand == Subcommand::Install {
         if manager.options.filter_patterns.is_empty() {
-            return Ok((Vec::new(), true));
+            return Ok((Vec::new(), InstallRootDependencies::Yes));
         }
         WorkspaceFilter::select_workspaces(
             &manager.lockfile,
@@ -1410,13 +1427,16 @@ pub(crate) fn get_workspace_filters(
         )
     } else {
         match &manager.filtered_link_targets {
-            None => return Ok((Vec::new(), true)),
+            None => return Ok((Vec::new(), InstallRootDependencies::Yes)),
             Some(targets) => targets.package_ids(&manager.lockfile),
         }
     };
     let filters = vec![WorkspaceFilter::from_ids(ids)];
     let install_root_dependencies = WorkspaceFilter::is_selected(&filters, 0);
-    Ok((filters, install_root_dependencies))
+    Ok((
+        filters,
+        InstallRootDependencies::from_bool(install_root_dependencies),
+    ))
 }
 
 fn frozen_changed_section(
@@ -1613,7 +1633,7 @@ fn enqueue_named_updates(
             dependency_i as DependencyID,
             &dependency,
             invalid_package_id,
-            false,
+            InstallPeer::No,
         ) {
             add_dependency_error(manager, &dependency, err);
         }
@@ -2185,7 +2205,7 @@ fn save_lockfile_only(
     ctx: Command::Context,
     load_result: &lockfile::LoadResult,
     save_format: lockfile::Format,
-    had_any_diffs: bool,
+    had_any_diffs: HadAnyDiffs,
     lockfile_before_install: bun_ptr::ParentRef<Lockfile>,
     packages_len_before_install: usize,
     log_level: Options::LogLevel,
@@ -2200,7 +2220,9 @@ fn save_lockfile_only(
 
     // save the lockfile and exit. make sure metahash is generated for binary lockfile
     manager.lockfile.meta_hash = manager.lockfile.generate_meta_hash(
-        PackageManager::verbose_install() || manager.options.do_.print_meta_hash_string(),
+        PrintNameVersion::from_bool(
+            PackageManager::verbose_install() || manager.options.do_.print_meta_hash_string(),
+        ),
         packages_len_before_install,
     )?;
 
@@ -2295,8 +2317,8 @@ fn run_root_lifecycle_scripts(
         }
         // root lifecycle scripts can run now that all dependencies are installed, dependency scripts
         // have finished, and lockfiles have been saved
-        let optional = false;
-        let output_in_foreground = true;
+        let optional = Optional::No;
+        let output_in_foreground = Foreground::Yes;
         // `spawn_package_lifecycle_scripts` consumes by-value; `.take()`
         // moves it out (`package_name` is owned by the List and drops with it).
         manager.spawn_package_lifecycle_scripts(

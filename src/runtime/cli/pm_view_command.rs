@@ -8,7 +8,7 @@ use bun_core::{Global, Output, prettyln};
 use bun_http as http;
 use bun_install::PackageManager;
 use bun_install::dependency;
-use bun_install::npm::{self, PackageManifest};
+use bun_install::npm::{self, ExtendedManifest, PackageManifest};
 use bun_js_parser as ast;
 use bun_js_printer as JSPrinter;
 use bun_parsers::json as JSON;
@@ -16,14 +16,16 @@ use bun_paths::PathBuffer;
 use bun_semver as Semver;
 use bun_url::URL; // bumpalo::Bump re-export
 
+use crate::cli::JsonOutput;
 use bun_core::fmt::buf_print_infallible as buf_print;
 
 pub(crate) fn view(
     manager: &mut PackageManager,
     spec_: &[u8],
     property_path: Option<&[u8]>,
-    json_output: bool,
+    json_output: JsonOutput,
 ) -> Result<(), crate::Error> {
+    let json_output = json_output == JsonOutput::Yes;
     let bump = Bump::new();
     let (name, mut version) = dependency::split_name_and_version_or_latest('brk: {
         // Extremely best effort.
@@ -165,10 +167,10 @@ pub(crate) fn view(
         &mut log,
         response_buf.list.as_slice(),
         name,
-        b"",  // last_modified (not needed for view)
-        b"",  // etag (not needed for view)
-        0,    // public_max_age (not needed for view)
-        true, // is_extended_manifest (view uses application/json Accept header)
+        b"",                   // last_modified (not needed for view)
+        b"",                   // etag (not needed for view)
+        0,                     // public_max_age (not needed for view)
+        ExtendedManifest::Yes, // view uses application/json Accept header
     ) {
         Ok(Some(m)) => m,
         Ok(None) => {

@@ -249,6 +249,18 @@ pub fn replace_package_manager_run(
     Ok(())
 }
 
+bun_core::bool_enum!(
+    /// Whether a lifecycle script's stdio is inherited (root package scripts)
+    /// or captured/buffered (dependency scripts).
+    pub Foreground
+);
+
+bun_core::bool_enum!(
+    /// Whether the scripts belong to an optional dependency, whose failure
+    /// must not fail the install.
+    pub Optional
+);
+
 pub struct LifecycleScriptSubprocess<'a> {
     pub(crate) package_name: Box<[u8]>,
 
@@ -274,8 +286,8 @@ pub struct LifecycleScriptSubprocess<'a> {
 
     pub(crate) has_incremented_alive_count: bool,
 
-    pub(crate) foreground: bool,
-    pub(crate) optional: bool,
+    pub(crate) foreground: Foreground,
+    pub(crate) optional: Optional,
     pub(crate) started_at: u64,
 
     pub(crate) ctx: Option<InstallCtx<'a>>,
@@ -537,7 +549,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             let combined_script: &mut ZStr =
                 ZStr::from_raw_mut(copy_script.as_mut_ptr(), copy_script.len() - 1);
 
-            if (*this).foreground && (*manager).options.log_level != crate::LogLevel::Silent {
+            if (*this).foreground == Foreground::Yes
+                && (*manager).options.log_level != crate::LogLevel::Silent
+            {
                 Output::command(Output::CommandArgv::Single(combined_script.as_bytes()));
             } else if let Some(scripts_node) = (*manager).scripts_node_mut() {
                 (*manager).set_node_name::<true>(
@@ -597,7 +611,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             // `spawned.stdout/stderr` after spawn — see the `#[cfg(windows)]`
             // block below and `filter_run.rs` for the canonical pattern.
             let spawn_options = SpawnOptions {
-                stdin: if (*this).foreground {
+                stdin: if (*this).foreground == Foreground::Yes {
                     bun_spawn::Stdio::Inherit
                 } else {
                     bun_spawn::Stdio::Ignore
@@ -605,7 +619,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
                 stdout: if (*manager).options.log_level == crate::LogLevel::Silent {
                     bun_spawn::Stdio::Ignore
-                } else if (*manager).options.log_level.is_verbose() || (*this).foreground {
+                } else if (*manager).options.log_level.is_verbose()
+                    || (*this).foreground == Foreground::Yes
+                {
                     bun_spawn::Stdio::Inherit
                 } else {
                     #[cfg(unix)]
@@ -625,7 +641,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 },
                 stderr: if (*manager).options.log_level == crate::LogLevel::Silent {
                     bun_spawn::Stdio::Ignore
-                } else if (*manager).options.log_level.is_verbose() || (*this).foreground {
+                } else if (*manager).options.log_level.is_verbose()
+                    || (*this).foreground == Foreground::Yes
+                {
                     bun_spawn::Stdio::Inherit
                 } else {
                     #[cfg(unix)]
@@ -701,7 +719,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         (*this).remaining_fds += 1;
 
                         Self::reset_output_flags(&mut (*this).stdout, stdout);
-                        (*this).stdout.start(stdout, true)?;
+                        (*this).stdout.start(stdout, bun_io::IsPollable::Yes)?;
                         if let Some(poll) = (*this).stdout.handle.get_poll() {
                             poll.set_flag(FilePollFlag::Socket);
                         }
@@ -717,7 +735,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         (*this).remaining_fds += 1;
 
                         Self::reset_output_flags(&mut (*this).stderr, stderr);
-                        (*this).stderr.start(stderr, true)?;
+                        (*this).stderr.start(stderr, bun_io::IsPollable::Yes)?;
                         if let Some(poll) = (*this).stderr.handle.get_poll() {
                             poll.set_flag(FilePollFlag::Socket);
                         }
@@ -845,7 +863,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         match status {
             Status::Exited(exit) => {
                 if exit.code > 0 {
-                    if self.optional {
+                    if self.optional == Optional::Yes {
                         if let Some(ctx) = &self.ctx {
                             let installer = ctx.installer_mut();
                             installer.store.entries.items_step()[ctx.entry_id.get() as usize]
@@ -869,7 +887,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     Global::exit(exit.code as u32);
                 }
 
-                if !self.foreground
+                if self.foreground == Foreground::No
                     && let Some(scripts_node) = self.manager().scripts_node_mut()
                 {
                     // .monotonic is okay because because this value is only used by hoisted
@@ -967,7 +985,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" terminated by {}<r>",
                     bstr::BStr::new(self.script_name()),
                     bstr::BStr::new(&self.package_name),
-                    signal_code.fmt(Output::enable_ansi_colors_stderr()),
+                    signal_code.fmt(Output::AnsiColors::from_bool(
+                        Output::enable_ansi_colors_stderr()
+                    )),
                 );
 
                 // `Status::signal_code()` range-checks 1..=31 (`bun_core::SignalCode` is
@@ -980,7 +1000,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 );
             }
             Status::Err(err) => {
-                if self.optional {
+                if self.optional == Optional::Yes {
                     if let Some(ctx) = &self.ctx {
                         let installer = ctx.installer_mut();
                         installer.store.entries.items_step()[ctx.entry_id.get() as usize]
@@ -1081,9 +1101,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         list: ScriptsList,
         envp: bun_dotenv::NullDelimitedEnvMap,
         shell_bin: Option<&'a ZStr>,
-        optional: bool,
+        optional: Optional,
         log_level: crate::LogLevel,
-        foreground: bool,
+        foreground: Foreground,
         ctx: Option<InstallCtx<'a>>,
     ) -> Result<(), crate::Error> {
         let package_name = list.package_name.clone();

@@ -530,7 +530,7 @@ fn process_deps(
         .expect("unreachable");
 
         if let Some(dep_entry) = yarn_lock_.find_entry_by_spec(&dep_spec) {
-            let dep_entry_workspace = dep_entry.workspace;
+            let dep_entry_workspace = IsWorkspace::from_bool(dep_entry.workspace);
             let dep_name_hash = string_hash(dep_name);
             let dep_name_str = string_buf_.append_with_hash(dep_name, dep_name_hash)?;
 
@@ -1168,7 +1168,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                                 Some(&mut *manager),
                             )
                             .unwrap_or_default(),
-                            behavior: behavior_for(dep.dep_type, false),
+                            behavior: behavior_for(dep.dep_type, IsWorkspace::No),
                         },
                     );
                 }
@@ -1644,7 +1644,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 name_hash,
                 name: dep_name_string,
                 version: parsed_version,
-                behavior: behavior_for(root_dep.dep_type, false),
+                behavior: behavior_for(root_dep.dep_type, IsWorkspace::No),
             };
 
             this.buffers.dependencies.push(dep);
@@ -1913,7 +1913,8 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         this.verify_data()?;
     }
 
-    this.meta_hash = this.generate_meta_hash(false, this.packages.len())?;
+    this.meta_hash =
+        this.generate_meta_hash(lockfile::PrintNameVersion::No, this.packages.len())?;
 
     let result = LoadResult::Ok(lockfile::LoadResultOk {
         lockfile: this,
@@ -2000,10 +2001,12 @@ fn string_hash(s: &[u8]) -> u64 {
     Semver::string::Builder::string_hash(s)
 }
 
+bun_core::bool_enum!(IsWorkspace);
+
 /// The bitflags-backed `Behavior` has no named fields, so build via
 /// `with(FLAG, cond)` chaining.
 #[inline]
-fn behavior_for(dep_type: DependencyType, workspace: bool) -> dependency::Behavior {
+fn behavior_for(dep_type: DependencyType, workspace: IsWorkspace) -> dependency::Behavior {
     dependency::Behavior::default()
         .with(
             dependency::Behavior::PROD,
@@ -2018,5 +2021,8 @@ fn behavior_for(dep_type: DependencyType, workspace: bool) -> dependency::Behavi
             dep_type == DependencyType::Development,
         )
         .with(dependency::Behavior::PEER, dep_type == DependencyType::Peer)
-        .with(dependency::Behavior::WORKSPACE, workspace)
+        .with(
+            dependency::Behavior::WORKSPACE,
+            workspace == IsWorkspace::Yes,
+        )
 }

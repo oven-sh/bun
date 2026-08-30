@@ -15,7 +15,7 @@ use bun_core::{self as core, Environment, Global, Output, ZStr};
 use bun_core::{pretty, pretty_errorln, prettyln};
 use bun_dotenv as DotEnv;
 use bun_jsc::js_promise::Status as PromiseStatus;
-use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, VirtualMachine};
+use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, IsRejection, VirtualMachine};
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_md::root as md;
 use bun_options_types::schema::api;
@@ -23,6 +23,7 @@ use bun_options_types::schema::api;
 use bun_paths::WPathBuffer;
 use bun_paths::strings;
 use bun_paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
+use bun_resolver::fs::StoreFd;
 use bun_resolver::package_json::PackageJSON;
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_which::which;
@@ -95,6 +96,15 @@ pub(crate) struct ConfigureEnvOptions {
 }
 
 pub(crate) struct RunCommand;
+
+bun_core::bool_enum!(pub(crate) Silent);
+bun_core::bool_enum!(
+    /// Which shell interprets a package.json script body: Bun's built-in shell
+    /// or the system shell (`sh` / `cmd.exe`).
+    pub(crate) ScriptShell { Bun, System }
+);
+bun_core::bool_enum!(WithLinker);
+bun_core::bool_enum!(pub(crate) ForceUsingBun);
 
 impl RunCommand {
     /// `bun run --help` body.
@@ -243,8 +253,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         cwd: &[u8],
         env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
-        silent: bool,
-        use_system_shell: bool,
+        silent: Silent,
+        use_system_shell: ScriptShell,
     ) -> crate::Result<()> {
         Self::run_package_script_foreground_with_shell_path(
             ctx,
@@ -268,10 +278,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         cwd: &[u8],
         env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
-        silent: bool,
-        use_system_shell: bool,
+        silent: Silent,
+        use_system_shell: ScriptShell,
         shell_path: Option<&[u8]>,
     ) -> crate::Result<()> {
+        let silent = silent == Silent::Yes;
         let shell_search_path = shell_path.unwrap_or_else(|| env.get(b"PATH").unwrap_or(b""));
         let shell_bin =
             Self::find_shell(shell_search_path, cwd).ok_or(crate::Error::MissingShell)?;
@@ -295,7 +306,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         for part in passthrough {
             copy_script.push(b' ');
-            if cfg!(windows) && use_system_shell && bun_which::batch_arg_has_cmd_metachars(part) {
+            if cfg!(windows)
+                && use_system_shell == ScriptShell::System
+                && bun_which::batch_arg_has_cmd_metachars(part)
+            {
                 if !silent {
                     pretty_errorln!(
                         "<r><red>error<r>: Failed to run script <b>{}<r>: argument {} contains a cmd.exe special character and cannot be passed to the system shell",
@@ -320,7 +334,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             Output::flush();
         }
 
-        if !use_system_shell {
+        if use_system_shell == ScriptShell::Bun {
             // SAFETY: `MiniEventLoop` stores `env` as a raw `*mut`; the loader
             // outlives the call (process-lifetime in `configure_env_for_run`).
             let mini = bun_event_loop::MiniEventLoop::init_global(
@@ -451,7 +465,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                         pretty_errorln!(
                             "<r><red>error<r><d>:<r> script <b>\"{}\"<r> was terminated by signal {}<r>",
                             bstr::BStr::new(name),
-                            bun_sys::SignalCode(sig as u8).fmt(Output::enable_ansi_colors_stderr()),
+                            bun_sys::SignalCode(sig as u8).fmt(Output::AnsiColors::from_bool(
+                                Output::enable_ansi_colors_stderr()
+                            )),
                         );
                         Output::flush();
 
@@ -498,7 +514,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                         pretty_errorln!(
                             "<r><red>error<r><d>:<r> script <b>\"{}\"<r> was terminated by signal {}<r>",
                             bstr::BStr::new(name),
-                            bun_sys::SignalCode(sig as u8).fmt(Output::enable_ansi_colors_stderr()),
+                            bun_sys::SignalCode(sig as u8).fmt(Output::AnsiColors::from_bool(
+                                Output::enable_ansi_colors_stderr()
+                            )),
                         );
                         Output::flush();
                     }
@@ -557,7 +575,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         env: Option<*mut DotEnv::Loader>,
         opts: ConfigureEnvOptions,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
-        Self::configure_env_for_run_impl(ctx, this_transpiler, env, opts, true)
+        Self::configure_env_for_run_impl(ctx, this_transpiler, env, opts, WithLinker::Yes)
     }
 
     /// Like [`Self::configure_env_for_run`] but does **not** construct the
@@ -570,7 +588,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         env: Option<*mut DotEnv::Loader>,
         opts: ConfigureEnvOptions,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
-        Self::configure_env_for_run_impl(ctx, this_transpiler, env, opts, false)
+        Self::configure_env_for_run_impl(ctx, this_transpiler, env, opts, WithLinker::No)
     }
 
     /// `configure_linker()` + `load_tsconfig_json` setup, factored into a
@@ -593,7 +611,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
         env: Option<*mut DotEnv::Loader>,
         opts: ConfigureEnvOptions,
-        with_linker: bool,
+        with_linker: WithLinker,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
         let args = ctx.args.clone();
         let env_is_none = env.is_none();
@@ -613,14 +631,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
-        this_transpiler.resolver.store_fd = opts.store_root_fd;
+        this_transpiler.resolver.store_fd = StoreFd::from_bool(opts.store_root_fd);
 
         // Bundler-linker + JSX-runtime config: only callers that actually
         // transpile through this `Transpiler` need it. `configure_linker`'s
         // auto-JSX step reads the cwd `DirInfo` (and, with `load_tsconfig_json`
         // on, its `tsconfig.json`) — keep it ahead of the `read_dir_info` below
         // so that read populates/uses the same cache entry.
-        if with_linker {
+        if with_linker == WithLinker::Yes {
             Self::configure_run_transpiler_linker(this_transpiler);
         }
 
@@ -659,7 +677,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 Ok(Some(info)) => info,
             };
 
-        this_transpiler.resolver.store_fd = false;
+        this_transpiler.resolver.store_fd = StoreFd::No;
 
         if env_is_none {
             // Re-derive — borrowck won't let `env_loader` straddle the
@@ -677,7 +695,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
             // Always skip default .env files for package.json script runner
             // (the script's own bun instance loads .env)
-            let _ = this_transpiler.run_env_loader(true);
+            let _ = this_transpiler.run_env_loader(DotEnv::SkipDefaultEnv::Yes);
         }
 
         // Re-derive after `run_env_loader` — that call creates its own
@@ -874,7 +892,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 Global::exit(1);
             }
 
-            bun_http::async_http::preconnect(url, false);
+            bun_http::async_http::preconnect(url, bun_http::async_http::UrlOwnership::Borrowed);
         }
     }
 
@@ -896,7 +914,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         args.write = Some(false);
         args.target = Some(api::Target::Bun);
         let mut bundle = Transpiler::init(runner_arena(), ctx.log, args, None)?;
-        bundle.run_env_loader(bundle.options.env.disable_default_env_files)?;
+        bundle.run_env_loader(DotEnv::SkipDefaultEnv::from_bool(
+            bundle.options.env.disable_default_env_files,
+        ))?;
 
         let top_level_dir: &[u8] = ctx.args.absolute_working_dir.as_deref().unwrap_or(b"");
         let mini = bun_event_loop::MiniEventLoop::init_global(
@@ -931,7 +951,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if !ctx.debug.loaded_bunfig {
             arguments::load_config_path(
                 CommandTag::RunCommand,
-                true,
+                arguments::AutoLoaded::Yes,
                 bun_core::zstr!("bunfig.toml"),
                 ctx,
             )?;
@@ -973,7 +993,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.preload = std::mem::take(&mut ctx.preloads);
         vm.argv = std::mem::take(&mut ctx.passthrough);
         // `InitOptions` has no `store_fd` field, so set it on the resolver directly.
-        vm.transpiler.resolver.store_fd = ctx.debug.hot_reload != cli::command::HotReload::None;
+        vm.transpiler.resolver.store_fd =
+            StoreFd::from_bool(ctx.debug.hot_reload != cli::command::HotReload::None);
         // `vm.dns_result_order` is a `u8` until the b2-cycle widens
         // it to `bun_dns::Order`; the enum is `#[repr(u8)]` so `as u8` is exact.
         vm.dns_result_order =
@@ -1133,7 +1154,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if !ctx.debug.loaded_bunfig && !graph.flags.contains(GraphFlags::DISABLE_AUTOLOAD_BUNFIG) {
             arguments::load_config_path(
                 CommandTag::RunCommand,
-                true,
+                arguments::AutoLoaded::Yes,
                 bun_core::zstr!("bunfig.toml"),
                 ctx,
             )?;
@@ -1434,7 +1455,11 @@ impl Run<'_> {
                     // rejection reports origin "unhandledRejection".
                     let is_rejection = !vm.entry_point_result.evaluated_as_cjs;
                     // SAFETY: `global` valid for VM lifetime.
-                    let handled = vm.uncaught_exception(unsafe { &*global }, result, is_rejection);
+                    let handled = vm.uncaught_exception(
+                        unsafe { &*global },
+                        result,
+                        IsRejection::from_bool(is_rejection),
+                    );
                     promise.set_handled();
                     vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 
@@ -1472,7 +1497,7 @@ impl Run<'_> {
             vm.global().vm().release_weak_refs();
             // `bun_alloc::Arena` has no per-heap collect to run alongside this
             // GC; it would only be a memory-usage hint, not correctness.
-            let _ = vm.global().vm().run_gc(false);
+            let _ = vm.global().vm().run_gc(bun_jsc::GcMode::Async);
             vm.tick();
         }
 
@@ -1829,7 +1854,7 @@ impl RunCommand {
         this_transpiler: &mut Transpiler<'static>,
         original_path: Option<&mut Vec<u8>>,
         cwd: &[u8],
-        force_using_bun: bool,
+        force_using_bun: ForceUsingBun,
     ) -> crate::Result<()> {
         let mut package_json_dir: &[u8] = b"";
 
@@ -1867,8 +1892,9 @@ impl RunCommand {
         this_transpiler: &mut Transpiler<'static>,
         original_path: Option<&mut Vec<u8>>,
         cwd: &[u8],
-        force_using_bun: bool,
+        force_using_bun: ForceUsingBun,
     ) -> crate::Result<Vec<u8>> {
+        let force_using_bun = force_using_bun == ForceUsingBun::Yes;
         let env_loader = this_transpiler.env_mut();
         // Snapshot PATH up front. The env
         // map owns `Box<[u8]>` values, so a borrow would dangle once the
@@ -2050,8 +2076,8 @@ impl RunCommand {
         )
     }
 
-    fn run_binary_generic_error(executable: &[u8], silent: bool, err: &sys::Error) -> ! {
-        if !silent {
+    fn run_binary_generic_error(executable: &[u8], silent: Silent, err: &sys::Error) -> ! {
+        if silent == Silent::No {
             pretty_errorln!(
                 "<r><red>error<r>: Failed to run \"<b>{}<r>\" due to:\n{}",
                 bstr::BStr::new(Self::basename_or_bun(executable)),
@@ -2159,14 +2185,14 @@ impl RunCommand {
         match spawn_result {
             Err(err) => {
                 // an error occurred while spawning the process
-                Self::run_binary_generic_error(executable, silent, &err);
+                Self::run_binary_generic_error(executable, Silent::from_bool(silent), &err);
             }
             Ok(result) => {
                 let signal_code = result.status.signal_code();
                 match result.status {
                     // An error occurred after the process was spawned.
                     SpawnStatus::Err(err) => {
-                        Self::run_binary_generic_error(executable, silent, &err);
+                        Self::run_binary_generic_error(executable, Silent::from_bool(silent), &err);
                     }
 
                     SpawnStatus::Signaled(signal) => {
@@ -2321,7 +2347,7 @@ impl RunCommand {
             // command opts in via `read_global_config`) then `bunfig.toml`.
             let _ = arguments::load_config_path(
                 CommandTag::RunCommand,
-                true,
+                arguments::AutoLoaded::Yes,
                 bun_core::zstr!("bunfig.toml"),
                 ctx,
             );
@@ -2369,7 +2395,7 @@ impl RunCommand {
             this_transpiler,
             Some(&mut original_path),
             root_dir_info.abs_path,
-            force_using_bun,
+            ForceUsingBun::from_bool(force_using_bun),
         )?;
         let env_loader: &mut DotEnv::Loader = this_transpiler.env_mut();
         env_loader
@@ -2439,8 +2465,8 @@ impl RunCommand {
                         // field of `ctx` but `run_package_script_foreground`
                         // takes `&mut ContextData`; clone the slice up-front.
                         let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
-                        let silent = ctx.debug.silent;
-                        let use_system_shell = ctx.debug.use_system_shell;
+                        let silent = Silent::from_bool(ctx.debug.silent);
+                        let use_system_shell = ScriptShell::from_bool(ctx.debug.use_system_shell);
 
                         if let Some(&prescript) = scripts.get(&temp_script_buffer[1..]) {
                             Self::run_package_script_foreground_with_shell_path(
@@ -3511,7 +3537,7 @@ impl RunCommand {
 
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
-        this_transpiler.resolver.store_fd = true;
+        this_transpiler.resolver.store_fd = StoreFd::Yes;
         this_transpiler.configure_linker();
 
         // SAFETY: `Transpiler::fs` is the non-null process-static singleton.
@@ -3587,8 +3613,9 @@ impl RunCommand {
                             // SAFETY: `Transpiler::fs` is the non-null process-static
                             // singleton; the lazy-stat rewrite inside `kind()` is
                             // serialized on the per-entry mutex.
-                            if unsafe { value.kind(&raw mut (*this_transpiler.fs).fs, true) }
-                                == bun_resolver::fs::EntryKind::File
+                            if unsafe {
+                                value.kind(&raw mut (*this_transpiler.fs).fs, StoreFd::Yes)
+                            } == bun_resolver::fs::EntryKind::File
                             {
                                 if !has_copied {
                                     path_buf[..value.dir.len()].copy_from_slice(value.dir);
@@ -3657,7 +3684,7 @@ impl RunCommand {
                             // SAFETY: `Transpiler::fs` is the non-null process-static
                             // singleton; the lazy-stat rewrite inside `kind()` is
                             // serialized on the per-entry mutex.
-                            && unsafe { value.kind(&raw mut (*this_transpiler.fs).fs, true) }
+                            && unsafe { value.kind(&raw mut (*this_transpiler.fs).fs, StoreFd::Yes) }
                                 == bun_resolver::fs::EntryKind::File
                         {
                             // SAFETY: `Transpiler::fs` is the non-null process-static singleton.

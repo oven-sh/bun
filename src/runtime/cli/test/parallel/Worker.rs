@@ -155,13 +155,13 @@ impl Worker {
             if let Some(fd) = stdout {
                 this.out
                     .reader
-                    .start(fd, true)
+                    .start(fd, bun_io::IsPollable::Yes)
                     .map_err(|_| crate::Error::PipeStartFailed)?;
             }
             if let Some(fd) = stderr {
                 this.err
                     .reader
-                    .start(fd, true)
+                    .start(fd, bun_io::IsPollable::Yes)
                     .map_err(|_| crate::Error::PipeStartFailed)?;
             }
             if !extra_pipes.is_empty() {

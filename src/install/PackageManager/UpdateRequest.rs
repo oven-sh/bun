@@ -79,6 +79,12 @@ fn anchor_cli_bytes(b: Box<[u8]>) -> &'static [u8] {
     unsafe { &*ptr }
 }
 
+bun_core::bool_enum!(
+    /// Whether a parse failure prints and crashes (CLI) or is recorded in `log`
+    /// and returned as an error.
+    pub Fatal
+);
+
 impl UpdateRequest {
     /// Borrow the backing string buffer.
     ///
@@ -147,8 +153,15 @@ impl UpdateRequest {
         update_requests: &'a mut Array,
         subcommand: Subcommand,
     ) -> &'a mut [UpdateRequest] {
-        Self::parse_with_error(pm, log, positionals, update_requests, subcommand, true)
-            .unwrap_or_else(|_| Global::crash())
+        Self::parse_with_error(
+            pm,
+            log,
+            positionals,
+            update_requests,
+            subcommand,
+            Fatal::Yes,
+        )
+        .unwrap_or_else(|_| Global::crash())
     }
     pub fn parse_with_error<'a>(
         mut pm: Option<&mut PackageManager>,
@@ -156,7 +169,7 @@ impl UpdateRequest {
         positionals: &[&[u8]],
         update_requests: &'a mut Array,
         subcommand: Subcommand,
-        fatal: bool,
+        fatal: Fatal,
     ) -> crate::Result<&'a mut [UpdateRequest]> {
         // first one is always either:
         // add
@@ -223,7 +236,7 @@ impl UpdateRequest {
                 Some(&mut *log),
                 pm.as_deref_mut(),
             ) else {
-                if fatal {
+                if fatal == Fatal::Yes {
                     Output::err_generic(
                         "unrecognised dependency format: {}",
                         format_args!("{}", bstr::BStr::new(positional)),
@@ -262,7 +275,7 @@ impl UpdateRequest {
                 dependency::version::Tag::Npm => version.npm().name.eql(placeholder, input, input),
                 _ => false,
             } {
-                if fatal {
+                if fatal == Fatal::Yes {
                     Output::err_generic(
                         "unrecognised dependency format: {}",
                         format_args!("{}", bstr::BStr::new(positional)),

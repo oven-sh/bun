@@ -1,8 +1,9 @@
 use crate as css;
+use crate::properties::Important;
 
 use css::PrintErr;
-use css::Printer;
 use css::error::MinifyErr;
+use css::{HandleCssModule, Printer};
 
 // PERF: heap-backed shim.
 // TODO(refactor): thread `'bump` and replace this with `crate::generics::ArrayList<'bump, T>`
@@ -319,7 +320,7 @@ fn decl_block_to_css(
     let mut i: usize = 0;
     for decl in decls.declarations.iter() {
         dest.newline()?;
-        decl.to_css(dest, false)?;
+        decl.to_css(dest, Important::No)?;
         if i != length - 1 || !dest.minify {
             dest.write_char(b';')?;
         }
@@ -327,7 +328,7 @@ fn decl_block_to_css(
     }
     for decl in decls.important_declarations.iter() {
         dest.newline()?;
-        decl.to_css(dest, true)?;
+        decl.to_css(dest, Important::Yes)?;
         if i != length - 1 || !dest.minify {
             dest.write_char(b';')?;
         }
@@ -367,7 +368,7 @@ fn custom_ident_to_css(
         .css_module
         .as_ref()
         .is_some_and(|m| m.config.custom_idents);
-    dest.write_ident(v, enabled)
+    dest.write_ident(v, HandleCssModule::from_bool(enabled))
 }
 
 /// Port of `DashedIdentFns.toCss` → `Printer.writeDashedIdent`. The
@@ -383,6 +384,8 @@ fn dashed_ident_to_css(
     dest.serialize_name(&v[2..])
 }
 
+bun_core::bool_enum!(pub ParentIsUnused);
+
 /// Recurse into the nested list and report whether the rule should be
 /// dropped. NOTE: `never_matches()` is a *drop condition*, not merely an
 /// optimization — omitting it diverges output (e.g. `@media not all
@@ -391,7 +394,7 @@ impl<R> media::MediaRule<R> {
     pub(crate) fn minify(
         &mut self,
         context: &mut MinifyContext<'_, '_>,
-        parent_is_unused: bool,
+        parent_is_unused: ParentIsUnused,
     ) -> Result<bool, MinifyErr>
     where
         R: for<'b> css::generics::DeepClone<'b>,
@@ -487,7 +490,7 @@ impl<R> CssRuleList<R> {
     pub(crate) fn minify(
         &mut self,
         context: &mut MinifyContext<'_, '_>,
-        parent_is_unused: bool,
+        parent_is_unused: ParentIsUnused,
     ) -> Result<(), MinifyErr>
     where
         R: for<'b> css::generics::DeepClone<'b>,
@@ -650,7 +653,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     style_rules: &mut StyleRuleKeyMap,
     merge_state: &mut StyleRuleMergeState,
     context: &mut MinifyContext<'_, '_>,
-    parent_is_unused: bool,
+    parent_is_unused: ParentIsUnused,
 ) -> Result<(), MinifyErr> {
     use css::SmallList;
     use css::selector::{self, Component, Selector, SelectorList};
@@ -658,7 +661,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         unreachable!()
     };
 
-    if parent_is_unused || sty.minify(context, parent_is_unused)? {
+    if parent_is_unused == ParentIsUnused::Yes || sty.minify(context, parent_is_unused)? {
         return Ok(());
     }
 

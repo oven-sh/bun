@@ -1222,7 +1222,7 @@ pub mod O {
 // `File` / `Dir` — high-level handles. Extracted to file.rs / dir.rs.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod file;
-pub use file::{File, ReadToEndResult};
+pub use file::{File, ReadToEndResult, Truncate};
 pub mod dir;
 pub use dir::*;
 
@@ -3103,15 +3103,15 @@ mod posix_impl {
         Ok(())
     }
 
-    /// `socketpair_impl(.., for_shell = false)`.
+    /// `socketpair_impl(.., ForShell::No)`.
     /// Linux uses `SOCK_CLOEXEC|SOCK_NONBLOCK` type flags; non-Linux sets
     /// CLOEXEC + nonblock + (Darwin) `SO_NOSIGPIPE` per-fd, closing both on
     /// any post-step error.
-    pub fn socketpair(domain: i32, ty: i32, proto: i32, nonblock: bool) -> Maybe<[Fd; 2]> {
-        socketpair_impl(domain, ty, proto, nonblock, false)
+    pub fn socketpair(domain: i32, ty: i32, proto: i32, nonblock: IoMode) -> Maybe<[Fd; 2]> {
+        socketpair_impl(domain, ty, proto, nonblock, ForShell::No)
     }
 
-    /// `socketpair_impl(.., for_shell = true)`.
+    /// `socketpair_impl(.., ForShell::Yes)`.
     /// On macOS this skips `SO_NOSIGPIPE` (so the child's writes get SIGPIPE
     /// when the read end closes — required for `yes | head`-style pipelines)
     /// and bumps `SO_RCVBUF`/`SO_SNDBUF` to 128 KB instead. On Linux/other
@@ -3120,19 +3120,22 @@ mod posix_impl {
         domain: i32,
         ty: i32,
         proto: i32,
-        nonblock: bool,
+        nonblock: IoMode,
     ) -> Maybe<[Fd; 2]> {
-        socketpair_impl(domain, ty, proto, nonblock, true)
+        socketpair_impl(domain, ty, proto, nonblock, ForShell::Yes)
     }
+
+    bun_core::bool_enum!(ForShell);
 
     fn socketpair_impl(
         domain: i32,
         ty: i32,
         proto: i32,
-        nonblock: bool,
-        for_shell: bool,
+        nonblock: IoMode,
+        for_shell: ForShell,
     ) -> Maybe<[Fd; 2]> {
         let _ = for_shell; // only meaningful on macOS
+        let nonblock = nonblock == IoMode::NonBlocking;
         let mut fds = [0i32; 2];
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
@@ -3163,7 +3166,7 @@ mod posix_impl {
             // case bump RCVBUF/SNDBUF instead.
             #[cfg(target_os = "macos")]
             {
-                if for_shell {
+                if for_shell == ForShell::Yes {
                     let so_recvbuf: libc::c_int = 1024 * 128;
                     let so_sendbuf: libc::c_int = 1024 * 128;
                     // SAFETY: setsockopt on freshly-created socketpair fds.
@@ -3968,7 +3971,13 @@ mod windows_impl {
         let mut wt = WPathBuffer::default();
         let from_w = bun_paths::string_paths::to_nt_path(&mut wf, from.as_bytes());
         let to_w = bun_paths::string_paths::to_nt_path(&mut wt, to.as_bytes());
-        super::windows::rename_at_w(from_dir, from_w, to_dir, to_w, true)
+        super::windows::rename_at_w(
+            from_dir,
+            from_w,
+            to_dir,
+            to_w,
+            super::windows::ReplaceIfExists::Yes,
+        )
     }
     pub(crate) fn renameat2(
         from_dir: Fd,
@@ -7049,8 +7058,10 @@ pub fn get_file_attributes(path: &ZStr) -> Option<WindowsFileAttributes> {
     })
 }
 
+bun_core::bool_enum!(pub FileOnly);
+
 /// `access(path, F_OK) == 0`. `file_only` ignored on POSIX.
-pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
+pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: FileOnly) -> bool {
     #[cfg(not(windows))]
     {
         let _ = file_only;
@@ -7067,7 +7078,7 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
         if attrs == windows::INVALID_FILE_ATTRIBUTES {
             return false;
         }
-        if file_only && (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0 {
+        if file_only == FileOnly::Yes && (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0 {
             return false;
         }
         if (attrs & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
@@ -7232,14 +7243,15 @@ pub fn get_fcntl_flags(_fd: Fd) -> Maybe<FcntlInt> {
 }
 #[inline]
 pub fn set_nonblocking(fd: Fd) -> Maybe<()> {
-    update_nonblocking(fd, true)
+    update_nonblocking(fd, IoMode::NonBlocking)
 }
+bun_core::bool_enum!(pub IoMode { Blocking, NonBlocking });
 /// GETFL → toggle O_NONBLOCK → SETFL (only if changed).
-pub fn update_nonblocking(fd: Fd, nonblocking: bool) -> Maybe<()> {
+pub fn update_nonblocking(fd: Fd, nonblocking: IoMode) -> Maybe<()> {
     #[cfg(unix)]
     {
         let cur = get_fcntl_flags(fd)? as i32;
-        let new = if nonblocking {
+        let new = if nonblocking == IoMode::NonBlocking {
             cur | O::NONBLOCK
         } else {
             cur & !O::NONBLOCK

@@ -21,7 +21,7 @@ static MIXED_DECODER: zig_base64::Base64DecoderWithIgnore = {
 };
 
 pub fn decode(destination: &mut [u8], source: &[u8]) -> SIMDUTFResult {
-    let result = simdutf::base64::decode(source, destination, false);
+    let result = simdutf::base64::decode(source, destination, Alphabet::Standard);
 
     if !result.is_successful() {
         // The input does not follow the WHATWG forgiving-base64 specification
@@ -53,6 +53,8 @@ pub const fn decode_lenient_len(source_len: usize) -> usize {
     source_len.div_ceil(4) * 3
 }
 
+pub use simdutf::base64::Alphabet;
+
 /// Decode base64 the way Node.js `Buffer.from(str, "base64" | "base64url")`
 /// and `buf.write(str, "base64" | "base64url")` do: both the standard and the
 /// URL-safe alphabets are accepted, whitespace and any other non-alphabet
@@ -64,7 +66,7 @@ pub const fn decode_lenient_len(source_len: usize) -> usize {
 /// decoded with simdutf's `base64_default_or_url_accept_garbage` mode.
 ///
 /// Returns the number of bytes written to `destination`.
-pub fn decode_lenient(destination: &mut [u8], source: &[u8], is_urlsafe: bool) -> usize {
+pub fn decode_lenient(destination: &mut [u8], source: &[u8], is_urlsafe: Alphabet) -> usize {
     // Fast path: the common case is strictly valid base64 for the requested
     // alphabet (possibly with whitespace and padding), which simdutf decodes
     // with its fastest kernel. This is the same first attempt Node.js makes.
@@ -123,11 +125,12 @@ pub use bun_core::base64::encode;
 
 /// [`encode`] appended to `out` (reserving the room itself); returns the number of bytes appended.
 pub fn encode_append(out: &mut Vec<u8>, source: &[u8]) -> usize {
-    let len = simdutf::base64::encode_len(source.len(), false);
+    let len = simdutf::base64::encode_len(source.len(), Alphabet::Standard);
     // SAFETY: `encode_raw` writes exactly `len` bytes into the `len` spare bytes reserved here.
     unsafe {
         bun_core::vec::fill_spare(out, len, |spare| {
-            let written = simdutf::base64::encode_raw(source, spare.as_mut_ptr(), false);
+            let written =
+                simdutf::base64::encode_raw(source, spare.as_mut_ptr(), Alphabet::Standard);
             debug_assert_eq!(written, len);
             (written, written)
         })
@@ -141,7 +144,7 @@ pub fn encode_alloc(source: &[u8]) -> Vec<u8> {
 }
 
 fn simdutf_encode_len_url_safe(source_len: usize) -> usize {
-    simdutf::base64::encode_len(source_len, true)
+    simdutf::base64::encode_len(source_len, Alphabet::UrlSafe)
 }
 
 /// Encode with the following differences from regular `encode` function:
@@ -151,7 +154,7 @@ fn simdutf_encode_len_url_safe(source_len: usize) -> usize {
 ///
 /// See the documentation for simdutf's `binary_to_base64` function for more details (simdutf_impl.h).
 pub fn encode_url_safe(dest: &mut [u8], source: &[u8]) -> usize {
-    simdutf::base64::encode(source, dest, true)
+    simdutf::base64::encode(source, dest, Alphabet::UrlSafe)
 }
 
 pub fn decode_len(source: &[u8]) -> usize {

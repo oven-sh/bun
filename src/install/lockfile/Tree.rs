@@ -11,8 +11,8 @@ use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{DepSorter, DependencyIDList, DependencyIDSlice, Lockfile};
 use crate::package_manager::{PackageManager, WorkspaceFilter};
 use crate::{
-    Dependency, DependencyID, PackageID, PackageNameHash, Resolution, invalid_dependency_id,
-    invalid_package_id,
+    Dependency, DependencyID, InstallRootDependencies, PackageID, PackageNameHash, Resolution,
+    invalid_dependency_id, invalid_package_id,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -439,7 +439,7 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) manager: Option<&'a PackageManager>,
     pub(crate) sort_buf: Vec<DependencyID>,
     pub(crate) workspace_filters: &'a [WorkspaceFilter],
-    pub(crate) install_root_dependencies: bool,
+    pub(crate) install_root_dependencies: InstallRootDependencies,
     pub(crate) packages_to_install: Option<&'a [PackageID]>,
     /// Workspace package ids that are hoisting barriers (self-contained node_modules).
     pub(crate) self_contained: Vec<PackageID>,
@@ -544,7 +544,7 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     dep_id: DependencyID,
     parent_pkg_id: PackageID,
     workspace_filters: &[WorkspaceFilter],
-    install_root_dependencies: bool,
+    install_root_dependencies: InstallRootDependencies,
     manager: &PackageManager,
     lockfile: &Lockfile,
     resolutions: &[PackageID],
@@ -610,7 +610,7 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     }
 
     if !dep.behavior.is_workspace() {
-        return !install_root_dependencies;
+        return install_root_dependencies == InstallRootDependencies::No;
     }
 
     if manager.summary.pruned_workspaces.contains(&dep.name_hash) {

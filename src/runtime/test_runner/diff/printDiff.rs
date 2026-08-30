@@ -5,6 +5,7 @@ use std::fmt::Write;
 use bstr::BStr;
 
 use super::text_diff::{self as diff, Hunk};
+use bun_core::output::AnsiColors;
 use bun_core::output::ansi as colors;
 use bun_core::strings::{self, str_utf8};
 
@@ -16,12 +17,15 @@ pub(crate) struct DiffConfig {
     pub(crate) truncate_context: usize,
 }
 
+bun_core::bool_enum!(pub(crate) IsAgent);
+
 impl DiffConfig {
-    pub(crate) fn default(is_agent: bool, enable_ansi_colors: bool) -> DiffConfig {
+    pub(crate) fn default(is_agent: IsAgent, enable_ansi_colors: AnsiColors) -> DiffConfig {
+        let is_agent = is_agent == IsAgent::Yes;
         DiffConfig {
             min_bytes_before_chunking: if is_agent { 0 } else { 2 * 1024 }, // 2kb
             chunk_context_lines: if is_agent { 1 } else { 5 },
-            enable_ansi_colors,
+            enable_ansi_colors: enable_ansi_colors == AnsiColors::Enabled,
             truncate_threshold: if is_agent { 1024 } else { 2 * 1024 }, // 2kb
             truncate_context: if is_agent { 50 } else { 100 },
         }

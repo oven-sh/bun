@@ -102,16 +102,18 @@ bun_core::comptime_string_map! {
     };
 }
 
+bun_core::bool_enum!(RegistryMode { Builder, Overlay });
+
 /// Registry mapping global names to their types.
 ///
 /// Supports two modes:
-/// - **Builder mode** (`base=false`): wraps a single HashMap, used during
+/// - **Builder mode**: wraps a single HashMap, used during
 ///   `build_default_globals` to construct the static base.
-/// - **Overlay mode** (`base=true`): lookups check the extras HashMap first,
+/// - **Overlay mode**: lookups check the extras HashMap first,
 ///   then fall back to the static `BASE_GLOBAL_INDEX` / `BASE.globals` table.
 ///   Inserts go into extras.
 pub struct GlobalRegistry {
-    base: bool,
+    mode: RegistryMode,
     entries: HashMap<Cow<'static, str>, Global>,
 }
 
@@ -119,7 +121,7 @@ impl GlobalRegistry {
     /// Create an empty builder-mode registry.
     pub fn new() -> Self {
         Self {
-            base: false,
+            mode: RegistryMode::Builder,
             entries: HashMap::new(),
         }
     }
@@ -127,7 +129,7 @@ impl GlobalRegistry {
     /// Create an overlay-mode registry backed by the static base.
     pub fn with_base() -> Self {
         Self {
-            base: true,
+            mode: RegistryMode::Overlay,
             entries: HashMap::new(),
         }
     }
@@ -136,7 +138,7 @@ impl GlobalRegistry {
         if let Some(v) = self.entries.get(key) {
             return Some(v);
         }
-        if self.base {
+        if self.mode == RegistryMode::Overlay {
             return lookup_base_global(key);
         }
         None
@@ -148,15 +150,15 @@ impl GlobalRegistry {
 
     pub fn contains_key(&self, key: &str) -> bool {
         self.entries.contains_key(key)
-            || (self.base && BASE_GLOBAL_INDEX.contains_key(key.as_bytes()))
+            || (self.mode == RegistryMode::Overlay
+                && BASE_GLOBAL_INDEX.contains_key(key.as_bytes()))
     }
 
     /// Iterate over all keys in the registry (base + extras).
     /// Keys in extras that shadow base keys appear only once.
     pub fn keys(&self) -> impl Iterator<Item = &str> {
         let entries = &self.entries;
-        let base_keys = self
-            .base
+        let base_keys = (self.mode == RegistryMode::Overlay)
             .then(|| BASE_GLOBAL_INDEX.keys())
             .into_iter()
             .flatten()
@@ -170,7 +172,7 @@ impl GlobalRegistry {
     /// Only valid in builder mode (no base).
     pub fn into_inner(self) -> HashMap<Cow<'static, str>, Global> {
         debug_assert!(
-            !self.base,
+            self.mode == RegistryMode::Builder,
             "into_inner() called on overlay-mode GlobalRegistry"
         );
         self.entries
@@ -293,7 +295,7 @@ fn install_type_config_inner(
                     ..Default::default()
                 },
                 None,
-                false,
+                IsConstructor::No,
             )
         }
         TypeConfig::Hook(hook_config) => {
@@ -425,7 +427,7 @@ fn simple_function(
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     )
 }
 
@@ -457,7 +459,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let at = add_function(
         shapes,
@@ -470,7 +472,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let concat = add_function(
         shapes,
@@ -485,7 +487,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let join = pure_primitive_fn(shapes);
     let slice = add_function(
@@ -501,7 +503,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let map = add_function(
         shapes,
@@ -561,7 +563,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let filter = add_function(
         shapes,
@@ -578,7 +580,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let find = add_function(
         shapes,
@@ -593,7 +595,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let find_index = add_function(
         shapes,
@@ -608,7 +610,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let every = add_function(
         shapes,
@@ -623,7 +625,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let some = add_function(
         shapes,
@@ -638,7 +640,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let flat_map = add_function(
         shapes,
@@ -655,7 +657,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let length = Type::Primitive;
     let push = add_function(
@@ -691,7 +693,7 @@ fn build_array_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
 
     add_object(
@@ -732,7 +734,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let add = add_function(
         shapes,
@@ -768,7 +770,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let clear = add_function(
         shapes,
@@ -780,7 +782,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let delete = add_function(
         shapes,
@@ -793,7 +795,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let size = Type::Primitive;
     let difference = add_function(
@@ -809,7 +811,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let union = add_function(
         shapes,
@@ -824,7 +826,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let symmetrical_difference = add_function(
         shapes,
@@ -839,7 +841,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let is_subset_of = add_function(
         shapes,
@@ -852,7 +854,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let is_superset_of = add_function(
         shapes,
@@ -865,7 +867,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let for_each = add_function(
         shapes,
@@ -880,7 +882,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let values = add_function(
         shapes,
@@ -892,7 +894,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let keys = add_function(
         shapes,
@@ -904,7 +906,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let entries = add_function(
         shapes,
@@ -916,7 +918,7 @@ fn build_set_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
 
     add_object(
@@ -954,7 +956,7 @@ fn build_map_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let get = add_function(
         shapes,
@@ -967,7 +969,7 @@ fn build_map_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let clear = add_function(
         shapes,
@@ -979,7 +981,7 @@ fn build_map_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let set = add_function(
         shapes,
@@ -994,7 +996,7 @@ fn build_map_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let delete = add_function(
         shapes,
@@ -1007,7 +1009,7 @@ fn build_map_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let size = Type::Primitive;
     let for_each = add_function(
@@ -1023,7 +1025,7 @@ fn build_map_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let values = add_function(
         shapes,
@@ -1035,7 +1037,7 @@ fn build_map_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let keys = add_function(
         shapes,
@@ -1047,7 +1049,7 @@ fn build_map_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let entries = add_function(
         shapes,
@@ -1059,7 +1061,7 @@ fn build_map_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
 
     add_object(
@@ -1097,7 +1099,7 @@ fn build_weak_set_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let delete = add_function(
         shapes,
@@ -1110,7 +1112,7 @@ fn build_weak_set_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
 
     add_object(
@@ -1135,7 +1137,7 @@ fn build_weak_map_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let set = add_function(
         shapes,
@@ -1150,7 +1152,7 @@ fn build_weak_map_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let delete = add_function(
         shapes,
@@ -1163,7 +1165,7 @@ fn build_weak_map_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
 
     add_object(
@@ -1186,7 +1188,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     add_object(
         shapes,
@@ -1209,7 +1211,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let mixed_index_of = add_function(
         shapes,
@@ -1221,7 +1223,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let mixed_includes = add_function(
         shapes,
@@ -1233,7 +1235,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let mixed_at = add_function(
         shapes,
@@ -1248,7 +1250,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let mixed_map = add_function(
         shapes,
@@ -1264,7 +1266,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let mixed_flat_map = add_function(
         shapes,
@@ -1280,7 +1282,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let mixed_filter = add_function(
         shapes,
@@ -1296,7 +1298,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let mixed_concat = add_function(
         shapes,
@@ -1311,7 +1313,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let mixed_slice = add_function(
         shapes,
@@ -1326,7 +1328,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let mixed_every = add_function(
         shapes,
@@ -1341,7 +1343,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let mixed_some = add_function(
         shapes,
@@ -1356,7 +1358,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let mixed_find = add_function(
         shapes,
@@ -1373,7 +1375,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let mixed_find_index = add_function(
         shapes,
@@ -1388,7 +1390,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let mixed_join = add_function(
         shapes,
@@ -1400,7 +1402,7 @@ fn build_object_shape(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let mut mixed_props: HashMap<&'static str, Type> = HashMap::new();
     mixed_props.insert("toString", mixed_to_string);
@@ -1473,7 +1475,7 @@ fn build_state_shapes(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         Some(BUILT_IN_SET_STATE_ID),
-        false,
+        IsConstructor::No,
     );
 
     // BuiltInUseState: object with [0] = Poly (state), [1] = setState function
@@ -1494,7 +1496,7 @@ fn build_state_shapes(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         Some(BUILT_IN_SET_ACTION_STATE_ID),
-        false,
+        IsConstructor::No,
     );
 
     // BuiltInUseActionState: [0] = Poly, [1] = setActionState function
@@ -1515,7 +1517,7 @@ fn build_state_shapes(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         Some(BUILT_IN_DISPATCH_ID),
-        false,
+        IsConstructor::No,
     );
 
     // BuiltInUseReducer: [0] = Poly, [1] = dispatch function
@@ -1536,7 +1538,7 @@ fn build_state_shapes(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         Some(BUILT_IN_START_TRANSITION_ID),
-        false,
+        IsConstructor::No,
     );
 
     // BuiltInUseTransition: [0] = Primitive (isPending), [1] = startTransition function
@@ -1557,7 +1559,7 @@ fn build_state_shapes(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         Some(BUILT_IN_SET_OPTIMISTIC_ID),
-        false,
+        IsConstructor::No,
     );
 
     // BuiltInUseOptimistic: [0] = Poly, [1] = setOptimistic function
@@ -1583,7 +1585,7 @@ fn build_hook_shapes(shapes: &mut ShapeRegistry) {
             ..Default::default()
         },
         Some(BUILT_IN_EFFECT_EVENT_ID),
-        false,
+        IsConstructor::No,
     );
 }
 
@@ -1665,7 +1667,7 @@ pub fn get_reanimated_module_type(shapes: &mut ShapeRegistry) -> Type {
                 ..Default::default()
             },
             None,
-            false,
+            IsConstructor::No,
         );
         reanimated_type.push((*func_name, func_type));
     }
@@ -1987,7 +1989,7 @@ fn build_react_apis(
             ..Default::default()
         },
         Some(BUILT_IN_USE_OPERATOR_ID),
-        false,
+        IsConstructor::No,
     );
     react_apis.push(("use", use_fn));
 
@@ -2058,7 +2060,7 @@ fn build_typed_globals(
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let obj_from_entries = add_function(
         shapes,
@@ -2072,7 +2074,7 @@ fn build_typed_globals(
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let obj_entries = add_function(
         shapes,
@@ -2105,7 +2107,7 @@ fn build_typed_globals(
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let obj_values = add_function(
         shapes,
@@ -2138,7 +2140,7 @@ fn build_typed_globals(
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let object_global = add_object(
         shapes,
@@ -2164,7 +2166,7 @@ fn build_typed_globals(
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let array_from = add_function(
         shapes,
@@ -2183,7 +2185,7 @@ fn build_typed_globals(
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let array_of = add_function(
         shapes,
@@ -2197,7 +2199,7 @@ fn build_typed_globals(
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let array_global = add_object(
         shapes,
@@ -2230,7 +2232,7 @@ fn build_typed_globals(
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     math_props.push(("random", math_random));
     let math_global = add_object(shapes, Some("Math"), math_props);
@@ -2250,7 +2252,7 @@ fn build_typed_globals(
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let perf_global = add_object(shapes, Some("performance"), vec![("now", perf_now)]);
     typed_globals.push(("performance", perf_global.clone()));
@@ -2269,7 +2271,7 @@ fn build_typed_globals(
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let date_global = add_object(shapes, Some("Date"), vec![("now", date_now)]);
     typed_globals.push(("Date", date_global.clone()));
@@ -2323,7 +2325,7 @@ fn build_typed_globals(
             ..Default::default()
         },
         None,
-        true,
+        IsConstructor::Yes,
     );
     typed_globals.push(("Map", map_ctor.clone()));
     globals.insert("Map", map_ctor);
@@ -2340,7 +2342,7 @@ fn build_typed_globals(
             ..Default::default()
         },
         None,
-        true,
+        IsConstructor::Yes,
     );
     typed_globals.push(("Set", set_ctor.clone()));
     globals.insert("Set", set_ctor);
@@ -2357,7 +2359,7 @@ fn build_typed_globals(
             ..Default::default()
         },
         None,
-        true,
+        IsConstructor::Yes,
     );
     typed_globals.push(("WeakMap", weak_map_ctor.clone()));
     globals.insert("WeakMap", weak_map_ctor);
@@ -2374,7 +2376,7 @@ fn build_typed_globals(
             ..Default::default()
         },
         None,
-        true,
+        IsConstructor::Yes,
     );
     typed_globals.push(("WeakSet", weak_set_ctor.clone()));
     globals.insert("WeakSet", weak_set_ctor);
@@ -2391,7 +2393,7 @@ fn build_typed_globals(
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let react_clone_element = add_function(
         shapes,
@@ -2403,7 +2405,7 @@ fn build_typed_globals(
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     let react_create_ref = add_function(
         shapes,
@@ -2417,7 +2419,7 @@ fn build_typed_globals(
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
 
     // Build React namespace properties from react_apis + React-specific functions
@@ -2441,7 +2443,7 @@ fn build_typed_globals(
             ..Default::default()
         },
         None,
-        false,
+        IsConstructor::No,
     );
     typed_globals.push(("_jsx", jsx_fn.clone()));
     globals.insert("_jsx", jsx_fn);

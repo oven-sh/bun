@@ -9,9 +9,9 @@ use bun_http::MimeType;
 use bun_jsc::JSGlobalObject;
 use bun_ptr::RefPtr;
 
-use crate::webcore::Blob;
 use crate::webcore::blob::SizeType;
 use crate::webcore::blob::store::{Bytes, Data, IsAllAscii, Store};
+use crate::webcore::{Blob, IncludeContentType};
 use bun_standalone_graph::File;
 
 /// The process-wide template of an embedded file's `Blob`: store, content
@@ -75,7 +75,8 @@ fn template_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleG
 pub(crate) fn file_blob(file: &File, global: &JSGlobalObject) -> Blob {
     // SAFETY: `template_blob` returns the pointer from `Blob::new`, never
     // freed for the process lifetime; only read here.
-    let blob = unsafe { template_blob(file).cast::<Blob>().as_ref() }.dupe_with_content_type(true);
+    let blob = unsafe { template_blob(file).cast::<Blob>().as_ref() }
+        .dupe_with_content_type(IncludeContentType::Yes);
     blob.global_this.set(global);
     blob
 }

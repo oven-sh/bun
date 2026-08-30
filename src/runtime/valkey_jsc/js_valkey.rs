@@ -1505,9 +1505,12 @@ impl JSValkeyClient {
         // `SocketGroup` (stable for the VM's lifetime). `ssl_ctx` is a +1-ref
         // BoringSSL `SSL_CTX*` (or None) forwarded opaquely to usockets.
         let socket = unsafe {
-            (*client_ptr)
-                .address
-                .connect(owner_ptr, &mut *group, ssl_ctx, is_tls)
+            (*client_ptr).address.connect(
+                owner_ptr,
+                &mut *group,
+                ssl_ctx,
+                valkey::Transport::from_bool(is_tls),
+            )
         }?;
         self.client_mut().socket = socket;
         // Disarm on success: the socket now owns the keep-alive ref.

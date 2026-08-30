@@ -19,7 +19,9 @@ use crate::lockfile_real::package::{Diff, DiffSummary, Package};
 use crate::package_manager::Options::{Enable, LogLevel};
 use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
 use crate::package_manager::workspace_selection::{self, RootSelection};
-use crate::{Features, PackageID, PackageManager, ResolutionTag, invalid_package_id};
+use crate::{
+    Features, InstallRootDependencies, PackageID, PackageManager, ResolutionTag, invalid_package_id,
+};
 
 const STORE_DIR: &[u8] = b"node_modules/.bun";
 const ROOT_DIR: &[u8] = b"node_modules";
@@ -627,7 +629,13 @@ fn hoist_filtered(manager: &mut PackageManager) {
     let result = unsafe {
         let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
         let log: *mut bun_ast::Log = (*pm).log;
-        (*lf).hoist::<{ tree::BuilderMethod::Filter }>(&mut *log, Some(&*pm), true, &[], None)
+        (*lf).hoist::<{ tree::BuilderMethod::Filter }>(
+            &mut *log,
+            Some(&*pm),
+            InstallRootDependencies::Yes,
+            &[],
+            None,
+        )
     };
     if result.is_err() {
         manager.crash();
@@ -1554,7 +1562,7 @@ fn build_store_with(manager: &mut PackageManager, (local, remote): StoreFeatures
     let store = build_store(
         &*manager,
         &manager.lockfile,
-        true,
+        InstallRootDependencies::Yes,
         &[],
         None,
         Timings::Quiet,
@@ -1627,7 +1635,7 @@ fn direct_aliases(manager: &PackageManager, pkg_id: PackageID) -> Vec<Box<[u8]>>
             dep_id,
             pkg_id,
             &[],
-            true,
+            InstallRootDependencies::Yes,
             manager,
             lockfile,
             resolutions,

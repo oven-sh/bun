@@ -19,10 +19,10 @@ use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory,
 };
 use crate::hir::{
-    AstAlloc, BlockKind, Effect, EvaluationOrder, HirFunction, HirVec, IdentifierId,
-    InstructionKind, InstructionValue, ParamPattern, Place, PrimitiveValue, ReactFunctionType,
-    ReturnVariant, SourceLocation, SpreadPattern, StoreStr, Terminal, VariableBinding,
-    environment::Environment,
+    AstAlloc, BlockKind, Effect, EvaluationOrder, FunctionNesting, HirFunction, HirVec,
+    IdentifierId, InstructionKind, InstructionValue, ParamPattern, Place, PrimitiveValue,
+    ReactFunctionType, ReturnVariant, SourceLocation, SpreadPattern, StoreStr, Terminal,
+    VariableBinding, environment::Environment,
 };
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
@@ -102,7 +102,7 @@ pub(crate) fn lower(
         scope, // component_scope = function_scope for top-level
         &context_identifiers,
         import_bindings,
-        true, // is_top_level
+        FunctionNesting::TopLevel,
     )?;
 
     Ok(hir_func)
@@ -123,7 +123,7 @@ pub(super) fn lower_inner<'h>(
     component_scope: &'h ast::Scope,
     context_identifiers: &RefSet,
     import_bindings: &IndexMap<Ref, VariableBinding>,
-    is_top_level: bool,
+    is_top_level: FunctionNesting,
 ) -> Result<(HirFunction, IndexSet<Ref>, IndexMap<Ref, IdentifierId>), CompilerError> {
     // `validate_ts_this_parameter`: Bun's parser strips `this` parameters
     // before this pass runs, so the upstream check is a no-op here.
@@ -316,10 +316,9 @@ pub(super) fn lower_inner<'h>(
             loc,
             id,
             name_hint: None,
-            fn_type: if is_top_level {
-                env.fn_type
-            } else {
-                ReactFunctionType::Other
+            fn_type: match is_top_level {
+                FunctionNesting::TopLevel => env.fn_type,
+                FunctionNesting::Nested => ReactFunctionType::Other,
             },
             params: hir_params,
             return_type_annotation: None,

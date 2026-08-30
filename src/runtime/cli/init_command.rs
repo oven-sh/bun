@@ -73,7 +73,7 @@ impl InitCommand {
                 let e = C::from_index(i);
                 #[allow(clippy::disallowed_methods)]
                 // template selected at runtime per enum variant
-                Output::pretty_fmt_rt(e.fmt(), colors)
+                Output::pretty_fmt_rt(e.fmt(), Output::AnsiColors::from_bool(colors))
             })
             .collect();
 
@@ -317,7 +317,10 @@ impl InitCommand {
             let arg = arg_.as_bytes();
             if parse_flags && !arg.is_empty() && arg[0] == b'-' {
                 if arg == b"--help" || arg == b"-h" {
-                    CLI::command::tag_print_help(CLI::Command::Tag::InitCommand, true);
+                    CLI::command::tag_print_help(
+                        CLI::Command::Tag::InitCommand,
+                        CLI::ShowAllFlags::Yes,
+                    );
                     Global::exit(0);
                 } else if arg == b"-m" || arg == b"--minimal" {
                     minimal = true;
@@ -795,7 +798,9 @@ impl InitCommand {
             {
                 Some(f) => (f.handle(), None),
                 None => {
-                    let fd = bun_sys::File::create(Fd::cwd(), b"package.json", true)?.into_raw();
+                    let fd =
+                        bun_sys::File::create(Fd::cwd(), b"package.json", bun_sys::Truncate::Yes)?
+                            .into_raw();
                     (fd, Some(bun_sys::CloseOnDrop::new(fd)))
                 }
             };
@@ -955,6 +960,8 @@ impl InitCommand {
 
 pub(crate) struct Assets;
 
+bun_core::bool_enum!(IsTemplate);
+
 impl Assets {
     // "known" assets
     pub(crate) const GITIGNORE: &'static [u8] = include_bytes!("init/gitignore.default");
@@ -971,7 +978,7 @@ impl Assets {
         asset: &'static [u8],
         args: &[(&[u8], &[u8])],
     ) -> Result<(), Error> {
-        let is_template = !args.is_empty();
+        let is_template = IsTemplate::from_bool(!args.is_empty());
         Self::create_full_inner(asset, asset_name, "", is_template, args)
     }
 
@@ -980,7 +987,7 @@ impl Assets {
         contents: &'static [u8],
         args: &[(&[u8], &[u8])],
     ) -> Result<(), Error> {
-        let is_template = !args.is_empty();
+        let is_template = IsTemplate::from_bool(!args.is_empty());
         Self::create_full_with_contents(asset_name, contents, "", is_template, args)
     }
 
@@ -1014,7 +1021,7 @@ impl Assets {
         message_suffix: &'static str,
         args: &[(&[u8], &[u8])],
     ) -> Result<(), Error> {
-        let is_template = !args.is_empty();
+        let is_template = IsTemplate::from_bool(!args.is_empty());
         Self::create_full_inner(asset, filename, message_suffix, is_template, args)
     }
 
@@ -1022,7 +1029,7 @@ impl Assets {
         asset: &'static [u8],
         filename: &[u8],
         message_suffix: &'static str,
-        is_template: bool,
+        is_template: IsTemplate,
         args: &[(&[u8], &[u8])],
     ) -> Result<(), Error> {
         let file = bun_sys::File::openat(
@@ -1033,7 +1040,7 @@ impl Assets {
         )?;
 
         // Write contents of known assets to the new file. Template assets get formatted.
-        if is_template {
+        if is_template == IsTemplate::Yes {
             let buf = bun_fmt::substitute_named(asset, args);
             file.write_all(&buf)?;
         } else {
@@ -1055,7 +1062,7 @@ impl Assets {
         // optionally add a suffix to the end of the `+ filename` message. Must have a leading space.
         message_suffix: &'static str,
         // Treat the asset as a format string, using `args` to populate it. Only applies to known assets.
-        is_template: bool,
+        is_template: IsTemplate,
         // Format arguments
         args: &[(&[u8], &[u8])],
     ) -> Result<(), Error> {
@@ -1066,7 +1073,7 @@ impl Assets {
             0o666,
         )?;
 
-        if is_template {
+        if is_template == IsTemplate::Yes {
             let buf = bun_fmt::substitute_named(contents, args);
             file.write_all(&buf)?;
         } else {

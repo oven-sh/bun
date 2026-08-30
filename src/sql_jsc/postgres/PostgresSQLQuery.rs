@@ -6,6 +6,7 @@ use crate::jsc::{
     CallFrame, JSGlobalObject, JSValue, JsError, JsRef, JsResult, VirtualMachineSqlExt as _,
 };
 use crate::shared::query_ctor_args::QueryCtorArgs;
+use crate::shared::{IsLast, SimpleQuery, UseBigint};
 use bun_core::String as BunString;
 use bun_jsc::JsCell;
 use bun_ptr::{AsCtxPtr, RefPtr};
@@ -18,6 +19,7 @@ use super::error_jsc::postgres_error_to_js;
 use super::postgres_request as PostgresRequest;
 use super::postgres_sql_connection;
 use super::postgres_sql_statement::Status as StatementStatus;
+use super::signature::StatementName;
 use bun_sql::postgres::CommandTag;
 use bun_sql::postgres::PostgresProtocol as protocol;
 use bun_sql::postgres::any_postgres_error::AnyPostgresError;
@@ -157,11 +159,11 @@ impl PostgresSQLQuery {
     pub(crate) fn get_target(
         &self,
         global_object: &JSGlobalObject,
-        clean_target: bool,
+        is_last: IsLast,
     ) -> Option<JSValue> {
         let this_value = self.this_value.get().try_get()?;
         let target = js::target_get_cached(this_value)?;
-        if clean_target {
+        if is_last == IsLast::Yes {
             js::target_set_cached(this_value, global_object, JSValue::ZERO);
         }
         Some(target)
@@ -188,7 +190,7 @@ impl PostgresSQLQuery {
             return;
         };
         let _downgrade = scopeguard::guard((), |_| self.this_value.with_mut(|r| r.downgrade()));
-        let Some(target_value) = self.get_target(global_object, true) else {
+        let Some(target_value) = self.get_target(global_object, IsLast::Yes) else {
             return;
         };
 
@@ -222,7 +224,7 @@ impl PostgresSQLQuery {
             return;
         };
         let _downgrade = scopeguard::guard((), |_| self.this_value.with_mut(|r| r.downgrade()));
-        let Some(target_value) = self.get_target(global_object, true) else {
+        let Some(target_value) = self.get_target(global_object, IsLast::Yes) else {
             return;
         };
 
@@ -270,11 +272,11 @@ impl PostgresSQLQuery {
         command_tag_str: &[u8],
         global_object: &JSGlobalObject,
         connection: JSValue,
-        is_last: bool,
+        is_last: IsLast,
     ) {
         // R-2: see `on_write_fail` — `&self` + Cell/JsCell, RefPtr brackets re-entry.
         let _guard = self.ref_guard();
-        self.status.set(if is_last {
+        self.status.set(if is_last == IsLast::Yes {
             Status::Success
         } else {
             Status::PartialResponse
@@ -290,7 +292,7 @@ impl PostgresSQLQuery {
             return;
         };
         let _last = scopeguard::guard((), |_| {
-            if is_last {
+            if is_last == IsLast::Yes {
                 Self::allow_gc(this_value, global_object);
                 self.this_value.with_mut(|r| r.downgrade());
             }
@@ -325,7 +327,7 @@ impl PostgresSQLQuery {
                     postgres_sql_connection::js::queries_get_cached(connection)
                         .unwrap_or(JSValue::UNDEFINED)
                 },
-                JSValue::from(is_last),
+                JSValue::from(is_last == IsLast::Yes),
             ],
         );
     }
@@ -371,8 +373,8 @@ impl PostgresSQLQuery {
             (*ptr).query = query.to_bun_string(global_this)?;
             (*ptr).this_value.set(JsRef::init_weak(this_value));
             (*ptr).flags.set(Flags {
-                bigint,
-                simple,
+                bigint: bigint == UseBigint::Yes,
+                simple: simple == SimpleQuery::Yes,
                 ..Default::default()
             });
         }
@@ -546,10 +548,12 @@ impl PostgresSQLQuery {
             binding_value,
             columns_value,
             connection.prepared_statement_id.get(),
-            connection
-                .flags
-                .get()
-                .contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS),
+            StatementName::from_bool(
+                connection
+                    .flags
+                    .get()
+                    .contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS),
+            ),
         ) {
             Ok(s) => s,
             Err(err) => {

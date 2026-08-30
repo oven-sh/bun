@@ -13,7 +13,7 @@ use crate::lockfile_real::StringBuilder;
 use crate::lockfile_real::package::{Package, PackageColumns, ResolverContext, Scripts};
 use crate::package_manager_real::options::LogLevel;
 use crate::package_manager_real::{
-    PackageManager, TaskCallbackList, enqueue, resolution as pm_resolution,
+    InstallPeer, IsRoot, PackageManager, TaskCallbackList, enqueue, resolution as pm_resolution,
 };
 use crate::repository_real::{Repository, RepositoryExt as _};
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
@@ -350,7 +350,7 @@ impl PackageManager {
         &mut self,
         item: &TaskCallbackContext,
         any_root: Option<&Cell<bool>>,
-        install_peer: bool,
+        install_peer: InstallPeer,
     ) -> Result<(), crate::Error> {
         match *item {
             TaskCallbackContext::Dependency(dependency_id) => {
@@ -385,7 +385,7 @@ impl PackageManager {
                     install_peer,
                     pm_resolution::assign_root_resolution,
                     Some(PackageManager::fail_root_resolution),
-                    true,
+                    IsRoot::Yes,
                 )?;
                 if let Some(ptr) = any_root {
                     let new_resolution_id =
@@ -415,7 +415,7 @@ impl PackageManager {
                 peer_dependency_id,
                 &dependency,
                 resolution,
-                true,
+                InstallPeer::Yes,
             )?;
         }
         Ok(())
@@ -426,7 +426,7 @@ impl PackageManager {
         dep_list: TaskCallbackList,
         ctx: C,
         on_resolve: Option<impl FnOnce(C)>,
-        install_peer: bool,
+        install_peer: InstallPeer,
     ) -> Result<(), crate::Error> {
         if !dep_list.is_empty() {
             let dependency_list = dep_list;

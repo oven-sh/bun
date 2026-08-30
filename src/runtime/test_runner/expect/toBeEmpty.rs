@@ -3,6 +3,7 @@ use core::ffi::c_void;
 use bun_jsc::{CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult, VM};
 
 use super::{throw, Expect};
+use super::IsNot;
 
 // Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
 // `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
@@ -62,7 +63,7 @@ pub(crate) fn to_be_empty(
                 pass = props_iter.len == 0;
             }
         } else {
-            let signature = Expect::get_signature("toBeEmpty", "", false);
+            let signature = Expect::get_signature("toBeEmpty", "", IsNot::No);
             return throw!(
                 this,
                 global,
@@ -81,7 +82,7 @@ pub(crate) fn to_be_empty(
     }
 
     if not && pass {
-        let signature = Expect::get_signature("toBeEmpty", "", true);
+        let signature = Expect::get_signature("toBeEmpty", "", IsNot::Yes);
         return throw!(
             this,
             global,
@@ -99,7 +100,7 @@ pub(crate) fn to_be_empty(
     }
 
     if not {
-        let signature = Expect::get_signature("toBeEmpty", "", true);
+        let signature = Expect::get_signature("toBeEmpty", "", IsNot::Yes);
         return throw!(
             this,
             global,
@@ -109,7 +110,7 @@ pub(crate) fn to_be_empty(
         );
     }
 
-    let signature = Expect::get_signature("toBeEmpty", "", false);
+    let signature = Expect::get_signature("toBeEmpty", "", IsNot::No);
     throw!(
         this,
         global,

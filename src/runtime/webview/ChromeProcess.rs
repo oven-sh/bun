@@ -634,7 +634,7 @@ impl Endpoints {
             libc::AF_UNIX as i32,
             libc::SOCK_STREAM as i32,
             0,
-            false, // .blocking
+            bun_sys::IoMode::Blocking,
         )?;
         let mut endpoints = Endpoints {
             fds: Some(fds),
@@ -772,7 +772,7 @@ impl Endpoints {
         // SAFETY: `pipe` is a live Box; `close_and_destroy` frees it in any state.
         let result = unsafe {
             (*pipe)
-                .init(event_loop.uv_loop(), false)
+                .init(event_loop.uv_loop(), uv::Ipc::No)
                 .to_result(bun_sys::Tag::uv_pipe)
                 .and_then(|()| (*pipe).open(fd.uv()).to_result(bun_sys::Tag::open))
         };

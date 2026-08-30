@@ -5,6 +5,7 @@ use core::cmp::Ordering;
 
 use crate::BoundedArray;
 use crate::CrateError as Error;
+use crate::string::printer::{AsciiOnly, Json};
 use bun_alloc::AllocError;
 use bun_highway as highway;
 use bun_simdutf_sys::simdutf;
@@ -48,6 +49,7 @@ pub use unicode_draft::{
 /// lives in C++ (`src/jsc/bindings/stringWidth.cpp`); this module is the FFI
 /// surface for the remaining Rust callers.
 pub use visible_impl::visible;
+pub use visible_impl::visible::width::exclude_ansi_colors::AmbiguousWidth;
 
 /// `unicode` surface needed by `immutable.rs` itself (CodepointIterator +
 /// WTF-8 decode). Full transcoding suite lives in `unicode_draft`.
@@ -493,7 +495,7 @@ pub(crate) use crate::strings_impl::{
 
 pub fn index_equal_any(in_: &[&[u8]], target: &[u8]) -> Option<usize> {
     for (i, str) in in_.iter().enumerate() {
-        if eql_long(str, target, true) {
+        if eql_long(str, target, CheckLen::Yes) {
             return Some(i);
         }
     }
@@ -931,7 +933,7 @@ pub fn starts_with(self_: &[u8], str: &[u8]) -> bool {
     if str.len() > self_.len() {
         return false;
     }
-    eql_long(&self_[0..str.len()], str, false)
+    eql_long(&self_[0..str.len()], str, CheckLen::No)
 }
 
 /// Transliterated from:
@@ -968,7 +970,7 @@ pub fn is_utf8_char_boundary(c: u8) -> bool {
 
 pub fn starts_with_case_insensitive_ascii(self_: &[u8], prefix: &[u8]) -> bool {
     self_.len() >= prefix.len()
-        && eql_case_insensitive_ascii(&self_[0..prefix.len()], prefix, false)
+        && eql_case_insensitive_ascii(&self_[0..prefix.len()], prefix, CheckLen::No)
 }
 
 pub use crate::strings_impl::{
@@ -1044,7 +1046,7 @@ pub fn eql(self_: &[u8], other: &[u8]) -> bool {
     if self_.len() != other.len() {
         return false;
     }
-    eql_long(self_, other, false)
+    eql_long(self_, other, CheckLen::No)
 }
 
 pub fn eql_comptime(self_: &[u8], alt: &'static [u8]) -> bool {
@@ -1135,7 +1137,7 @@ pub(crate) fn eql_comptime_check_len_with_type<T: crate::NoUninit + Eq, const CH
 }
 
 pub fn eql_case_insensitive_ascii_ignore_length(a: &[u8], b: &[u8]) -> bool {
-    eql_case_insensitive_ascii(a, b, false)
+    eql_case_insensitive_ascii(a, b, CheckLen::No)
 }
 
 pub use crate::strings_impl::{
@@ -1146,13 +1148,13 @@ pub use crate::strings_impl::{
 /// reachable from existing call sites until the next typo sweep.
 #[inline]
 pub fn eql_case_insensitive_asciii_check_length(a: &[u8], b: &[u8]) -> bool {
-    eql_case_insensitive_ascii(a, b, true)
+    eql_case_insensitive_ascii(a, b, CheckLen::Yes)
 }
 
 // The libc `strncasecmp`-backed implementation lives in tier-0
 // `crate::strings_impl` (so `contains_case_insensitive_ascii` and friends can
 // reach it). `check_len` is a runtime 3rd arg because that's the dominant
-// call shape across the tree (`eql_case_insensitive_ascii(a, b, true)`);
+// call shape across the tree (`eql_case_insensitive_ascii(a, b, CheckLen::Yes)`);
 // callers wanting the length-agnostic forms have the `_check_length` /
 // `_ignore_length` wrappers above.
 pub use crate::strings_impl::{contains_case_insensitive_ascii, eql_case_insensitive_ascii};
@@ -1199,13 +1201,15 @@ pub fn has_prefix_case_insensitive(str: &[u8], prefix: &[u8]) -> bool {
     has_prefix_case_insensitive_t(str, prefix)
 }
 
+crate::bool_enum!(pub CheckLen);
+
 // same rationale as `eql_case_insensitive_ascii` — `check_len` is a runtime
-// 3rd arg to match the dominant call shape (`eql_long(a, b, true)`).
+// 3rd arg to match the dominant call shape (`eql_long(a, b, CheckLen::Yes)`).
 #[inline]
-pub fn eql_long(a_str: &[u8], b_str: &[u8], check_len: bool) -> bool {
+pub fn eql_long(a_str: &[u8], b_str: &[u8], check_len: CheckLen) -> bool {
     let len = b_str.len();
 
-    if check_len {
+    if check_len == CheckLen::Yes {
         if len == 0 {
             return a_str.is_empty();
         }
@@ -1975,7 +1979,7 @@ pub const UNICODE_REPLACEMENT: u32 = 0xFFFD;
 pub fn left_has_any_in_right(to_check: &[&[u8]], against: &[&[u8]]) -> bool {
     for check in to_check {
         for item in against {
-            if eql_long(check, item, true) {
+            if eql_long(check, item, CheckLen::Yes) {
                 return true;
             }
         }
@@ -2056,7 +2060,7 @@ pub fn must_escape_yaml_string(contents: &[u8]) -> bool {
 #[derive(Copy, Clone)]
 pub struct QuoteEscapeFormatFlags {
     pub quote_char: u8,
-    pub json: bool,
+    pub json: Json,
     pub str_encoding: Encoding,
 }
 
@@ -2064,7 +2068,7 @@ impl Default for QuoteEscapeFormatFlags {
     fn default() -> Self {
         Self {
             quote_char: b'"',
-            json: false,
+            json: Json::No,
             str_encoding: Encoding::Utf8,
         }
     }
@@ -2091,7 +2095,7 @@ impl core::fmt::Display for QuoteEscapeFormat<'_> {
             self.data,
             &mut buf,
             self.flags.quote_char,
-            false, // ascii_only
+            AsciiOnly::No,
             self.flags.json,
             self.flags.str_encoding,
         )
@@ -2352,12 +2356,13 @@ pub fn utf16_eql_string(text: &[u16], str: &[u8]) -> bool {
 /// returning `None`).
 pub fn to_utf16_alloc_for_real(
     bytes: &[u8],
-    fail_if_invalid: bool,
-    sentinel: bool,
+    fail_if_invalid: FailIfInvalid,
+    sentinel: Sentinel,
 ) -> Result<Vec<u16>, ToUTF16Error> {
     if let Some(v) = to_utf16_alloc(bytes, fail_if_invalid, sentinel)? {
         return Ok(v);
     }
+    let sentinel = sentinel == Sentinel::Yes;
     // All-ASCII path: widen each byte.
     let mut out: Vec<u16> = Vec::new();
     out.try_reserve_exact(bytes.len() + sentinel as usize)
@@ -2535,7 +2540,7 @@ pub fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8
 }
 
 /// Errors from `to_utf16_alloc`. `InvalidByteSequence` is only returned when
-/// `fail_if_invalid = true`; `OutOfMemory` can be returned by any call.
+/// `FailIfInvalid::Yes`; `OutOfMemory` can be returned by any call.
 ///
 /// Re-exported from `unicode_draft` so that `to_utf16_alloc_maybe_buffered`
 /// (defined there) and `to_utf16_alloc` (defined here) share a single error
@@ -2550,6 +2555,9 @@ impl From<ToUTF16Error> for crate::CrateError {
     }
 }
 
+crate::bool_enum!(pub FailIfInvalid);
+crate::bool_enum!(pub Sentinel);
+
 /// `strings.toUTF16Alloc` — convert UTF-8 → UTF-16LE **iff** `bytes` contains
 /// any non-ASCII byte; pure-ASCII inputs return `Ok(None)` (caller keeps the
 /// 8-bit form). When `fail_if_invalid` is set, invalid UTF-8 yields
@@ -2558,12 +2566,14 @@ impl From<ToUTF16Error> for crate::CrateError {
 /// includes a trailing 0 u16.
 pub fn to_utf16_alloc(
     bytes: &[u8],
-    fail_if_invalid: bool,
-    sentinel: bool,
+    fail_if_invalid: FailIfInvalid,
+    sentinel: Sentinel,
 ) -> Result<Option<Vec<u16>>, ToUTF16Error> {
     let Some(_first) = first_non_ascii(bytes) else {
         return Ok(None);
     };
+    let fail_if_invalid = fail_if_invalid == FailIfInvalid::Yes;
+    let sentinel = sentinel == Sentinel::Yes;
 
     let out_length = simdutf::length::utf16::from::utf8(bytes);
     let cap = out_length + if sentinel { 1 } else { 0 };
@@ -2755,8 +2765,16 @@ mod tests {
     fn strings_reexport_wrappers_terminate() {
         assert_eq!(super::first_non_ascii(b"abc"), None);
         assert_eq!(super::first_non_ascii(b"ab\xC3"), Some(2));
-        assert!(super::eql_case_insensitive_ascii(b"A", b"a", true));
-        assert!(!super::eql_case_insensitive_ascii(b"Ab", b"a", true));
+        assert!(super::eql_case_insensitive_ascii(
+            b"A",
+            b"a",
+            super::CheckLen::Yes
+        ));
+        assert!(!super::eql_case_insensitive_ascii(
+            b"Ab",
+            b"a",
+            super::CheckLen::Yes
+        ));
     }
 
     #[test]

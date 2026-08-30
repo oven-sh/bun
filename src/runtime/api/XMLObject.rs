@@ -266,6 +266,9 @@ fn skipped(value: JSValue) -> bool {
     value.is_undefined() || value.is_symbol() || value.is_function()
 }
 
+bun_core::bool_enum!(Separate);
+bun_core::bool_enum!(EscapeContext { Text, Attribute });
+
 impl Stringifier {
     fn mark_visiting(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<()> {
         let was_present = self
@@ -584,7 +587,7 @@ impl Stringifier {
                 ))
                 .into());
         };
-        self.stringify_compact_element(global, &name, value, false)
+        self.stringify_compact_element(global, &name, value, Separate::No)
     }
 
     /// Whether a compact property value produces any output: everything but
@@ -615,7 +618,7 @@ impl Stringifier {
         global: &JSGlobalObject,
         name: &BunString,
         value: JSValue,
-        separate: bool,
+        separate: Separate,
     ) -> StringifyResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
@@ -640,7 +643,7 @@ impl Stringifier {
         global: &JSGlobalObject,
         name: &BunString,
         value: JSValue,
-        separate: bool,
+        separate: Separate,
     ) -> StringifyResult<()> {
         let mut iter = value.array_iterator(global)?;
         let mut first = true;
@@ -657,7 +660,7 @@ impl Stringifier {
                     ))
                     .into());
             }
-            if !first && separate {
+            if !first && separate == Separate::Yes {
                 self.newline();
             }
             first = false;
@@ -759,7 +762,7 @@ impl Stringifier {
             if pretty {
                 self.newline();
             }
-            self.stringify_compact_element(global, &key, child, pretty)?;
+            self.stringify_compact_element(global, &key, child, Separate::from_bool(pretty))?;
         }
         if pretty {
             self.indent -= 1;
@@ -866,7 +869,7 @@ impl Stringifier {
         self.builder.append_lchar(b' ');
         self.builder.append_string(name);
         self.builder.append_latin1(b"=\"");
-        self.append_escaped(global, value, true)?;
+        self.append_escaped(global, value, EscapeContext::Attribute)?;
         self.builder.append_lchar(b'"');
         Ok(())
     }
@@ -874,15 +877,16 @@ impl Stringifier {
     /// Character data with `& < >` and CR escaped (`>` for the `]]>` rule,
     /// CR because a literal one would be normalized to LF when parsed).
     fn append_text(&mut self, global: &JSGlobalObject, text: &BunString) -> StringifyResult<()> {
-        self.append_escaped(global, text, false)
+        self.append_escaped(global, text, EscapeContext::Text)
     }
 
     fn append_escaped(
         &mut self,
         global: &JSGlobalObject,
         text: &BunString,
-        attribute: bool,
+        context: EscapeContext,
     ) -> StringifyResult<()> {
+        let attribute = context == EscapeContext::Attribute;
         let len = text.length();
         let mut i = 0;
         while i < len {

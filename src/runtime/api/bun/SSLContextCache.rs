@@ -55,7 +55,7 @@ impl ArrayHashContext<Digest> for DigestContext {
     }
     #[inline]
     fn eql(&self, a: &Digest, b: &Digest, _b_index: usize) -> bool {
-        bun_core::strings::eql_long(a, b, false)
+        bun_core::strings::eql_long(a, b, bun_core::strings::CheckLen::No)
     }
 }
 

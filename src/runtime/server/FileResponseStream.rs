@@ -14,7 +14,7 @@ use core::ffi::c_void;
 use bun_io::Closer;
 #[cfg(windows)]
 use bun_io::pipe_reader::WindowsFlags as ReaderFlags;
-use bun_io::{BufferedReader, FileType, ReadState};
+use bun_io::{BufferedReader, FileType, IsPollable, ReadState};
 #[cfg(unix)]
 use bun_io::{FilePollFlag, PosixFlags as ReaderFlags};
 use bun_jsc::JsCell;
@@ -243,9 +243,13 @@ impl FileResponseStream {
         // the parent pointer (`loop_`/`event_loop`), so no cell borrow spans them.
         let reader = this_ref.reader_mut();
         let start_result = if opts.offset > 0 {
-            reader.start_file_offset(opts.fd, opts.pollable, opts.offset as usize)
+            reader.start_file_offset(
+                opts.fd,
+                IsPollable::from_bool(opts.pollable),
+                opts.offset as usize,
+            )
         } else {
-            reader.start(opts.fd, opts.pollable)
+            reader.start(opts.fd, IsPollable::from_bool(opts.pollable))
         };
         if let Err(err) = start_result {
             this_ref.fail_with(err);

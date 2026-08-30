@@ -3,6 +3,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::throw;
 use super::DiffFormatter;
 use super::Expect;
+use super::IsNot;
 
 pub(crate) fn to_have_property(
     this: &Expect,
@@ -73,7 +74,7 @@ pub(crate) fn to_have_property(
     if not {
         if let Some(expected_property_value) = expected_property {
             let signature =
-                Expect::get_signature("toHaveProperty", "<green>path<r><d>, <r><green>value<r>", true);
+                Expect::get_signature("toHaveProperty", "<green>path<r><d>, <r><green>value<r>", IsNot::Yes);
             if !received_property.is_empty() {
                 return throw!(
                     this,
@@ -86,7 +87,7 @@ pub(crate) fn to_have_property(
             }
         }
 
-        let signature = Expect::get_signature("toHaveProperty", "<green>path<r>", true);
+        let signature = Expect::get_signature("toHaveProperty", "<green>path<r>", IsNot::Yes);
         return throw!(
             this,
             global,
@@ -99,7 +100,7 @@ pub(crate) fn to_have_property(
 
     if let Some(expected_property_value) = expected_property {
         let signature =
-            Expect::get_signature("toHaveProperty", "<green>path<r><d>, <r><green>value<r>", false);
+            Expect::get_signature("toHaveProperty", "<green>path<r><d>, <r><green>value<r>", IsNot::No);
         if !received_property.is_empty() {
             // deep equal case
             let diff_format = DiffFormatter {
@@ -122,7 +123,7 @@ pub(crate) fn to_have_property(
         );
     }
 
-    let signature = Expect::get_signature("toHaveProperty", "<green>path<r>", false);
+    let signature = Expect::get_signature("toHaveProperty", "<green>path<r>", IsNot::No);
     throw!(
         this,
         global,

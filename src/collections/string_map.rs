@@ -5,13 +5,15 @@ use bun_alloc::AllocError;
 
 use crate::array_hash_map::StringArrayHashMap;
 
+bun_core::bool_enum!(pub DupeKeys);
+
 pub struct StringMap {
     pub(crate) map: StringArrayHashMap<Box<[u8]>>,
-    pub dupe_keys: bool,
+    pub dupe_keys: DupeKeys,
 }
 
 impl StringMap {
-    pub fn init(dupe_keys: bool) -> Self {
+    pub fn init(dupe_keys: DupeKeys) -> Self {
         Self {
             map: StringArrayHashMap::default(),
             dupe_keys,

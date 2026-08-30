@@ -2,7 +2,7 @@ use crate as css;
 use crate::css_rules::{CssRuleList, Location};
 use crate::css_values::ident::CustomIdent;
 use crate::media_query::{self, MediaFeatureType, Operator, QueryCondition, QueryFeature, ToCss};
-use crate::properties::Property;
+use crate::properties::{Important, Property};
 use crate::{PrintErr, Printer};
 
 /// A [`<container-name>`](https://drafts.csswg.org/css-contain-3/#typedef-container-name).
@@ -140,7 +140,7 @@ impl QueryCondition for StyleQuery {
         }
     }
     fn feature_to_css(f: &Property, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        f.to_css(dest, false)
+        f.to_css(dest, Important::No)
     }
 
     fn parse_feature(input: &mut css::Parser) -> css::Result<Self> {

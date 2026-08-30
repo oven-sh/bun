@@ -278,7 +278,7 @@ impl ASTMemoryAllocator {
             // The AstAlloc state follows the arena's retain-or-recycle
             // decision: callers like `--define` hold `StoreRef`s across a
             // retained reset, so only clear it when the heap is recycled.
-            if !self.arena.reset_retain_with_limit(limit) {
+            if self.arena.reset_retain_with_limit(limit) == bun_alloc::ResetOutcome::Recycled {
                 self.reset_ast_state();
             }
             self.arena_dirty = false;

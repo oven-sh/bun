@@ -35,9 +35,11 @@ fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
     None
 }
 
+bun_core::bool_enum!(pub AutoLoaded);
+
 fn load_bunfig(
     cmd: CommandTag,
-    auto_loaded: bool,
+    auto_loaded: AutoLoaded,
     config_path: &ZStr,
     ctx: Context<'_>,
 ) -> Result<(), crate::Error> {
@@ -45,7 +47,7 @@ fn load_bunfig(
         match bun_ast::to_source(config_path, bun_ast::ToSourceOptions { convert_bom: true }) {
             Ok(s) => s,
             Err(err) => {
-                if auto_loaded {
+                if auto_loaded == AutoLoaded::Yes {
                     return Ok(());
                 }
                 bun_core::pretty_errorln!(
@@ -88,14 +90,14 @@ fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Er
 
     let mut config_buf = PathBuffer::uninit();
     if let Some(path) = get_home_config_path(&mut config_buf) {
-        load_bunfig(cmd, true, path, ctx)?;
+        load_bunfig(cmd, AutoLoaded::Yes, path, ctx)?;
     }
     Ok(())
 }
 
 pub fn load_config_path(
     cmd: CommandTag,
-    auto_loaded: bool,
+    auto_loaded: AutoLoaded,
     config_path: &ZStr,
     ctx: Context<'_>,
 ) -> Result<(), crate::Error> {
@@ -105,7 +107,7 @@ pub fn load_config_path(
     // lookup so the dead arm is still a single branch.
     if cmd.read_global_config() {
         if let Err(err) = load_global_bunfig(cmd, ctx) {
-            if auto_loaded {
+            if auto_loaded == AutoLoaded::Yes {
                 return Ok(());
             }
 
@@ -156,7 +158,7 @@ pub fn load_config(
             ctx.has_loaded_global_config = true;
 
             if let Some(path) = get_home_config_path(&mut config_buf) {
-                if let Err(err) = load_config_path(cmd, true, path, ctx) {
+                if let Err(err) = load_config_path(cmd, AutoLoaded::Yes, path, ctx) {
                     report_bunfig_load_failure(ctx.log, err);
                 }
             }
@@ -165,7 +167,7 @@ pub fn load_config(
 
     let mut config_path_: &[u8] = user_config_path_.unwrap_or(b"");
 
-    let mut auto_loaded: bool = false;
+    let mut auto_loaded = AutoLoaded::No;
     if config_path_.is_empty()
         && (user_config_path_.is_some()
             || ALWAYS_LOADS_CONFIG[cmd]
@@ -187,7 +189,7 @@ pub fn load_config(
                 && (ctx.parallel || ctx.sequential || ctx.workspaces || !ctx.filters.is_empty())))
     {
         config_path_ = b"bunfig.toml";
-        auto_loaded = true;
+        auto_loaded = AutoLoaded::Yes;
     }
 
     if config_path_.is_empty() {

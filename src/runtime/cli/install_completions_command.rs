@@ -531,7 +531,8 @@ impl InstallCompletionsCommand {
 
             debug_assert!(!completions_dir.is_empty());
 
-            let output_file: File = match File::create(output_dir, filename, true) {
+            let output_file: File = match File::create(output_dir, filename, bun_sys::Truncate::Yes)
+            {
                 Ok(f) => f,
                 Err(err) => {
                     pretty_errorln!(

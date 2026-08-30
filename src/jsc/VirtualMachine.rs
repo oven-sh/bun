@@ -8,6 +8,7 @@ use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
 use bun_bundler::Transpiler;
+use bun_bundler::transpiler::AutoJsx;
 use bun_io as Async;
 use bun_uws as uws;
 
@@ -21,6 +22,8 @@ use crate::{
     self as jsc, Exception, JSGlobalObject, JSInternalPromise, JSValue, JsResult, OpaqueCallback,
     PlatformEventLoop, ResolvedSource, VM, ZigException,
 };
+
+use bun_core::output::AnsiColors;
 
 pub use crate::process_auto_killer as ProcessAutoKiller;
 
@@ -1392,11 +1395,11 @@ impl VirtualMachine {
     }
 
     #[cold]
-    pub fn garbage_collect(&self, sync: bool) -> usize {
-        bun_core::Global::mimalloc_cleanup(false);
+    pub fn garbage_collect(&self, sync: crate::GcMode) -> usize {
+        bun_core::Global::mimalloc_cleanup(bun_core::Force::No);
         let vm = self.global().vm();
-        if sync {
-            return vm.run_gc(true);
+        if sync == crate::GcMode::Sync {
+            return vm.run_gc(crate::GcMode::Sync);
         }
         vm.collect_async();
         vm.heap_size()
@@ -1405,7 +1408,9 @@ impl VirtualMachine {
     #[inline]
     pub fn auto_garbage_collect(&self) {
         if self.aggressive_garbage_collection != GCLevel::None {
-            let _ = self.garbage_collect(self.aggressive_garbage_collection == GCLevel::Aggressive);
+            let _ = self.garbage_collect(crate::GcMode::from_bool(
+                self.aggressive_garbage_collection == GCLevel::Aggressive,
+            ));
         }
     }
 
@@ -1623,15 +1628,25 @@ impl VirtualMachine {
     pub fn set_is_main_thread_vm(value: bool) {
         IS_MAIN_THREAD_VM.set(value);
     }
+}
 
+bun_core::bool_enum!(pub BlockUntilConnected);
+bun_core::bool_enum!(pub IsRejection);
+
+impl VirtualMachine {
     /// The body lives in `bun_runtime` (it constructs `bun.api.Debugger`), so
     /// dispatch through [`RuntimeHooks::ensure_debugger`] like
     /// [`reload_entry_point`] does. No-op when hooks aren't installed (pure
     /// `bun_jsc` unit tests).
-    pub fn ensure_debugger(&mut self, block_until_connected: bool) -> crate::CrateResult<()> {
+    pub fn ensure_debugger(
+        &mut self,
+        block_until_connected: BlockUntilConnected,
+    ) -> crate::CrateResult<()> {
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: hook contract — `self` is the live per-thread VM.
-            unsafe { (hooks.ensure_debugger)(self, block_until_connected) };
+            unsafe {
+                (hooks.ensure_debugger)(self, block_until_connected == BlockUntilConnected::Yes)
+            };
         }
         Ok(())
     }
@@ -1648,7 +1663,7 @@ impl VirtualMachine {
         &mut self,
         global_object: &JSGlobalObject,
         err: JSValue,
-        is_rejection: bool,
+        is_rejection: IsRejection,
     ) -> bool {
         // A VM that has stopped (or is being torn down) has nobody to report to; and what a caller took
         // to be an error may be its termination.
@@ -1684,7 +1699,11 @@ impl VirtualMachine {
         let handled = Bun__handleUncaughtException(
             global_object,
             err.to_error().unwrap_or(err),
-            if is_rejection { 1 } else { 0 },
+            if is_rejection == IsRejection::Yes {
+                1
+            } else {
+                0
+            },
         ) > 0;
         if !handled {
             // `beforeExit` has already been dispatched, so the run is winding
@@ -2849,7 +2868,7 @@ impl VirtualMachine {
         self.overridden_main.deinit();
 
         let hooks = runtime_hooks();
-        let _ = self.ensure_debugger(true);
+        let _ = self.ensure_debugger(BlockUntilConnected::Yes);
 
         // Node.js `--trace-*` and `--stack-trace-limit` flags need
         // `internal/process/pre_execution` to run before any user code.
@@ -3503,7 +3522,7 @@ pub fn collect_macro_vm_garbage() {
     }
     debug_assert!(!vm_ref.is_main_thread);
     debug_assert_eq!(vm_ref.macro_guard_depth, 0);
-    vm_ref.jsc_vm().run_gc(true);
+    vm_ref.jsc_vm().run_gc(crate::GcMode::Sync);
 }
 
 fn normalize_source(source: &[u8]) -> &[u8] {
@@ -3793,7 +3812,7 @@ impl VirtualMachine {
             if let Err(e) = r {
                 let exc = global_object.take_exception(e);
                 // `exc` is already the exception's value; report it directly.
-                let _ = this.uncaught_exception(global_object, exc, false);
+                let _ = this.uncaught_exception(global_object, exc, IsRejection::No);
             }
         };
 
@@ -3829,7 +3848,7 @@ impl VirtualMachine {
             }
             Mode::Strict => {
                 let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
-                let _ = self.uncaught_exception(global_object, wrapped, true);
+                let _ = self.uncaught_exception(global_object, wrapped, IsRejection::Yes);
                 let handled = handle_unhandled();
                 if !handled {
                     emit_warning(self);
@@ -3843,7 +3862,7 @@ impl VirtualMachine {
                     return;
                 }
                 let wrapped = unhandled_rejection_as_uncaught_error(global_object, reason);
-                if self.uncaught_exception(global_object, wrapped, true) {
+                if self.uncaught_exception(global_object, wrapped, IsRejection::Yes) {
                     drain(self);
                     return;
                 }
@@ -3969,7 +3988,10 @@ impl VirtualMachine {
             // node's child does via AtExit(FlushCompileCache) on every restart.
             crate::node_compile_cache::persist_now();
             bun_core::Output::flush();
-            bun_core::reload_process(should_clear_terminal, false);
+            bun_core::reload_process(
+                bun_core::ClearTerminal::from_bool(should_clear_terminal),
+                bun_core::MayReturn::No,
+            );
         }
 
         if let Some(p) = self.pending_internal_promise {
@@ -4096,8 +4118,10 @@ impl VirtualMachine {
         vm_ref.install_bytecode_string_table(graph);
         vm_ref.let_heap_take_initial_module_graph(graph);
         // Avoid reading from tsconfig.json & package.json when in standalone mode
-        vm_ref.transpiler.configure_linker_with_auto_jsx(false);
-        vm_ref.transpiler.resolver.store_fd = false;
+        vm_ref
+            .transpiler
+            .configure_linker_with_auto_jsx(AutoJsx::No);
+        vm_ref.transpiler.resolver.store_fd = bun_resolver::fs::StoreFd::No;
         IS_SMOL_MODE.store(opts.smol, core::sync::atomic::Ordering::Relaxed);
         Ok(vm)
     }
@@ -4146,11 +4170,13 @@ impl VirtualMachine {
         }
         vm_ref.hot_reload = worker.hot_reload();
         vm_ref.initial_script_execution_context_identifier = worker.execution_context_id() as i32;
-        vm_ref.transpiler.resolver.store_fd = opts.store_fd;
+        vm_ref.transpiler.resolver.store_fd = bun_resolver::fs::StoreFd::from_bool(opts.store_fd);
         if opts.graph.is_none() {
             vm_ref.transpiler.configure_linker();
         } else {
-            vm_ref.transpiler.configure_linker_with_auto_jsx(false);
+            vm_ref
+                .transpiler
+                .configure_linker_with_auto_jsx(AutoJsx::No);
         }
         Ok(vm)
     }
@@ -4282,7 +4308,7 @@ impl VirtualMachine {
                 // `ref_` as ctx.
                 let s = bun_core::String::create_external::<*mut RefString>(
                     unsafe { bun_core::ffi::slice(ptr, len) },
-                    true,
+                    bun_core::WTFEncoding::Latin1,
                     ref_,
                     free_ref_string,
                 );
@@ -4898,6 +4924,12 @@ impl VirtualMachine {
         }
         self.has_terminated = true;
     }
+}
+
+bun_core::bool_enum!(pub AllowSideEffects);
+bun_core::bool_enum!(pub AllowSourceCodePreview);
+
+impl VirtualMachine {
     /// Note: takes the concrete
     /// `bun_core::io::Writer` since every call site passes
     /// `Output.errorWriterBuffered()`.
@@ -4906,7 +4938,7 @@ impl VirtualMachine {
         exception: &Exception,
         exception_list: Option<&mut ExceptionList>,
         writer: &mut bun_core::io::Writer,
-        allow_side_effects: bool,
+        allow_side_effects: AllowSideEffects,
     ) {
         let mut formatter = crate::console_object::Formatter::new(self.global());
         let colors = bun_core::Output::enable_ansi_colors_stderr();
@@ -4916,7 +4948,7 @@ impl VirtualMachine {
             exception_list,
             &mut formatter,
             writer,
-            colors,
+            AnsiColors::from_bool(colors),
             allow_side_effects,
         );
         // `defer formatter.deinit()` → Drop.
@@ -4952,7 +4984,7 @@ impl VirtualMachine {
 
         self.event_loop_mut().ensure_waker();
 
-        let _ = self.ensure_debugger(true);
+        let _ = self.ensure_debugger(BlockUntilConnected::Yes);
 
         if !self.transpiler.options.disable_transpilation {
             if let Some(hooks) = runtime_hooks() {
@@ -5281,8 +5313,8 @@ impl VirtualMachine {
         mut exception_list: Option<&mut ExceptionList>,
         formatter: &mut crate::console_object::Formatter,
         writer: &mut bun_core::io::Writer,
-        allow_ansi_color: bool,
-        allow_side_effects: bool,
+        allow_ansi_color: AnsiColors,
+        allow_side_effects: AllowSideEffects,
     ) {
         // Note: the post-print stack/exception_list block is handled at the
         // tail instead of via a drop guard (the body has no early-`?` returns
@@ -5310,8 +5342,8 @@ impl VirtualMachine {
                 formatter: *mut crate::console_object::Formatter<'a>,
                 writer: *mut bun_core::io::Writer,
                 exception_list: *mut ExceptionList,
-                allow_ansi_color: bool,
-                allow_side_effects: bool,
+                allow_ansi_color: AnsiColors,
+                allow_side_effects: AllowSideEffects,
                 printed_member: bool,
             }
             extern "C" fn agg_iter(
@@ -5405,12 +5437,12 @@ impl VirtualMachine {
         exception_list: Option<&mut ExceptionList>,
         formatter: &mut crate::console_object::Formatter,
         writer: &mut bun_core::io::Writer,
-        allow_ansi_color: bool,
-        allow_side_effects: bool,
+        allow_ansi_color: AnsiColors,
+        allow_side_effects: AllowSideEffects,
     ) -> bool {
         macro_rules! write_msg {
             ($msg:expr, $w:expr, $color:expr) => {
-                if $color {
+                if $color == AnsiColors::Enabled {
                     let _ = $msg.write_format::<true>(&mut bun_io::AsFmt::new($w));
                 } else {
                     let _ = $msg.write_format::<false>(&mut bun_io::AsFmt::new($w));
@@ -5492,7 +5524,7 @@ impl VirtualMachine {
         exception: &Exception,
     ) -> JSValue {
         let jsc_vm = global_object.bun_vm().as_mut();
-        let _ = jsc_vm.uncaught_exception(global_object, exception.value(), false);
+        let _ = jsc_vm.uncaught_exception(global_object, exception.value(), IsRejection::No);
         JSValue::UNDEFINED
     }
 
@@ -5500,7 +5532,7 @@ impl VirtualMachine {
     pub(crate) fn print_stack_trace(
         writer: &mut bun_core::io::Writer,
         trace: &crate::ZigStackTrace,
-        allow_ansi_colors: bool,
+        allow_ansi_colors: AnsiColors,
     ) -> crate::CrateResult<()> {
         use crate::zig_stack_frame::LineColumn;
         let stack = trace.frames();
@@ -5529,7 +5561,7 @@ impl VirtualMachine {
             let has_name = {
                 use core::fmt::Write as _;
                 let mut probe = String::new();
-                let _ = write!(probe, "{}", frame.name_formatter(false));
+                let _ = write!(probe, "{}", frame.name_formatter(AnsiColors::Disabled));
                 !probe.is_empty()
             };
 
@@ -5537,7 +5569,7 @@ impl VirtualMachine {
             // dispatches on the runtime `allow_ansi_colors` flag.
             macro_rules! pretty_write {
                 ($fmt:literal $(, $arg:expr)* $(,)?) => {
-                    if allow_ansi_colors {
+                    if allow_ansi_colors == AnsiColors::Enabled {
                         write!(writer, bun_core::pretty_fmt!($fmt, true) $(, $arg)*)
                     } else {
                         write!(writer, bun_core::pretty_fmt!($fmt, false) $(, $arg)*)
@@ -5646,7 +5678,7 @@ impl VirtualMachine {
         exception_list: Option<&mut ExceptionList>,
         must_reset_parser_arena_later: &mut bool,
         source_code_slice: &mut Option<bun_core::Utf8Bytes<'static>>,
-        allow_source_code_preview: bool,
+        allow_source_code_preview: AllowSourceCodePreview,
     ) {
         // `global()` returns `&'static`, so the borrow detaches from `&self`
         // and survives the `&mut self` reborrows below.
@@ -5656,7 +5688,7 @@ impl VirtualMachine {
         // and read the *current* value at scope-exit without a raw-ptr deref,
         // while the body freely `.set()`s it.
         let enable_source_code_preview = Cell::new(
-            allow_source_code_preview
+            allow_source_code_preview == AllowSourceCodePreview::Yes
                 && !(bun_core::env_var::feature_flag::BUN_DISABLE_SOURCE_CODE_PREVIEW::get()
                     .unwrap_or(false)
                     || bun_core::env_var::feature_flag::BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW::get()
@@ -5985,8 +6017,8 @@ impl VirtualMachine {
         zig_exception: &mut ZigException,
         formatter: Option<&mut crate::console_object::Formatter>,
         writer: &mut bun_core::io::Writer,
-        allow_side_effects: bool,
-        allow_ansi_color: bool,
+        allow_side_effects: AllowSideEffects,
+        allow_ansi_color: AnsiColors,
     ) -> crate::CrateResult<()> {
         let mut default_formatter = crate::console_object::Formatter::new(self.global());
         let f = formatter.unwrap_or(&mut default_formatter);
@@ -6010,8 +6042,8 @@ impl VirtualMachine {
         exception_list: Option<&mut ExceptionList>,
         formatter: &mut crate::console_object::Formatter,
         writer: &mut bun_core::io::Writer,
-        allow_ansi_color: bool,
-        allow_side_effects: bool,
+        allow_ansi_color: AnsiColors,
+        allow_side_effects: AllowSideEffects,
     ) -> crate::CrateResult<()> {
         // Note: stack-safety guard for the Error recursion path.
         // `print_error_instance_body` dispatches on runtime bools, so it
@@ -6065,7 +6097,9 @@ impl VirtualMachine {
             exception_list,
             &mut exception_holder.need_to_clear_parser_arena_on_deinit,
             &mut source_code_slice,
-            formatter.error_display_level != crate::console_object::ErrorDisplayLevel::Warn,
+            AllowSourceCodePreview::from_bool(
+                formatter.error_display_level != crate::console_object::ErrorDisplayLevel::Warn,
+            ),
         );
         error_instance.ensure_still_alive();
 
@@ -6099,8 +6133,8 @@ impl VirtualMachine {
         exception_list: Option<&mut ExceptionList>,
         formatter: &mut crate::console_object::Formatter,
         writer: &mut bun_core::io::Writer,
-        allow_ansi_color: bool,
-        allow_side_effects: bool,
+        allow_ansi_color: AnsiColors,
+        allow_side_effects: AllowSideEffects,
     ) -> crate::CrateResult<()> {
         use crate::JSType;
         use crate::console_object::formatter::TagOptions;
@@ -6127,7 +6161,7 @@ impl VirtualMachine {
             prev: prev_had_errors,
         };
 
-        if allow_side_effects {
+        if allow_side_effects == AllowSideEffects::Yes {
             if let Some(debugger) = self.debugger.as_deref_mut() {
                 debugger.lifecycle_reporter_agent.report_error(exception);
             }
@@ -6152,7 +6186,8 @@ impl VirtualMachine {
             }
         }
         let _defer_gh = DeferGhAnnotation {
-            run: allow_side_effects && bun_core::Output::is_github_action(),
+            run: allow_side_effects == AllowSideEffects::Yes
+                && bun_core::Output::is_github_action(),
             exception: bun_ptr::BackRef::new(&*exception),
         };
 
@@ -6160,7 +6195,7 @@ impl VirtualMachine {
         // `allow_ansi_color` bool through a local wrapper.
         macro_rules! pretty_write {
             ($w:expr, $fmt:literal $(, $arg:expr)* $(,)?) => {
-                if allow_ansi_color {
+                if allow_ansi_color == AnsiColors::Enabled {
                     write!($w, bun_core::pretty_fmt!($fmt, true) $(, $arg)*)
                 } else {
                     write!($w, bun_core::pretty_fmt!($fmt, false) $(, $arg)*)
@@ -6211,12 +6246,12 @@ impl VirtualMachine {
             let hl = bun_core::fmt::fmt_javascript(
                 clamped,
                 bun_core::fmt::HighlighterOptions {
-                    enable_colors: allow_ansi_color,
+                    enable_colors: allow_ansi_color == AnsiColors::Enabled,
                     ..Default::default()
                 },
             );
             if clamped.len() != trimmed.len() {
-                if allow_ansi_color {
+                if allow_ansi_color == AnsiColors::Enabled {
                     pretty_write!(
                         writer,
                         "<r><b>{} |<r> {}<r><d> | ... truncated <r>\n",
@@ -6300,12 +6335,12 @@ impl VirtualMachine {
                     let hl = bun_core::fmt::fmt_javascript(
                         clamped,
                         bun_core::fmt::HighlighterOptions {
-                            enable_colors: allow_ansi_color,
+                            enable_colors: allow_ansi_color == AnsiColors::Enabled,
                             ..Default::default()
                         },
                     );
                     if clamped.len() != trimmed.len() {
-                        if allow_ansi_color {
+                        if allow_ansi_color == AnsiColors::Enabled {
                             pretty_write!(
                                 writer,
                                 "<r><b>- |<r> {}<r><d> | ... truncated <r>\n",
@@ -6337,12 +6372,12 @@ impl VirtualMachine {
                     let hl = bun_core::fmt::fmt_javascript(
                         clamped,
                         bun_core::fmt::HighlighterOptions {
-                            enable_colors: allow_ansi_color,
+                            enable_colors: allow_ansi_color == AnsiColors::Enabled,
                             ..Default::default()
                         },
                     );
                     if clamped.len() != trimmed.len() {
-                        if allow_ansi_color {
+                        if allow_ansi_color == AnsiColors::Enabled {
                             pretty_write!(
                                 writer,
                                 "<r><b>{} |<r> {}<r><d> | ... truncated <r>\n\n",
@@ -6490,7 +6525,7 @@ impl VirtualMachine {
                     splat_space(writer, pad_left as u64)?;
                     pretty_write!(writer, " {}<r><d>:<r> ", field)?;
 
-                    if allow_side_effects && global_ref.has_exception() {
+                    if allow_side_effects == AllowSideEffects::Yes && global_ref.has_exception() {
                         global_ref.clear_exception();
                     }
 
@@ -6499,13 +6534,13 @@ impl VirtualMachine {
                         global_ref,
                         TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
                     )?;
-                    let _ = if allow_ansi_color {
+                    let _ = if allow_ansi_color == AnsiColors::Enabled {
                         formatter.format::<true>(tag, writer, value, global_ref)
                     } else {
                         formatter.format::<false>(tag, writer, value, global_ref)
                     };
 
-                    if allow_side_effects {
+                    if allow_side_effects == AllowSideEffects::Yes {
                         if global_ref.has_exception() {
                             global_ref.clear_exception();
                         }
@@ -6550,7 +6585,7 @@ impl VirtualMachine {
                 TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
             )?;
             if !matches!(tag.tag, TagPayload::NativeCode) {
-                let _ = if allow_ansi_color {
+                let _ = if allow_ansi_color == AnsiColors::Enabled {
                     formatter.format::<true>(tag, writer, error_instance, global_ref)
                 } else {
                     formatter.format::<false>(tag, writer, error_instance, global_ref)
@@ -6609,13 +6644,13 @@ impl VirtualMachine {
         is_browser_error: bool,
         optional_code: Option<&[u8]>,
         writer: &mut bun_core::io::Writer,
-        allow_ansi_color: bool,
+        allow_ansi_color: AnsiColors,
         error_display_level: crate::console_object::ErrorDisplayLevel,
     ) -> crate::CrateResult<()> {
         use crate::console_object::Colon;
         macro_rules! pretty_write {
             ($fmt:literal $(, $arg:expr)* $(,)?) => {
-                if allow_ansi_color {
+                if allow_ansi_color == AnsiColors::Enabled {
                     write!(writer, bun_core::pretty_fmt!($fmt, true) $(, $arg)*)
                 } else {
                     write!(writer, bun_core::pretty_fmt!($fmt, false) $(, $arg)*)
@@ -6645,7 +6680,7 @@ impl VirtualMachine {
                                     && bun_core::strings::eql_long(
                                         &msg_chars[..code.len()],
                                         code,
-                                        false,
+                                        bun_core::strings::CheckLen::No,
                                     )
                                     && msg_chars[code.len()] == b':'
                                     && msg_chars[code.len() + 1] == b' '
@@ -6795,12 +6830,17 @@ impl VirtualMachine {
                 let (name_str, loc_str) = {
                     use core::fmt::Write as _;
                     let mut name_str = String::new();
-                    let _ = write!(name_str, "{}", frame.name_formatter(false));
+                    let _ = write!(name_str, "{}", frame.name_formatter(AnsiColors::Disabled));
                     let mut loc_str = String::new();
                     let _ = write!(
                         loc_str,
                         "{}",
-                        frame.source_url_formatter(file, origin, LineColumn::Include, false)
+                        frame.source_url_formatter(
+                            file,
+                            origin,
+                            LineColumn::Include,
+                            AnsiColors::Disabled
+                        )
                     );
                     (name_str, loc_str)
                 };

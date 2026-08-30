@@ -132,7 +132,7 @@ pub fn crc32_bytes(crc: u32, data: &[u8]) -> u32 {
     crc as u32
 }
 
-pub use bun_core::compress::State;
+pub use bun_core::compress::{Chunk, State};
 type ZlibReaderArrayListState = State;
 type ZlibCompressorArrayListState = State;
 
@@ -272,7 +272,7 @@ impl<'a> ZlibReaderArrayList<'a> {
         None
     }
 
-    pub fn read_all(&mut self, is_done: bool) -> Result<(), ZlibError> {
+    pub fn read_all(&mut self, is_done: Chunk) -> Result<(), ZlibError> {
         // We mutate list_ptr directly, so the output-length sync-back is just
         // truncate/set_len. The unconditional epilogue is implemented as an
         // IIFE for the body + a manual epilogue that runs before returning `result`.
@@ -345,7 +345,7 @@ impl<'a> ZlibReaderArrayList<'a> {
                     ReturnCode::BufError => {
                         // BufError with avail_in == 0 means we need more input data
                         if self.zlib.avail_in == 0 {
-                            if is_done {
+                            if is_done == Chunk::Last {
                                 // Stream is truncated - we're at EOF but decoder needs more data
                                 self.state = ZlibReaderArrayListState::Error;
                                 return Err(ZlibError::ZlibError);
@@ -1017,7 +1017,7 @@ impl InflateDecoder {
 
     /// Consume all of `input`, appending decompressed output to `out`
     /// (growing by 4096-byte steps, capped at `max_output_size`). Returns
-    /// `ShortRead` when more input is required and `is_done` is false.
+    /// `ShortRead` when more input is required and `is_done` is [`Chunk::More`].
     ///
     /// The stream state persists across calls so this can be driven one
     /// body chunk at a time.
@@ -1025,7 +1025,7 @@ impl InflateDecoder {
         &mut self,
         mut input: &[u8],
         out: &mut Vec<u8>,
-        is_done: bool,
+        is_done: Chunk,
     ) -> Result<(), ZlibError> {
         if matches!(self.state, State::Error) {
             return Ok(());
@@ -1080,7 +1080,7 @@ impl InflateDecoder {
                 }
                 ReturnCode::BufError => {
                     if input.is_empty() && self.strm.avail_in == 0 {
-                        if is_done {
+                        if is_done == Chunk::Last {
                             self.state = State::Error;
                             return Err(ZlibError::ZlibError);
                         }

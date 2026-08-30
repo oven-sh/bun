@@ -8,10 +8,11 @@ use bun_jsc::{
     Strong,
 };
 use bun_lsquic_sys as lsquic;
+use bun_uws::Fin;
 
 use super::endpoint::alloc_exposed_array_buffer;
 use super::ffi::lsquic_callback;
-use super::session::{QuicSession, SessionEvent};
+use super::session::{QuicSession, SessionEvent, StreamDirection};
 
 const QUIC_STREAM_HEADERS_KIND_HINTS: u32 = 0;
 const QUIC_STREAM_HEADERS_KIND_INITIAL: u32 = 1;
@@ -360,7 +361,7 @@ impl QuicStream {
         self.with_state(|s| s.id)
     }
 
-    fn push_inbound(&self, data: &[u8], fin: bool) {
+    fn push_inbound(&self, data: &[u8], fin: Fin) {
         if self.destroyed.get() {
             return;
         }
@@ -368,7 +369,7 @@ impl QuicStream {
             if !data.is_empty() {
                 inbound.chunks.push_back(data.to_vec());
             }
-            if fin {
+            if fin == Fin::Yes {
                 inbound.ended = true;
             }
         });
@@ -382,7 +383,7 @@ impl QuicStream {
                 self.read_stat(IDX_STATS_MAX_BYTES_ACCUMULATED).max(acc),
             );
         }
-        if fin {
+        if fin == Fin::Yes {
             self.with_state(|s| s.fin_received = 1);
         }
     }
@@ -994,7 +995,9 @@ pub(super) unsafe extern "C" fn on_new_stream(
     let id = stream.id();
     let is_local = (id & 1 == 0) != session.is_server();
     if is_local {
-        if let Some(qs) = session.take_pending_local_stream(id & STREAM_ID_UNI_BIT as u64 != 0) {
+        if let Some(qs) = session.take_pending_local_stream(StreamDirection::from_bool(
+            id & STREAM_ID_UNI_BIT as u64 != 0,
+        )) {
             // SAFETY: pending streams are kept alive by their wrapper Strong.
             unsafe { (*qs).bind_raw(s) };
             session.push_event(SessionEvent::StreamReady {
@@ -1078,11 +1081,11 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
         let n = stream.read(buf);
         match n {
             n if n > 0 => {
-                qs.push_inbound(&buf[..n as usize], false);
+                qs.push_inbound(&buf[..n as usize], Fin::No);
                 got_any = true;
             }
             0 => {
-                qs.push_inbound(&[], true);
+                qs.push_inbound(&[], Fin::Yes);
                 stream.want_read(false);
                 let write_done = qs.with_state(|s| s.fin_sent != 0 || s.write_ended != 0);
                 if write_done {

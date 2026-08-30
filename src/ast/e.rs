@@ -498,16 +498,19 @@ impl Default for ImportIdentifier {
         Self { ref_: Ref::NONE }
     }
 }
+bun_core::bool_enum!(pub WasOriginallyIdentifier);
+
 impl ImportIdentifier {
     #[inline]
-    pub const fn new(ref_: Ref, was_originally_identifier: bool) -> Self {
+    pub const fn new(ref_: Ref, was_originally_identifier: WasOriginallyIdentifier) -> Self {
         // Strip any incoming user bits (the caller may pass an
         // `E::Identifier.ref_` carrying its own flags in bits 1/2) before
         // applying ours, so foreign flags can't leak into this node.
         Self {
-            ref_: ref_
-                .without_user_bits()
-                .with_user_bit(0, was_originally_identifier),
+            ref_: ref_.without_user_bits().with_user_bit(
+                0,
+                matches!(was_originally_identifier, WasOriginallyIdentifier::Yes),
+            ),
         }
     }
 
@@ -1116,6 +1119,8 @@ impl JsonTape {
     }
 }
 
+bun_core::bool_enum!(pub IsSingleLine);
+
 /// `Data::EObjectJSON`: a `(first, count)` span of the document's property-row tape.
 #[repr(C)]
 pub struct ObjectJSON {
@@ -1151,7 +1156,7 @@ impl ObjectJSON {
         tape: core::ptr::NonNull<JsonTape>,
         first: u32,
         count: u32,
-        is_single_line: bool,
+        is_single_line: IsSingleLine,
         close_brace_loc: crate::Loc,
     ) -> Self {
         ObjectJSON {
@@ -1159,7 +1164,7 @@ impl ObjectJSON {
             first,
             count,
             close_brace_loc,
-            is_single_line,
+            is_single_line: is_single_line == IsSingleLine::Yes,
         }
     }
 
@@ -1223,7 +1228,7 @@ impl ArrayJSON {
         tape: core::ptr::NonNull<JsonTape>,
         first: u32,
         count: u32,
-        is_single_line: bool,
+        is_single_line: IsSingleLine,
         close_bracket_loc: crate::Loc,
     ) -> Self {
         ArrayJSON {
@@ -1231,7 +1236,7 @@ impl ArrayJSON {
             first,
             count,
             close_bracket_loc,
-            is_single_line,
+            is_single_line: is_single_line == IsSingleLine::Yes,
         }
     }
 
@@ -1808,7 +1813,11 @@ impl EString {
             // PERF: transcodes to a heap Vec then copies into the bump
             // arena — profile.
             // `fail_if_invalid = false` means the only possible error is `OutOfMemory`.
-            let utf16 = bun_core::handle_oom(strings::to_utf16_alloc_for_real(utf8, false, false));
+            let utf16 = bun_core::handle_oom(strings::to_utf16_alloc_for_real(
+                utf8,
+                strings::FailIfInvalid::No,
+                strings::Sentinel::No,
+            ));
             let arena_slice: &mut [u16] = bump.alloc_slice_copy(&utf16);
             Self::init_utf16(arena_slice)
         }
@@ -1858,7 +1867,7 @@ impl EString {
 
     pub fn eql_bytes(&self, other: &[u8]) -> bool {
         if self.is_utf8() {
-            strings::eql_long(&self.data, other, true)
+            strings::eql_long(&self.data, other, strings::CheckLen::Yes)
         } else {
             strings::utf16_eql_string(self.slice16(), other)
         }
@@ -1883,7 +1892,11 @@ impl EString {
         let mut i = 0usize;
         let mut next: Option<&EString> = Some(self);
         while let Some(cur) = next {
-            if !strings::eql_long(&cur.data, &value[i..i + cur.data.len()], false) {
+            if !strings::eql_long(
+                &cur.data,
+                &value[i..i + cur.data.len()],
+                strings::CheckLen::No,
+            ) {
                 return false;
             }
             i += cur.data.len();
@@ -2000,7 +2013,7 @@ impl EString {
     pub fn eql_string(&self, other: &EString) -> bool {
         if self.is_utf8() {
             if other.is_utf8() {
-                strings::eql_long(&self.data, &other.data, true)
+                strings::eql_long(&self.data, &other.data, strings::CheckLen::Yes)
             } else {
                 strings::utf16_eql_string(other.slice16(), &self.data)
             }
@@ -2558,13 +2571,15 @@ mod json_tape_tests {
         let kb = tape.get().alloc_str(b"b");
         let (first, count) = tape.get().append_props(&[prop(kb, JsonValue::Null)], &[]);
         // SAFETY: the tape's own pointer, as `Parser` passes it.
-        let inner = unsafe { ObjectJSON::new(tape.ptr(), first, count, true, Loc::EMPTY) };
+        let inner =
+            unsafe { ObjectJSON::new(tape.ptr(), first, count, IsSingleLine::Yes, Loc::EMPTY) };
 
         // The parse continues: another string, then the outer object's rows.
         let ka = tape.get().alloc_str(b"a");
         let (first, count) = tape.get().append_props(&[prop(ka, JsonValue::Null)], &[]);
         // SAFETY: as above.
-        let outer = unsafe { ObjectJSON::new(tape.ptr(), first, count, true, Loc::EMPTY) };
+        let outer =
+            unsafe { ObjectJSON::new(tape.ptr(), first, count, IsSingleLine::Yes, Loc::EMPTY) };
 
         // Post-parse reads, after every one of those writes.
         assert_eq!(inner.properties().len(), 1);
@@ -2581,11 +2596,13 @@ mod json_tape_tests {
 
         let (first, count) = tape.get().append_items(&[JsonValue::Null], &[]);
         // SAFETY: the tape's own pointer, as `Parser` passes it.
-        let inner = unsafe { ArrayJSON::new(tape.ptr(), first, count, true, Loc::EMPTY) };
+        let inner =
+            unsafe { ArrayJSON::new(tape.ptr(), first, count, IsSingleLine::Yes, Loc::EMPTY) };
 
         let (first, count) = tape.get().append_items(&[JsonValue::Boolean(true)], &[]);
         // SAFETY: as above.
-        let outer = unsafe { ArrayJSON::new(tape.ptr(), first, count, true, Loc::EMPTY) };
+        let outer =
+            unsafe { ArrayJSON::new(tape.ptr(), first, count, IsSingleLine::Yes, Loc::EMPTY) };
 
         assert_eq!(inner.items().len(), 1);
         assert!(matches!(inner.items()[0], JsonValue::Null));
@@ -2598,9 +2615,9 @@ mod json_tape_tests {
     fn zero_count_spans_do_not_read_the_tape() {
         let tape = TapeOwner::new();
         // SAFETY: the tape's own pointer.
-        let o = unsafe { ObjectJSON::new(tape.ptr(), 0, 0, true, Loc::EMPTY) };
+        let o = unsafe { ObjectJSON::new(tape.ptr(), 0, 0, IsSingleLine::Yes, Loc::EMPTY) };
         // SAFETY: as above.
-        let a = unsafe { ArrayJSON::new(tape.ptr(), 0, 0, true, Loc::EMPTY) };
+        let a = unsafe { ArrayJSON::new(tape.ptr(), 0, 0, IsSingleLine::Yes, Loc::EMPTY) };
         assert!(o.properties().is_empty());
         assert_eq!(o.value_locs(), Some(&[][..]));
         assert!(a.items().is_empty());
@@ -2639,13 +2656,15 @@ mod json_tape_tests {
         let kb = tape(tape_ptr).alloc_str(b"b");
         let (first, count) = tape(tape_ptr).append_props(&[prop(kb, JsonValue::Null)], &[]);
         // SAFETY: the tape's own pointer.
-        let inner = unsafe { ObjectJSON::new(tape_ptr, first, count, true, Loc::EMPTY) };
+        let inner =
+            unsafe { ObjectJSON::new(tape_ptr, first, count, IsSingleLine::Yes, Loc::EMPTY) };
 
         // The parse keeps appending after the node is built.
         let ka = tape(tape_ptr).alloc_str(b"a");
         let (first, count) = tape(tape_ptr).append_props(&[prop(ka, JsonValue::Null)], &[]);
         // SAFETY: as above.
-        let outer = unsafe { ObjectJSON::new(tape_ptr, first, count, true, Loc::EMPTY) };
+        let outer =
+            unsafe { ObjectJSON::new(tape_ptr, first, count, IsSingleLine::Yes, Loc::EMPTY) };
 
         assert_eq!(inner.properties()[0].key.slice(), b"b");
         assert_eq!(outer.properties()[0].key.slice(), b"a");

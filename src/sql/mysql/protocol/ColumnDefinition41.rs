@@ -71,6 +71,12 @@ impl ColumnFlags {
     }
 }
 
+bun_core::bool_enum!(
+    /// Whether the column's `name_or_index` differs from the previously
+    /// decoded definition in this slot.
+    pub Changed
+);
+
 /// Chunk kind in MariaDB's extended column metadata: 0 carries a type name
 /// ("uuid", "inet4", ...), 1 carries a storage format name ("json").
 const EXTENDED_METADATA_FORMAT: u8 = 1;
@@ -102,7 +108,7 @@ impl ColumnDefinition41 {
         &mut self,
         reader: &mut NewReader<Context>,
         extended_type_info: bool,
-    ) -> Result<bool, AnyMySQLError> {
+    ) -> Result<Changed, AnyMySQLError> {
         // Length encoded strings
         self.catalog = reader.encode_len_string()?;
         bun_core::scoped_log!(
@@ -211,14 +217,14 @@ impl ColumnDefinition41 {
         // According to mariadb, there seem to be extra 2 bytes at the end that is not being used
         reader.skip(2);
 
-        Ok(changed)
+        Ok(Changed::from_bool(changed))
     }
 
     pub fn decode<Context: ReaderContext>(
         &mut self,
         reader: &mut NewReader<Context>,
         extended_type_info: bool,
-    ) -> Result<bool, AnyMySQLError> {
+    ) -> Result<Changed, AnyMySQLError> {
         self.decode_internal(reader, extended_type_info)
     }
 }

@@ -35,10 +35,10 @@ use crate::resolution_real::{self as resolution, Resolution};
 use crate::string_builder;
 use crate::update_request::UpdateRequest;
 use crate::{
-    self as Install, DependencyID, ExternalSlice, Features, PackageID, PackageManager,
-    PackageNameAndVersionHash, PackageNameHash, TruncatedPackageNameHash, dependency,
-    dependency::Dependency, initialize_store, invalid_dependency_id, invalid_package_id,
-    npm as Npm,
+    self as Install, DependencyID, ExternalSlice, Features, InstallRootDependencies, PackageID,
+    PackageManager, PackageNameAndVersionHash, PackageNameHash, TruncatedPackageNameHash,
+    dependency, dependency::Dependency, initialize_store, invalid_dependency_id,
+    invalid_package_id, npm as Npm,
 };
 use bun_install_types::NodeLinker::NodeLinker;
 
@@ -369,6 +369,12 @@ pub enum LoadResult<'a> {
     Ok(LoadResultOk<'a>),
 }
 
+bun_core::bool_enum!(
+    /// Whether the chosen `configVersion` differs from what the lockfile had
+    /// (and therefore needs to be saved).
+    pub ConfigVersionChanged
+);
+
 impl<'a> LoadResult<'a> {
     pub(crate) fn loaded_from_text_lockfile(&self) -> bool {
         match self {
@@ -443,21 +449,23 @@ impl<'a> LoadResult<'a> {
     }
 
     /// configVersion and boolean for if the configVersion previously existed/needs to be saved to lockfile
-    pub(crate) fn choose_config_version(&self) -> (ConfigVersion, bool) {
+    pub(crate) fn choose_config_version(&self) -> (ConfigVersion, ConfigVersionChanged) {
         match self {
-            LoadResult::NotFound | LoadResult::Err(_) => (ConfigVersion::CURRENT, true),
+            LoadResult::NotFound | LoadResult::Err(_) => {
+                (ConfigVersion::CURRENT, ConfigVersionChanged::Yes)
+            }
             LoadResult::Ok(ok) => match ok.migrated {
                 Migrated::None => {
                     if let Some(config_version) = ok.lockfile.saved_config_version {
-                        return (config_version, false);
+                        return (config_version, ConfigVersionChanged::No);
                     }
 
                     // existing bun project without configVersion
-                    (ConfigVersion::V0, true)
+                    (ConfigVersion::V0, ConfigVersionChanged::Yes)
                 }
-                Migrated::Pnpm => (ConfigVersion::V1, true),
-                Migrated::Npm => (ConfigVersion::V0, true),
-                Migrated::Yarn => (ConfigVersion::V0, true),
+                Migrated::Pnpm => (ConfigVersion::V1, ConfigVersionChanged::Yes),
+                Migrated::Npm => (ConfigVersion::V0, ConfigVersionChanged::Yes),
+                Migrated::Yarn => (ConfigVersion::V0, ConfigVersionChanged::Yes),
             },
         }
     }
@@ -1330,7 +1338,13 @@ impl<'a> Cloner<'a> {
 impl Lockfile {
     /// Re-hoists while a pass bound an optional peer late; a reload has that binding up front.
     pub(crate) fn resolve(&mut self, log: &mut bun_ast::Log) -> Result<(), tree::SubtreeError> {
-        while self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)? {}
+        while self.hoist::<{ tree::BuilderMethod::Resolvable }>(
+            log,
+            None,
+            InstallRootDependencies::Yes,
+            &[],
+            None,
+        )? {}
         Ok(())
     }
 
@@ -1338,7 +1352,7 @@ impl Lockfile {
         &mut self,
         log: &mut bun_ast::Log,
         manager: &mut PackageManager,
-        install_root_dependencies: bool,
+        install_root_dependencies: InstallRootDependencies,
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
     ) -> Result<(), tree::SubtreeError> {
@@ -1359,7 +1373,7 @@ impl Lockfile {
         // `tree::Builder` stores these unconditionally (Option/slice), so
         // accept the concrete shapes for all `METHOD`s.
         manager: Option<&PackageManager>,
-        install_root_dependencies: bool,
+        install_root_dependencies: InstallRootDependencies,
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
     ) -> Result<bool, tree::SubtreeError> {
@@ -1494,7 +1508,7 @@ impl Lockfile {
                         scope,
                         pkg_name_str,
                         pkg_name_hash,
-                        false,
+                        Npm::ExtendedManifest::No,
                     ) else {
                         continue;
                     };
@@ -1730,7 +1744,8 @@ impl<'a> Printer<'a> {
         // Erase to raw so the `entries_mutex` reborrow below doesn't conflict
         // with the `&mut self` borrow `read_directory` took.
         let entries_option: *const Fs::EntriesOption =
-            fs.fs.read_directory(top_level_dir, None, 0, true)?;
+            fs.fs
+                .read_directory(top_level_dir, None, 0, Fs::StoreFd::Yes)?;
         // Copy the listing's basenames out under `entries_mutex`; `.data` must
         // only be probed while the lock is held.
         let entries = {
@@ -1752,7 +1767,7 @@ impl<'a> Printer<'a> {
             &entries,
             &[] as &[&[u8]],
             DotEnv::DotEnvFileSuffix::Production,
-            false,
+            DotEnv::SkipDefaultEnv::No,
         )?;
         let mut log = bun_ast::Log::init();
         options.load(
@@ -2722,6 +2737,12 @@ impl<'a> EqlSorter<'a> {
     }
 }
 
+bun_core::bool_enum!(
+    /// Whether `generate_meta_hash` also prints the alphabetized name@version
+    /// listing it hashes.
+    pub PrintNameVersion
+);
+
 impl Lockfile {
     /// A placement of `r` bound past `r_loaded_package_count` was rebound after loading: a change.
     pub(crate) fn eql(
@@ -2893,7 +2914,7 @@ impl Lockfile {
 
     pub fn has_meta_hash_changed(
         &mut self,
-        print_name_version_string: bool,
+        print_name_version_string: PrintNameVersion,
         packages_len: usize,
     ) -> Result<bool, BunError> {
         let previous_meta_hash = self.meta_hash;
@@ -2901,13 +2922,13 @@ impl Lockfile {
         Ok(!strings::eql_long(
             &previous_meta_hash,
             &self.meta_hash,
-            false,
+            strings::CheckLen::No,
         ))
     }
 
     pub(crate) fn generate_meta_hash(
         &self,
-        print_name_version_string: bool,
+        print_name_version_string: PrintNameVersion,
         packages_len: usize,
     ) -> Result<MetaHash, BunError> {
         if packages_len <= 1 {
@@ -3047,7 +3068,7 @@ impl Lockfile {
 
         let len = string_builder.len;
         let alphabetized_name_version_string = &string_builder.allocated_slice()[..len];
-        if print_name_version_string {
+        if print_name_version_string == PrintNameVersion::Yes {
             Output::flush();
             Output::disable_buffering();
             Output::writer()

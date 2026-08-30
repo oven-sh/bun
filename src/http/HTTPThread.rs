@@ -971,7 +971,7 @@ impl HttpThread {
                 drop(core::mem::take(&mut client.prev_redirect));
                 drop(core::mem::take(&mut client.compressed_request_body));
                 drop(core::mem::take(&mut client.proxy_authorization));
-                client.close_proxy_tunnel(false);
+                client.close_proxy_tunnel(crate::ShutdownTunnel::No);
                 drop(core::mem::take(&mut client.custom_ssl_ctx));
                 drop(core::mem::take(&mut client.state));
                 if let Some(f) = release.release_at_shutdown {

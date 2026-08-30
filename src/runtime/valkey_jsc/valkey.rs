@@ -176,6 +176,8 @@ pub enum Address {
     Host { host: Box<[u8]>, port: u16 },
 }
 
+bun_core::bool_enum!(pub(crate) Transport { Plain, Tls });
+
 impl Address {
     pub(crate) fn hostname(&self) -> &[u8] {
         match self {
@@ -196,14 +198,19 @@ impl Address {
         owner: *mut Owner,
         group: &mut SocketGroup,
         ssl_ctx: Option<*mut SslCtx>,
-        is_tls: bool,
+        is_tls: Transport,
     ) -> Result<AnySocket, crate::Error> {
-        if is_tls {
+        if is_tls == Transport::Tls {
             let kind = SocketKind::ValkeyTls;
             let sock = match self {
-                Address::Unix(path) => {
-                    uws::SocketTLS::connect_unix_group(group, kind, ssl_ctx, path, owner, false)?
-                }
+                Address::Unix(path) => uws::SocketTLS::connect_unix_group(
+                    group,
+                    kind,
+                    ssl_ctx,
+                    path,
+                    owner,
+                    uws::AllowHalfOpen::No,
+                )?,
                 Address::Host { host, port } => uws::SocketTLS::connect_group(
                     group,
                     kind,
@@ -211,16 +218,21 @@ impl Address {
                     host,
                     i32::from(*port),
                     owner,
-                    false,
+                    uws::AllowHalfOpen::No,
                 )?,
             };
             Ok(AnySocket::SocketTls(sock))
         } else {
             let kind = SocketKind::Valkey;
             let sock = match self {
-                Address::Unix(path) => {
-                    uws::SocketTCP::connect_unix_group(group, kind, ssl_ctx, path, owner, false)?
-                }
+                Address::Unix(path) => uws::SocketTCP::connect_unix_group(
+                    group,
+                    kind,
+                    ssl_ctx,
+                    path,
+                    owner,
+                    uws::AllowHalfOpen::No,
+                )?,
                 Address::Host { host, port } => uws::SocketTCP::connect_group(
                     group,
                     kind,
@@ -228,7 +240,7 @@ impl Address {
                     host,
                     i32::from(*port),
                     owner,
-                    false,
+                    uws::AllowHalfOpen::No,
                 )?,
             };
             Ok(AnySocket::SocketTcp(sock))

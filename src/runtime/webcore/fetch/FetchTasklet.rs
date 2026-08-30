@@ -29,7 +29,7 @@ use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store
 use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyValueError};
 use crate::webcore::fetch::fetch_request_body_sink::{FetchRequestBodySink, RequestBodyChunk};
 use crate::webcore::readable_stream::{ReadableStream, Strong as ReadableStreamStrong};
-use crate::webcore::response::HeadersRef;
+use crate::webcore::response::{HeadersRef, Redirected};
 use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable};
 use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, SinkHandle};
@@ -277,6 +277,8 @@ impl HTTPRequestBody {
     }
 }
 
+bun_core::bool_enum!(LastChunk);
+
 impl Drop for FetchTasklet {
     fn drop(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "deinit");
@@ -340,11 +342,11 @@ impl FetchTasklet {
     /// `on_data` call per the `StreamResult::Temporary*` contract — `on_data`
     /// copies/consumes before returning and never retains the slice.
     #[inline]
-    fn temporary_chunk(chunk: &[u8], done: bool) -> StreamResult {
+    fn temporary_chunk(chunk: &[u8], done: LastChunk) -> StreamResult {
         // See INVARIANT above. `RawSlice` is non-owning; backing buffer
         // outlives the synchronous `on_data` call.
         let v = bun_ptr::RawSlice::new(chunk);
-        if done {
+        if done == LastChunk::Yes {
             StreamResult::TemporaryAndDone(v)
         } else {
             StreamResult::Temporary(v)
@@ -789,14 +791,14 @@ impl FetchTasklet {
                 bytes.size_hint.set(self.get_size_hint());
                 buffer_reset.set(false);
                 let chunk = self.scheduled_response_buffer.list.as_slice();
-                bytes.on_data(Self::temporary_chunk(chunk, true));
+                bytes.on_data(Self::temporary_chunk(chunk, LastChunk::Yes));
                 return Ok(());
             }
         } else if let Some(bytes) = self.response_stream.bytes() {
             bun_output::scoped_log!(FetchTasklet, "onBodyReceived response_stream");
             bytes.size_hint.set(self.get_size_hint());
             let chunk = self.scheduled_response_buffer.list.as_slice();
-            bytes.on_data(Self::temporary_chunk(chunk, false));
+            bytes.on_data(Self::temporary_chunk(chunk, LastChunk::No));
             if self.response_stream.is_held() {
                 self.after_body_chunk_delivered(&bytes);
             }
@@ -816,11 +818,11 @@ impl FetchTasklet {
                     let chunk = self.scheduled_response_buffer.list.as_slice();
 
                     if self.result.has_more {
-                        bytes.on_data(Self::temporary_chunk(chunk, false));
+                        bytes.on_data(Self::temporary_chunk(chunk, LastChunk::No));
                     } else {
                         readable.value.ensure_still_alive();
                         response.detach_readable_stream(&global_this);
-                        bytes.on_data(Self::temporary_chunk(chunk, true));
+                        bytes.on_data(Self::temporary_chunk(chunk, LastChunk::Yes));
                     }
 
                     return Ok(());
@@ -1771,7 +1773,7 @@ impl FetchTasklet {
             None => BunString::clone_utf8(http_response.status),
         };
         let url = BunString::clone_utf8(metadata.url.slice());
-        let redirected = self.result.redirected;
+        let redirected = Redirected::from_bool(self.result.redirected);
         let body = if self.response_body_is_null(status_code) {
             self.null_body_value()
         } else {

@@ -3,6 +3,7 @@ use core::mem::{align_of, size_of};
 use bun_alloc::AllocError;
 
 use crate::autolinks::is_list_bullet;
+use crate::inlines::TrimTrailing;
 use crate::parser::{self, BlockHeader, Parser};
 use crate::types::{self, BlockType, Container, VerbatimLine};
 
@@ -273,9 +274,9 @@ impl Parser<'_> {
                 BlockType::Code => self.process_code_block(&block_lines, data, flags)?,
                 BlockType::Html => self.process_html_block(&block_lines)?,
                 BlockType::Table => self.process_table_block(&block_lines, data)?,
-                BlockType::P => self.process_leaf_block(&block_lines, true)?,
-                BlockType::H => self.process_leaf_block(&block_lines, true)?,
-                _ => self.process_leaf_block(&block_lines, false)?,
+                BlockType::P => self.process_leaf_block(&block_lines, TrimTrailing::Yes)?,
+                BlockType::H => self.process_leaf_block(&block_lines, TrimTrailing::Yes)?,
+                _ => self.process_leaf_block(&block_lines, TrimTrailing::No)?,
             }
             if !is_in_tight_list || block_type != BlockType::P {
                 self.leave_block(block_type, data)?;

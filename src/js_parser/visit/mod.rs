@@ -7,7 +7,7 @@ pub(crate) mod visit_expr;
 pub(crate) mod visit_stmt;
 
 use crate::lexer as js_lexer;
-use crate::p::{LowerUsingDeclarationsContext, P};
+use crate::p::{LowerUsingDeclarationsContext, P, ShouldHoistFns};
 use crate::parser::{
     ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
     Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, VisitArgsOpts,
@@ -36,6 +36,8 @@ use core::ptr::NonNull;
 
 // In the AST crate, ListManaged is arena-backed.
 type ListManaged<'bump, T> = BumpVec<'bump, T>;
+
+bun_core::bool_enum!(pub(crate) IsInOrOf);
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // Thin alias of `current_scope_mut()` kept for local readability.
@@ -560,10 +562,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub(crate) fn visit_for_loop_init(&mut self, stmt: Stmt, is_in_or_of: bool) -> Stmt {
+    pub(crate) fn visit_for_loop_init(&mut self, stmt: Stmt, is_in_or_of: IsInOrOf) -> Stmt {
         match stmt.data {
             StmtData::SExpr(mut st) => {
-                let assign_target = if is_in_or_of {
+                let assign_target = if is_in_or_of == IsInOrOf::Yes {
                     AssignTarget::Replace
                 } else {
                     AssignTarget::None
@@ -1539,7 +1541,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let raw = core::mem::replace(stmts, ListManaged::new_in(arena)).into_bump_slice_mut();
             // SAFETY: current_scope is a valid arena ptr for the parse.
             let parent_is_none = p.current_scope().parent.is_none();
-            *stmts = ctx.finalize(p, raw, parent_is_none);
+            *stmts = ctx.finalize(p, raw, ShouldHoistFns::from_bool(parent_is_none));
         }
 
         #[cfg(debug_assertions)]

@@ -1,7 +1,7 @@
 use std::io::Write as _;
 
 use crate::cli::command::{Context, HotReload};
-use bun_bundler::bundle_v2::{self, BundleV2};
+use bun_bundler::bundle_v2::{self, BundleV2, CliWatchFlag};
 use bun_bundler::linker_context::metafile_builder as MetafileBuilder;
 use bun_bundler::options;
 use bun_bundler::transpiler;
@@ -563,9 +563,13 @@ impl BuildCommand {
                 ct.options.define = options::Define::init(
                     user_defines,
                     None,
-                    this_transpiler.options.define.drop_debugger,
-                    this_transpiler.options.dead_code_elimination
-                        && this_transpiler.options.minify_syntax,
+                    bun_bundler::defines::DropDebugger::from_bool(
+                        this_transpiler.options.define.drop_debugger,
+                    ),
+                    bun_bundler::defines::OmitUnusedGlobalCalls::from_bool(
+                        this_transpiler.options.dead_code_elimination
+                            && this_transpiler.options.minify_syntax,
+                    ),
                 )?;
             }
 
@@ -629,7 +633,10 @@ impl BuildCommand {
 
                     if !result.errors.is_empty() || result.output_files.is_empty() {
                         Output::flush();
-                        exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
+                        exit_or_watch(
+                            1,
+                            CliWatchFlag::from_bool(ctx.debug.hot_reload == HotReload::Watch),
+                        );
                     }
                 }
 
@@ -664,7 +671,7 @@ impl BuildCommand {
                 this_transpiler,
                 arena,
                 Some(core::ptr::NonNull::from(&mut event_loop)),
-                ctx.debug.hot_reload == HotReload::Watch,
+                bundle_v2::CliWatchFlag::from_bool(ctx.debug.hot_reload == HotReload::Watch),
                 &mut reachable_file_count,
                 &mut minify_duration,
                 &mut input_code_length,
@@ -681,7 +688,10 @@ impl BuildCommand {
                     }
 
                     Output::flush();
-                    exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
+                    exit_or_watch(
+                        1,
+                        CliWatchFlag::from_bool(ctx.debug.hot_reload == HotReload::Watch),
+                    );
                 }
             };
 
@@ -701,7 +711,10 @@ impl BuildCommand {
                                 "could not open metafile {}",
                                 (bun_fmt::quote(&ctx.bundler_options.metafile),),
                             );
-                            exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
+                            exit_or_watch(
+                                1,
+                                CliWatchFlag::from_bool(ctx.debug.hot_reload == HotReload::Watch),
+                            );
                         }
                     };
 
@@ -713,7 +726,10 @@ impl BuildCommand {
                                 "could not write metafile {}",
                                 (bun_fmt::quote(&ctx.bundler_options.metafile),),
                             );
-                            exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
+                            exit_or_watch(
+                                1,
+                                CliWatchFlag::from_bool(ctx.debug.hot_reload == HotReload::Watch),
+                            );
                         }
                     }
                     drop(file);
@@ -741,7 +757,12 @@ impl BuildCommand {
                                     "could not open metafile-md {}",
                                     (bun_fmt::quote(&ctx.bundler_options.metafile_md),),
                                 );
-                                exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
+                                exit_or_watch(
+                                    1,
+                                    CliWatchFlag::from_bool(
+                                        ctx.debug.hot_reload == HotReload::Watch,
+                                    ),
+                                );
                             }
                         };
 
@@ -753,7 +774,12 @@ impl BuildCommand {
                                     "could not write metafile-md {}",
                                     (bun_fmt::quote(&ctx.bundler_options.metafile_md),),
                                 );
-                                exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
+                                exit_or_watch(
+                                    1,
+                                    CliWatchFlag::from_bool(
+                                        ctx.debug.hot_reload == HotReload::Watch,
+                                    ),
+                                );
                             }
                         }
                         drop(file);
@@ -772,7 +798,10 @@ impl BuildCommand {
                 &mut output_files,
             ) {
                 Output::err_generic("{}", (msg.as_str(),));
-                exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
+                exit_or_watch(
+                    1,
+                    CliWatchFlag::from_bool(ctx.debug.hot_reload == HotReload::Watch),
+                );
             }
         }
 
@@ -844,7 +873,10 @@ impl BuildCommand {
                             "could not open output directory {}",
                             (bun_fmt::quote(root_path),),
                         );
-                        exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
+                        exit_or_watch(
+                            1,
+                            CliWatchFlag::from_bool(ctx.debug.hot_reload == HotReload::Watch),
+                        );
                     }
                 }
             };
@@ -873,7 +905,9 @@ impl BuildCommand {
                 print_summary(
                     bundled_end,
                     minify_duration,
-                    opt_minify_identifiers || opt_minify_whitespace || opt_minify_syntax,
+                    Minified::from_bool(
+                        opt_minify_identifiers || opt_minify_whitespace || opt_minify_syntax,
+                    ),
                     input_code_length as usize,
                     reachable_file_count,
                     output_files,
@@ -1187,13 +1221,13 @@ impl BuildCommand {
         ))?;
         exit_or_watch(
             if had_err { 1 } else { 0 },
-            ctx.debug.hot_reload == HotReload::Watch,
+            CliWatchFlag::from_bool(ctx.debug.hot_reload == HotReload::Watch),
         );
     }
 }
 
-fn exit_or_watch(code: u8, watch: bool) -> ! {
-    if watch {
+fn exit_or_watch(code: u8, watch: CliWatchFlag) -> ! {
+    if watch == CliWatchFlag::Yes {
         // the watcher thread will exit the process. `std::thread::sleep`
         // accepts arbitrarily large Durations on every supported platform
         // (the stdlib loops internally where the OS primitive is narrower),
@@ -1203,14 +1237,17 @@ fn exit_or_watch(code: u8, watch: bool) -> ! {
     Global::exit(u32::from(code));
 }
 
+bun_core::bool_enum!(Minified);
+
 fn print_summary(
     bundled_end: i128,
     minify_duration: u64,
-    minified: bool,
+    minified: Minified,
     input_code_length: usize,
     reachable_file_count: usize,
     output_files: &[options::OutputFile],
 ) {
+    let minified = minified == Minified::Yes;
     let padding_buf = [b' '; 16];
 
     let bundle_until_now =

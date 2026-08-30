@@ -47,7 +47,7 @@ unsafe impl Send for CacheState {}
 struct Entry {
     /// `path.text` of the module (absolute file path).
     filename: Box<[u8]>,
-    is_cjs: bool,
+    is_cjs: ModuleFormat,
     code_hash: [u8; HASH_SIZE],
     code_size: u32,
     /// Post-transpile text; `None` when the module never transpiled
@@ -171,10 +171,12 @@ fn errno_tail(e: &sys::Error) -> String {
     }
 }
 
+bun_core::bool_enum!(pub ModuleFormat { Esm, Cjs });
+
 /// Human-readable module name for logs: plain path for CommonJS, `file://`
 /// URL for ESM — matching Node's output.
-fn display_name(filename: &[u8], is_cjs: bool) -> String {
-    if is_cjs {
+fn display_name(filename: &[u8], is_cjs: ModuleFormat) -> String {
+    if is_cjs == ModuleFormat::Cjs {
         filename.as_bstr().to_string()
     } else if cfg!(windows) {
         let mut bytes = Vec::with_capacity(filename.len() + 8);
@@ -191,8 +193,11 @@ fn display_name(filename: &[u8], is_cjs: bool) -> String {
     }
 }
 
-fn type_name(is_cjs: bool) -> &'static str {
-    if is_cjs { "CommonJS" } else { "ESM" }
+fn type_name(is_cjs: ModuleFormat) -> &'static str {
+    match is_cjs {
+        ModuleFormat::Cjs => "CommonJS",
+        ModuleFormat::Esm => "ESM",
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -208,8 +213,8 @@ fn sha256(bytes: &[u8]) -> [u8; HASH_SIZE] {
 
 /// First 8 digest bytes of `SHA256(type byte || filename)`: the in-memory map
 /// key and the on-disk entry name (16 hex chars).
-fn cache_key(filename: &[u8], is_cjs: bool) -> u64 {
-    let type_byte: [u8; 1] = [is_cjs as u8];
+fn cache_key(filename: &[u8], is_cjs: ModuleFormat) -> u64 {
+    let type_byte: [u8; 1] = [(is_cjs == ModuleFormat::Cjs) as u8];
     let mut ctx = core::mem::MaybeUninit::<boring::SHA256_CTX>::uninit();
     let mut out = [0u8; HASH_SIZE];
     // SAFETY: `SHA256_Init` fully initializes the context; updates/final only
@@ -231,7 +236,7 @@ fn hex(digest: &[u8; HASH_SIZE]) -> String {
 /// Portable mode keys on the path relative to the cache dir (Node parity).
 /// Falls back to absolute keys when no relative form exists (e.g. different
 /// Windows drives, where `relative` returns `to` unchanged — Node parity).
-fn key_for(state: &CacheState, filename: &[u8], is_cjs: bool) -> u64 {
+fn key_for(state: &CacheState, filename: &[u8], is_cjs: ModuleFormat) -> u64 {
     if state.portable {
         // Thread-local scratch result: consumed before any other resolve call.
         let rel = bun_paths::resolve_path::relative(&state.dir, filename);
@@ -554,7 +559,7 @@ pub fn get_dir() -> Option<Vec<u8>> {
 /// transpile text). The pointer stays valid for the process (entry map owns it).
 pub fn fetch(
     filename: &[u8],
-    is_cjs: bool,
+    is_cjs: ModuleFormat,
     code: &[u8],
 ) -> Option<crate::resolved_source::Bytecode> {
     if !is_enabled() || filename.is_empty() || !bun_paths::is_absolute(filename) {
@@ -622,7 +627,7 @@ pub fn fetch(
 /// Parse-failure hook: mirrors Node registering an entry before compilation.
 /// The entry stays "not initialized" so exit-time persist logs the skip line
 /// (and the cache directory exists with zero entries — Node parity).
-pub fn note_parse_failure(filename: &[u8], is_cjs: bool) {
+pub fn note_parse_failure(filename: &[u8], is_cjs: ModuleFormat) {
     if !is_enabled() || filename.is_empty() || !bun_paths::is_absolute(filename) {
         return;
     }
@@ -950,7 +955,7 @@ struct PersistJob {
     format: Format,
     code: Box<[u8]>,
     filename: Box<[u8]>,
-    is_cjs: bool,
+    is_cjs: ModuleFormat,
     code_size: u32,
     code_hash: [u8; HASH_SIZE],
 }
@@ -986,10 +991,9 @@ fn collect_persist_jobs(state: &mut CacheState) -> Vec<PersistJob> {
         };
         jobs.push(PersistJob {
             key,
-            format: if entry.is_cjs {
-                Format::Cjs
-            } else {
-                Format::Esm
+            format: match entry.is_cjs {
+                ModuleFormat::Cjs => Format::Cjs,
+                ModuleFormat::Esm => Format::Esm,
             },
             code,
             filename: entry.filename.clone(),

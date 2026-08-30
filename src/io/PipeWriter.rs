@@ -16,9 +16,9 @@ use bun_sys::{self as sys, Fd};
 
 use crate::{EventLoopHandle, FilePollFlag, FilePollKind, FilePollRef, Owner, PollTag};
 
-use crate::pipes::{FileType, PollOrFd};
+use crate::pipes::{CloseFd, FileType, IsPollable, PollOrFd, ReceivedHup};
 #[cfg(windows)]
-use crate::source::Source;
+use crate::source::{Source, WasCanceled};
 
 bun_core::define_scoped_log!(log, PipeWriter, hidden);
 
@@ -119,11 +119,11 @@ pub trait PosixPipeWriter {
         WriteResult::Wrote(offset)
     }
 
-    fn on_poll(&mut self, size_hint: isize, received_hup: bool) {
+    fn on_poll(&mut self, size_hint: isize, received_hup: ReceivedHup) {
         // reshaped for borrowck — capture buffer.len() before further &mut self calls.
         let buffer_len = self.get_buffer().len();
         log!("onPoll({})", buffer_len);
-        if buffer_len == 0 && !received_hup {
+        if buffer_len == 0 && received_hup == ReceivedHup::No {
             let self_addr = std::ptr::from_ref(self).cast::<()>() as usize;
             log!(
                 "PosixPipeWriter(0x{:x}) handle={}",
@@ -180,7 +180,7 @@ pub trait PosixPipeWriter {
     /// and parents rely on no `on_write` arriving after `on_error`). An error
     /// is always `Err`: `try_write` reports a short write as `Pending`, never
     /// as `Wrote`, so an error here means nothing was written this round.
-    fn drain_buffered_data(&self, max_write_size: usize, received_hup: bool) -> WriteResult {
+    fn drain_buffered_data(&self, max_write_size: usize, received_hup: ReceivedHup) -> WriteResult {
         let _ = received_hup; // autofix
 
         let buf_len = self.get_buffer().len();
@@ -482,7 +482,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
                     Some(parent.cast()),
                     // SAFETY: parent was set via set_parent with a *mut Parent.
                     Some(|ctx: *mut c_void| unsafe { Parent::on_close(ctx.cast::<Parent>()) }),
-                    self.close_fd,
+                    CloseFd::from_bool(self.close_fd),
                 );
             }
         }
@@ -518,10 +518,10 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
 
     /// On POSIX a `MovableIfWindowsFd` never transfers ownership, so callers
     /// pass the plain `Fd` (via `MovableIfWindowsFd::get_posix()` when needed).
-    pub fn start(&mut self, rawfd: Fd, pollable: bool) -> sys::Result<()> {
+    pub fn start(&mut self, rawfd: Fd, pollable: IsPollable) -> sys::Result<()> {
         let fd = rawfd;
-        self.pollable = pollable;
-        if !pollable {
+        self.pollable = pollable == IsPollable::Yes;
+        if pollable == IsPollable::No {
             debug_assert!(!matches!(self.handle, PollOrFd::Poll(_)));
             self.handle = PollOrFd::Fd(fd);
             return sys::Result::Ok(());
@@ -957,9 +957,9 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
         let received_hup = 'brk: {
             if let Some(poll) = self.get_poll() {
-                break 'brk poll.has_flag(FilePollFlag::Hup);
+                break 'brk ReceivedHup::from_bool(poll.has_flag(FilePollFlag::Hup));
             }
-            false
+            ReceivedHup::No
         };
 
         let rc = self.drain_buffered_data(usize::MAX, received_hup);
@@ -1033,8 +1033,8 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         );
     }
 
-    pub fn start(&mut self, fd: Fd, is_pollable: bool) -> sys::Result<()> {
-        if !is_pollable {
+    pub fn start(&mut self, fd: Fd, is_pollable: IsPollable) -> sys::Result<()> {
+        if is_pollable == IsPollable::No {
             self.close();
             self.handle = PollOrFd::Fd(fd);
             return sys::Result::Ok(());
@@ -1242,7 +1242,7 @@ pub trait BaseWindowsPipeWriter: Sized {
         self.start_with_current_pipe()
     }
 
-    fn start_sync(&mut self, fd: Fd, _pollable: bool) -> sys::Result<()> {
+    fn start_sync(&mut self, fd: Fd, _pollable: IsPollable) -> sys::Result<()> {
         debug_assert!(self.source().is_none());
         let mut source = Source::SyncFile(Source::open_file(fd));
         source.set_data(core::ptr::from_mut(self).cast::<c_void>());
@@ -1263,7 +1263,7 @@ pub trait BaseWindowsPipeWriter: Sized {
     }
 
     // TODO: MovableIfWindowsFd overload — add a separate start_movable().
-    fn start(&mut self, rawfd: Fd, _pollable: bool) -> sys::Result<()> {
+    fn start(&mut self, rawfd: Fd, _pollable: IsPollable) -> sys::Result<()> {
         let fd = rawfd;
         debug_assert!(self.source().is_none());
         // Use the event loop from the parent, not the global one
@@ -1591,7 +1591,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
 
         // ALWAYS complete first — the boxed `source::File` outlives this
         // callback (detach()/close() gates free).
-        file.complete(was_canceled);
+        file.complete(WasCanceled::from_bool(was_canceled));
 
         // If detached, file may be closing (owned fd) or just stopped (non-owned fd).
         // The deref to balance write()'s ref was already done in close().
@@ -1695,7 +1695,7 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
             }
             .to_error(sys::Tag::write)
             {
-                file.complete(false);
+                file.complete(WasCanceled::No);
                 self.close();
                 self.parent_on_error(err);
             } else {
@@ -2168,7 +2168,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
 
         // ALWAYS complete first — the boxed `source::File` outlives this
         // callback (detach()/close() gates free).
-        file.complete(was_canceled);
+        file.complete(WasCanceled::from_bool(was_canceled));
 
         // If detached, file may be closing (owned fd) or just stopped (non-owned fd).
         // The deref to balance processSend's ref was already done in close().
@@ -2318,7 +2318,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             }
             .to_error(sys::Tag::write)
             {
-                file.complete(false);
+                file.complete(WasCanceled::No);
                 Self::r(this).last_write_result = WriteResult::Err(err.clone());
                 Self::r_on_error(this, err);
                 core::hint::black_box(this);

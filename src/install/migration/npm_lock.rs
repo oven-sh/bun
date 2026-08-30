@@ -240,7 +240,7 @@ impl<'a> Migrator<'a> {
             return Ok(());
         };
         let pkg_name = package_name_from_path(key);
-        if strings::eql_long(&wksp_entry.name, pkg_name, true) {
+        if strings::eql_long(&wksp_entry.name, pkg_name, strings::CheckLen::Yes) {
             return Ok(());
         }
         let pkg_name_hash = string_hash(pkg_name);

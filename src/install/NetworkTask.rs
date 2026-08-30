@@ -4,6 +4,7 @@ use core::sync::atomic::Ordering;
 
 use crate::bun_fs::{FileSystem, FilenameStore};
 use bun_collections::HashMap;
+use bun_core::compress::Chunk;
 use bun_core::{self, fmt::quote};
 use bun_core::{MutableString, strings};
 use bun_http::{
@@ -14,7 +15,7 @@ use bun_threading::thread_pool::Batch;
 use bun_url::URL;
 
 use crate::extract_tarball;
-use crate::npm::{self as npm, PackageManifest};
+use crate::npm::{self as npm, ExtendedManifest, PackageManifest};
 use crate::{ExtractTarball, PackageManager, PatchTask, TarballStream, Task};
 
 // Adapter so `StringOrTinyString::init_append_if_needed` can intern overflow
@@ -112,7 +113,7 @@ pub enum Callback {
     PackageManifest {
         loaded_manifest: Option<PackageManifest>,
         name: strings::StringOrTinyString,
-        is_extended_manifest: bool,
+        is_extended_manifest: ExtendedManifest,
     },
     Extract(ExtractTarball),
     LocalTarball,
@@ -259,7 +260,7 @@ impl NetworkTask {
                         unsafe { (*this).streaming_committed = true };
                         // SAFETY: `stream` is the live heap-allocated
                         // `TarballStream` owned by this task.
-                        unsafe { TarballStream::on_chunk(stream, chunk, false, None) };
+                        unsafe { TarballStream::on_chunk(stream, chunk, Chunk::More, None) };
                     }
                     return;
                 }
@@ -277,7 +278,7 @@ impl NetworkTask {
                         TarballStream::on_chunk(
                             stream,
                             chunk,
-                            true,
+                            Chunk::Last,
                             result.fail.map(crate::Error::from),
                         )
                     };
@@ -463,15 +464,22 @@ impl bun_core::output::ErrName for ForManifestError {
     }
 }
 
+bun_core::bool_enum!(
+    /// Whether the dependency requesting this manifest is optional; failures to
+    /// build the request are then swallowed instead of logged as errors.
+    pub IsOptional
+);
+
 impl NetworkTask {
     pub(crate) fn for_manifest(
         &mut self,
         name: &[u8],
         scope: &npm::registry::Scope,
         loaded_manifest: Option<&PackageManifest>,
-        is_optional: bool,
-        needs_extended: bool,
+        is_optional: IsOptional,
+        needs_extended: ExtendedManifest,
     ) -> Result<(), ForManifestError> {
+        let is_optional = is_optional == IsOptional::Yes;
         let pm = self.pm_mut();
         // SAFETY: `pm.log` is the long-lived `*mut Log` the package manager
         // was constructed with.
@@ -590,7 +598,9 @@ impl NetworkTask {
         let mut last_modified: &[u8] = b"";
         let mut etag: &[u8] = b"";
         if let Some(manifest) = loaded_manifest {
-            if (needs_extended && manifest.pkg.has_extended_manifest) || !needs_extended {
+            if (needs_extended == ExtendedManifest::Yes && manifest.pkg.has_extended_manifest)
+                || needs_extended == ExtendedManifest::No
+            {
                 last_modified = manifest.pkg.last_modified.slice(&manifest.string_buf);
                 etag = manifest.pkg.etag.slice(&manifest.string_buf);
             }
@@ -607,7 +617,7 @@ impl NetworkTask {
         }
 
         let headers_buf: &'static [u8] = if header_builder.header_count > 0 {
-            let accept_header = if needs_extended {
+            let accept_header = if needs_extended == ExtendedManifest::Yes {
                 ACCEPT_HEADER_VALUE_EXTENDED
             } else {
                 ACCEPT_HEADER_VALUE
@@ -643,7 +653,7 @@ impl NetworkTask {
             // SAFETY: same invariant as `last_modified` above.
             unsafe { bun_ptr::detach_lifetime(&*self.header_buf) }
         } else {
-            let header_buf: &'static str = if needs_extended {
+            let header_buf: &'static str = if needs_extended == ExtendedManifest::Yes {
                 EXTENDED_HEADERS_BUF
             } else {
                 DEFAULT_HEADERS_BUF

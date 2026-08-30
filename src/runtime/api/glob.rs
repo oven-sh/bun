@@ -3,6 +3,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use bun_alloc::Arena;
 use bun_core::String as BunString;
 use bun_glob::BunGlobWalker as GlobWalker;
+use bun_glob::{Absolute, Dot, ErrorOnBrokenSymlinks, FollowSymlinks, OnlyFiles};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     ArgumentsSlice, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, Job, JobContext, JsPtr,
@@ -34,7 +35,7 @@ impl ScanOpts {
         global_this: &JSGlobalObject,
         _arena: &Arena,
         cwd_val: JSValue,
-        absolute: bool,
+        absolute: Absolute,
         fn_name: &'static str,
     ) -> JsResult<Box<[u8]>> {
         let cwd_string = BunString::from_js(cwd_val, global_this)?;
@@ -60,7 +61,7 @@ impl ScanOpts {
             // `cwd_utf8` drops at scope exit.
             let mut path_buf2 = [0u8; MAX_PATH_BYTES * 2];
 
-            if !absolute {
+            if absolute == Absolute::No {
                 let parts: &[&[u8]] = &[cwd_utf8.slice()];
                 let cwd_str = join_string_buf::<platform::Auto>(&mut path_buf2, parts);
                 break 'cwd_str Box::<[u8]>::from(cwd_str);
@@ -116,8 +117,13 @@ impl ScanOpts {
         if !opts_obj.is_object() {
             if opts_obj.is_string() {
                 {
-                    let result =
-                        Self::parse_cwd(global_this, arena, opts_obj, out.absolute, fn_name)?;
+                    let result = Self::parse_cwd(
+                        global_this,
+                        arena,
+                        opts_obj,
+                        Absolute::from_bool(out.absolute),
+                        fn_name,
+                    )?;
                     if !result.is_empty() {
                         out.cwd = Some(result);
                     }
@@ -172,7 +178,13 @@ impl ScanOpts {
             }
 
             {
-                let result = Self::parse_cwd(global_this, arena, cwd_val, out.absolute, fn_name)?;
+                let result = Self::parse_cwd(
+                    global_this,
+                    arena,
+                    cwd_val,
+                    Absolute::from_bool(out.absolute),
+                    fn_name,
+                )?;
                 if !result.is_empty() {
                     out.cwd = Some(result);
                 }
@@ -305,11 +317,12 @@ impl Glob {
             return Ok(None);
         };
         let cwd = match_opts.cwd;
-        let dot = match_opts.dot;
-        let absolute = match_opts.absolute;
-        let follow_symlinks = match_opts.follow_symlinks;
-        let error_on_broken_symlinks = match_opts.error_on_broken_symlinks;
-        let only_files = match_opts.only_files;
+        let dot = Dot::from_bool(match_opts.dot);
+        let absolute = Absolute::from_bool(match_opts.absolute);
+        let follow_symlinks = FollowSymlinks::from_bool(match_opts.follow_symlinks);
+        let error_on_broken_symlinks =
+            ErrorOnBrokenSymlinks::from_bool(match_opts.error_on_broken_symlinks);
+        let only_files = OnlyFiles::from_bool(match_opts.only_files);
 
         let _ = arena; // arena ownership is no longer threaded through GlobWalker init.
 

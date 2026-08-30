@@ -83,6 +83,8 @@ impl core::fmt::Debug for GlobalRef {
     }
 }
 
+bun_core::bool_enum!(DateTimeZone { Utc, Local });
+
 bun_core::declare_scope!(TerminationTaken, hidden);
 
 impl JSGlobalObject {
@@ -149,7 +151,7 @@ impl JSGlobalObject {
         minute: i32,
         second: i32,
         millisecond: i32,
-        local: bool,
+        local: DateTimeZone,
     ) -> JsResult<f64> {
         crate::mark_binding();
         crate::cpp::Bun__gregorianDateTimeToMS(
@@ -161,7 +163,7 @@ impl JSGlobalObject {
             minute,
             second,
             millisecond,
-            local,
+            local == DateTimeZone::Local,
         )
     }
 
@@ -183,7 +185,7 @@ impl JSGlobalObject {
             minute,
             second,
             millisecond,
-            false,
+            DateTimeZone::Utc,
         )
     }
 
@@ -205,11 +207,11 @@ impl JSGlobalObject {
             minute,
             second,
             millisecond,
-            true,
+            DateTimeZone::Local,
         )
     }
 
-    fn ms_to_gregorian_date_time_impl(&self, ms: f64, local: bool) -> GregorianDateTime {
+    fn ms_to_gregorian_date_time_impl(&self, ms: f64, local: DateTimeZone) -> GregorianDateTime {
         crate::mark_binding();
         let mut dt = GregorianDateTime::default();
         // SAFETY: FFI — &self is a valid JSGlobalObject*; out-param pointers are to live
@@ -218,7 +220,7 @@ impl JSGlobalObject {
             crate::cpp::raw::Bun__msToGregorianDateTime(
                 self.as_ptr(),
                 ms,
-                local,
+                local == DateTimeZone::Local,
                 &raw mut dt.year,
                 &raw mut dt.month,
                 &raw mut dt.day,
@@ -232,11 +234,11 @@ impl JSGlobalObject {
     }
 
     pub fn ms_to_gregorian_date_time_utc(&self, ms: f64) -> GregorianDateTime {
-        self.ms_to_gregorian_date_time_impl(ms, false)
+        self.ms_to_gregorian_date_time_impl(ms, DateTimeZone::Utc)
     }
 
     pub fn ms_to_gregorian_date_time(&self, ms: f64) -> GregorianDateTime {
-        self.ms_to_gregorian_date_time_impl(ms, true)
+        self.ms_to_gregorian_date_time_impl(ms, DateTimeZone::Local)
     }
 
     pub fn ms_to_gregorian_date_time_in_zone(&self, ms: f64, tz_id: u32) -> GregorianDateTime {

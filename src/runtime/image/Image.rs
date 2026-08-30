@@ -1941,11 +1941,11 @@ impl PipelineTask {
             d.height = next.height;
         }
         if p.flip {
-            let next = codecs::flip(&d.rgba, d.width, d.height, false)?;
+            let next = codecs::flip(&d.rgba, d.width, d.height, codecs::FlipAxis::Vertical)?;
             d.rgba = next;
         }
         if p.flop {
-            let next = codecs::flip(&d.rgba, d.width, d.height, true)?;
+            let next = codecs::flip(&d.rgba, d.width, d.height, codecs::FlipAxis::Horizontal)?;
             d.rgba = next;
         }
         if let Some(r) = p.resize {
@@ -2049,11 +2049,11 @@ fn apply_orientation(
 ) -> Result<(), codecs::Error> {
     let t = orient.transform();
     if t.flip {
-        let next = codecs::flip(&d.rgba, d.width, d.height, false)?;
+        let next = codecs::flip(&d.rgba, d.width, d.height, codecs::FlipAxis::Vertical)?;
         d.rgba = next;
     }
     if t.flop {
-        let next = codecs::flip(&d.rgba, d.width, d.height, true)?;
+        let next = codecs::flip(&d.rgba, d.width, d.height, codecs::FlipAxis::Horizontal)?;
         d.rgba = next;
     }
     if t.rotate != 0 {

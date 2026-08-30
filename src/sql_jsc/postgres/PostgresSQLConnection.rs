@@ -12,7 +12,7 @@ use crate::jsc::{
 };
 use bun_boringssl as BoringSSL;
 use bun_boringssl_sys::OwnedSslCtx;
-use bun_collections::{OffsetByteList, StringHashMap, StringMap};
+use bun_collections::{DupeKeys, OffsetByteList, StringHashMap, StringMap};
 use bun_core::strings;
 use bun_core::{self};
 use bun_io::KeepAlive;
@@ -27,11 +27,12 @@ use crate::postgres::PostgresSQLStatement;
 use crate::postgres::data_cell as DataCell;
 use crate::postgres::error_jsc::{create_postgres_error, postgres_error_to_js};
 use crate::postgres::postgres_request as PostgresRequest;
-use crate::postgres::postgres_request::MessageType;
+use crate::postgres::postgres_request::{IncludeDescribe, MessageType};
 use crate::postgres::postgres_sql_query::{self, RequestCounter, Status as QueryStatus};
 use crate::postgres::postgres_sql_statement::{Error as StatementError, Status as StatementStatus};
 use crate::postgres::sasl::SASLStatus;
 use crate::shared::CachedStructure as PostgresCachedStructure;
+use crate::shared::IsLast;
 use crate::shared::connection_ctor_args::ConnectionCtorArgs;
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::PostgresErrorOptions;
@@ -485,9 +486,9 @@ impl PostgresSQLConnection {
             bun_uws::SocketKind::PostgresTls,
             ssl_ctx,
             sni,
-            true,  // is_client
-            false, // request_cert (server-only)
-            false, // reject_unauthorized (server-only)
+            uws::TlsRole::Client,
+            uws::RequestCert::No,        // server-only
+            uws::RejectUnauthorized::No, // server-only
             ext_size,
             ext_size,
         ) else {
@@ -1182,7 +1183,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             prepared_statement_id: Cell::new(0),
             pending_activity_count: AtomicU32::new(0),
             js_value: JsCell::new(crate::jsc::JsRef::empty()),
-            backend_parameters: JsCell::new(StringMap::init(true)),
+            backend_parameters: JsCell::new(StringMap::init(DupeKeys::Yes)),
             database,
             user: username,
             password,
@@ -1236,7 +1237,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
                 None,
                 path_slice,
                 ptr,
-                false,
+                uws::AllowHalfOpen::No,
             )
         } else {
             uws::SocketTCP::connect_group(
@@ -1246,7 +1247,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
                 hostname.slice(),
                 args.port,
                 ptr,
-                false,
+                uws::AllowHalfOpen::No,
             )
         };
 
@@ -1931,7 +1932,7 @@ impl PostgresSQLConnection {
                                                 statement,
                                                 binding_value,
                                                 columns_value,
-                                                false,
+                                                IncludeDescribe::No,
                                                 self.writer(),
                                             )
                                         {
@@ -2125,7 +2126,7 @@ impl PostgresSQLConnection {
                                                 statement,
                                                 binding_value,
                                                 columns_value,
-                                                true,
+                                                IncludeDescribe::Yes,
                                                 self.writer(),
                                             )
                                         {
@@ -2471,7 +2472,7 @@ impl PostgresSQLConnection {
                             b"",
                             self.global(),
                             self.js_value.get().try_get().unwrap_or_default(),
-                            true,
+                            IsLast::Yes,
                         );
                     }
                 }
@@ -2494,7 +2495,7 @@ impl PostgresSQLConnection {
                     cmd.command_tag.slice(),
                     self.global(),
                     self.js_value.get().try_get().unwrap_or_default(),
-                    false,
+                    IsLast::No,
                 );
                 self.update_ref();
                 // cmd dropped at scope end
@@ -2968,7 +2969,7 @@ impl PostgresSQLConnection {
                     b"CLOSECOMPLETE",
                     self.global(),
                     self.js_value.get().get(),
-                    false,
+                    IsLast::No,
                 );
                 self.update_ref();
             }
@@ -2991,7 +2992,7 @@ impl PostgresSQLConnection {
                 if request.status.get() == QueryStatus::Fail {
                     return Ok(());
                 }
-                request.on_result(b"", self.global(), self.js_value.get().get(), false);
+                request.on_result(b"", self.global(), self.js_value.get().get(), IsLast::No);
                 self.update_ref();
             }
             MessageType::CopyOutResponse => {

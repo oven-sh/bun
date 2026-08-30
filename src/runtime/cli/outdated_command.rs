@@ -9,6 +9,7 @@ use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
+use bun_install::npm::ExtendedManifest;
 use bun_install::package_manager::{
     LogLevel, Subcommand, WorkspaceFilter, populate_manifest_cache,
 };
@@ -51,6 +52,8 @@ impl<'a> FilterType<'a> {
     }
     // *NOTE*: name and path are not allocated → no Drop impl needed.
 }
+
+bun_core::bool_enum!(WasFiltered);
 
 impl OutdatedCommand {
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
@@ -171,7 +174,7 @@ impl OutdatedCommand {
                     manager.options.filter_patterns,
                     original_cwd,
                 );
-                (ids, true)
+                (ids, WasFiltered::Yes)
             } else {
                 let root_pkg_id = manager
                     .root_package_id
@@ -179,7 +182,7 @@ impl OutdatedCommand {
                 if root_pkg_id == bun_install::INVALID_PACKAGE_ID {
                     return Ok(());
                 }
-                (vec![root_pkg_id], false)
+                (vec![root_pkg_id], WasFiltered::No)
             };
         populate_manifest_cache::populate_manifest_cache(
             manager,
@@ -302,7 +305,7 @@ impl OutdatedCommand {
     fn print_outdated_info_table<const ENABLE_ANSI_COLORS: bool>(
         manager: &mut PackageManager,
         workspace_pkg_ids: &[PackageID],
-        was_filtered: bool,
+        was_filtered: WasFiltered,
     ) -> crate::Result<()> {
         let package_patterns: Option<Vec<FilterType<'_>>> = 'package_patterns: {
             let args = manager.options.positionals.get(1..).unwrap_or(&[]);
@@ -350,7 +353,7 @@ impl OutdatedCommand {
         // `&manager.options`).
         let cache_ctx = manager.manifest_disk_cache_ctx();
         let min_age_ms = manager.options.minimum_release_age_ms;
-        let needs_extended = min_age_ms.is_some();
+        let needs_extended = ExtendedManifest::from_bool(min_age_ms.is_some());
         let excludes = manager.options.minimum_release_age_excludes;
 
         let mut version_buf: String = String::new();
@@ -542,7 +545,7 @@ impl OutdatedCommand {
         }
 
         // Show workspace column if filtered OR if there are catalog dependencies
-        let show_workspace_column = was_filtered || has_catalog_deps;
+        let show_workspace_column = was_filtered == WasFiltered::Yes || has_catalog_deps;
 
         let package_column_inside_length = "Packages".len().max(max_name);
         let current_column_inside_length = "Current".len().max(max_current);

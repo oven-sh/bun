@@ -7,6 +7,7 @@ use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsRes
 // `bun_jsc` not yet a dep; alias to local shim so `bun_jsc::Strong` etc. resolve.
 use crate::webcore::jsc as bun_jsc;
 use bun_collections::VecExt;
+use bun_dotenv::HttpScheme;
 use bun_sys as syscall;
 
 use crate::webcore::streams;
@@ -543,7 +544,7 @@ impl ReadableStream {
                     .as_mut()
                     .transpiler
                     .env_mut()
-                    .get_http_proxy(true, None, None);
+                    .get_http_proxy(HttpScheme::Http, None, None);
                 let proxy_url = proxy.as_ref().map(|p| p.href);
 
                 crate::webcore::s3::client::readable_stream(

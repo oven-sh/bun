@@ -492,7 +492,7 @@ impl PatchTask {
         };
 
         match pkg_install.install(
-            true,
+            SkipDelete::Yes,
             sys::Dir::borrow(&system_tmpdir),
             InstallMethod::Copyfile,
             resolution_tag,
@@ -825,6 +825,6 @@ impl PatchTask {
 
 use crate::PreinstallState;
 use crate::network_task::Authorization;
-use crate::package_install::{InstallResult, Method as InstallMethod};
+use crate::package_install::{InstallResult, Method as InstallMethod, SkipDelete};
 use crate::package_manager::Options::LogLevel;
 use crate::package_manager_task::Id as TaskId;

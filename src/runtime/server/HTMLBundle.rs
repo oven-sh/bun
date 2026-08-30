@@ -7,7 +7,7 @@ use core::mem;
 use core::ptr::NonNull;
 
 use bun_ast::Loader;
-use bun_ast::Log;
+use bun_ast::{Log, Recycled};
 use bun_bundler::bundle_v2::BundleV2Result;
 use bun_bundler::options::{self as bundler_options, LoaderExt as _};
 use bun_core::strings;
@@ -16,7 +16,7 @@ use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
 use bun_jsc::bun_string_jsc;
 use bun_ptr::{RefCount, RefPtr, ThisPtr};
-use bun_uws::{AnyRequest, AnyResponse};
+use bun_uws::{AnyRequest, AnyResponse, CloseConnection};
 
 use crate::api::js_bundle_completion_task::JSBundleCompletionTask;
 use crate::api::js_bundler::js_bundler::{self as JSBundler, Config as JSBundlerConfig};
@@ -182,6 +182,8 @@ impl State {
     }
 }
 
+bun_core::bool_enum!(IsHead);
+
 impl Route {
     pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = 0;
@@ -204,19 +206,24 @@ impl Route {
     }
 
     pub(crate) fn on_request(this: ThisPtr<Self>, req: AnyRequest, resp: AnyResponse) {
-        Self::on_any_request(this, req, resp, false);
+        Self::on_any_request(this, req, resp, IsHead::No);
     }
 
     pub(crate) fn on_head_request(this: ThisPtr<Self>, req: AnyRequest, resp: AnyResponse) {
-        Self::on_any_request(this, req, resp, true);
+        Self::on_any_request(this, req, resp, IsHead::Yes);
     }
 
-    fn on_any_request(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse, is_head: bool) {
+    fn on_any_request(
+        this: ThisPtr<Self>,
+        mut req: AnyRequest,
+        resp: AnyResponse,
+        is_head: IsHead,
+    ) {
         let _guard = RefPtr::from_this(this);
         let route: &Route = &this;
 
         let Some(server) = route.server.get() else {
-            resp.end_without_body(true);
+            resp.end_without_body(CloseConnection::Yes);
             return;
         };
 
@@ -236,7 +243,7 @@ impl Route {
                     }
                     AnyRequest::H3(_) => {
                         resp.write_status(b"503 Service Unavailable");
-                        resp.end(b"DevServer HMR is HTTP/1.1 only", true);
+                        resp.end(b"DevServer HMR is HTTP/1.1 only", CloseConnection::Yes);
                     }
                 }
                 return;
@@ -275,7 +282,7 @@ impl Route {
                     // create the PendingResponse, add it to the list
                     let Some(method) = Method::which(req.method()) else {
                         resp.write_status(b"405 Method Not Allowed");
-                        resp.end_without_body(true);
+                        resp.end_without_body(CloseConnection::Yes);
                         return;
                     };
                     let pending = PendingResponse {
@@ -297,7 +304,7 @@ impl Route {
                         );
                     }
                     // TODO: use the code from DevServer.rs to render the error
-                    resp.end_without_body(true);
+                    resp.end_without_body(CloseConnection::Yes);
                 }
                 State::Html(html) => {
                     if bun_core::Environment::ENABLE_LOGS {
@@ -307,7 +314,7 @@ impl Route {
                             bstr::BStr::new(req.url())
                         );
                     }
-                    if is_head {
+                    if is_head == IsHead::Yes {
                         StaticRoute::on_head_request(html.this_ptr(), req, resp);
                     } else {
                         StaticRoute::on_request(html.this_ptr(), req, resp);
@@ -507,7 +514,9 @@ impl Route {
                     bun_output::scoped_log!(debug, "onComplete: err - {}", err);
                 }
                 let mut log = Log::init();
-                completion_task.log.clone_to_with_recycled(&mut log, true);
+                completion_task
+                    .log
+                    .clone_to_with_recycled(&mut log, Recycled::Yes);
                 self.set_build_error(server, log);
             }
             BundleV2Result::Value(bundle) => 'bundle: {
@@ -692,11 +701,11 @@ impl Route {
                     // socket; write Content-Length so the client has framing.
                     resp.write_status(b"500 Build Failed");
                     resp.write_header_int(b"Content-Length", 0);
-                    resp.end_without_body(true);
+                    resp.end_without_body(CloseConnection::Yes);
                 }
                 _ => {
                     resp.write_header_int(b"Content-Length", 0);
-                    resp.end_without_body(true);
+                    resp.end_without_body(CloseConnection::Yes);
                 }
             }
         }
@@ -724,7 +733,7 @@ impl Drop for PendingResponse {
         if self.is_response_pending.get() {
             self.resp.clear_aborted();
             self.resp.clear_on_writable();
-            self.resp.end_without_body(true);
+            self.resp.end_without_body(CloseConnection::Yes);
         }
     }
 }

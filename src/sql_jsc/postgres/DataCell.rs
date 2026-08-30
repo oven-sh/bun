@@ -3,6 +3,7 @@ use core::mem::size_of;
 use crate::jsc::{JSGlobalObject, JSValue, bun_string_jsc};
 use bun_core::String as BunString;
 
+use crate::shared::UseBigint;
 use crate::shared::cached_structure::CachedStructure as PostgresCachedStructure;
 use bun_sql::postgres::postgres_protocol as protocol;
 use bun_sql::postgres::postgres_types as types;
@@ -127,22 +128,39 @@ fn try_slice(slice: &[u8], count: usize) -> &[u8] {
 
 const MAX_ARRAY_NESTING_DEPTH: usize = 100;
 
+bun_core::bool_enum!(
+    /// Nested `[...]` inside a json/jsonb array (vs. the outer `{...}` Postgres array literal).
+    JsonSubArray
+);
+bun_core::bool_enum!(
+    /// Postgres wire format code for a column value.
+    FormatCode { Text, Binary }
+);
+
 // PERF: `array_type` and `is_json_sub_array` are only used in value
 // position (branch selectors), never type position. Profile if it shows up on a hot path.
 fn parse_array(
     bytes: &[u8],
-    bigint: bool,
+    bigint: UseBigint,
     array_type: types::Tag,
     global_object: &JSGlobalObject,
     offset: Option<&mut usize>,
-    is_json_sub_array: bool,
+    is_json_sub_array: JsonSubArray,
     depth: usize,
 ) -> Result<SQLDataCell> {
     if depth > MAX_ARRAY_NESTING_DEPTH {
         return Err(AnyPostgresError::UnsupportedArrayFormat);
     }
-    let closing_brace: u8 = if is_json_sub_array { b']' } else { b'}' };
-    let opening_brace: u8 = if is_json_sub_array { b'[' } else { b'{' };
+    let closing_brace: u8 = if is_json_sub_array == JsonSubArray::Yes {
+        b']'
+    } else {
+        b'}'
+    };
+    let opening_brace: u8 = if is_json_sub_array == JsonSubArray::Yes {
+        b'['
+    } else {
+        b'{'
+    };
     if bytes.len() < 2 || bytes[0] != opening_brace {
         return Err(AnyPostgresError::UnsupportedArrayFormat);
     }
@@ -552,7 +570,7 @@ fn parse_array(
                             }
                             match array_type {
                                 types::Tag::int8_array => {
-                                    if bigint {
+                                    if bigint == UseBigint::Yes {
                                         array.push(SQLDataCell::int8(
                                             bun_core::fmt::parse_decimal::<i64>(element)
                                                 .ok_or(AnyPostgresError::UnsupportedArrayFormat)?,
@@ -590,7 +608,7 @@ fn parse_array(
                                         array_type,
                                         global_object,
                                         Some(&mut sub_array_offset),
-                                        true,
+                                        JsonSubArray::Yes,
                                         depth + 1,
                                     )?;
                                     array.push(sub_array);
@@ -744,27 +762,28 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
 }
 
 fn from_bytes(
-    binary: bool,
-    bigint: bool,
+    binary: FormatCode,
+    bigint: UseBigint,
     oid: types::Tag,
     bytes: &[u8],
     global_object: &JSGlobalObject,
 ) -> Result<SQLDataCell> {
     use types::Tag as T;
+    let binary = binary == FormatCode::Binary;
     match oid {
         // TODO: .int2_array, .float8_array
         T::int4_array => {
             if binary {
                 from_bytes_typed_array::<i32>(T::int4_array, bytes)
             } else {
-                parse_array(bytes, bigint, T::int4_array, global_object, None, false, 0)
+                parse_array(bytes, bigint, T::int4_array, global_object, None, JsonSubArray::No, 0)
             }
         }
         T::float4_array => {
             if binary {
                 from_bytes_typed_array::<f32>(T::float4_array, bytes)
             } else {
-                parse_array(bytes, bigint, T::float4_array, global_object, None, false, 0)
+                parse_array(bytes, bigint, T::float4_array, global_object, None, JsonSubArray::No, 0)
             }
         }
         T::int2 => {
@@ -796,7 +815,7 @@ fn from_bytes(
         }
         // postgres when reading bigint as int8 it returns a string unless type: { bigint: postgres.BigInt is set
         T::int8 => {
-            if bigint {
+            if bigint == UseBigint::Yes {
                 // .int8 is a 64-bit integer always string
                 Ok(SQLDataCell::int8(
                     bun_core::fmt::parse_decimal::<i64>(bytes).unwrap_or(0),
@@ -860,7 +879,7 @@ fn from_bytes(
                     _ => unreachable!(),
                 }
             } else {
-                if bun_core::strings::eql_case_insensitive_ascii(bytes, b"NULL", true) {
+                if bun_core::strings::eql_case_insensitive_ascii(bytes, b"NULL", bun_core::strings::CheckLen::Yes) {
                     return Ok(SQLDataCell::null());
                 }
                 if let Some(inf) = crate::postgres::types::date::parse_infinity(bytes) {
@@ -967,7 +986,7 @@ fn from_bytes(
         | T::timetz_array
         | T::timestamp_array
         | T::timestamptz_array
-        | T::interval_array) => parse_array(bytes, bigint, tag, global_object, None, false, 0),
+        | T::interval_array) => parse_array(bytes, bigint, tag, global_object, None, JsonSubArray::No, 0),
         _ => Ok(SQLDataCell::string(bytes)),
     }
 }
@@ -1277,8 +1296,10 @@ impl<'a> Putter<'a> {
             };
             *cell = if let Some(data) = optional_bytes {
                 from_bytes(
-                    (field.binary || self.binary) && tag.is_binary_format_supported(),
-                    self.bigint,
+                    FormatCode::from_bool(
+                        (field.binary || self.binary) && tag.is_binary_format_supported(),
+                    ),
+                    UseBigint::from_bool(self.bigint),
                     tag,
                     data.slice(),
                     self.global_object,

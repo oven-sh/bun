@@ -555,7 +555,7 @@ pub fn get_loader_and_virtual_source<'a>(
         }
     }
 
-    let is_main = strings::eql_long(specifier, jsc_vm.main(), true);
+    let is_main = strings::eql_long(specifier, jsc_vm.main(), strings::CheckLen::Yes);
 
     let dir = path.name().dir;
     // NOTE: we cannot trust `path.isFile()` since it's not always correct
@@ -721,12 +721,15 @@ pub struct ESMConditions {
     pub(crate) style: ConditionsMap,
 }
 
+bun_core::bool_enum!(pub AllowAddons);
+
 impl ESMConditions {
     pub fn init(
         defaults: &[&[u8]],
-        allow_addons: bool,
+        allow_addons: AllowAddons,
         conditions: &[&[u8]],
     ) -> Result<ESMConditions, bun_alloc::AllocError> {
+        let allow_addons = allow_addons == AllowAddons::Yes;
         let mut default_condition_amp = ConditionsMap::default();
 
         let mut import_condition_map = ConditionsMap::default();
@@ -840,7 +843,7 @@ pub(crate) fn defines_from_transform_options(
     framework_env: Option<&Env>,
     node_env: Option<&[u8]>,
     drop: &[&[u8]],
-    omit_unused_global_calls: bool,
+    omit_unused_global_calls: defines::OmitUnusedGlobalCalls,
     bump: &bun_alloc::Arena,
 ) -> Result<Box<defines::Define>, crate::Error> {
     let (input_keys, input_values): (&[Box<[u8]>], &[Box<[u8]>]) = match maybe_input_define {
@@ -944,7 +947,8 @@ pub(crate) fn defines_from_transform_options(
 
     let resolved_defines = defines::DefineData::from_input(&user_defines, drop, log, bump)?;
 
-    let drop_debugger = drop.iter().any(|item| *item == b"debugger");
+    let drop_debugger =
+        defines::DropDebugger::from_bool(drop.iter().any(|item| *item == b"debugger"));
 
     Ok(defines::Define::init(
         Some(resolved_defines),
@@ -1623,7 +1627,9 @@ impl<'a> BundleOptions<'a> {
             // `&self.drop` is `Box<[Box<[u8]>]>`; the callee wants `&[&[u8]]`,
             // so re-borrow per call (cold path: once per options build).
             &self.drop.iter().map(|s| s.as_ref()).collect::<Vec<_>>(),
-            self.dead_code_elimination && self.minify_syntax,
+            defines::OmitUnusedGlobalCalls::from_bool(
+                self.dead_code_elimination && self.minify_syntax,
+            ),
             arena,
         )?;
         self.defines_loaded = true;
@@ -1817,7 +1823,7 @@ impl<'a> BundleOptions<'a> {
             // 3. user conditions
             opts.conditions = ESMConditions::init(
                 Target::default_conditions_map()[opts.target],
-                transform.allow_addons.unwrap_or(true),
+                AllowAddons::from_bool(transform.allow_addons.unwrap_or(true)),
                 &transform
                     .conditions
                     .iter()
@@ -2113,6 +2119,8 @@ pub fn find_unterminated_placeholder(template: &[u8]) -> Option<(usize, &[u8])> 
     None
 }
 
+bun_core::bool_enum!(pub(crate) SanitizeParentDirs);
+
 // Shared body for PathTemplate::print / PathTemplateConst::print (D064).
 // Writes raw path bytes via a byte-writer free fn (not `core::fmt::Display`).
 fn path_template_print<W: bun_io::Write>(
@@ -2123,7 +2131,7 @@ fn path_template_print<W: bun_io::Write>(
     ext: &[u8],
     hash: Option<u64>,
     target: &[u8],
-    sanitize_parent_dirs: bool,
+    sanitize_parent_dirs: SanitizeParentDirs,
 ) -> bun_io::Result<()> {
     let mut remain: &[u8] = data;
     while let Some(j) = strings::index_of_char(remain, b'[') {
@@ -2168,7 +2176,7 @@ fn path_template_print<W: bun_io::Write>(
             PlaceholderField::Dir => {
                 if dir.is_empty() {
                     writer.write_all(b".")?;
-                } else if sanitize_parent_dirs {
+                } else if sanitize_parent_dirs == SanitizeParentDirs::Yes {
                     // Rewrite `..` segments so `[dir]` can't escape outdir for an
                     // out-of-root source. `--compile` skips this: bunfs entries keep
                     // `..` so runtime references to them resolve.
@@ -2247,7 +2255,17 @@ fn write_sanitized_parent_dirs_rewrites_every_dotdot_segment() {
 fn path_template_print_tolerates_malformed_brackets() {
     fn run(template: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
-        path_template_print(&mut out, template, b"D", b"N", b"E", Some(0), b"T", false).unwrap();
+        path_template_print(
+            &mut out,
+            template,
+            b"D",
+            b"N",
+            b"E",
+            Some(0),
+            b"T",
+            SanitizeParentDirs::No,
+        )
+        .unwrap();
         out
     }
     // Unterminated known placeholder: used to slice one past the end.
@@ -2363,7 +2381,7 @@ impl PathTemplate {
     pub(crate) fn print<W: bun_io::Write>(
         &self,
         writer: &mut W,
-        sanitize_parent_dirs: bool,
+        sanitize_parent_dirs: SanitizeParentDirs,
     ) -> bun_io::Result<()> {
         path_template_print(
             writer,
@@ -2432,7 +2450,7 @@ impl PathTemplateConst {
     pub(crate) fn print<W: bun_io::Write>(
         &self,
         writer: &mut W,
-        sanitize_parent_dirs: bool,
+        sanitize_parent_dirs: SanitizeParentDirs,
     ) -> bun_io::Result<()> {
         path_template_print(
             writer,
@@ -2450,7 +2468,8 @@ impl PathTemplateConst {
 impl core::fmt::Display for PathTemplateConst {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut buf = Vec::<u8>::new();
-        self.print(&mut buf, true).map_err(|_| core::fmt::Error)?;
+        self.print(&mut buf, SanitizeParentDirs::Yes)
+            .map_err(|_| core::fmt::Error)?;
         write!(f, "{}", bstr::BStr::new(&buf))
     }
 }
@@ -2458,7 +2477,8 @@ impl core::fmt::Display for PathTemplateConst {
 impl core::fmt::Display for PathTemplate {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut buf = Vec::<u8>::new();
-        self.print(&mut buf, true).map_err(|_| core::fmt::Error)?;
+        self.print(&mut buf, SanitizeParentDirs::Yes)
+            .map_err(|_| core::fmt::Error)?;
         write!(f, "{}", bstr::BStr::new(&buf))
     }
 }

@@ -32,6 +32,8 @@ struct Token<'a> {
     data: TokenData<'a>,
 }
 
+bun_core::bool_enum!(Sign { Positive, Negative });
+
 enum TokenData<'a> {
     Eof,
     // Structural
@@ -341,14 +343,14 @@ impl<'a> JSON5Parser<'a> {
                         start: i32::try_from(self.pos).expect("int cast"),
                     };
                     self.pos += 1;
-                    break 'next TokenData::Number(self.scan_signed_value(false)?);
+                    break 'next TokenData::Number(self.scan_signed_value(Sign::Positive)?);
                 }
                 b'-' => {
                     self.token.loc = Loc {
                         start: i32::try_from(self.pos).expect("int cast"),
                     };
                     self.pos += 1;
-                    break 'next TokenData::Number(self.scan_signed_value(true)?);
+                    break 'next TokenData::Number(self.scan_signed_value(Sign::Negative)?);
                 }
                 // Strings
                 b'"' | b'\'' => {
@@ -465,7 +467,8 @@ impl<'a> JSON5Parser<'a> {
         true
     }
 
-    fn scan_signed_value(&mut self, is_negative: bool) -> Result<f64, ParseError> {
+    fn scan_signed_value(&mut self, is_negative: Sign) -> Result<f64, ParseError> {
+        let is_negative = is_negative == Sign::Negative;
         match self.peek() {
             b'0'..=b'9' | b'.' => {
                 let n = self.scan_number()?;

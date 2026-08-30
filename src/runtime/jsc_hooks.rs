@@ -17,6 +17,7 @@
 //!      `__bun_http_sync_download_*` — low-tier extern impls.
 
 use bun_core::WTFStringImplExt as _;
+use bun_core::output::AnsiColors;
 use bun_options_types::LoaderExt as _;
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -25,10 +26,11 @@ use core::ptr;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::module_loader::{ArenaResetGuard, FetchFlags, TranspileArgs, TranspileExtra};
+use bun_jsc::node_compile_cache::ModuleFormat;
 use bun_jsc::resolved_source::Bytecode;
 use bun_jsc::virtual_machine::{
-    InitOptions, RuntimeHooks, RuntimeState as OpaqueRuntimeState, SweepResult, VirtualMachine,
-    WorkerExecArgvFlags,
+    AllowSideEffects, InitOptions, RuntimeHooks, RuntimeState as OpaqueRuntimeState, SweepResult,
+    VirtualMachine, WorkerExecArgvFlags,
 };
 use bun_jsc::{
     AnyPromise, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSModuleLoader,
@@ -37,8 +39,9 @@ use bun_jsc::{
 
 use bun_ast::ImportKind;
 use bun_ast::Loader;
-use bun_bundler::entry_points::ServerEntryPoint;
+use bun_bundler::entry_points::{IsHotReloadEnabled, ServerEntryPoint};
 use bun_bundler::options::{self, ModuleType};
+use bun_bundler::transpiler::AutoJsx;
 use bun_resolve_builtins::Module as HardcodedModule;
 use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
@@ -473,7 +476,7 @@ unsafe fn init_runtime_state(
                 unsafe {
                     let t = &mut (*vm).transpiler;
                     t.options.emit_dce_annotations = false;
-                    t.resolver.store_fd = opts.store_fd;
+                    t.resolver.store_fd = bun_resolver::fs::StoreFd::from_bool(opts.store_fd);
                     t.resolver.prefer_module_field = false;
                     // Propagate `--preserve-symlinks`
                     // from CLI args to the resolver so symlinked node_modules
@@ -517,7 +520,7 @@ unsafe fn init_runtime_state(
                     // `resolver.opts.load_tsconfig_json = false`, defeating
                     // `compile.autoloadTsconfig: false`.
                     if opts.graph.is_some() {
-                        t.configure_linker_with_auto_jsx(false);
+                        t.configure_linker_with_auto_jsx(AutoJsx::No);
                     } else {
                         t.configure_linker();
                     }
@@ -717,7 +720,12 @@ fn generate_entry_point(_vm: &VirtualMachine, watch: bool, entry_path: &[u8]) ->
     }
     // SAFETY: `state` is the live per-thread `RuntimeState` (boxed in
     // `init_runtime_state`); no other `&mut` to `entry_point` is held here.
-    ServerEntryPoint::generate(unsafe { &mut (*state).entry_point }, watch, entry_path).is_ok()
+    ServerEntryPoint::generate(
+        unsafe { &mut (*state).entry_point },
+        IsHotReloadEnabled::from_bool(watch),
+        entry_path,
+    )
+    .is_ok()
 }
 
 /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
@@ -1260,7 +1268,7 @@ fn print_exception(
         // SAFETY: `as_exception` returned a live `*mut Exception` owned by the
         // JSC heap; we only read through it for the duration of this call.
         let exception = unsafe { &*exception };
-        vm_ref.print_exception(exception, exception_list, writer, true);
+        vm_ref.print_exception(exception, exception_list, writer, AllowSideEffects::Yes);
     } else {
         let mut formatter = bun_jsc::console_object::Formatter::new(global);
         // `Formatter::new` already
@@ -1272,8 +1280,8 @@ fn print_exception(
             exception_list,
             &mut formatter,
             writer,
-            colors,
-            true,
+            AnsiColors::from_bool(colors),
+            AllowSideEffects::Yes,
         );
         // `defer formatter.deinit()` → Drop.
     }
@@ -1776,7 +1784,7 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
             // registered entry implies `close()` has not run, and `deinit`
             // cannot fire before `close()` drops the wrapper's Strong ref.
             ActiveHandle::StatWatcher(w) => bun_ptr::ParentRef::from(w).close(),
-            ActiveHandle::Server(mut s) => s.stop(true),
+            ActiveHandle::Server(mut s) => s.stop(crate::server::StopMode::Abrupt),
             ActiveHandle::Listener(l) => {
                 // SAFETY: live until it unregisters in `do_stop`/`finalize`.
                 crate::socket::Listener::stop_for_vm_teardown(unsafe { l.as_ref() })
@@ -2175,7 +2183,7 @@ fn note_compile_cache_parse_failure(
     if bun_jsc::node_compile_cache::is_enabled() && loader.is_java_script_like() && path.is_file() {
         bun_jsc::node_compile_cache::note_parse_failure(
             path.text,
-            !matches!(module_type, ModuleType::Esm),
+            ModuleFormat::from_bool(!matches!(module_type, ModuleType::Esm)),
         );
     }
 }
@@ -2928,7 +2936,7 @@ fn transpile_source_code_inner(
                     {
                         bun_jsc::node_compile_cache::fetch(
                             source.path.text,
-                            is_commonjs_module,
+                            ModuleFormat::from_bool(is_commonjs_module),
                             entry.output_code.byte_slice(),
                         )
                     } else {
@@ -3165,7 +3173,11 @@ fn transpile_source_code_inner(
                         && path.is_file()
                         && loader.is_java_script_like()
                     {
-                        bun_jsc::node_compile_cache::fetch(path.text, is_commonjs_module, written)
+                        bun_jsc::node_compile_cache::fetch(
+                            path.text,
+                            ModuleFormat::from_bool(is_commonjs_module),
+                            written,
+                        )
                     } else {
                         None
                     };
@@ -3248,7 +3260,11 @@ fn transpile_source_code_inner(
                     && path.is_file()
                     && loader.is_java_script_like()
                 {
-                    bun_jsc::node_compile_cache::fetch(path.text, is_commonjs_module, written)
+                    bun_jsc::node_compile_cache::fetch(
+                        path.text,
+                        ModuleFormat::from_bool(is_commonjs_module),
+                        written,
+                    )
                 } else {
                     None
                 };
@@ -4544,7 +4560,8 @@ pub extern "C" fn Bun__transpileVirtualModule(
             .copied();
         opt.unwrap_or_else(|| {
             // SAFETY: `jsc_vm` is the live per-thread VM.
-            if bun_core::strings::eql_long(specifier, unsafe { &*jsc_vm }.main(), true) {
+            let main = unsafe { &*jsc_vm }.main();
+            if bun_core::strings::eql_long(specifier, main, bun_core::strings::CheckLen::Yes) {
                 Loader::Js
             } else {
                 Loader::File

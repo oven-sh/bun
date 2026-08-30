@@ -202,7 +202,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
                     FileSystem::instance().top_level_dir_without_trailing_slash(),
                     name,
                     // is_directory
-                    true,
+                    bun_sys::SymlinkKind::Directory,
                 ) {
                     if manager.options.log_level != LogLevel::Silent {
                         bun_core::pretty_errorln!(
@@ -264,7 +264,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
                 err: None,
                 skipped_due_to_missing_bin: false,
             };
-            bin_linker.link(true);
+            bin_linker.link(bun_install::Scope::Global);
 
             if let Some(e) = bin_linker.err {
                 if manager.options.log_level != LogLevel::Silent {

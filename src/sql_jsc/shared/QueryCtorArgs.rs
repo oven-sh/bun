@@ -4,13 +4,22 @@
 
 use crate::jsc::{JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsResult};
 
+bun_core::bool_enum!(
+    /// Return 64-bit integers as JS `BigInt` (otherwise as strings).
+    pub UseBigint
+);
+bun_core::bool_enum!(
+    /// Simple (text-protocol, unparameterised) query vs. prepared statement.
+    pub SimpleQuery
+);
+
 pub(crate) struct QueryCtorArgs {
     pub query: JSValue,
     pub values: JSValue,
     pub pending_value: JSValue,
     pub columns: JSValue,
-    pub bigint: bool,
-    pub simple: bool,
+    pub bigint: UseBigint,
+    pub simple: SimpleQuery,
 }
 
 impl QueryCtorArgs {
@@ -37,9 +46,9 @@ impl QueryCtorArgs {
         let js_bigint: JSValue = args.next_eat().unwrap_or(JSValue::FALSE);
         let js_simple: JSValue = args.next_eat().unwrap_or(JSValue::FALSE);
 
-        let bigint = js_bigint.is_boolean() && js_bigint.as_boolean();
-        let simple = js_simple.is_boolean() && js_simple.as_boolean();
-        if simple {
+        let bigint = UseBigint::from_bool(js_bigint.is_boolean() && js_bigint.as_boolean());
+        let simple = SimpleQuery::from_bool(js_simple.is_boolean() && js_simple.as_boolean());
+        if simple == SimpleQuery::Yes {
             if values.get_length(global_this)? > 0 {
                 return Err(global_this
                     .throw_invalid_arguments(format_args!("simple query cannot have parameters")));

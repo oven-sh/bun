@@ -78,13 +78,15 @@ pub struct SubprocExec {
     pub(crate) this_id: NodeId,
 }
 
+bun_core::bool_enum!(pub(crate) StdinState { Open, Closed });
+
 /// Tracks which subprocess stdio pipes are still open. Each `Option` is `None`
 /// if that fd was *not* piped (e.g. inherited / fd-backed), so it never gates
 /// completion. `Some(state)` means it was piped and must reach `Closed` before
 /// [`Cmd::has_finished`] returns true.
 #[derive(Default)]
 pub struct BufferedIoClosed {
-    pub(crate) stdin: Option<bool>,
+    pub(crate) stdin: Option<StdinState>,
     pub(crate) stdout: Option<BufferedIoState>,
     pub(crate) stderr: Option<BufferedIoState>,
 }
@@ -114,6 +116,9 @@ impl Drop for BufferedIoState {
     }
 }
 
+bun_core::bool_enum!(IoIsPipe);
+bun_core::bool_enum!(RedirectsElsewhere);
+
 impl BufferedIoClosed {
     /// Build the per-fd closed/buffering state from the command's `Stdio` triple.
     fn from_stdio(io: &[Stdio; 3]) -> Self {
@@ -122,7 +127,7 @@ impl BufferedIoClosed {
         const STDERR_NO: usize = 2;
         Self {
             stdin: if io[STDIN_NO].is_piped() {
-                Some(false)
+                Some(StdinState::Open)
             } else {
                 None
             },
@@ -141,7 +146,7 @@ impl BufferedIoClosed {
 
     /// True once stdin, stdout, and stderr have all been closed.
     fn all_closed(&self) -> bool {
-        let stdin_closed = self.stdin.unwrap_or(true);
+        let stdin_closed = self.stdin.is_none_or(|s| s == StdinState::Closed);
         let stdout_closed = self.stdout.as_ref().is_none_or(BufferedIoState::closed);
         let stderr_closed = self.stderr.as_ref().is_none_or(BufferedIoState::closed);
         let ret = stdin_closed && stdout_closed && stderr_closed;
@@ -157,7 +162,7 @@ impl BufferedIoClosed {
 
     /// Mark stdin closed.
     fn close_stdin(&mut self) {
-        self.stdin = Some(true);
+        self.stdin = Some(StdinState::Closed);
     }
 
     /// Close the stdout/stderr side.
@@ -170,8 +175,8 @@ impl BufferedIoClosed {
     fn close_out(
         slot: &mut Option<BufferedIoState>,
         readable: &mut Readable,
-        io_is_pipe: bool,
-        redirects_elsewhere: bool,
+        io_is_pipe: IoIsPipe,
+        redirects_elsewhere: RedirectsElsewhere,
         shell_buf: *mut Vec<u8>,
     ) {
         let Some(state) = slot.as_mut() else { return };
@@ -183,7 +188,10 @@ impl BufferedIoClosed {
         };
         // If the shell state is piped (inside a cmd substitution) aggregate
         // the output of this command.
-        if io_is_pipe && !redirects_elsewhere && !shell_buf.is_null() {
+        if io_is_pipe == IoIsPipe::Yes
+            && redirects_elsewhere == RedirectsElsewhere::No
+            && !shell_buf.is_null()
+        {
             let the_slice = pipe.slice();
             // SAFETY: `shell_buf` points into `ShellExecEnv::_buffered_*`,
             // which the owning Cmd's `base.shell` keeps live for the duration
@@ -651,7 +659,7 @@ impl Cmd {
                 let status = process.status.clone();
                 process.on_exit(status, &crate::api::bun::process::rusage_zeroed());
             } else {
-                process.wait(false);
+                process.wait(bun_spawn::WaitMode::NonBlocking);
             }
         }
 
@@ -1018,8 +1026,8 @@ impl Cmd {
         BufferedIoClosed::close_out(
             &mut sub.buffered_closed.stdout,
             &mut child.stdout,
-            matches!(self.io.stdout, IoOutKind::Pipe),
-            redirect.redirects_elsewhere(ast::IoKind::Stdout),
+            IoIsPipe::from_bool(matches!(self.io.stdout, IoOutKind::Pipe)),
+            RedirectsElsewhere::from_bool(redirect.redirects_elsewhere(ast::IoKind::Stdout)),
             self.base.shell_mut().buffered_stdout(),
         );
         child.close_io(StdioKind::Stdout);
@@ -1052,8 +1060,8 @@ impl Cmd {
         BufferedIoClosed::close_out(
             &mut sub.buffered_closed.stderr,
             &mut child.stderr,
-            matches!(self.io.stderr, IoOutKind::Pipe),
-            redirect.redirects_elsewhere(ast::IoKind::Stderr),
+            IoIsPipe::from_bool(matches!(self.io.stderr, IoOutKind::Pipe)),
+            RedirectsElsewhere::from_bool(redirect.redirects_elsewhere(ast::IoKind::Stderr)),
             self.base.shell_mut().buffered_stderr(),
         );
         child.close_io(StdioKind::Stderr);

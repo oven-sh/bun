@@ -1,11 +1,12 @@
 #![warn(unused_must_use)]
 use crate::Error;
 use crate::lexer as js_lexer;
-use crate::p::{P, ReactRefreshExportKind};
+use crate::p::{AllValuesArePure, P, ReactRefreshExportKind, ShouldHoistFns};
 use crate::parser::{
     PrependTempRefsOpts, ReactRefresh, Ref, RelocateVarsMode, SideEffects, StmtsKind,
     statement_cares_about_scope,
 };
+use crate::visit::IsInOrOf;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::flags;
 use bun_ast::stmt::Data as StmtData;
@@ -1829,7 +1830,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .expect("unreachable");
 
         if let Some(initst) = data.init {
-            data.init = Some(p.visit_for_loop_init(initst, false));
+            data.init = Some(p.visit_for_loop_init(initst, IsInOrOf::No));
         }
 
         if let Some(mut test) = data.test {
@@ -1880,7 +1881,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
                 .expect("unreachable");
-            let _ = p.visit_for_loop_init(data.init, true);
+            let _ = p.visit_for_loop_init(data.init, IsInOrOf::Yes);
             p.visit_expr(&mut data.value);
             data.body = p.visit_loop_body(data.body);
 
@@ -1927,7 +1928,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
             .expect("unreachable");
-        let _ = p.visit_for_loop_init(data.init, true);
+        let _ = p.visit_for_loop_init(data.init, IsInOrOf::Yes);
         p.visit_expr(&mut data.value);
         data.body = p.visit_loop_body(data.body);
 
@@ -2000,8 +2001,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let visited_stmts = ctx.finalize(
                         p,
                         stmts_slice,
-                        p.will_wrap_module_in_try_catch_for_using
-                            && p.current_scope().parent.is_none(),
+                        ShouldHoistFns::from_bool(
+                            p.will_wrap_module_in_try_catch_for_using
+                                && p.current_scope().parent.is_none(),
+                        ),
                     );
                     if let StmtData::SBlock(mut b) = data.body.data {
                         b.stmts = list_to_stmts(visited_stmts);
@@ -2119,7 +2122,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ctx.scan_stmts(p, cases[i].body.slice_mut());
                 }
                 let switch_stmt = p.arena.alloc_slice_copy(&[*stmt]);
-                stmts.extend_from_slice(&ctx.finalize(p, switch_stmt, false));
+                stmts.extend_from_slice(&ctx.finalize(p, switch_stmt, ShouldHoistFns::No));
             }
 
             p.pop_scope();
@@ -2176,7 +2179,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut value_exprs: BumpVec<'a, Expr> = BumpVec::with_capacity_in(values.len(), p.arena);
 
-        let mut all_values_are_pure = true;
+        let mut all_values_are_pure = AllValuesArePure::Yes;
 
         // ts_namespace is set for the enum scope (push_scope_for_visit_pass populated it
         // during the parse pass); exported_members is an arena-backed `StoreRef`.
@@ -2234,7 +2237,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         if !p.expr_can_be_removed_if_unused(&visited) {
-                            all_values_are_pure = false;
+                            all_values_are_pure = AllValuesArePure::No;
                         }
                     }
                 }
@@ -2385,7 +2388,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             data.name.ref_,
             data.arg,
             prepend_list.into_bump_slice_mut(),
-            false,
+            AllValuesArePure::No,
         )?;
         Ok(())
     }

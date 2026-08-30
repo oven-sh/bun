@@ -96,12 +96,19 @@ pub struct ExtensionOrderGroup {
     pub default: Box<[Box<[u8]>]>,
     pub esm: Box<[Box<[u8]>]>,
 }
+bun_core::bool_enum!(pub(crate) IsNodeModules);
+
 impl ExtensionOrder {
     /// Returns the
     /// [`ExtOrder`] tag; resolve to a slice via
     /// [`BundleOptions::ext_order_slice`].
-    pub(crate) fn kind(&self, kind: bun_ast::ImportKind, is_node_modules: bool) -> ExtOrder {
+    pub(crate) fn kind(
+        &self,
+        kind: bun_ast::ImportKind,
+        is_node_modules: IsNodeModules,
+    ) -> ExtOrder {
         use bun_ast::ImportKind as K;
+        let is_node_modules = is_node_modules == IsNodeModules::Yes;
         match kind {
             K::Url | K::AtConditional | K::At => ExtOrder::Css,
             K::Stmt | K::EntryPointBuild | K::EntryPointRun | K::Dynamic => {

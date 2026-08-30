@@ -667,7 +667,7 @@ impl TranspilerJob {
                 // SAFETY: dst/src point at locals that outlive this guard; no aliases at drop.
                 unsafe {
                     *dst = bun_ast::Log::init();
-                    (*src).clone_to_with_recycled(&mut *dst, true);
+                    (*src).clone_to_with_recycled(&mut *dst, bun_ast::Recycled::Yes);
                 }
             },
         );
@@ -778,7 +778,7 @@ impl TranspilerJob {
         let (vm_main, vm_main_hash) = unsafe { ((*vm).main(), (*vm).main_hash) };
         let is_main = vm_main.len() == path.text.len()
             && vm_main_hash == hash
-            && strings::eql_long(vm_main, path.text, false);
+            && strings::eql_long(vm_main, path.text, strings::CheckLen::No);
 
         let module_type: ModuleType = match this_tag {
             ResolvedSourceTag::PackageJsonTypeCommonjs => ModuleType::Cjs,

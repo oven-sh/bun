@@ -871,7 +871,7 @@ impl SizeHandlerImpl {
                 &mut block_start,
                 &mut block_end,
                 LogicalSidePair::Block,
-                logical_supported,
+                LogicalSupported::from_bool(logical_supported),
                 dest,
                 context,
             );
@@ -902,7 +902,7 @@ impl SizeHandlerImpl {
                 &mut inline_start,
                 &mut inline_end,
                 LogicalSidePair::Inline,
-                logical_supported,
+                LogicalSupported::from_bool(logical_supported),
                 dest,
                 context,
             );
@@ -1004,12 +1004,12 @@ impl SizeHandlerImpl {
         start: &mut Option<Property>,
         end: &mut Option<Property>,
         pair: LogicalSidePair,
-        logical_supported: bool,
+        logical_supported: LogicalSupported,
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
         // _ = this; // autofix
-        let shorthand_supported = logical_supported
+        let shorthand_supported = logical_supported == LogicalSupported::Yes
             && match spec.shorthand_feature {
                 Some(f) => !context.should_compile_logical(f),
                 None => true,
@@ -1092,6 +1092,8 @@ enum LogicalSidePair {
     Block,
     Inline,
 }
+
+bun_core::bool_enum!(LogicalSupported);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Spec instantiations

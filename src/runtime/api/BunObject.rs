@@ -74,7 +74,7 @@ use bun_jsc::{
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use crate::cli::open::Editor;
 use bun_core::{EncodedSlice, String as BunString, strings};
-use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
+use bun_jsc::virtual_machine::{IsRejection, ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
 #[cfg(not(windows))]
 use bun_paths::PathBuffer;
@@ -378,7 +378,7 @@ fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult
 
     if bun_shell_parser::needs_escape_bunstr(&bunstr) {
         let result = bun_shell_parser::escape_bun_str::<true>(&bunstr, &mut outbuf)?;
-        if !result {
+        if result == bun_shell_parser::Utf16Validity::Invalid {
             return Err(global_this.throw(format_args!(
                 "String has invalid utf-16: {}",
                 bstr::BStr::new(bunstr.byte_slice()),
@@ -937,7 +937,7 @@ fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
         if let Some(sliced) = &editor_name {
             let prev_name = edit.name;
 
-            if !strings::eql_long(prev_name, sliced.slice(), true) {
+            if !strings::eql_long(prev_name, sliced.slice(), strings::CheckLen::Yes) {
                 let prev = core::mem::take(edit);
                 // Own the bytes in `name_storage` and
                 // hand back a thread-lifetime borrow.
@@ -1036,7 +1036,7 @@ fn sleep_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult
 
 // HOST_EXPORT(Bun__gc, c)
 pub fn gc(vm: &mut VirtualMachine, sync: bool) -> usize {
-    vm.garbage_collect(sync)
+    vm.garbage_collect(bun_jsc::GcMode::from_bool(sync))
 }
 
 #[bun_jsc::host_fn]
@@ -1758,6 +1758,7 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
     // That can't compile in `bun_jsc`, so port the body here where the S3
     // types are in scope and store the cached value through the public
     // `RareData.s3_default_client: Strong` field.
+    use crate::webcore::s3::credentials_jsc::RequestPayer;
     use crate::webcore::s3_client::S3Client;
     use bun_jsc::StrongOptional;
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
@@ -1782,7 +1783,7 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
         None,
         None,
         None,
-        false,
+        RequestPayer::No,
         global_this,
     ) {
         Ok(v) => v,
@@ -1795,7 +1796,7 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
         options: aws_options.options,
         acl: aws_options.acl,
         storage_class: aws_options.storage_class,
-        request_payer: aws_options.request_payer,
+        request_payer: RequestPayer::from_bool(aws_options.request_payer),
     };
     let js_client = <S3Client as bun_jsc::JsClass>::to_js(client, global_this);
     js_client.ensure_still_alive();
@@ -2098,7 +2099,7 @@ pub(crate) mod environment_variables {
 extern "C" fn Bun__reportError(global_object: &JSGlobalObject, err: JSValue) {
     // SAFETY: VirtualMachine::get() returns the thread-local VM raw pointer.
     let vm = jsc::virtual_machine::VirtualMachine::get().as_mut();
-    let _ = vm.uncaught_exception(global_object, err, false);
+    let _ = vm.uncaught_exception(global_object, err, IsRejection::No);
 }
 
 /// Shared argument prefix for `Bun.{gzip,gunzip,deflate,inflate}Sync` and
@@ -2241,7 +2242,7 @@ pub mod JSZlib {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
-        gzip_or_deflate_sync(global_this, buffer_value, options_val, true)
+        gzip_or_deflate_sync(global_this, buffer_value, options_val, ZlibFormat::Gzip)
     }
 
     #[bun_jsc::host_fn]
@@ -2250,7 +2251,7 @@ pub mod JSZlib {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
-        gunzip_or_inflate_sync(global_this, buffer_value, options_val, false)
+        gunzip_or_inflate_sync(global_this, buffer_value, options_val, ZlibFormat::Deflate)
     }
 
     #[bun_jsc::host_fn]
@@ -2259,7 +2260,7 @@ pub mod JSZlib {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
-        gzip_or_deflate_sync(global_this, buffer_value, options_val, false)
+        gzip_or_deflate_sync(global_this, buffer_value, options_val, ZlibFormat::Deflate)
     }
 
     #[bun_jsc::host_fn]
@@ -2268,15 +2269,18 @@ pub mod JSZlib {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
-        gunzip_or_inflate_sync(global_this, buffer_value, options_val, true)
+        gunzip_or_inflate_sync(global_this, buffer_value, options_val, ZlibFormat::Gzip)
     }
+
+    bun_core::bool_enum!(ZlibFormat { Deflate, Gzip });
 
     fn gunzip_or_inflate_sync(
         global_this: &JSGlobalObject,
         buffer_value: JSValue,
         options_val_: Option<JSValue>,
-        is_gzip: bool,
+        format: ZlibFormat,
     ) -> JsResult<JSValue> {
+        let is_gzip = format == ZlibFormat::Gzip;
         let mut opts = zlib::Options {
             gzip: is_gzip,
             window_bits: if is_gzip { 31 } else { -15 },
@@ -2374,7 +2378,7 @@ pub mod JSZlib {
                     }
                 };
 
-                match reader.read_all(true) {
+                match reader.read_all(zlib::Chunk::Last) {
                     Ok(()) => {}
                     Err(zlib::ZlibError::OutOfMemory) => {
                         return Err(global_this.throw_out_of_memory());
@@ -2450,8 +2454,9 @@ pub mod JSZlib {
         global_this: &JSGlobalObject,
         buffer_value: JSValue,
         options_val_: Option<JSValue>,
-        is_gzip: bool,
+        format: ZlibFormat,
     ) -> JsResult<JSValue> {
+        let is_gzip = format == ZlibFormat::Gzip;
         let mut level: Option<i32> = None;
         let mut library = Library::Zlib;
         let mut window_bits: i32 = 0;
@@ -2732,10 +2737,12 @@ pub mod JSZstd {
 
     // --- Async versions ---
 
+    bun_core::bool_enum!(pub(crate) ZstdOp { Decompress, Compress });
+
     /// `Bun.zstdCompress` / `Bun.zstdDecompress` off the JS thread.
     pub(crate) struct ZstdJob {
         pub buffer: node::ThreadIsolated<node::StringOrBuffer<'static>>,
-        pub is_compress: bool,
+        pub op: ZstdOp,
         pub level: i32,
         /// Filled in by `run`.
         pub result: Result<Box<[u8]>, Failure>,
@@ -2751,7 +2758,7 @@ pub mod JSZstd {
         ) -> Option<bun_jsc::Completion<Self>> {
             let input = this.buffer.slice();
 
-            this.result = if this.is_compress {
+            this.result = if this.op == ZstdOp::Compress {
                 compress_to_box(input, this.level)
             } else {
                 decompress_to_box(input)
@@ -2782,7 +2789,7 @@ pub mod JSZstd {
     fn create_job(
         global_this: &JSGlobalObject,
         buffer: node::ThreadIsolated<node::StringOrBuffer<'static>>,
-        is_compress: bool,
+        op: ZstdOp,
         level: i32,
     ) -> JSValue {
         let cx = global_this.js_thread();
@@ -2792,7 +2799,7 @@ pub mod JSZstd {
             &cx,
             ZstdJob {
                 buffer,
-                is_compress,
+                op,
                 level,
                 result: Ok(Box::default()),
             },
@@ -2807,7 +2814,7 @@ pub mod JSZstd {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let (buffer, _, level) = get_options_async(global_this, callframe)?;
-        Ok(create_job(global_this, buffer, true, level))
+        Ok(create_job(global_this, buffer, ZstdOp::Compress, level))
     }
 
     #[bun_jsc::host_fn]
@@ -2816,7 +2823,7 @@ pub mod JSZstd {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let (buffer, _, _) = get_options_async(global_this, callframe)?;
-        Ok(create_job(global_this, buffer, false, 0)) // level is ignored for decompression
+        Ok(create_job(global_this, buffer, ZstdOp::Decompress, 0)) // level is ignored for decompression
     }
 }
 

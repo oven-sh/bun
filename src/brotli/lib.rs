@@ -42,6 +42,7 @@ impl Default for DecoderOptions {
     }
 }
 
+pub use bun_core::compress::Chunk;
 use bun_core::compress::State as ReaderState;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -103,12 +104,12 @@ impl StreamingDecoder {
 
     /// Consume all of `input`, appending decompressed bytes to `out`
     /// (growing in 4096-byte steps). Returns `ShortRead` when more input is
-    /// required and `is_done` is false.
+    /// required and `is_done` is [`Chunk::More`].
     pub fn decompress(
         &mut self,
         input: &[u8],
         out: &mut Vec<u8>,
-        is_done: bool,
+        is_done: Chunk,
     ) -> crate::Result<()> {
         if matches!(self.state, ReaderState::End | ReaderState::Error) {
             return Ok(());
@@ -173,7 +174,7 @@ impl StreamingDecoder {
                 }
                 c::BrotliDecoderResult::needs_more_input => {
                     self.state = ReaderState::Inflating;
-                    if is_done {
+                    if is_done == Chunk::Last {
                         self.state = ReaderState::Error;
                         return Err(crate::Error::BrotliDecompressionError);
                     }

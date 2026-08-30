@@ -2805,7 +2805,11 @@ impl Package<u64> {
                         let num_notes = 'count: {
                             let mut i: usize = 0;
                             for value in workspace_names.values() {
-                                if strings::eql_long(&value.name, &entry.name, true) {
+                                if strings::eql_long(
+                                    &value.name,
+                                    &entry.name,
+                                    strings::CheckLen::Yes,
+                                ) {
                                     i += 1;
                                 }
                             }
@@ -2822,7 +2826,11 @@ impl Package<u64> {
                                 if note_path.as_ptr() == path_.as_ptr() {
                                     continue;
                                 }
-                                if strings::eql_long(&value.name, &entry.name, true) {
+                                if strings::eql_long(
+                                    &value.name,
+                                    &entry.name,
+                                    strings::CheckLen::Yes,
+                                ) {
                                     let note_abs_path = bun_core::ZBox::from_bytes(
                                         resolve_path::join_abs_string_z::<path::platform::Auto>(
                                             cwd,
@@ -3231,6 +3239,12 @@ pub mod serializer {
         pub needs_update: bool,
     }
 
+    bun_core::bool_enum!(
+        /// Whether the on-disk package list is the v2 (`u32` semver ints)
+        /// layout and must be widened to `u64` while loading.
+        pub(crate) MigrateFromV2
+    );
+
     // The v2-migration arm
     // below hard-codes `u32 → u64` (`VersionedURL.migrate()` returns `<u64>`).
     // The only caller (`bun.lockb.rs`) instantiates at `u64`, so bind concretely
@@ -3238,7 +3252,7 @@ pub mod serializer {
     pub(crate) fn load(
         stream: &mut Stream,
         end: usize,
-        migrate_from_v2: bool,
+        migrate_from_v2: MigrateFromV2,
     ) -> crate::Result<PackagesLoadResult<u64>> {
         type SemverIntType = u64;
         let reader = stream.reader();
@@ -3279,7 +3293,7 @@ pub mod serializer {
         list.ensure_total_capacity(list_len as usize)?;
 
         let mut needs_update = false;
-        if migrate_from_v2 {
+        if migrate_from_v2 == MigrateFromV2::Yes {
             type OldPackageV2 = Package<u32>;
             let mut list_for_migrating_from_v2 = <List<u32>>::default();
 

@@ -16,7 +16,7 @@ use super::stream::Stream;
 use crate::h3_client as H3;
 use crate::internal_state::HTTPStage;
 use crate::signals::Field as Signal;
-use crate::{HTTPClient, HeaderResult, Protocol};
+use crate::{HTTPClient, HeaderResult, OnlyBuffer, Protocol};
 
 use crate::h3_client::h3_client;
 
@@ -43,6 +43,8 @@ pub struct ClientSession {
     pub(crate) pending: Vec<*mut Stream>,
 }
 
+bun_core::bool_enum!(pub(crate) StreamEnded);
+
 impl ClientSession {
     /// `bun.TrivialNew(@This())` — heap-allocate and return raw; pointer is
     /// stashed in the `quic.Socket` ext slot and the `ClientContext` registry.
@@ -68,7 +70,7 @@ impl ClientSession {
         !self.closed
             && self.port == port
             && self.reject_unauthorized == reject_unauthorized
-            && strings::eql_long(&self.hostname, hostname, true)
+            && strings::eql_long(&self.hostname, hostname, strings::CheckLen::Yes)
     }
 
     /// Mutable access to the live lsquic connection handle.
@@ -292,7 +294,8 @@ impl ClientSession {
     /// `done` = the lsquic stream is gone; deliver whatever is buffered then
     /// detach. Mirrors H2's `ClientSession.deliverStream` so the HTTPClient state
     /// machine sees the same call sequence regardless of transport.
-    pub(crate) fn deliver(&mut self, stream: *mut Stream, done: bool) {
+    pub(crate) fn deliver(&mut self, stream: *mut Stream, done: StreamEnded) {
+        let done = done == StreamEnded::Yes;
         let st = stream_mut(stream);
         let Some(client_ptr) = st.client else {
             if done {
@@ -366,13 +369,14 @@ impl ClientSession {
             if done {
                 client.state.flags.received_last_chunk = true;
             }
-            let report = match client.handle_response_body(st.body_buffer.as_slice(), false) {
-                Ok(r) => r,
-                Err(e) => {
-                    st.body_buffer.clear();
-                    return self.fail(stream, e);
-                }
-            };
+            let report =
+                match client.handle_response_body(st.body_buffer.as_slice(), OnlyBuffer::No) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        st.body_buffer.clear();
+                        return self.fail(stream, e);
+                    }
+                };
             st.body_buffer.clear();
             if done {
                 self.detach(stream);

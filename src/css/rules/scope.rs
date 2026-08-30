@@ -20,7 +20,7 @@ pub struct ScopeRule<R> {
 
 impl<R> ScopeRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        use crate::selectors::selector::serialize::serialize_selector_list;
+        use crate::selectors::selector::serialize::{IsRelative, serialize_selector_list};
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
@@ -36,7 +36,7 @@ impl<R> ScopeRule<R> {
             // Read `dest.ctx` directly (Copy) — `Printer::context()`
             // ties the borrow to `&self`, which conflicts with `&mut dest`.
             let ctx = dest.ctx;
-            serialize_selector_list(scope_start.v.slice(), dest, ctx, false)?;
+            serialize_selector_list(scope_start.v.slice(), dest, ctx, IsRelative::No)?;
             dest.write_char(b')')?;
             dest.whitespace()?;
         }
@@ -55,12 +55,12 @@ impl<R> ScopeRule<R> {
                     scope_end,
                     |scope_end: &SelectorList, d: &mut Printer| -> Result<(), PrintErr> {
                         let ctx = d.ctx;
-                        serialize_selector_list(scope_end.v.slice(), d, ctx, false)
+                        serialize_selector_list(scope_end.v.slice(), d, ctx, IsRelative::No)
                     },
                 )?;
             } else {
                 let ctx = dest.ctx;
-                return serialize_selector_list(scope_end.v.slice(), dest, ctx, false);
+                return serialize_selector_list(scope_end.v.slice(), dest, ctx, IsRelative::No);
             }
             dest.write_char(b')')?;
             dest.whitespace()?;

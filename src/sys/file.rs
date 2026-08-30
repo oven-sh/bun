@@ -31,6 +31,8 @@ pub struct ReadToEndResult {
     pub err: Option<Error>,
 }
 
+bun_core::bool_enum!(pub Truncate);
+
 // `File` high-level helpers — wrap the syscall surface above.
 impl File {
     // ── construction / identity ──────────────────────────────────────────
@@ -114,9 +116,16 @@ impl File {
         }
     }
     /// Create a file at `path` relative to `dir`, optionally truncating.
-    pub fn create(dir: impl AsFd, path: &[u8], truncate: bool) -> Maybe<Self> {
+    pub fn create(dir: impl AsFd, path: &[u8], truncate: Truncate) -> Maybe<Self> {
         let dir = dir.as_fd();
-        let flags = O::WRONLY | O::CREAT | O::CLOEXEC | if truncate { O::TRUNC } else { 0 };
+        let flags = O::WRONLY
+            | O::CREAT
+            | O::CLOEXEC
+            | if truncate == Truncate::Yes {
+                O::TRUNC
+            } else {
+                0
+            };
         openat_a(dir, path, flags, 0o666).map(Self::from_fd)
     }
     /// Windows wide-path variant of [`File::create`] (truncating, write-only).

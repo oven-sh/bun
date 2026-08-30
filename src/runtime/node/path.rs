@@ -108,7 +108,7 @@ fn eql_ignore_case_t<T: PathCharCwd>(a: &[T], b: &[T]) -> bool {
         // T == u8 when !IS_U16; bytemuck statically checks the layout.
         let a8: &[u8] = bytemuck::cast_slice::<T, u8>(a);
         let b8: &[u8] = bytemuck::cast_slice::<T, u8>(b);
-        return strings::eql_case_insensitive_ascii(a8, b8, true);
+        return strings::eql_case_insensitive_ascii(a8, b8, strings::CheckLen::Yes);
     }
     // In practice the only callers instantiate with `T == u8`; provide a sound
     // u16 compare so

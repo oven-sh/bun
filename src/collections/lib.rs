@@ -149,7 +149,7 @@ pub use array_hash_map::{
 pub use hashbrown;
 
 pub mod string_map;
-pub use string_map::StringMap;
+pub use string_map::{DupeKeys, StringMap};
 
 // Re-export from bun_ptr so callers can name it as `bun_collections::TaggedPtrUnion`
 // (PORTING.md groups it under Collections; the impl lives in src/ptr/).

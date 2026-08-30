@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::{Expect, get_signature, throw};
+use super::IsNot;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
@@ -96,7 +97,7 @@ impl Expect {
         // inlined directly below instead of bound to RECEIVED_LINE/EXPECTED_LINE locals.
         if not {
             if count_as_num == 0 {
-                let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", true);
+                let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", IsNot::Yes);
                 return throw!(
                     this,
                     global,
@@ -106,7 +107,7 @@ impl Expect {
                     expect_string_fmt,
                 );
             } else if count_as_num == 1 {
-                let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", true);
+                let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", IsNot::Yes);
                 return throw!(
                     this,
                     global,
@@ -116,7 +117,7 @@ impl Expect {
                     expect_string_fmt,
                 );
             } else {
-                let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", true);
+                let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", IsNot::Yes);
                 return throw!(
                     this,
                     global,
@@ -130,7 +131,7 @@ impl Expect {
         }
 
         if count_as_num == 0 {
-            let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", false);
+            let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", IsNot::No);
             throw!(
                 this,
                 global,
@@ -140,7 +141,7 @@ impl Expect {
                 expect_string_fmt,
             )
         } else if count_as_num == 1 {
-            let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", false);
+            let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", IsNot::No);
             throw!(
                 this,
                 global,
@@ -150,7 +151,7 @@ impl Expect {
                 expect_string_fmt,
             )
         } else {
-            let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", false);
+            let signature: &str = get_signature("toIncludeRepeated", "<green>expected<r>", IsNot::No);
             throw!(
                 this,
                 global,

@@ -137,7 +137,7 @@ impl Value {
                 // latin1 = true.
                 BunString::create_external::<*mut c_void>(
                     bytes,
-                    true,
+                    bun_core::WTFEncoding::Latin1,
                     core::ptr::null_mut::<c_void>(),
                     noop,
                 )

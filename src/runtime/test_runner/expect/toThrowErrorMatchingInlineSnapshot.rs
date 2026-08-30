@@ -2,6 +2,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::throw;
 use super::Expect;
+use super::IsNot;
 
 pub(crate) fn to_throw_error_matching_inline_snapshot(
     this: &Expect,
@@ -18,7 +19,7 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
 
     let not = this.flags.get().not();
     if not {
-        let signature = Expect::get_signature("toThrowErrorMatchingInlineSnapshot", "", true);
+        let signature = Expect::get_signature("toThrowErrorMatchingInlineSnapshot", "", IsNot::Yes);
         return throw!(
             this,
             global,
@@ -65,7 +66,7 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
         "<green>properties<r><d>, <r>hint",
     )?;
     let Some(value) = this.fn_to_err_string_or_undefined(global, received)? else {
-        let signature = Expect::get_signature("toThrowErrorMatchingInlineSnapshot", "", false);
+        let signature = Expect::get_signature("toThrowErrorMatchingInlineSnapshot", "", IsNot::No);
         return throw!(
             this,
             global,

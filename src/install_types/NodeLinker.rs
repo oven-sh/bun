@@ -146,9 +146,14 @@ pub struct PnpmMatcher {
     pub behavior: Behavior,
 }
 
+bun_core::bool_enum!(
+    /// A pnpm-style pattern (`foo-*`) or its negation (`!foo-*`).
+    pub MatcherKind { Include, Exclude }
+);
+
 pub struct Matcher {
     pub(crate) pattern: Pattern,
-    pub is_exclude: bool,
+    pub kind: MatcherKind,
 }
 
 pub enum Pattern {
@@ -194,16 +199,16 @@ impl PnpmMatcher {
         match expr.data {
             ast::ExprData::EString(mut s) => {
                 let matcher = create_matcher(s.slice(&arena));
-                has_include = has_include || !matcher.is_exclude;
-                has_exclude = has_exclude || matcher.is_exclude;
+                has_include = has_include || matcher.kind == MatcherKind::Include;
+                has_exclude = has_exclude || matcher.kind == MatcherKind::Exclude;
                 matchers.push(matcher);
             }
             ast::ExprData::EArray(patterns) => {
                 for pattern_expr in patterns.slice() {
                     if let Some(pattern) = pattern_expr.as_string_cloned(&arena)? {
                         let matcher = create_matcher(pattern);
-                        has_include = has_include || !matcher.is_exclude;
-                        has_exclude = has_exclude || matcher.is_exclude;
+                        has_include = has_include || matcher.kind == MatcherKind::Include;
+                        has_exclude = has_exclude || matcher.kind == MatcherKind::Exclude;
                         matchers.push(matcher);
                     } else {
                         log.add_error_opts(
@@ -288,11 +293,11 @@ impl PnpmMatcher {
                 for matcher in self.matchers.iter() {
                     match &matcher.pattern {
                         Pattern::MatchAll => {
-                            matches = !matcher.is_exclude;
+                            matches = matcher.kind == MatcherKind::Include;
                         }
                         Pattern::Regex(regex) => {
                             if regex.matches(&name_str) {
-                                matches = !matcher.is_exclude;
+                                matches = matcher.kind == MatcherKind::Include;
                             }
                         }
                     }
@@ -306,16 +311,16 @@ impl PnpmMatcher {
 pub fn create_matcher(raw: &[u8]) -> Matcher {
     let mut trimmed = strings::trim(raw, &strings::WHITESPACE_CHARS);
 
-    let mut is_exclude = false;
+    let mut kind = MatcherKind::Include;
     if strings::starts_with_char(trimmed, b'!') {
-        is_exclude = true;
+        kind = MatcherKind::Exclude;
         trimmed = &trimmed[1..];
     }
 
     if trimmed == b"*" {
         return Matcher {
             pattern: Pattern::MatchAll,
-            is_exclude,
+            kind,
         };
     }
 
@@ -331,6 +336,6 @@ pub fn create_matcher(raw: &[u8]) -> Matcher {
             source: source.into_boxed_slice(),
             compiled: OnceCell::new(),
         }),
-        is_exclude,
+        kind,
     }
 }

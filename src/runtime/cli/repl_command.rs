@@ -23,7 +23,7 @@ use bun_jsc::{self as jsc, JSGlobalObject};
 // module here so `Repl` resolves without touching `cli/mod.rs`.
 #[path = "repl.rs"]
 mod repl;
-use repl::Repl;
+use repl::{PrintResult, Repl};
 
 use crate::Command;
 use crate::cli::Arguments;
@@ -49,7 +49,7 @@ impl ReplCommand {
         if !ctx.debug.loaded_bunfig {
             Arguments::load_config_path(
                 Command::Tag::RunCommand,
-                true,
+                Arguments::AutoLoaded::Yes,
                 bun_core::zstr!("bunfig.toml"),
                 ctx,
             )?;
@@ -225,7 +225,10 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         if !this.eval_script.is_empty() || this.eval_and_print {
             // Non-interactive: evaluate the -e/--eval or -p/--print script,
             // drain the event loop, and exit
-            let had_error = this.repl.eval_script(this.eval_script, this.eval_and_print);
+            let had_error = this.repl.eval_script(
+                this.eval_script,
+                PrintResult::from_bool(this.eval_and_print),
+            );
             Output::flush();
             if had_error {
                 // Only overwrite on error so `process.exitCode = N` in the

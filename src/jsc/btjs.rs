@@ -260,7 +260,7 @@ fn print_source_at_address(
         &symbol_info.compile_unit_name,
         tty_config,
         print_line_from_file_any_os,
-        do_llint,
+        DoLlint::from_bool(do_llint),
     )?;
     if let Some(frame) = frame {
         let desc = frame.describe_frame();
@@ -292,9 +292,11 @@ fn print_unknown_source(
         module_name.as_deref().unwrap_or(b"???"),
         tty_config,
         print_line_from_file_any_os,
-        false,
+        DoLlint::No,
     )
 }
+
+bun_core::bool_enum!(DoLlint);
 
 #[cfg(debug_assertions)]
 fn print_line_info(
@@ -306,7 +308,7 @@ fn print_line_info(
     tty_config: tty::Config,
     // impl-Trait so it monomorphizes, not a runtime fn pointer.
     print_line_from_file: impl Fn(&mut Vec<u8>, &SourceLocation) -> Result<(), Error>,
-    do_llint: bool,
+    do_llint: DoLlint,
 ) -> Result<(), Error> {
     if !cfg!(debug_assertions) {
         unreachable!();
@@ -323,12 +325,12 @@ fn print_line_info(
             sl.line,
             sl.column
         )?;
-    } else if !do_llint {
+    } else if do_llint == DoLlint::No {
         out_stream.extend_from_slice(b"???:?:?");
     }
 
     tty_config.set_color(out_stream, Color::Reset)?;
-    if !do_llint || source_location.is_some() {
+    if do_llint == DoLlint::No || source_location.is_some() {
         out_stream.extend_from_slice(b": ");
     }
     tty_config.set_color(out_stream, Color::Dim)?;

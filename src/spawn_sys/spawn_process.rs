@@ -806,9 +806,19 @@ pub unsafe fn spawn_process_posix(
 
                 let fds: [Fd; 2] = 'brk: {
                     let pair_result = if !options.no_sigpipe {
-                        bun_sys::socketpair_for_shell(libc::AF_UNIX, libc::SOCK_STREAM, 0, false)
+                        bun_sys::socketpair_for_shell(
+                            libc::AF_UNIX,
+                            libc::SOCK_STREAM,
+                            0,
+                            bun_sys::IoMode::Blocking,
+                        )
                     } else {
-                        bun_sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, false)
+                        bun_sys::socketpair(
+                            libc::AF_UNIX,
+                            libc::SOCK_STREAM,
+                            0,
+                            bun_sys::IoMode::Blocking,
+                        )
                     };
                     let pair = match pair_result {
                         Ok(p) => p,
@@ -929,11 +939,15 @@ pub unsafe fn spawn_process_posix(
             }
             PosixStdio::Ipc | PosixStdio::Buffer | PosixStdio::SocketFd => {
                 let is_ipc = matches!(ipc, PosixStdio::Ipc);
-                let fds: [Fd; 2] =
-                    match bun_sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, is_ipc) {
-                        Ok(p) => p,
-                        Err(e) => return Ok(Err(e)),
-                    };
+                let fds: [Fd; 2] = match bun_sys::socketpair(
+                    libc::AF_UNIX,
+                    libc::SOCK_STREAM,
+                    0,
+                    bun_sys::IoMode::from_bool(is_ipc),
+                ) {
+                    Ok(p) => p,
+                    Err(e) => return Ok(Err(e)),
+                };
 
                 if !options.sync && !is_ipc {
                     if let Err(e) = bun_sys::set_nonblocking(fds[0]) {

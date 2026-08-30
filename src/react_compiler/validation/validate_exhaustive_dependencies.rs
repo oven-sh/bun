@@ -11,8 +11,8 @@ use crate::hir::visitors::{
     each_instruction_value_operand_with_functions, each_lvalue, each_terminal_operand,
 };
 use crate::hir::{
-    ArrayElement, AstAlloc, BlockId, DependencyPathEntry, HirFunction, HirVec, Identifier,
-    IdentifierId, InstructionKind, InstructionValue, ManualMemoDependency,
+    ArrayElement, AstAlloc, BlockId, DependencyPathEntry, FunctionNesting, HirFunction, HirVec,
+    Identifier, IdentifierId, InstructionKind, InstructionValue, ManualMemoDependency,
     ManualMemoDependencyRoot, NonLocalBinding, Place, PlaceOrSpread, PropertyLiteral, StoreStr,
     Terminal, Type, hir_vec,
 };
@@ -69,7 +69,7 @@ pub(crate) fn validate_exhaustive_dependencies(
         &env.functions,
         &mut temporaries,
         &mut Some(&mut callbacks),
-        false,
+        FunctionNesting::TopLevel,
     )?;
 
     // Set has_invalid_deps on StartMemoize instructions that had validation errors
@@ -468,12 +468,12 @@ fn collect_dependencies(
     functions: &[HirFunction],
     temporaries: &mut IdMap<IdentifierId, Temporary>,
     callbacks: &mut Option<&mut Callbacks<'_>>,
-    is_function_expression: bool,
+    is_function_expression: FunctionNesting,
 ) -> Result<Temporary, CompilerDiagnostic> {
     let optionals = find_optional_places(func);
     let mut locals: HashSet<IdentifierId> = HashSet::new();
 
-    if is_function_expression {
+    if is_function_expression == FunctionNesting::Nested {
         for param in &func.params {
             let place = param.place();
             locals.insert(place.identifier);
@@ -751,7 +751,7 @@ fn collect_dependencies(
                         functions,
                         temporaries,
                         &mut None,
-                        true,
+                        FunctionNesting::Nested,
                     )?;
                     temporaries.insert(lvalue_id, function_deps.clone());
                     add_dependency(&function_deps, &mut dependencies, &locals);

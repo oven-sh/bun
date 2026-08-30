@@ -9,6 +9,7 @@ use crate::HTTPClient;
 use crate::h2_frame_parser as wire;
 use crate::http_request_body::HTTPRequestBody;
 use crate::internal_state::HTTPStage;
+use crate::lshpack::NeverIndex;
 use bun_core::strings;
 use bun_picohttp as picohttp;
 
@@ -126,9 +127,21 @@ pub(crate) fn write_request(
         }
     }
 
-    encode_header(session, &mut encoded, b":method", request.method, false)?;
-    encode_header(session, &mut encoded, b":scheme", b"https", false)?;
-    encode_header(session, &mut encoded, b":authority", authority, false)?;
+    encode_header(
+        session,
+        &mut encoded,
+        b":method",
+        request.method,
+        NeverIndex::No,
+    )?;
+    encode_header(session, &mut encoded, b":scheme", b"https", NeverIndex::No)?;
+    encode_header(
+        session,
+        &mut encoded,
+        b":authority",
+        authority,
+        NeverIndex::No,
+    )?;
     encode_header(
         session,
         &mut encoded,
@@ -138,7 +151,7 @@ pub(crate) fn write_request(
         } else {
             b"/"
         },
-        false,
+        NeverIndex::No,
     )?;
 
     for h in request.headers {
@@ -154,7 +167,7 @@ pub(crate) fn write_request(
             heap = vec![0u8; h.name().len()];
             strings::copy_lowercase_if_needed(h.name(), &mut heap)
         };
-        let mut never_index = false;
+        let mut never_index = NeverIndex::No;
         if let Some(kind) = classify_request_header(name) {
             match kind {
                 RequestHeader::Drop | RequestHeader::Host => continue,
@@ -171,7 +184,7 @@ pub(crate) fn write_request(
                         continue;
                     }
                 }
-                RequestHeader::Sensitive => never_index = true,
+                RequestHeader::Sensitive => never_index = NeverIndex::Yes,
                 RequestHeader::Expect => {}
             }
         }
@@ -197,7 +210,7 @@ pub(crate) fn write_request(
         session,
         stream.id,
         &encoded,
-        !has_inline_body && !is_streaming,
+        EndStream::from_bool(!has_inline_body && !is_streaming),
     );
     if encoded.capacity() > 64 * 1024 {
         encoded = Vec::new();
@@ -212,11 +225,16 @@ pub(crate) fn write_request(
     Ok(())
 }
 
+bun_core::bool_enum!(
+    /// The END_STREAM flag on a DATA/HEADERS frame.
+    pub EndStream
+);
+
 pub(crate) fn write_header_block(
     session: &mut ClientSession,
     stream_id: u32,
     block: &[u8],
-    end_stream: bool,
+    end_stream: EndStream,
 ) {
     let max: usize = session.remote_max_frame_size as usize;
     let mut remaining = block;
@@ -229,7 +247,7 @@ pub(crate) fn write_header_block(
         if last {
             flags |= wire::HeadersFrameFlags::END_HEADERS as u8;
         }
-        if first && end_stream {
+        if first && end_stream == EndStream::Yes {
             flags |= wire::HeadersFrameFlags::END_STREAM as u8;
         }
         session.write_frame(
@@ -256,7 +274,7 @@ pub(crate) fn write_data_windowed(
     session: &mut ClientSession,
     stream: &mut Stream,
     data: &[u8],
-    end_stream: bool,
+    end_stream: EndStream,
     cap: usize,
 ) -> usize {
     let mut remaining = data;
@@ -281,7 +299,7 @@ pub(crate) fn write_data_windowed(
             .min(session.remote_max_frame_size as usize)
             .min(window);
         let last = chunk_len == remaining.len();
-        let flags: u8 = if last && end_stream {
+        let flags: u8 = if last && end_stream == EndStream::Yes {
             wire::DataFrameFlags::END_STREAM as u8
         } else {
             0
@@ -316,7 +334,7 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
     match &mut client.state.original_request_body {
         HTTPRequestBody::Bytes(_) => {
             let pending = stream.pending_body;
-            let sent = write_data_windowed(session, stream, pending.slice(), true, cap);
+            let sent = write_data_windowed(session, stream, pending.slice(), EndStream::Yes, cap);
             // pending_body[sent..] is a suffix of the original slice.
             stream.pending_body = bun_ptr::RawSlice::new(&pending.slice()[sent..]);
             if stream.pending_body.is_empty() {
@@ -339,7 +357,7 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
             }
             // SAFETY: data_ptr[cursor..cursor+data_len] is the readable slice.
             let data = unsafe { bun_core::ffi::slice(data_ptr.add(cursor), data_len) };
-            let sent = write_data_windowed(session, stream, data, ended, cap);
+            let sent = write_data_windowed(session, stream, data, EndStream::from_bool(ended), cap);
             // We still hold the lock from `acquire()` above; `sb` is the sole
             // live borrow, so reborrowing `&mut sb.buffer` is a child access.
             let buffer = &mut sb.buffer;
@@ -405,7 +423,7 @@ fn encode_header(
     encoded: &mut Vec<u8>,
     name: &[u8],
     value: &[u8],
-    never_index: bool,
+    never_index: NeverIndex,
 ) -> crate::Result<()> {
     let required = encoded.len() + name.len() + value.len() + 32;
     encoded.reserve(required.saturating_sub(encoded.len()));

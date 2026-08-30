@@ -159,6 +159,8 @@ mod io_thread_pool {
     }
 }
 
+bun_core::bool_enum!(IsInsideThreadPool);
+
 impl ThreadPool {
     /// Inherent associated type so call sites that wrote
     /// `ThreadPool::Worker::get(ctx)`
@@ -286,7 +288,7 @@ impl ThreadPool {
     unsafe fn schedule_with_options(
         &self,
         parse_task: *mut ParseTask,
-        is_inside_thread_pool: bool,
+        is_inside_thread_pool: IsInsideThreadPool,
     ) {
         // SAFETY: caller contract; each read ends at the statement.
         let needs_source = unsafe {
@@ -322,7 +324,7 @@ impl ThreadPool {
         }
 
         let schedule_fn: fn(&ThreadPoolLib::ThreadPool, ThreadPoolLib::Batch) =
-            if is_inside_thread_pool {
+            if is_inside_thread_pool == IsInsideThreadPool::Yes {
                 ThreadPoolLib::ThreadPool::schedule_inside_thread_pool
             } else {
                 ThreadPoolLib::ThreadPool::schedule
@@ -363,12 +365,12 @@ impl ThreadPool {
     pub(crate) fn schedule(&self, parse_task: *mut ParseTask) {
         // SAFETY: callers pass a live, exclusively-owned ParseTask (heap- or
         // arena-allocated raw pointer); see call sites in bundle_v2.rs.
-        unsafe { self.schedule_with_options(parse_task, false) };
+        unsafe { self.schedule_with_options(parse_task, IsInsideThreadPool::No) };
     }
 
     pub(crate) fn schedule_inside_thread_pool(&self, parse_task: *mut ParseTask) {
         // SAFETY: see `schedule`.
-        unsafe { self.schedule_with_options(parse_task, true) };
+        unsafe { self.schedule_with_options(parse_task, IsInsideThreadPool::Yes) };
     }
 
     // returns `&'static mut` — the `Worker` is `heap::alloc`'d

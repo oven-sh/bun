@@ -52,6 +52,10 @@ pub struct UsIoVec {
     pub len: usize,
 }
 
+bun_core::bool_enum!(pub TlsRole { Server, Client });
+bun_core::bool_enum!(pub RequestCert);
+bun_core::bool_enum!(pub RejectUnauthorized);
+
 impl us_socket_t {
     pub fn open(&mut self, is_client: bool, ip_addr: Option<&[u8]>) {
         bun_core::scoped_log!(uws, "us_socket_open({:p}, is_client: {})", self, is_client);
@@ -276,9 +280,9 @@ impl us_socket_t {
         k: SocketKind,
         ssl_ctx: &mut SslCtx,
         sni: Option<&core::ffi::CStr>,
-        is_client: bool,
-        request_cert: bool,
-        reject_unauthorized: bool,
+        is_client: TlsRole,
+        request_cert: RequestCert,
+        reject_unauthorized: RejectUnauthorized,
         old_ext: i32,
         new_ext: i32,
     ) -> Option<NonNull<us_socket_t>> {
@@ -291,9 +295,9 @@ impl us_socket_t {
                 k as u8,
                 ssl_ctx,
                 sni.map_or(ptr::null(), |s| s.as_ptr()),
-                is_client as i32,
-                request_cert as i32,
-                reject_unauthorized as i32,
+                (is_client == TlsRole::Client) as i32,
+                (request_cert == RequestCert::Yes) as i32,
+                (reject_unauthorized == RejectUnauthorized::Yes) as i32,
                 old_ext,
                 new_ext,
             ))

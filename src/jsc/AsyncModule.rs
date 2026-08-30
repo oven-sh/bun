@@ -205,7 +205,7 @@ unsafe extern "C" {
 use core::sync::atomic::Ordering;
 use std::io::Write as _;
 
-use bun_install::package_manager::run_tasks;
+use bun_install::package_manager::{InstallPeer, run_tasks};
 use bun_install::{self as install, LogLevel, PackageID};
 
 use crate::event_loop::{ConcurrentTaskItem, Task};
@@ -354,13 +354,18 @@ impl Queue {
 
         if bun_core::output::enable_ansi_colors_stderr() {
             pm.start_progress_bar_if_none();
-            run_tasks::run_tasks::<QueueRunTasksCallbacks<true>>(pm, self, true, LogLevel::Default)
-                .expect("unreachable");
+            run_tasks::run_tasks::<QueueRunTasksCallbacks<true>>(
+                pm,
+                self,
+                InstallPeer::Yes,
+                LogLevel::Default,
+            )
+            .expect("unreachable");
         } else {
             run_tasks::run_tasks::<QueueRunTasksCallbacks<false>>(
                 pm,
                 self,
-                true,
+                InstallPeer::Yes,
                 LogLevel::DefaultNoProgress,
             )
             .expect("unreachable");

@@ -36,7 +36,10 @@ pub use crate::error::{
 pub use crate::generics::{self as generic, implement_deep_clone, implement_hash};
 pub use crate::logical::{self, PropertyCategory};
 pub use crate::prefixes;
-pub use crate::printer::{self as css_printer, ImportInfo, Printer, PrinterOptions};
+pub use crate::printer::{
+    self as css_printer, HandleCssModule, ImportInfo, IsDeclaration, Printer, PrinterOptions,
+    WsBefore,
+};
 pub use crate::small_list::SmallList;
 pub use crate::targets::{self, Features, Targets};
 
@@ -61,7 +64,7 @@ pub use crate::properties::{
     custom::{TokenList, TokenListFns},
 };
 pub use crate::rules::{
-    self as css_rules, CssRule, CssRuleList, Location, MinifyContext, StyleContext,
+    self as css_rules, CssRule, CssRuleList, Location, MinifyContext, ParentIsUnused, StyleContext,
     import::{ImportConditions, ImportRule},
     layer::{LayerBlockRule, LayerName, LayerStatementRule},
     namespace::NamespaceRule,
@@ -392,7 +395,7 @@ fn parse_custom_at_rule_without_block<T: CustomAtRuleParser>(
     start: &ParserState,
     options: &ParserOptions,
     at_rule_parser: &mut T,
-    is_nested: bool,
+    is_nested: IsNested,
 ) -> Maybe<CssRule<T::AtRule>, ()> {
     match T::rule_without_block(at_rule_parser, prelude, start, options, is_nested) {
         Ok(v) => Ok(CssRule::Custom(v)),
@@ -406,7 +409,7 @@ fn parse_custom_at_rule_body<T: CustomAtRuleParser>(
     start: &ParserState,
     options: &ParserOptions,
     at_rule_parser: &mut T,
-    is_nested: bool,
+    is_nested: IsNested,
 ) -> CssResult<T::AtRule> {
     match T::parse_block(at_rule_parser, prelude, start, input, options, is_nested) {
         Ok(vv) => Ok(vv),
@@ -648,6 +651,8 @@ pub trait QualifiedRuleParser {
 #[derive(Default, Clone, Copy, crate::DeepClone)]
 pub struct DefaultAtRule;
 
+bun_core::bool_enum!(pub IsNested);
+
 /// Same as `AtRuleParser` but modified to provide parser options.
 /// Also added: `on_import_rule` to handle `@import` rules.
 pub trait CustomAtRuleParser {
@@ -666,7 +671,7 @@ pub trait CustomAtRuleParser {
         prelude: Self::Prelude,
         start: &ParserState,
         options: &ParserOptions,
-        is_nested: bool,
+        is_nested: IsNested,
     ) -> Maybe<Self::AtRule, ()>;
 
     fn parse_block(
@@ -675,7 +680,7 @@ pub trait CustomAtRuleParser {
         start: &ParserState,
         input: &mut Parser,
         options: &ParserOptions,
-        is_nested: bool,
+        is_nested: IsNested,
     ) -> CssResult<Self::AtRule>;
 
     fn on_import_rule(this: &mut Self, import_rule: &mut ImportRule, start: u32, end: u32);
@@ -753,7 +758,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         _: &ParserState,
         input: &mut Parser,
         _: &ParserOptions,
-        _: bool,
+        _: IsNested,
     ) -> CssResult<Self::AtRule> {
         Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid))
     }
@@ -763,7 +768,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         _prelude: (),
         _: &ParserState,
         _: &ParserOptions,
-        _: bool,
+        _: IsNested,
     ) -> Maybe<Self::AtRule, ()> {
         Err(())
     }
@@ -1128,7 +1133,7 @@ where
                 self.any_rule_so_far = true;
 
                 if first_stylesheet_rule
-                    && strings::eql_case_insensitive_ascii(name, b"charset", true)
+                    && strings::eql_case_insensitive_ascii(name, b"charset", strings::CheckLen::Yes)
                 {
                     let delimiters = Delimiters::SEMICOLON | Delimiters::CLOSE_CURLY_BRACKET;
                     let _ = self
@@ -1416,12 +1421,15 @@ mod rule_parsers {
 
     // ── NestedRuleParser behavior (struct hoisted above) ─────────────────────────
 
+    bun_core::bool_enum!(pub(crate) IsStyleRule);
+
     impl<'a, T: CustomAtRuleParser> NestedRuleParser<'a, T> {
         pub(crate) fn parse_nested(
             &mut self,
             input: &mut Parser,
-            is_style_rule: bool,
+            is_style_rule: IsStyleRule,
         ) -> CssResult<(DeclarationBlock<'static>, CssRuleList<T::AtRule>)> {
+            let is_style_rule = is_style_rule == IsStyleRule::Yes;
             // TODO: think about memory management in error cases
             let mut rules = CssRuleList::<T::AtRule>::default();
             let composes_state = if self.is_in_style_rule
@@ -1513,7 +1521,7 @@ mod rule_parsers {
             // Declarations can be immediately within @media and @supports blocks
             // that are nested within a parent style rule. These act the same way
             // as if they were nested within a `& { ... }` block.
-            let (declarations, mut rules) = self.parse_nested(input, false)?;
+            let (declarations, mut rules) = self.parse_nested(input, IsStyleRule::No)?;
 
             if declarations.len() > 0 {
                 rules.v.insert(
@@ -1879,7 +1887,7 @@ mod rule_parsers {
                     Ok(())
                 }
                 AtRulePrelude::Nest(selectors) => {
-                    let (declarations, rules) = this.parse_nested(input, true)?;
+                    let (declarations, rules) = this.parse_nested(input, IsStyleRule::Yes)?;
                     this.rules
                         .v
                         .push(CssRule::Nesting(css_rules::nesting::NestingRule {
@@ -1911,7 +1919,7 @@ mod rule_parsers {
                         start,
                         this.options,
                         this.at_rule_parser,
-                        this.is_in_style_rule,
+                        IsNested::from_bool(this.is_in_style_rule),
                     )?));
                     Ok(())
                 }
@@ -1953,7 +1961,7 @@ mod rule_parsers {
                         start,
                         this.options,
                         this.at_rule_parser,
-                        this.is_in_style_rule,
+                        IsNested::from_bool(this.is_in_style_rule),
                     )?;
                     this.rules.v.push(rule);
                     Ok(())
@@ -2055,7 +2063,7 @@ mod rule_parsers {
                 }
             }
             let location = input.position();
-            let (declarations, rules) = this.parse_nested(input, true)?;
+            let (declarations, rules) = this.parse_nested(input, IsStyleRule::Yes)?;
 
             // We parsed a style rule with the `composes` property. Track which
             // properties it used so we can validate it later.
@@ -2410,7 +2418,11 @@ mod stylesheet_impl {
                 selector_expansion_total: 0,
             };
 
-            if self.rules.minify(&mut minify_ctx, false).is_err() {
+            if self
+                .rules
+                .minify(&mut minify_ctx, ParentIsUnused::No)
+                .is_err()
+            {
                 // Rule-level minify signals failure with the unit `MinifyErr`
                 // and records the diagnostic out-of-band on the context.
                 debug_assert!(minify_ctx.err.is_some());
@@ -5991,7 +6003,7 @@ pub mod to_css {
         for (idx, val) in this.iter().enumerate() {
             val.to_css(dest)?;
             if idx < len - 1 {
-                dest.delim(b',', false)?;
+                dest.delim(b',', WsBefore::No)?;
             }
         }
         Ok(())

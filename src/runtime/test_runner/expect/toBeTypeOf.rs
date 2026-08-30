@@ -1,5 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
+use super::IsNot;
 use super::get_signature;
 use super::throw;
 
@@ -85,7 +86,7 @@ pub(crate) fn to_be_type_of(
     let expected_str = expected.to_fmt(&mut formatter2);
 
     if not {
-        let signature = get_signature("toBeTypeOf", "", true);
+        let signature = get_signature("toBeTypeOf", "", IsNot::Yes);
         return throw!(
             this,
             global,
@@ -101,7 +102,7 @@ pub(crate) fn to_be_type_of(
         );
     }
 
-    let signature = get_signature("toBeTypeOf", "", false);
+    let signature = get_signature("toBeTypeOf", "", IsNot::No);
     throw!(
         this,
         global,

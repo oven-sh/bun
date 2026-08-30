@@ -18,8 +18,8 @@ use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
 use crate::hir::environment::Environment;
 
 use crate::hir::{
-    AliasingEffect, AstAlloc, BlockId, Effect, EvaluationOrder, FunctionId, HIR, HirFunction,
-    IdentifierId, InstructionValue, Place, ReactFunctionType,
+    AliasingEffect, AstAlloc, BlockId, Effect, EvaluationOrder, FunctionId, FunctionNesting, HIR,
+    HirFunction, IdentifierId, InstructionValue, Place, ReactFunctionType,
 };
 
 /// Analyse all nested function expressions and object methods in `func`.
@@ -109,7 +109,9 @@ where
 
     // inferMutationAliasingEffects on the inner function
     crate::inference::infer_mutation_aliasing_effects::infer_mutation_aliasing_effects(
-        func, env, true,
+        func,
+        env,
+        FunctionNesting::Nested,
     )?;
 
     // Check for invariant errors (e.g., uninitialized value kind)
@@ -125,7 +127,9 @@ where
     // inferMutationAliasingRanges — returns the externally-visible function effects
     let function_effects =
         crate::inference::infer_mutation_aliasing_ranges::infer_mutation_aliasing_ranges(
-            func, env, true,
+            func,
+            env,
+            FunctionNesting::Nested,
         )?;
 
     // rewriteInstructionKindsBasedOnReassignment

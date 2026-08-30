@@ -347,6 +347,8 @@ pub(crate) fn bind_and_execute<Context: WriterContext>(
     Ok(())
 }
 
+bun_core::bool_enum!(pub(crate) IncludeDescribe);
+
 /// Atomically sends Parse + [Describe] + Bind + Execute + Flush + Sync as a single message batch.
 /// This is required for unnamed prepared statements to work correctly with connection poolers
 /// like PgBouncer in transaction mode, which may reassign server connections between protocol
@@ -358,7 +360,7 @@ pub(crate) fn parse_and_bind_and_execute<Context: WriterContext>(
     statement: &PostgresSQLStatement,
     array_value: JSValue,
     columns_value: JSValue,
-    include_describe: bool,
+    include_describe: IncludeDescribe,
     mut writer: protocol::NewWriter<Context>,
 ) -> Result<(), AnyPostgresError> {
     let name = &statement.signature.prepared_statement_name;
@@ -375,7 +377,7 @@ pub(crate) fn parse_and_bind_and_execute<Context: WriterContext>(
     }
 
     // Describe (needed on first execution to learn parameter/result types for caching)
-    if include_describe {
+    if include_describe == IncludeDescribe::Yes {
         let d = protocol::Describe {
             p: protocol::PortalOrPreparedStatement::PreparedStatement(name),
         };

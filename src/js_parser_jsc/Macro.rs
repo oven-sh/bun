@@ -24,7 +24,8 @@ use bun_resolver::package_json::{
 use crate::expr_jsc::ExprJsc;
 use bun_jsc::js_property_iterator::JSPropertyIteratorOptions;
 use bun_jsc::virtual_machine::{
-    InitOptions as VirtualMachineInitOptions, MacroModeGuard, VirtualMachine, runtime_hooks,
+    InitOptions as VirtualMachineInitOptions, IsRejection, MacroModeGuard, VirtualMachine,
+    runtime_hooks,
 };
 use bun_jsc::{
     self as jsc, ConsoleObject, JSArrayIterator, JSGlobalObject, JSPropertyIterator, JSValue,
@@ -630,8 +631,9 @@ impl<'a> Run<'a> {
         match tag {
             T::Error => {
                 // SAFETY: `vm()` is the per-thread VM; uniquely accessed here.
-                let _ =
-                    unsafe { (*self.macro_.vm()).uncaught_exception(self.global, value, false) };
+                let _ = unsafe {
+                    (*self.macro_.vm()).uncaught_exception(self.global, value, IsRejection::No)
+                };
                 return Ok(self.caller);
             }
             T::Undefined => {
@@ -667,7 +669,11 @@ impl<'a> Run<'a> {
                     {
                         // SAFETY: `vm()` is the per-thread VM; uniquely accessed here.
                         let _ = unsafe {
-                            (*self.macro_.vm()).uncaught_exception(self.global, value, false)
+                            (*self.macro_.vm()).uncaught_exception(
+                                self.global,
+                                value,
+                                IsRejection::No,
+                            )
                         };
                         return Err(MacroError::MacroFailed);
                     }
@@ -1067,11 +1073,11 @@ fn expr_from_blob(
     loc: bun_ast::Loc,
 ) -> crate::Result<Expr> {
     use bun_ast::{E, ExprData, StoreStr as Str};
-    use bun_http_types::MimeType::{Category, MimeType};
+    use bun_http_types::MimeType::{Category, Dupe, MimeType};
 
     // `Response.json()` and most servers send parameters (`;charset=utf-8`),
     // so classify through the same parser the runtime uses for blob types.
-    let mime_type = MimeType::init(content_type, false, None);
+    let mime_type = MimeType::init(content_type, Dupe::No, None);
 
     if mime_type.category == Category::Json {
         let source = &Source::init_path_string(b"fetch.json", bytes);
@@ -1090,7 +1096,7 @@ fn expr_from_blob(
 
     if mime_type.category.is_text_like() {
         let mut output = bun_core::MutableString::init_empty();
-        bun_core::quote_for_json(bytes, &mut output, true)?;
+        bun_core::quote_for_json(bytes, &mut output, bun_core::printer::AsciiOnly::Yes)?;
         let owned = output.to_owned_slice();
         // strip the surrounding quotes; copy into the bump arena so the
         // `E.String` data outlives `owned`.

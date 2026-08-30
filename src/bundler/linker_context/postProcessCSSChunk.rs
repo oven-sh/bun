@@ -4,7 +4,7 @@ use bun_core::string_joiner::{StringJoiner, Watcher};
 use bun_sourcemap::{LineColumnOffset, LineColumnOffsetOptional};
 
 use crate::chunk::IntermediateOutput;
-use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
+use crate::linker_context_mod::{CanHaveShifts, GenerateChunkCtx, LinkerOptionsMode};
 use crate::thread_pool;
 use crate::{Chunk, CompileResultForSourceMap, Index, options};
 
@@ -146,7 +146,10 @@ pub(crate) fn post_process_css_chunk(
     // chunk.flags.is_executable = is_executable;
 
     if c.options.source_maps != options::SourceMapOption::None {
-        let can_have_shifts = matches!(chunk.intermediate_output, IntermediateOutput::Pieces(_));
+        let can_have_shifts = CanHaveShifts::from_bool(matches!(
+            chunk.intermediate_output,
+            IntermediateOutput::Pieces(_)
+        ));
         // Copy the `ParentRef` out (not `c.resolver()`) so `output_dir`
         // borrows the local, not `c`, avoiding the split-borrow with
         // `c.generate_source_map_for_chunk(&mut self, …)` below.

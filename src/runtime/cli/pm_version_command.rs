@@ -7,7 +7,7 @@ use crate::api::bun::process::sync::{
     Options as SpawnSyncOptions, SyncStdio as Stdio, spawn as spawn_sync,
 };
 use crate::cli::command;
-use crate::cli::run_command::RunCommand;
+use crate::cli::run_command::{RunCommand, ScriptShell, Silent};
 use bun_alloc::{AllocError, Arena};
 use bun_ast::ExprData;
 use bun_core::strings;
@@ -148,8 +148,8 @@ impl PmVersionCommand {
             None
         };
 
-        let silent = pm.options.log_level == LogLevel::Silent;
-        let use_system_shell = ctx.debug.use_system_shell;
+        let silent = Silent::from_bool(pm.options.log_level == LogLevel::Silent);
+        let use_system_shell = ScriptShell::from_bool(ctx.debug.use_system_shell);
 
         if let Some(s) = &scripts_obj {
             if let Some(script) = s.get(b"preversion") {

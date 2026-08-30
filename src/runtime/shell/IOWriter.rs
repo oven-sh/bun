@@ -168,7 +168,7 @@ pub(crate) type Poll = WriterImpl;
 /// can drop the last external ref without freeing `self` while PipeWriter is
 /// still on the stack.
 #[cfg(not(windows))]
-pub(crate) fn on_poll(writer: &mut Poll, size_hint: isize, hup: bool) {
+pub(crate) fn on_poll(writer: &mut Poll, size_hint: isize, hup: bun_io::ReceivedHup) {
     use bun_io::pipe_writer::PosixPipeWriter;
     let parent = writer.parent.expect("IOWriter writer.parent unset");
     // `parent` is the backref stashed via `set_parent` in `IOWriter::init`;
@@ -353,7 +353,10 @@ impl IOWriter {
     fn __start(&self) -> sys::Result<()> {
         let s = self.state();
         crate::shell_log!("IOWriter(fd={}) __start()", s.fd);
-        if let Err(e) = s.writer.start(s.fd, s.flags.pollable) {
+        if let Err(e) = s
+            .writer
+            .start(s.fd, bun_io::IsPollable::from_bool(s.flags.pollable))
+        {
             #[cfg(not(windows))]
             {
                 // We get this if we pass in a file descriptor that is not
@@ -370,9 +373,11 @@ impl IOWriter {
                     s.flags.nonblock = false;
                     s.flags.is_socket = false;
                     if matches!(s.writer.handle, bun_io::pipes::PollOrFd::Poll(_)) {
-                        s.writer
-                            .handle
-                            .close_impl(None, None::<fn(*mut c_void)>, false);
+                        s.writer.handle.close_impl(
+                            None,
+                            None::<fn(*mut c_void)>,
+                            bun_io::CloseFd::No,
+                        );
                     }
                     s.writer.handle = bun_io::pipes::PollOrFd::Closed;
                     return self.__start();
@@ -386,9 +391,11 @@ impl IOWriter {
                         s.flags.nonblock = false;
                         s.flags.is_socket = false;
                         if matches!(s.writer.handle, bun_io::pipes::PollOrFd::Poll(_)) {
-                            s.writer
-                                .handle
-                                .close_impl(None, None::<fn(*mut c_void)>, false);
+                            s.writer.handle.close_impl(
+                                None,
+                                None::<fn(*mut c_void)>,
+                                bun_io::CloseFd::No,
+                            );
                         }
                         s.writer.handle = bun_io::pipes::PollOrFd::Closed;
                         return self.__start();
@@ -517,7 +524,10 @@ impl IOWriter {
                     return WriteOutcome::Suspended;
                 }
             }
-            if let Err(e) = s.writer.start(s.fd, s.flags.pollable) {
+            if let Err(e) = s
+                .writer
+                .start(s.fd, bun_io::IsPollable::from_bool(s.flags.pollable))
+            {
                 return WriteOutcome::Failed(e);
             }
             WriteOutcome::Suspended
@@ -1197,7 +1207,7 @@ impl Drop for IOWriter {
             if matches!(s.writer.handle, bun_io::pipes::PollOrFd::Poll(_)) {
                 s.writer
                     .handle
-                    .close_impl(None, None::<fn(*mut c_void)>, false);
+                    .close_impl(None, None::<fn(*mut c_void)>, bun_io::CloseFd::No);
             }
         }
         #[cfg(windows)]

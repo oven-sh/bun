@@ -18,6 +18,7 @@ use crate::jsc::{
 use core::cell::Cell;
 // Note: `bun_jsc::VirtualMachine` is a *module* alias; the struct lives at
 // `virtual_machine::VirtualMachine`.
+use crate::jsc::event_loop::AllowDrainMicrotask;
 use crate::jsc::virtual_machine::VirtualMachine;
 
 use super::{
@@ -430,7 +431,11 @@ impl TimerObjectInternals {
         // --- after this point, the timer is no longer guaranteed to be alive ---
 
         // SAFETY: `vm` is live; see `enter()` note above.
-        if unsafe { (*(*vm).event_loop()).exit_maybe_drain_microtasks(!exception_thrown) }.is_err()
+        if unsafe {
+            (*(*vm).event_loop())
+                .exit_maybe_drain_microtasks(AllowDrainMicrotask::from_bool(!exception_thrown))
+        }
+        .is_err()
         {
             return true;
         }

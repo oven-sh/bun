@@ -48,9 +48,11 @@ pub(crate) struct AstBuilder<'a, 'bump> {
     pub(crate) module_ref: Ref,
     pub(crate) declared_symbols: DeclaredSymbolList,
     /// When set, codegen is altered
-    pub(crate) hot_reloading: bool,
+    pub(crate) hot_reloading: HotReloading,
     pub(crate) hmr_api_ref: Ref,
 }
+
+bun_core::bool_enum!(pub(crate) HotReloading);
 
 // stub fields for ImportScanner duck typing
 //
@@ -61,7 +63,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
     pub(crate) fn init(
         bump: &'bump Bump,
         source: &'a Source,
-        hot_reloading: bool,
+        hot_reloading: HotReloading,
     ) -> Result<Self, OOM> {
         let scope: *mut Scope = bump.alloc(Scope {
             kind: ScopeKind::Entry,
@@ -180,7 +182,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         {
             let import_id: &[u8] = *import_id; // must be given '[N][]const u8'
             let ref_ = self.new_symbol(SymbolKind::Import, import_id)?;
-            if self.hot_reloading {
+            if self.hot_reloading == HotReloading::Yes {
                 self.get_symbol(ref_).namespace_alias =
                     Some(bun_alloc::ast_box(G::NamespaceAlias {
                         namespace_ref,
@@ -317,7 +319,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // builder goes out of scope (UAF in the printer). Copy the `Copy`
         // `Stmt`s/`*mut Scope`s into the bump arena so the returned
         // `BundledAst` owns them with parser-arena lifetime.
-        if self.hot_reloading {
+        if self.hot_reloading == HotReloading::Yes {
             // get a estimate on how many statements there are going to be
             let prealloc_count = self.stmts.len() + 2;
             let mut hmr_stmts: Vec<Stmt> = Vec::with_capacity(prealloc_count);

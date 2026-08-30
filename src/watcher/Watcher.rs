@@ -151,6 +151,8 @@ pub trait WatcherContext {
     }
 }
 
+bun_core::bool_enum!(pub CloseDescriptors);
+
 impl Watcher {
     /// Initializes a watcher. Each watcher is tied to some context type, which
     /// receives watch callbacks on the watcher thread. This function does not
@@ -158,7 +160,7 @@ impl Watcher {
     ///
     /// ```ignore
     /// let watcher = Watcher::init(instance_of_t, fs)?;
-    /// // on error: watcher.shutdown(false);
+    /// // on error: watcher.shutdown(CloseDescriptors::No);
     /// watcher.start()?;
     ///
     /// // To integrate a started watcher into module resolution:
@@ -283,7 +285,8 @@ impl Watcher {
     /// # Safety
     /// `this` must be the unique heap pointer returned from `init()`; ownership
     /// transfers here on the no-thread path (the Box is reclaimed).
-    pub unsafe fn shutdown(this: *mut Self, close_descriptors: bool) {
+    pub unsafe fn shutdown(this: *mut Self, close_descriptors: CloseDescriptors) {
+        let close_descriptors = close_descriptors == CloseDescriptors::Yes;
         let free = {
             // SAFETY: caller passes the unique heap pointer returned from init().
             // Shared access suffices (atomics + mutex + column reads); the borrow
@@ -804,11 +807,11 @@ impl Watcher {
     /// Thread-safe: uses internal locking to prevent race conditions.
     ///
     /// Returns:
-    /// - true if the file is successfully added to the watchlist or already watched
-    /// - false if the file cannot be opened or added to the watchlist
-    pub fn add_file_by_path_slow(&mut self, file_path: &[u8]) -> bool {
+    /// - `Ok` if the file is successfully added to the watchlist or already watched
+    /// - `Err` if the file cannot be opened or added to the watchlist
+    pub fn add_file_by_path_slow(&mut self, file_path: &[u8]) -> sys::Result<()> {
         if file_path.is_empty() {
-            return false;
+            return Err(sys::Error::from_code(sys::E::ENOENT, sys::Tag::watch));
         }
         let hash = Self::get_hash(file_path);
 
@@ -819,7 +822,7 @@ impl Watcher {
             self.mutex.unlock();
 
             if already_watched {
-                return true;
+                return Ok(());
             }
         }
 
@@ -828,17 +831,14 @@ impl Watcher {
         let fd: Fd = {
             let mut path_z = bun_paths::PathBuffer::uninit();
             if file_path.len() >= path_z.len() {
-                return false;
+                return Err(sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::open));
             }
             path_z[..file_path.len()].copy_from_slice(file_path);
             path_z[file_path.len()] = 0;
             // `path_z[file_path.len()] == 0` written above; `from_buf` borrows
             // `path_z[..len]` as a `&ZStr` with the NUL debug-asserted in-bounds.
             let z = ZStr::from_buf(&path_z[..], file_path.len());
-            match bun_sys::open(z, WATCH_OPEN_FLAGS, 0) {
-                Ok(opened) => opened,
-                Err(_) => return false,
-            }
+            bun_sys::open(z, WATCH_OPEN_FLAGS, 0)?
         };
         #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
         let fd: Fd = Fd::INVALID;
@@ -851,13 +851,13 @@ impl Watcher {
                 if ownership == FdOwnership::Caller && fd.is_valid() {
                     let _ = bun_sys::close(fd);
                 }
-                true
+                Ok(())
             }
-            Err(_) => {
+            Err(err) => {
                 if fd.is_valid() {
                     let _ = bun_sys::close(fd);
                 }
-                false
+                Err(err)
             }
         }
     }

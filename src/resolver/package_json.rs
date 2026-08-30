@@ -399,7 +399,7 @@ impl PackageJSON {
             r_fs,
             package_json_path,
             dirname_fd,
-            false,
+            fs::UseSharedBuffer::No,
             None,
             None,
         ) {
@@ -1535,6 +1535,8 @@ fn module_bufs() -> *mut ModuleBufs {
     })
 }
 
+bun_core::bool_enum!(SubpathKind { Exports, Imports });
+
 // `module_type` / `debug_logs` are `&'a mut T`, so reading/writing them
 // requires `&mut self`. All resolution methods take `&mut self`.
 impl<'a> ESModule<'a> {
@@ -1556,7 +1558,7 @@ impl<'a> ESModule<'a> {
             };
         }
 
-        let result = self.resolve_imports_exports(specifier, imports, true, b"/");
+        let result = self.resolve_imports_exports(specifier, imports, SubpathKind::Imports, b"/");
 
         match result.status {
             Status::Undefined | Status::Null => Resolution {
@@ -1658,14 +1660,20 @@ impl<'a> ESModule<'a> {
 
             if let Some(main_export) = main_export {
                 if !matches!(main_export.data, EntryData::Null) {
-                    let result = self.resolve_target::<false>(package_url, main_export, b"", false);
+                    let result = self.resolve_target::<false>(
+                        package_url,
+                        main_export,
+                        b"",
+                        SubpathKind::Exports,
+                    );
                     if result.status != Status::Null && result.status != Status::Undefined {
                         return result;
                     }
                 }
             }
         } else if matches!(exports.data, EntryData::Map(_)) && exports.keys_start_with_dot() {
-            let result = self.resolve_imports_exports(subpath, exports, false, package_url);
+            let result =
+                self.resolve_imports_exports(subpath, exports, SubpathKind::Exports, package_url);
             if result.status != Status::Null && result.status != Status::Undefined {
                 return result;
             }
@@ -1695,7 +1703,7 @@ impl<'a> ESModule<'a> {
         &mut self,
         match_key: &[u8],
         match_obj: &Entry,
-        is_imports: bool,
+        is_imports: SubpathKind,
         package_url: &[u8],
     ) -> Resolution {
         if let Some(logs) = self.debug_logs.as_deref_mut() {
@@ -1808,7 +1816,7 @@ impl<'a> ESModule<'a> {
         package_url: &[u8],
         target: &Entry,
         subpath: &[u8],
-        internal: bool,
+        internal: SubpathKind,
     ) -> Resolution {
         match &target.data {
             EntryData::String(str) => {
@@ -1923,7 +1931,7 @@ impl<'a> ESModule<'a> {
                         ));
                     }
 
-                    if internal
+                    if internal == SubpathKind::Imports
                         && !strings::has_prefix(str, b"../")
                         && !strings::has_prefix(str, b"/")
                     {

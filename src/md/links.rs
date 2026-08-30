@@ -28,6 +28,8 @@ pub(crate) struct BracketLinkMatch {
     pub(crate) link_end: usize,
 }
 
+bun_core::bool_enum!(pub(crate) LinkKind { Link, Image });
+
 /// A successfully parsed link/image/wikilink whose opening span has been
 /// emitted. The caller renders `content[label_start..label_end]` as inline
 /// content, performs `leave`, and resumes at `link_end`. Returning this
@@ -309,12 +311,12 @@ impl Parser<'_> {
         &mut self,
         dest: &[u8],
         title: &[u8],
-        is_image: bool,
+        is_image: LinkKind,
     ) -> Result<LabelLeave, parser::Error> {
         if self.image_nesting_level > 0 {
             // Inside image alt text: emit only text, no HTML tags
             Ok(LabelLeave::AltText)
-        } else if is_image {
+        } else if is_image == LinkKind::Image {
             self.renderer.enter_span(
                 Span::Img,
                 SpanAttrs {
@@ -343,7 +345,7 @@ impl Parser<'_> {
         &mut self,
         content: &[u8],
         start: usize,
-        is_image: bool,
+        is_image: LinkKind,
         brackets: &BracketMatches,
         base: usize,
     ) -> Result<Option<LabelParse>, parser::Error> {
@@ -490,7 +492,7 @@ impl Parser<'_> {
                 let dest = &content[dest_start..dest_end];
 
                 // Link nesting prohibition: links cannot contain other links (CommonMark §6.7)
-                if !is_image
+                if is_image == LinkKind::Link
                     && has_inner_bracket
                     && self.label_contains_link(label, brackets, base + start + 1)
                 {
@@ -539,7 +541,7 @@ impl Parser<'_> {
                     let dest: Box<[u8]> = Box::from(&ref_def.dest[..]);
                     let title: Box<[u8]> = Box::from(&ref_def.title[..]);
                     // Link nesting prohibition
-                    if !is_image
+                    if is_image == LinkKind::Link
                         && has_inner_bracket
                         && self.label_contains_link(label, brackets, base + start + 1)
                     {
@@ -574,7 +576,7 @@ impl Parser<'_> {
                 let dest: Box<[u8]> = Box::from(&ref_def.dest[..]);
                 let title: Box<[u8]> = Box::from(&ref_def.title[..]);
                 // Link nesting prohibition
-                if !is_image
+                if is_image == LinkKind::Link
                     && has_inner_bracket
                     && self.label_contains_link(label, brackets, base + start + 1)
                 {

@@ -1,10 +1,11 @@
 use crate as css;
+use crate::css_properties::custom::IsCustomProperty;
 use crate::css_rules::Location;
 use crate::css_values::angle::Angle;
 use crate::css_values::size::Size2D;
 use crate::css_values::url::Url;
 use crate::generics::DeepClone as _;
-use crate::{PrintErr, Printer};
+use crate::{PrintErr, Printer, WsBefore};
 
 use super::ArrayList;
 
@@ -37,7 +38,7 @@ impl FontFaceProperty {
         macro_rules! write_property_single {
             ($d:expr, $prop:expr, $value:expr) => {{
                 $d.write_str($prop)?;
-                $d.delim(b':', false)?;
+                $d.delim(b':', WsBefore::No)?;
                 $value.to_css($d)
             }};
         }
@@ -45,13 +46,13 @@ impl FontFaceProperty {
         macro_rules! write_property_multi {
             ($d:expr, $prop:expr, $value:expr) => {{
                 $d.write_str($prop)?;
-                $d.delim(b':', false)?;
+                $d.delim(b':', WsBefore::No)?;
                 let slice = $value;
                 let len = slice.len();
                 for (idx, val) in slice.iter().enumerate() {
                     val.to_css($d)?;
                     if idx < len - 1 {
-                        $d.delim(b',', false)?;
+                        $d.delim(b',', WsBefore::No)?;
                     }
                 }
                 Ok(())
@@ -75,8 +76,8 @@ impl FontFaceProperty {
             }
             FontFaceProperty::Custom(custom) => {
                 custom.name.to_css(dest)?;
-                dest.delim(b':', false)?;
-                custom.value.to_css(dest, true)
+                dest.delim(b':', WsBefore::No)?;
+                custom.value.to_css(dest, IsCustomProperty::Yes)
             }
         }
     }

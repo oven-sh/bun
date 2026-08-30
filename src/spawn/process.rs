@@ -89,7 +89,8 @@ pub use bun_spawn_sys::{
 /// inherently once-per-process — keep `EV_ONESHOT` there so the kernel
 /// auto-removes the filter.
 #[cfg(unix)]
-const PROCESS_POLL_ONE_SHOT: bool = !cfg!(any(target_os = "linux", target_os = "android"));
+const PROCESS_POLL_ONE_SHOT: bun_io::OneShot =
+    bun_io::OneShot::from_bool(!cfg!(any(target_os = "linux", target_os = "android")));
 
 pub use crate::{ProcessExit, ProcessExitHandler, ProcessExitKind};
 
@@ -208,6 +209,8 @@ impl Drop for ProcessHandle {
     }
 }
 
+bun_core::bool_enum!(pub WaitMode { NonBlocking, Blocking });
+
 impl Process {
     pub fn memory_cost(&self) -> usize {
         core::mem::size_of::<Self>()
@@ -314,17 +317,20 @@ impl Process {
     }
 
     #[cfg(unix)]
-    pub(crate) fn wait_posix(&mut self, sync_: bool) {
+    pub(crate) fn wait_posix(&mut self, sync_: WaitMode) {
         let mut rusage = rusage_zeroed();
         let waitpid_result = posix_spawn::wait4(
             self.pid,
-            if sync_ { 0 } else { libc::WNOHANG as u32 },
+            match sync_ {
+                WaitMode::Blocking => 0,
+                WaitMode::NonBlocking => libc::WNOHANG as u32,
+            },
             Some(&mut rusage),
         );
         self.on_wait_pid(&waitpid_result, &rusage);
     }
 
-    pub fn wait(&mut self, sync_: bool) {
+    pub fn wait(&mut self, sync_: WaitMode) {
         #[cfg(unix)]
         self.wait_posix(sync_);
         #[cfg(windows)]
@@ -364,7 +370,7 @@ impl Process {
         // SAFETY: caller contract — adopts the queued +1 ref.
         let _guard = unsafe { RefPtr::from_raw(this) };
         // SAFETY: `_guard` keeps `this` live.
-        unsafe { (*this).wait(false) };
+        unsafe { (*this).wait(WaitMode::NonBlocking) };
     }
 
     #[cfg(unix)]
@@ -420,7 +426,7 @@ impl Process {
             Err(err) => {
                 #[cfg(unix)]
                 if err.get_errno() == bun_sys::E::ESRCH {
-                    self.wait(true);
+                    self.wait(WaitMode::Blocking);
                     return Ok(self.has_exited());
                 }
                 Err(err)
@@ -2057,7 +2063,7 @@ mod spawn_process_body {
                     WindowsStdio::Buffer(my_pipe) => {
                         // SAFETY: `my_pipe` is a non-null heap allocation from
                         // create_zeroed_pipe (heap::alloc).
-                        if let Some(err) = unsafe { (&mut **my_pipe).init(loop_, false) }
+                        if let Some(err) = unsafe { (&mut **my_pipe).init(loop_, uv::Ipc::No) }
                             .to_error(bun_sys::Tag::uv_pipe)
                         {
                             cleanup_uv_files(&uv_files_to_close, loop_);
@@ -2135,7 +2141,7 @@ mod spawn_process_body {
                 }
                 WindowsStdio::Ipc(my_pipe) => {
                     // SAFETY: non-null heap allocation from create_zeroed_pipe.
-                    if let Some(err) = unsafe { (&mut **my_pipe).init(loop_, true) }
+                    if let Some(err) = unsafe { (&mut **my_pipe).init(loop_, uv::Ipc::Yes) }
                         .to_error(bun_sys::Tag::uv_pipe)
                     {
                         cleanup_uv_files(&uv_files_to_close, loop_);
@@ -2149,7 +2155,7 @@ mod spawn_process_body {
                 }
                 WindowsStdio::Buffer(my_pipe) => {
                     // SAFETY: non-null heap allocation from create_zeroed_pipe.
-                    if let Some(err) = unsafe { (&mut **my_pipe).init(loop_, false) }
+                    if let Some(err) = unsafe { (&mut **my_pipe).init(loop_, uv::Ipc::No) }
                         .to_error(bun_sys::Tag::uv_pipe)
                     {
                         cleanup_uv_files(&uv_files_to_close, loop_);
@@ -2435,8 +2441,13 @@ mod spawn_process_body {
             }
         }
 
+        bun_core::bool_enum!(pub NewProcessGroup);
+
         impl Options {
-            pub(crate) fn to_spawn_options(&self, new_process_group: bool) -> SpawnOptions {
+            pub(crate) fn to_spawn_options(
+                &self,
+                new_process_group: NewProcessGroup,
+            ) -> SpawnOptions {
                 SpawnOptions {
                     stdin: self.stdin.to_stdio(),
                     stdout: self.stdout.to_stdio(),
@@ -2447,7 +2458,7 @@ mod spawn_process_body {
                     use_execve_on_macos: self.use_execve_on_macos,
                     stream: false,
                     argv0: self.argv0,
-                    new_process_group,
+                    new_process_group: new_process_group == NewProcessGroup::Yes,
                     #[cfg(windows)]
                     windows: self.windows.clone(),
                     #[cfg(not(windows))]
@@ -2738,11 +2749,14 @@ mod spawn_process_body {
             let loop_ = options.windows.loop_.platform_event_loop();
             // All stdio inherited: the child is the foreground program on our console.
             let _child = crate::ctrl_c::Child::enter();
-            let mut spawned =
-                match spawn_process_windows(&options.to_spawn_options(false), argv, envp)? {
-                    Err(err) => return Ok(Err(err)),
-                    Ok(proces) => proces,
-                };
+            let mut spawned = match spawn_process_windows(
+                &options.to_spawn_options(NewProcessGroup::No),
+                argv,
+                envp,
+            )? {
+                Err(err) => return Ok(Err(err)),
+                Ok(proces) => proces,
+            };
 
             // Sole owner during sync spawn; detached and released on return,
             // by which time the loop has drained and no uv callback holds a
@@ -2777,11 +2791,14 @@ mod spawn_process_body {
             envp: *const *const c_char,
         ) -> core::result::Result<Maybe<Result>, crate::Error> {
             let loop_: EventLoopHandle = options.windows.loop_;
-            let mut spawned =
-                match spawn_process_windows(&options.to_spawn_options(false), argv, envp)? {
-                    Err(err) => return Ok(Err(err)),
-                    Ok(process) => process,
-                };
+            let mut spawned = match spawn_process_windows(
+                &options.to_spawn_options(NewProcessGroup::No),
+                argv,
+                envp,
+            )? {
+                Err(err) => return Ok(Err(err)),
+                Ok(process) => process,
+            };
             // Single-pointer ownership: the
             // `heap::alloc` result is the *only* root for this allocation. Every
             // field access below — including those inside uv callbacks fired from
@@ -3191,7 +3208,11 @@ mod spawn_process_body {
             // SAFETY: caller-built argv/envp are null-terminated C-string
             // arrays with argv[0] non-null; valid for this call.
             let process = match unsafe {
-                spawn_process_posix(&options.to_spawn_options(no_orphans), argv, envp)
+                spawn_process_posix(
+                    &options.to_spawn_options(NewProcessGroup::from_bool(no_orphans)),
+                    argv,
+                    envp,
+                )
             }? {
                 Err(err) => return Ok(Err(err)),
                 Ok(proces) => proces,

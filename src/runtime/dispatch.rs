@@ -648,7 +648,7 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
     // SAFETY: contract above.
     let poll_ref = unsafe { &mut *poll };
     let owner = poll_ref.owner;
-    let hup = poll_ref.flags.contains(PollFlag::Hup);
+    let hup = bun_io::ReceivedHup::from_bool(poll_ref.flags.contains(PollFlag::Hup));
 
     debug_assert!(!owner.is_null());
 

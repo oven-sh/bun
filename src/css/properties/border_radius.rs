@@ -5,6 +5,7 @@ use crate::Printer;
 use crate::PropertyCategory;
 use crate::PropertyHandlerContext;
 use crate::VendorPrefix;
+use crate::WsBefore;
 use crate::css_properties::{Property, PropertyId, PropertyIdTag};
 use crate::css_values::length::LengthPercentage;
 use crate::css_values::rect::Rect;
@@ -128,7 +129,7 @@ impl BorderRadius {
         write_rect(wt, wr, wb, wl, dest)?;
 
         if !(wt == ht && wr == hr && wb == hb && wl == hl) {
-            dest.delim(b'/', true)?;
+            dest.delim(b'/', WsBefore::Yes)?;
             write_rect(ht, hr, hb, hl, dest)?;
         }
         Ok(())

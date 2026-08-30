@@ -91,27 +91,27 @@ impl ScopeFunctions {
     }
     #[bun_jsc::host_fn(method)]
     pub(crate) fn fn_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .if()", true, "if")
+        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .if()", Invert::Yes, "if")
     }
     #[bun_jsc::host_fn(method)]
     pub(crate) fn fn_skip_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .skipIf()", false, "skipIf")
+        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .skipIf()", Invert::No, "skipIf")
     }
     #[bun_jsc::host_fn(method)]
     pub(crate) fn fn_todo_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"call .todoIf()", false, "todoIf")
+        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"call .todoIf()", Invert::No, "todoIf")
     }
     #[bun_jsc::host_fn(method)]
     pub(crate) fn fn_failing_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"call .failingIf()", false, "failingIf")
+        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"call .failingIf()", Invert::No, "failingIf")
     }
     #[bun_jsc::host_fn(method)]
     pub(crate) fn fn_concurrent_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"call .concurrentIf()", false, "concurrentIf")
+        this.generic_if(global, frame, BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"call .concurrentIf()", Invert::No, "concurrentIf")
     }
     #[bun_jsc::host_fn(method)]
     pub(crate) fn fn_serial_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"call .serialIf()", false, "serialIf")
+        this.generic_if(global, frame, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"call .serialIf()", Invert::No, "serialIf")
     }
     #[bun_jsc::host_fn(method)]
     pub(crate) fn fn_each(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -288,6 +288,8 @@ fn filter_names<R: WriteEnd>(rem: &mut R, description: Option<&[u8]>, parent_in:
     }
 }
 
+bun_core::bool_enum!(Invert);
+
 impl ScopeFunctions {
     fn enqueue_describe_or_test_callback(
         &self,
@@ -441,7 +443,7 @@ impl ScopeFunctions {
         frame: &CallFrame,
         conditional_cfg: BaseScopeCfg,
         name: &[u8],
-        invert: bool,
+        invert: Invert,
         fn_name: &'static str,
     ) -> JsResult<JSValue> {
         let _g = group_log::begin();
@@ -451,7 +453,7 @@ impl ScopeFunctions {
             return Err(global.throw(format_args!("Expected condition to be a boolean")));
         }
         let cond = condition.to_boolean();
-        if cond != invert {
+        if cond != (invert == Invert::Yes) {
             self.generic_extend(global, conditional_cfg, name, fn_name)
         } else {
             create_bound(global, self.mode, self.each, self.cfg, fn_name)

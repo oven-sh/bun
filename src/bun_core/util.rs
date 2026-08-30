@@ -3589,7 +3589,7 @@ pub mod base64 {
     /// `bun.base64.encode` — standard alphabet, padded. Returns bytes written.
     pub fn encode(dest: &mut [u8], source: &[u8]) -> usize {
         debug_assert!(dest.len() >= encode_len(source));
-        simdutf::base64::encode(source, dest, false)
+        simdutf::base64::encode(source, dest, simdutf::base64::Alphabet::Standard)
     }
 
     /// Encoded output size for a standard-base64 input of `source_len` bytes.
@@ -4353,10 +4353,14 @@ pub fn maybe_handle_panic_during_process_reload() {
     }
 }
 
-/// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → panics.
+crate::bool_enum!(pub ClearTerminal);
+crate::bool_enum!(pub MayReturn);
+
+/// Port of `bun.reloadProcess`. `may_return == MayReturn::Yes` → returns on failure; `No` → panics.
 /// `on_before_reload_process_posix` clears CLOEXEC on stdio/IPC and resets caught signal
 /// dispositions on all POSIX; the close_range sweep is Linux/BSD only.
-pub fn reload_process(clear_terminal: bool, may_return: bool) {
+pub fn reload_process(clear_terminal: ClearTerminal, may_return: MayReturn) {
+    let may_return = may_return == MayReturn::Yes;
     // Exactly one thread may perform the reload: the JS thread and the watcher's grace-window
     // fallback can both reach here, and concurrent execve prep crashes on musl. The swap elects a
     // winner; a loser parks or returns. A thread that already owns the reload may re-enter.
@@ -4374,7 +4378,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     }
     RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.set(true));
 
-    if clear_terminal {
+    if clear_terminal == ClearTerminal::Yes {
         crate::output::flush();
         crate::output::disable_buffering();
         crate::output::reset_terminal_all();

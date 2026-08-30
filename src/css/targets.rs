@@ -38,7 +38,7 @@ impl Targets {
         if val.is_empty() {
             return None;
         }
-        if strings::eql_case_insensitive_ascii(val, b"null", true) {
+        if strings::eql_case_insensitive_ascii(val, b"null", strings::CheckLen::Yes) {
             return None;
         }
 

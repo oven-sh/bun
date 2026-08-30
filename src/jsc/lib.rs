@@ -773,7 +773,7 @@ pub use abort_signal::{AbortSignal, AbortSignalRef};
 // type (and likewise for `JSGlobalObject`). Both structs carry `UnsafeCell`
 // so `&T → *mut T` for FFI is sound under Stacked Borrows.
 pub use self::js_global_object::{GlobalRef, JSGlobalObject, MicrotaskCallback};
-pub use self::vm::VM;
+pub use self::vm::{GcMode, VM};
 
 /// Options for `JSGlobalObject::validate_integer_range` / `validate_bigint_range`.
 /// min/max are `i128` so every

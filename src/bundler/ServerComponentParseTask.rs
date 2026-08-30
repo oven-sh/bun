@@ -16,7 +16,7 @@ use bun_ast::{B, Binding, E, G, S, Stmt, symbol};
 use bun_ast::{ExprNodeList, LocRef, StmtOrExpr, UseDirective};
 use bun_ast::{ImportKind, ImportRecordFlags};
 
-use crate::AstBuilder::AstBuilder;
+use crate::AstBuilder::{AstBuilder, HotReloading};
 use crate::JSAst;
 use crate::Worker;
 use crate::bundle_v2::BundleV2;
@@ -174,7 +174,11 @@ fn task_callback(
     // Take it up-front so `ab`'s borrow of it ends
     // (via NLL) before we move it into `Success`.
     let source = core::mem::take(&mut task.source);
-    let mut ab = AstBuilder::init(bump, &source, ctx.transpiler().options.hot_module_reloading)?;
+    let mut ab = AstBuilder::init(
+        bump,
+        &source,
+        HotReloading::from_bool(ctx.transpiler().options.hot_module_reloading),
+    )?;
 
     match &task.data {
         Data::ClientReferenceProxy(data) => generate_client_reference_proxy(ctx, data, &mut ab)?,

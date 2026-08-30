@@ -17,7 +17,7 @@ use crate::lowering::hir_builder::{HirBuilder, convert_loc};
 use super::expr::lower_reorderable_expression;
 use super::function::lower_function_declaration;
 use super::helpers::{
-    AssignmentStyle, IdentifierForAssignment, build_temporary_place, lower_assignment,
+    AssignmentStyle, ComputedKey, IdentifierForAssignment, build_temporary_place, lower_assignment,
     lower_expression_to_temporary, lower_identifier_for_assignment, lower_object_property_key,
     lower_value_to_temporary, promote_temporary,
 };
@@ -1954,7 +1954,7 @@ pub(super) fn lower_assignment_binding(
                     continue;
                 }
 
-                let key = match lower_object_property_key(builder, &prop.key, false)? {
+                let key = match lower_object_property_key(builder, &prop.key, ComputedKey::No)? {
                     Some(k) => k,
                     None => continue,
                 };

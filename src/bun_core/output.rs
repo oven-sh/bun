@@ -170,7 +170,7 @@ pub fn argv() -> impl Iterator<Item = &'static [u8]> {
 #[inline]
 pub fn debug_warn(payload: impl PrettyFmtInput) {
     if crate::env::IS_DEBUG {
-        let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
+        let buf = payload.into_pretty_buf(AnsiColors::from_bool(enable_ansi_colors_stderr()));
         pretty_errorln!("<yellow>debug warn<r><d>:<r> {}", buf);
         flush();
     }
@@ -179,7 +179,7 @@ pub fn debug_warn(payload: impl PrettyFmtInput) {
 /// `bun.Output.warn` — yellow `warn:` prefix to stderr.
 #[inline]
 pub fn warn(payload: impl PrettyFmtInput) {
-    let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
+    let buf = payload.into_pretty_buf(AnsiColors::from_bool(enable_ansi_colors_stderr()));
     pretty_errorln!("<r><yellow>warn<r><d>:<r> {}", buf);
 }
 
@@ -189,7 +189,7 @@ pub fn warn(payload: impl PrettyFmtInput) {
 /// form: `crate::pretty_errorln!`.
 #[inline]
 pub fn pretty_errorln(payload: impl PrettyFmtInput) {
-    let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
+    let buf = payload.into_pretty_buf(AnsiColors::from_bool(enable_ansi_colors_stderr()));
     write_bytes(Destination::Stderr, &buf);
     if buf.0.last() != Some(&b'\n') {
         write_bytes(Destination::Stderr, b"\n");
@@ -1416,8 +1416,12 @@ impl ScopedLogger {
             flag[pfx.len()..].copy_from_slice(tag);
             let flag_slice = flag.as_slice();
             for arg in argv() {
-                if strings::eql_case_insensitive_ascii(arg, flag_slice, true)
-                    || strings::eql_case_insensitive_ascii(arg, b"--debug-all", true)
+                if strings::eql_case_insensitive_ascii(arg, flag_slice, strings::CheckLen::Yes)
+                    || strings::eql_case_insensitive_ascii(
+                        arg,
+                        b"--debug-all",
+                        strings::CheckLen::Yes,
+                    )
                 {
                     self.really_disable.store(false, Ordering::Relaxed);
                     break;
@@ -1645,7 +1649,7 @@ pub use bun_output_tags::{ansi, ansi_b};
 /// keeps it next to the call site (and the body is two calls — cheap).
 #[inline(always)]
 pub fn pretty(payload: impl PrettyFmtInput) {
-    let buf = payload.into_pretty_buf(enable_ansi_colors_stdout());
+    let buf = payload.into_pretty_buf(AnsiColors::from_bool(enable_ansi_colors_stdout()));
     write_bytes(Destination::Stdout, &buf);
 }
 
@@ -1656,7 +1660,7 @@ pub fn pretty(payload: impl PrettyFmtInput) {
 /// `inline(always)` for the same .text-layout reason as [`pretty`].
 #[inline(always)]
 pub fn prettyln(payload: impl PrettyFmtInput) {
-    let buf = payload.into_pretty_buf(enable_ansi_colors_stdout());
+    let buf = payload.into_pretty_buf(AnsiColors::from_bool(enable_ansi_colors_stdout()));
     write_bytes(Destination::Stdout, &buf);
     if buf.0.last() != Some(&b'\n') {
         write_bytes(Destination::Stdout, b"\n");
@@ -1675,28 +1679,33 @@ pub fn prettyln(payload: impl PrettyFmtInput) {
 /// tested against it).
 pub use bun_core_macros::pretty_fmt;
 
+crate::bool_enum!(
+    /// Whether `<tag>` markers are rewritten to ANSI escapes or stripped.
+    pub AnsiColors { Disabled, Enabled }
+);
+
 /// Input accepted by [`pretty_fmt`]: either a `&str`/`&[u8]` template or a
 /// pre-formatted `&fmt::Arguments<'_>` (which is first rendered to a string
 /// then `<tag>`-rewritten — used by `Custom Inspect`-style call sites that
 /// build the template via `format_args!`).
 pub trait PrettyFmtInput {
-    fn into_pretty_buf(self, is_enabled: bool) -> PrettyBuf;
+    fn into_pretty_buf(self, is_enabled: AnsiColors) -> PrettyBuf;
 }
 impl PrettyFmtInput for &str {
     #[inline]
-    fn into_pretty_buf(self, is_enabled: bool) -> PrettyBuf {
+    fn into_pretty_buf(self, is_enabled: AnsiColors) -> PrettyBuf {
         PrettyBuf(pretty_fmt_runtime(self.as_bytes(), is_enabled))
     }
 }
 impl PrettyFmtInput for &[u8] {
     #[inline]
-    fn into_pretty_buf(self, is_enabled: bool) -> PrettyBuf {
+    fn into_pretty_buf(self, is_enabled: AnsiColors) -> PrettyBuf {
         PrettyBuf(pretty_fmt_runtime(self, is_enabled))
     }
 }
 impl PrettyFmtInput for &fmt::Arguments<'_> {
     #[inline]
-    fn into_pretty_buf(self, is_enabled: bool) -> PrettyBuf {
+    fn into_pretty_buf(self, is_enabled: AnsiColors) -> PrettyBuf {
         // Render the `Arguments` first, then rewrite `<tag>` markers.
         let rendered = std::format!("{}", self);
         PrettyBuf(pretty_fmt_runtime(rendered.as_bytes(), is_enabled))
@@ -1704,7 +1713,7 @@ impl PrettyFmtInput for &fmt::Arguments<'_> {
 }
 impl PrettyFmtInput for fmt::Arguments<'_> {
     #[inline]
-    fn into_pretty_buf(self, is_enabled: bool) -> PrettyBuf {
+    fn into_pretty_buf(self, is_enabled: AnsiColors) -> PrettyBuf {
         (&self).into_pretty_buf(is_enabled)
     }
 }
@@ -1717,13 +1726,13 @@ impl PrettyFmtInput for fmt::Arguments<'_> {
 /// [`pretty_fmt_rt`].
 #[inline]
 pub fn pretty_fmt<const ENABLE_ANSI_COLORS: bool>(input: impl PrettyFmtInput) -> PrettyBuf {
-    input.into_pretty_buf(ENABLE_ANSI_COLORS)
+    input.into_pretty_buf(AnsiColors::from_bool(ENABLE_ANSI_COLORS))
 }
 
 /// Runtime-bool form of [`pretty_fmt`] for call sites that don't have a
 /// const-generic colour flag (crash handler, dynamic templates).
 #[inline]
-pub fn pretty_fmt_rt(input: impl PrettyFmtInput, is_enabled: bool) -> PrettyBuf {
+pub fn pretty_fmt_rt(input: impl PrettyFmtInput, is_enabled: AnsiColors) -> PrettyBuf {
     input.into_pretty_buf(is_enabled)
 }
 
@@ -1922,13 +1931,13 @@ impl<A: FmtTuple> fmt::Display for TemplateDisplay<'_, A> {
 
 /// Runtime `<tag>` → ANSI rewrite *with* a positional-argument tuple
 /// substituted at each `{}` / `{s}` / `{d}` placeholder. Returns a `Display`
-/// impl so callers can `write!(w, "{}", pretty_fmt_args(fmt, true, (a, b)))`.
+/// impl so callers can `write!(w, "{}", pretty_fmt_args(fmt, AnsiColors::Enabled, (a, b)))`.
 ///
 /// Port of `Output.prettyFmt` + `print` fused for the dynamic-template case
 /// (crash_handler builds the template at runtime).
 pub(crate) fn pretty_fmt_args<A: FmtTuple>(
     fmt: &str,
-    is_enabled: bool,
+    is_enabled: AnsiColors,
     args: A,
 ) -> TemplateDisplay<'static, A> {
     TemplateDisplay {
@@ -1944,7 +1953,7 @@ pub(crate) fn pretty_fmt_args<A: FmtTuple>(
 /// vs `bun_core_macros::rewrite` because the two intentionally diverge in the
 /// `{` arm (proc-macro rewrites specs `{s}`→`{}`; this side copies braces
 /// verbatim) and on unknown tags (proc-macro errors; this side emits `""`).
-pub fn pretty_fmt_runtime(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
+pub fn pretty_fmt_runtime(fmt: &[u8], is_enabled: AnsiColors) -> Vec<u8> {
     let mut out = Vec::with_capacity(fmt.len() * 4);
     let mut i = 0usize;
     while i < fmt.len() {
@@ -1998,7 +2007,7 @@ pub fn pretty_fmt_runtime(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
                         break 'picker "";
                     }
                 };
-                if is_enabled {
+                if is_enabled == AnsiColors::Enabled {
                     out.extend_from_slice(if is_reset {
                         RESET.as_bytes()
                     } else {
@@ -2390,7 +2399,11 @@ pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
     // `fmt` is rendered into a `{}` arg, so strip a trailing \n and let
     // pretty_errorln! add exactly one.
     let fmt = fmt.strip_suffix('\n').unwrap_or(fmt);
-    let body = pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args);
+    let body = pretty_fmt_args(
+        fmt,
+        AnsiColors::from_bool(enable_ansi_colors_stderr()),
+        args,
+    );
     err_with_body(&error_name, &body);
 }
 
@@ -2442,7 +2455,11 @@ pub fn err_generic(fmt: &str, args: impl FmtTuple) {
     let fmt = fmt.strip_suffix('\n').unwrap_or(fmt);
     pretty_errorln!(
         "<r><red>error<r><d>:<r> {}",
-        pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args),
+        pretty_fmt_args(
+            fmt,
+            AnsiColors::from_bool(enable_ansi_colors_stderr()),
+            args
+        ),
     );
 }
 
@@ -2926,7 +2943,7 @@ mod pretty_fmt_tests {
     //! Parity checks between the `pretty_fmt!` proc-macro (compile-time) and
     //! `pretty_fmt_runtime`. Guards against the
     //! macro leaking raw `<r>`/`<b>` markup into help text.
-    use super::{RESET, pretty_fmt_runtime};
+    use super::{AnsiColors, RESET, pretty_fmt_runtime};
     use bun_core_macros::pretty_fmt;
 
     #[test]
@@ -2985,12 +3002,16 @@ mod pretty_fmt_tests {
     fn pretty_fmt_args_preserves_multibyte_utf8() {
         let s = format!(
             "{}",
-            super::pretty_fmt_args("<r><cyan>↑<r> {s} →<r> {s}\n", false, ("a", "b"))
+            super::pretty_fmt_args(
+                "<r><cyan>↑<r> {s} →<r> {s}\n",
+                AnsiColors::Disabled,
+                ("a", "b")
+            )
         );
         assert_eq!(s, "↑ a → b\n");
         let s = format!(
             "{}",
-            super::pretty_fmt_args("<cyan>↑<r> {s} →<r>", true, ("a",))
+            super::pretty_fmt_args("<cyan>↑<r> {s} →<r>", AnsiColors::Enabled, ("a",))
         );
         assert_eq!(s, "\x1b[36m↑\x1b[0m a →\x1b[0m");
     }
@@ -3023,13 +3044,13 @@ mod pretty_fmt_tests {
             ($s:literal) => {{
                 assert_eq!(
                     pretty_fmt!($s, true).as_bytes(),
-                    pretty_fmt_runtime($s.as_bytes(), true).as_slice(),
+                    pretty_fmt_runtime($s.as_bytes(), AnsiColors::Enabled).as_slice(),
                     "enabled mismatch for {:?}",
                     $s,
                 );
                 assert_eq!(
                     pretty_fmt!($s, false).as_bytes(),
-                    pretty_fmt_runtime($s.as_bytes(), false).as_slice(),
+                    pretty_fmt_runtime($s.as_bytes(), AnsiColors::Disabled).as_slice(),
                     "disabled mismatch for {:?}",
                     $s,
                 );

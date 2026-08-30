@@ -12,6 +12,7 @@ use crate::diagnostics::CompilerError;
 use crate::diagnostics::CompilerErrorDetail;
 use crate::diagnostics::ErrorCategory;
 use crate::diagnostics::Position;
+use crate::hir::cfg_utils::BlockUsed;
 use crate::hir::cfg_utils::mark_instruction_ids;
 use crate::hir::environment::Environment;
 use crate::hir::visitors::each_terminal_successor;
@@ -1077,12 +1078,13 @@ fn get_reverse_postordered_blocks(
     fn visit(
         hir: &HIR,
         block_id: BlockId,
-        is_used: bool,
+        is_used: BlockUsed,
         visited: &mut IndexSet<BlockId>,
         used: &mut IndexSet<BlockId>,
         used_fallthroughs: &mut IndexSet<BlockId>,
         postorder: &mut Vec<BlockId>,
     ) {
+        let is_used = is_used == BlockUsed::Yes;
         let was_used = used.contains(&block_id);
         let was_visited = visited.contains(&block_id);
         visited.insert(block_id);
@@ -1107,13 +1109,21 @@ fn get_reverse_postordered_blocks(
             if is_used {
                 used_fallthroughs.insert(ft);
             }
-            visit(hir, ft, false, visited, used, used_fallthroughs, postorder);
+            visit(
+                hir,
+                ft,
+                BlockUsed::No,
+                visited,
+                used,
+                used_fallthroughs,
+                postorder,
+            );
         }
         for successor in successors {
             visit(
                 hir,
                 successor,
-                is_used,
+                BlockUsed::from_bool(is_used),
                 visited,
                 used,
                 used_fallthroughs,
@@ -1129,7 +1139,7 @@ fn get_reverse_postordered_blocks(
     visit(
         hir,
         hir.entry,
-        true,
+        BlockUsed::Yes,
         &mut visited,
         &mut used,
         &mut used_fallthroughs,

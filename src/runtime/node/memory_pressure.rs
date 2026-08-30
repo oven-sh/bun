@@ -201,7 +201,11 @@ mod posix {
             );
             // SAFETY: `poll` is the fresh hive slot; `platform_event_loop` is the live uws loop.
             let result = unsafe {
-                (*poll).register(ctx.platform_event_loop(), Flags::MemoryPressure, false)
+                (*poll).register(
+                    ctx.platform_event_loop(),
+                    Flags::MemoryPressure,
+                    bun_io::OneShot::No,
+                )
             };
             if result.is_err() {
                 // SAFETY: fresh hive slot never handed out.

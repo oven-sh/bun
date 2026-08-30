@@ -8,6 +8,7 @@ use core::ffi::c_void;
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
+use crate::webcore::blob::WasString;
 
 declare_scope!(FormData, visible);
 
@@ -173,7 +174,7 @@ pub(crate) fn to_js_from_multipart_data(
             if field.is_file {
                 let filename_str = field.filename.slice(buf);
 
-                let mut blob = Blob::create(value_str, wrap.global, false);
+                let mut blob = Blob::create(value_str, wrap.global, WasString::No);
                 let filename = EncodedSlice::utf8(filename_str);
 
                 if !field.content_type.is_empty() {
@@ -303,7 +304,11 @@ pub(crate) fn for_each_multipart_entry<C>(
             } else {
                 b""
             };
-            if strings::eql_case_insensitive_ascii(key, b"content-disposition", true) {
+            if strings::eql_case_insensitive_ascii(
+                key,
+                b"content-disposition",
+                strings::CheckLen::Yes,
+            ) {
                 // OWS after the colon is SP or HTAB (RFC 9112 §5.6.3); the
                 // disposition type is a case-insensitive token (RFC 2183 §2).
                 value = strings::trim(value, b" \t");
@@ -340,9 +345,14 @@ pub(crate) fn for_each_multipart_entry<C>(
                         value = &value[(i + 1).min(value.len())..];
                     }
 
-                    if strings::eql_case_insensitive_ascii(eql_key, b"name", true) {
+                    if strings::eql_case_insensitive_ascii(eql_key, b"name", strings::CheckLen::Yes)
+                    {
                         name = subslicer.sub(field_value).value();
-                    } else if strings::eql_case_insensitive_ascii(eql_key, b"filename", true) {
+                    } else if strings::eql_case_insensitive_ascii(
+                        eql_key,
+                        b"filename",
+                        strings::CheckLen::Yes,
+                    ) {
                         filename = Some(subslicer.sub(field_value).value());
                         is_file = true;
                     }
@@ -359,7 +369,7 @@ pub(crate) fn for_each_multipart_entry<C>(
                 }
             } else if !value.is_empty()
                 && field.content_type.is_empty()
-                && strings::eql_case_insensitive_ascii(key, b"content-type", true)
+                && strings::eql_case_insensitive_ascii(key, b"content-type", strings::CheckLen::Yes)
             {
                 let trimmed = strings::trim(value, b"; \t");
                 // Only an exact `\r\n` terminates a header line above, so a bare

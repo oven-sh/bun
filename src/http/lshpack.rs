@@ -50,6 +50,11 @@ pub enum HpackError {
     UnableToEncode,
 }
 
+bun_core::bool_enum!(
+    /// RFC 7541 §6.2.3 never-indexed literal (sensitive header field).
+    pub NeverIndex
+);
+
 impl HPACK {
     /// DecodeResult name and value uses a thread_local shared buffer and should be copy/cloned before the next decode/encode call
     pub fn decode(&mut self, src: &[u8]) -> Result<DecodeResult, HpackError> {
@@ -92,7 +97,7 @@ impl HPACK {
         &mut self,
         name: &[u8],
         value: &[u8],
-        never_index: bool,
+        never_index: NeverIndex,
         dst_buffer: &mut [u8],
         dst_buffer_offset: usize,
     ) -> Result<usize, HpackError> {
@@ -107,7 +112,7 @@ impl HPACK {
                 name.len(),
                 value.as_ptr(),
                 value.len(),
-                never_index as c_int,
+                (never_index == NeverIndex::Yes) as c_int,
                 dst_buffer.as_mut_ptr(),
                 dst_buffer.len(),
                 dst_buffer_offset,

@@ -283,6 +283,10 @@ pub mod defines {
         pub data: DefineData,
     }
 
+    bun_core::bool_enum!(pub Valueless);
+    bun_core::bool_enum!(pub CanBeRemovedIfUnused);
+    bun_core::bool_enum!(pub MethodCallMustBeReplacedWithUndefined);
+
     /// Bit-packed flags (LSB-first): 3 padding bits, `valueless`,
     /// `can_be_removed_if_unused`, `call_can_be_unwrapped_if_unused`
     /// (`E.CallUnwrap`, 2 bits), `method_call_must_be_replaced_with_undefined`.
@@ -340,17 +344,18 @@ pub mod defines {
                 | ((v as u8) << Self::METHOD_CALL_UNDEF_SHIFT);
         }
         pub fn new(
-            valueless: bool,
-            can_be_removed_if_unused: bool,
+            valueless: Valueless,
+            can_be_removed_if_unused: CanBeRemovedIfUnused,
             call_can_be_unwrapped_if_unused: E::CallUnwrap,
-            method_call_must_be_replaced_with_undefined: bool,
+            method_call_must_be_replaced_with_undefined: MethodCallMustBeReplacedWithUndefined,
         ) -> Self {
             let mut f = Flags(0);
-            f.set_valueless(valueless);
-            f.set_can_be_removed_if_unused(can_be_removed_if_unused);
+            f.set_valueless(valueless == Valueless::Yes);
+            f.set_can_be_removed_if_unused(can_be_removed_if_unused == CanBeRemovedIfUnused::Yes);
             f.set_call_can_be_unwrapped_if_unused(call_can_be_unwrapped_if_unused);
             f.set_method_call_must_be_replaced_with_undefined(
-                method_call_must_be_replaced_with_undefined,
+                method_call_must_be_replaced_with_undefined
+                    == MethodCallMustBeReplacedWithUndefined::Yes,
             );
             f
         }
@@ -415,10 +420,12 @@ pub mod defines {
             DefineData {
                 value: options.value,
                 flags: Flags::new(
-                    options.valueless,
-                    options.can_be_removed_if_unused,
+                    Valueless::from_bool(options.valueless),
+                    CanBeRemovedIfUnused::from_bool(options.can_be_removed_if_unused),
                     options.call_can_be_unwrapped_if_unused,
-                    options.method_call_must_be_replaced_with_undefined,
+                    MethodCallMustBeReplacedWithUndefined::from_bool(
+                        options.method_call_must_be_replaced_with_undefined,
+                    ),
                 ),
                 original_name: options.original_name.map(Box::<[u8]>::from),
             }
@@ -476,12 +483,16 @@ pub mod defines {
                 value: b.value,
                 flags: Flags::new(
                     // TODO: investigate if this is correct. This is what it was before.
-                    a.method_call_must_be_replaced_with_undefined()
-                        || b.method_call_must_be_replaced_with_undefined(),
-                    a.can_be_removed_if_unused(),
+                    Valueless::from_bool(
+                        a.method_call_must_be_replaced_with_undefined()
+                            || b.method_call_must_be_replaced_with_undefined(),
+                    ),
+                    CanBeRemovedIfUnused::from_bool(a.can_be_removed_if_unused()),
                     a.call_can_be_unwrapped_if_unused(),
-                    a.method_call_must_be_replaced_with_undefined()
-                        || b.method_call_must_be_replaced_with_undefined(),
+                    MethodCallMustBeReplacedWithUndefined::from_bool(
+                        a.method_call_must_be_replaced_with_undefined()
+                            || b.method_call_must_be_replaced_with_undefined(),
+                    ),
                 ),
                 original_name: b.original_name,
             }

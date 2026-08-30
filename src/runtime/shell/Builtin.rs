@@ -583,7 +583,7 @@ impl Builtin {
                         perm,
                         &mut pollable,
                         &mut is_socket,
-                        false,
+                        bun_io::ForceSync::No,
                         &mut is_nonblocking,
                         (),
                         |_| {},

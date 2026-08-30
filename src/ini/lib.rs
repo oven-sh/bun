@@ -1618,8 +1618,8 @@ mod draft {
     }
 
     use bun_install_types::NodeLinker::{
-        Behavior as PnpmBehavior, FromExprError, Matcher as PnpmMatcherEntry, PnpmMatcher,
-        create_matcher,
+        Behavior as PnpmBehavior, FromExprError, Matcher as PnpmMatcherEntry, MatcherKind,
+        PnpmMatcher, create_matcher,
     };
 
     /// `PnpmMatcher.fromExpr` operating on
@@ -1644,16 +1644,16 @@ mod draft {
             ExprData::EString(s) => {
                 let mut s = *s;
                 let matcher = create_matcher(s.slice(bump));
-                has_include = has_include || !matcher.is_exclude;
-                has_exclude = has_exclude || matcher.is_exclude;
+                has_include = has_include || matcher.kind == MatcherKind::Include;
+                has_exclude = has_exclude || matcher.kind == MatcherKind::Exclude;
                 matchers.push(matcher);
             }
             ExprData::EArray(patterns) => {
                 for pattern_expr in patterns.items.slice() {
                     if let Some(pattern) = pattern_expr.as_string_cloned(bump)? {
                         let matcher = create_matcher(pattern);
-                        has_include = has_include || !matcher.is_exclude;
-                        has_exclude = has_exclude || matcher.is_exclude;
+                        has_include = has_include || matcher.kind == MatcherKind::Include;
+                        has_exclude = has_exclude || matcher.kind == MatcherKind::Exclude;
                         matchers.push(matcher);
                     } else {
                         log.add_error_opts(

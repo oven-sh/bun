@@ -736,7 +736,7 @@ fn fetch_registry_tree(
         b"",
         b"",
         0,
-        true,
+        npm::ExtendedManifest::Yes,
     ) {
         Ok(Some(m)) => m,
         Ok(None) => {

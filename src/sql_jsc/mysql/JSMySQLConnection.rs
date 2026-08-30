@@ -27,7 +27,7 @@ use crate::mysql::protocol::error_packet_jsc::ErrorPacketJsc;
 // is intentionally NOT imported by name — that ident is taken in this module's
 // value namespace by the `declare_scope!` static and in the type namespace by
 // the `pub use JSMySQLConnection as MySQLConnection` re-export below.
-use super::my_sql_connection::{self as my_sql_connection};
+use super::my_sql_connection::{self as my_sql_connection, AllowPublicKeyRetrieval};
 use super::my_sql_statement::MySQLStatement;
 use super::protocol::result_set::{self as ResultSet};
 
@@ -458,7 +458,8 @@ impl JSMySQLConnection {
         let use_unnamed_prepared_statements = arguments[14].as_boolean();
         // MySQL doesn't support unnamed prepared statements
         let _ = use_unnamed_prepared_statements;
-        let allow_public_key_retrieval = callframe.argument(15).to_boolean();
+        let allow_public_key_retrieval =
+            AllowPublicKeyRetrieval::from_bool(callframe.argument(15).to_boolean());
 
         let ptr: *mut JSMySQLConnection = bun_core::heap::into_raw(Box::new(JSMySQLConnection {
             ref_count: Cell::new(1),
@@ -507,7 +508,7 @@ impl JSMySQLConnection {
                     None,
                     &path[..],
                     ptr,
-                    false,
+                    uws::AllowHalfOpen::No,
                 )
             } else {
                 SocketTCP::connect_group(
@@ -517,7 +518,7 @@ impl JSMySQLConnection {
                     hostname.slice(),
                     args.port,
                     ptr,
-                    false,
+                    uws::AllowHalfOpen::No,
                 )
             };
             let socket = match result {

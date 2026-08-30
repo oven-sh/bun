@@ -22,9 +22,9 @@ pub type Loop = bun_sys::windows::libuv::Loop;
 /// dispatch in `bun_runtime::dispatch::__bun_run_file_poll` recovers the type
 /// from this constant. T2 cannot name `bun_io`, so the value is mirrored.
 use crate::max_buf::MaxBuf;
-use crate::pipes::{Chunk, FileType, PollOrFd, ReadState};
+use crate::pipes::{Chunk, FileType, IsPollable, PollOrFd, ReadState, ReceivedHup};
 #[cfg(windows)]
-use crate::source::Source;
+use crate::source::{Source, WasCanceled};
 
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
@@ -352,7 +352,7 @@ impl PosixBufferedReader {
         // Unregister the FilePoll if it's registered
         if let PollOrFd::Poll(poll) = &mut self.handle {
             if poll.is_registered() {
-                let _ = poll.unregister(self.vtable.loop_().cast(), false);
+                let _ = poll.unregister(self.vtable.loop_().cast(), crate::ForceUnregister::No);
             }
         }
     }
@@ -543,8 +543,8 @@ impl PosixBufferedReader {
         }
     }
 
-    pub fn start(&mut self, fd: Fd, is_pollable: bool) -> sys::Result<()> {
-        if !is_pollable {
+    pub fn start(&mut self, fd: Fd, is_pollable: IsPollable) -> sys::Result<()> {
+        if is_pollable == IsPollable::No {
             self.buffer().clear();
             self.flags.remove(PosixFlags::IS_DONE);
             self.handle.close(None, None::<fn(*mut c_void)>);
@@ -566,7 +566,12 @@ impl PosixBufferedReader {
         sys::Result::Ok(())
     }
 
-    pub fn start_file_offset(&mut self, fd: Fd, poll: bool, offset: usize) -> sys::Result<()> {
+    pub fn start_file_offset(
+        &mut self,
+        fd: Fd,
+        poll: IsPollable,
+        offset: usize,
+    ) -> sys::Result<()> {
         self._offset = offset;
         self.flags.insert(PosixFlags::USE_PREAD);
         self.start(fd, poll)
@@ -618,13 +623,13 @@ impl PosixBufferedReader {
         // The read loop dispatches `on_read_chunk` and touches `*this`
         // afterwards, so the parent (which embeds this reader) must outlive it.
         let _parent = vtable.ref_parent();
-        let mut received_hup = false;
+        let mut received_hup = ReceivedHup::No;
         // A used-up limit is reported without reading, so there is nothing to wait for.
         // SAFETY: caller contract; borrow ends at `;`.
         if file_type == FileType::Pipe && !unsafe { (*this).limit.reached() } {
             match bun_core::is_readable(fd) {
                 bun_core::Pollable::Ready => {}
-                bun_core::Pollable::Hup => received_hup = true,
+                bun_core::Pollable::Hup => received_hup = ReceivedHup::Yes,
                 bun_core::Pollable::NotReady => {
                     // SAFETY: caller contract; the error dispatch may free the parent.
                     unsafe { Self::register_poll(this) };
@@ -639,7 +644,11 @@ impl PosixBufferedReader {
     /// # Safety
     /// `this` is the live reader registered as the poll's user data; see
     /// [`Self::read`] for why the entry is raw.
-    pub unsafe fn on_poll(this: *mut PosixBufferedReader, size_hint: isize, received_hup: bool) {
+    pub unsafe fn on_poll(
+        this: *mut PosixBufferedReader,
+        size_hint: isize,
+        received_hup: ReceivedHup,
+    ) {
         // SAFETY: caller contract — `this` is live; borrows end at each `;`.
         let Some((fd, file_type, vtable)) = (unsafe { (*this).begin_read() }) else {
             return;
@@ -758,10 +767,11 @@ impl PosixBufferedReader {
         this: *mut PosixBufferedReader,
         file_type: FileType,
         fd: Fd,
-        mut received_hup: bool,
+        received_hup: ReceivedHup,
     ) {
         // SAFETY: caller contract — `this` is live.
         let vtable = unsafe { (*this).vtable };
+        let mut received_hup = received_hup == ReceivedHup::Yes;
         let streaming = vtable.is_streaming_enabled();
         let mut scratch = vtable.event_loop().claim_pipe_read_scratch();
         loop {
@@ -1306,7 +1316,7 @@ impl WindowsBufferedReader {
         unsafe { (*this.cast::<WindowsBufferedReader>()).close() };
     }
 
-    pub fn start(&mut self, fd: Fd, _: bool) -> sys::Result<()> {
+    pub fn start(&mut self, fd: Fd, _: IsPollable) -> sys::Result<()> {
         debug_assert!(self.source.is_none());
         // Use the event loop from the parent, not the global one
         // This is critical for spawnSync to use its isolated loop
@@ -1319,7 +1329,12 @@ impl WindowsBufferedReader {
         self.start_with_current_pipe()
     }
 
-    pub fn start_file_offset(&mut self, fd: Fd, poll: bool, offset: usize) -> sys::Result<()> {
+    pub fn start_file_offset(
+        &mut self,
+        fd: Fd,
+        poll: IsPollable,
+        offset: usize,
+    ) -> sys::Result<()> {
         self._offset = offset;
         self.flags.insert(WindowsFlags::USE_PREAD);
         self.start(fd, poll)
@@ -1449,7 +1464,7 @@ impl WindowsBufferedReader {
         );
 
         // ALWAYS complete the read first (cleans up fs_t, updates state)
-        file.complete(was_canceled);
+        file.complete(WasCanceled::from_bool(was_canceled));
 
         if parent_ptr.is_null() {
             if file.state != crate::source::FileState::Closing {
@@ -1583,7 +1598,7 @@ impl WindowsBufferedReader {
                             .to_error(sys::Tag::write)
                             {
                                 // SAFETY: see above.
-                                unsafe { (*file_raw).complete(false) };
+                                unsafe { (*file_raw).complete(WasCanceled::No) };
                                 this.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
                                 this.flags.insert(WindowsFlags::IS_PAUSED);
                                 // we should inform the error if we are unable to keep reading
@@ -1663,7 +1678,7 @@ impl WindowsBufferedReader {
                 .to_error(sys::Tag::write)
                 {
                     // SAFETY: see above.
-                    unsafe { (*file_raw).complete(false) };
+                    unsafe { (*file_raw).complete(WasCanceled::No) };
                     self.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
                     return sys::Result::Err(err);
                 }

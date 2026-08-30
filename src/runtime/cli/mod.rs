@@ -590,6 +590,8 @@ pub mod help_command {
         InvalidCommand,
     }
 
+    bun_core::bool_enum!(pub ShowAllFlags);
+
     #[cold]
     pub(crate) fn exec() -> crate::Result<()> {
         exec_with_reason(Reason::Explicit)
@@ -680,7 +682,7 @@ pub mod help_command {
 
     // Tag/Reason lack `ConstParamTy` in lower-tier crates, so `reason` is a
     // runtime arg.
-    pub(crate) fn print_with_reason(reason: Reason, show_all_flags: bool) {
+    pub(crate) fn print_with_reason(reason: Reason, show_all_flags: ShowAllFlags) {
         let mut rand = bun_core::rand::DefaultPrng::init(
             u64::try_from(bun_core::time::milli_timestamp().max(0)).expect("int cast"),
         );
@@ -714,7 +716,7 @@ pub mod help_command {
                     args,
                     Global::package_json_version_with_revision
                 );
-                if show_all_flags {
+                if show_all_flags == ShowAllFlags::Yes {
                     pretty!("\n<b>Flags:<r>");
                     bun_clap::simple_help_bun_top_level(arguments::AUTO_PARAMS);
                     pretty!(
@@ -740,7 +742,7 @@ Join our Discord community:      <blue>https://bun.com/discord<r>\n"
 
     #[cold]
     fn exec_with_reason(reason: Reason) -> ! {
-        print_with_reason(reason, false);
+        print_with_reason(reason, ShowAllFlags::No);
         if reason == Reason::InvalidCommand {
             Global::exit(1);
         }
@@ -748,6 +750,12 @@ Join our Discord community:      <blue>https://bun.com/discord<r>\n"
     }
 }
 pub use help_command as HelpCommand;
+pub use help_command::ShowAllFlags;
+
+bun_core::bool_enum!(
+    /// `--json`: emit machine-readable JSON instead of the human table.
+    pub JsonOutput
+);
 
 pub mod reserved_command {
     use super::*;
@@ -1510,7 +1518,7 @@ pub mod command {
         // dir search, profile patching).
         for a in bun::argv().iter().skip(2) {
             if matches!(a, b"--help" | b"-h") {
-                tag_print_help(Tag::InstallCompletionsCommand, true);
+                tag_print_help(Tag::InstallCompletionsCommand, ShowAllFlags::Yes);
                 Global::exit(0);
             }
         }
@@ -1569,7 +1577,7 @@ pub mod command {
         if ctx.positionals.len() > 1 {
             super::exec_command::ExecCommand::exec(ctx)?;
         } else {
-            tag_print_help(Tag::ExecCommand, true);
+            tag_print_help(Tag::ExecCommand, ShowAllFlags::Yes);
         }
         Ok(())
     }
@@ -1784,7 +1792,7 @@ pub mod command {
         let args = argv_zslice();
 
         if args.len() <= 2 {
-            tag_print_help(Tag::CreateCommand, false);
+            tag_print_help(Tag::CreateCommand, ShowAllFlags::No);
             Global::exit(1);
         }
 
@@ -1824,7 +1832,7 @@ pub mod command {
             || positional_i == 0
             || positionals[1].is_empty()
         {
-            tag_print_help(Tag::CreateCommand, true);
+            tag_print_help(Tag::CreateCommand, ShowAllFlags::Yes);
             Global::exit(0);
         }
 
@@ -1954,10 +1962,15 @@ To create a project with the official Next.js scaffolding tool, run\n\
             }
         }
 
-        super::pm_view_command::view(pm, package_name, property_path, json_output)
+        super::pm_view_command::view(
+            pm,
+            package_name,
+            property_path,
+            JsonOutput::from_bool(json_output),
+        )
     }
 
-    pub(crate) fn tag_print_help(cmd: Tag, show_all_flags: bool) {
+    pub(crate) fn tag_print_help(cmd: Tag, show_all_flags: ShowAllFlags) {
         // the output of --help uses the following syntax highlighting
         // template: <b>Usage<r>: <b><green>bun <command><r> <cyan>[flags]<r> <blue>[arguments]<r>
         // use [foo] for multiple arguments or flags for foo.
@@ -2271,7 +2284,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>
                 );
                 Output::flush();
             }
-            _ => HelpCommand::print_with_reason(HelpCommand::Reason::Explicit, false),
+            _ => HelpCommand::print_with_reason(HelpCommand::Reason::Explicit, ShowAllFlags::No),
         }
     }
 

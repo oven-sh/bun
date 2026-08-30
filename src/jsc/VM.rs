@@ -44,6 +44,8 @@ bun_opaque::opaque_ffi! {
     pub struct VM;
 }
 
+bun_core::bool_enum!(pub GcMode { Async, Sync });
+
 impl VM {
     // Note: `JSC__VM__create` was removed from bindings.cpp (Bun creates
     // its VM via `Zig::GlobalObject::create` → `WebWorker__createVM` instead).
@@ -86,8 +88,8 @@ impl VM {
         JSC__VM__shrinkFootprint(self)
     }
 
-    pub fn run_gc(&self, sync: bool) -> usize {
-        JSC__VM__runGC(self, sync)
+    pub fn run_gc(&self, sync: GcMode) -> usize {
+        JSC__VM__runGC(self, sync == GcMode::Sync)
     }
 
     pub(crate) fn heap_size(&self) -> usize {

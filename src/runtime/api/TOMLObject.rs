@@ -4,7 +4,7 @@ use bun_core::String as BunString;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, TemporalType, wtf,
 };
-use bun_parsers::toml::TOML;
+use bun_parsers::toml::{RedactLogs, TOML};
 
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     bun_jsc::create_host_function_object(
@@ -25,7 +25,7 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         super::BlobOrBufferInput::Bytes,
         super::NullishInput::Throw,
         |arena, log, source| {
-            let root = match TOML::parse(source, log, arena, false) {
+            let root = match TOML::parse(source, log, arena, RedactLogs::No) {
                 Ok(v) => v,
                 Err(bun_parsers::Error::StackOverflow) => {
                     return Err(global.throw_stack_overflow());
@@ -149,10 +149,16 @@ struct Path<'p> {
     key: &'p BunString,
 }
 
+bun_core::bool_enum!(OwnHeader);
+bun_core::bool_enum!(HeaderKind {
+    Table,
+    ArrayOfTables
+});
+
 impl Stringifier {
     fn stringify_root(&mut self, global: &JSGlobalObject, root: JSValue) -> StringifyResult<()> {
         self.mark_visiting(global, root)?;
-        self.stringify_table_body(global, root, None, false)?;
+        self.stringify_table_body(global, root, None, OwnHeader::No)?;
         self.visiting.remove(&root);
         Ok(())
     }
@@ -215,12 +221,12 @@ impl Stringifier {
         global: &JSGlobalObject,
         table: JSValue,
         path: Option<&Path<'_>>,
-        own_header: bool,
+        own_header: OwnHeader,
     ) -> StringifyResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
         }
-        let mut header_pending = own_header;
+        let mut header_pending = own_header == OwnHeader::Yes;
 
         let iter_options = jsc::JSPropertyIteratorOptions {
             skip_empty_name: false,
@@ -242,7 +248,7 @@ impl Stringifier {
             };
             if header_pending {
                 header_pending = false;
-                self.append_header(path, false);
+                self.append_header(path, HeaderKind::Table);
             }
             self.append_key_segment(&prop_name);
             self.builder.append_latin1(b" = ");
@@ -265,7 +271,7 @@ impl Stringifier {
                         parent: path,
                         key: &prop_name,
                     };
-                    self.stringify_table_body(global, value, Some(&child), true)?;
+                    self.stringify_table_body(global, value, Some(&child), OwnHeader::Yes)?;
                     self.visiting.remove(&value);
                 }
                 Layout::ArrayOfTables => {
@@ -287,8 +293,8 @@ impl Stringifier {
                             return Err(self.err_changed(global));
                         }
                         self.mark_visiting(global, item)?;
-                        self.append_header(Some(&child), true);
-                        self.stringify_table_body(global, item, Some(&child), false)?;
+                        self.append_header(Some(&child), HeaderKind::ArrayOfTables);
+                        self.stringify_table_body(global, item, Some(&child), OwnHeader::No)?;
                         self.visiting.remove(&item);
                     }
                     self.visiting.remove(&value);
@@ -298,7 +304,7 @@ impl Stringifier {
 
         // An empty table is materialized only by its header.
         if header_pending {
-            self.append_header(path, false);
+            self.append_header(path, HeaderKind::Table);
         }
 
         Ok(())
@@ -409,7 +415,8 @@ impl Stringifier {
 
     /// `[a.b.c]` or `[[a.b.c]]`, preceded by a blank line when the document
     /// already has content.
-    fn append_header(&mut self, path: Option<&Path<'_>>, array_of_tables: bool) {
+    fn append_header(&mut self, path: Option<&Path<'_>>, kind: HeaderKind) {
+        let array_of_tables = kind == HeaderKind::ArrayOfTables;
         if self.wrote {
             self.builder.append_lchar(b'\n');
         }

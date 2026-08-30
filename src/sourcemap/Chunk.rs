@@ -111,15 +111,16 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
         .expect("unreachable");
     mutable.append(b"{\n  \"version\":3,\n  \"sources\": [")?;
 
-    bun_core::quote_for_json(filename, mutable, ASCII_ONLY)?;
+    let ascii_only = bun_core::printer::AsciiOnly::from_bool(ASCII_ONLY);
+    bun_core::quote_for_json(filename, mutable, ascii_only)?;
 
     if include_sources_contents {
         mutable.append(b"],\n  \"sourcesContent\": [")?;
-        bun_core::quote_for_json(source.contents(), mutable, ASCII_ONLY)?;
+        bun_core::quote_for_json(source.contents(), mutable, ascii_only)?;
     }
 
     mutable.append(b"],\n  \"mappings\": ")?;
-    bun_core::quote_for_json(mappings, mutable, ASCII_ONLY)?;
+    bun_core::quote_for_json(mappings, mutable, ascii_only)?;
     mutable.append(b", \"names\": []\n}")?;
     Ok(())
 }
@@ -128,9 +129,11 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
 // `NewBuilder`'s hot methods are concretized on it
 // (see the `impl NewBuilder<VLQSourceMap>` block below).
 
+bun_core::bool_enum!(pub PrependCount);
+
 /// Trait capturing the methods `SourceMapFormat<T>` forwards to its `ctx`.
 pub trait SourceMapFormatCtx: Sized {
-    fn init(prepend_count: bool) -> Self;
+    fn init(prepend_count: PrependCount) -> Self;
     fn append_line_separator(&mut self) -> Result<(), crate::Error>;
     fn append(
         &mut self,
@@ -148,7 +151,7 @@ pub struct SourceMapFormat<T: SourceMapFormatCtx> {
 }
 
 impl<T: SourceMapFormatCtx> SourceMapFormat<T> {
-    pub fn init(prepend_count: bool) -> Self {
+    pub fn init(prepend_count: PrependCount) -> Self {
         Self {
             ctx: T::init(prepend_count),
         }
@@ -210,8 +213,8 @@ impl Default for VLQSourceMap {
 }
 
 impl SourceMapFormatCtx for VLQSourceMap {
-    fn init(prepend_count: bool) -> VLQSourceMap {
-        if prepend_count {
+    fn init(prepend_count: PrependCount) -> VLQSourceMap {
+        if prepend_count == PrependCount::Yes {
             return VLQSourceMap {
                 data: MutableString::init_empty(),
                 internal: Some(internal_source_map::Builder::init()),

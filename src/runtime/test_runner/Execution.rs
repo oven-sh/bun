@@ -46,7 +46,7 @@ use bun_core::scoped_log;
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
     group_begin, AddedInPhase, BunTest, BunTestPtr, EntryData, ExecutionEntry,
-    HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
+    HandleUncaughtExceptionResult, HasDoneParameter, Order, RefDataValue, ScopeMode, StepResult,
 };
 use crate::cli::test_command;
 
@@ -1032,7 +1032,7 @@ fn step_sequence_one(
             buntest_strong,
             global_this,
             cb.get(),
-            next_item.has_done_parameter,
+            HasDoneParameter::from_bool(next_item.has_done_parameter),
             callback_data,
             &next_item.timespec,
         )

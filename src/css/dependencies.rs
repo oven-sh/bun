@@ -1,6 +1,7 @@
 //! CSS dependency tracking — `@import` and `url()` references collected during printing.
 
 use crate::SourceLocation;
+use crate::css_modules::AtStart;
 
 /// Options for `analyze_dependencies` in `PrinterOptions`.
 pub struct DependencyOptions {
@@ -54,7 +55,7 @@ impl ImportDependency {
                 bstr::BStr::new(filename),
                 bstr::BStr::new(rule.url)
             ),
-            false,
+            AtStart::No,
         );
 
         ImportDependency {
@@ -81,7 +82,7 @@ impl UrlDependency {
         let placeholder = crate::css_modules::hash(
             bump,
             format_args!("{}_{}", bstr::BStr::new(filename), bstr::BStr::new(theurl)),
-            false,
+            AtStart::No,
         );
         UrlDependency {
             placeholder: std::ptr::from_ref::<[u8]>(placeholder),

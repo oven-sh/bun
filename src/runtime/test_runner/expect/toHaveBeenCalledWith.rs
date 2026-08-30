@@ -4,6 +4,7 @@ use super::DiffFormatter;
 use super::mock;
 use super::throw;
 use super::Expect;
+use super::IsNot;
 
 pub(crate) fn to_have_been_called_with(
     this: &Expect,
@@ -64,7 +65,7 @@ pub(crate) fn to_have_been_called_with(
     expected_args_js_array.ensure_still_alive();
 
     if this.flags.get().not() {
-        let signature = Expect::get_signature("toHaveBeenCalledWith", "<green>...expected<r>", true);
+        let signature = Expect::get_signature("toHaveBeenCalledWith", "<green>...expected<r>", IsNot::Yes);
         return throw!(
             this,
             global,
@@ -73,7 +74,7 @@ pub(crate) fn to_have_been_called_with(
             expected_args_js_array.to_fmt(&mut formatter),
         );
     }
-    let signature = Expect::get_signature("toHaveBeenCalledWith", "<green>...expected<r>", false);
+    let signature = Expect::get_signature("toHaveBeenCalledWith", "<green>...expected<r>", IsNot::No);
 
     if calls_count == 0 {
         return throw!(

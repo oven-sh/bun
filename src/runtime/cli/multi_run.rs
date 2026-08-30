@@ -15,7 +15,7 @@ use bun_paths as path;
 
 use crate::Command;
 use crate::filter_arg as FilterArg;
-use crate::run_command::{ConfigureEnvOptions, RunCommand};
+use crate::run_command::{ConfigureEnvOptions, ForceUsingBun, RunCommand};
 
 // `bun.spawn` (Process/Status/SpawnOptions/Rusage/spawnProcess) —
 // lives under crate::api::bun::process.
@@ -45,24 +45,26 @@ struct ScriptConfig {
     path: Box<[u8]>,
 }
 
+bun_core::bool_enum!(PipeKind { Stdout, Stderr });
+
 /// Wraps a BufferedReader and tracks whether it represents stdout or stderr,
 /// so output can be routed to the correct parent stream.
 pub struct PipeReader<'a> {
     reader: BufferedReader,
     handle: *mut ProcessHandle<'a>, // set in ProcessHandle::start()
-    is_stderr: bool,
+    kind: PipeKind,
     /// Reached EOF or errored; no more chunks will arrive.
     ended: bool,
     line_buffer: Vec<u8>,
 }
 
 impl<'a> PipeReader<'a> {
-    fn new(is_stderr: bool) -> Self {
+    fn new(kind: PipeKind) -> Self {
         Self {
             // BufferedReader::init(This) — the parent type fills the vtable.
             reader: BufferedReader::init::<Self>(),
             handle: ptr::null_mut(),
-            is_stderr,
+            kind,
             ended: false,
             line_buffer: Vec::new(),
         }
@@ -229,14 +231,14 @@ impl<'a> ProcessHandle<'a> {
                 let _ = bun_sys::set_nonblocking(stdout_fd);
                 self.stdout_reader
                     .reader
-                    .start(stdout_fd, true)
+                    .start(stdout_fd, bun_io::IsPollable::Yes)
                     .map_err(Error::from)?;
             }
             if let Some(stderr_fd) = stderr_fd {
                 let _ = bun_sys::set_nonblocking(stderr_fd);
                 self.stderr_reader
                     .reader
-                    .start(stderr_fd, true)
+                    .start(stderr_fd, bun_io::IsPollable::Yes)
                     .map_err(Error::from)?;
             }
         }
@@ -366,7 +368,7 @@ impl<'a> State<'a> {
         pipe.line_buffer.extend_from_slice(chunk);
 
         // Route to correct parent stream: child stdout -> parent stdout, child stderr -> parent stderr
-        let writer = if pipe.is_stderr {
+        let writer = if pipe.kind == PipeKind::Stderr {
             Output::error_writer()
         } else {
             Output::writer()
@@ -422,7 +424,7 @@ impl<'a> State<'a> {
         if !pipe.line_buffer.is_empty() {
             let line = &pipe.line_buffer[..];
             let needs_newline = !line.is_empty() && line[line.len() - 1] != b'\n';
-            let writer = if pipe.is_stderr {
+            let writer = if pipe.kind == PipeKind::Stderr {
                 Output::error_writer()
             } else {
                 Output::writer()
@@ -961,7 +963,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 this_transpiler,
                 None,
                 &package.dir,
-                run_in_bun,
+                ForceUsingBun::from_bool(run_in_bun),
             )?;
             let pkg_name: Box<[u8]> = if !package.json.name.is_empty() {
                 Box::<[u8]>::from(&package.json.name[..])
@@ -1064,7 +1066,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             this_transpiler,
             None,
             cwd,
-            run_in_bun,
+            ForceUsingBun::from_bool(run_in_bun),
         )?;
 
         // Load package.json scripts
@@ -1178,8 +1180,8 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             state: &raw const state,
             config,
             color_idx,
-            stdout_reader: PipeReader::new(false),
-            stderr_reader: PipeReader::new(true),
+            stdout_reader: PipeReader::new(PipeKind::Stdout),
+            stderr_reader: PipeReader::new(PipeKind::Stderr),
             process: None,
             finished: false,
             remaining_dependencies: 0,

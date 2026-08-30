@@ -583,7 +583,7 @@ impl ExtractTarball {
                         dir_to_move,
                         Fd::from_std_dir(cache_dir),
                         path_to_use,
-                        true,
+                        bun_sys::windows::ReplaceIfExists::Yes,
                     ) {
                         bun_sys::Result::Err(err) => {
                             if retries < MAX_RETRIES {

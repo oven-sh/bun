@@ -6,7 +6,9 @@ use bun_core::fmt::PathSep;
 use bun_core::strings;
 use bun_core::{Global, Output, env_var, fmt as bun_fmt};
 use bun_install::dependency::Dependency;
-use bun_install::lockfile::{LoadResult, LoadStep, Lockfile, package::PackageColumns as _, tree};
+use bun_install::lockfile::{
+    LoadResult, LoadStep, Lockfile, PrintNameVersion, package::PackageColumns as _, tree,
+};
 use bun_install::npm as Npm;
 use bun_install::package_manager_real::{
     CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
@@ -355,7 +357,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             } else {
                 b"".as_slice()
             };
-            let json_output = pm.options.json_output;
+            let json_output = crate::cli::JsonOutput::from_bool(pm.options.json_output);
             PmViewCommand::view(pm, spec, property_path, json_output)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"bin") {
@@ -403,7 +405,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             let pm = unsafe { &mut *pm_ptr };
             let _ = pm
                 .lockfile
-                .has_meta_hash_changed(false, pm.lockfile.packages.len())?;
+                .has_meta_hash_changed(PrintNameVersion::No, pm.lockfile.packages.len())?;
 
             Output::flush();
             Output::disable_buffering();
@@ -429,7 +431,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             let pm = unsafe { &mut *pm_ptr };
             let _ = pm
                 .lockfile
-                .has_meta_hash_changed(true, pm.lockfile.packages.len())?;
+                .has_meta_hash_changed(PrintNameVersion::Yes, pm.lockfile.packages.len())?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"cache") {
             if pm.options.positionals.len() > 1
@@ -914,7 +916,7 @@ fn print_node_modules_folder_structure(
             if strings::eql_long(
                 &possible_path,
                 directories[dir_index].relative_path.as_bytes(),
-                true,
+                strings::CheckLen::Yes,
             ) {
                 found_node_modules = true;
                 let next = directories.remove(dir_index);

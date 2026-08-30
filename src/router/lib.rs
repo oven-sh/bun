@@ -578,7 +578,8 @@ impl<'a> RouteLoader<'a> {
             // once the stub forwards it.
             // SAFETY: no other live borrow of `*entry_ptr` here;
             // `resolver.fs_impl()` points at the process-global RealFS.
-            let kind = unsafe { (&*entry_ptr).kind(resolver.fs_impl(), false) };
+            let kind =
+                unsafe { (&*entry_ptr).kind(resolver.fs_impl(), bun_resolver::fs::StoreFd::No) };
             // SAFETY: shared read-only borrow for the match arms; the only
             // subsequent mutation is via `Route::parse` which takes the raw
             // pointer and reborrows internally.

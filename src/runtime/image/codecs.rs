@@ -757,7 +757,9 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, degrees: u32) -> Result<Decoded
     })
 }
 
-pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u8>, Error> {
+bun_core::bool_enum!(pub(crate) FlipAxis { Vertical, Horizontal });
+
+pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: FlipAxis) -> Result<Vec<u8>, Error> {
     #[cfg(target_os = "macos")]
     if use_system() {
         match system_backend::BackendError::split(system_backend::flip(src, w, h, horizontal)) {
@@ -775,7 +777,7 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
             i32::try_from(w).expect("int cast"),
             i32::try_from(h).expect("int cast"),
             out.as_mut_ptr(),
-            horizontal as i32,
+            (horizontal == FlipAxis::Horizontal) as i32,
         )
     };
     // SAFETY: the flip kernel is a permutation that stores every one of the w*h dst pixels.

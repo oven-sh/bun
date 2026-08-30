@@ -6,6 +6,12 @@ use bun_jsc::{FromAny, JSGlobalObject, JSObject, JSValue, JsError, JsResult, Str
 use super::assert::myers_diff as MyersDiff;
 use super::assert::myers_diff::{Diff, DiffKind, Line};
 
+bun_core::bool_enum!(pub(crate) CheckCommaDisparity);
+bun_core::bool_enum!(
+    /// Split `actual` and `expected` into lines before diffing.
+    pub(crate) DiffMode { Chars, Lines }
+);
+
 /// Compare `actual` and `expected`, producing a diff that would turn `actual`
 /// into `expected`, and hand it to JS in the shape `output` asks for.
 ///
@@ -34,12 +40,18 @@ pub(crate) fn myers_diff(
         Output::List {
             lines,
             check_comma_disparity,
-        } => (lines, check_comma_disparity),
-        Output::Simple(_) => (false, false),
+        } => (
+            DiffMode::from_bool(lines),
+            CheckCommaDisparity::from_bool(check_comma_disparity),
+        ),
+        Output::Simple(_) => (DiffMode::Chars, CheckCommaDisparity::No),
         Output::Lines {
             check_comma_disparity,
             ..
-        } => (true, check_comma_disparity),
+        } => (
+            DiffMode::Lines,
+            CheckCommaDisparity::from_bool(check_comma_disparity),
+        ),
     };
 
     // JS strings arrive as Latin-1 or UTF-16. When the two sides differ, widen the
@@ -48,7 +60,7 @@ pub(crate) fn myers_diff(
     let expected_is_16 = expected.encoding() == EncodingNonAscii::Utf16;
     if !actual_is_16 && !expected_is_16 {
         let (a, e) = (actual.byte_slice(), expected.byte_slice());
-        return if lines {
+        return if lines == DiffMode::Lines {
             diff_lines::<u8>(global, a, e, check_comma_disparity, output)
         } else {
             diff_chars::<u8>(global, a, e, output)
@@ -71,7 +83,7 @@ pub(crate) fn myers_diff(
         expected_wide = widen(expected);
         &expected_wide
     };
-    if lines {
+    if lines == DiffMode::Lines {
         diff_lines::<u16>(global, a, e, check_comma_disparity, output)
     } else {
         diff_chars::<u16>(global, a, e, output)
@@ -96,7 +108,7 @@ fn diff_lines<'s, T>(
     global: &JSGlobalObject,
     actual: &'s [T],
     expected: &'s [T],
-    check_comma_disparity: bool,
+    check_comma_disparity: CheckCommaDisparity,
     output: &Output<'_>,
 ) -> JsResult<JSValue>
 where
@@ -106,7 +118,7 @@ where
     let a = MyersDiff::split::<T>(actual);
     let e = MyersDiff::split::<T>(expected);
 
-    let diff: MyersDiff::DiffList<&'s [T]> = if check_comma_disparity {
+    let diff: MyersDiff::DiffList<&'s [T]> = if check_comma_disparity == CheckCommaDisparity::Yes {
         MyersDiff::Differ::<&'s [T], true>::diff(a.as_slice(), e.as_slice())
             .map_err(|err| map_diff_error(global, err))?
     } else {

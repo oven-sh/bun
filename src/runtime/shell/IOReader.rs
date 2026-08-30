@@ -216,7 +216,7 @@ impl IOReader {
             };
             if need_start {
                 let fd = self.state().fd;
-                if let Err(e) = r.start(fd, true) {
+                if let Err(e) = r.start(fd, bun_io::IsPollable::Yes) {
                     self.on_reader_error(&e);
                 }
             }
@@ -399,7 +399,8 @@ impl Drop for IOReader {
                 // return the FilePoll to its pool. Do it explicitly (without
                 // closing the fd — we own that and close it ourselves below).
                 if matches!(r.handle, bun_io::pipes::PollOrFd::Poll(_)) {
-                    r.handle.close_impl(None, None::<fn(*mut c_void)>, false);
+                    r.handle
+                        .close_impl(None, None::<fn(*mut c_void)>, bun_io::CloseFd::No);
                 }
                 let _ = sys::close(s.fd);
             }

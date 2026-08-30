@@ -3939,22 +3939,28 @@ pub(crate) const SPECIAL_CHARS_TABLE: ByteTable = {
 /// Characters that need to be backslashed inside double quotes
 pub(crate) const BACKSLASHABLE_CHARS: [u8; 4] = *b"$`\"\\";
 
+bun_core::bool_enum!(pub Utf16Validity { Invalid, Valid });
+
 pub fn escape_bun_str<const ADD_QUOTES: bool>(
     bunstr: &BunString,
     outbuf: &mut Vec<u8>,
-) -> Result<bool, bun_alloc::AllocError> {
+) -> Result<Utf16Validity, bun_alloc::AllocError> {
     if bunstr.is_utf16() {
         let res = escape_utf16::<ADD_QUOTES>(bunstr.utf16(), outbuf)?;
-        return Ok(!res.is_invalid);
+        return Ok(if res.is_invalid {
+            Utf16Validity::Invalid
+        } else {
+            Utf16Validity::Valid
+        });
     }
     if bunstr.is_utf8() {
         escape_8bit::<ADD_QUOTES, false>(bunstr.byte_slice(), outbuf)?;
-        return Ok(true);
+        return Ok(Utf16Validity::Valid);
     }
     // Otherwise 8-bit (Latin-1/ASCII). `outbuf` is consumed as UTF-8, so
     // Latin-1 code units 0x80..=0xFF must be re-encoded, not copied verbatim.
     escape_8bit::<ADD_QUOTES, true>(bunstr.byte_slice(), outbuf)?;
-    Ok(true)
+    Ok(Utf16Validity::Valid)
 }
 
 /// Escapes an 8-bit byte string into UTF-8 output. `LATIN1` selects how bytes

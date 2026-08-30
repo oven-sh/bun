@@ -181,7 +181,10 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         #[cfg(not(windows))]
         {
             // On POSIX `StdioResult` is an `Option<Fd>`.
-            match self.writer.start(self.stdio_result.unwrap(), true) {
+            match self
+                .writer
+                .start(self.stdio_result.unwrap(), bun_io::IsPollable::Yes)
+            {
                 bun_sys::Result::Err(err) => {
                     // start() failed: `started` stays false so no release
                     // site fires — release start()'s `+1` here.

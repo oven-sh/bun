@@ -680,10 +680,23 @@ pub fn decode_hex_u16(src: &[u16], dst: &mut [u8]) -> usize {
     written
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum SkipMask {
+    No,
+    Yes,
+}
+
+impl SkipMask {
+    #[inline]
+    pub const fn from_bool(b: bool) -> Self {
+        if b { Self::Yes } else { Self::No }
+    }
+}
+
 /// Apply a WebSocket mask to data using SIMD acceleration
-/// If skip_mask is true, data is copied without masking
+/// With `SkipMask::Yes`, data is copied without masking
 #[inline(always)]
-pub fn fill_with_skip_mask(mask: [u8; 4], output: &mut [u8], input: &[u8], skip_mask: bool) {
+pub fn fill_with_skip_mask(mask: [u8; 4], output: &mut [u8], input: &[u8], skip_mask: SkipMask) {
     if input.is_empty() {
         return;
     }
@@ -696,7 +709,7 @@ pub fn fill_with_skip_mask(mask: [u8; 4], output: &mut [u8], input: &[u8], skip_
             output.as_mut_ptr(),
             input.as_ptr(),
             input.len(),
-            skip_mask,
+            skip_mask == SkipMask::Yes,
         );
     }
 }
@@ -708,7 +721,7 @@ pub fn fill_with_skip_mask(mask: [u8; 4], output: &mut [u8], input: &[u8], skip_
 /// reads-before-writes per lane (it's `dst[i] = src[i] ^ mask[i&3]`), so
 /// feeding it `src == dst` is sound.
 #[inline(always)]
-pub fn fill_with_skip_mask_inplace(mask: [u8; 4], buf: &mut [u8], skip_mask: bool) {
+pub fn fill_with_skip_mask_inplace(mask: [u8; 4], buf: &mut [u8], skip_mask: SkipMask) {
     if buf.is_empty() {
         return;
     }
@@ -723,7 +736,7 @@ pub fn fill_with_skip_mask_inplace(mask: [u8; 4], buf: &mut [u8], skip_mask: boo
             buf.as_mut_ptr(),
             buf.as_ptr(),
             buf.len(),
-            skip_mask,
+            skip_mask == SkipMask::Yes,
         );
     }
 }

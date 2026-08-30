@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::DiffFormatter;
+use super::IsNot;
 use super::throw;
 use super::{Expect, get_signature};
 
@@ -59,7 +60,11 @@ pub(crate) fn to_have_been_last_called_with(
     expected_args_js_array.ensure_still_alive();
 
     if this.flags.get().not() {
-        let signature = get_signature("toHaveBeenLastCalledWith", "<green>...expected<r>", true);
+        let signature = get_signature(
+            "toHaveBeenLastCalledWith",
+            "<green>...expected<r>",
+            IsNot::Yes,
+        );
         return throw!(
             this,
             global,
@@ -68,7 +73,11 @@ pub(crate) fn to_have_been_last_called_with(
             expected_args_js_array.to_fmt(&mut formatter),
         );
     }
-    let signature = get_signature("toHaveBeenLastCalledWith", "<green>...expected<r>", false);
+    let signature = get_signature(
+        "toHaveBeenLastCalledWith",
+        "<green>...expected<r>",
+        IsNot::No,
+    );
 
     if total_calls == 0 {
         return throw!(

@@ -210,6 +210,8 @@ const _: () = {
     }
 };
 
+bun_core::bool_enum!(pub IncludeContentType);
+
 impl Blob {
     /// Heap-promote and mark as
     /// heap-allocated so `deinit` knows to free the heap box.
@@ -343,7 +345,7 @@ impl Blob {
     /// New view onto the same store, +1 ref.
     #[inline]
     pub fn dupe(&self) -> Blob {
-        self.dupe_with_content_type(false)
+        self.dupe_with_content_type(IncludeContentType::No)
     }
 
     /// Alias for [`Self::dupe`].
@@ -357,7 +359,7 @@ impl Blob {
     /// `content_type` so freeing one side does not dangle the other (the old
     /// borrow path was removed because it dropped user-supplied parameters
     /// like multipart boundaries on a static-mime miss).
-    pub fn dupe_with_content_type(&self, _include_content_type: bool) -> Blob {
+    pub fn dupe_with_content_type(&self, _include_content_type: IncludeContentType) -> Blob {
         Blob {
             reported_estimated_size: Cell::new(self.reported_estimated_size.get()),
             size: Cell::new(self.size.get()),

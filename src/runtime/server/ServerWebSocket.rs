@@ -8,7 +8,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::{ComptimeStringMapExt as _, JsCell};
 use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
 use bun_uws_sys::web_socket::{WebSocketHandler, WebSocketUpgradeServer, Wrap};
-use bun_uws_sys::{Opcode, SendStatus};
+use bun_uws_sys::{Compress, Fin, Opcode, SendStatus};
 
 use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{
@@ -290,7 +290,7 @@ impl ServerWebSocket {
         fn_name: &'static str,
         compress_value: JSValue,
         args_len: usize,
-    ) -> JsResult<bool> {
+    ) -> JsResult<Compress> {
         if !compress_value.is_boolean()
             && !compress_value.is_undefined()
             && !compress_value.is_empty()
@@ -299,7 +299,9 @@ impl ServerWebSocket {
                 global_this.throw(format_args!("{fn_name} expects compress to be a boolean"))
             );
         }
-        Ok(args_len > 1 && compress_value.to_boolean())
+        Ok(Compress::from_bool(
+            args_len > 1 && compress_value.to_boolean(),
+        ))
     }
 
     /// Route a publish through either the per-socket uWS handle (when
@@ -312,7 +314,7 @@ impl ServerWebSocket {
         topic: &[u8],
         buffer: &[u8],
         opcode: Opcode,
-        compress: bool,
+        compress: Compress,
     ) -> JSValue {
         let status = if !ctx.publish_to_self && !self.is_closed() {
             self.websocket().publish(topic, buffer, opcode, compress)
@@ -1072,7 +1074,8 @@ impl ServerWebSocket {
         if let Some(buffer) = message_value.as_array_buffer(global_this) {
             let slice = buffer.slice();
             return Ok(send_status_to_js(
-                self.websocket().send(slice, Opcode::Binary, compress, true),
+                self.websocket()
+                    .send(slice, Opcode::Binary, compress, Fin::Yes),
                 slice.len(),
                 "send",
                 "bytes",
@@ -1081,7 +1084,8 @@ impl ServerWebSocket {
 
         if let Some(slice) = blob_payload(global_this, "send", message_value)? {
             let ret = send_status_to_js(
-                self.websocket().send(slice, Opcode::Binary, compress, true),
+                self.websocket()
+                    .send(slice, Opcode::Binary, compress, Fin::Yes),
                 slice.len(),
                 "send",
                 "bytes",
@@ -1096,7 +1100,8 @@ impl ServerWebSocket {
 
             let buffer = slice.slice();
             Ok(send_status_to_js(
-                self.websocket().send(buffer, Opcode::Text, compress, true),
+                self.websocket()
+                    .send(buffer, Opcode::Text, compress, Fin::Yes),
                 buffer.len(),
                 "send",
                 "bytes string",
@@ -1138,7 +1143,8 @@ impl ServerWebSocket {
 
         let buffer = slice.slice();
         Ok(send_status_to_js(
-            self.websocket().send(buffer, Opcode::Text, compress, true),
+            self.websocket()
+                .send(buffer, Opcode::Text, compress, Fin::Yes),
             buffer.len(),
             "sendText",
             "bytes string",
@@ -1173,7 +1179,8 @@ impl ServerWebSocket {
         if let Some(buffer) = message_value.as_array_buffer(global_this) {
             let slice = buffer.slice();
             return Ok(send_status_to_js(
-                self.websocket().send(slice, Opcode::Binary, compress, true),
+                self.websocket()
+                    .send(slice, Opcode::Binary, compress, Fin::Yes),
                 slice.len(),
                 "sendBinary",
                 "bytes",
@@ -1182,7 +1189,8 @@ impl ServerWebSocket {
 
         if let Some(slice) = blob_payload(global_this, "sendBinary", message_value)? {
             let ret = send_status_to_js(
-                self.websocket().send(slice, Opcode::Binary, compress, true),
+                self.websocket()
+                    .send(slice, Opcode::Binary, compress, Fin::Yes),
                 slice.len(),
                 "sendBinary",
                 "bytes",
@@ -1233,7 +1241,8 @@ impl ServerWebSocket {
                         return Err(throw_control_frame_too_large(global_this, buffer.len()));
                     }
                     return Ok(send_status_to_js(
-                        self.websocket().send(buffer, opcode, false, true),
+                        self.websocket()
+                            .send(buffer, opcode, Compress::No, Fin::Yes),
                         buffer.len(),
                         name,
                         "bytes",
@@ -1243,7 +1252,8 @@ impl ServerWebSocket {
                         return Err(throw_control_frame_too_large(global_this, buffer.len()));
                     }
                     let ret = send_status_to_js(
-                        self.websocket().send(buffer, opcode, false, true),
+                        self.websocket()
+                            .send(buffer, opcode, Compress::No, Fin::Yes),
                         buffer.len(),
                         name,
                         "bytes",
@@ -1258,7 +1268,8 @@ impl ServerWebSocket {
                         return Err(throw_control_frame_too_large(global_this, buffer.len()));
                     }
                     return Ok(send_status_to_js(
-                        self.websocket().send(buffer, opcode, false, true),
+                        self.websocket()
+                            .send(buffer, opcode, Compress::No, Fin::Yes),
                         buffer.len(),
                         name,
                         "bytes",
@@ -1273,7 +1284,7 @@ impl ServerWebSocket {
         }
 
         Ok(send_status_to_js(
-            self.websocket().send(&[], opcode, false, true),
+            self.websocket().send(&[], opcode, Compress::No, Fin::Yes),
             0,
             name,
             "bytes",

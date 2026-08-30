@@ -3,8 +3,10 @@ use crate::webcore::blob::store::{S3Ext as _, Store, StoreExt as _};
 use crate::webcore::blob::{self, Blob, BlobExt};
 use crate::webcore::s3::client as s3;
 use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
+use crate::webcore::s3::credentials_jsc::RequestPayer;
 use crate::webcore::s3_client::S3CredentialsExt as _;
 use bun_core::strings;
+use bun_dotenv::HttpScheme;
 use bun_http::Method;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsError, JsResult};
@@ -264,7 +266,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
     default_options: s3::MultiPartUploadOptions,
     default_acl: Option<s3::ACL>,
     default_storage_class: Option<s3::StorageClass>,
-    default_request_payer: bool,
+    default_request_payer: RequestPayer,
 ) -> JsResult<Blob> {
     let mut aws_options = <s3::S3Credentials>::get_credentials_with_options(
         default_credentials,
@@ -297,7 +299,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials(
         options,
         None,
         None,
-        false,
+        RequestPayer::No,
         global,
     )?;
     let credentials = std::mem::take(&mut aws_options.credentials);
@@ -480,7 +482,8 @@ impl S3BlobStatTask {
             path,
             S3BlobStatTask::on_s3_exists_resolved,
             this.cast::<core::ffi::c_void>(),
-            env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
+            env.get_http_proxy(HttpScheme::Http, None, None)
+                .map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
         Ok(promise)
@@ -507,7 +510,8 @@ impl S3BlobStatTask {
             path,
             S3BlobStatTask::on_s3_stat_resolved,
             this.cast::<core::ffi::c_void>(),
-            env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
+            env.get_http_proxy(HttpScheme::Http, None, None)
+                .map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
         Ok(promise)
@@ -534,7 +538,8 @@ impl S3BlobStatTask {
             path,
             S3BlobStatTask::on_s3_size_resolved,
             this.cast::<core::ffi::c_void>(),
-            env.get_http_proxy(true, None, None).map(|proxy| proxy.href),
+            env.get_http_proxy(HttpScheme::Http, None, None)
+                .map(|proxy| proxy.href),
             s3_store.request_payer,
         )?;
         Ok(promise)

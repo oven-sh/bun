@@ -31,7 +31,9 @@ use crate::repository_real::RepositoryExt as _;
 use crate::resolution::{
     NpmVersionInfo as ResolutionNpmValue, Tag as ResolutionTag, TaggedValue as ResolutionTagged,
 };
-use bun_install::NetworkTask;
+use bun_install::network_task::{IsOptional, NetworkTask};
+use bun_install::npm::ExtendedManifest;
+use bun_install::package_manager_task::NormalizePath;
 use bun_install::{
     self as install, Behavior, Dependency, DependencyID, ExtractTarball, Features, Integrity, Npm,
     PackageID, PackageNameHash, PatchTask, Repository, Resolution, TaskCallbackContext,
@@ -71,13 +73,25 @@ const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+bun_core::bool_enum!(
+    /// Whether peer dependencies are resolved/installed in this pass (second
+    /// phase) or deferred to `peer_dependencies` for later.
+    pub InstallPeer
+);
+
+bun_core::bool_enum!(
+    /// Whether the dependency being enqueued is a root dependency
+    /// (`assign_root_resolution`) rather than a transitive one.
+    pub IsRoot
+);
+
 pub fn enqueue_dependency_with_main(
     this: &mut PackageManager,
     id: DependencyID,
     // This must be a *const to prevent UB
     dependency: &Dependency,
     resolution: PackageID,
-    install_peer: bool,
+    install_peer: InstallPeer,
 ) -> crate::Result<()> {
     enqueue_dependency_with_main_and_success_fn(
         this,
@@ -87,7 +101,7 @@ pub fn enqueue_dependency_with_main(
         install_peer,
         assign_resolution,
         None,
-        false,
+        IsRoot::No,
     )
 }
 
@@ -107,7 +121,9 @@ pub fn enqueue_dependency_list(
     while i < end {
         let dependency = this.lockfile.buffers.dependencies[i as usize].clone();
         let resolution = this.lockfile.buffers.resolutions[i as usize];
-        if let Err(err) = enqueue_dependency_with_main(this, i, &dependency, resolution, false) {
+        if let Err(err) =
+            enqueue_dependency_with_main(this, i, &dependency, resolution, InstallPeer::No)
+        {
             let path_sep = match dependency.version.tag {
                 dependency::version::Tag::Folder => bun_fmt::PathSep::Auto,
                 _ => bun_fmt::PathSep::Any,
@@ -531,7 +547,7 @@ pub fn enqueue_dependency_to_root(
     let dep_id = 'brk: {
         let str_buf = this.lockfile.buffers.string_bytes.as_slice();
         for (id, dep) in this.lockfile.buffers.dependencies.iter().enumerate() {
-            if !strings::eql_long(dep.name.slice(str_buf), name, true) {
+            if !strings::eql_long(dep.name.slice(str_buf), name, strings::CheckLen::Yes) {
                 continue;
             }
             if !dep.version.eql(version, str_buf, version_buf) {
@@ -578,10 +594,10 @@ pub fn enqueue_dependency_to_root(
             dep_id,
             &dependency,
             invalid_package_id,
-            false,
+            InstallPeer::No,
             assign_root_resolution,
             Some(fail_root_resolution),
-            true,
+            IsRoot::Yes,
         ) {
             return DependencyToEnqueue::Failure(err);
         }
@@ -610,7 +626,7 @@ pub fn enqueue_dependency_to_root(
                         if let Err(err) = run_tasks::run_tasks::<VoidRunTasksCallbacks>(
                             manager,
                             &mut (),
-                            false,
+                            InstallPeer::No,
                             log_level,
                         ) {
                             self.err = Some(err);
@@ -760,7 +776,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     // This must be a *const to prevent UB
     dependency: &Dependency,
     resolution: PackageID,
-    install_peer: bool,
+    install_peer: InstallPeer,
     success_fn: SuccessFn,
     fail_fn: Option<FailFn>,
     // The two `SuccessFn` candidates
@@ -768,7 +784,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     // bodies in release builds, so Apple ld64 (which ignores `.llvm_addrsig`)
     // folds them and a runtime fn-pointer address comparison is unsound. Thread
     // an explicit flag instead.
-    is_root: bool,
+    is_root: IsRoot,
 ) -> crate::Result<()> {
     if dependency.behavior.is_optional_peer() {
         return Ok(());
@@ -1133,13 +1149,14 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             );
                         }
 
-                        if !dependency.behavior.is_peer() || install_peer {
+                        if !dependency.behavior.is_peer() || install_peer == InstallPeer::Yes {
                             if !this.has_created_network_task(
                                 task_id,
                                 dependency.behavior.is_required(),
                             ) {
-                                let needs_extended_manifest =
-                                    this.options.minimum_release_age_ms.is_some();
+                                let needs_extended_manifest = ExtendedManifest::from_bool(
+                                    this.options.minimum_release_age_ms.is_some(),
+                                );
                                 if this.options.enable.manifest_cache() {
                                     let mut expired = false;
                                     // SAFETY: `this_ptr` is the live exclusive
@@ -1311,7 +1328,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         &name_str,
                                         scope,
                                         loaded_manifest.as_ref(),
-                                        dependency.behavior.is_optional(),
+                                        IsOptional::from_bool(dependency.behavior.is_optional()),
                                         needs_extended_manifest,
                                     )?;
                                 }
@@ -1328,7 +1345,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             *manifest_entry_parse.value_ptr = TaskCallbackList::default();
                         }
 
-                        let ctx = if is_root {
+                        let ctx = if is_root == IsRoot::Yes {
                             TaskCallbackContext::RootDependency(id)
                         } else {
                             TaskCallbackContext::Dependency(id)
@@ -1358,7 +1375,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             let alias = this.lockfile.str_detached(&dependency.name);
             let url = this.lockfile.str_detached(&dep.repo);
             let clone_id = Task::Id::for_git_clone(url);
-            let ctx = if is_root {
+            let ctx = if is_root == IsRoot::Yes {
                 TaskCallbackContext::RootDependency(id)
             } else {
                 TaskCallbackContext::Dependency(id)
@@ -1425,7 +1442,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
 
                 if dependency.behavior.is_peer() {
-                    if !install_peer {
+                    if install_peer == InstallPeer::No {
                         this.peer_dependencies.write_item(id)?;
                         return Ok(());
                     }
@@ -1457,7 +1474,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 entry.value_ptr.push(ctx);
 
                 if dependency.behavior.is_peer() {
-                    if !install_peer {
+                    if install_peer == InstallPeer::No {
                         this.peer_dependencies.write_item(id)?;
                         return Ok(());
                     }
@@ -1508,7 +1525,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
             }
 
-            let ctx = if is_root {
+            let ctx = if is_root == IsRoot::Yes {
                 TaskCallbackContext::RootDependency(id)
             } else {
                 TaskCallbackContext::Dependency(id)
@@ -1528,7 +1545,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             }
 
             if dependency.behavior.is_peer() {
-                if !install_peer {
+                if install_peer == InstallPeer::No {
                     this.peer_dependencies.write_item(id)?;
                     return Ok(());
                 }
@@ -1719,7 +1736,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
             }
 
-            let ctx = if is_root {
+            let ctx = if is_root == IsRoot::Yes {
                 TaskCallbackContext::RootDependency(id)
             } else {
                 TaskCallbackContext::Dependency(id)
@@ -1737,7 +1754,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             }
 
             if dependency.behavior.is_peer() {
-                if !install_peer {
+                if install_peer == InstallPeer::No {
                     this.peer_dependencies.write_item(id)?;
                     return Ok(());
                 }
@@ -2061,16 +2078,16 @@ fn enqueue_local_tarball(
     // other dependencies (e.g. `appendPackage` / `StringBuilder.allocate`
     // in `Package.fromNPM`).
     let mut abs_buf = PathBuffer::uninit();
-    let (tarball_path, normalize): (&[u8], bool) =
+    let (tarball_path, normalize): (&[u8], NormalizePath) =
         match local_tarball_base_dir(&this.lockfile, dependency_id, path) {
-            None => (path, true),
+            None => (path, NormalizePath::Yes),
             Some(base_dir) => (
                 Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
                     FileSystem::instance().top_level_dir(),
                     &mut abs_buf,
                     &[base_dir, path],
                 ),
-                false,
+                NormalizePath::No,
             ),
         };
 
@@ -2227,7 +2244,7 @@ fn get_or_put_resolved_package_with_find_result(
     behavior: Behavior,
     manifest: &Npm::PackageManifest,
     find_result: Npm::FindResult,
-    install_peer: bool,
+    install_peer: InstallPeer,
     success_fn: SuccessFn,
 ) -> crate::Result<Option<ResolvedPackageResult>> {
     // reshaped for borrowck — `is_root_dependency(&self, &mut PackageManager, …)`
@@ -2288,7 +2305,7 @@ fn get_or_put_resolved_package_with_find_result(
     // version preference, and the "peer *" hoisting test depends on it
     // deduping to whatever sibling pin exists rather than the manifest floor.
     let suppress_peer_satisfies = behavior.is_peer()
-        && !install_peer
+        && install_peer == InstallPeer::No
         && !(version.tag == dependency::version::Tag::Npm && version.npm().version.is_star());
     if let Some(id) = this.lockfile.get_package_id(
         name_hash,
@@ -2308,7 +2325,7 @@ fn get_or_put_resolved_package_with_find_result(
             is_first_time: false,
             task: None,
         }));
-    } else if behavior.is_peer() && !install_peer {
+    } else if behavior.is_peer() && install_peer == InstallPeer::No {
         return Ok(None);
     }
 
@@ -2451,10 +2468,10 @@ fn get_or_put_resolved_package(
     behavior: Behavior,
     dependency_id: DependencyID,
     resolution: PackageID,
-    install_peer: bool,
+    install_peer: InstallPeer,
     success_fn: SuccessFn,
 ) -> crate::Result<Option<ResolvedPackageResult>> {
-    if install_peer && behavior.is_peer() {
+    if install_peer == InstallPeer::Yes && behavior.is_peer() {
         if let Some(index) = this.lockfile.package_index.get(&name_hash) {
             let resolutions = this.lockfile.packages.items_resolution();
             match index {
@@ -2611,7 +2628,8 @@ fn get_or_put_resolved_package(
             // materializing `&mut *this_ptr` after `name_str`/`scope` are
             // derived from it would pop their borrow-stack tags under SB.
             let cache_ctx = this.manifest_disk_cache_ctx();
-            let needs_ext = this.options.minimum_release_age_ms.is_some();
+            let needs_ext =
+                ExtendedManifest::from_bool(this.options.minimum_release_age_ms.is_some());
             let this_ptr: *mut PackageManager = this;
             // SAFETY: `string_bytes` is not resized between here and the
             // `find_result` lookup; `manifest` lives in `this.manifests` and
@@ -2762,7 +2780,7 @@ fn get_or_put_resolved_package(
                     }
 
                     // `Ok(None)` in the peer pass makes the caller reload the manifest and retry.
-                    if behavior.is_peer() && !install_peer {
+                    if behavior.is_peer() && install_peer == InstallPeer::No {
                         return Ok(None);
                     }
 

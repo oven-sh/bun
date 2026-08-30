@@ -13,7 +13,7 @@ use bun_ast::import_record::{Flags as ImportRecordFlags, ImportRecord};
 
 use crate::defines::Define;
 use crate::lexer as js_lexer;
-use crate::p::P;
+use crate::p::{IsInternal, P};
 use crate::parser::{
     Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, StatementScope,
     WrapMode,
@@ -351,6 +351,8 @@ impl<'a> Parser<'a> {
 // append_part, to_ast, …}` (gated in P.rs); the full ported body is preserved
 // per-method-gated in the impl block below and replaces this stub once that
 // surface lands.
+bun_core::bool_enum!(HasHashbang);
+
 impl<'a> Parser<'a> {
     #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut))]
     pub fn parse(mut self) -> Result<crate::Result<'a>, Error> {
@@ -791,7 +793,10 @@ impl<'a> Parser<'a> {
 
         // Detect a leading "// @bun" pragma
         if p.options.features.dont_bundle_twice {
-            if let Some(pragma) = Self::has_bun_pragma(&source.contents, !hashbang.is_empty()) {
+            if let Some(pragma) = Self::has_bun_pragma(
+                &source.contents,
+                HasHashbang::from_bool(!hashbang.is_empty()),
+            ) {
                 return Ok(crate::Result::AlreadyBundled(pragma));
             }
         }
@@ -884,7 +889,9 @@ impl<'a> Parser<'a> {
                     .then(|| "ssr".to_owned()),
                 ..Default::default()
             };
-            let opt_out = bun_react_compiler::has_module_scope_opt_out(stmts);
+            let opt_out = bun_react_compiler::ModuleScopeOptOut::from_bool(
+                bun_react_compiler::has_module_scope_opt_out(stmts),
+            );
             let import_bindings = bun_react_compiler::collect_import_bindings(
                 stmts,
                 p.import_records.items(),
@@ -1975,7 +1982,7 @@ impl<'a> Parser<'a> {
                     &symbols,
                     None,
                     b"import_",
-                    true,
+                    IsInternal::Yes,
                     js_ast::PartTag::Runtime,
                 )
                 .expect("unreachable");
@@ -2008,7 +2015,7 @@ impl<'a> Parser<'a> {
                     &jsx_imports,
                     None,
                     b"",
-                    false,
+                    IsInternal::No,
                     js_ast::PartTag::JsxImport,
                 )
                 .expect("unreachable");
@@ -2023,7 +2030,7 @@ impl<'a> Parser<'a> {
                     &jsx_imports,
                     None,
                     b"",
-                    false,
+                    IsInternal::No,
                     js_ast::PartTag::JsxImport,
                 )
                 .expect("unreachable");
@@ -2259,7 +2266,7 @@ impl<'a> Parser<'a> {
     // because `_parse` consumes `self` by value and destructures it before this
     // call site; the source contents are passed explicitly.
     // called from gated `_parse` body above
-    fn has_bun_pragma(contents: &[u8], has_hashbang: bool) -> Option<crate::AlreadyBundled> {
+    fn has_bun_pragma(contents: &[u8], has_hashbang: HasHashbang) -> Option<crate::AlreadyBundled> {
         const BUN_PRAGMA: &[u8] = b"// @bun";
         let end = contents.len();
 
@@ -2271,7 +2278,7 @@ impl<'a> Parser<'a> {
         //   const myCode = 1;
         //   ```
         let mut cursor: usize = 0;
-        if has_hashbang {
+        if has_hashbang == HasHashbang::Yes {
             while contents[cursor] != b'\n' {
                 cursor += 1;
                 if cursor >= end {

@@ -515,7 +515,7 @@ pub fn get_ipc_instance(
                 bun_uws::SocketKind::SpawnIpc,
                 fd,
                 send_queue,
-                true,
+                bun_uws::Ipc::Yes,
             )
         };
         let Some(socket) = socket else {

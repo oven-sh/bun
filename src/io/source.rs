@@ -15,6 +15,8 @@ bun_core::declare_scope!(PipeSource, hidden);
 pub type Pipe = uv::Pipe;
 pub use uv::Tty;
 
+bun_core::bool_enum!(pub(crate) WasCanceled);
+
 pub enum Source {
     Pipe(Box<Pipe>),
     /// `BackRef` not `Box`: the stdin tty (fd 0) lives in static storage
@@ -190,9 +192,9 @@ impl File {
 
     /// Mark the operation as complete and clean up.
     /// Must be called first in the callback before processing data.
-    pub(crate) fn complete(&mut self, was_canceled: bool) {
+    pub(crate) fn complete(&mut self, was_canceled: WasCanceled) {
         debug_assert!(self.state == FileState::Operating || self.state == FileState::Canceling);
-        if was_canceled {
+        if was_canceled == WasCanceled::Yes {
             debug_assert!(self.state == FileState::Canceling);
         }
 
@@ -369,7 +371,7 @@ impl Source {
         bun_core::scoped_log!(PipeSource, "openPipe (fd = {})", fd);
         let mut pipe: Box<Pipe> = Box::new(bun_core::ffi::zeroed::<Pipe>());
         // we should never init using IPC here
-        if let Some(err) = pipe.init(loop_, false).to_error(bun_sys::Tag::pipe) {
+        if let Some(err) = pipe.init(loop_, uv::Ipc::No).to_error(bun_sys::Tag::pipe) {
             drop(pipe);
             return bun_sys::Result::Err(err);
         }

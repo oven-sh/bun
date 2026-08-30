@@ -186,7 +186,7 @@ pub mod expect {
     pub(crate) fn get_signature(
         matcher_name: &'static str,
         args: &'static str,
-        not: bool,
+        not: IsNot,
     ) -> &'static str {
         Expect::get_signature(matcher_name, args, not)
     }
@@ -401,7 +401,7 @@ pub mod expect {
             let value_fmt = value.to_fmt(&mut f1);
             let expected_fmt = other_value.to_fmt(&mut f2);
             let glyph = rel.glyph();
-            let signature = Expect::get_signature(name, "<green>expected<r>", not);
+            let signature = Expect::get_signature(name, "<green>expected<r>", IsNot::from_bool(not));
             if not {
                 return throw!(
                     this, global, signature,

@@ -5,15 +5,16 @@ use crate::diagnostics::{
     CompilerDiagnostic, CompilerError, CompilerErrorDetail, ErrorCategory, SourceLocation,
 };
 use crate::hir::{
-    Effect, FunctionExpressionType, InstructionKind, InstructionValue, LValue, LoweredFunction,
-    ObjectProperty, ObjectPropertyKey, ObjectPropertyType, Place, StoreStr, VariableBinding,
+    Effect, FunctionExpressionType, FunctionNesting, InstructionKind, InstructionValue, LValue,
+    LoweredFunction, ObjectProperty, ObjectPropertyKey, ObjectPropertyType, Place, StoreStr,
+    VariableBinding,
 };
 use bun_ast::expr::Data;
 use bun_ast::{self as ast, E, Expr, G, Loc, Ref};
 
 use super::super::hir_builder::{HirBuilder, convert_loc};
 use super::FunctionNode;
-use super::helpers::{lower_expression_to_temporary, lower_value_to_temporary};
+use super::helpers::{ComputedKey, lower_expression_to_temporary, lower_value_to_temporary};
 use super::{gather_captured_context, lower_inner};
 
 pub(super) fn lower_function_to_value(
@@ -89,7 +90,7 @@ fn lower_function(
         component_scope,
         &context_ids,
         &import_bindings,
-        false, // nested function
+        FunctionNesting::Nested,
     )?;
 
     builder.merge_used_refs(&child_used_refs);
@@ -148,7 +149,7 @@ pub(super) fn lower_function_declaration(
         component_scope,
         &context_ids,
         &import_bindings,
-        false, // nested function
+        FunctionNesting::Nested,
     )?;
 
     builder.merge_used_refs(&child_used_refs);
@@ -275,7 +276,7 @@ fn lower_function_for_object_method(
         component_scope,
         &context_ids,
         &import_bindings,
-        false, // nested function
+        FunctionNesting::Nested,
     )?;
 
     builder.merge_used_refs(&child_used_refs);
@@ -314,7 +315,7 @@ pub(super) fn lower_object_method(
         return Ok(None);
     }
 
-    let computed = method.flags.contains(PF::IsComputed);
+    let computed = ComputedKey::from_bool(method.flags.contains(PF::IsComputed));
     let key = match key_expr {
         Some(k) => {
             lower_object_property_key(builder, k, computed)?.unwrap_or(ObjectPropertyKey::String {
@@ -363,8 +364,9 @@ pub(super) fn lower_object_method(
 fn lower_object_property_key(
     builder: &mut HirBuilder<'_>,
     key: &Expr,
-    computed: bool,
+    computed: ComputedKey,
 ) -> Result<Option<ObjectPropertyKey>, CompilerError> {
+    let computed = computed == ComputedKey::Yes;
     match &key.data {
         // Upstream matches `StringLiteral` regardless of `computed`, so a
         // constant string in a computed key (`{["foo"]: x}`) still lowers to

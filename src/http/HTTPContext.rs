@@ -1163,13 +1163,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         let mut iter = pool.used.iterator::<true, true>();
         while let Some(idx) = iter.next() {
             let pooled = pooled_socket_mut(pool.at(u16::try_from(idx).expect("int cast")));
-            // Do NOT call rp.data.shutdown() here — it drives
-            // SSLWrapper.shutdown → triggerCloseCallback →
-            // onClose(handlers.ctx), and handlers.ctx is the
-            // stale HTTPClient pointer from detachOwner(). That
-            // client is freed by now. http_socket.close(.failure)
-            // below force-closes the TCP without triggering the
-            // callback, same as addMemoryBackToPool().
+            // Not shutdown(): its close callback would deref the freed HTTPClient in the ext slot.
             pooled.release_parked_refs();
             pooled.http_socket.close(uws::CloseKind::Failure);
         }

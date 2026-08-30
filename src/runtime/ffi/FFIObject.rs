@@ -134,8 +134,7 @@ pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
 pub mod reader {
     use super::*;
 
-    /// `<class>__<fn>__put` helpers from ZigGeneratedCode.cpp; each installs one
-    /// `Reader` function on the object.
+    /// Generated `Reader__<fn>__put` installers from ZigGeneratedCode.cpp.
     const PUTS: &[unsafe extern "C" fn(*mut JSGlobalObject, JSValue)] = &[
         super::Reader__u8__put,
         super::Reader__u16__put,

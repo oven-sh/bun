@@ -849,15 +849,6 @@ pub fn new_function_with_data(
     )
 }
 
-// ───────────────────────── DOMCall codegen helpers ─────────────────────────
-//
-// `DOMCallArgumentType` / `DOMCallArgumentTypeWrapper` / `DOMCallResultType`
-// feed the C++ codegen
-// (`generate-classes.ts`), not runtime — there is nothing for the Rust side to
-// hold; the spec-strings stay in the codegen script. Call sites (e.g.
-// `bun:ffi`'s `FFIObject`) declare the C++-side `<class>__<fn>__put` extern
-// themselves and call it to install the function.
-
 // ───────────────────────── instance/static method wrapping ─────────────────────────
 
 // There is no generic argument-decoding wrapper: each call site hand-writes

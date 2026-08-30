@@ -2555,9 +2555,6 @@ impl<'a> HTTPClient<'a> {
             self.flags.is_streaming_request_body = false;
         }
 
-        // Decided before unix_socket_path is cleared below: a unix-socket connection must not be pooled.
-        let keep_alive_possible = self.is_keep_alive_possible();
-        self.unix_socket_path = b"";
         // TODO: what we do with stream body?
         let request_body: &[u8] = if self.state.flags.resend_request_body_on_redirect
             && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
@@ -2586,7 +2583,7 @@ impl<'a> HTTPClient<'a> {
             bun_core::scoped_log!(fetch, "close the tunnel");
             self.close_proxy_tunnel(true);
             GenHttpContext::<IS_SSL>::close_socket(socket);
-        } else if keep_alive_possible
+        } else if self.is_keep_alive_possible()
             && self.is_request_fully_sent()
             && !socket.is_closed_or_has_error()
         {
@@ -2613,6 +2610,8 @@ impl<'a> HTTPClient<'a> {
         // (handleResponseMetadata already repointed this.url at the new one).
         self.prev_redirect = Vec::new();
 
+        self.leave_unix_socket_for_cross_origin_redirect();
+
         // TODO: should this check be before decrementing the redirect count?
         // the current logic will allow one less redirect than requested
         if self.remaining_redirect_count == 0 {
@@ -2628,6 +2627,13 @@ impl<'a> HTTPClient<'a> {
         self.reevaluate_proxy_for_redirect();
 
         self.start(HTTPRequestBody::Bytes(request_body));
+    }
+
+    /// With `unix` the URL's authority is a placeholder, so a same-origin hop stays on the socket.
+    fn leave_unix_socket_for_cross_origin_redirect(&mut self) {
+        if self.state.flags.redirect_is_cross_origin {
+            self.unix_socket_path = b"";
+        }
     }
 
     /// Re-resolve `http_proxy` against the post-redirect `self.url`. The
@@ -4243,10 +4249,10 @@ impl<'a> HTTPClient<'a> {
     fn do_redirect_multiplexed(&mut self) {
         debug_assert!(self.flags.protocol != Protocol::Http1_1);
         bun_core::scoped_log!(fetch, "doRedirectMultiplexed");
+        self.leave_unix_socket_for_cross_origin_redirect();
         if matches!(self.state.original_request_body, HTTPRequestBody::Stream(_)) {
             self.flags.is_streaming_request_body = false;
         }
-        self.unix_socket_path = b"";
         let request_body: &[u8] = if self.state.flags.resend_request_body_on_redirect
             && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
         {
@@ -5135,6 +5141,8 @@ impl<'a> HTTPClient<'a> {
                         }
                     }
                 }
+
+                self.state.flags.redirect_is_cross_origin = !is_same_origin;
 
                 // https://fetch.spec.whatwg.org/#concept-http-redirect-fetch
                 // If request's current URL's origin is not same origin with

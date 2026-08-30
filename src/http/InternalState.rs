@@ -63,6 +63,8 @@ pub struct InternalStateFlags {
     pub(crate) is_redirect_pending: bool,
     pub(crate) is_libdeflate_fast_path_disabled: bool,
     pub(crate) resend_request_body_on_redirect: bool,
+    /// Read in `do_redirect` once the pool/close decision has read `unix_socket_path`.
+    pub(crate) redirect_is_cross_origin: bool,
     /// Set when the TLS handshake completed but the user-supplied JS
     /// `checkServerIdentity` callback has not yet approved the peer
     /// certificate. While set, `on_writable` must not write any HTTP
@@ -90,6 +92,7 @@ impl InternalStateFlags {
             is_redirect_pending: false,
             is_libdeflate_fast_path_disabled: false,
             resend_request_body_on_redirect: false,
+            redirect_is_cross_origin: false,
             is_waiting_for_cert_check: false,
             receive_paused: false,
             body_compressed: false,

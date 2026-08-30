@@ -5,7 +5,7 @@ use core::fmt;
 use bun_core::Output;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsError, JsResult,
+    AnyPromise, CallFrame, JSGlobalObject, JSValue, JsError, JsResult,
     ConsoleObject, JSFunction, JSPropertyIterator, JSString,
 };
 use bun_jsc::{JsClass as _, StringJsc as _};
@@ -471,6 +471,37 @@ impl Expect {
         }
     }
 
+    /// Returns the promise that `wait_for_promise` polls for `value`'s outcome, or `None`
+    /// when `value` is not a thenable.
+    ///
+    /// `wait_for_promise` reads a promise's internal state and never calls `then()`. A
+    /// `Promise` subclass that starts its work inside an overridden `then()` (Bun.SQL's
+    /// `Query`, `Bun.$`'s `ShellPromise`) never settles that way, and a plain thenable has no
+    /// internal state at all. A pending promise or a thenable is therefore adopted by a fresh
+    /// native promise through the spec resolve steps, which call the value's own `then()`,
+    /// the same as `await value`. JSC skips that call for a promise whose `then` is the
+    /// built-in one. A settled promise already holds its outcome and is returned as is.
+    ///
+    /// Nothing but the pending `then()` callbacks refer to the adopter, so the caller keeps
+    /// the returned promise on the stack across the wait.
+    fn thenable_to_wait_for(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Option<AnyPromise>> {
+        if let Some(promise) = value.as_any_promise() {
+            promise.set_handled(global_this.vm());
+            if promise.status() != js_promise::Status::Pending {
+                return Ok(Some(promise));
+            }
+        } else {
+            let then = if value.is_object() { value.get(global_this, "then")? } else { None };
+            if !then.is_some_and(JSValue::is_callable) {
+                return Ok(None);
+            }
+        }
+        let adopter = js_promise::JSPromise::create(global_this);
+        adopter.set_handled();
+        adopter.resolve(global_this, value)?;
+        Ok(Some(AnyPromise::Normal(core::ptr::from_mut(adopter))))
+    }
+
     /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
     /// If no flags, returns the original value
     /// If either flag is set, waits for the result, and returns either it as a JSValue, or null if the expectation failed (in which case if silent is false, also throws a js exception)
@@ -485,9 +516,8 @@ impl Expect {
     ) -> JsResult<JSValue> {
         match flags.promise() {
             resolution @ (Promise::Resolves | Promise::Rejects) => {
-                if let Some(promise) = value.as_any_promise() {
+                if let Some(promise) = Self::thenable_to_wait_for(global_this, value)? {
                     let vm = global_this.vm();
-                    promise.set_handled(vm);
 
                     // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
             global_this
@@ -868,7 +898,14 @@ impl Expect {
             return_value = return_value_from_function;
         }
 
-        if let Some(promise) = return_value.as_any_promise() {
+        let promise = match Self::thenable_to_wait_for(global_this, return_value) {
+            Ok(promise) => promise,
+            Err(err) => {
+                scope.apply(vm);
+                return Err(err);
+            }
+        };
+        if let Some(promise) = promise {
             let waited = vm.wait_for_promise(promise);
             scope.apply(vm);
             waited.map_err(|stopped| stopped.throw(global_this))?;
@@ -1437,9 +1474,8 @@ impl Expect {
         // call the custom matcher implementation
         let mut result = matcher_fn.call(global_this, matcher_context_jsvalue, args)?;
         // support for async matcher results
-        if let Some(promise) = result.as_any_promise() {
+        if let Some(promise) = Self::thenable_to_wait_for(global_this, result)? {
             let vm = global_this.vm();
-            promise.set_handled(vm);
 
             // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
             global_this

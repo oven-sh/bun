@@ -257,8 +257,7 @@ pub mod Runtime {
         /// in watch/dev-server mode.
         pub bundler_feature_flags: Option<Box<StringSet>>,
 
-        /// `Define::user_hash` of the table this parse runs with, for the
-        /// runtime transpiler cache key.
+        /// `Define::user_hash` of this parse's define table (runtime transpiler cache key).
         pub define_hash: Option<u64>,
 
         /// REPL mode: transforms code for interactive evaluation

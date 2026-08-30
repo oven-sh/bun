@@ -493,15 +493,12 @@ pub mod defines {
         pub identifiers: StringHashMap<IdentifierDefine>,
         pub dots: StringHashMap<Vec<DotDefine>>,
         pub drop_debugger: bool,
-        /// `hash_user_inputs` of the define pairs and `--drop` entries this
-        /// table was built from. Part of the runtime transpiler cache key.
+        /// `hash_user_inputs` of this table's inputs, for the runtime transpiler cache key.
         pub user_hash: Option<u64>,
     }
 
     impl Define {
-        /// Order-independent, length-prefixed hash of the three inputs. User
-        /// and env pairs are separate sections because `init` lets a later env
-        /// pair override a user pair. `None` when all three are empty.
+        /// Order-independent, length-prefixed hash of the three inputs. `None` when all are empty.
         pub fn hash_user_inputs<'i>(
             defines: impl IntoIterator<Item = (&'i [u8], &'i [u8])>,
             env_defines: impl IntoIterator<Item = (&'i [u8], &'i [u8])>,
@@ -523,6 +520,7 @@ pub mod defines {
                 hasher.update(&(bytes.len() as u64).to_le_bytes());
                 hasher.update(bytes);
             };
+            // Separate sections: `init` lets a later env pair override a user pair.
             for pairs in [defines, env_defines] {
                 update(&(pairs.len() as u64).to_le_bytes());
                 for (key, value) in pairs {

@@ -240,6 +240,43 @@ describe("bundler", () => {
     },
   });
 
+  // A `..` segment in the static text is normalized away in the map keys, so
+  // the runtime string could never equal a key. The call must stay a runtime
+  // call.
+  itBundled("glob-require/DotDotSegmentNotGlobbed", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        const which = process.env.WHICH || "x";
+        console.log(require(\`./a/../mods/\${which}.js\`));
+      `,
+      "/a/unused.js": `module.exports = 0;`,
+      "/mods/x.js": `module.exports = 1;`,
+    },
+    run: { stdout: "1" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__glob");
+    },
+  });
+
+  // A placeholder right after a `..` segment would otherwise glob the whole
+  // source tree through the collapsed pattern ./a/../**/*.js.
+  itBundled("glob-require/DotDotSegmentBeforePlaceholderNotGlobbed", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        const which = process.env.WHICH || "mods/x";
+        console.log(require(\`./a/../\${which}.js\`));
+      `,
+      "/a/unused.js": `module.exports = 0;`,
+      "/mods/x.js": `module.exports = 2;`,
+    },
+    run: { stdout: "2" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__glob");
+    },
+  });
+
   // A second argument to `import()` carrying `with: { type }` must reach both
   // the bundled matches and the runtime fallback. `.html` defaults to a
   // non-text loader, so the raw-text output proves the attribute was applied.

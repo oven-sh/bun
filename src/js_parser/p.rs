@@ -935,6 +935,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if shape.last() == Some(&b'/') {
             return false;
         }
+        // Past the leading relative prefix, a `.`, `..`, or empty segment in
+        // the static text is normalized away in the map keys, so the runtime
+        // string could never equal a key and every lookup would miss.
+        let mut rest = shape;
+        if let Some(s) = rest.strip_prefix(b"./") {
+            rest = s;
+        } else {
+            while let Some(s) = rest.strip_prefix(b"../") {
+                rest = s;
+            }
+        }
+        for seg in strings::split(rest, b"/") {
+            if seg.is_empty() || strings::eql(seg, b".") || strings::eql(seg, b"..") {
+                return false;
+            }
+        }
         // Glob metacharacters in the literal text would change the match.
         strings::index_of_any(shape, b"*?[{!\\").is_none()
     }

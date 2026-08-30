@@ -1490,7 +1490,7 @@ const messages = require(`./locales/${lang}.json`); // bundles every ./locales/*
 The rules:
 
 - The path must start with `./` or `../` and name a directory or file prefix before the first `${}` or `+`. A bare `require("./" + name)` is left alone.
-- Static text that contains a glob metacharacter (`*`, `?`, `[`, `{`, `!`, or `\`) leaves the call as a runtime call.
+- Static text that contains a glob metacharacter (`*`, `?`, `[`, `{`, `!`, or `\`), or a `.`, `..`, or empty path segment past the leading `./` or `../`, leaves the call as a runtime call.
 - A placeholder right after a `/` matches across directories (`**/*`). Anywhere else it matches one path segment (`*`).
 - A `const` whose initializer is such a template or concatenation is followed, so ``const file = `./bin/${arch}/addon.node`; require(file)`` is bundled too.
 - When the path ends in a placeholder, each file can also be reached without its extension: `require("./src/" + name)` finds `./src/cat.js` for `"cat"`.

@@ -367,6 +367,15 @@ impl JSValue {
         }
         host_fn::from_js_host_call_generic(global, || JSC__JSValue__isJSXElement(self, global))
     }
+    /// `JSValue.isDOMException()` — true iff this is a `DOMException`
+    /// wrapper (an `Object` cell, not an `ErrorInstance`).
+    #[inline]
+    pub fn is_dom_exception(self) -> bool {
+        unsafe extern "C" {
+            safe fn JSC__JSValue__isDOMException(this: JSValue) -> bool;
+        }
+        JSC__JSValue__isDOMException(self)
+    }
     /// `JSValue.isAggregateError(globalObject)`.
     #[inline]
     pub fn is_aggregate_error(self, global: &JSGlobalObject) -> bool {

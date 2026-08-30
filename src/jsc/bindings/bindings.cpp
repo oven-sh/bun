@@ -149,6 +149,7 @@
 #include "JSDOMConvertSequences.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMConvertUnion.h"
+#include "JSDOMException.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMIterator.h"
@@ -4255,6 +4256,11 @@ bool JSC__JSValue__isError(JSC::EncodedJSValue JSValue0)
 {
     JSC::JSObject* obj = JSC::JSValue::decode(JSValue0).getObject();
     return obj != nullptr && obj->isErrorInstance();
+}
+
+bool JSC__JSValue__isDOMException(JSC::EncodedJSValue JSValue0)
+{
+    return JSC::JSValue::decode(JSValue0).inherits<WebCore::JSDOMException>();
 }
 
 bool JSC__JSValue__isAggregateError(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* global)

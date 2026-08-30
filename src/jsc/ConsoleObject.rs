@@ -2212,6 +2212,9 @@ pub mod formatter {
             use jsc::JSType as T;
             let tag = match js_type {
                 T::ErrorInstance => TagPayload::Error,
+                // DOMException is an Object cell; the object formatter would
+                // dump its 25 enumerable prototype constants (#40224).
+                T::Object if value.is_dom_exception() => TagPayload::Error,
                 T::NumberObject => TagPayload::Double,
                 T::DerivedArray
                 | T::Array

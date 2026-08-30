@@ -6238,7 +6238,8 @@ impl VirtualMachine {
 
         let is_error_instance = error_instance != JSValue::ZERO
             && error_instance.is_cell()
-            && error_instance.js_type() == JSType::ErrorInstance;
+            && (error_instance.js_type() == JSType::ErrorInstance
+                || error_instance.is_dom_exception());
         // NOTE: cannot use `self.global()` — `global_ref` outlives a
         // `&mut self` recursion (`print_error_instance_js`) and is passed to
         // `Formatter<'2>::format`, which requires an unbounded (VM-lifetime)
@@ -6438,11 +6439,16 @@ impl VirtualMachine {
                     continue;
                 }
 
+                // The fallback below is only for a cause the iterator did not
+                // visit, or the inline-formatted cause prints a second time.
+                if field.eq_ascii(b"cause") {
+                    saw_cause = true;
+                }
+
                 let kind = value.js_type();
-                if kind == JSType::ErrorInstance && !prev_had_errors {
-                    if field.eq_ascii(b"cause") {
-                        saw_cause = true;
-                    }
+                // Only the errors_to_append path guards against circular
+                // references, so a DOMException takes the ErrorInstance route.
+                if (kind == JSType::ErrorInstance || value.is_dom_exception()) && !prev_had_errors {
                     value.protect();
                     errors_to_append.push(value);
                 } else if kind.is_object()
@@ -6536,7 +6542,9 @@ impl VirtualMachine {
             if !saw_cause {
                 let key = bun_core::String::static_("cause");
                 if let Some(cause) = error_instance.get_own(global_ref, &key)? {
-                    if cause.is_cell() && cause.js_type() == JSType::ErrorInstance {
+                    if cause.is_cell()
+                        && (cause.js_type() == JSType::ErrorInstance || cause.is_dom_exception())
+                    {
                         cause.protect();
                         errors_to_append.push(cause);
                     }

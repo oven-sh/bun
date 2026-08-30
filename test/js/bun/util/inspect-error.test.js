@@ -152,6 +152,116 @@ test("Inserted originalLine and originalColumn do not appear in node:util.inspec
 `);
 });
 
+// https://github.com/oven-sh/bun/issues/40224
+describe.concurrent("DOMException formats as an error", () => {
+  test("Bun.inspect does not dump the legacy constant table", () => {
+    const err = new DOMException("The operation was aborted.", "AbortError");
+    const inspected = Bun.inspect(err);
+    expect(inspected).toContain("AbortError");
+    expect(inspected).toContain("The operation was aborted.");
+    expect(inspected).not.toContain("INDEX_SIZE_ERR");
+    expect(inspected).not.toContain("DATA_CLONE_ERR");
+  });
+
+  test("console.error(abort reason) prints an error", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "const ac = new AbortController(); ac.abort(); console.error(ac.signal.reason);"],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("AbortError");
+    expect(stderr).toContain("aborted");
+    // The abort reason carries a .stack, and its frame must print after
+    // the header.
+    expect(stderr).toMatch(/AbortError: The operation was aborted\.[\s\S]*^\s+at .*\[eval\]/m);
+    expect(stderr).not.toContain("INDEX_SIZE_ERR");
+    expect(exitCode).toBe(0);
+  });
+
+  test("uncaught DOMException does not dump the legacy constant table", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", 'throw new DOMException("boom", "AbortError");'],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("AbortError: boom");
+    expect(stderr).not.toContain("INDEX_SIZE_ERR");
+    expect(exitCode).toBe(1);
+  });
+
+  test("DOMException nested in an object formats as an error", () => {
+    const inspected = Bun.inspect({ reason: new DOMException("nested", "DataError") });
+    expect(inspected).toContain("DataError");
+    expect(inspected).not.toContain("INDEX_SIZE_ERR");
+  });
+
+  test("DOMException as a non-enumerable error cause is printed", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", 'throw new Error("outer", { cause: new DOMException("inner", "AbortError") });'],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("error: outer");
+    expect(stderr).toContain("AbortError: inner");
+    expect(stderr).not.toContain("INDEX_SIZE_ERR");
+    expect(exitCode).toBe(1);
+  });
+
+  test("DOMException as an enumerable error cause prints once", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        'const e = new Error("outer"); e.cause = new DOMException("inner", "AbortError"); throw e;',
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("error: outer");
+    expect(stderr.split("AbortError: inner").length - 1).toBe(1);
+    expect(stderr).not.toContain("INDEX_SIZE_ERR");
+    expect(exitCode).toBe(1);
+  });
+
+  test("DOMException cause of a nested error prints once", async () => {
+    const code =
+      'const deep = new DOMException("deep", "AbortError");' +
+      'const mid = new Error("mid"); mid.cause = deep;' +
+      'throw new Error("outer", { cause: mid });';
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("error: outer");
+    expect(stderr).toContain("error: mid");
+    expect(stderr.split("AbortError: deep").length - 1).toBe(1);
+    expect(stderr).not.toContain("INDEX_SIZE_ERR");
+    expect(exitCode).toBe(1);
+  });
+
+  test("self-referencing DOMException prints [Circular] instead of recursing", () => {
+    const err = new DOMException("x", "AbortError");
+    err.self = err;
+    const inspected = Bun.inspect(err);
+    expect(inspected).toContain("[Circular]");
+    expect(inspected).not.toContain("INDEX_SIZE_ERR");
+    // Once for the error, once for the appended self reference. Not once
+    // per recursion level.
+    expect(inspected.split("AbortError: x").length - 1).toBe(2);
+  });
+});
+
 describe("observable properties", () => {
   for (let property of ["sourceURL", "line", "column"]) {
     test(`${property} is observable`, () => {

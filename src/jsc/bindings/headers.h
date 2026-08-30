@@ -227,6 +227,7 @@ CPP_DECL bool JSC__JSValue__isCallable(JSC::EncodedJSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isClass(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
 CPP_DECL bool JSC__JSValue__isConstructor(JSC::EncodedJSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isCustomGetterSetter(JSC::EncodedJSValue JSValue0);
+CPP_DECL bool JSC__JSValue__isDOMException(JSC::EncodedJSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isError(JSC::EncodedJSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isException(JSC::EncodedJSValue JSValue0, JSC::VM* arg1);
 CPP_DECL bool JSC__JSValue__isGetterSetter(JSC::EncodedJSValue JSValue0);

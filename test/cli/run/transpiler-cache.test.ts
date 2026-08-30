@@ -320,6 +320,58 @@ describe("transpiler cache", () => {
     expect(newCacheCount()).toBe(0); // cache hit, order doesn't matter
   });
 
+  // `bun -` prints the entry point without the CommonJS wrapper and evaluates
+  // it as a script. The same bytes run as a file are printed wrapped in
+  // `(function(exports, require, module, __filename, __dirname) {})` and the
+  // loader calls that function. The two transpiles must not share an entry.
+  describe("a CommonJS entry point from stdin does not share an entry with the same file", () => {
+    // stdin is transpiled with the tsx loader, so only a .tsx file agrees with
+    // it on the rest of the cache key.
+    const filler = "\n//" + Buffer.alloc(5 * 1024, "f").toString();
+    const cjs = `console.log("ran", typeof module.exports);\nmodule.exports = { a: 1 };${filler}`;
+
+    async function bunRunStdin(code: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-"],
+        cwd: temp_dir,
+        env,
+        stdin: Buffer.from(code),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode, signalCode: proc.signalCode };
+    }
+
+    test("file first, then stdin", async () => {
+      writeFileSync(join(temp_dir, "a.tsx"), cjs);
+      expect(await bunRun(join(temp_dir, "a.tsx"), env)).toSpawn("ran object");
+      expect(newCacheCount()).toBe(1);
+
+      // Served the wrapped output, the script evaluates to a function that is
+      // never called and prints nothing.
+      expect(await bunRunStdin(cjs)).toSpawn("ran object");
+      expect(newCacheCount()).toBe(0); // different features hash: deleted + written
+
+      expect(await bunRunStdin(cjs)).toSpawn("ran object");
+      expect(newCacheCount()).toBe(0); // cache hit
+    });
+
+    test("stdin first, then file", async () => {
+      writeFileSync(join(temp_dir, "a.tsx"), cjs);
+      expect(await bunRunStdin(cjs)).toSpawn("ran object");
+      expect(newCacheCount()).toBe(1);
+
+      // Served the unwrapped output, the file run has no `module` binding and
+      // fails with "ReferenceError: module is not defined".
+      expect(await bunRun(join(temp_dir, "a.tsx"), env)).toSpawn("ran object");
+      expect(newCacheCount()).toBe(0);
+
+      expect(await bunRun(join(temp_dir, "a.tsx"), env)).toSpawn("ran object");
+      expect(newCacheCount()).toBe(0);
+    });
+  });
+
   // Serving the entry point from the cache must not change how the modules it
   // loads are resolved. Both of these are gated on the `has_loaded` flag, which
   // used to be set only on the path that runs the printer.

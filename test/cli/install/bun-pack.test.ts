@@ -909,11 +909,12 @@ tarball: \${fs.existsSync("pack-lifecycle-order-1.1.1.tgz")}\`)`;
       "\n",
     ),
   );
-  // package.json embeds the path to bun, so its size differs between machines
+  // package.json embeds the path to bun, so its size differs between machines (and passes 512
+  // bytes on some CI agents, where the size prints as "0.58KB")
   expect(out.split("\n")).toEqual([
     "bun pack <version> (<revision>)",
     "",
-    expect.stringMatching(/^packed \d+B package\.json$/),
+    expect.stringMatching(/^packed \S+ package\.json$/),
     "packed 61B prepack.txt",
     "packed 60B prepare.txt",
     "packed 259B script.js",
@@ -973,7 +974,7 @@ test.concurrent("lifecycle script modifying version updates tarball filename (#1
   expect(out.split("\n")).toEqual([
     "bun pack <version> (<revision>)",
     "",
-    expect.stringMatching(/^packed \d+B package\.json$/),
+    expect.stringMatching(/^packed \S+ package\.json$/),
     "packed 20B index.js",
     "packed 197B update-version.js",
     "",

@@ -183,7 +183,8 @@ describe.concurrent("process.execve", () => {
         import { openSync, writeFileSync } from "node:fs";
         writeFileSync("not-a-binary", "not an ELF file\\n", { mode: 0o755 });
         const fd = openSync("failures.txt", "a");
-        spawnThreadsForTesting(1_000_000, fd, 2, true);
+        const rc = spawnThreadsForTesting(1_000_000, fd, 2, true);
+        if (rc !== 0) throw new Error("could not start the spinner threads: errno " + rc);
         let attempts = 0;
         for (; attempts < 3000; attempts++) {
           try {

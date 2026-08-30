@@ -137,9 +137,18 @@ struct SpawnThreadsForTestingLoop {
     int fd;
 };
 
-// Spawns `iterations` detached no-op threads. Stops at the first failure:
-// writes the errno to `fd` right away (this thread may be killed a few
-// microseconds later by the exec it is racing) and returns it.
+// Written right away: the caller may be killed a few microseconds later by the
+// exec it is racing.
+static void recordSpawnThreadsForTestingFailure(int fd, int rc)
+{
+    char message[64];
+    int length = snprintf(message, sizeof message, "pthread_create failed: errno %d\n", rc);
+    if (fd >= 0 && length > 0)
+        (void)write(fd, message, static_cast<size_t>(length));
+}
+
+// Spawns `iterations` detached no-op threads. Stops at the first failure,
+// records it to `fd` and returns it.
 static void* spawnThreadsForTestingLoop(void* arg)
 {
     std::unique_ptr<SpawnThreadsForTestingLoop> loop(static_cast<SpawnThreadsForTestingLoop*>(arg));
@@ -155,10 +164,7 @@ static void* spawnThreadsForTestingLoop(void* arg)
         pthread_t thread;
         int rc = pthread_create(&thread, &attr, spawnThreadsForTestingEntry, nullptr);
         if (rc != 0) {
-            char message[64];
-            int length = snprintf(message, sizeof message, "pthread_create failed: errno %d\n", rc);
-            if (loop->fd >= 0 && length > 0)
-                (void)write(loop->fd, message, static_cast<size_t>(length));
+            recordSpawnThreadsForTestingFailure(loop->fd, rc);
             result = rc;
             break;
         }
@@ -207,6 +213,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_spawnThreadsForTesting, (JSC::JSGlobalObject
         int rc = pthread_create(&loops[started], &attr, spawnThreadsForTestingLoop, loop);
         if (rc != 0) {
             delete loop;
+            recordSpawnThreadsForTestingFailure(fd, rc);
             firstError = rc;
             break;
         }

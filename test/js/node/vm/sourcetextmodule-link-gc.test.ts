@@ -188,10 +188,14 @@ test.skipIf(isWindows)(
         const src = readFileSync(new URL("./fixture.mjs", import.meta.url), "utf8");
         const url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
         for (let r = 0; r < 20; r++) {
-          const w = new Worker(url, { type: "module" });
+          // smol: the worker VM gets its own heap; --smol on the parent does not reach it.
+          const w = new Worker(url, { type: "module", smol: true });
+          // Listen before yielding: close is only dispatched if a listener exists
+          // when the worker goes away, so a worker that dies early must not hang us.
+          const closed = new Promise(res => w.addEventListener("close", res, { once: true }));
           await new Promise(res => setTimeout(res, 150 + ((r * 37) % 400)));
           w.terminate();
-          await new Promise(res => w.addEventListener("close", res, { once: true }));
+          await closed;
         }
         console.log("ok");
       `,

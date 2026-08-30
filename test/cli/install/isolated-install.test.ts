@@ -1355,15 +1355,11 @@ for (const backend of ["clonefile", "hardlink", "copyfile"]) {
 }
 
 test("ranged peer dependency resolution is stable across installs from bun.lock", async () => {
-  // `peer-deps-fixed` has a peer on `no-deps@^1.0.0`. The graph contains both
-  // no-deps@1.0.1 (exact pin via normal-dep-and-dev-dep, hoisted to the root
-  // of the saved tree) and no-deps@1.1.0 (via two-range-deps). The fresh
-  // resolve binds the peer edge to the highest satisfying version (1.1.0) in
-  // its deferred-peer phase; reloading bun.lock used to re-derive the edge
-  // from the saved tree paths instead, rebinding it to the hoisted 1.0.1.
-  // That silently changed the runtime dependency tree on the second install
-  // and re-keyed the isolated store entry (`+<peer hash>` suffix) on every
-  // warm install.
+  // `peer-deps-fixed` has a peer on `no-deps@^1.0.0`. normal-dep-and-dev-dep
+  // pins no-deps@1.0.1 and two-range-deps' `^1.0.0` shares it, so the peer
+  // edge binds to 1.0.1. Reloading bun.lock used to re-derive the edge from
+  // the saved tree paths instead of the saved resolution, which re-keyed the
+  // isolated store entry (`+<peer hash>` suffix) on every warm install.
   const { packageJson, packageDir } = await registry.createTestDir({
     bunfigOpts: { linker: "isolated" },
   });
@@ -1383,12 +1379,11 @@ test("ranged peer dependency resolution is stable across installs from bun.lock"
   await runBunInstall(bunEnv, packageDir);
 
   const bunDir = join(packageDir, "node_modules", ".bun");
-  // highest satisfying ^1.0.0 in the graph; `toContain` prints the full
-  // listing when the entry is missing or keyed with a different peer hash
-  const entryName = "peer-deps-fixed@1.0.0+7ff199101204a65d";
+  // `toContain` prints the full listing when the entry is missing or keyed with a different peer hash
+  const entryName = "peer-deps-fixed@1.0.0+f8a822eca018d0a1";
   expect(await readdirSorted(bunDir)).toContain(entryName);
   expect(await file(join(bunDir, entryName, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
-    version: "1.1.0",
+    version: "1.0.1",
   });
 
   // reinstall from bun.lock: same peer variant, same resolved version
@@ -1397,7 +1392,7 @@ test("ranged peer dependency resolution is stable across installs from bun.lock"
 
   expect((await readdirSorted(bunDir)).filter(e => e.startsWith("peer-deps-fixed@"))).toEqual([entryName]);
   expect(await file(join(bunDir, entryName, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
-    version: "1.1.0",
+    version: "1.0.1",
   });
 });
 

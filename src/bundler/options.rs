@@ -79,7 +79,10 @@ pub(crate) fn validate_path(
 pub use bun_js_parser::options::AllowUnresolved;
 
 /// `glob_resolver` for the parser's template-literal `require()` / `import()`
-/// support: returns each match as a `./`- or `../`-prefixed relative specifier.
+/// support: every file under `source_dir` matching `pattern`, each as the
+/// `./`- or `../`-prefixed POSIX-separated relative specifier the runtime
+/// string would have to equal. Hidden entries are skipped (`dot: false`), so
+/// a `**` walk never descends into `.git`.
 pub fn parser_glob_resolver(source_dir: &[u8], pattern: &[u8]) -> Vec<Box<[u8]>> {
     let mut out: Vec<Box<[u8]>> = Vec::new();
     if !(pattern.starts_with(b"./") || pattern.starts_with(b"../")) {
@@ -87,7 +90,14 @@ pub fn parser_glob_resolver(source_dir: &[u8], pattern: &[u8]) -> Vec<Box<[u8]>>
     }
 
     let walker = match bun_glob::BunGlobWalker::init_with_cwd(
-        pattern, source_dir, true, false, true, false, true, None,
+        pattern,
+        source_dir,
+        /* dot */ false,
+        /* absolute */ true,
+        /* follow_symlinks */ true,
+        /* error_on_broken_symlinks */ false,
+        /* only_files */ true,
+        None,
     ) {
         Ok(Ok(w)) => w,
         _ => return out,
@@ -99,16 +109,20 @@ pub fn parser_glob_resolver(source_dir: &[u8], pattern: &[u8]) -> Vec<Box<[u8]>>
     }
     loop {
         match iter.next() {
-            Ok(Ok(Some(m))) => {
-                let p: &[u8] = &m;
-                let mut s: Vec<u8> = p
-                    .iter()
-                    .map(|&b| if cfg!(windows) && b == b'\\' { b'/' } else { b })
-                    .collect();
-                if !(s.starts_with(b"./") || s.starts_with(b"../")) {
-                    s.splice(0..0, b"./".iter().copied());
+            Ok(Ok(Some(abs))) => {
+                // `Loose` normalizes with host rules but emits `/` separators,
+                // so the key matches what the source builds at runtime on
+                // every platform.
+                let rel = bun_paths::resolve_path::relative_platform::<
+                    bun_paths::resolve_path::platform::Loose,
+                    false,
+                >(source_dir, &abs);
+                let mut key: Vec<u8> = Vec::with_capacity(rel.len() + 2);
+                if !(rel.starts_with(b"./") || rel.starts_with(b"../")) {
+                    key.extend_from_slice(b"./");
                 }
-                out.push(s.into_boxed_slice());
+                key.extend_from_slice(rel);
+                out.push(key.into_boxed_slice());
             }
             Ok(Ok(None)) => break,
             // A mid-walk failure would otherwise emit a partial map whose

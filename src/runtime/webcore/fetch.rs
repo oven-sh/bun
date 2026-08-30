@@ -90,6 +90,23 @@ fn ssl_config_intern_for_http(config: SSLConfig) -> http::ssl_config::SharedPtr 
     http::ssl_config::global_registry::intern(config)
 }
 
+/// The HTTP thread connects to the `unix` path later, and the keep-alive pool
+/// keys the connection on that path. A relative path is anchored to `cwd`
+/// here, on the JS thread, so it names one socket: a `process.chdir()` after
+/// this `fetch()` neither moves the connect target nor lets the pool hand back
+/// a connection to a same-named socket in another directory.
+///
+/// The join does not normalize. `connect(2)` resolves `..` after following a
+/// symlink, `path.resolve` collapses it first, and the socket must stay the one
+/// the kernel would have picked from `cwd`.
+fn absolute_unix_socket_path(cwd: &[u8], path: Vec<u8>) -> Box<[u8]> {
+    // Linux abstract-namespace sockets start with NUL and are not paths.
+    if path.first() == Some(&0) || bun_paths::is_absolute(&path) {
+        return path.into_boxed_slice();
+    }
+    bun_paths::join_sep_maybe_z::<false>(&[cwd, &path])
+}
+
 /// Build the refcounted `bun_s3_signing::S3Credentials` from the lower-tier
 /// `bun_dotenv::S3Credentials` POD mirror. The dotenv crate (T2) cannot name
 /// `bun_s3_signing` types (would be an upward dep), so the conversion lives at
@@ -688,10 +705,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if !obj.is_empty() {
                 if let Some(socket_path) = obj.get(global_this, "unix")? {
                     if socket_path.is_string() && socket_path.get_length(ctx)? > 0 {
-                        break 'extract_unix_socket_path socket_path
-                            .to_bun_string(global_this)?
-                            .to_owned_slice()
-                            .into_boxed_slice();
+                        break 'extract_unix_socket_path absolute_unix_socket_path(
+                            vm.top_level_dir(),
+                            socket_path.to_bun_string(global_this)?.to_owned_slice(),
+                        );
                     }
                 }
             }

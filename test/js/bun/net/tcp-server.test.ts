@@ -166,7 +166,7 @@ it("echo server 1 on 1", async () => {
 
     using server: TCPSocketListener<any> | undefined = listen({
       socket: handlers,
-      hostname: "localhost",
+      hostname: "127.0.0.1",
       port: 0,
 
       data: {
@@ -176,7 +176,7 @@ it("echo server 1 on 1", async () => {
     });
     const clientProm = connect({
       socket: handlers,
-      hostname: "localhost",
+      hostname: "127.0.0.1",
       port: server.port,
       data: {
         counter: 0,
@@ -273,7 +273,7 @@ describe("tcp socket binaryType", () => {
 
         using server: TCPSocketListener<any> | undefined = listen({
           socket: handlers,
-          hostname: "localhost",
+          hostname: "127.0.0.1",
           port: 0,
           data: {
             isServer: true,
@@ -283,7 +283,7 @@ describe("tcp socket binaryType", () => {
 
         const clientProm = connect({
           socket: handlers,
-          hostname: "localhost",
+          hostname: "127.0.0.1",
           port: server.port,
           data: {
             counter: 0,

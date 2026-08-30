@@ -639,6 +639,61 @@ describe("workspaces", () => {
     const tarball = readTarball(join(packageDir, "pkgs", "pkg1", "pkg1-1.1.1.tgz"));
     expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/index.js" }]);
   });
+
+  describe("lifecycle scripts describe the workspace member being packed", () => {
+    const echoPackageEnv = "$npm_package_name $npm_package_version $npm_package_json $npm_config_local_prefix";
+    let pkg1Dir: string;
+    let expectedLines: string[];
+
+    beforeEach(async () => {
+      pkg1Dir = join(packageDir, "pkgs", "pkg1");
+      // npm_config_local_prefix is the workspace root, as with npm.
+      const memberEnv = `pkg1 1.1.1 ${join(pkg1Dir, "package.json")} ${packageDir}`;
+      expectedLines = [`prepack ${memberEnv}`, `postpack ${memberEnv}`];
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({ name: "pack-workspace", version: "2.2.2", workspaces: ["pkgs/*"] }),
+        ),
+        write(
+          join(pkg1Dir, "package.json"),
+          JSON.stringify({
+            name: "pkg1",
+            version: "1.1.1",
+            scripts: {
+              prepack: `echo prepack ${echoPackageEnv}`,
+              postpack: `echo postpack ${echoPackageEnv}`,
+              release: `'${bunExe()}' pm pack --dry-run`,
+            },
+          }),
+        ),
+      ]);
+    });
+
+    function lifecycleLines(out: string) {
+      return out.split("\n").filter(line => line.startsWith("prepack ") || line.startsWith("postpack "));
+    }
+
+    test("bun pm pack in the member", async () => {
+      const { out } = await pack(pkg1Dir, bunEnv, "--dry-run");
+      expect(lifecycleLines(out)).toEqual(expectedLines);
+    });
+
+    test("bun pm pack from a member script", async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), "run", "--silent", "release"],
+        cwd: pkg1Dir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(lifecycleLines(out)).toEqual(expectedLines);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   test("replaces workspace: protocol without lockfile", async () => {
     await Promise.all([
       write(

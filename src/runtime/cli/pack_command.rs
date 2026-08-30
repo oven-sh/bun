@@ -2154,7 +2154,18 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         // not repeated.
         unsafe { (*transpiler_for_deinit).deinit() };
     }
-    ctx.manager.env_mut().map.put(b"npm_command", b"pack")?;
+    let script_env = ctx.manager.env_mut();
+    script_env.map.put(b"npm_command", b"pack")?;
+    // `configure_env_for_run` described the package.json of the directory the
+    // package manager chdir'd to, which for a workspace member is the
+    // workspace root; the lifecycle scripts belong to the manifest being packed.
+    script_env
+        .map
+        .put(b"npm_package_json", abs_package_json_path.as_bytes())?;
+    script_env.map.put(b"npm_package_name", package_name)?;
+    script_env
+        .map
+        .put(b"npm_package_version", package_version)?;
 
     let (postpack_script, publish_script, postpublish_script, ran_scripts): (
         Option<Box<[u8]>>,

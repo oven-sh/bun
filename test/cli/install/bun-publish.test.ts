@@ -1243,6 +1243,34 @@ it("$npm_lifecycle_event is accurate during publish", async () => {
   expect(exitCode).toBe(0);
 });
 
+it("lifecycle scripts get the workspace member's npm_package_* when publishing a member", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const memberDir = join(packageDir, "packages", "publish-pkg-12");
+  const echoPackageEnv = "$npm_package_name $npm_package_version $npm_package_json $npm_config_local_prefix";
+  const events = ["prepublishOnly", "prepack", "postpack", "publish", "postpublish"];
+  await Promise.all([
+    write(join(packageDir, "bunfig.toml"), await registry.authBunfig("npm_package_env")),
+    write(packageJson, JSON.stringify({ name: "root", version: "0.0.1", workspaces: ["packages/*"] })),
+    write(
+      join(memberDir, "package.json"),
+      JSON.stringify({
+        name: "publish-pkg-12",
+        version: "12.0.0",
+        scripts: Object.fromEntries(events.map(event => [event, `echo ${event} ${echoPackageEnv}`])),
+      }),
+    ),
+  ]);
+
+  const { out, err, exitCode } = await publish(env, memberDir, "--dry-run");
+  // npm_config_local_prefix is the workspace root, as with npm.
+  const memberEnv = `publish-pkg-12 12.0.0 ${join(memberDir, "package.json")} ${packageDir}`;
+  expect(out.split("\n").filter(line => events.some(event => line.startsWith(`${event} `)))).toEqual(
+    events.map(event => `${event} ${memberEnv}`),
+  );
+  expect(err).not.toContain("error:");
+  expect(exitCode).toBe(0);
+});
+
 describe("readme", () => {
   // Regression for https://github.com/oven-sh/bun/issues/30255 — `bun publish`
   // packed the README into the tarball but never populated the version-level

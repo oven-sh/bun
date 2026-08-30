@@ -202,11 +202,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 allow_ts_decorators: class_opts.allow_ts_decorators,
                 class_has_extends: extends.is_some(),
                 has_argument_decorators: false,
+                decorator_scope: Some(p.current_scope),
                 ..Default::default()
             };
 
             // Parse decorators for this property
             let first_decorator_loc = p.lexer.loc();
+            let first_decorator_range = p.lexer.range();
             let property_scope_index = p.scopes_in_order.len();
             if opts.allow_ts_decorators {
                 opts.ts_decorators = p.parse_type_script_decorators()?;
@@ -221,6 +223,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // read fields before move (G::Property is not Copy).
                 let prop_kind = property.kind;
                 let prop_key = property.key;
+
+                // tsc and esbuild reject them too: the lowering needs a statement.
+                if Self::IS_TYPESCRIPT_ENABLED
+                    && !p.options.features.standard_decorators
+                    && class_opts.is_class_expr
+                {
+                    let decorator_range = if opts.ts_decorators.len() > 0 {
+                        Some(first_decorator_range)
+                    } else {
+                        Self::first_argument_decorator_range(&property)
+                    };
+                    if let Some(range) = decorator_range {
+                        p.log().add_range_error(
+                            Some(p.source),
+                            range,
+                            b"TypeScript experimental decorators can only be used with class declarations",
+                        );
+                    }
+                }
+
                 properties.push(property);
                 has_auto_accessor =
                     has_auto_accessor || prop_kind == js_ast::g::PropertyKind::AutoAccessor;
@@ -275,7 +297,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_decorators: has_any_decorators,
             should_lower_standard_decorators: p.options.features.standard_decorators
                 && (has_any_decorators || has_auto_accessor),
+            ts_decorators_use_private_names: false,
         })
+    }
+
+    /// The location of the first parameter decorator of a method property, if any.
+    fn first_argument_decorator_range(property: &G::Property) -> Option<bun_ast::Range> {
+        let value = property.value?;
+        let js_ast::expr::Data::EFunction(func) = value.data else {
+            return None;
+        };
+        func.func
+            .args
+            .iter()
+            .flat_map(|arg| arg.ts_decorators.slice().iter())
+            .next()
+            .map(|decorator| bun_ast::Range {
+                loc: decorator.loc,
+                len: 0,
+            })
     }
 
     pub(crate) fn parse_template_parts(

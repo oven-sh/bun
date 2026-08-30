@@ -121,6 +121,7 @@ fn class_copy(c: &G::Class) -> G::Class {
         properties: c.properties,
         has_decorators: c.has_decorators,
         should_lower_standard_decorators: c.should_lower_standard_decorators,
+        ts_decorators_use_private_names: c.ts_decorators_use_private_names,
     }
 }
 
@@ -273,7 +274,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Create a static block property from a single expression.
-    fn make_static_block(&mut self, expr: Expr, l: bun_ast::Loc) -> Property {
+    pub(crate) fn make_static_block(&mut self, expr: Expr, l: bun_ast::Loc) -> Property {
         let bump = self.arena;
         let stmt = self.s(
             S::SExpr {
@@ -890,7 +891,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// Drain receiver-capture temporaries created past `baseline` into a
     /// single `var` declaration statement; `None` if none were created.
-    fn drain_capture_temp_decls(&mut self, baseline: usize, loc: bun_ast::Loc) -> Option<Stmt> {
+    pub(crate) fn drain_capture_temp_decls(
+        &mut self,
+        baseline: usize,
+        loc: bun_ast::Loc,
+    ) -> Option<Stmt> {
         let total = self.temp_refs_to_declare.len();
         if total == baseline {
             return None;

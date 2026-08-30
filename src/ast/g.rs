@@ -63,6 +63,8 @@ pub struct Class {
     pub properties: StoreSlice<Property>,
     pub has_decorators: bool,
     pub should_lower_standard_decorators: bool,
+    /// A member or parameter decorator reads a `#private` name of this class.
+    pub ts_decorators_use_private_names: bool,
 }
 
 impl Default for Class {
@@ -77,6 +79,7 @@ impl Default for Class {
             properties: StoreSlice::EMPTY,
             has_decorators: false,
             should_lower_standard_decorators: false,
+            ts_decorators_use_private_names: false,
         }
     }
 }

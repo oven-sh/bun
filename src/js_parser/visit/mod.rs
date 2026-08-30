@@ -235,7 +235,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         for arg in args.iter_mut() {
             if arg.ts_decorators.len_u32() > 0 {
+                // Parsed in the class body scope (see `parse_fn`), so visit it there.
+                let args_scope = self.current_scope;
+                let class_body_scope = args_scope
+                    .parent
+                    .expect("a method with parameter decorators is inside a class body");
+                debug_assert!(class_body_scope.kind == ScopeKind::ClassBody);
+                self.current_scope = class_body_scope;
                 self.visit_ts_decorators(&mut arg.ts_decorators);
+                self.current_scope = args_scope;
             }
 
             // reborrow per-iter.
@@ -249,9 +257,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // `Vec<Expr>` is not `Copy`; mutate in place.
     pub(crate) fn visit_ts_decorators(&mut self, decs: &mut ExprNodeList) {
+        let outer_class_scope = self.ts_decorator_class_scope.replace(self.current_scope);
         for dec in decs.slice_mut() {
             self.visit_expr(dec);
         }
+        self.ts_decorator_class_scope = outer_class_scope;
     }
 
     pub(crate) fn visit_decls<const IS_POSSIBLY_DECL_TO_REMOVE: bool>(
@@ -858,6 +868,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             self.push_scope_for_visit_pass(ScopeKind::ClassBody, class.body_loc)
                 .expect("unreachable");
+            let class_body_scope = self.current_scope;
 
             let mut constructor_function: Option<bun_ast::StoreRef<E::Function>> = None;
             let properties: &mut [G::Property] = class.properties.slice_mut();
@@ -987,7 +998,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 if let Some(val) = property.initializer {
-                    // if (property.flags.is_static and )
                     if let Some(name) = name_to_keep {
                         let was_anon = val.is_anonymous_named();
                         let prev_dcn2 = self.decorator_class_name;
@@ -1013,7 +1023,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.fn_only_data_visit.is_this_nested = old_is_this_captured;
             }
 
+            class.ts_decorators_use_private_names = self
+                .ts_decorator_scopes_using_private_names
+                .iter()
+                .position(|scope| *scope == class_body_scope)
+                .inspect(|&i| {
+                    self.ts_decorator_scopes_using_private_names.swap_remove(i);
+                })
+                .is_some();
+
             if Self::IS_TYPESCRIPT_ENABLED {
+                if !class.should_lower_standard_decorators {
+                    self.lower_ts_auto_accessors(class);
+                }
+
                 // `lower_standard_decorators_stmt` owns field placement for such classes.
                 let use_define = self.options.use_define_for_class_fields
                     || class.should_lower_standard_decorators;
@@ -1150,10 +1173,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             };
                             injected.push(Stmt::assign(target, init));
                         }
-                        // Keep `#x;` for brand; keep decorated props for `lower_class`.
-                        if is_private || prop.ts_decorators.len_u32() > 0 {
+                        // Keep `#x;` for brand. A decorated field stays only for its decorator call.
+                        if is_private {
                             class_body.push(G::Property {
                                 initializer: None,
+                                ..prop
+                            });
+                        } else if prop.ts_decorators.len_u32() > 0 {
+                            class_body.push(G::Property {
+                                initializer: None,
+                                kind: PropertyKind::Declare,
                                 ..prop
                             });
                         }
@@ -1309,6 +1338,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut before: ListManaged<'a, Stmt> = ListManaged::new_in(p.arena);
             let mut after: ListManaged<'a, Stmt> = ListManaged::new_in(p.arena);
 
+            let prev_nearest_stmt_list = p.nearest_stmt_list;
+            // BACKREF via `addr_of_mut!` (Stacked Borrows); set before the enum pre-pass too.
+            p.nearest_stmt_list = NonNull::new(core::ptr::addr_of_mut!(before));
+
             // Preprocess TypeScript enums to improve code generation. Otherwise
             // uses of an enum before that enum has been declared won't be inlined:
             //
@@ -1340,13 +1373,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // visit all statements first
             let mut visited: ListManaged<'a, Stmt> =
                 ListManaged::with_capacity_in(stmts.len(), p.arena);
-
-            let prev_nearest_stmt_list = p.nearest_stmt_list;
-            // BACKREF — `before` outlives this block; raw NonNull avoids
-            // the `&'a mut` borrow conflict. Derive via `addr_of_mut!` (no intermediate
-            // `&mut`) so the pointer shares the local's base tag and survives the
-            // direct `&mut before` reborrows in the loop below (Stacked Borrows).
-            p.nearest_stmt_list = NonNull::new(core::ptr::addr_of_mut!(before));
 
             let mut preprocessed_enum_i: usize = 0;
 

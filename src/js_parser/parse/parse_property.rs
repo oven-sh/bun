@@ -104,6 +104,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 allow_super_call: opts.class_has_extends && is_constructor,
                 allow_super_property: true,
                 allow_ts_decorators: opts.allow_ts_decorators,
+                decorator_scope: opts.decorator_scope,
                 is_constructor,
                 has_decorators: opts.ts_decorators.len() > 0
                     || (opts.has_class_decorators && is_constructor),
@@ -449,8 +450,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             if let Some(prop) =
                                                 p.parse_property(kind, opts, None)?
                                             {
-                                                if prop.kind == PropertyKind::Normal
-                                                    && prop.value.is_none()
+                                                if matches!(
+                                                    prop.kind,
+                                                    PropertyKind::Normal
+                                                        | PropertyKind::AutoAccessor
+                                                ) && prop.value.is_none()
                                                     && opts.ts_decorators.len() > 0
                                                 {
                                                     let mut prop_ = prop;
@@ -463,10 +467,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         }
                                     }
                                     PropertyModifierKeyword::PAccessor => {
-                                        // "accessor" keyword for auto-accessor fields (TC39 standard decorators)
+                                        // "accessor" keyword for auto-accessor fields
                                         if opts.is_class
                                             && !p.lexer.has_newline_before
-                                            && p.options.features.standard_decorators
                                             && PropertyModifierKeyword::find(raw)
                                                 == Some(PropertyModifierKeyword::PAccessor)
                                         {

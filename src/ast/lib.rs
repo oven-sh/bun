@@ -2938,6 +2938,8 @@ pub mod flags {
         IsStatic,
         WasShorthand,
         IsSpread,
+        /// The getter a TypeScript `accessor` member was lowered to (keeps its decorators).
+        IsAutoAccessorGetter,
     }
     pub type PropertySet = EnumSet<Property>;
     pub const PROPERTY_NONE: PropertySet = EnumSet::empty();

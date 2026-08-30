@@ -579,6 +579,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             &ParseClassOptions {
                 allow_ts_decorators: Self::IS_TYPESCRIPT_ENABLED
                     || p.options.features.standard_decorators,
+                is_class_expr: true,
                 ..Default::default()
             },
         )?;
@@ -589,6 +590,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn pfx_t_at(p: &mut Self) -> PResult<Expr> {
         // Parse decorators before a class expression: @dec class { ... }
+        if Self::IS_TYPESCRIPT_ENABLED && !p.options.features.standard_decorators {
+            p.log().add_range_error(
+                Some(p.source),
+                p.lexer.range(),
+                b"TypeScript experimental decorators cannot be used in expression position",
+            );
+        }
         let ts_decorators = p.parse_type_script_decorators()?;
 
         // Expect class keyword after decorators
@@ -650,6 +658,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             &ParseClassOptions {
                 ts_decorators: ts_decorators_slice,
                 allow_ts_decorators: true,
+                is_class_expr: true,
                 ..Default::default()
             },
         )?;

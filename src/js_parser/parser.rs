@@ -1216,6 +1216,9 @@ pub struct FnOrArrowDataParse {
 
     /// Allow TypeScript decorators in function arguments
     pub(crate) allow_ts_decorators: bool,
+
+    /// The class body scope, where TypeScript parameter decorators are parsed.
+    pub(crate) decorator_scope: Option<js_ast::StoreRef<js_ast::Scope>>,
 }
 
 impl Default for FnOrArrowDataParse {
@@ -1237,6 +1240,7 @@ impl Default for FnOrArrowDataParse {
             track_arrow_arg_errors: false,
             allow_missing_body_for_type_script: false,
             allow_ts_decorators: false,
+            decorator_scope: None,
         }
     }
 }
@@ -1321,6 +1325,8 @@ pub struct PropertyOpts {
     pub(crate) ts_decorators: ExprNodeList,
     pub(crate) has_argument_decorators: bool,
     pub(crate) has_class_decorators: bool,
+    /// See `FnOrArrowDataParse::decorator_scope`.
+    pub(crate) decorator_scope: Option<js_ast::StoreRef<js_ast::Scope>>,
 }
 
 impl Default for PropertyOpts {
@@ -1338,6 +1344,7 @@ impl Default for PropertyOpts {
             ts_decorators: bun_alloc::AstAlloc::vec(),
             has_argument_decorators: false,
             has_class_decorators: false,
+            decorator_scope: None,
         }
     }
 }
@@ -1421,6 +1428,8 @@ pub struct ParseClassOptions<'a> {
     pub(crate) ts_decorators: &'a [Expr],
     pub(crate) allow_ts_decorators: bool,
     pub(crate) is_type_script_declare: bool,
+    /// TypeScript experimental decorators are rejected inside class expressions.
+    pub(crate) is_class_expr: bool,
 }
 
 #[repr(u8)]

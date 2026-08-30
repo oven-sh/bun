@@ -527,7 +527,7 @@ describe("ES Decorators", () => {
       const { stderr, exitCode } = await runDecoratorTS(`
         @x export @y class Foo {}
       `);
-      expect(stderr).toContain('Expected "class" but found "@"');
+      expect(stderr).toContain("Decorators are not valid here");
       expect(exitCode).not.toBe(0);
     });
 

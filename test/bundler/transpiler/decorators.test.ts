@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { join } from "node:path";
 import DecoratedClass from "./decorator-export-default-class-fixture";
 import DecoratedAnonClass from "./decorator-export-default-class-fixture-anon";
 
@@ -368,6 +369,10 @@ test("decorators random", () => {
 
   expect(Object.isFrozen(IceCream)).toBe(true);
 
+  // Decorated fields keep [[Define]] semantics, like tsc and esbuild with
+  // useDefineForClassFields unset (the default for this test's tsconfig). The
+  // own property created by `flavor = "vanilla"` shadows the accessor the
+  // decorator put on the prototype.
   class IceCreamComponent {
     @Emoji()
     flavor = "vanilla";
@@ -395,165 +400,32 @@ test("decorators random", () => {
   }
 
   const iceCream = new IceCreamComponent();
-  expect(iceCream.flavor === "🍦 vanilla 🍦").toBe(true);
+  expect(Object.getOwnPropertyDescriptor(iceCream, "flavor")).toEqual({
+    value: "vanilla",
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+  expect(iceCream.flavor).toBe("vanilla");
   iceCream.flavor = "chocolate";
-  expect(iceCream.flavor === "🍦 chocolate 🍦").toBe(true);
+  expect(iceCream.flavor).toBe("chocolate");
+  expect(Object.getOwnPropertyDescriptor(IceCreamComponent.prototype, "flavor").get()).toBe(undefined);
+});
 
-  const i: unique symbol = Symbol.for("i");
-  const h: unique symbol = Symbol.for("h");
-  const t: unique symbol = Symbol.for("t");
-  const q: unique symbol = Symbol.for("q");
-  const p: unique symbol = Symbol.for("p");
-  const u3: unique symbol = Symbol.for("u3");
-  const u5: unique symbol = Symbol.for("u5");
-  const u6: unique symbol = Symbol.for("u6");
-  const u8: unique symbol = Symbol.for("u8");
-
-  class S {
-    @StringAppender("😛") k = 35;
-    @StringAppender("🤠") static j = 4;
-    @StringAppender("😵‍💫") private static [h] = 30;
-    @StringAppender("🤯") private static u = 60;
-    @StringAppender("🤪") private [t] = 32;
-    @StringAppender("🤑") [i] = 8;
-    @StringAppender("🎃") private e = 10;
-    @StringAppender("👻") static [q] = 202;
-    @StringAppender("😇") r = S[h];
-    _y: number;
-    @StringAppender("🤡") get y() {
-      return this._y;
-    }
-    set y(next) {
-      this._y = next;
-    }
-    #o = 100;
-
-    @StringAppender("😍") u1: number;
-    @StringAppender("🥳") static u2: number;
-    @StringAppender("🤓") private static [u3]: number;
-    @StringAppender("🥺") private static u4: number;
-    @StringAppender("🤯") private [u5]: number;
-    @StringAppender("🤩") [u6]: number;
-    @StringAppender("☹️") private u7: number;
-    @StringAppender("🙃") static [u8]: number;
-
-    @StringAppender("🤔") u9 = this.u1;
-    @StringAppender("🤨") u10 = this.u2;
-    @StringAppender("🙂") u11 = S[u3];
-    @StringAppender("🙁") u12 = S.u4;
-    @StringAppender("😐") u13 = this[u5];
-    @StringAppender("😑") u14 = this[u6];
-    @StringAppender("😶") u15 = this.u7;
-    @StringAppender("😏") u16 = S[u8];
-
-    constructor() {
-      this.k = 3;
-      expect(this.k).toBe("3 😛");
-      expect(S.j).toBe(4);
-      expect(this[i]).toBe("8 🤑");
-      expect(this.e).toBe("10 🎃");
-      expect(S[h]).toBe(30);
-      expect(S.u).toBe(60);
-      expect(this[t]).toBe("32 🤪");
-      expect(S[q]).toBe(202);
-      expect(this.#o).toBe(100);
-      expect(this.r).toBe("30 😇");
-      expect(this.y).toBe(undefined);
-      this.y = 100;
-      expect(this.y).toBe(100);
-
-      expect(this.u1).toBe(undefined);
-      expect(S.u2).toBe(undefined);
-      expect(S[u3]).toBe(undefined);
-      expect(S.u4).toBe(undefined);
-      expect(this[u5]).toBe(undefined);
-      expect(this[u6]).toBe(undefined);
-      expect(this.u7).toBe(undefined);
-      expect(S[u8]).toBe(undefined);
-
-      expect(this.u9).toBe("undefined 🤔");
-      expect(this.u10).toBe("undefined 🤨");
-      expect(this.u11).toBe("undefined 🙂");
-      expect(this.u12).toBe("undefined 🙁");
-      expect(this.u13).toBe("undefined 😐");
-      expect(this.u14).toBe("undefined 😑");
-      expect(this.u15).toBe("undefined 😶");
-      expect(this.u16).toBe("undefined 😏");
-
-      this.u1 = 100;
-      expect(this.u1).toBe("100 😍");
-      S.u2 = 100;
-      expect(S.u2).toBe("100 🥳");
-      S[u3] = 100;
-      expect(S[u3]).toBe("100 🤓");
-      S.u4 = 100;
-      expect(S.u4).toBe("100 🥺");
-      this[u5] = 100;
-      expect(this[u5]).toBe("100 🤯");
-      this[u6] = 100;
-      expect(this[u6]).toBe("100 🤩");
-      this.u7 = 100;
-      expect(this.u7).toBe("100 ☹️");
-      S[u8] = 100;
-      expect(S[u8]).toBe("100 🙃");
-
-      expect(this.u9).toBe("undefined 🤔");
-      expect(this.u10).toBe("undefined 🤨");
-      expect(this.u11).toBe("undefined 🙂");
-      expect(this.u12).toBe("undefined 🙁");
-      expect(this.u13).toBe("undefined 😐");
-      expect(this.u14).toBe("undefined 😑");
-      expect(this.u15).toBe("undefined 😶");
-      expect(this.u16).toBe("undefined 😏");
-    }
-  }
-
-  let s = new S();
-  expect(s.u9).toBe("undefined 🤔");
-  expect(s.u10).toBe("undefined 🤨");
-  expect(s.u11).toBe("undefined 🙂");
-  expect(s.u12).toBe("undefined 🙁");
-  expect(s.u13).toBe("undefined 😐");
-  expect(s.u14).toBe("undefined 😑");
-  expect(s.u15).toBe("undefined 😶");
-  expect(s.u16).toBe("undefined 😏");
-
-  s.u9 = 35;
-  expect(s.u9).toBe("35 🤔");
-  s.u10 = 36;
-  expect(s.u10).toBe("36 🤨");
-  s.u11 = 37;
-  expect(s.u11).toBe("37 🙂");
-  s.u12 = 38;
-  expect(s.u12).toBe("38 🙁");
-  s.u13 = 39;
-  expect(s.u13).toBe("39 😐");
-  s.u14 = 40;
-  expect(s.u14).toBe("40 😑");
-  s.u15 = 41;
-  expect(s.u15).toBe("41 😶");
-  s.u16 = 42;
-  expect(s.u16).toBe("42 😏");
-
-  function StringAppender(emoji: string) {
-    return function (target: Object, key: string | symbol) {
-      let val = target[key];
-
-      const getter = () => {
-        return val;
-      };
-      const setter = value => {
-        val = `${value} ${emoji}`;
-      };
-
-      Object.defineProperty(target, key, {
-        get: getter,
-        set: setter,
-        enumerable: true,
-        configurable: true,
-      });
-    };
-  }
+test("decorators random (useDefineForClassFields: false)", async () => {
+  // The same decorators with [[Set]] semantics: every field initializer runs
+  // through the accessor the decorator defined on the prototype. The fixture
+  // directory has its own tsconfig.json with useDefineForClassFields: false.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "set-semantics-fixture.ts"],
+    env: bunEnv,
+    cwd: join(import.meta.dir, "decorators-set-semantics"),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ok\n");
+  expect(exitCode).toBe(0);
 });
 
 test("class field order", () => {
@@ -1057,8 +929,11 @@ test("decorator and declare", () => {
 });
 
 test("lowering many decorated instance fields into a large constructor body stays linear", async () => {
-  // Hold N fixed; compare M=100 vs M=50000. If the splice-after-super() were O(M*N)
-  // instead of O(M+N), tLarge/tSmall would be ~5x (debug) / ~90x (release) here, not ~2x.
+  // Hold N fixed; compare M=100 vs M=20000 after a warm-up. Parsing the N-sized body
+  // dominates both runs when the lowering is O(M+N), so tLarge/tSmall stays under ~2x.
+  // If the splice-after-super() were O(M*N), every field would copy the body again
+  // and the ratio would be far above 3x in both debug and release builds.
+  // Only useDefineForClassFields: false moves field initializers into the constructor.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1075,7 +950,7 @@ test("lowering many decorated instance fields into a large constructor body stay
         }
         const t = new Bun.Transpiler({
           loader: "ts",
-          tsconfig: { compilerOptions: { experimentalDecorators: true } },
+          tsconfig: { compilerOptions: { experimentalDecorators: true, useDefineForClassFields: false } },
         });
         function time(M) {
           const src = gen(M);
@@ -1086,8 +961,9 @@ test("lowering many decorated instance fields into a large constructor body stay
             throw new Error("instance-field initializers missing from lowered constructor at M=" + M);
           return ms;
         }
+        time(100);
         const tSmall = time(100);
-        const tLarge = time(50000);
+        const tLarge = time(20000);
         console.log(JSON.stringify({ tSmall, tLarge, ratio: tLarge / tSmall }));
       `,
     ],

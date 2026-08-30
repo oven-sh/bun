@@ -1,8 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use super::FormatterTestExt;
-use bun_jsc::console_object::Formatter;
 
-use super::DiffFormatter;
+use super::mock;
 use super::Expect;
 use super::throw;
 
@@ -18,104 +16,76 @@ pub(crate) fn to_have_last_returned_with(
         callframe.this(),
         "toHaveBeenLastReturnedWith",
         "<green>expected<r>",
-        super::mock::MockKind::Returns,
+        mock::MockKind::Returns,
     )?;
 
     let calls_count = u32::try_from(returns.get_length(global_this)?).unwrap();
-    let mut pass = false;
-    let mut last_return_value: JSValue = JSValue::UNDEFINED;
-    let mut last_call_threw = false;
-    let mut last_error_value: JSValue = JSValue::UNDEFINED;
-
-    if calls_count > 0 {
-        let last_result = returns.get_direct_index(global_this, calls_count - 1)?;
-
-        if last_result.is_object() {
-            let result_type = last_result.get(global_this, "type")?.unwrap_or(JSValue::UNDEFINED);
-            if result_type.is_string() {
-                let type_str = result_type.to_bun_string(global_this)?;
-
-                if type_str.eq_ascii(b"return") {
-                    last_return_value =
-                        last_result.get(global_this, "value")?.unwrap_or(JSValue::UNDEFINED);
-
-                    if last_return_value.jest_deep_equals(expected, global_this)? {
-                        pass = true;
-                    }
-                } else if type_str.eq_ascii(b"throw") {
-                    last_call_threw = true;
-                    last_error_value =
-                        last_result.get(global_this, "value")?.unwrap_or(JSValue::UNDEFINED);
-                }
-            }
-        }
-    }
+    let mock::ReturnCheck {
+        matched: pass,
+        return_value: last_return_value,
+        threw: last_call_threw,
+        error_value: last_error_value,
+    } = if calls_count > 0 {
+        mock::check_returned_with(
+            global_this,
+            returns.get_direct_index(global_this, calls_count - 1)?,
+            expected,
+        )?
+    } else {
+        mock::ReturnCheck::MISSING
+    };
 
     if pass != this.flags.get().not() {
         return Ok(JSValue::UNDEFINED);
     }
 
     // Handle failure
-    let mut formatter = Formatter::new(global_this).with_quote_strings(true);
-
     let signature = Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", false);
 
     if this.flags.get().not() {
-        return throw!(
-            this,
+        return mock::throw_not_failure(
+            &this,
             global_this,
-            Expect::get_signature("toHaveBeenLastReturnedWith", "<green>expected<r>", true),
-            concat!(
-                "\n\n",
-                "Expected mock function not to have last returned: <green>{}<r>\n",
-                "But it did.\n",
-            ),
-            expected.to_fmt(&mut formatter),
+            "toHaveBeenLastReturnedWith",
+            "<green>expected<r>",
+            format_args!("Expected mock function not to have last returned"),
+            expected,
+            "\nBut it did.\n",
         );
     }
 
     if calls_count == 0 {
-        return throw!(
-            this,
-            global_this,
-            signature,
-            concat!("\n\n", "The mock function was not called."),
-        );
+        return throw!(this, global_this, signature, "\n\nThe mock function was not called.");
     }
 
     if last_call_threw {
-        return throw!(
-            this,
+        return mock::throw_call_threw(
+            &this,
             global_this,
             signature,
-            concat!("\n\n", "The last call threw an error: <red>{}<r>\n"),
-            last_error_value.to_fmt(&mut formatter),
+            format_args!("The last call"),
+            last_error_value,
         );
     }
 
     // Diff if possible
     if expected.is_string() && last_return_value.is_string() {
-        let diff_format = DiffFormatter {
-            received_string: None,
-            expected_string: None,
-            expected: Some(expected),
-            received: Some(last_return_value),
-            global_this: Some(global_this),
-            not: false,
-        };
-        return throw!(this, global_this, signature, "\n\n{}\n", diff_format);
+        return mock::throw_diff(
+            &this,
+            global_this,
+            signature,
+            format_args!(""),
+            expected,
+            last_return_value,
+        );
     }
 
-    // The `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters cannot alias
-    // the same backing formatter. Use a second formatter for the received value —
-    // `make_formatter` is a trivial struct init with no shared state between values.
-    let mut formatter2 = super::make_formatter(global_this);
-    throw!(
-        this,
+    mock::throw_expected_received(
+        &this,
         global_this,
         signature,
-        "\n\nExpected: <green>{}<r>\nReceived: <red>{}<r>",
-        expected.to_fmt(&mut formatter),
-        last_return_value.to_fmt(&mut formatter2),
+        format_args!(""),
+        expected,
+        last_return_value,
     )
 }

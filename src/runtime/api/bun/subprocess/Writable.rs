@@ -14,6 +14,35 @@ use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 
 use super::{Flags, StaticPipeWriter, StdioResult, Subprocess, js};
 
+/// Build the `Writable::Buffer` writer for a `Stdio::Blob` stdin. The Blob is
+/// moved out of `stdio` (a `ManuallyDrop` + `ptr::read` pair, since `Stdio`
+/// has a `Drop`) and `Stdio::Ignore` is left behind; callers do not read
+/// `stdio` afterwards.
+pub(crate) fn buffered_stdin_writer<P: super::static_pipe_writer::StaticPipeWriterProcess>(
+    stdio: &mut Stdio,
+    event_loop: bun_event_loop::EventLoopHandle,
+    process: *mut P,
+    result: StdioResult,
+) -> RefPtr<super::NewStaticPipeWriter<P>> {
+    let source = match stdio {
+        Stdio::Blob(_) => {
+            // `Stdio` has a Drop impl (it would `blob.detach()`), so the
+            // payload cannot be destructure-moved out (E0509); take ownership
+            // via ManuallyDrop + ptr::read so the blob is moved exactly once.
+            let owned = core::mem::ManuallyDrop::new(core::mem::replace(stdio, Stdio::Ignore));
+            let blob = match &*owned {
+                // SAFETY: `owned` is ManuallyDrop and discarded after this
+                // read; the Blob payload is moved out exactly once.
+                Stdio::Blob(b) => unsafe { core::ptr::read(b) },
+                _ => unreachable!(),
+            };
+            super::source_from_blob(blob)
+        }
+        _ => unreachable!("caller matched Blob"),
+    };
+    super::NewStaticPipeWriter::create(event_loop, process, result, source)
+}
+
 pub enum Writable<'a> {
     Pipe(RefPtr<FileSink>),
     Fd(Fd),
@@ -190,20 +219,11 @@ impl<'a> Writable<'a> {
                 }
 
                 Stdio::Blob(_) => {
-                    // See the unix arm below: Stdio has Drop, so move the
-                    // payload out via ManuallyDrop + ptr::read.
-                    let owned =
-                        core::mem::ManuallyDrop::new(core::mem::replace(stdio, Stdio::Ignore));
-                    let blob = match &*owned {
-                        // SAFETY: owned is ManuallyDrop; payload moved exactly once.
-                        Stdio::Blob(b) => unsafe { core::ptr::read(b) },
-                        _ => unreachable!(),
-                    };
-                    return Ok(Writable::Buffer(StaticPipeWriter::create(
+                    return Ok(Writable::Buffer(buffered_stdin_writer(
+                        stdio,
                         evtloop,
                         subprocess as *mut Subprocess<'a>,
                         result,
-                        super::source_from_blob(blob),
                     )));
                 }
                 Stdio::Fd(fd) => {
@@ -282,24 +302,12 @@ impl<'a> Writable<'a> {
                 Ok(Writable::Pipe(pipe_ref))
             }
 
-            Stdio::Blob(_) => {
-                // `Stdio` has a Drop impl (would `blob.detach()`), so we can't
-                // move the payload out by match — take ownership via
-                // ManuallyDrop + ptr::read to transfer without detaching.
-                let owned = core::mem::ManuallyDrop::new(core::mem::replace(stdio, Stdio::Ignore));
-                let blob = match &*owned {
-                    // SAFETY: `owned` is ManuallyDrop and discarded after this
-                    // read; the Blob payload is moved out exactly once.
-                    Stdio::Blob(b) => unsafe { core::ptr::read(b) },
-                    _ => unreachable!(),
-                };
-                Ok(Writable::Buffer(StaticPipeWriter::create(
-                    evtloop,
-                    std::ptr::from_mut::<Subprocess<'a>>(subprocess),
-                    result,
-                    super::source_from_blob(blob),
-                )))
-            }
+            Stdio::Blob(_) => Ok(Writable::Buffer(buffered_stdin_writer(
+                stdio,
+                evtloop,
+                std::ptr::from_mut::<Subprocess<'a>>(subprocess),
+                result,
+            ))),
             Stdio::Memfd(_) => {
                 // Transfer ownership: `Stdio`'s Drop would close the memfd, so
                 // take it out via ManuallyDrop (same pattern as the Blob arm)

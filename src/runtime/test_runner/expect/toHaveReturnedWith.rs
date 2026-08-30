@@ -1,6 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-use super::DiffFormatter;
 use super::mock;
 use super::throw;
 use super::Expect;
@@ -33,25 +32,17 @@ pub(crate) fn to_have_returned_with(
     for i in 0..calls_count {
         let result = returns.get_direct_index(global, i)?;
 
-        if result.is_object() {
-            let result_type = result.get(global, "type")?.unwrap_or(JSValue::UNDEFINED);
-            if result_type.is_string() {
-                let type_str = result_type.to_bun_string(global)?;
+        match mock::parse_mock_result(global, result)? {
+            mock::MockResult::Return(result_value) => {
+                successful_returns.push(result_value);
 
-                if type_str.eq_ascii(b"return") {
-                    let result_value = result.get(global, "value")?.unwrap_or(JSValue::UNDEFINED);
-                    successful_returns.push(result_value);
-
-                    // Check for pass condition only if not already passed
-                    if !pass {
-                        if result_value.jest_deep_equals(expected, global)? {
-                            pass = true;
-                        }
-                    }
-                } else if type_str.eq_ascii(b"throw") {
-                    has_errors = true;
+                // Check for pass condition only if not already passed
+                if !pass && result_value.jest_deep_equals(expected, global)? {
+                    pass = true;
                 }
             }
+            mock::MockResult::Throw(_) => has_errors = true,
+            mock::MockResult::Other => {}
         }
     }
 
@@ -60,18 +51,17 @@ pub(crate) fn to_have_returned_with(
     }
 
     // Handle failure
-    let mut formatter = super::make_formatter(global);
-
     let signature: &str = Expect::get_signature("toHaveReturnedWith", "<green>expected<r>", false);
 
     if this.flags.get().not() {
-        let not_signature: &str = Expect::get_signature("toHaveReturnedWith", "<green>expected<r>", true);
-        return throw!(
-            this,
+        return mock::throw_not_failure(
+            &this,
             global,
-            not_signature,
-            "\n\nExpected mock function not to have returned: <green>{}<r>\n",
-            expected.to_fmt(&mut formatter),
+            "toHaveReturnedWith",
+            "<green>expected<r>",
+            format_args!("Expected mock function not to have returned"),
+            expected,
+            "\n",
         );
     }
 
@@ -82,33 +72,22 @@ pub(crate) fn to_have_returned_with(
     if calls_count == 1 && successful_returns_count == 1 {
         let received = successful_returns[0];
         if expected.is_string() && received.is_string() {
-            let diff_format = DiffFormatter {
-                expected: Some(expected),
-                received: Some(received),
-                expected_string: None,
-                received_string: None,
-                global_this: Some(global),
-                not: false,
-            };
-            return throw!(this, global, signature, "\n\n{}\n", diff_format);
+            return mock::throw_diff(&this, global, signature, format_args!(""), expected, received);
         }
 
-        // The `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters cannot alias
-        // the same backing formatter. Use a second formatter for the received value —
-        // `make_formatter` is a trivial struct init with no shared state between values.
-        let mut formatter2 = super::make_formatter(global);
-        return throw!(
-            this,
+        return mock::throw_expected_received(
+            &this,
             global,
             signature,
-            "\n\nExpected: <green>{}<r>\nReceived: <red>{}<r>",
-            expected.to_fmt(&mut formatter),
-            received.to_fmt(&mut formatter2),
+            format_args!(""),
+            expected,
+            received,
         );
     }
 
     // list_formatter holds &mut Formatter via RefCell, so a separate formatter is
     // required for the inline `expected.to_fmt` argument used alongside it in the same format_args!.
+    let mut formatter = super::make_formatter(global);
     let mut list_fmt = super::make_formatter(global);
 
     if has_errors {

@@ -720,17 +720,14 @@ pub mod testing_apis {
         }
     }
 
-    /// Codegen (`generated_js2native.rs`) wraps this with `host_fn_result`, so we
-    /// expose the bare `JsHostFnZig` signature here and do the buffer scope inline.
-    pub(crate) fn shell_lex(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        MarkedArgumentBuffer::new(|buf| shell_lex_impl(global, callframe, buf))
-    }
-
-    fn shell_lex_impl(
+    /// Shared prologue for the lex/parse testing APIs: extract the two
+    /// arguments (template strings + interpolated values) and assemble the
+    /// shell source via `shell_cmd_from_js`.
+    fn shell_cmd_args_from_js(
         global: &JSGlobalObject,
         callframe: &CallFrame,
         marked_argument_buffer: &mut MarkedArgumentBuffer,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<(Bump, Vec<BunString>, Vec<JSValue>, Vec<u8>)> {
         // SAFETY: bun_vm() is non-null for a Bun-owned global.
         let vm = global.bun_vm();
         let mut arguments = jsc::ArgumentsSlice::init(vm, callframe.arguments());
@@ -753,7 +750,6 @@ pub mod testing_apis {
         let mut jsstrings: Vec<BunString> = Vec::with_capacity(4);
         // SAFETY: every JSValue pushed here is also rooted in marked_argument_buffer.
         let mut jsobjs: Vec<JSValue> = Vec::new();
-
         let mut script: Vec<u8> = Vec::new();
         shell_cmd_from_js(
             global,
@@ -764,6 +760,22 @@ pub mod testing_apis {
             &mut script,
             marked_argument_buffer,
         )?;
+        Ok((arena, jsstrings, jsobjs, script))
+    }
+
+    /// Codegen (`generated_js2native.rs`) wraps this with `host_fn_result`, so we
+    /// expose the bare `JsHostFnZig` signature here and do the buffer scope inline.
+    pub(crate) fn shell_lex(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        MarkedArgumentBuffer::new(|buf| shell_lex_impl(global, callframe, buf))
+    }
+
+    fn shell_lex_impl(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+        marked_argument_buffer: &mut MarkedArgumentBuffer,
+    ) -> JsResult<JSValue> {
+        let (arena, jsstrings, jsobjs, script) =
+            shell_cmd_args_from_js(global, callframe, marked_argument_buffer)?;
 
         let jsobjs_len: u32 = u32::try_from(jsobjs.len()).expect("int cast");
         let lex_result = 'brk: {
@@ -809,38 +821,8 @@ pub mod testing_apis {
         callframe: &CallFrame,
         marked_argument_buffer: &mut MarkedArgumentBuffer,
     ) -> JsResult<JSValue> {
-        // SAFETY: bun_vm() is non-null for a Bun-owned global.
-        let vm = global.bun_vm();
-        let mut arguments = jsc::ArgumentsSlice::init(vm, callframe.arguments());
-        let string_args: JSValue = match arguments.next_eat() {
-            Some(s) => s,
-            None => {
-                return Err(global.throw(format_args!("shell_parse: expected 2 arguments, got 0")));
-            }
-        };
-
-        let arena = Bump::new();
-
-        let template_args_js: JSValue = match arguments.next_eat() {
-            Some(s) => s,
-            None => {
-                return Err(global.throw(format_args!("shell: expected 2 arguments, got 0")));
-            }
-        };
-        let mut template_args = template_args_js.array_iterator(global)?;
-        let mut jsstrings: Vec<BunString> = Vec::with_capacity(4);
-        // SAFETY: every JSValue pushed here is also rooted in marked_argument_buffer.
-        let mut jsobjs: Vec<JSValue> = Vec::new();
-        let mut script: Vec<u8> = Vec::new();
-        shell_cmd_from_js(
-            global,
-            string_args,
-            &mut template_args,
-            &mut jsobjs,
-            &mut jsstrings,
-            &mut script,
-            marked_argument_buffer,
-        )?;
+        let (arena, jsstrings, mut jsobjs, script) =
+            shell_cmd_args_from_js(global, callframe, marked_argument_buffer)?;
 
         let mut out_parser: Option<bun_shell_parser::Parser<'_>> = None;
         let mut out_lex_result: Option<bun_shell_parser::LexResult<'_>> = None;

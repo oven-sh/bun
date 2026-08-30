@@ -29,11 +29,8 @@ pub mod options_jsc; // GetAddrInfo.Options ↔ JSValue
 
 #[cfg(target_os = "macos")]
 pub(crate) use dns_body::dns_sd;
+pub use dns_body::get_addr_info_request;
 pub use dns_body::{
     CacheHit, GetAddrInfoRequest, GlobalData, InternalDNSRequest, Order, PendingCache,
     PendingCacheField, RecordType, Resolver, internal,
-};
-pub use dns_body::{
-    get_addr_info_request, get_host_by_addr_info_request, get_name_info_request,
-    resolve_info_request,
 };

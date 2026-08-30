@@ -1,7 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-use super::DiffFormatter;
-use super::throw;
+use super::mock;
 use super::{Expect, get_signature};
 
 pub(crate) fn to_have_nth_returned_with(
@@ -16,7 +15,7 @@ pub(crate) fn to_have_nth_returned_with(
         frame.this(),
         "toHaveNthReturnedWith",
         "<green>n<r>, <green>expected<r>",
-        super::mock::MockKind::Returns,
+        mock::MockKind::Returns,
     )?;
 
     // Validate n is a number
@@ -35,101 +34,69 @@ pub(crate) fn to_have_nth_returned_with(
     let calls_count = u32::try_from(returns.get_length(global)?).unwrap();
     let index = u32::try_from(n - 1).unwrap(); // Convert to 0-based index
 
-    let mut pass = false;
-    let mut nth_return_value: JSValue = JSValue::UNDEFINED;
-    let mut nth_call_threw = false;
-    let mut nth_error_value: JSValue = JSValue::UNDEFINED;
-    let mut nth_call_exists = false;
-
-    if index < calls_count {
-        nth_call_exists = true;
-        let nth_result = returns.get_direct_index(global, index)?;
-        if nth_result.is_object() {
-            let result_type = nth_result.get(global, "type")?.unwrap_or(JSValue::UNDEFINED);
-            if result_type.is_string() {
-                let type_str = result_type.to_bun_string(global)?;
-                if type_str.eq_ascii(b"return") {
-                    nth_return_value = nth_result.get(global, "value")?.unwrap_or(JSValue::UNDEFINED);
-                    if nth_return_value.jest_deep_equals(expected, global)? {
-                        pass = true;
-                    }
-                } else if type_str.eq_ascii(b"throw") {
-                    nth_call_threw = true;
-                    nth_error_value = nth_result.get(global, "value")?.unwrap_or(JSValue::UNDEFINED);
-                }
-            }
-        }
-    }
+    let nth_call_exists = index < calls_count;
+    let mock::ReturnCheck {
+        matched: pass,
+        return_value: nth_return_value,
+        threw: nth_call_threw,
+        error_value: nth_error_value,
+    } = if nth_call_exists {
+        mock::check_returned_with(global, returns.get_direct_index(global, index)?, expected)?
+    } else {
+        mock::ReturnCheck::MISSING
+    };
 
     if pass != this.flags.get().not() {
         return Ok(JSValue::UNDEFINED);
     }
 
     // Handle failure
-    let mut formatter = super::make_formatter(global);
-    let mut formatter2 = super::make_formatter(global);
-
     let signature = get_signature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", false);
 
     if this.flags.get().not() {
-        return throw!(
-            this,
+        return mock::throw_not_failure(
+            &this,
             global,
-            get_signature("toHaveNthReturnedWith", "<green>n<r>, <green>expected<r>", true),
-            "\n\nExpected mock function not to have returned on call {}: <green>{}<r>\nBut it did.\n",
-            n,
-            expected.to_fmt(&mut formatter),
+            "toHaveNthReturnedWith",
+            "<green>n<r>, <green>expected<r>",
+            format_args!("Expected mock function not to have returned on call {}", n),
+            expected,
+            "\nBut it did.\n",
         );
     }
 
     if !nth_call_exists {
-        return throw!(
-            this,
-            global,
-            signature,
-            "\n\nThe mock function was called {} time{}, but call {} was requested.\n",
-            calls_count,
-            if calls_count == 1 { "" } else { "s" },
-            n,
-        );
+        return mock::throw_nth_call_missing(&this, global, signature, calls_count, index + 1, "\n");
     }
 
     if nth_call_threw {
-        return throw!(
-            this,
+        return mock::throw_call_threw(
+            &this,
             global,
             signature,
-            "\n\nCall {} threw an error: <red>{}<r>\n",
-            n,
-            nth_error_value.to_fmt(&mut formatter),
+            format_args!("Call {}", n),
+            nth_error_value,
         );
     }
 
     // Diff if possible
     if expected.is_string() && nth_return_value.is_string() {
-        let diff_format = DiffFormatter {
-            expected: Some(expected),
-            received: Some(nth_return_value),
-            expected_string: None,
-            received_string: None,
-            global_this: Some(global),
-            not: false,
-        };
-        return throw!(
-            this,
+        return mock::throw_diff(
+            &this,
             global,
             signature,
-            "\n\nCall {}:\n{}\n", n, diff_format,
+            format_args!("Call {}:\n", n),
+            expected,
+            nth_return_value,
         );
     }
 
-    throw!(
-        this,
+    mock::throw_expected_received(
+        &this,
         global,
         signature,
-        "\n\nCall {}:\nExpected: <green>{}<r>\nReceived: <red>{}<r>",
-        n,
-        expected.to_fmt(&mut formatter),
-        nth_return_value.to_fmt(&mut formatter2),
+        format_args!("Call {}:\n", n),
+        expected,
+        nth_return_value,
     )
 }

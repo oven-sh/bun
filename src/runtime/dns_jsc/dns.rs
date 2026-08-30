@@ -136,7 +136,7 @@ mod lib_c {
         query_init: &GetAddrInfo,
         global_this: &JSGlobalObject,
     ) -> JSValue {
-        let key = get_addr_info_request::PendingCacheKey::init(query_init);
+        let key = PendingCacheKey::init_query(query_init);
 
         let cache =
             this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
@@ -230,7 +230,7 @@ pub(crate) mod lib_uv_backend {
         query: GetAddrInfo,
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
-        let key = get_addr_info_request::PendingCacheKey::init(&query);
+        let key = PendingCacheKey::init_query(&query);
 
         let cache =
             this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
@@ -338,7 +338,7 @@ fn normalize_dns_name<'a>(name: &'a [u8], backend: &mut GetAddrInfoBackend) -> &
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Each c-ares reply struct implements this with its record-type tag.
-pub trait CAresRecordType: Sized {
+pub(crate) trait CAresRecordType: Sized {
     const TYPE_NAME: &'static str;
     /// `"query" + ucfirst(TYPE_NAME)` — each impl carries the precomputed
     /// literal so error paths report the right syscall.
@@ -405,34 +405,97 @@ pub(crate) struct ResolveInfoRequest<T: CAresRecordType> {
     pub tail: *mut CAresLookup<T>, // INTRUSIVE — points at `head` or last appended node
 }
 
-pub mod resolve_info_request {
-    use super::*;
+/// Request types holding an intrusive `head`/`tail` list of lookup nodes, so the
+/// shared `PendingCacheKey` can append a waiter while the request is in flight.
+pub trait HasTail {
+    type Node;
+    /// Append `node` after the current tail and advance `tail`.
+    ///
+    /// # Safety
+    /// `this` and its current `tail` must point at live nodes.
+    unsafe fn append_node(this: *mut Self, node: *mut Self::Node);
+}
 
-    pub struct PendingCacheKey<T: CAresRecordType> {
-        pub(crate) hash: u64,
-        pub(crate) len: u16,
-        pub name: Box<[u8]>,
-        pub(crate) lookup: *mut ResolveInfoRequest<T>,
-    }
-
-    impl<T: CAresRecordType> PendingCacheKey<T> {
-        pub(crate) fn append(&mut self, cares_lookup: *mut CAresLookup<T>) {
-            // SAFETY: lookup/tail are valid while request is in the pending cache
+macro_rules! impl_has_tail {
+    (<$T:ident: $bound:path> $req:ty => $node:ty) => {
+        impl<$T: $bound> HasTail for $req { impl_has_tail!(@body $node); }
+    };
+    ($req:ty => $node:ty) => {
+        impl HasTail for $req { impl_has_tail!(@body $node); }
+    };
+    (@body $node:ty) => {
+        type Node = $node;
+        unsafe fn append_node(this: *mut Self, node: *mut Self::Node) {
+            // SAFETY: fn contract — `this` and its current `tail` are live.
             unsafe {
-                let tail = (*self.lookup).tail;
-                (*tail).next = NonNull::new(cares_lookup);
-                (*self.lookup).tail = cares_lookup;
+                let tail = (*this).tail;
+                (*tail).next = NonNull::new(node);
+                (*this).tail = node;
             }
         }
+    };
+}
 
-        pub(crate) fn init(name: &[u8]) -> Self {
-            let hash = wyhash(name);
-            Self {
-                hash,
-                len: name.len() as u16,
-                name: Box::<[u8]>::from(name),
-                lookup: ptr::null_mut(),
-            }
+impl_has_tail!(<T: CAresRecordType> ResolveInfoRequest<T> => CAresLookup<T>);
+
+/// Pending-cache slot key: dedupes in-flight DNS requests by `{hash, len, name}`
+/// and points at the request whose intrusive list collects waiting lookups.
+pub struct PendingCacheKey<Req: HasTail> {
+    pub(crate) hash: u64,
+    pub(crate) len: u16,
+    pub(crate) name: Box<[u8]>,
+    pub(crate) lookup: *mut Req,
+}
+
+/// Request types whose pending-cache key hashes only the lookup name.
+/// `GetAddrInfoRequest` is deliberately excluded: its keys must be built with
+/// [`PendingCacheKey::init_query`], which hashes `port` + `options` + `name`.
+pub trait NameKeyed: HasTail {}
+
+impl<T: CAresRecordType> NameKeyed for ResolveInfoRequest<T> {}
+impl NameKeyed for GetHostByAddrInfoRequest {}
+impl NameKeyed for GetNameInfoRequest {}
+
+impl<Req: HasTail> PendingCacheKey<Req> {
+    pub(crate) fn append(&mut self, node: *mut Req::Node) {
+        // SAFETY: lookup/tail are valid while request is in the pending cache
+        unsafe { Req::append_node(self.lookup, node) }
+    }
+
+    /// `{ hash, len, name, lookup: null }` copy for `HiveArray::get_init`.
+    /// `lookup` is filled in later by `*Request::init` once the request has
+    /// been heap-allocated; until then it is a defined null rather than uninit
+    /// garbage, so the `iter_set` loop in `get_or_put_into_pending_cache` can
+    /// safely materialise `&mut PendingCacheKey` over the slot.
+    pub(crate) fn unlinked(&self) -> Self {
+        Self {
+            hash: self.hash,
+            len: self.len,
+            name: self.name.clone(),
+            lookup: ptr::null_mut(),
+        }
+    }
+}
+
+impl<Req: NameKeyed> PendingCacheKey<Req> {
+    pub(crate) fn init(name: &[u8]) -> Self {
+        Self {
+            hash: wyhash(name),
+            len: name.len() as u16,
+            name: Box::<[u8]>::from(name),
+            lookup: ptr::null_mut(),
+        }
+    }
+}
+
+impl PendingCacheKey<GetAddrInfoRequest> {
+    /// addr-info keys hash `port` + `options` + `name`, not just the name bytes.
+    pub(crate) fn init_query(query: &GetAddrInfo) -> Self {
+        Self {
+            hash: query.hash(),
+            len: query.name.len() as u16,
+            name: query.name.clone(),
+            lookup: ptr::null_mut(),
         }
     }
 }
@@ -538,37 +601,7 @@ pub(crate) struct GetHostByAddrInfoRequest {
     pub tail: *mut CAresReverse, // INTRUSIVE
 }
 
-pub mod get_host_by_addr_info_request {
-    use super::*;
-
-    pub struct PendingCacheKey {
-        pub(crate) hash: u64,
-        pub(crate) len: u16,
-        pub name: Box<[u8]>,
-        pub(crate) lookup: *mut GetHostByAddrInfoRequest,
-    }
-
-    impl PendingCacheKey {
-        pub(crate) fn append(&mut self, cares_lookup: *mut CAresReverse) {
-            // SAFETY: lookup/tail are valid while request is in the pending cache
-            unsafe {
-                let tail = (*self.lookup).tail;
-                (*tail).next = NonNull::new(cares_lookup);
-                (*self.lookup).tail = cares_lookup;
-            }
-        }
-
-        pub(crate) fn init(name: &[u8]) -> Self {
-            let hash = wyhash(name);
-            Self {
-                hash,
-                len: name.len() as u16,
-                name: Box::<[u8]>::from(name),
-                lookup: ptr::null_mut(),
-            }
-        }
-    }
-}
+impl_has_tail!(GetHostByAddrInfoRequest => CAresReverse);
 
 impl GetHostByAddrInfoRequest {
     /// Reverse lookups always cache through `pending_addr_cache_cares`, so no
@@ -784,37 +817,7 @@ pub(crate) struct GetNameInfoRequest {
     pub tail: *mut CAresNameInfo, // INTRUSIVE
 }
 
-pub mod get_name_info_request {
-    use super::*;
-
-    pub struct PendingCacheKey {
-        pub(crate) hash: u64,
-        pub(crate) len: u16,
-        pub name: Box<[u8]>,
-        pub(crate) lookup: *mut GetNameInfoRequest,
-    }
-
-    impl PendingCacheKey {
-        pub(crate) fn append(&mut self, cares_lookup: *mut CAresNameInfo) {
-            // SAFETY: lookup/tail are valid while request is in the pending cache
-            unsafe {
-                let tail = (*self.lookup).tail;
-                (*tail).next = NonNull::new(cares_lookup);
-                (*self.lookup).tail = cares_lookup;
-            }
-        }
-
-        pub(crate) fn init(name: &[u8]) -> Self {
-            let hash = wyhash(name);
-            Self {
-                hash,
-                len: name.len() as u16,
-                name: Box::<[u8]>::from(name),
-                lookup: ptr::null_mut(),
-            }
-        }
-    }
-}
+impl_has_tail!(GetNameInfoRequest => CAresNameInfo);
 
 impl GetNameInfoRequest {
     fn init(
@@ -918,6 +921,8 @@ pub struct GetAddrInfoRequest {
     pub(crate) tail: *mut DNSLookup, // INTRUSIVE
 }
 
+impl_has_tail!(GetAddrInfoRequest => DNSLookup);
+
 pub mod get_addr_info_request {
     use super::*;
 
@@ -985,33 +990,6 @@ pub mod get_addr_info_request {
             unsafe { (*req).backend = Backend::Libc(this.backend) };
             super::GetAddrInfoRequest::then(req, cx.global());
             Ok(())
-        }
-    }
-
-    pub struct PendingCacheKey {
-        pub(crate) hash: u64,
-        pub(crate) len: u16,
-        pub name: Box<[u8]>,
-        pub(crate) lookup: *mut GetAddrInfoRequest,
-    }
-
-    impl PendingCacheKey {
-        pub(crate) fn append(&mut self, dns_lookup: *mut DNSLookup) {
-            // SAFETY: `lookup`/`tail` are valid while the request sits in the pending cache.
-            unsafe {
-                let tail = (*self.lookup).tail;
-                (*tail).next = NonNull::new(dns_lookup);
-                (*self.lookup).tail = dns_lookup;
-            }
-        }
-
-        pub(crate) fn init(query: &GetAddrInfo) -> Self {
-            Self {
-                hash: query.hash(),
-                len: query.name.len() as u16,
-                name: query.name.clone(),
-                lookup: ptr::null_mut(),
-            }
         }
     }
 
@@ -1689,7 +1667,7 @@ impl<T: CAresRecordType> Drop for CAresLookup<T> {
 // DNSLookup
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct DNSLookup {
+pub struct DNSLookup {
     pub resolver: Option<RefPtr<Resolver>>,
     pub global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     pub promise: JSPromiseStrong,
@@ -3514,28 +3492,22 @@ hostent_ttls_newtype!(
     parse_aaaa
 );
 
-pub type PendingCache = HiveArray<get_addr_info_request::PendingCacheKey, 32>;
-type SrvPendingCache =
-    HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_srv_reply>, 32>;
-type SoaPendingCache =
-    HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_soa_reply>, 32>;
-type TxtPendingCache =
-    HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_txt_reply>, 32>;
-type NaptrPendingCache =
-    HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_naptr_reply>, 32>;
-type MxPendingCache =
-    HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_mx_reply>, 32>;
-type CaaPendingCache =
-    HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_ares_caa_reply>, 32>;
-type NSPendingCache = HiveArray<resolve_info_request::PendingCacheKey<NsHostent>, 32>;
-type PtrPendingCache = HiveArray<resolve_info_request::PendingCacheKey<PtrHostent>, 32>;
-type CnamePendingCache = HiveArray<resolve_info_request::PendingCacheKey<CnameHostent>, 32>;
-type APendingCache = HiveArray<resolve_info_request::PendingCacheKey<AHostentWithTtls>, 32>;
-type AAAAPendingCache = HiveArray<resolve_info_request::PendingCacheKey<AaaaHostentWithTtls>, 32>;
-type AnyPendingCache =
-    HiveArray<resolve_info_request::PendingCacheKey<c_ares::struct_any_reply>, 32>;
-type AddrPendingCache = HiveArray<get_host_by_addr_info_request::PendingCacheKey, 32>;
-type NameInfoPendingCache = HiveArray<get_name_info_request::PendingCacheKey, 32>;
+pub type PendingCache = HiveArray<PendingCacheKey<GetAddrInfoRequest>, 32>;
+type ResolvePendingCache<T> = HiveArray<PendingCacheKey<ResolveInfoRequest<T>>, 32>;
+type SrvPendingCache = ResolvePendingCache<c_ares::struct_ares_srv_reply>;
+type SoaPendingCache = ResolvePendingCache<c_ares::struct_ares_soa_reply>;
+type TxtPendingCache = ResolvePendingCache<c_ares::struct_ares_txt_reply>;
+type NaptrPendingCache = ResolvePendingCache<c_ares::struct_ares_naptr_reply>;
+type MxPendingCache = ResolvePendingCache<c_ares::struct_ares_mx_reply>;
+type CaaPendingCache = ResolvePendingCache<c_ares::struct_ares_caa_reply>;
+type NSPendingCache = ResolvePendingCache<NsHostent>;
+type PtrPendingCache = ResolvePendingCache<PtrHostent>;
+type CnamePendingCache = ResolvePendingCache<CnameHostent>;
+type APendingCache = ResolvePendingCache<AHostentWithTtls>;
+type AAAAPendingCache = ResolvePendingCache<AaaaHostentWithTtls>;
+type AnyPendingCache = ResolvePendingCache<c_ares::struct_any_reply>;
+type AddrPendingCache = HiveArray<PendingCacheKey<GetHostByAddrInfoRequest>, 32>;
+type NameInfoPendingCache = HiveArray<PendingCacheKey<GetNameInfoRequest>, 32>;
 
 #[cfg(windows)]
 type PollType = UvDnsPoll;
@@ -3617,18 +3589,11 @@ impl UvDnsPoll {
     }
 }
 
-#[derive(Clone, Copy)]
-pub enum CacheHit {
-    Inflight(*mut get_addr_info_request::PendingCacheKey), // BORROW_FIELD into resolver buffer
-    New(*mut get_addr_info_request::PendingCacheKey),      // BORROW_FIELD into resolver buffer
-    Disabled,
-}
+pub type CacheHit = LookupCacheHit<GetAddrInfoRequest>;
 
-pub(crate) enum LookupCacheHit<R: HasPendingCacheKey> {
-    // The request type is threaded via `R`; `PendingCacheKey` resolves
-    // through `HasPendingCacheKey`.
-    Inflight(*mut R::PendingCacheKey), // BORROW_FIELD
-    New(*mut R::PendingCacheKey),      // BORROW_FIELD
+pub enum LookupCacheHit<R: HasPendingCacheKey> {
+    Inflight(*mut PendingCacheKey<R>), // BORROW_FIELD into resolver buffer
+    New(*mut PendingCacheKey<R>),      // BORROW_FIELD into resolver buffer
     Disabled,
 }
 
@@ -3639,11 +3604,9 @@ impl<R: HasPendingCacheKey> Clone for LookupCacheHit<R> {
 }
 impl<R: HasPendingCacheKey> Copy for LookupCacheHit<R> {}
 
-/// Associates a request type with its `PendingCacheKey` and the matching `HiveArray`
+/// Associates a request type with the matching pending-cache `HiveArray`
 /// field on `Resolver`.
-pub(crate) trait HasPendingCacheKey {
-    type PendingCacheKey;
-
+pub trait HasPendingCacheKey: HasTail + Sized {
     /// Return the per-request-type pending HiveArray field on `Resolver`.
     /// `field` is the runtime tag selecting which field (some request types are reachable
     /// via more than one field, e.g. `pending_host_cache_{cares,native}`).
@@ -3655,122 +3618,50 @@ pub(crate) trait HasPendingCacheKey {
     fn pending_cache(
         resolver: &Resolver,
         field: PendingCacheField,
-    ) -> &mut HiveArray<Self::PendingCacheKey, 32>;
-
-    /// `key.hash` — all `PendingCacheKey` shapes carry `{ hash: u64, len: u16, lookup: *mut _ }`.
-    fn key_hash(key: &Self::PendingCacheKey) -> u64;
-    /// `key.len`
-    fn key_len(key: &Self::PendingCacheKey) -> u16;
-    fn key_name(key: &Self::PendingCacheKey) -> &[u8];
-    /// Construct a fully-initialized `PendingCacheKey { hash, len, lookup: null }`
-    /// for `HiveArray::get_init`. `lookup` is filled in later by `*Request::init`
-    /// once the request has been heap-allocated; until then it is a defined null
-    /// rather than uninit garbage, so the `iter_set` loop in
-    /// `get_or_put_into_resolve_pending_cache` can safely materialise
-    /// `&mut PendingCacheKey` over the slot.
-    fn key_new(key: &Self::PendingCacheKey) -> Self::PendingCacheKey;
+    ) -> &mut HiveArray<PendingCacheKey<Self>, 32>;
 }
 
 impl<T: CAresRecordType> HasPendingCacheKey for ResolveInfoRequest<T> {
-    type PendingCacheKey = resolve_info_request::PendingCacheKey<T>;
-
     #[inline]
     fn pending_cache(
         resolver: &Resolver,
         field: PendingCacheField,
-    ) -> &mut HiveArray<Self::PendingCacheKey, 32> {
+    ) -> &mut HiveArray<PendingCacheKey<Self>, 32> {
         resolver.pending_cache_for::<T>(field)
-    }
-    #[inline]
-    fn key_hash(key: &Self::PendingCacheKey) -> u64 {
-        key.hash
-    }
-    #[inline]
-    fn key_len(key: &Self::PendingCacheKey) -> u16 {
-        key.len
-    }
-    #[inline]
-    fn key_name(key: &Self::PendingCacheKey) -> &[u8] {
-        &key.name
-    }
-    #[inline]
-    fn key_new(key: &Self::PendingCacheKey) -> Self::PendingCacheKey {
-        resolve_info_request::PendingCacheKey {
-            hash: key.hash,
-            len: key.len,
-            name: key.name.clone(),
-            lookup: ptr::null_mut(),
-        }
     }
 }
 
 impl HasPendingCacheKey for GetHostByAddrInfoRequest {
-    type PendingCacheKey = get_host_by_addr_info_request::PendingCacheKey;
-
     #[inline]
     fn pending_cache(
         resolver: &Resolver,
         _field: PendingCacheField,
-    ) -> &mut HiveArray<Self::PendingCacheKey, 32> {
+    ) -> &mut HiveArray<PendingCacheKey<Self>, 32> {
         // SAFETY: see `HasPendingCacheKey::pending_cache` doc — short,
         // non-reentrant borrow on the single JS thread.
         unsafe { resolver.pending_addr_cache_cares.get_mut() }
     }
-    #[inline]
-    fn key_hash(key: &Self::PendingCacheKey) -> u64 {
-        key.hash
-    }
-    #[inline]
-    fn key_len(key: &Self::PendingCacheKey) -> u16 {
-        key.len
-    }
-    #[inline]
-    fn key_name(key: &Self::PendingCacheKey) -> &[u8] {
-        &key.name
-    }
-    #[inline]
-    fn key_new(key: &Self::PendingCacheKey) -> Self::PendingCacheKey {
-        get_host_by_addr_info_request::PendingCacheKey {
-            hash: key.hash,
-            len: key.len,
-            name: key.name.clone(),
-            lookup: ptr::null_mut(),
-        }
-    }
 }
 
 impl HasPendingCacheKey for GetNameInfoRequest {
-    type PendingCacheKey = get_name_info_request::PendingCacheKey;
-
     #[inline]
     fn pending_cache(
         resolver: &Resolver,
         _field: PendingCacheField,
-    ) -> &mut HiveArray<Self::PendingCacheKey, 32> {
+    ) -> &mut HiveArray<PendingCacheKey<Self>, 32> {
         // SAFETY: see `HasPendingCacheKey::pending_cache` doc — short,
         // non-reentrant borrow on the single JS thread.
         unsafe { resolver.pending_nameinfo_cache_cares.get_mut() }
     }
+}
+
+impl HasPendingCacheKey for GetAddrInfoRequest {
     #[inline]
-    fn key_hash(key: &Self::PendingCacheKey) -> u64 {
-        key.hash
-    }
-    #[inline]
-    fn key_len(key: &Self::PendingCacheKey) -> u16 {
-        key.len
-    }
-    #[inline]
-    fn key_name(key: &Self::PendingCacheKey) -> &[u8] {
-        &key.name
-    }
-    #[inline]
-    fn key_new(key: &Self::PendingCacheKey) -> Self::PendingCacheKey {
-        get_name_info_request::PendingCacheKey {
-            hash: key.hash,
-            len: key.len,
-            name: key.name.clone(),
-            lookup: ptr::null_mut(),
-        }
+    fn pending_cache(
+        resolver: &Resolver,
+        field: PendingCacheField,
+    ) -> &mut HiveArray<PendingCacheKey<Self>, 32> {
+        resolver.pending_host_cache(field)
     }
 }
 
@@ -3827,6 +3718,109 @@ bun_core::comptime_string_map! {
 
 impl RecordType {
     pub(crate) const DEFAULT: Self = RecordType::A;
+}
+
+/// Intrusive pending-chain node shared by the `drain_pending_*` family.
+trait PendingChainNode: Sized {
+    fn chain_next(&self) -> Option<NonNull<Self>>;
+    fn chain_global(&self) -> &JSGlobalObject;
+}
+
+macro_rules! impl_pending_chain_node {
+    ($($node:ty),* $(,)?) => {$(
+        impl PendingChainNode for $node {
+            #[inline]
+            fn chain_next(&self) -> Option<NonNull<Self>> {
+                self.next
+            }
+            #[inline]
+            fn chain_global(&self) -> &JSGlobalObject {
+                self.global_this()
+            }
+        }
+    )*};
+}
+impl_pending_chain_node!(DNSLookup, CAresReverse, CAresNameInfo);
+
+impl<T: CAresRecordType> PendingChainNode for CAresLookup<T> {
+    #[inline]
+    fn chain_next(&self) -> Option<NonNull<Self>> {
+        self.next
+    }
+    #[inline]
+    fn chain_global(&self) -> &JSGlobalObject {
+        self.global_this()
+    }
+}
+
+/// Error-arm skeleton shared by the `drain_pending_*` family: hand the
+/// in-place chain head to `process`, free the boxed request via
+/// `consume_head`, then walk the remaining (individually boxed) tail nodes.
+///
+/// SAFETY: `head` must point at the intrusive head embedded in the live,
+/// heap-allocated request held by the pending-cache slot. `consume_head` must
+/// consume exactly that request (via `heap::take`) without touching the tail
+/// nodes, and `process` must consume each node it is handed (the per-type
+/// `process_*` contract).
+unsafe fn drain_chain_err<Node: PendingChainNode>(
+    head: *mut Node,
+    mut process: impl FnMut(*mut Node),
+    consume_head: impl FnOnce(),
+) {
+    // SAFETY: see fn contract — each node's `next` is read before the node is
+    // consumed.
+    unsafe {
+        let mut pending = (*head).chain_next();
+        process(head);
+        consume_head();
+
+        while let Some(value) = pending {
+            pending = (*value.as_ptr()).chain_next();
+            process(value.as_ptr());
+        }
+    }
+}
+
+/// Success-arm skeleton shared by the `drain_pending_*` family. `array` is
+/// the answer already converted for `prev_global` (the head's global);
+/// `to_js` re-converts it whenever a tail node belongs to a different global.
+/// `keep_alive` brackets every `on_complete` so the conservative stack scan
+/// keeps the shared value rooted across the completion callbacks.
+///
+/// SAFETY: same contract as [`drain_chain_err`], with `on_complete` consuming
+/// each node it is handed. Additionally, `to_js` must not append to or
+/// consume chain nodes: each node's `next` is snapshotted only as the walk
+/// reaches it, after earlier `to_js`/`on_complete` calls have run.
+unsafe fn drain_chain_ok<'a, Node: PendingChainNode + 'a>(
+    head: *mut Node,
+    mut array: Outcome,
+    mut prev_global: &'a JSGlobalObject,
+    mut to_js: impl FnMut(&JSGlobalObject) -> Outcome,
+    mut on_complete: impl FnMut(*mut Node, Outcome),
+    consume_head: impl FnOnce(),
+) {
+    // SAFETY: see fn contract — each node's `next` is read before the node is
+    // consumed.
+    unsafe {
+        let mut pending = (*head).chain_next();
+        keep_alive(&array);
+        on_complete(head, array);
+        consume_head();
+        keep_alive(&array);
+
+        while let Some(value) = pending {
+            let new_global = (*value.as_ptr()).chain_global();
+            if !core::ptr::eq(prev_global, new_global) {
+                array = to_js(new_global);
+                prev_global = new_global;
+            }
+            pending = (*value.as_ptr()).chain_next();
+
+            keep_alive(&array);
+            on_complete(value.as_ptr(), array);
+            keep_alive(&array);
+        }
+    }
 }
 
 impl Resolver {
@@ -4087,7 +4081,7 @@ impl Resolver {
 
     /// Dispatch to a typed ResolveInfoRequest cache by record type.
     // Each per-record cache is a distinct monomorphization of
-    // `HiveArray<resolve_info_request::PendingCacheKey<_>, 32>`; `PendingCacheKey<T>` is
+    // `ResolvePendingCache<_>`; `PendingCacheKey<ResolveInfoRequest<T>>` is
     // layout-identical for all `T` (only the `*mut ResolveInfoRequest<T>` payload's pointee
     // type differs), so reinterpreting the field reference at the caller's `T` is sound when
     // `T::CACHE_FIELD` selects the matching field.
@@ -4095,21 +4089,16 @@ impl Resolver {
     fn pending_cache_for<T: CAresRecordType>(
         &self,
         _field: PendingCacheField,
-    ) -> &mut HiveArray<resolve_info_request::PendingCacheKey<T>, 32> {
+    ) -> &mut ResolvePendingCache<T> {
         macro_rules! field {
             ($f:ident) => {
                 // SAFETY: the matched arm guarantees `self.$f` *is*
-                // `JsCell<HiveArray<PendingCacheKey<T>, 32>>` for this `T::CACHE_FIELD`;
+                // `JsCell<ResolvePendingCache<T>>` for this `T::CACHE_FIELD`;
                 // the cast is an identity transmute (same layout, same lifetime).
                 // R-2: `JsCell::as_ptr` projects `&mut` from `&self`; caller
                 // holds the borrow only for a short, non-reentrant window
                 // (see `pending_host_cache` doc).
-                unsafe {
-                    &mut *self
-                        .$f
-                        .as_ptr()
-                        .cast::<HiveArray<resolve_info_request::PendingCacheKey<T>, 32>>()
-                }
+                unsafe { &mut *self.$f.as_ptr().cast::<ResolvePendingCache<T>>() }
             };
         }
         match T::CACHE_FIELD {
@@ -4140,24 +4129,24 @@ impl Resolver {
         &self,
         index: u8,
         field: PendingCacheField,
-    ) -> get_addr_info_request::PendingCacheKey {
+    ) -> PendingCacheKey<GetAddrInfoRequest> {
         let cache = self.pending_host_cache(field);
-        // SAFETY: slot at `index` was alloc'd by `get_or_put_into_resolve_pending_cache`.
+        // SAFETY: slot at `index` was alloc'd by `get_or_put_into_pending_cache`.
         unsafe { cache.box_at(index as usize) }
             .expect("pending DNS slot")
             .into_inner()
     }
-    fn get_key_addr(&self, index: u8) -> get_host_by_addr_info_request::PendingCacheKey {
+    fn get_key_addr(&self, index: u8) -> PendingCacheKey<GetHostByAddrInfoRequest> {
         self.pending_addr_cache_cares.with_mut(|cache| {
-            // SAFETY: slot at `index` was alloc'd by `get_or_put_into_resolve_pending_cache`.
+            // SAFETY: slot at `index` was alloc'd by `get_or_put_into_pending_cache`.
             unsafe { cache.box_at(index as usize) }
                 .expect("pending DNS slot")
                 .into_inner()
         })
     }
-    fn get_key_nameinfo(&self, index: u8) -> get_name_info_request::PendingCacheKey {
+    fn get_key_nameinfo(&self, index: u8) -> PendingCacheKey<GetNameInfoRequest> {
         self.pending_nameinfo_cache_cares.with_mut(|cache| {
-            // SAFETY: slot at `index` was alloc'd by `get_or_put_into_resolve_pending_cache`.
+            // SAFETY: slot at `index` was alloc'd by `get_or_put_into_pending_cache`.
             unsafe { cache.box_at(index as usize) }
                 .expect("pending DNS slot")
                 .into_inner()
@@ -4176,58 +4165,39 @@ impl Resolver {
 
         let key = {
             let cache = self.pending_cache_for::<T>(T::CACHE_FIELD);
-            // SAFETY: slot at `index` was alloc'd by `get_or_put_into_resolve_pending_cache`.
+            // SAFETY: slot at `index` was alloc'd by `get_or_put_into_pending_cache`.
             unsafe { cache.box_at(index as usize) }
                 .expect("pending DNS slot")
                 .into_inner()
         };
 
-        let Some(mut addr) = result else {
-            // SAFETY: `key.lookup` is the heap-allocated request stored in the
-            // pending-cache slot; consumed via `heap::take` below.
-            unsafe {
-                let mut pending = (*key.lookup).head.next;
-                CAresLookup::<T>::process_resolve(
-                    ptr::addr_of_mut!((*key.lookup).head),
-                    err,
-                    timeout,
-                    None,
-                );
-                drop(bun_core::heap::take(key.lookup));
-
-                while let Some(value) = pending {
-                    pending = (*value.as_ptr()).next;
-                    CAresLookup::<T>::process_resolve(value.as_ptr(), err, timeout, None);
-                }
-            }
-            return;
-        };
-
         // SAFETY: `key.lookup` is the heap-allocated request stored in the
-        // pending-cache slot; consumed via `heap::take` below.
+        // pending-cache slot; consumed via `heap::take` in `consume_head`.
+        // `addr` (an `OwnedReply`) frees the c-ares reply when it drops at the
+        // end of this block, after every consumer has run.
         unsafe {
-            let mut pending = (*key.lookup).head.next;
-            let mut prev_global = (*key.lookup).head.global_this();
-            let mut array =
-                Outcome::of(prev_global, addr.to_js_response(prev_global, T::TYPE_NAME));
-            keep_alive(&array);
-            CAresLookup::<T>::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
-            drop(bun_core::heap::take(key.lookup));
+            let head = ptr::addr_of_mut!((*key.lookup).head);
+            let consume_head = || drop(bun_core::heap::take(key.lookup));
 
-            keep_alive(&array);
+            let Some(mut addr) = result else {
+                drain_chain_err(
+                    head,
+                    |node| CAresLookup::<T>::process_resolve(node, err, timeout, None),
+                    consume_head,
+                );
+                return;
+            };
 
-            while let Some(value) = pending {
-                let new_global = (*value.as_ptr()).global_this();
-                if !core::ptr::eq(prev_global, new_global) {
-                    array = Outcome::of(new_global, addr.to_js_response(new_global, T::TYPE_NAME));
-                    prev_global = new_global;
-                }
-                pending = (*value.as_ptr()).next;
-
-                keep_alive(&array);
-                CAresLookup::<T>::on_complete(value.as_ptr(), array);
-                keep_alive(&array);
-            }
+            let head_global = (*head).global_this();
+            let array = Outcome::of(head_global, addr.to_js_response(head_global, T::TYPE_NAME));
+            drain_chain_ok(
+                head,
+                array,
+                head_global,
+                |global| Outcome::of(global, addr.to_js_response(global, T::TYPE_NAME)),
+                |node, value| CAresLookup::<T>::on_complete(node, value),
+                consume_head,
+            );
         }
     }
 
@@ -4242,60 +4212,43 @@ impl Resolver {
 
         let _guard = self.ref_guard();
 
-        let Some(addr) = result else {
-            // SAFETY: `key.lookup` is the heap-allocated request stored in the
-            // pending-cache slot; consumed via `heap::take` below.
-            unsafe {
-                let mut pending = (*key.lookup).head.next;
-                DNSLookup::process_get_addr_info(
-                    ptr::addr_of_mut!((*key.lookup).head),
-                    err,
-                    timeout,
-                    None,
-                );
-                drop(bun_core::heap::take(key.lookup));
-
-                while let Some(value) = pending {
-                    pending = (*value.as_ptr()).next;
-                    DNSLookup::process_get_addr_info(value.as_ptr(), err, timeout, None);
-                }
-            }
-            return;
-        };
-
-        // SAFETY: `key.lookup` is the heap-allocated request stored in the pending-cache
-        // slot; `addr` is the c-ares-allocated AddrInfo freed by `_free_addr` below.
+        // SAFETY: `key.lookup` is the heap-allocated request stored in the
+        // pending-cache slot; consumed via `heap::take` in `consume_head`.
+        // `addr` is the c-ares-allocated AddrInfo freed by `_free_addr` below.
         unsafe {
-            let mut pending = (*key.lookup).head.next;
-            let mut prev_global = (*key.lookup).head.global_this();
-            let mut array = Outcome::of(
-                prev_global,
-                super::cares_jsc::addr_info_to_js_array(&mut *addr, prev_global),
+            let head = ptr::addr_of_mut!((*key.lookup).head);
+            let consume_head = || drop(bun_core::heap::take(key.lookup));
+
+            let Some(addr) = result else {
+                drain_chain_err(
+                    head,
+                    |node| DNSLookup::process_get_addr_info(node, err, timeout, None),
+                    consume_head,
+                );
+                return;
+            };
+
+            let head_global = (*head).global_this();
+            let array = Outcome::of(
+                head_global,
+                super::cares_jsc::addr_info_to_js_array(&mut *addr, head_global),
             );
             // SAFETY: addr is the c-ares-allocated AddrInfo; freed once after all consumers run.
-            // Move the raw pointer into the guard so the loop body can keep borrowing `*addr`.
+            // Move the raw pointer into the guard so `to_js` can keep borrowing `*addr`.
             let _free_addr = scopeguard::guard(addr, |a| c_ares::AddrInfo::destroy(a));
-            keep_alive(&array);
-            DNSLookup::on_complete_with_array(ptr::addr_of_mut!((*key.lookup).head), array);
-            drop(bun_core::heap::take(key.lookup));
-
-            keep_alive(&array);
-
-            while let Some(value) = pending {
-                let new_global = (*value.as_ptr()).global_this();
-                if !core::ptr::eq(prev_global, new_global) {
-                    array = Outcome::of(
-                        new_global,
-                        super::cares_jsc::addr_info_to_js_array(&mut *addr, new_global),
-                    );
-                    prev_global = new_global;
-                }
-                pending = (*value.as_ptr()).next;
-
-                keep_alive(&array);
-                DNSLookup::on_complete_with_array(value.as_ptr(), array);
-                keep_alive(&array);
-            }
+            drain_chain_ok(
+                head,
+                array,
+                head_global,
+                |global| {
+                    Outcome::of(
+                        global,
+                        super::cares_jsc::addr_info_to_js_array(&mut *addr, global),
+                    )
+                },
+                |node, value| DNSLookup::on_complete_with_array(node, value),
+                consume_head,
+            );
         }
     }
 
@@ -4311,7 +4264,7 @@ impl Resolver {
 
         let _guard = self.ref_guard();
 
-        let mut array: Outcome = match super::options_jsc::result_any_to_js(result, global_object)
+        let array: Outcome = match super::options_jsc::result_any_to_js(result, global_object)
             .transpose()
         {
             Some(a) => Outcome::of(global_object, a),
@@ -4339,35 +4292,24 @@ impl Resolver {
             }
         };
         // SAFETY: `key.lookup` is the heap-allocated request stored in the
-        // pending-cache slot; consumed via `heap::take` below.
+        // pending-cache slot; consumed via `heap::take` in `consume_head`.
         unsafe {
-            let mut pending = (*key.lookup).head.next;
-            let mut prev_global = (*key.lookup).head.global_this();
-
-            {
-                keep_alive(&array);
-                DNSLookup::on_complete_with_array(ptr::addr_of_mut!((*key.lookup).head), array);
-                drop(bun_core::heap::take(key.lookup));
-                keep_alive(&array);
-            }
-
-            while let Some(value) = pending {
-                let new_global = (*value.as_ptr()).global_this();
-                pending = (*value.as_ptr()).next;
-                if !core::ptr::eq(prev_global, new_global) {
+            let head = ptr::addr_of_mut!((*key.lookup).head);
+            drain_chain_ok(
+                head,
+                array,
+                (*head).global_this(),
+                |global| {
                     // Non-null addrinfo (checked above): never `None`.
-                    array = Outcome::of(
-                        new_global,
-                        super::options_jsc::result_any_to_js(result, new_global)
+                    Outcome::of(
+                        global,
+                        super::options_jsc::result_any_to_js(result, global)
                             .map(|a| a.expect("addrinfo present")),
-                    );
-                    prev_global = new_global;
-                }
-
-                keep_alive(&array);
-                DNSLookup::on_complete_with_array(value.as_ptr(), array);
-                keep_alive(&array);
-            }
+                    )
+                },
+                |node, value| DNSLookup::on_complete_with_array(node, value),
+                || drop(bun_core::heap::take(key.lookup)),
+            );
         }
     }
 
@@ -4382,60 +4324,43 @@ impl Resolver {
 
         let _guard = self.ref_guard();
 
-        let Some(addr) = result else {
-            // SAFETY: `key.lookup` is the heap-allocated request stored in the
-            // pending-cache slot; consumed via `heap::take` below.
-            unsafe {
-                let mut pending = (*key.lookup).head.next;
-                CAresReverse::process_resolve(
-                    ptr::addr_of_mut!((*key.lookup).head),
-                    err,
-                    timeout,
-                    None,
-                );
-                drop(bun_core::heap::take(key.lookup));
-
-                while let Some(value) = pending {
-                    pending = (*value.as_ptr()).next;
-                    CAresReverse::process_resolve(value.as_ptr(), err, timeout, None);
-                }
-            }
-            return;
-        };
-
-        // SAFETY: `key.lookup` is the heap-allocated request stored in the pending-cache
-        // slot; `addr` is the c-ares-owned hostent (freed by c-ares after the callback).
+        // SAFETY: `key.lookup` is the heap-allocated request stored in the
+        // pending-cache slot; consumed via `heap::take` in `consume_head`.
+        // `addr` is the c-ares-owned hostent (freed by c-ares after the callback).
         unsafe {
-            let mut pending = (*key.lookup).head.next;
-            let mut prev_global = (*key.lookup).head.global_this();
+            let head = ptr::addr_of_mut!((*key.lookup).head);
+            let consume_head = || drop(bun_core::heap::take(key.lookup));
+
+            let Some(addr) = result else {
+                drain_chain_err(
+                    head,
+                    |node| CAresReverse::process_resolve(node, err, timeout, None),
+                    consume_head,
+                );
+                return;
+            };
+
             //  The callback need not and should not attempt to free the memory
             //  pointed to by hostent; the ares library will free it when the
             //  callback returns.
-            let mut array = Outcome::of(
-                prev_global,
-                super::cares_jsc::hostent_to_js_response(&mut *addr, prev_global, b""),
+            let head_global = (*head).global_this();
+            let array = Outcome::of(
+                head_global,
+                super::cares_jsc::hostent_to_js_response(&mut *addr, head_global, b""),
             );
-            keep_alive(&array);
-            CAresReverse::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
-            drop(bun_core::heap::take(key.lookup));
-
-            keep_alive(&array);
-
-            while let Some(value) = pending {
-                let new_global = (*value.as_ptr()).global_this();
-                if !core::ptr::eq(prev_global, new_global) {
-                    array = Outcome::of(
-                        new_global,
-                        super::cares_jsc::hostent_to_js_response(&mut *addr, new_global, b""),
-                    );
-                    prev_global = new_global;
-                }
-                pending = (*value.as_ptr()).next;
-
-                keep_alive(&array);
-                CAresReverse::on_complete(value.as_ptr(), array);
-                keep_alive(&array);
-            }
+            drain_chain_ok(
+                head,
+                array,
+                head_global,
+                |global| {
+                    Outcome::of(
+                        global,
+                        super::cares_jsc::hostent_to_js_response(&mut *addr, global, b""),
+                    )
+                },
+                |node, value| CAresReverse::on_complete(node, value),
+                consume_head,
+            );
         }
     }
 
@@ -4450,64 +4375,45 @@ impl Resolver {
 
         let _guard = self.ref_guard();
 
-        let Some(mut name_info) = result else {
-            // SAFETY: `key.lookup` is the heap-allocated request stored in the
-            // pending-cache slot; consumed via `heap::take` below.
-            unsafe {
-                let mut pending = (*key.lookup).head.next;
-                CAresNameInfo::process_resolve(
-                    ptr::addr_of_mut!((*key.lookup).head),
-                    err,
-                    timeout,
-                    None,
-                );
-                drop(bun_core::heap::take(key.lookup));
-
-                while let Some(value) = pending {
-                    pending = (*value.as_ptr()).next;
-                    CAresNameInfo::process_resolve(value.as_ptr(), err, timeout, None);
-                }
-            }
-            return;
-        };
-
         // SAFETY: `key.lookup` is the heap-allocated request stored in the
-        // pending-cache slot; consumed via `heap::take` below.
+        // pending-cache slot; consumed via `heap::take` in `consume_head`.
         unsafe {
-            let mut pending = (*key.lookup).head.next;
-            let mut prev_global = (*key.lookup).head.global_this();
+            let head = ptr::addr_of_mut!((*key.lookup).head);
+            let consume_head = || drop(bun_core::heap::take(key.lookup));
 
-            let mut array = Outcome::of(
-                prev_global,
-                super::cares_jsc::nameinfo_to_js_response(&mut name_info, prev_global),
+            let Some(mut name_info) = result else {
+                drain_chain_err(
+                    head,
+                    |node| CAresNameInfo::process_resolve(node, err, timeout, None),
+                    consume_head,
+                );
+                return;
+            };
+
+            let head_global = (*head).global_this();
+            let array = Outcome::of(
+                head_global,
+                super::cares_jsc::nameinfo_to_js_response(&mut name_info, head_global),
             );
-            keep_alive(&array);
-            CAresNameInfo::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
-            drop(bun_core::heap::take(key.lookup));
-
-            keep_alive(&array);
-
-            while let Some(value) = pending {
-                let new_global = (*value.as_ptr()).global_this();
-                if !core::ptr::eq(prev_global, new_global) {
-                    array = Outcome::of(
-                        new_global,
-                        super::cares_jsc::nameinfo_to_js_response(&mut name_info, new_global),
-                    );
-                    prev_global = new_global;
-                }
-                pending = (*value.as_ptr()).next;
-
-                keep_alive(&array);
-                CAresNameInfo::on_complete(value.as_ptr(), array);
-                keep_alive(&array);
-            }
+            drain_chain_ok(
+                head,
+                array,
+                head_global,
+                |global| {
+                    Outcome::of(
+                        global,
+                        super::cares_jsc::nameinfo_to_js_response(&mut name_info, global),
+                    )
+                },
+                |node, value| CAresNameInfo::on_complete(node, value),
+                consume_head,
+            );
         }
     }
 
-    pub(crate) fn get_or_put_into_resolve_pending_cache<R: HasPendingCacheKey>(
+    pub(crate) fn get_or_put_into_pending_cache<R: HasPendingCacheKey>(
         &self,
-        key: &R::PendingCacheKey,
+        key: &PendingCacheKey<R>,
         field: PendingCacheField,
     ) -> LookupCacheHit<R> {
         // Dispatch via `HasPendingCacheKey::pending_cache`; the body is
@@ -4518,47 +4424,16 @@ impl Resolver {
         while let Some(index) = inflight_iter.next() {
             // SAFETY: `used` bit is set ⇒ slot was initialized.
             let entry = unsafe { &mut *cache.ptr_at(index) };
-            if R::key_hash(entry) == R::key_hash(key)
-                && R::key_len(entry) == R::key_len(key)
-                && R::key_name(entry) == R::key_name(key)
-            {
+            if entry.hash == key.hash && entry.len == key.len && entry.name == key.name {
                 return LookupCacheHit::Inflight(std::ptr::from_mut(entry));
             }
         }
 
-        if let Some(new) = cache.get_init(R::key_new(key)) {
+        if let Some(new) = cache.get_init(key.unlinked()) {
             return LookupCacheHit::New(new.as_ptr());
         }
 
         LookupCacheHit::Disabled
-    }
-
-    pub(crate) fn get_or_put_into_pending_cache(
-        &self,
-        key: &get_addr_info_request::PendingCacheKey,
-        field: PendingCacheField,
-    ) -> CacheHit {
-        let cache = self.pending_host_cache(field);
-        let mut inflight_iter = cache.used.iter_set();
-
-        while let Some(index) = inflight_iter.next() {
-            // SAFETY: `used` bit is set ⇒ slot was initialized.
-            let entry = unsafe { &mut *cache.ptr_at(index) };
-            if entry.hash == key.hash && entry.len == key.len && entry.name == key.name {
-                return CacheHit::Inflight(std::ptr::from_mut(entry));
-            }
-        }
-
-        if let Some(new) = cache.get_init(get_addr_info_request::PendingCacheKey {
-            hash: key.hash,
-            len: key.len,
-            name: key.name.clone(),
-            lookup: ptr::null_mut(),
-        }) {
-            return CacheHit::New(new.as_ptr());
-        }
-
-        CacheHit::Disabled
     }
 
     pub(crate) fn get_channel(&self) -> ChannelResult<'_> {
@@ -4970,8 +4845,8 @@ impl Resolver {
             }
         };
 
-        let key = get_host_by_addr_info_request::PendingCacheKey::init(ip);
-        let cache = self.get_or_put_into_resolve_pending_cache::<GetHostByAddrInfoRequest>(
+        let key = PendingCacheKey::<GetHostByAddrInfoRequest>::init(ip);
+        let cache = self.get_or_put_into_pending_cache::<GetHostByAddrInfoRequest>(
             &key,
             PendingCacheField::PendingAddrCacheCares,
         );
@@ -5287,10 +5162,9 @@ impl Resolver {
 
         let cache_field = T::CACHE_FIELD; // "pending_{TYPE_NAME}_cache_cares"
 
-        let key = resolve_info_request::PendingCacheKey::<T>::init(name);
+        let key = PendingCacheKey::<ResolveInfoRequest<T>>::init(name);
 
-        let cache =
-            self.get_or_put_into_resolve_pending_cache::<ResolveInfoRequest<T>>(&key, cache_field);
+        let cache = self.get_or_put_into_pending_cache::<ResolveInfoRequest<T>>(&key, cache_field);
         if let LookupCacheHit::Inflight(inflight) = cache {
             // CAresLookup will have the name ownership
             let cares_lookup = CAresLookup::<T>::init(Some(self.as_ctx_ptr()), global_this, name);
@@ -5341,7 +5215,7 @@ impl Resolver {
             }
         };
 
-        let key = get_addr_info_request::PendingCacheKey::init(query);
+        let key = PendingCacheKey::init_query(query);
 
         let cache =
             self.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheCares);
@@ -5850,8 +5724,8 @@ impl Resolver {
         }
         let cache_name: Box<[u8]> = cache_name.into_boxed_slice();
 
-        let key = get_name_info_request::PendingCacheKey::init(&cache_name);
-        let cache = resolver.get_or_put_into_resolve_pending_cache::<GetNameInfoRequest>(
+        let key = PendingCacheKey::<GetNameInfoRequest>::init(&cache_name);
+        let cache = resolver.get_or_put_into_pending_cache::<GetNameInfoRequest>(
             &key,
             PendingCacheField::PendingNameinfoCacheCares,
         );

@@ -123,11 +123,9 @@ SEL WKWebViewConfiguration::s_initWithDirectory;
 SEL WKWebViewConfiguration::s_initWithConfiguration;
 SEL WKWebViewConfiguration::s_setProcessPool;
 
-// One pool for every view, retained for process lifetime. Without an
-// explicit pool each view gets a private WebProcessPool, which spends one
-// CVDisplayLink per display — CoreVideo allows 64 per process, so the
-// 65th lifetime view wedged (oven-sh/bun#40951). Cookies/storage are
-// per-configuration (WKWebsiteDataStore), not per-pool.
+// One pool shared by every view, retained for process lifetime. A private
+// pool per view spends one CVDisplayLink each (CoreVideo allows 64 per
+// process), so the 65th lifetime view wedged (oven-sh/bun#40951).
 id WKWebViewConfiguration::sharedProcessPool()
 {
     static id pool;

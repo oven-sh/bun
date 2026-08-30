@@ -612,10 +612,10 @@ describe("test invalid arguments", () => {
   it("dns.lookupService", async () => {
     expect(() => {
       dns.lookupService("", 443, (err, hostname, service) => {});
-    }).toThrow("Expected address to be a non-empty string for 'lookupService'.");
+    }).toThrow("The argument 'address' is invalid. Received ''");
     expect(() => {
       dns.lookupService("google.com", 443, (err, hostname, service) => {});
-    }).toThrow(`The "address" argument is invalid. Received type string ('google.com')`);
+    }).toThrow("The argument 'address' is invalid. Received 'google.com'");
   });
 });
 
@@ -733,14 +733,17 @@ describe("dns.lookupService", () => {
   });
 });
 
-// Deprecated reference: https://nodejs.org/api/deprecations.html#DEP0118
-describe("lookup deprecated behavior", () => {
-  it.each([undefined, false, null, NaN, ""])("dns.lookup", domain => {
-    dns.lookup(domain, (error, address, family) => {
-      expect(error).toBeNull();
-      expect(address).toBeNull();
-      expect(family).toBe(4);
-    });
+// node 26 removed DEP0118: an empty hostname is now rejected outright.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/dns.js#L180
+describe("lookup with an empty hostname", () => {
+  it.each([undefined, false, null, NaN, ""])("dns.lookup(%p) throws", domain => {
+    expect(() => dns.lookup(domain, () => {})).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+  });
+
+  it.each([undefined, false, null, NaN, ""])("dns.promises.lookup(%p) rejects", async domain => {
+    await expect(dns.promises.lookup(domain)).rejects.toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
   });
 });
 
@@ -768,9 +771,14 @@ describe("uses `dns.promises` implementations for `util.promisify` factory", () 
   });
 
   it("util.promisify(dns.lookup) acts like dns.promises.lookup", async () => {
-    // Use a name that resolves locally: a public name with several A records
-    // behind round-robin DNS can return a different first address per call.
-    expect(await util.promisify(dns.lookup)("localhost")).toEqual(await dns.promises.lookup("localhost"));
+    // An IP literal short-circuits the resolver, so this stays deterministic. A
+    // real hostname can round-robin between answers and make the two calls
+    // disagree for reasons that have nothing to do with promisify.
+    const promisified = await util.promisify(dns.lookup)("127.0.0.1");
+    // The callback form yields (err, address, family); only the promises
+    // implementation resolves to an object.
+    expect(promisified).toEqual({ address: "127.0.0.1", family: 4 });
+    expect(promisified).toEqual(await dns.promises.lookup("127.0.0.1"));
   });
 });
 

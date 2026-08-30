@@ -10,7 +10,14 @@ const {
 } = require("internal/validators");
 const { resistStopPropagation, ErrnoException } = require("internal/shared");
 const { MIMEType, MIMEParams } = require("internal/util/mime");
-const { deprecate } = require("internal/util/deprecate");
+const { deprecate: internalDeprecate } = require("internal/util/deprecate");
+
+// Public util.deprecate API. Node takes modifyPrototype as an option bag here
+// and as a positional argument internally.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/util.js#L586
+function deprecate(fn, msg, code, { modifyPrototype } = { __proto__: null }) {
+  return internalDeprecate(fn, msg, code, modifyPrototype);
+}
 
 const internalErrorName = $newRustFunction("node_util_binding.rs", "internalErrorName", 1);
 const internalErrorEntries = $newRustFunction("node_util_binding.rs", "internalErrorEntries", 0);
@@ -31,9 +38,9 @@ function isFunction(value) {
   return typeof value === "function";
 }
 
-// Node semantics (includes the [[Prototype]] identity check Bun.deepEquals omits) plus the
-// skipPrototype third argument, which is public API in node v26.3.0 (fn.length === 3).
-// https://github.com/nodejs/node/blob/main/lib/internal/util/comparisons.js
+// Node semantics: includes the [[Prototype]] identity check Bun.deepEquals omits,
+// plus the public skipPrototype third arg (fn.length === 3 in node v26.3.0,
+// asserted by upstream test-util-isDeepStrictEqual.js).
 const { isDeepStrictEqual } = require("internal/util/comparisons");
 
 const parseArgs = $newRustFunction("parse_args.rs", "parseArgs", 1);

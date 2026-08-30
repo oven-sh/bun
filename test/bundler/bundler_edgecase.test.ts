@@ -252,6 +252,44 @@ describe("bundler", () => {
       stdout: "1",
     },
   });
+  itBundled("edgecase/PrettyStatementSpacing", {
+    files: {
+      "/entry.js": /* js */ `
+        import "side";
+        import { a } from "named";
+        import * as ns from "star";
+        for (let i = 0; i < 3; i++) console.log(a, ns, i);
+        for (;;) break;
+      `,
+    },
+    external: ["side", "named", "star"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain(`import "side";\n`);
+      expect(out).toContain(`import { a } from "named";\n`);
+      expect(out).toContain(`import * as ns from "star";\n`);
+      expect(out).toContain(`for (let i = 0; i < 3; i++)\n`);
+      expect(out).toContain(`for (; ; )\n`);
+    },
+  });
+  itBundled("edgecase/PrettyStatementSpacingMinified", {
+    files: {
+      "/entry.js": /* js */ `
+        import "side";
+        import { a } from "named";
+        import * as ns from "star";
+        for (let i = 0; i < 3; i++) console.log(a, ns, i);
+        for (;;) break;
+      `,
+    },
+    external: ["side", "named", "star"],
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain(`import"side";import{a}from"named";import*as ns from"star";`);
+      expect(out).toContain(`for(let i=0;i<3;i++)console.log(a,ns,i);for(;;)break;`);
+    },
+  });
   itBundled("edgecase/ValidLoaderSeenAsInvalid", {
     files: {
       "/entry.js": /* js */ `console.log(1)`,

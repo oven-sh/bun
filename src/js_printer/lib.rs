@@ -5619,9 +5619,12 @@ pub(crate) mod __gated_printer {
 
                     self.print_whitespacer(ws!(b"export {"));
 
+                    // `export {} from "x"` stays `{}`, like SExportClause above.
+                    let has_items = !slice_of(s.items).is_empty();
+
                     if !s.is_single_line {
                         self.indent();
-                    } else {
+                    } else if has_items {
                         self.print_space();
                     }
 
@@ -5643,7 +5646,7 @@ pub(crate) mod __gated_printer {
                         self.unindent();
                         self.print_newline();
                         self.print_indent();
-                    } else {
+                    } else if has_items {
                         self.print_space();
                     }
 
@@ -5829,6 +5832,7 @@ pub(crate) mod __gated_printer {
                     }
 
                     self.print(b";");
+                    self.print_space();
 
                     if let Some(test) = &s.test {
                         self.print_expr(*test, Level::Lowest, ExprFlag::none());
@@ -6077,6 +6081,8 @@ pub(crate) mod __gated_printer {
                             self.print(b" ");
                         }
                         self.print_whitespacer(ws!(b"from "));
+                    } else {
+                        self.print_space();
                     }
 
                     self.print_import_record_path(record);

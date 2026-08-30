@@ -10,8 +10,8 @@ use crate::lexer as js_lexer;
 use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
     ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
-    Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, VisitArgsOpts,
-    VisitDeclOpts, is_eval_or_arguments,
+    Ref, RelocateVarsMode, RequireUnwrap, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap,
+    VisitArgsOpts, VisitDeclOpts, is_eval_or_arguments,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast as js_ast;
@@ -257,8 +257,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn visit_decls<const IS_POSSIBLY_DECL_TO_REMOVE: bool>(
         &mut self,
         decls: &mut [G::Decl],
-        was_const: bool,
+        kind: LocalKind,
+        is_export: bool,
     ) -> usize {
+        let was_const = kind == LocalKind::KConst;
+        let require_unwrap = if kind.is_using() {
+            RequireUnwrap::Disabled
+        } else if is_export {
+            RequireUnwrap::Namespace
+        } else {
+            RequireUnwrap::IntoDecl
+        };
         let mut j: usize = 0;
         // Iterate by index so kept entries can be written back through `decls[j]`
         // while scanning ahead.
@@ -335,7 +344,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.visit_expr_in_out(
                     &mut val,
                     ExprIn {
-                        is_immediately_assigned_to_decl: true,
+                        require_unwrap,
                         ..Default::default()
                     },
                 );

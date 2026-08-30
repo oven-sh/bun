@@ -9,7 +9,8 @@ use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
     ExprIn, FnOrArrowDataVisit, IdentifierOpts, PrependTempRefsOpts, ReactRefresh, Ref,
-    StrictModeFeature, ThenCatchChain, TransposeState, VisitArgsOpts, float_to_int32, prefill,
+    RequireUnwrap, StrictModeFeature, ThenCatchChain, TransposeState, VisitArgsOpts,
+    float_to_int32, prefill,
 };
 use crate::scan::scan_side_effects::SideEffects;
 use bun_alloc::ArenaVecExt as _;
@@ -2013,8 +2014,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if e_.args.len_u32() == 1 {
                 let first = e_.args.slice()[0];
                 let state = TransposeState {
-                    is_require_immediately_assigned_to_decl: in_.is_immediately_assigned_to_decl
-                        && matches!(first.data, Data::EString(..)),
+                    require_unwrap: match in_.require_unwrap {
+                        // Only a string literal can take over the declaration.
+                        RequireUnwrap::IntoDecl if !matches!(first.data, Data::EString(..)) => {
+                            RequireUnwrap::Namespace
+                        }
+                        mode => mode,
+                    },
                     ..Default::default()
                 };
                 match &first.data {

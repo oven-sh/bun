@@ -684,11 +684,23 @@ pub struct VisitDeclOpts {
     pub(crate) could_be_macro: bool,
 }
 
+/// What a `require()` of a package on the CommonJS unwrap list becomes at the visited position.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum RequireUnwrap {
+    /// A reference to the namespace of the `import * as ns` it becomes.
+    #[default]
+    Namespace,
+    /// `const x = require("pkg")`: the import takes over `x` and `visit_decls` drops the declarator.
+    IntoDecl,
+    /// Stays a plain `require()`, as inside a try/catch: `using` disposes the required value itself.
+    Disabled,
+}
+
 #[derive(Clone, Copy)]
 pub struct TransposeState {
     pub(crate) is_await_target: bool,
     pub(crate) is_then_catch_target: bool,
-    pub(crate) is_require_immediately_assigned_to_decl: bool,
+    pub(crate) require_unwrap: RequireUnwrap,
     pub(crate) loc: bun_ast::Loc,
     pub(crate) import_record_tag: Option<bun_ast::ImportRecordTag>,
     pub(crate) import_loader: Option<bun_ast::Loader>,
@@ -700,7 +712,7 @@ impl Default for TransposeState {
         Self {
             is_await_target: false,
             is_then_catch_target: false,
-            is_require_immediately_assigned_to_decl: false,
+            require_unwrap: RequireUnwrap::Namespace,
             loc: bun_ast::Loc::EMPTY,
             import_record_tag: None,
             import_loader: None,
@@ -998,9 +1010,8 @@ pub struct ExprIn {
     /// tests.
     pub(crate) assign_target: js_ast::AssignTarget,
 
-    /// Currently this is only used when unwrapping a call to `require()`
-    /// with `__toESM()`.
-    pub(crate) is_immediately_assigned_to_decl: bool,
+    /// Set by `visit_decls` when the expression initializes a declarator.
+    pub(crate) require_unwrap: RequireUnwrap,
 
     pub(crate) property_access_for_method_call_maybe_should_replace_with_undefined: bool,
 }

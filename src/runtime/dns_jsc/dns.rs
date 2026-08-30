@@ -3212,10 +3212,8 @@ pub mod internal {
         // touched under `global_cache().lock()`, which is held here.
         unsafe {
             if (*request).result.is_some() {
-                // Already answered (cache hit, or answered inline): the socket goes on
-                // the loop's dns_ready_head. Wake the loop too, as a worker would,
-                // because this may run inside that list's drain (a connect made from a
-                // connect-error callback) and nothing else would poll it again.
+                // Wakes the loop: this can run inside the dns_ready_head drain (a connect
+                // made from a connect-error callback), after the list was taken.
                 query.notify_threadsafe(request);
                 return;
             }
@@ -5175,9 +5173,6 @@ impl Resolver {
         options: GetAddrInfoOptions,
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
-        // A name no resolver could answer is ENOTFOUND here, not after a round trip.
-        // This also keeps the name inside the fixed `PathBuffer` the system backends
-        // copy it into.
         if !bun_dns::is_valid_hostname(name) {
             let mut promise = JSPromiseStrong::init(global_this);
             let promise_value = promise.value();

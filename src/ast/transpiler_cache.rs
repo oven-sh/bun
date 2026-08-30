@@ -61,7 +61,7 @@ impl RuntimeTranspilerCache {
     ///
     /// Centralises the raw-pointer obligation so the two public entry
     /// points below stay safe.
-    /// `this` is always derived from a live `&self` / `&mut self` in those
+    /// `this` is always derived from a live `&mut self` in those
     /// callers and the returned `Copy` handle is consumed immediately, so
     /// the `link_interface!` liveness contract (owner valid for every
     /// dispatch through the handle) is upheld.

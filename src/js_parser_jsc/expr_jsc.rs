@@ -32,7 +32,7 @@ pub fn to_js_error(e: ToJSError, global: &JSGlobalObject) -> JsError {
     }
 }
 
-/// Extension trait providing `Expr.toJS` / `Expr::Data.toJS` as method syntax.
+/// Extension trait providing `Expr.toJS` as method syntax.
 /// `Expr` lives in `bun_js_parser` (lower tier, no JSC dep), so an inherent
 /// `impl Expr { fn to_js }` is forbidden by orphan rules. Mirrors the
 /// `StringJsc` pattern in `bun_jsc` — callers `use bun_js_parser_jsc::ExprJsc`

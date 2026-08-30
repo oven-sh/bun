@@ -227,6 +227,7 @@ fn print_elapsed() {
 
 pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result<()> {
     let quiet = manager.options.log_level == LogLevel::Silent;
+    let json = manager.options.json_output;
     let dry_run = manager.options.dry_run;
 
     let configured_linker = manager.options.node_linker;
@@ -262,7 +263,9 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
     let store_present = match Dir::open(ROOT_DIR) {
         Ok(node_modules) => lstat_kind(&node_modules, b".bun") == EntryKind::Directory,
         Err(err) if err.get_errno() == E::ENOENT => {
-            if !quiet {
+            if json {
+                print_json(&Plan::default(), None);
+            } else if !quiet {
                 Output::flush();
                 bun_core::pretty!(
                     "<r><green>Done<r>! No node_modules folder <d>(nothing to prune)<r> "
@@ -304,7 +307,9 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
     let n = plan.removals.len();
     let checked = plan.checked;
     if n == 0 {
-        if !quiet {
+        if json {
+            print_json(&plan, None);
+        } else if !quiet {
             let folders = plan
                 .folders
                 .iter()
@@ -322,13 +327,15 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
         return Ok(());
     }
 
-    if !quiet {
+    if !quiet || json {
         plan.resolve_versions();
         plan.sort_rows();
     }
 
     if dry_run {
-        if !quiet {
+        if json {
+            print_json(&plan, None);
+        } else if !quiet {
             for removal in &plan.removals {
                 plan.print_row(removal);
             }
@@ -345,10 +352,13 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
         return Ok(());
     }
 
-    let failed = execute(&plan, quiet);
+    let removed_rows = execute(&plan, quiet || json);
     housekeeping(&plan, layout, manager);
+    let failed = n - removed_rows.count();
 
-    if !quiet {
+    if json {
+        print_json(&plan, Some(&removed_rows));
+    } else if !quiet {
         Output::flush();
         let removed = n - failed;
         bun_core::pretty!("<r><b>{}<r> package{} removed", removed, plural(removed));
@@ -409,6 +419,53 @@ fn print_apply_hint() {
         bun_core::pretty!(" {}", BStr::new(arg));
     }
     bun_core::pretty!("<r>\n");
+    Output::flush();
+}
+
+/// `--json`: one object per row the text output prints; `removed_rows` is `None` unless entries were deleted.
+fn print_json(plan: &Plan, removed_rows: Option<&DynamicBitSet>) {
+    fn json_str(s: &[u8]) -> bun_core::fmt::JSONFormatterUTF8<'_> {
+        bun_core::fmt::format_json_string_utf8(s, Default::default())
+    }
+
+    let mut out: Vec<u8> = Vec::with_capacity(plan.removals.len() * 128 + 64);
+    out.extend_from_slice(b"{\n  \"removed\": [");
+    let mut written = 0usize;
+    for (i, removal) in plan.removals.iter().enumerate() {
+        if removed_rows.is_some_and(|rows| !rows.is_set(i)) {
+            continue;
+        }
+        if written > 0 {
+            out.push(b',');
+        }
+        written += 1;
+        let _ = write!(
+            out,
+            "\n    {{\n      \"name\": {},\n      \"version\": ",
+            json_str(&removal.alias)
+        );
+        match &removal.version {
+            Some(version) => {
+                let _ = write!(out, "{}", json_str(version));
+            }
+            None => out.extend_from_slice(b"null"),
+        }
+        let mut path = plan.path(removal);
+        bun_paths::resolve_path::platform_to_posix_in_place(&mut path[..]);
+        let _ = write!(out, ",\n      \"path\": {}\n    }}", json_str(&path));
+    }
+    if written > 0 {
+        out.extend_from_slice(b"\n  ");
+    }
+    let failed = removed_rows.map_or(0, |rows| plan.removals.len() - rows.count());
+    let _ = write!(
+        out,
+        "],\n  \"checked\": {},\n  \"failed\": {}\n}}\n",
+        plan.checked, failed
+    );
+
+    Output::flush();
+    let _ = Output::writer().write_all(&out);
     Output::flush();
 }
 
@@ -1762,11 +1819,12 @@ fn remove_link(dir: &Dir, name: &[u8]) -> sys::Maybe<()> {
     result
 }
 
-fn execute(plan: &Plan, quiet: bool) -> usize {
-    let mut failed = 0usize;
+// Returns the indices into `plan.removals` that were removed; the rest failed.
+fn execute(plan: &Plan, quiet: bool) -> DynamicBitSet {
+    let mut removed_rows = handle_oom(DynamicBitSet::init_empty(plan.removals.len()));
     let mut removed_from = handle_oom(DynamicBitSet::init_empty(plan.folders.len()));
 
-    for removal in &plan.removals {
+    for (i, removal) in plan.removals.iter().enumerate() {
         let dir = plan.dir(removal.folder);
         let result = match removal.kind {
             EntryKind::SymLink => remove_link(dir, &removal.name),
@@ -1784,13 +1842,13 @@ fn execute(plan: &Plan, quiet: bool) -> usize {
                         BStr::new(err.msg().unwrap_or(b"unknown error")),
                     ),
                 );
-                failed += 1;
                 continue;
             }
         }
         if !quiet {
             plan.print_row(removal);
         }
+        removed_rows.set(i);
         removed_from.set(removal.folder);
     }
 
@@ -1804,7 +1862,7 @@ fn execute(plan: &Plan, quiet: bool) -> usize {
         rmdir(plan.dir(parent), plan.scope_name(idx, parent));
     }
 
-    failed
+    removed_rows
 }
 
 fn rmdir(dir: &Dir, name: &[u8]) {

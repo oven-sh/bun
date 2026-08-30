@@ -167,13 +167,19 @@ complete -c bun \
 	-n "__fish_seen_subcommand_from dedupe" -l 'check' -d 'Exit with code 1 if the lockfile has duplicate versions that can be removed, without changing anything'
 
 complete -c bun \
+	-n "__fish_seen_subcommand_from dedupe" -l 'json' -d 'Output in JSON format' -f
+
+complete -c bun \
 	-n "__fish_seen_subcommand_from add" -d 'Popular' -a '(__fish__get_bun_packages)'
 
 complete -c bun \
 	-n "__fish_seen_subcommand_from add" -d 'History' -a '(__history_completions)'
 
 complete -c bun \
-	-n "__fish_seen_subcommand_from pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) cache;" -a 'bin ls licenses cache hash hash-print hash-string' -f
+	-n "__fish_seen_subcommand_from pm; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) cache;" -a 'pack bin ls why diff licenses whoami view version pkg hash hash-print hash-string cache migrate scan untrusted trust default-trusted' -f
+
+complete -c bun \
+	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from pack bin ls why diff whoami view cache hash hash-print scan untrusted default-trusted version" -l 'json' -d 'Output in JSON format' -f
 
 complete -c bun \
 	-n "__fish_seen_subcommand_from pm; and __fish_seen_subcommand_from cache; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts);" -a 'rm' -f
@@ -210,6 +216,7 @@ complete -c bun -n "__fish_use_subcommand" -a "unlink" -d "Unregister a local np
 complete -c bun -n "__fish_use_subcommand" -a "pm" -d "Additional package management utilities" -f
 complete -c bun -n "__fish_use_subcommand" -a "x" -d "Execute a package binary, installing if needed" -f
 complete -c bun -n "__fish_use_subcommand" -a "outdated" -d "Display the latest versions of outdated dependencies" -f
+complete -c bun -n "__fish_seen_subcommand_from outdated" -l "json" -d "Output in JSON format" -f
 complete -c bun -n "__fish_use_subcommand" -a "audit" -d "Check installed packages for vulnerabilities" -f
 complete -c bun -n "__fish_use_subcommand" -a "dedupe" -d "Remove duplicate versions from the lockfile" -f
 complete -c bun -n "__fish_use_subcommand" -a "prune" -d "Remove packages that are not in the lockfile from node_modules" -f
@@ -228,6 +235,7 @@ complete -c bun -n "__fish_seen_subcommand_from prune" -l "cpu" -r -d "Prune for
 complete -c bun -n "__fish_seen_subcommand_from prune" -l "linker" -r -a "isolated hoisted" -d "Prune a node_modules installed with the given linker" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -s "F" -l "filter" -r -d "Prune only the matching workspaces" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -l "silent" -d "Don't log anything" -f
+complete -c bun -n "__fish_seen_subcommand_from prune" -l "json" -d "Output in JSON format" -f
 complete -c bun -n "__fish_seen_subcommand_from audit prune" -l "cwd" -r -d "Set a specific cwd"
 complete -c bun -n "__fish_use_subcommand" -a "update" -d "Update dependencies to their latest versions" -f
 complete -c bun -n "__fish_seen_subcommand_from update" -s "p" -l "production" -d "Only update dependencies and optionalDependencies" -f
@@ -249,6 +257,7 @@ complete -c bun -n "__fish_seen_subcommand_from update" -l "no-cache" -d "Ignore
 complete -c bun -n "__fish_seen_subcommand_from update" -l "silent" -d "Don't log anything" -f
 complete -c bun -n "__fish_seen_subcommand_from update" -l "verbose" -d "Excessively verbose logging" -f
 complete -c bun -n "__fish_use_subcommand" -a "publish" -d "Publish your package from local to npm" -f
+complete -c bun -n "__fish_seen_subcommand_from publish" -l "json" -d "Output in JSON format" -f
 complete -c bun -n "__fish_use_subcommand" -a "repl" -d "Start a REPL session with Bun" -f
 complete -c bun -n "__fish_seen_subcommand_from repl" -s "e" -l "eval" -r -d "Evaluate argument as a script, then exit" -f
 complete -c bun -n "__fish_seen_subcommand_from repl" -s "p" -l "print" -r -d "Evaluate argument as a script, print the result, then exit" -f

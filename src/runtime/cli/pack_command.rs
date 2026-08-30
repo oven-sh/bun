@@ -184,6 +184,21 @@ impl<'a> Context<'a> {
         }
         bun_core::pretty!("{}\n", path);
     }
+
+    fn pack_json(&self, tarball: Option<TarballDigest>, files: PackList) -> PackJson {
+        PackJson {
+            unpacked_size: self.stats.unpacked_size,
+            total_files: self.stats.total_files,
+            tarball,
+            files,
+            bundled: self
+                .bundled_deps
+                .iter()
+                .filter(|dep| dep.was_packed)
+                .map(|dep| dep.name.clone())
+                .collect(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -191,6 +206,22 @@ pub struct BundledDep {
     pub name: Box<[u8]>,
     pub(crate) was_packed: bool,
     pub(crate) from_root_package_json: bool,
+}
+
+/// The data behind the `--json` document; `bun publish` keeps it in its context to print after uploading.
+pub(crate) struct PackJson {
+    pub(crate) unpacked_size: usize,
+    pub(crate) total_files: usize,
+    /// `None` with `--dry-run`: no tarball is built, so there is nothing to size or hash.
+    pub(crate) tarball: Option<TarballDigest>,
+    pub(crate) files: PackList,
+    pub(crate) bundled: Vec<Box<[u8]>>,
+}
+
+pub(crate) struct TarballDigest {
+    pub(crate) size: usize,
+    pub(crate) shasum: [u8; sha::SHA1::DIGEST],
+    pub(crate) integrity: [u8; sha::SHA512::DIGEST],
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -206,6 +237,7 @@ impl PackCommand {
 
         if manager.options.log_level != LogLevel::Silent
             && manager.options.log_level != LogLevel::Quiet
+            && !manager.options.json_output
         {
             bun_core::prettyln!(
                 "<r><b>bun pack <r><d>v{}<r>",
@@ -371,11 +403,13 @@ const DEFAULT_IGNORE_PATTERNS: &[(&[u8], bool)] = &[
     (b"bunfig.toml", true),
 ];
 
-struct PackListEntry {
-    subpath: ZBox, // owned NUL-terminated path
-    size: usize,
+pub(crate) struct PackListEntry {
+    pub(crate) subpath: Box<[u8]>,
+    pub(crate) size: usize,
+    /// Permission bits of the tar entry (no file type bits).
+    pub(crate) mode: bun_sys::Mode,
 }
-type PackList = Vec<PackListEntry>;
+pub(crate) type PackList = Vec<PackListEntry>;
 
 pub(crate) struct PackQueueItem {
     path: ZBox, // owned `[:0]const u8`; allocated via `entry_subpath`
@@ -2009,6 +2043,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     // `Publish::Context`.
     let manager_ptr: *mut PackageManager = &raw mut *ctx.manager;
     let log_level = ctx.manager.options.log_level;
+    let json_output = ctx.manager.options.json_output;
     let bump = pack_bump();
     // Note: `workspace_package_json_cache` and `log` are disjoint fields on
     // `PackageManager`; route through raw-pointer field projections so the
@@ -2392,43 +2427,49 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     if opt_dry_run(ctx.manager) {
         // don't create the tarball, but run scripts if they exist
 
-        print_archived_files_and_packages::<true>(
+        let pack_list = dry_run_pack_list(
             ctx,
             &root_dir,
-            PackListOrQueue::Queue(&mut pack_queue),
-            0,
+            &mut pack_queue,
+            &mut bundled_pack_queue,
+            &bins,
+            edited_package_json.len(),
         );
 
-        if !FOR_PUBLISH {
-            if opt_pack_destination(ctx.manager).is_empty()
-                && opt_pack_filename(ctx.manager).is_empty()
-            {
-                Context::print_tarball_path(
-                    fmt_tarball_filename(
+        if !json_output {
+            print_archived_files_and_packages(ctx, &pack_list);
+
+            if !FOR_PUBLISH {
+                if opt_pack_destination(ctx.manager).is_empty()
+                    && opt_pack_filename(ctx.manager).is_empty()
+                {
+                    Context::print_tarball_path(
+                        fmt_tarball_filename(
+                            package_name,
+                            package_version,
+                            TarballNameStyle::Normalize,
+                        ),
+                        log_level,
+                    );
+                } else {
+                    let mut dest_buf = PathBuffer::uninit();
+                    let (abs_tarball_dest, _) = tarball_destination(
+                        opt_pack_destination(ctx.manager),
+                        opt_pack_filename(ctx.manager),
+                        abs_workspace_path,
                         package_name,
                         package_version,
-                        TarballNameStyle::Normalize,
-                    ),
-                    log_level,
-                );
-            } else {
-                let mut dest_buf = PathBuffer::uninit();
-                let (abs_tarball_dest, _) = tarball_destination(
-                    opt_pack_destination(ctx.manager),
-                    opt_pack_filename(ctx.manager),
-                    abs_workspace_path,
-                    package_name,
-                    package_version,
-                    &mut dest_buf[..],
-                );
-                Context::print_tarball_path(
-                    bstr::BStr::new(abs_tarball_dest.as_bytes()),
-                    log_level,
-                );
+                        &mut dest_buf[..],
+                    );
+                    Context::print_tarball_path(
+                        bstr::BStr::new(abs_tarball_dest.as_bytes()),
+                        log_level,
+                    );
+                }
             }
-        }
 
-        Context::print_summary(ctx.stats, None, None, log_level);
+            Context::print_summary(ctx.stats, None, None, log_level);
+        }
 
         if let Some(postpack_script_str) = &postpack_script {
             run_lifecycle_script(
@@ -2440,6 +2481,8 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 ctx.manager.options.log_level == LogLevel::Silent,
             )?;
         }
+
+        let pack_json = ctx.pack_json(None, pack_list);
 
         if FOR_PUBLISH {
             let mut dest_buf = PathBuffer::uninit();
@@ -2464,14 +2507,19 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 command_ctx: unsafe { &mut *std::ptr::from_mut(ctx.command_ctx) },
                 package_name: package_name.into(),
                 package_version: package_version.into(),
-                abs_tarball_path: ZStr::boxed(abs_tarball_dest.as_bytes()),
+                abs_tarball_path: ZBox::from_bytes(abs_tarball_dest.as_bytes()),
                 tarball_bytes: Box::new([]),
                 uses_workspaces: false,
                 publish_script,
                 postpublish_script,
                 script_env: Some(this_transpiler.env_mut()),
                 normalized_pkg_info: Box::new([]),
+                pack_json,
             }));
+        }
+
+        if json_output {
+            print_json(package_name, package_version, None, &pack_json);
         }
 
         return Ok(None);
@@ -2579,8 +2627,8 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         _ => {}
     }
 
-    // append removed items from `pack_queue` with their file size
-    let mut pack_list: PackList = Vec::new();
+    // package.json, then the items removed from `pack_queue`. Bundled dependency files are not listed.
+    let mut pack_list: PackList = Vec::with_capacity(pack_queue.count() + 1);
 
     let mut read_buf = [0u8; 8192];
     let mut file_reader: Box<BufferedFileReader> =
@@ -2603,7 +2651,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         // uses below, so call `complete_one()` explicitly at every loop-body
         // exit and `end()` once after the loops.
 
-        entry = archive_package_json(
+        let (cleared_entry, package_json_perm) = archive_package_json(
             ctx,
             // SAFETY: `archive` is the non-null `*mut Archive` returned by
             // `Archive::write_new()` above; only this thread accesses it.
@@ -2612,6 +2660,12 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             &root_dir,
             &edited_package_json,
         )?;
+        entry = cleared_entry;
+        pack_list.push(PackListEntry {
+            subpath: Box::from(&b"package.json"[..]),
+            size: edited_package_json.len(),
+            mode: package_json_perm,
+        });
         if log_level.show_progress() {
             node.as_mut()
                 .expect("infallible: progress active")
@@ -2673,9 +2727,14 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 }
             };
 
+            let perm = tar_entry_perm(
+                stat.st_mode as bun_sys::Mode,
+                is_package_bin(&bins, item.path.as_bytes()),
+            );
             pack_list.push(PackListEntry {
-                subpath: ZBox::from_bytes(item.path.as_bytes()),
+                subpath: item.path.as_bytes().into(),
                 size: usize::try_from(stat.st_size).expect("int cast"),
+                mode: perm,
             });
 
             entry = add_archive_entry(
@@ -2690,7 +2749,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 unsafe { &mut *archive },
                 entry,
                 &mut print_buf,
-                &bins,
+                perm,
             )?;
 
             if log_level.show_progress() {
@@ -2745,7 +2804,10 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 unsafe { &mut *archive },
                 entry,
                 &mut print_buf,
-                &bins,
+                tar_entry_perm(
+                    stat.st_mode as bun_sys::Mode,
+                    is_package_bin(&bins, item.path.as_bytes()),
+                ),
             )?;
 
             if log_level.show_progress() {
@@ -2889,33 +2951,40 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         None
     };
 
-    print_archived_files_and_packages::<false>(
-        ctx,
-        &root_dir,
-        PackListOrQueue::List(&pack_list),
-        edited_package_json.len(),
-    );
+    if !json_output {
+        print_archived_files_and_packages(ctx, &pack_list);
 
-    if !FOR_PUBLISH {
-        if opt_pack_destination(ctx.manager).is_empty() && opt_pack_filename(ctx.manager).is_empty()
-        {
-            Context::print_tarball_path(
-                fmt_tarball_filename(package_name, package_version, TarballNameStyle::Normalize),
-                log_level,
-            );
-        } else {
-            Context::print_tarball_path(bstr::BStr::new(abs_tarball_dest.as_bytes()), log_level);
+        if !FOR_PUBLISH {
+            if opt_pack_destination(ctx.manager).is_empty()
+                && opt_pack_filename(ctx.manager).is_empty()
+            {
+                Context::print_tarball_path(
+                    fmt_tarball_filename(
+                        package_name,
+                        package_version,
+                        TarballNameStyle::Normalize,
+                    ),
+                    log_level,
+                );
+            } else {
+                Context::print_tarball_path(
+                    bstr::BStr::new(abs_tarball_dest.as_bytes()),
+                    log_level,
+                );
+            }
         }
-    }
 
-    Context::print_summary(ctx.stats, Some(&shasum), Some(&integrity), log_level);
+        Context::print_summary(ctx.stats, Some(&shasum), Some(&integrity), log_level);
+    }
 
     if FOR_PUBLISH {
         Output::flush();
     }
 
     if let Some(postpack_script_str) = &postpack_script {
-        bun_core::pretty!("\n");
+        if !json_output {
+            bun_core::pretty!("\n");
+        }
         run_lifecycle_script(
             ctx.command_ctx,
             postpack_script_str,
@@ -2925,6 +2994,15 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             ctx.manager.options.log_level == LogLevel::Silent,
         )?;
     }
+
+    let pack_json = ctx.pack_json(
+        Some(TarballDigest {
+            size: ctx.stats.packed_size,
+            shasum,
+            integrity,
+        }),
+        pack_list,
+    );
 
     if FOR_PUBLISH {
         return Ok(Some(Publish::Context {
@@ -2937,14 +3015,31 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             command_ctx: unsafe { &mut *std::ptr::from_mut(ctx.command_ctx) },
             package_name: package_name.into(),
             package_version: package_version.into(),
-            abs_tarball_path: ZStr::boxed(abs_tarball_dest.as_bytes()),
+            abs_tarball_path: ZBox::from_bytes(abs_tarball_dest.as_bytes()),
             tarball_bytes: tarball_bytes.unwrap_or_default().into_boxed_slice(),
             uses_workspaces: false,
             publish_script,
             postpublish_script,
             script_env: Some(this_transpiler.env_mut()),
             normalized_pkg_info: normalized_pkg_info.unwrap_or_default(),
+            pack_json,
         }));
+    }
+
+    if json_output {
+        // `--filename` is used verbatim, so it can be relative to the cwd `PackageManager::init` entered.
+        let mut abs_buf = PathBuffer::uninit();
+        let abs_tarball_path = resolve_path::join_abs_string_buf::<resolve_path::platform::Auto>(
+            bun_resolver::fs::FileSystem::instance().top_level_dir,
+            &mut abs_buf,
+            &[abs_tarball_dest.as_bytes()],
+        );
+        print_json(
+            package_name,
+            package_version,
+            Some(abs_tarball_path),
+            &pack_json,
+        );
     }
 
     Ok(None)
@@ -3151,7 +3246,7 @@ fn archive_package_json(
     entry: *mut ArchiveEntry,
     root_dir: &Dir,
     edited_package_json: &[u8],
-) -> Result<*mut ArchiveEntry, AllocError> {
+) -> Result<(*mut ArchiveEntry, bun_sys::Mode), AllocError> {
     // `entry` is the same pointer after `.clear()`.
     let entry = ArchiveEntry::opaque_ref(entry);
     let stat = match bun_sys::fstatat(Fd::from_std_dir(root_dir), bun_core::zstr!("package.json")) {
@@ -3170,7 +3265,8 @@ fn archive_package_json(
     entry.set_size(i64::try_from(edited_package_json.len()).expect("int cast"));
     // https://github.com/libarchive/libarchive/blob/898dc8319355b7e985f68a9819f182aaed61b53a/libarchive/archive_entry.h#L185
     entry.set_filetype(0o100000);
-    entry.set_perm(stat.st_mode as bun_sys::Mode);
+    let perm = tar_entry_perm(stat.st_mode as bun_sys::Mode, false);
+    entry.set_perm(perm);
     // '1985-10-26T08:15:00.000Z'
     // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L28
     entry.set_mtime(499162500, 0);
@@ -3192,7 +3288,14 @@ fn archive_package_json(
     ctx.stats.unpacked_size +=
         usize::try_from(archive.write_data(edited_package_json)).expect("int cast");
 
-    Ok(entry.clear())
+    Ok((entry.clear(), perm))
+}
+
+/// Permission bits of a tar entry: the file's mode bits, made executable when the file is a package bin.
+fn tar_entry_perm(st_mode: bun_sys::Mode, is_bin: bool) -> bun_sys::Mode {
+    let perm = st_mode & 0o7777;
+    // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L20
+    if is_bin { perm | 0o111 } else { perm }
 }
 
 fn add_archive_entry(
@@ -3205,7 +3308,7 @@ fn add_archive_entry(
     archive: &mut Archive,
     entry: *mut ArchiveEntry,
     print_buf: &mut Vec<u8>,
-    bins: &[BinInfo],
+    perm: bun_sys::Mode,
 ) -> Result<*mut ArchiveEntry, AllocError> {
     // `entry` is the same pointer after `.clear()`.
     let entry = ArchiveEntry::opaque_ref(entry);
@@ -3229,12 +3332,6 @@ fn add_archive_entry(
 
     // https://github.com/libarchive/libarchive/blob/898dc8319355b7e985f68a9819f182aaed61b53a/libarchive/archive_entry.h#L185
     entry.set_filetype(0o100000);
-
-    let mut perm: bun_sys::Mode = stat.st_mode as bun_sys::Mode;
-    // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L20
-    if is_package_bin(bins, filename.as_bytes()) {
-        perm |= 0o111;
-    }
     entry.set_perm(perm);
 
     // '1985-10-26T08:15:00.000Z'
@@ -3776,111 +3873,98 @@ impl IgnorePatterns {
 // printArchivedFilesAndPackages
 // ───────────────────────────────────────────────────────────────────────────
 
-enum PackListOrQueue<'a> {
-    Queue(&'a mut PackQueue),
-    List(&'a PackList),
-}
-
-fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
+/// `--dry-run` builds no archive, so the list (and `stats.unpacked_size`) comes from `fstatat`.
+fn dry_run_pack_list(
     ctx: &mut Context<'_>,
-    root_dir_std: &Dir,
-    pack_list: PackListOrQueue<'_>,
+    root_dir: &Dir,
+    pack_queue: &mut PackQueue,
+    bundled_pack_queue: &mut PackQueue,
+    bins: &[BinInfo],
     package_json_len: usize,
-) {
-    let root_dir = Fd::from_std_dir(root_dir_std);
-    if ctx.manager.options.log_level == LogLevel::Silent
-        || ctx.manager.options.log_level == LogLevel::Quiet
-    {
-        return;
-    }
-    if IS_DRY_RUN {
-        let PackListOrQueue::Queue(pack_queue) = pack_list else {
-            unreachable!()
-        };
+) -> PackList {
+    let root_dir = Fd::from_std_dir(root_dir);
+    let mut pack_list: PackList = Vec::with_capacity(pack_queue.count() + 1);
 
-        let package_json_stat = match bun_sys::fstatat(root_dir, bun_core::zstr!("package.json")) {
+    let package_json_stat = match bun_sys::fstatat(root_dir, bun_core::zstr!("package.json")) {
+        Ok(s) => s,
+        Err(err) => {
+            Output::err(
+                crate::Error::from(err),
+                "failed to stat package.json",
+                format_args!(""),
+            );
+            Global::crash();
+        }
+    };
+    ctx.stats.unpacked_size += package_json_len;
+    pack_list.push(PackListEntry {
+        subpath: Box::from(&b"package.json"[..]),
+        size: package_json_len,
+        mode: tar_entry_perm(package_json_stat.st_mode as bun_sys::Mode, false),
+    });
+
+    while let Some(item) = pack_queue.remove_or_null() {
+        let stat = match bun_sys::fstatat(root_dir, &item.path) {
             Ok(s) => s,
             Err(err) => {
+                if item.optional {
+                    ctx.stats.total_files -= 1;
+                    continue;
+                }
                 Output::err(
                     crate::Error::from(err),
-                    "failed to stat package.json",
-                    format_args!(""),
+                    "failed to stat file: \"{}\"",
+                    format_args!("{}", bstr::BStr::new(item.path.as_bytes())),
                 );
                 Global::crash();
             }
         };
 
-        ctx.stats.unpacked_size += usize::try_from(package_json_stat.st_size).expect("int cast");
-
-        bun_core::prettyln!(
-            "\n<r><b><cyan>packed<r> {} {}",
-            bun_fmt::size(
-                usize::try_from(package_json_stat.st_size).expect("int cast"),
-                bun_fmt::SizeFormatterOptions {
-                    space_between_number_and_unit: false
-                }
+        let size = usize::try_from(stat.st_size).expect("int cast");
+        ctx.stats.unpacked_size += size;
+        pack_list.push(PackListEntry {
+            mode: tar_entry_perm(
+                stat.st_mode as bun_sys::Mode,
+                is_package_bin(bins, item.path.as_bytes()),
             ),
-            "package.json",
-        );
+            subpath: item.path.as_bytes().into(),
+            size,
+        });
+    }
 
-        while let Some(item) = pack_queue.remove_or_null() {
-            let stat = match bun_sys::fstatat(root_dir, &item.path) {
-                Ok(s) => s,
-                Err(err) => {
-                    if item.optional {
-                        ctx.stats.total_files -= 1;
-                        continue;
-                    }
-                    Output::err(
-                        crate::Error::from(err),
-                        "failed to stat file: \"{}\"",
-                        format_args!("{}", bstr::BStr::new(item.path.as_bytes())),
-                    );
-                    Global::crash();
-                }
-            };
-
-            ctx.stats.unpacked_size += usize::try_from(stat.st_size).expect("int cast");
-
-            bun_core::prettyln!(
-                "<r><b><cyan>packed<r> {} {}",
-                bun_fmt::size(
-                    usize::try_from(stat.st_size).expect("int cast"),
-                    bun_fmt::SizeFormatterOptions {
-                        space_between_number_and_unit: false
-                    }
-                ),
-                bstr::BStr::new(item.path.as_bytes()),
-            );
-        }
-
-        for dep in &ctx.bundled_deps {
-            if !dep.was_packed {
-                continue;
+    // Bundled dependency files count toward the size and the entry count but are not listed.
+    while let Some(item) = bundled_pack_queue.remove_or_null() {
+        match bun_sys::fstatat(root_dir, &item.path) {
+            Ok(stat) => {
+                ctx.stats.unpacked_size += usize::try_from(stat.st_size).expect("int cast");
             }
-            bun_core::prettyln!("<r><b><green>bundled<r> {}", bstr::BStr::new(&dep.name));
+            Err(err) => {
+                if item.optional {
+                    ctx.stats.total_files -= 1;
+                    continue;
+                }
+                Output::err(
+                    crate::Error::from(err),
+                    "failed to stat file: \"{}\"",
+                    format_args!("{}", bstr::BStr::new(item.path.as_bytes())),
+                );
+                Global::crash();
+            }
         }
+    }
 
-        Output::flush();
+    pack_list
+}
+
+fn print_archived_files_and_packages(ctx: &Context<'_>, pack_list: &PackList) {
+    if ctx.manager.options.log_level == LogLevel::Silent
+        || ctx.manager.options.log_level == LogLevel::Quiet
+    {
         return;
     }
 
-    let PackListOrQueue::List(pack_list) = pack_list else {
-        unreachable!()
-    };
-
-    bun_core::prettyln!(
-        "\n<r><b><cyan>packed<r> {} {}",
-        bun_fmt::size(
-            package_json_len,
-            bun_fmt::SizeFormatterOptions {
-                space_between_number_and_unit: false
-            }
-        ),
-        "package.json",
-    );
-
-    for entry in pack_list.iter() {
+    bun_core::pretty!("\n");
+    for entry in pack_list {
         bun_core::prettyln!(
             "<r><b><cyan>packed<r> {} {}",
             bun_fmt::size(
@@ -3889,7 +3973,7 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
                     space_between_number_and_unit: false
                 }
             ),
-            bstr::BStr::new(entry.subpath.as_bytes()),
+            bstr::BStr::new(&entry.subpath),
         );
     }
 
@@ -3901,6 +3985,154 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
     }
 
     Output::flush();
+}
+
+pub(crate) fn json_str(s: &[u8]) -> bun_fmt::JSONFormatterUTF8<'_> {
+    bun_fmt::format_json_string_utf8(s, Default::default())
+}
+
+/// `--json`: an array with one object for the tarball.
+fn print_json(name: &[u8], version: &[u8], path: Option<&[u8]>, json: &PackJson) {
+    let mut out: Vec<u8> = Vec::new();
+    out.extend_from_slice(b"[\n  {");
+    write_json_fields(&mut out, 2, name, version, path, json);
+    out.extend_from_slice(b"\n  }\n]\n");
+
+    Output::flush();
+    let _ = Output::writer().write_all(&out);
+    Output::flush();
+}
+
+/// Writes the keys shared by `bun pm pack --json` and `bun publish --json`, without a trailing comma.
+pub(crate) fn write_json_fields(
+    out: &mut Vec<u8>,
+    indent: usize,
+    name: &[u8],
+    version: &[u8],
+    path: Option<&[u8]>,
+    json: &PackJson,
+) {
+    fn write_indent(out: &mut Vec<u8>, indent: usize) {
+        for _ in 0..indent {
+            out.extend_from_slice(b"  ");
+        }
+    }
+    fn write_key(out: &mut Vec<u8>, indent: usize, key: &str) {
+        out.push(b'\n');
+        write_indent(out, indent);
+        let _ = write!(out, "\"{key}\": ");
+    }
+    fn write_optional(out: &mut Vec<u8>, value: Option<impl fmt::Display>) {
+        match value {
+            Some(value) => {
+                let _ = write!(out, "{value}");
+            }
+            None => out.extend_from_slice(b"null"),
+        }
+    }
+
+    let mut id: Vec<u8> = Vec::with_capacity(name.len() + 1 + version.len());
+    id.extend_from_slice(name);
+    id.push(b'@');
+    id.extend_from_slice(version);
+    let mut filename: Vec<u8> = Vec::new();
+    let _ = write!(
+        filename,
+        "{}",
+        fmt_tarball_filename(name, version, TarballNameStyle::Normalize)
+    );
+    let tarball = json.tarball.as_ref();
+
+    write_key(out, indent, "id");
+    let _ = write!(out, "{},", json_str(&id));
+    write_key(out, indent, "name");
+    let _ = write!(out, "{},", json_str(name));
+    write_key(out, indent, "version");
+    let _ = write!(out, "{},", json_str(version));
+    write_key(out, indent, "filename");
+    let _ = write!(out, "{},", json_str(&filename));
+    write_key(out, indent, "path");
+    write_optional(out, path.map(json_str));
+    out.push(b',');
+    write_key(out, indent, "size");
+    write_optional(out, tarball.map(|t| t.size));
+    out.push(b',');
+    write_key(out, indent, "unpackedSize");
+    let _ = write!(out, "{},", json.unpacked_size);
+    write_key(out, indent, "shasum");
+    match tarball {
+        Some(t) => {
+            let _ = write!(out, "\"{}\",", bun_fmt::hex_lower(&t.shasum));
+        }
+        None => out.extend_from_slice(b"null,"),
+    }
+    write_key(out, indent, "integrity");
+    match tarball {
+        Some(t) => {
+            let _ = write!(out, "\"{}\",", bun_fmt::integrity::<false>(t.integrity));
+        }
+        None => out.extend_from_slice(b"null,"),
+    }
+    write_key(out, indent, "entryCount");
+    let _ = write!(out, "{},", json.total_files);
+
+    write_key(out, indent, "files");
+    out.push(b'[');
+    for (i, file) in json.files.iter().enumerate() {
+        if i > 0 {
+            out.push(b',');
+        }
+        out.push(b'\n');
+        write_indent(out, indent + 1);
+        let _ = write!(
+            out,
+            "{{ \"path\": {}, \"size\": {}, \"mode\": {} }}",
+            json_str(&file.subpath),
+            file.size,
+            file.mode
+        );
+    }
+    if !json.files.is_empty() {
+        out.push(b'\n');
+        write_indent(out, indent);
+    }
+    out.extend_from_slice(b"],");
+
+    write_key(out, indent, "bundled");
+    out.push(b'[');
+    for (i, dep) in json.bundled.iter().enumerate() {
+        if i > 0 {
+            out.extend_from_slice(b", ");
+        }
+        let _ = write!(out, "{}", json_str(dep));
+    }
+    out.push(b']');
+}
+
+/// Names of the top-level `node_modules/<name>` directories the paths start with, in first-seen order.
+pub(crate) fn bundled_dep_names(files: &PackList) -> Vec<Box<[u8]>> {
+    let mut names: Vec<Box<[u8]>> = Vec::new();
+    for file in files {
+        let Some(rest) = file.subpath.strip_prefix(b"node_modules/") else {
+            continue;
+        };
+        let mut components = strings::split(rest, b"/");
+        let Some(first) = components.next() else {
+            continue;
+        };
+        let mut name: Vec<u8> = first.to_vec();
+        if first.starts_with(b"@") {
+            let Some(second) = components.next() else {
+                continue;
+            };
+            name.push(b'/');
+            name.extend_from_slice(second);
+        }
+        if !names.iter().any(|known| **known == *name) {
+            names.push(name.into_boxed_slice());
+        }
+    }
+    names
 }
 
 /// Some files are always packed, even if they are explicitly ignored or not

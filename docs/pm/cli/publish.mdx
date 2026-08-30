@@ -126,6 +126,65 @@ bun publish --otp 123456
   other automated workflows.
 </Note>
 
+### JSON Output
+
+Pass `--json` to get the publish summary as one JSON object, for scripts and CI. Bun writes nothing else to stdout, so with `--ignore-scripts` (or quiet lifecycle scripts) the output can be piped straight into `jq` or `JSON.parse`. Errors still go to stderr, and the exit code does not change.
+
+```sh terminal icon="terminal"
+bun publish --json
+```
+
+```json
+{
+  "id": "publish-1@1.0.0",
+  "name": "publish-1",
+  "version": "1.0.0",
+  "filename": "publish-1-1.0.0.tgz",
+  "path": null,
+  "size": 565,
+  "unpackedSize": 746,
+  "shasum": "1b092b561a78c7ac37ad29623f3e0307e7e8fe72",
+  "integrity": "sha512-D75YG0FEVwjIaI0LtRB+Po7J5MzRw4wYCkU5vOAN1sS+ELTwE56eiveTghWK5m/WnlRUmM46wptLtMRlC57pJA==",
+  "entryCount": 4,
+  "files": [
+    { "path": "package.json", "size": 198, "mode": 420 },
+    { "path": "README.md", "size": 160, "mode": 420 },
+    { "path": "index.ts", "size": 30, "mode": 420 },
+    { "path": "tsconfig.json", "size": 358, "mode": 420 }
+  ],
+  "bundled": [],
+  "tag": "latest",
+  "access": null,
+  "registry": "http://localhost:4873/",
+  "dryRun": false
+}
+```
+
+The first keys describe the tarball. They are the keys `bun pm pack --json` prints:
+
+- `id`: `<name>@<version>`
+- `name`, `version`: the `name` and `version` fields of `package.json`
+- `filename`: the tarball name, `<name>-<version>.tgz`. A scope is folded into the name: `@scope/pkg` becomes `scope-pkg-1.0.0.tgz`.
+- `path`: the absolute path of the tarball when you pass a tarball path. `bun publish` deletes the tarball it packs itself, so `path` is `null` otherwise.
+- `size`: the size of the tarball in bytes
+- `unpackedSize`: the sum of the sizes of the files in the tarball, in bytes
+- `shasum`: the SHA-1 hash of the tarball, as lowercase hex
+- `integrity`: the SHA-512 hash of the tarball, as an SRI string (`sha512-<base64>`)
+- `entryCount`: the number of files in the tarball, bundled dependencies included
+- `files`: one object per file, in the order of the `packed` lines: `path` relative to the package root, `size` in bytes, and `mode`, the permission bits of the tar entry as a number (`420` is `0644`, `493` is `0755`; bins are always executable). When `bun publish` packs the package, the files of bundled dependencies are counted in `entryCount` but not listed. With a tarball path, every file in the archive is listed.
+- `bundled`: the names of the bundled dependencies in the tarball
+
+`bun publish` adds four keys:
+
+- `tag`: the dist-tag, `"latest"` unless `--tag` or `publishConfig.tag` is set
+- `access`: the `--access` or `publishConfig.access` value, or `null` for the registry default
+- `registry`: the registry URL, without credentials
+- `dryRun`: `true` with `--dry-run`
+
+With `--dry-run` and no tarball path, `bun publish` builds no tarball, so `path`, `size`, `shasum` and `integrity` are `null`.
+
+Lifecycle scripts (`prepublishOnly`, `prepack`, `prepare`, `postpack`, `publish`, `postpublish`) inherit stdout, so anything they print comes before the document. Pass `--ignore-scripts` to keep stdout to the document alone. The document is written after the `publish` and `postpublish` scripts. If one of them fails, the command exits with the script's exit code and no document, like `npm publish --json`.
+
 ---
 
 <Publish />

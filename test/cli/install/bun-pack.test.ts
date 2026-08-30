@@ -3,6 +3,7 @@ import { readTarball } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { exists, mkdir, rm } from "fs/promises";
 import { bunEnv, bunExe, isLinux, isWindows, pack, runBunInstall, tempDir, tmpdirSync } from "harness";
+import { statSync } from "node:fs";
 import fs from "node:fs/promises";
 import { join } from "path";
 
@@ -1757,4 +1758,243 @@ test("$npm_lifecycle_event is accurate", async () => {
     ``,
   ]);
   expect(p.err).toEqual(`$ echo $npm_lifecycle_event\n`);
+});
+
+describe("--json", () => {
+  async function packJson(cwd: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", "pack", "--json", ...args],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  }
+
+  // Permission bits as the tarball stores them.
+  const modeOf = (path: string) => statSync(path).mode & 0o7777;
+
+  const indexSrc = "console.log('hello ./index.js');";
+  const cliSrc = "#!/usr/bin/env node\nconsole.log('hello ./bin/cli.js');";
+
+  test.concurrent("prints an array with one object for the tarball", async () => {
+    // bun re-prints package.json with two space indentation, so writing it that way keeps the sizes equal.
+    const packageJson = JSON.stringify(
+      { name: "pack-json", version: "1.0.0", bin: { "pack-json": "bin/cli.js" } },
+      null,
+      2,
+    );
+    using dir = tempDir("pack-json", {
+      "package.json": packageJson,
+      "index.js": indexSrc,
+      bin: { "cli.js": cliSrc },
+    });
+
+    const { out, err, exitCode } = await packJson(String(dir));
+
+    const tarball = readTarball(join(String(dir), "pack-json-1.0.0.tgz"));
+    const doc = JSON.parse(out);
+    expect(doc).toEqual([
+      {
+        id: "pack-json@1.0.0",
+        name: "pack-json",
+        version: "1.0.0",
+        filename: "pack-json-1.0.0.tgz",
+        path: join(String(dir), "pack-json-1.0.0.tgz"),
+        size: tarball.size,
+        unpackedSize: Buffer.byteLength(packageJson) + Buffer.byteLength(cliSrc) + Buffer.byteLength(indexSrc),
+        shasum: tarball.shasum,
+        integrity: `sha512-${tarball.integrity}`,
+        entryCount: 3,
+        files: [
+          {
+            path: "package.json",
+            size: Buffer.byteLength(packageJson),
+            mode: modeOf(join(String(dir), "package.json")),
+          },
+          {
+            path: "bin/cli.js",
+            size: Buffer.byteLength(cliSrc),
+            mode: modeOf(join(String(dir), "bin", "cli.js")) | 0o111,
+          },
+          { path: "index.js", size: Buffer.byteLength(indexSrc), mode: modeOf(join(String(dir), "index.js")) },
+        ],
+        bundled: [],
+      },
+    ]);
+    // `mode` is what the archive stores for each entry, in the same order.
+    expect(doc[0].files.map((file: { mode: number }) => file.mode)).toEqual(
+      tarball.entries.map((entry: { perm: number }) => entry.perm),
+    );
+    expect(out.endsWith("\n")).toBe(true);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("--dry-run: path, size, shasum and integrity are null", async () => {
+    const packageJson = JSON.stringify({ name: "@pack-json/scoped", version: "2.0.0" }, null, 2);
+    using dir = tempDir("pack-json-dry-run", { "package.json": packageJson, "index.js": indexSrc });
+
+    const { out, err, exitCode } = await packJson(String(dir), "--dry-run");
+
+    expect(JSON.parse(out)).toEqual([
+      {
+        id: "@pack-json/scoped@2.0.0",
+        name: "@pack-json/scoped",
+        version: "2.0.0",
+        filename: "pack-json-scoped-2.0.0.tgz",
+        path: null,
+        size: null,
+        unpackedSize: Buffer.byteLength(packageJson) + Buffer.byteLength(indexSrc),
+        shasum: null,
+        integrity: null,
+        entryCount: 2,
+        files: [
+          {
+            path: "package.json",
+            size: Buffer.byteLength(packageJson),
+            mode: modeOf(join(String(dir), "package.json")),
+          },
+          { path: "index.js", size: Buffer.byteLength(indexSrc), mode: modeOf(join(String(dir), "index.js")) },
+        ],
+        bundled: [],
+      },
+    ]);
+    expect(await exists(join(String(dir), "pack-json-scoped-2.0.0.tgz"))).toBeFalse();
+    expect(out.endsWith("\n")).toBe(true);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("path follows --destination and --filename", async () => {
+    using dir = tempDir("pack-json-destination", {
+      "package.json": JSON.stringify({ name: "pack-json-dest", version: "1.0.0" }, null, 2),
+      "index.js": indexSrc,
+    });
+
+    const dest = join(String(dir), "out", "dir");
+    let { out, err, exitCode } = await packJson(String(dir), `--destination=${dest}`);
+    let [doc] = JSON.parse(out);
+    expect(doc).toMatchObject({
+      filename: "pack-json-dest-1.0.0.tgz",
+      path: join(dest, "pack-json-dest-1.0.0.tgz"),
+    });
+    expect(await exists(doc.path)).toBeTrue();
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    // A relative --filename is resolved against the package directory.
+    ({ out, err, exitCode } = await packJson(String(dir), "--filename=custom.tgz"));
+    [doc] = JSON.parse(out);
+    expect(doc).toMatchObject({
+      filename: "pack-json-dest-1.0.0.tgz",
+      path: join(String(dir), "custom.tgz"),
+    });
+    expect(await exists(doc.path)).toBeTrue();
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("bundled dependencies are counted and named, not listed", async () => {
+    const packageJson = JSON.stringify(
+      {
+        name: "pack-json-bundled",
+        version: "1.0.0",
+        dependencies: { dep1: "1.1.1", dep2: "1.1.1" },
+        bundledDependencies: ["dep1", "dep2"],
+      },
+      null,
+      2,
+    );
+    const dep1Json = JSON.stringify({ name: "dep1", version: "1.1.1" });
+    const dep2Json = JSON.stringify({ name: "dep2", version: "1.1.1" });
+    using dir = tempDir("pack-json-bundled", {
+      "package.json": packageJson,
+      node_modules: {
+        dep1: { "package.json": dep1Json },
+        dep2: { "package.json": dep2Json, "index.js": indexSrc },
+      },
+    });
+
+    const unpackedSize =
+      Buffer.byteLength(packageJson) +
+      Buffer.byteLength(dep1Json) +
+      Buffer.byteLength(dep2Json) +
+      Buffer.byteLength(indexSrc);
+
+    // The dry run stats the bundled files instead of archiving them; the counts are the same.
+    const dryRun = await packJson(String(dir), "--dry-run");
+    expect(JSON.parse(dryRun.out)[0]).toMatchObject({
+      entryCount: 4,
+      unpackedSize,
+      files: [{ path: "package.json", size: Buffer.byteLength(packageJson) }],
+      bundled: ["dep1", "dep2"],
+    });
+    expect(dryRun.err).toBe("");
+    expect(dryRun.exitCode).toBe(0);
+
+    const { out, err, exitCode } = await packJson(String(dir));
+
+    const [doc] = JSON.parse(out);
+    expect(doc).toMatchObject({
+      entryCount: 4,
+      unpackedSize,
+      files: [{ path: "package.json", size: Buffer.byteLength(packageJson) }],
+      bundled: ["dep1", "dep2"],
+    });
+    expect(readTarball(join(String(dir), "pack-json-bundled-1.0.0.tgz")).entries).toMatchObject([
+      { pathname: "package/package.json" },
+      { pathname: "package/node_modules/dep1/package.json" },
+      { pathname: "package/node_modules/dep2/index.js" },
+      { pathname: "package/node_modules/dep2/package.json" },
+    ]);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("the document comes after the postpack script output", async () => {
+    using dir = tempDir("pack-json-postpack", {
+      "package.json": JSON.stringify({
+        name: "pack-json-postpack",
+        version: "1.0.0",
+        scripts: { postpack: "echo hi" },
+      }),
+    });
+
+    const { out, err, exitCode } = await packJson(String(dir));
+
+    expect(out.startsWith("hi\n[")).toBe(true);
+    expect(out.endsWith("]\n")).toBe(true);
+    expect(JSON.parse(out.slice(out.indexOf("[")))).toMatchObject([{ name: "pack-json-postpack", entryCount: 1 }]);
+    expect(err).toBe("$ echo hi\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.each(["--quiet", "--silent"])("%s still prints the document", async flag => {
+    using dir = tempDir("pack-json-quiet", {
+      "package.json": JSON.stringify({ name: "pack-json-quiet", version: "1.0.0" }),
+    });
+
+    const { out, err, exitCode } = await packJson(String(dir), flag);
+
+    expect(JSON.parse(out)).toMatchObject([{ name: "pack-json-quiet", filename: "pack-json-quiet-1.0.0.tgz" }]);
+    expect(out.endsWith("]\n")).toBe(true);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("errors stay on stderr and leave stdout empty", async () => {
+    using dir = tempDir("pack-json-error", {
+      "package.json": JSON.stringify({ name: "pack-json-error" }),
+    });
+
+    const { out, err, exitCode } = await packJson(String(dir));
+
+    expect(out).toBe("");
+    expect(err).toContain("error: package.json must have `name` and `version` fields");
+    expect(exitCode).toBe(1);
+  });
 });

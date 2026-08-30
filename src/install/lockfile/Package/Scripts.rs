@@ -420,20 +420,24 @@ pub struct List {
 }
 
 impl List {
+    /// `cwd` relative to the project root, when it passes through `node_modules`.
+    fn folder_in_node_modules(&self) -> Option<&[u8]> {
+        let cwd = self.cwd.as_bytes();
+        let i = strings::index_of(cwd, bun_paths::NODE_MODULES_NEEDLE)?;
+        Some(strings::without_trailing_slash(&cwd[i + 1..]))
+    }
+
     pub fn print_scripts(
         &self,
         resolution: &Resolution,
         resolution_buf: &[u8],
         format_type: PrintFormat,
     ) {
-        let needle = bun_paths::NODE_MODULES_NEEDLE;
-        if let Some(i) = strings::index_of(self.cwd.as_bytes(), needle) {
+        if let Some(folder) = self.folder_in_node_modules() {
             bun_core::pretty!(
                 "<d>.{s}{s} @{f}<r>\n",
                 BStr::new(SEP_STR.as_bytes()),
-                BStr::new(strings::without_trailing_slash(
-                    &self.cwd.as_bytes()[i + 1..]
-                )),
+                BStr::new(folder),
                 resolution.fmt(resolution_buf, PathSep::Posix),
             );
         } else {
@@ -461,6 +465,57 @@ impl List {
                 }
             }
         }
+    }
+
+    /// `--json` counterpart of `print_scripts`: one array element of `bun pm untrusted --json`.
+    pub fn write_json(
+        &self,
+        out: &mut Vec<u8>,
+        name: &[u8],
+        resolution: &Resolution,
+        resolution_buf: &[u8],
+    ) {
+        use std::io::Write as _;
+
+        fn json_str(s: &[u8]) -> bun_core::fmt::JSONFormatterUTF8<'_> {
+            bun_core::fmt::format_json_string_utf8(s, Default::default())
+        }
+
+        let mut version: Vec<u8> = Vec::new();
+        let _ = write!(
+            version,
+            "{}",
+            resolution.fmt(resolution_buf, PathSep::Posix)
+        );
+        let mut path: Vec<u8> = self
+            .folder_in_node_modules()
+            .unwrap_or_else(|| strings::without_trailing_slash(self.cwd.as_bytes()))
+            .to_vec();
+        bun_paths::resolve_path::platform_to_posix_in_place(&mut path[..]);
+
+        let _ = write!(out, "{{\n    \"name\": {},", json_str(name));
+        let _ = write!(out, "\n    \"version\": {},", json_str(&version));
+        let _ = write!(out, "\n    \"path\": {},", json_str(&path));
+        out.extend_from_slice(b"\n    \"scripts\": {");
+        let mut written: usize = 0;
+        for (script_index, maybe_script) in self.items.iter().enumerate() {
+            if let Some(script) = maybe_script {
+                if written > 0 {
+                    out.push(b',');
+                }
+                written += 1;
+                let _ = write!(
+                    out,
+                    "\n      \"{}\": {}",
+                    LockfileScripts::NAMES[script_index],
+                    json_str(script)
+                );
+            }
+        }
+        if written > 0 {
+            out.extend_from_slice(b"\n    ");
+        }
+        out.extend_from_slice(b"}\n  }");
     }
 
     // No manual deinit: `Box<[u8]>` fields drop automatically.

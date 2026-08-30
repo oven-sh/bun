@@ -579,4 +579,197 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
 
     expect(outputDepth2).toContain("mime-db@");
   });
+
+  describe.concurrent("--json", () => {
+    // app -> lib-a (dependencies), lib-b (devDependencies)
+    // lib-a -> lib-c (dependencies), lib-d (optional peer)
+    // lib-b -> lib-c (dependencies), lib-d (optionalDependencies)
+    // lib-c -> lib-a (dependencies), which closes the cycle lib-a -> lib-c -> lib-a
+    const integrity = "sha512-" + Buffer.alloc(86, "A").toString() + "==";
+    const files = {
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: { "lib-a": "^1.0.0" },
+        devDependencies: { "lib-b": "~2.0.0" },
+      }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: {
+          "": {
+            name: "app",
+            dependencies: { "lib-a": "^1.0.0" },
+            devDependencies: { "lib-b": "~2.0.0" },
+          },
+        },
+        packages: {
+          "lib-a": [
+            "lib-a@1.0.0",
+            "",
+            { dependencies: { "lib-c": "^3.0.0" }, peerDependencies: { "lib-d": "*" }, optionalPeers: ["lib-d"] },
+            integrity,
+          ],
+          "lib-b": [
+            "lib-b@2.0.0",
+            "",
+            { dependencies: { "lib-c": "3.0.0" }, optionalDependencies: { "lib-d": "^4.0.0" } },
+            integrity,
+          ],
+          "lib-c": ["lib-c@3.0.0", "", { dependencies: { "lib-a": "1.0.0" } }, integrity],
+          "lib-d": ["lib-d@4.0.0", "", {}, integrity],
+        },
+      }),
+    };
+
+    async function whyJson(cwd: string, ...args: string[]) {
+      await using proc = spawn({
+        cmd: [bunExe(), ...cmd.split(" "), ...args, "--json"],
+        cwd,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    const app = (type: string, spec: string) => ({
+      name: "app",
+      version: null,
+      type,
+      optional: false,
+      spec,
+      dependents: [],
+    });
+
+    it("prints the dependents tree, with the cycle and the root marked", async () => {
+      using dir = tempDir(`why-json-${i++}`, files);
+      const { stdout, stderr, exitCode } = await whyJson(String(dir), "lib-c");
+      expect(stderr).toBe("");
+      expect(stdout).toEndWith("]\n");
+      expect(JSON.parse(stdout)).toEqual([
+        {
+          name: "lib-c",
+          version: "3.0.0",
+          dependents: [
+            {
+              name: "lib-b",
+              version: "2.0.0",
+              type: "dependencies",
+              optional: false,
+              spec: "3.0.0",
+              dependents: [app("devDependencies", "~2.0.0")],
+            },
+            {
+              name: "lib-a",
+              version: "1.0.0",
+              type: "dependencies",
+              optional: false,
+              spec: "^3.0.0",
+              dependents: [
+                {
+                  name: "lib-c",
+                  version: "3.0.0",
+                  type: "dependencies",
+                  optional: false,
+                  spec: "1.0.0",
+                  dependents: [
+                    {
+                      name: "lib-b",
+                      version: "2.0.0",
+                      type: "dependencies",
+                      optional: false,
+                      spec: "3.0.0",
+                      dependents: [app("devDependencies", "~2.0.0")],
+                    },
+                    {
+                      name: "lib-a",
+                      version: "1.0.0",
+                      type: "dependencies",
+                      optional: false,
+                      spec: "^3.0.0",
+                      circular: true,
+                      dependents: null,
+                    },
+                  ],
+                },
+                app("dependencies", "^1.0.0"),
+              ],
+            },
+          ],
+        },
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    it("reports optional dependencies and optional peers", async () => {
+      using dir = tempDir(`why-json-${i++}`, files);
+      const { stdout, stderr, exitCode } = await whyJson(String(dir), "lib-d", "--top");
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([
+        {
+          name: "lib-d",
+          version: "4.0.0",
+          dependents: [
+            {
+              name: "lib-b",
+              version: "2.0.0",
+              type: "optionalDependencies",
+              optional: true,
+              spec: "^4.0.0",
+              dependents: null,
+            },
+            { name: "lib-a", version: "1.0.0", type: "peerDependencies", optional: true, spec: "*", dependents: null },
+          ],
+        },
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    it("--depth stops expanding with null, a package without dependents keeps []", async () => {
+      using dir = tempDir(`why-json-${i++}`, files);
+      const { stdout, stderr, exitCode } = await whyJson(String(dir), "lib-a", "--depth", "1");
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([
+        {
+          name: "lib-a",
+          version: "1.0.0",
+          dependents: [
+            { name: "lib-c", version: "3.0.0", type: "dependencies", optional: false, spec: "1.0.0", dependents: null },
+            app("dependencies", "^1.0.0"),
+          ],
+        },
+      ]);
+      expect(exitCode).toBe(0);
+
+      const depth0 = await whyJson(String(dir), "lib-d", "--depth", "0");
+      expect(depth0.stderr).toBe("");
+      expect(JSON.parse(depth0.stdout)).toEqual([{ name: "lib-d", version: "4.0.0", dependents: null }]);
+      expect(depth0.exitCode).toBe(0);
+    });
+
+    it("a pattern matching several packages prints one object per package", async () => {
+      using dir = tempDir(`why-json-${i++}`, files);
+      const { stdout, stderr, exitCode } = await whyJson(String(dir), "lib-*", "--top");
+      expect(stderr).toBe("");
+      const ids = JSON.parse(stdout).map((pkg: { name: string; version: string }) => `${pkg.name}@${pkg.version}`);
+      expect(ids.toSorted()).toEqual(["lib-a@1.0.0", "lib-b@2.0.0", "lib-c@3.0.0", "lib-d@4.0.0"]);
+      expect(exitCode).toBe(0);
+    });
+
+    it("prints the usage on stderr when the package argument is missing", async () => {
+      using dir = tempDir(`why-json-${i++}`, files);
+      const { stdout, stderr, exitCode } = await whyJson(String(dir));
+      expect(stdout).toBe("");
+      expect(stderr).toContain("Explain why a package is installed");
+      expect(exitCode).toBe(1);
+    });
+
+    it("prints [] and reports the error on stderr when nothing matches", async () => {
+      using dir = tempDir(`why-json-${i++}`, files);
+      const { stdout, stderr, exitCode } = await whyJson(String(dir), "missing");
+      expect(stdout).toBe("[]\n");
+      expect(stderr).toContain("No packages matching 'missing' found in lockfile");
+      expect(exitCode).toBe(1);
+    });
+  });
 });

@@ -258,13 +258,24 @@ _bun_pm_completion() {
     case $state in
     cmd2)
         sub_commands=(
+            'pack\:"create a tarball of the current workspace" '
             'bin\:"print the path to bin folder" '
             'ls\:"list the dependency tree according to the current lockfile" '
+            'why\:"show dependency tree explaining why a package is installed" '
+            'diff\:"show what changed between two versions of a package" '
             'licenses\:"list installed packages grouped by license" '
+            'whoami\:"print the current npm username" '
+            'view\:"view package metadata from the registry" '
+            'pkg\:"manage data in package.json" '
             'hash\:"generate & print the hash of the current lockfile" '
             'hash-string\:"print the string used to hash the lockfile" '
             'hash-print\:"print the hash stored in the current lockfile" '
             'cache\:"print the path to the cache folder" '
+            'migrate\:"migrate another package manager'"'"'s lockfile without installing anything" '
+            'scan\:"scan all packages in lockfile for security vulnerabilities" '
+            'untrusted\:"print current untrusted dependencies with scripts" '
+            'trust\:"run scripts for untrusted dependencies and add to trustedDependencies" '
+            'default-trusted\:"print the default trusted dependencies list" '
             'version\:"bump the version in package.json and create a git tag" '
         )
 
@@ -277,13 +288,33 @@ _bun_pm_completion() {
             _arguments -s -C \
                 '1: :->cmd' \
                 '2: :->cmd2' \
+                '--json[Output in JSON format]' \
                 ':::(rm)' &&
+                ret=0
+
+            ;;
+        pack)
+            pmargs=(
+                "--dry-run[do everything except for writing the tarball to disk]"
+                "--destination[the directory the tarball will be saved in]:directory:_files -/"
+                "--filename[the name of the tarball]:filename"
+                "--ignore-scripts[don't run pre/postpack and prepare scripts]"
+                "--gzip-level[specify a custom compression level for gzip (0-9, default is 9)]:level"
+                "--quiet[only output the tarball filename]"
+                "--json[Output in JSON format]"
+            )
+
+            _arguments -s -C \
+                '1: :->cmd' \
+                '2: :->cmd2' \
+                $pmargs &&
                 ret=0
 
             ;;
         bin)
             pmargs=(
                 "-g[print the global path to bin folder]"
+                "--json[Output in JSON format]"
             )
 
             _arguments -s -C \
@@ -297,12 +328,35 @@ _bun_pm_completion() {
             pmargs=(
                 "--all[list the entire dependency tree according to the current lockfile]"
                 "--trusted[list only trusted dependencies]"
+                "--json[Output in JSON format]"
             )
 
             _arguments -s -C \
                 '1: :->cmd' \
                 '2: :->cmd2' \
                 $pmargs &&
+                ret=0
+
+            ;;
+        why)
+            pmargs=(
+                "--top[show only the first level of dependencies]"
+                "--depth[maximum depth of the dependency tree to display]:depth"
+                "--json[Output in JSON format]"
+            )
+
+            _arguments -s -C \
+                '1: :->cmd' \
+                '2: :->cmd2' \
+                $pmargs &&
+                ret=0
+
+            ;;
+        whoami|view|diff|hash|hash-print|scan|untrusted|default-trusted)
+            _arguments -s -C \
+                '1: :->cmd' \
+                '2: :->cmd2' \
+                '--json[Output in JSON format]' &&
                 ret=0
 
             ;;
@@ -343,6 +397,7 @@ _bun_pm_completion() {
                 "-m[use the given message for the commit]:message"
                 "--message[use the given message for the commit]:message"
                 "--preid[identifier to prefix pre-release versions]:preid"
+                "--json[Output in JSON format]"
             )
 
             _arguments -s -C \
@@ -675,6 +730,7 @@ _bun_update_completion() {
 
 _bun_outdated_completion() {
     _arguments -s -C \
+        '--json[Output in JSON format]' \
         '--cwd[Set a specific cwd]:cwd' \
         '--verbose[Excessively verbose logging]' \
         '--no-progress[Disable the progress bar]' \
@@ -693,6 +749,7 @@ _bun_dedupe_completion() {
     _arguments -s -C \
         '1: :->cmd1' \
         '--check[Exit with code 1 if the lockfile has duplicate versions that can be removed, without changing anything]' \
+        '--json[Output in JSON format]' \
         '-c[Load config(bunfig.toml)]: :->config' \
         '--config[Load config(bunfig.toml)]: :->config' \
         '-y[Write a yarn.lock file (yarn v1)]' \
@@ -737,6 +794,7 @@ _bun_prune_completion() {
         '--prod[Also remove packages that are only needed by devDependencies]' \
         '*--omit[Also remove packages that are only needed by the given dependency types]:type:(dev optional peer)' \
         '--dry-run[Print what would be removed without deleting anything]' \
+        '--json[Output in JSON format]' \
         '*--os[Prune for a different operating system than the current one]:os' \
         '*--cpu[Prune for a different CPU architecture than the current one]:cpu' \
         '--linker[Prune a node_modules installed with the given linker]:linker:(isolated hoisted)' \

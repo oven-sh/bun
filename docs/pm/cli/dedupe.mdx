@@ -44,6 +44,54 @@ bun dedupe v1.4.0 (abc12345)
 
 `--lockfile-only` rewrites `bun.lock` without installing.
 
+### `--json`
+
+Pass `--json` to get the same report as a JSON object, for scripts and CI checks. Nothing else is written to stdout, so the output can be piped straight into `jq` or `JSON.parse`. It works with every mode: `--check`, `--dry-run`, `--lockfile-only` and a real run.
+
+```bash terminal icon="terminal"
+bun dedupe --check --json
+```
+
+```json
+{
+  "removed": [
+    {
+      "name": "esbuild",
+      "version": "0.15.10",
+      "resolvedTo": ["0.15.11"],
+      "downgrade": false
+    },
+    {
+      "name": "react",
+      "version": "18.2.0",
+      "resolvedTo": ["18.3.1"],
+      "downgrade": false
+    }
+  ],
+  "kept": [
+    {
+      "name": "one-fixed-dep",
+      "version": "1.0.0",
+      "reason": "needed to reach patched no-deps@1.0.0"
+    }
+  ],
+  "checked": 5,
+  "installed": null,
+  "failed": null
+}
+```
+
+- `removed`: one object per row of the text output, in the same order. `name` and `version` identify the version Bun removes (or would remove); `resolvedTo` lists the locked version(s) its dependents now use. It is empty (`[]`) when nothing depended on the removed version anymore. `downgrade` is `true` when every surviving version has a lower major than the removed one, the rows the text output marks with `(downgrade)`.
+- `kept`: one object per `kept …` line: a version Bun had to keep, with the `reason` (the text the `kept` line shows in parentheses). Empty when there is none.
+- `checked`: the number of packages in the lockfile that were checked.
+- `installed`, `failed`: the number of packages the run installed, and the number it failed to install. Both are `null` with `--check`, `--dry-run` and `--lockfile-only`, and whenever no install ran.
+
+When there is nothing to remove, `removed` is `[]`. The exit codes are the same as without `--json`: `--check` exits `1` when `removed` is not empty, `--dry-run` and a real run exit `0`. Errors are still reported on stderr. `--json` takes precedence over `--silent`: the document is still printed. For example, to list the duplicate versions one per line:
+
+```bash terminal icon="terminal"
+bun dedupe --dry-run --json | jq -r '.removed[] | "\(.name)@\(.version)"'
+```
+
 ### Notes
 
 - Bun respects overrides and catalogs. It re-points each dependency using its effective range.

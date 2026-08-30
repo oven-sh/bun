@@ -6673,6 +6673,34 @@ describe("pm trust", async () => {
     expect(await exited).toBe(0);
   });
 
+  test("--default --json", async () => {
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "default-trusted", "--json"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).toBe("");
+    const names = JSON.parse(out);
+    expect(Array.isArray(names)).toBeTrue();
+    expect(names.length).toBeGreaterThan(100);
+    expect(names.every((name: unknown) => typeof name === "string")).toBeTrue();
+    expect(names).toContain("esbuild");
+    expect(names).toEqual([...names].sort());
+    expect(out).toEndWith("]\n");
+    expect(exitCode).toBe(0);
+  });
+
   describe("--all", async () => {
     test("no dependencies", async () => {
       await writeFile(
@@ -9111,6 +9139,218 @@ describe("outdated", () => {
 
     // The catalog grouping should show which workspaces use it
     expect(out).toMatch(/catalog.*workspace-a.*workspace-b|workspace-b.*workspace-a/);
+  });
+
+  describe("--json", () => {
+    async function runBunOutdatedJson(cwd: string, ...args: string[]) {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "outdated", "--json", ...args],
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(err).not.toContain("error:");
+      // stdout is the JSON document and nothing else: no "bun outdated v1.x" header.
+      expect(out.startsWith("[")).toBe(true);
+      expect(out.endsWith("]\n")).toBe(true);
+      expect(exitCode).toBe(0);
+      return JSON.parse(out);
+    }
+
+    test("one object per outdated dependency, grouped like the table", async () => {
+      const deps = {
+        name: "foo",
+        dependencies: { "no-deps": "1.0.0", "what-bin": "1.5.0" },
+        devDependencies: { "a-dep": "1.0.1" },
+        peerDependencies: { "peer-no-deps": "1.0.0" },
+        optionalDependencies: { "prereleases-1": "1.0.0-future.1" },
+      };
+      await write(packageJson, JSON.stringify(deps));
+      await runBunInstall(env, packageDir);
+
+      // Widen the no-deps range after installing 1.0.0. The lockfile keeps 1.0.0,
+      // so current (1.0.0), update (1.1.0) and latest (2.0.0) all differ.
+      deps.dependencies["no-deps"] = "^1.0.0";
+      await write(packageJson, JSON.stringify(deps));
+      await runBunInstall(env, packageDir);
+
+      expect(await runBunOutdatedJson(packageDir)).toEqual([
+        {
+          name: "no-deps",
+          current: "1.0.0",
+          update: "1.1.0",
+          latest: "2.0.0",
+          type: "dependencies",
+          workspace: "foo",
+          catalog: null,
+        },
+        {
+          name: "a-dep",
+          current: "1.0.1",
+          update: "1.0.1",
+          latest: "1.0.10",
+          type: "devDependencies",
+          workspace: "foo",
+          catalog: null,
+        },
+        {
+          name: "peer-no-deps",
+          current: "1.0.0",
+          update: "1.0.0",
+          latest: "2.0.0",
+          type: "peerDependencies",
+          workspace: "foo",
+          catalog: null,
+        },
+        {
+          name: "prereleases-1",
+          current: "1.0.0-future.1",
+          update: "1.0.0-future.1",
+          latest: "1.0.0-future.4",
+          type: "optionalDependencies",
+          workspace: "foo",
+          catalog: null,
+        },
+      ]);
+    });
+
+    test("dependency patterns apply", async () => {
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" },
+        }),
+      );
+      await runBunInstall(env, packageDir);
+
+      expect((await runBunOutdatedJson(packageDir, "a-*")).map((dep: any) => dep.name)).toEqual(["a-dep"]);
+      expect(await runBunOutdatedJson(packageDir, "nothing-matches-this")).toEqual([]);
+    });
+
+    test("prints an empty array when nothing is outdated", async () => {
+      await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "no-deps": "2.0.0" } }));
+      await runBunInstall(env, packageDir);
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "outdated", "--json"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+      expect(err).not.toContain("error:");
+      expect(out).toBe("[]\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("workspaces and catalogs", async () => {
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "root",
+            workspaces: {
+              packages: ["packages/*"],
+              catalog: { "no-deps": "1.0.0" },
+              catalogs: { build: { "a-dep": "1.0.1" } },
+            },
+            dependencies: { "what-bin": "1.0.0" },
+          }),
+        ),
+        write(
+          join(packageDir, "packages", "workspace-a", "package.json"),
+          JSON.stringify({
+            name: "workspace-a",
+            dependencies: { "no-deps": "catalog:" },
+            devDependencies: { "a-dep": "catalog:build" },
+          }),
+        ),
+        write(
+          join(packageDir, "packages", "workspace-b", "package.json"),
+          JSON.stringify({
+            name: "workspace-b",
+            dependencies: { "no-deps": "catalog:", "peer-no-deps": "1.0.0" },
+          }),
+        ),
+      ]);
+      await runBunInstall(env, packageDir);
+
+      // Without --filter or -r, only the workspace of the cwd is listed.
+      expect(await runBunOutdatedJson(packageDir)).toEqual([
+        {
+          name: "what-bin",
+          current: "1.0.0",
+          update: "1.0.0",
+          latest: "1.5.0",
+          type: "dependencies",
+          workspace: "root",
+          catalog: null,
+        },
+      ]);
+
+      // The table folds the two catalog users into one row; the JSON keeps one
+      // object per workspace and names the catalog instead.
+      const all = await runBunOutdatedJson(packageDir, "--recursive");
+      expect(all.map((dep: any) => dep.type)).toEqual([
+        "dependencies",
+        "dependencies",
+        "dependencies",
+        "dependencies",
+        "devDependencies",
+      ]);
+      const byWorkspace = (dep: any) => `${dep.workspace}/${dep.name}`;
+      expect([...all].sort((a, b) => byWorkspace(a).localeCompare(byWorkspace(b)))).toEqual([
+        {
+          name: "what-bin",
+          current: "1.0.0",
+          update: "1.0.0",
+          latest: "1.5.0",
+          type: "dependencies",
+          workspace: "root",
+          catalog: null,
+        },
+        {
+          name: "a-dep",
+          current: "1.0.1",
+          update: "1.0.1",
+          latest: "1.0.10",
+          type: "devDependencies",
+          workspace: "workspace-a",
+          catalog: "build",
+        },
+        {
+          name: "no-deps",
+          current: "1.0.0",
+          update: "1.0.0",
+          latest: "2.0.0",
+          type: "dependencies",
+          workspace: "workspace-a",
+          catalog: "default",
+        },
+        {
+          name: "no-deps",
+          current: "1.0.0",
+          update: "1.0.0",
+          latest: "2.0.0",
+          type: "dependencies",
+          workspace: "workspace-b",
+          catalog: "default",
+        },
+        {
+          name: "peer-no-deps",
+          current: "1.0.0",
+          update: "1.0.0",
+          latest: "2.0.0",
+          type: "dependencies",
+          workspace: "workspace-b",
+          catalog: null,
+        },
+      ]);
+    });
   });
 });
 

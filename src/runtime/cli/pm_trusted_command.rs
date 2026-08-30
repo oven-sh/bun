@@ -1,5 +1,6 @@
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
+use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
 use bun_collections::{ArrayHashMap, ArrayIdentityContext, StringArrayHashMap};
@@ -28,7 +29,12 @@ type DepIdSet = ArrayHashMap<DependencyID, (), ArrayIdentityContext>;
 pub(crate) struct DefaultTrustedCommand;
 
 impl DefaultTrustedCommand {
-    pub(crate) fn exec() -> crate::Result<()> {
+    pub(crate) fn exec(pm: &PackageManager) -> crate::Result<()> {
+        if pm.options.json_output {
+            Self::print_json();
+            return Ok(());
+        }
+
         Output::print(format_args!(
             "Default trusted dependencies ({}):\n",
             DEFAULT_TRUSTED_DEPENDENCIES_LIST.len()
@@ -38,6 +44,24 @@ impl DefaultTrustedCommand {
         }
 
         Ok(())
+    }
+
+    /// `--json`: the names as a plain array, in the order of the text output.
+    fn print_json() {
+        let names: &[&[u8]] = &DEFAULT_TRUSTED_DEPENDENCIES_LIST;
+        let mut out: Vec<u8> = Vec::with_capacity(names.len() * 24 + 8);
+        out.push(b'[');
+        for (i, name) in names.iter().enumerate() {
+            if i > 0 {
+                out.push(b',');
+            }
+            let _ = write!(out, "\n  {}", json_str(name));
+        }
+        if !names.is_empty() {
+            out.push(b'\n');
+        }
+        out.extend_from_slice(b"]\n");
+        print_json_document(&out);
     }
 }
 
@@ -50,11 +74,14 @@ impl UntrustedCommand {
         args: &[&[u8]],
     ) -> crate::Result<()> {
         let _ = args;
-        bun_core::pretty_error!(
-            "<r><b>bun pm untrusted <r><d>v{}<r>\n\n",
-            Global::package_json_version_with_sha,
-        );
-        Output::flush();
+        let json_output = pm.options.json_output;
+        if !json_output {
+            bun_core::pretty_error!(
+                "<r><b>bun pm untrusted <r><d>v{}<r>\n\n",
+                Global::package_json_version_with_sha,
+            );
+            Output::flush();
+        }
 
         // Reshaped for borrowck — `LoadResult` returned by
         // `load_lockfile_from_cwd` mutably borrows `pm.lockfile`, so all
@@ -103,7 +130,7 @@ impl UntrustedCommand {
         }
 
         if untrusted_dep_ids.count() == 0 {
-            Self::print_zero_untrusted_dependencies_found();
+            Self::print_zero_untrusted_dependencies_found(lockfile, json_output);
             return Ok(());
         }
 
@@ -169,7 +196,12 @@ impl UntrustedCommand {
         }
 
         if untrusted_deps.count() == 0 {
-            Self::print_zero_untrusted_dependencies_found();
+            Self::print_zero_untrusted_dependencies_found(lockfile, json_output);
+            return Ok(());
+        }
+
+        if json_output {
+            print_untrusted_json(lockfile, untrusted_deps.keys(), untrusted_deps.values());
             return Ok(());
         }
 
@@ -194,7 +226,11 @@ impl UntrustedCommand {
         Ok(())
     }
 
-    fn print_zero_untrusted_dependencies_found() {
+    fn print_zero_untrusted_dependencies_found(lockfile: &Lockfile, json_output: bool) {
+        if json_output {
+            print_untrusted_json(lockfile, &[], &[]);
+            return;
+        }
         bun_core::pretty!(
             "Found <b>0<r> untrusted dependencies with scripts.\n\
              \n\
@@ -203,6 +239,45 @@ impl UntrustedCommand {
              For more information, visit <magenta>https://bun.com/docs/install/lifecycle#trusteddependencies<r>\n"
         );
     }
+}
+
+/// `--json` for `bun pm untrusted`: one object per package the text output lists, same order.
+fn print_untrusted_json(lockfile: &Lockfile, dep_ids: &[DependencyID], lists: &[ScriptsList]) {
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let package_ids = lockfile.buffers.resolutions.as_slice();
+    let pkg_names = lockfile.packages.items_name();
+    let resolutions = lockfile.packages.items_resolution();
+
+    let mut out: Vec<u8> = Vec::with_capacity(lists.len() * 192 + 8);
+    out.push(b'[');
+    for (i, (dep_id, scripts_list)) in dep_ids.iter().zip(lists).enumerate() {
+        if i > 0 {
+            out.push(b',');
+        }
+        let package_id = package_ids[*dep_id as usize] as usize;
+        out.extend_from_slice(b"\n  ");
+        scripts_list.write_json(
+            &mut out,
+            pkg_names[package_id].slice(buf),
+            &resolutions[package_id],
+            buf,
+        );
+    }
+    if !lists.is_empty() {
+        out.push(b'\n');
+    }
+    out.extend_from_slice(b"]\n");
+    print_json_document(&out);
+}
+
+fn print_json_document(out: &[u8]) {
+    Output::flush();
+    let _ = Output::writer().write_all(out);
+    Output::flush();
+}
+
+fn json_str(s: &[u8]) -> bun_core::fmt::JSONFormatterUTF8<'_> {
+    bun_core::fmt::format_json_string_utf8(s, Default::default())
 }
 
 pub(crate) struct TrustCommand;

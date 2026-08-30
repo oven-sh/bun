@@ -51,6 +51,51 @@ bun prune v1.4.0 (abc12345)
   bun prune --production
 ```
 
+### `--json`
+
+Pass `--json` to get the same information as a JSON document, for scripts and CI checks. Nothing else is written to stdout, so the output can be piped straight into `jq` or `JSON.parse`. Warnings and errors still go to stderr.
+
+```bash terminal icon="terminal"
+bun prune --production --json
+```
+
+```json
+{
+  "removed": [
+    {
+      "name": "@types/node",
+      "version": "20.11.5",
+      "path": "node_modules/@types/node"
+    },
+    {
+      "name": "left-pad",
+      "version": null,
+      "path": "node_modules/left-pad"
+    },
+    {
+      "name": "typescript",
+      "version": "5.4.0",
+      "path": "packages/app/node_modules/typescript"
+    }
+  ],
+  "checked": 948,
+  "failed": 0
+}
+```
+
+- `removed`: one object per removed package, in the order the text output lists them
+  - `name`: the package's folder name in `node_modules` (the alias for `npm:` aliases)
+  - `version`: the installed version as a string, or `null` when the folder has no readable `package.json` version (e.g. a dangling link)
+  - `path`: the removed folder, relative to the project root, with forward slashes
+- `checked`: the number of packages `bun prune` looked at, as in the summary line
+- `failed`: the number of packages that could not be deleted; those are not listed in `removed`, and the exit code is `1`
+
+With `--dry-run`, the document lists what would be removed and nothing is deleted. When there is nothing to prune, `removed` is an empty array (`[]`). With the isolated linker, store entries are listed by package name and version, with `node_modules/.bun/<name>@<version>` as the `path`.
+
+```bash terminal icon="terminal"
+bun prune --production --dry-run --json | jq -r '.removed[].path'
+```
+
 ### `--filter`
 
 Prune only the selected workspaces' `node_modules` folders (same patterns as [`bun install --filter`](/pm/filter)). Bun also cleans shared locations: the root `node_modules`, or `node_modules/.bun` with the isolated linker. In those locations, Bun keeps anything an unselected workspace still needs.

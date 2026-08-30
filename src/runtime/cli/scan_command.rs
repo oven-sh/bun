@@ -12,9 +12,10 @@ impl ScanCommand {
         manager: &mut PackageManager,
         original_cwd: &[u8],
     ) -> crate::Result<()> {
+        let json_output = manager.options.json_output;
         if manager.options.security_scanner.is_none() {
             bun_core::pretty_errorln!("<r><red>error<r>: no security scanner configured");
-            bun_core::pretty!(
+            bun_core::pretty_error!(
                 "\n\
                  To use 'bun pm scan', configure a security scanner in bunfig.toml:\n  \
                  [install.security]\n  \
@@ -25,11 +26,13 @@ impl ScanCommand {
             Global::exit(1);
         }
 
-        bun_core::pretty_error!(
-            "<r><b>bun pm scan <r><d>v{}<r>\n",
-            Global::package_json_version_with_sha,
-        );
-        Output::flush();
+        if !json_output {
+            bun_core::pretty_error!(
+                "<r><b>bun pm scan <r><d>v{}<r>\n",
+                Global::package_json_version_with_sha,
+            );
+            Output::flush();
+        }
 
         // Reshaped for borrowck — `manager.lockfile.load_from_cwd(&mut self,
         // Some(manager), log)` would alias `&mut *manager.lockfile` with `&mut *manager`.
@@ -65,11 +68,15 @@ impl ScanCommand {
         if let Some(results) = security_scan_results {
             // `defer { var results_mut = results; results_mut.deinit(); }` — Drop handles it.
 
-            security_scanner::print_security_advisories(manager, &results);
+            if json_output {
+                security_scanner::print_security_advisories_json(manager, &results);
+            } else {
+                security_scanner::print_security_advisories(manager, &results);
+            }
 
             if results.has_advisories() {
                 Global::exit(1);
-            } else {
+            } else if !json_output {
                 bun_core::pretty!("<green>No advisories found<r>\n");
             }
         }

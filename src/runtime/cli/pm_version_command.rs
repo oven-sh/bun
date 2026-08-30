@@ -74,9 +74,15 @@ impl PmVersionCommand {
         original_cwd: &[u8],
     ) -> Result<(), crate::Error> {
         let package_json_dir = Self::find_package_dir(original_cwd)?;
+        let json_output = pm.options.json_output;
 
         if positionals.len() <= 1 {
-            Self::show_help(ctx, pm, &package_json_dir)?;
+            if json_output {
+                let current = Self::get_current_package(ctx, &package_json_dir);
+                print_json(current.name.as_deref(), current.version.as_deref(), None);
+            } else {
+                Self::show_help(ctx, pm, &package_json_dir)?;
+            }
             return Ok(());
         }
 
@@ -176,6 +182,14 @@ impl PmVersionCommand {
             }
             break 'brk_version None;
         };
+        let (package_name, previous_version) = if json_output {
+            (
+                string_property(&json, b"name"),
+                current_version.map(<[u8]>::to_vec),
+            )
+        } else {
+            (None, None)
+        };
 
         let new_version_str = Self::calculate_new_version(
             current_version.unwrap_or(b"0.0.0"),
@@ -269,8 +283,16 @@ impl PmVersionCommand {
             }
         }
 
-        Output::print(format_args!("v{}\n", BStr::new(&new_version_str)));
-        Output::flush();
+        if json_output {
+            print_json(
+                package_name.as_deref(),
+                Some(&new_version_str),
+                previous_version.as_deref(),
+            );
+        } else {
+            Output::print(format_args!("v{}\n", BStr::new(&new_version_str)));
+            Output::flush();
+        }
         Ok(())
     }
 
@@ -338,8 +360,8 @@ impl PmVersionCommand {
         Global::exit(1);
     }
 
-    fn get_current_version(ctx: &command::ContextData, cwd: &[u8]) -> Option<Vec<u8>> {
-        // Returns an owned Vec<u8> (no borrow of the package.json bytes).
+    /// `name` and `version` of the package.json in `cwd`; both `None` when it is missing or unreadable.
+    fn get_current_package(ctx: &command::ContextData, cwd: &[u8]) -> CurrentPackage {
         let mut path_buf = PathBuffer::uninit();
         let package_json_path = path::join_abs_string_buf_z::<path_platform::Auto>(
             cwd,
@@ -349,7 +371,7 @@ impl PmVersionCommand {
 
         let Ok(package_json_contents) = bun_sys::File::read_from(Fd::cwd(), package_json_path)
         else {
-            return None;
+            return CurrentPackage::default();
         };
 
         let package_json_source = bun_ast::Source::init_path_string(
@@ -365,16 +387,13 @@ impl PmVersionCommand {
             unsafe { ctx.log_mut() },
             &json_bump,
         ) else {
-            return None;
+            return CurrentPackage::default();
         };
 
-        if let Some(v) = json.as_property(b"version") {
-            if let ExprData::EString(s) = &v.expr.data {
-                return Some(s.data.to_vec());
-            }
+        CurrentPackage {
+            name: string_property(&json, b"name"),
+            version: string_property(&json, b"version"),
         }
-
-        None
     }
 
     fn show_help(
@@ -382,7 +401,7 @@ impl PmVersionCommand {
         pm: &PackageManager,
         cwd: &[u8],
     ) -> Result<(), AllocError> {
-        let _current_version = Self::get_current_version(ctx, cwd);
+        let _current_version = Self::get_current_package(ctx, cwd).version;
         let current_version: &[u8] = _current_version.as_deref().unwrap_or(b"1.0.0");
 
         bun_core::prettyln!(
@@ -913,6 +932,49 @@ impl PmVersionCommand {
         }
         Ok(())
     }
+}
+
+#[derive(Default)]
+struct CurrentPackage {
+    name: Option<Vec<u8>>,
+    version: Option<Vec<u8>>,
+}
+
+/// The string value of the top-level property `key`, if the object has one.
+fn string_property(json: &bun_ast::Expr, key: &[u8]) -> Option<Vec<u8>> {
+    match &json.as_property(key)?.expr.data {
+        ExprData::EString(s) => Some(s.data.to_vec()),
+        _ => None,
+    }
+}
+
+/// `--json`: `{ "name", "version", "previousVersion" }`; missing values are `null`.
+fn print_json(name: Option<&[u8]>, version: Option<&[u8]>, previous_version: Option<&[u8]>) {
+    fn write_nullable(out: &mut Vec<u8>, value: Option<&[u8]>) {
+        match value {
+            Some(value) => {
+                let _ = write!(
+                    out,
+                    "{}",
+                    bun_core::fmt::format_json_string_utf8(value, Default::default())
+                );
+            }
+            None => out.extend_from_slice(b"null"),
+        }
+    }
+
+    let mut out: Vec<u8> = Vec::with_capacity(128);
+    out.extend_from_slice(b"{\n  \"name\": ");
+    write_nullable(&mut out, name);
+    out.extend_from_slice(b",\n  \"version\": ");
+    write_nullable(&mut out, version);
+    out.extend_from_slice(b",\n  \"previousVersion\": ");
+    write_nullable(&mut out, previous_version);
+    out.extend_from_slice(b"\n}\n");
+
+    Output::flush();
+    let _ = Output::writer().write_all(&out);
+    Output::flush();
 }
 
 // Builds formatted output into a `Vec<u8>` (never `format!`).

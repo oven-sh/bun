@@ -132,13 +132,19 @@ impl PackageManagerCommand {
   <d>├<r> <cyan>--filename<r>                the name of the tarball
   <d>├<r> <cyan>--ignore-scripts<r>          don't run pre/postpack and prepare scripts
   <d>├<r> <cyan>--gzip-level<r>              specify a custom compression level for gzip (0-9, default is 9)
-  <d>└<r> <cyan>--quiet<r>                   only output the tarball filename
+  <d>├<r> <cyan>--quiet<r>                   only output the tarball filename
+  <d>└<r> <cyan>--json<r>                    output as JSON
   <b><green>bun pm<r> <blue>bin<r>                  print the path to bin folder
-  <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder
+  <d>├<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder
+  <d>└<r> <cyan>--json<r>                    output as JSON
   <b><green>bun pm<r> <blue>ls<r>                   list the dependency tree according to the current lockfile
   <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile
-  <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies
+  <d>├<r> <cyan>--trusted<r>                 list only trusted dependencies
+  <d>└<r> <cyan>--json<r>                    output as JSON
   <b><green>bun pm<r> <blue>why<r> <d>\<pkg\><r>            show dependency tree explaining why a package is installed
+  <d>├<r> <cyan>--top<r>                     show only the first level of dependents
+  <d>├<r> <cyan>--depth<r> <d>\<n\><r>               maximum depth of the tree to display
+  <d>└<r> <cyan>--json<r>                    output as JSON
   <b><green>bun pm<r> <blue>licenses<r>             list installed packages grouped by license
   <d>├<r> <cyan>--json<r>                    output as JSON
   <d>├<r> <cyan>--prod<r>                    omit devDependencies
@@ -148,7 +154,8 @@ impl PackageManagerCommand {
   <b><green>bun pm<r> <blue>whoami<r>               print the current npm username
   <b><green>bun pm<r> <blue>view<r> <d>name[@version]<r>  view package metadata from the registry <d>(use `bun info` instead)<r>
   <b><green>bun pm<r> <blue>version<r> <d>[increment]<r>  bump the version in package.json and create a git tag
-  <d>└<r> <cyan>increment<r>                 patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific version
+  <d>├<r> <cyan>increment<r>                 patch, minor, major, prepatch, preminor, premajor, prerelease, from-git, or a specific version
+  <d>└<r> <cyan>--json<r>                    output as JSON
   <b><green>bun pm<r> <blue>pkg<r>                  manage data in package.json
   <d>├<r> <cyan>get<r> <d>[key ...]<r>
   <d>├<r> <cyan>set<r> <d>key=value ...<r>
@@ -164,6 +171,9 @@ impl PackageManagerCommand {
   <b><green>bun pm<r> <blue>trust<r> <d>names ...<r>      run scripts for untrusted dependencies and add to `trustedDependencies`
   <d>└<r>  <cyan>--all<r>                    trust all untrusted dependencies
   <b><green>bun pm<r> <blue>default-trusted<r>      print the default trusted dependencies list
+
+<b>Flags:<r>
+  <cyan>--json<r>                         output as JSON (scan, pack, bin, ls, why, diff, licenses, whoami, view, version, hash, hash-print, cache, untrusted, default-trusted)
 
 Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.
 ";
@@ -540,7 +550,17 @@ impl Subcommand {
     }
 
     pub(crate) fn supports_json_output(self) -> bool {
-        matches!(self, Self::Audit | Self::Pm | Self::Info)
+        matches!(
+            self,
+            Self::Audit
+                | Self::Pm
+                | Self::Info
+                | Self::Outdated
+                | Self::Why
+                | Self::Dedupe
+                | Self::Prune
+                | Self::Publish
+        )
     }
 
     // TODO: make all subcommands find root and chdir

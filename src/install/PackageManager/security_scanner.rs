@@ -46,6 +46,17 @@ fn signal_name(raw: u8) -> &'static str {
     bun_sys::SignalCode(raw).name().unwrap_or("UNKNOWN")
 }
 
+/// A status line: stdout, or stderr when `--json` reserves stdout for the document.
+macro_rules! status_ln {
+    ($json_output:expr, $fmt:literal) => {
+        if $json_output {
+            bun_core::pretty_errorln!($fmt)
+        } else {
+            bun_core::prettyln!($fmt)
+        }
+    };
+}
+
 pub(crate) struct PackagePath {
     pkg_path: Box<[PackageID]>,
     dep_path: Box<[DependencyID]>,
@@ -278,10 +289,17 @@ fn scan_installing_scanner_if_needed(
     match result {
         ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
         ScanAttemptResult::NeedsInstall(pkg_id) => {
-            bun_core::prettyln!("<r><yellow>Attempting to install security scanner from npm...<r>");
+            let json_output = manager.options.json_output;
+            status_ln!(
+                json_output,
+                "<r><yellow>Attempting to install security scanner from npm...<r>"
+            );
             let log_level = manager.options.log_level;
             do_partial_install_of_security_scanner(manager, command_ctx, log_level, pkg_id)?;
-            bun_core::prettyln!("<r><green><b>Security scanner installed successfully.<r>");
+            status_ln!(
+                json_output,
+                "<r><green><b>Security scanner installed successfully.<r>"
+            );
 
             let retry_result = attempt_security_scan_with_retry(
                 manager,
@@ -380,6 +398,86 @@ pub fn print_security_advisories(manager: &PackageManager, results: &SecuritySca
                 if results.warn_count == 1 { "" } else { "s" }
             );
         }
+    }
+}
+
+/// `--json`: one object per advisory, in scanner order, then the fatal and warning counts.
+pub fn print_security_advisories_json(manager: &PackageManager, results: &SecurityScanResults) {
+    let pkgs = manager.lockfile.packages.slice();
+    let pkg_names = pkgs.items_name();
+    let pkg_resolutions = pkgs.items_resolution();
+    let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
+
+    let mut out: Vec<u8> = Vec::new();
+    out.extend_from_slice(b"{\n  \"advisories\": [");
+    let mut version_buf: Vec<u8> = Vec::new();
+    for (i, advisory) in results.advisories.iter().enumerate() {
+        if i > 0 {
+            out.push(b',');
+        }
+        let level = match advisory.level {
+            SecurityAdvisoryLevel::Fatal => "fatal",
+            SecurityAdvisoryLevel::Warn => "warn",
+        };
+        let _ = write!(out, "\n    {{\n      \"level\": \"{level}\",");
+        let _ = write!(out, "\n      \"name\": {},", json_str(&advisory.package));
+
+        let pkg_path: &[PackageID] = advisory.pkg_path.as_deref().unwrap_or(&[]);
+        let version: Option<&[u8]> = match pkg_path.last() {
+            Some(&pkg_id)
+                if pkg_resolutions[pkg_id as usize].tag == bun_install::resolution::Tag::Npm =>
+            {
+                let npm = pkg_resolutions[pkg_id as usize].npm();
+                version_buf.clear();
+                let _ = write!(version_buf, "{}", npm.version.fmt(string_buf));
+                Some(version_buf.as_slice())
+            }
+            _ => None,
+        };
+        out.extend_from_slice(b"\n      \"version\": ");
+        write_json_opt_str(&mut out, version);
+        out.extend_from_slice(b",\n      \"description\": ");
+        write_json_opt_str(&mut out, advisory.description.as_deref());
+        out.extend_from_slice(b",\n      \"url\": ");
+        write_json_opt_str(&mut out, advisory.url.as_deref());
+
+        out.extend_from_slice(b",\n      \"path\": [");
+        for (j, pkg_id) in pkg_path.iter().enumerate() {
+            if j > 0 {
+                out.extend_from_slice(b", ");
+            }
+            let _ = write!(
+                out,
+                "{}",
+                json_str(pkg_names[*pkg_id as usize].slice(string_buf))
+            );
+        }
+        out.extend_from_slice(b"]\n    }");
+    }
+    if !results.advisories.is_empty() {
+        out.extend_from_slice(b"\n  ");
+    }
+    let _ = write!(
+        out,
+        "],\n  \"fatal\": {},\n  \"warnings\": {}\n}}\n",
+        results.fatal_count, results.warn_count
+    );
+
+    Output::flush();
+    let _ = Output::writer().write_all(&out);
+    Output::flush();
+}
+
+fn json_str(s: &[u8]) -> bun_core::fmt::JSONFormatterUTF8<'_> {
+    bun_core::fmt::format_json_string_utf8(s, Default::default())
+}
+
+fn write_json_opt_str(out: &mut Vec<u8>, value: Option<&[u8]>) {
+    match value {
+        Some(s) => {
+            let _ = write!(out, "{}", json_str(s));
+        }
+        None => out.extend_from_slice(b"null"),
     }
 }
 

@@ -8,7 +8,7 @@ use bun_ast::{E, Expr, G};
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
 use bun_core::{Environment, Global, Output};
-use bun_core::{ZStr, strings};
+use bun_core::{ZBox, ZStr, strings};
 use bun_dotenv as dotenv;
 use bun_http as http;
 use bun_install::lockfile::{LoadResult, LoadStep};
@@ -79,6 +79,17 @@ fn is_readme_os_path(name: &[OSPathChar]) -> bool {
     is_readme_filename_t(name)
 }
 
+fn os_path_to_utf8(path: &[OSPathChar]) -> Box<[u8]> {
+    #[cfg(windows)]
+    {
+        strings::to_utf8_alloc(path).into_boxed_slice()
+    }
+    #[cfg(not(windows))]
+    {
+        Box::from(path)
+    }
+}
+
 use crate::cli::init_command::InitCommand;
 use crate::cli::open;
 use crate::run_command::RunCommand as Run;
@@ -97,7 +108,7 @@ pub(crate) struct Context<'a, const DIRECTORY_PUBLISH: bool> {
 
     pub(crate) package_name: Box<[u8]>,
     pub(crate) package_version: Box<[u8]>,
-    pub(crate) abs_tarball_path: Box<ZStr>,
+    pub(crate) abs_tarball_path: ZBox,
     pub(crate) tarball_bytes: Box<[u8]>,
     pub(crate) uses_workspaces: bool,
 
@@ -106,6 +117,8 @@ pub(crate) struct Context<'a, const DIRECTORY_PUBLISH: bool> {
     pub(crate) publish_script: Option<Box<[u8]>>,
     pub(crate) postpublish_script: Option<Box<[u8]>>,
     pub(crate) script_env: Option<&'a mut dotenv::Loader>,
+
+    pub(crate) pack_json: pack::PackJson,
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -177,10 +190,14 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             ArchiveIterResult::Result(res) => res,
         };
 
+        let json_output = manager.options.json_output;
         let mut unpacked_size: usize = 0;
         let mut total_files: usize = 0;
+        let mut files: pack::PackList = Vec::new();
 
-        Output::print(format_args!("\n"));
+        if !json_output {
+            Output::print(format_args!("\n"));
+        }
 
         loop {
             let next = match iter.next() {
@@ -206,9 +223,9 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             #[cfg(not(windows))]
             let pathname: &[OSPathChar] = entry.pathname().as_bytes();
 
-            let size = entry.size();
+            let size = usize::try_from(entry.size().max(0)).expect("int cast");
 
-            unpacked_size += usize::try_from(size.max(0)).expect("int cast");
+            unpacked_size += size;
             total_files += usize::from(next.kind == FileKind::File);
 
             // this is option `strip: 1` (npm expects a `package/` prefix for all paths)
@@ -218,20 +235,28 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                     continue;
                 }
 
-                bun_core::pretty!(
-                    "<b><cyan>packed<r> {} {}\n",
-                    bun_fmt::size(
-                        usize::try_from(size.max(0)).expect("int cast"),
-                        bun_fmt::SizeFormatterOptions {
-                            space_between_number_and_unit: false
-                        }
-                    ),
-                    bun_fmt::fmt_os_path(stripped, Default::default()),
-                );
+                if !json_output {
+                    bun_core::pretty!(
+                        "<b><cyan>packed<r> {} {}\n",
+                        bun_fmt::size(
+                            size,
+                            bun_fmt::SizeFormatterOptions {
+                                space_between_number_and_unit: false
+                            }
+                        ),
+                        bun_fmt::fmt_os_path(stripped, Default::default()),
+                    );
+                }
 
                 if next.kind != FileKind::File {
                     continue;
                 }
+
+                files.push(pack::PackListEntry {
+                    subpath: os_path_to_utf8(stripped),
+                    size,
+                    mode: entry.perm(),
+                });
 
                 if !stripped.iter().any(|&c| bun_paths::is_sep_any_t(c)) {
                     // check for package.json, readme.md, ...
@@ -279,27 +304,33 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                             }
                             ArchiveIterResult::Result(bytes) => bytes,
                         };
-                        #[cfg(not(windows))]
-                        let filename_utf8: Vec<u8> = filename.to_vec();
-                        #[cfg(windows)]
-                        let filename_utf8: Vec<u8> = strings::to_utf8_alloc(filename);
                         maybe_readme = Some(ReadmeInfo {
-                            filename: filename_utf8,
+                            filename: os_path_to_utf8(filename).into_vec(),
                             contents: bytes.into_vec(),
                         });
                     }
                 }
             } else {
-                bun_core::pretty!(
-                    "<b><cyan>packed<r> {} {}\n",
-                    bun_fmt::size(
-                        usize::try_from(size.max(0)).expect("int cast"),
-                        bun_fmt::SizeFormatterOptions {
-                            space_between_number_and_unit: false
-                        }
-                    ),
-                    bun_fmt::fmt_os_path(pathname, Default::default()),
-                );
+                if !json_output {
+                    bun_core::pretty!(
+                        "<b><cyan>packed<r> {} {}\n",
+                        bun_fmt::size(
+                            size,
+                            bun_fmt::SizeFormatterOptions {
+                                space_between_number_and_unit: false
+                            }
+                        ),
+                        bun_fmt::fmt_os_path(pathname, Default::default()),
+                    );
+                }
+
+                if next.kind == FileKind::File {
+                    files.push(pack::PackListEntry {
+                        subpath: os_path_to_utf8(pathname),
+                        size,
+                        mode: entry.perm(),
+                    });
+                }
             }
         }
 
@@ -421,30 +452,44 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             maybe_readme,
         )?;
 
-        pack::Context::print_summary(
-            pack::Stats {
-                total_files,
-                unpacked_size,
-                packed_size: tarball_bytes.len(),
-                ..Default::default()
-            },
-            Some(&shasum),
-            Some(&integrity),
-            manager.options.log_level,
-        );
+        let packed_size = tarball_bytes.len();
+        if !json_output {
+            pack::Context::print_summary(
+                pack::Stats {
+                    total_files,
+                    unpacked_size,
+                    packed_size,
+                    ..Default::default()
+                },
+                Some(&shasum),
+                Some(&integrity),
+                manager.options.log_level,
+            );
+        }
 
         Ok(Context {
             manager,
             command_ctx: ctx,
             package_name,
             package_version,
-            abs_tarball_path: ZStr::boxed(abs_tarball_path.as_bytes()),
+            abs_tarball_path: ZBox::from_bytes(abs_tarball_path.as_bytes()),
             tarball_bytes: tarball_bytes.into(),
             uses_workspaces: false,
             normalized_pkg_info,
             publish_script: None,
             postpublish_script: None,
             script_env: None,
+            pack_json: pack::PackJson {
+                unpacked_size,
+                total_files,
+                tarball: Some(pack::TarballDigest {
+                    size: packed_size,
+                    shasum,
+                    integrity,
+                }),
+                bundled: pack::bundled_dep_names(&files),
+                files,
+            },
         })
     }
 
@@ -528,13 +573,14 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
 
 impl PublishCommand {
     pub(crate) fn exec(ctx: Command::Context) -> Result<(), Error> {
-        bun_core::prettyln!(
-            "<r><b>bun publish <r><d>v{}<r>",
-            Global::package_json_version_with_sha,
-        );
-        Output::flush();
-
         let cli = install::CommandLineArguments::parse(Subcommand::Publish)?;
+        if !cli.json_output {
+            bun_core::prettyln!(
+                "<r><b>bun publish <r><d>v{}<r>",
+                Global::package_json_version_with_sha,
+            );
+            Output::flush();
+        }
 
         let (manager, original_cwd) =
             match PackageManager::init(&mut *ctx, cli.clone(), Subcommand::Publish) {
@@ -605,6 +651,11 @@ impl PublishCommand {
                 err.report_and_crash();
             }
 
+            if context.manager.options.json_output {
+                print_json(&context);
+                return Ok(());
+            }
+
             bun_core::prettyln!(
                 "\n<green> +<r> {}@{}{}",
                 bstr::BStr::new(&context.package_name),
@@ -619,7 +670,7 @@ impl PublishCommand {
             return Ok(());
         }
 
-        let context = match Context::<true>::from_workspace(ctx, manager) {
+        let mut context = match Context::<true>::from_workspace(ctx, manager) {
             Ok(c) => c,
             Err(err) => {
                 use pack::PackError;
@@ -655,16 +706,19 @@ impl PublishCommand {
             err.report_and_crash();
         }
 
-        bun_core::prettyln!(
-            "\n<green> +<r> {}@{}{}",
-            bstr::BStr::new(&context.package_name),
-            bstr::BStr::new(dependency::without_build_tag(&context.package_version)),
-            if PackageManager::get().options.dry_run {
-                " (dry-run)"
-            } else {
-                ""
-            },
-        );
+        let json_output = context.manager.options.json_output;
+        if !json_output {
+            bun_core::prettyln!(
+                "\n<green> +<r> {}@{}{}",
+                bstr::BStr::new(&context.package_name),
+                bstr::BStr::new(dependency::without_build_tag(&context.package_version)),
+                if PackageManager::get().options.dry_run {
+                    " (dry-run)"
+                } else {
+                    ""
+                },
+            );
+        }
 
         if PackageManager::get()
             .options
@@ -679,6 +733,7 @@ impl PublishCommand {
                 .into();
             let script_env = context
                 .script_env
+                .as_deref_mut()
                 .expect("DIRECTORY_PUBLISH=true sets script_env");
             script_env
                 .map
@@ -737,6 +792,10 @@ impl PublishCommand {
                     return Err(e);
                 }
             }
+        }
+
+        if json_output {
+            print_json(&context);
         }
 
         Ok(())
@@ -874,21 +933,23 @@ impl PublishCommand {
         }
 
         // continues from `printSummary`
-        let registry_href = registry_url.href_without_auth();
-        bun_core::pretty!(
-            "<b><blue>Tag<r>: {}\n<b><blue>Access<r>: {}\n<b><blue>Registry<r>: {}/\n",
-            bstr::BStr::new(if !ctx.manager.options.publish_config.tag.is_empty() {
-                ctx.manager.options.publish_config.tag
-            } else {
-                b"latest"
-            }),
-            if let Some(access) = ctx.manager.options.publish_config.access {
-                access.as_str()
-            } else {
-                "default"
-            },
-            bstr::BStr::new(strings::without_trailing_slash(&registry_href)),
-        );
+        if !ctx.manager.options.json_output {
+            let registry_href = registry_url.href_without_auth();
+            bun_core::pretty!(
+                "<b><blue>Tag<r>: {}\n<b><blue>Access<r>: {}\n<b><blue>Registry<r>: {}/\n",
+                bstr::BStr::new(if !ctx.manager.options.publish_config.tag.is_empty() {
+                    ctx.manager.options.publish_config.tag
+                } else {
+                    b"latest"
+                }),
+                if let Some(access) = ctx.manager.options.publish_config.access {
+                    access.as_str()
+                } else {
+                    "default"
+                },
+                bstr::BStr::new(strings::without_trailing_slash(&registry_href)),
+            );
+        }
 
         // dry-run stops here
         if ctx.manager.options.dry_run {
@@ -1157,70 +1218,67 @@ impl PublishCommand {
                     }
                 }
 
-                if auth_url_is_web {
-                    bun_core::prettyln!(
-                        "\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n",
-                    );
+                // `--json` reserves stdout for the document, so the prompt goes to stderr.
+                let to_stderr = ctx.manager.options.json_output;
+                let colors = if to_stderr {
+                    Output::enable_ansi_colors_stderr()
                 } else {
-                    bun_core::prettyln!("\nAuthenticate your account at:\n");
-                }
+                    Output::enable_ansi_colors_stdout()
+                };
+                // The box holds the URL the registry sent, so it is not tag-walked.
+                let heading: &str = if auth_url_is_web {
+                    "\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n"
+                } else {
+                    "\nAuthenticate your account at:\n"
+                };
 
                 const PADDING: usize = 1;
-
-                let horizontal = if Output::enable_ansi_colors_stdout() {
-                    "─"
+                let (horizontal, vertical, top_left, top_right, bottom_left, bottom_right) =
+                    if colors {
+                        ("─", "│", "┌", "┐", "└", "┘")
+                    } else {
+                        ("-", "|", "|", "|", "|", "|")
+                    };
+                let (bold, reset) = if colors {
+                    (Output::BOLD, Output::RESET)
                 } else {
-                    "-"
+                    ("", "")
                 };
-                let vertical = if Output::enable_ansi_colors_stdout() {
-                    "│"
-                } else {
-                    "|"
-                };
-                let top_left = if Output::enable_ansi_colors_stdout() {
-                    "┌"
-                } else {
-                    "|"
-                };
-                let top_right = if Output::enable_ansi_colors_stdout() {
-                    "┐"
-                } else {
-                    "|"
-                };
-                let bottom_left = if Output::enable_ansi_colors_stdout() {
-                    "└"
-                } else {
-                    "|"
-                };
-                let bottom_right = if Output::enable_ansi_colors_stdout() {
-                    "┘"
-                } else {
-                    "|"
-                };
-
                 let width: usize = (PADDING * 2) + auth_url_str.len();
 
-                Output::print(format_args!("{}", top_left));
+                let mut prompt: Vec<u8> = Vec::new();
+                prompt.extend_from_slice(top_left.as_bytes());
                 for _ in 0..width {
-                    Output::print(format_args!("{}", horizontal));
+                    prompt.extend_from_slice(horizontal.as_bytes());
                 }
-                Output::print(format_args!("{}\n", top_right));
+                prompt.extend_from_slice(top_right.as_bytes());
+                prompt.push(b'\n');
 
-                Output::print(format_args!("{}", vertical));
-                for _ in 0..PADDING {
-                    Output::print(format_args!(" "));
-                }
-                bun_core::pretty!("<b>{}<r>", bstr::BStr::new(auth_url_str.as_bytes()));
-                for _ in 0..PADDING {
-                    Output::print(format_args!(" "));
-                }
-                Output::print(format_args!("{}\n", vertical));
+                prompt.extend_from_slice(vertical.as_bytes());
+                prompt.extend_from_slice(&[b' '; PADDING]);
+                prompt.extend_from_slice(bold.as_bytes());
+                prompt.extend_from_slice(auth_url_str.as_bytes());
+                prompt.extend_from_slice(reset.as_bytes());
+                prompt.extend_from_slice(&[b' '; PADDING]);
+                prompt.extend_from_slice(vertical.as_bytes());
+                prompt.push(b'\n');
 
-                Output::print(format_args!("{}", bottom_left));
+                prompt.extend_from_slice(bottom_left.as_bytes());
                 for _ in 0..width {
-                    Output::print(format_args!("{}", horizontal));
+                    prompt.extend_from_slice(horizontal.as_bytes());
                 }
-                Output::print(format_args!("{}\n", bottom_right));
+                prompt.extend_from_slice(bottom_right.as_bytes());
+                prompt.push(b'\n');
+
+                #[allow(clippy::disallowed_methods)]
+                // the heading is a literal with <b>/<r> markup that must be tag-walked
+                if to_stderr {
+                    Output::pretty_errorln(format_args!("{heading}"));
+                    Output::print_error(bstr::BStr::new(&prompt));
+                } else {
+                    Output::prettyln(format_args!("{heading}"));
+                    Output::print(format_args!("{}", bstr::BStr::new(&prompt)));
+                }
                 Output::flush();
 
                 if auth_url_is_web {
@@ -1357,8 +1415,17 @@ impl PublishCommand {
         }
 
         // classic
+        if ctx.manager.options.json_output {
+            // `--json` reserves stdout for the document, so the prompt goes to stderr.
+            bun_core::pretty_error!("\nThis operation requires a one-time password.\nEnter OTP: ");
+            Output::flush();
+        }
         match InitCommand::prompt(
-            "\nThis operation requires a one-time password.\nEnter OTP: ",
+            if ctx.manager.options.json_output {
+                ""
+            } else {
+                "\nThis operation requires a one-time password.\nEnter OTP: "
+            },
             b"",
         ) {
             Ok(v) => Ok(v.into()),
@@ -2092,6 +2159,58 @@ impl PublishError {
             }
         }
     }
+}
+
+/// `--json`: one object with the `bun pm pack --json` keys plus `tag`, `access`, `registry` and `dryRun`.
+fn print_json<const DIRECTORY_PUBLISH: bool>(ctx: &Context<'_, DIRECTORY_PUBLISH>) {
+    let options = &ctx.manager.options;
+    // A workspace publish deletes its tarball after the upload; only a tarball argument stays on disk.
+    let path = (!DIRECTORY_PUBLISH).then_some(ctx.abs_tarball_path.as_bytes());
+    let tag: &[u8] = if options.publish_config.tag.is_empty() {
+        b"latest"
+    } else {
+        options.publish_config.tag
+    };
+    let registry_href = ctx
+        .manager
+        .scope_for_package_name(&ctx.package_name)
+        .url
+        .url()
+        .href_without_auth();
+    let mut registry: Vec<u8> = strings::without_trailing_slash(&registry_href).to_vec();
+    registry.push(b'/');
+
+    let mut out: Vec<u8> = Vec::new();
+    out.push(b'{');
+    pack::write_json_fields(
+        &mut out,
+        1,
+        &ctx.package_name,
+        &ctx.package_version,
+        path,
+        &ctx.pack_json,
+    );
+    let _ = write!(
+        out,
+        ",\n  \"tag\": {},\n  \"access\": ",
+        pack::json_str(tag)
+    );
+    match options.publish_config.access {
+        Some(access) => {
+            let _ = write!(out, "{}", pack::json_str(access.as_str().as_bytes()));
+        }
+        None => out.extend_from_slice(b"null"),
+    }
+    let _ = write!(
+        out,
+        ",\n  \"registry\": {},\n  \"dryRun\": {}\n}}\n",
+        pack::json_str(&registry),
+        options.dry_run
+    );
+
+    Output::flush();
+    let _ = Output::writer().write_all(&out);
+    Output::flush();
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]

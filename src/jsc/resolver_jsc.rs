@@ -22,13 +22,6 @@ fn node_module_paths_for_js(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
     Ok(node_module_paths_js_value(&in_str, global, false))
 }
 
-#[unsafe(no_mangle)]
-extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObject) -> JSValue {
-    crate::mark_binding!();
-
-    node_module_paths_js_value(&BunString::static_("."), global, false)
-}
-
 // C++ callers pass a borrowed `const BunString*` (`Bun::toString`).
 #[unsafe(export_name = "Resolver__nodeModulePathsJSValue")]
 extern "C" fn node_module_paths_js_value(

@@ -746,7 +746,6 @@ class NapiRef {
 public:
     void ref();
     void unref();
-    void clear();
 
     NapiRef(Ref<NapiEnv>&& env, uint32_t count, Bun::NapiFinalizer finalizer)
         : env(env)

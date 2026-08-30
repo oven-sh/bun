@@ -874,7 +874,6 @@ impl<'a> ParseArgsState<'a> {
     }
 }
 
-#[bun_jsc::host_fn(export = "Bun__NodeUtil__jsParseArgs")]
 pub(crate) fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     MarkedArgumentBuffer::new(|default_roots| parse_args_impl(global, callframe, default_roots))
 }

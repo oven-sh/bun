@@ -2094,7 +2094,6 @@ function testImpl<T extends DevServerTest>(
           FORCE_COLOR: "1",
           BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
           BUN_DEV_SERVER_TEST_RUNNER: "1",
-          BUN_DUMP_STATE_ON_CRASH: "1",
           NODE_ENV,
           // BUN_DEBUG_QUIET_LOGS: "0",
           // BUN_DEBUG_DEVSERVER: isDebugBuild && interactive ? "1" : undefined,

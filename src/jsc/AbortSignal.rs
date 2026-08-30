@@ -441,15 +441,6 @@ extern "C" fn AbortSignal__Timeout__create(
 }
 
 /// # Safety
-/// `this` must be a live boxed `Timeout` returned from `AbortSignal__Timeout__create`;
-/// `vm` must be the live per-thread `VirtualMachine`.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn AbortSignal__Timeout__run(this: *mut Timeout, vm: *mut VirtualMachine) {
-    // SAFETY: C++ caller passes a live boxed Timeout and the live per-thread VM.
-    unsafe { Timeout::run(this, vm) }
-}
-
-/// # Safety
 /// `this` must be a live boxed `Timeout` returned from `AbortSignal__Timeout__create`.
 /// Must be called on the owning JS thread — `deinit` resolves the VM via the
 /// thread-local `VirtualMachine::get_mut_ptr()` and `Timeout::cancel` requires it.

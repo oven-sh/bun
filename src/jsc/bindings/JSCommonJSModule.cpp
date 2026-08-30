@@ -531,8 +531,6 @@ JSC_DEFINE_CUSTOM_SETTER(setterPath,
     return true;
 }
 
-extern "C" JSC::EncodedJSValue Resolver__propForRequireMainPaths(JSGlobalObject*);
-
 JSC_DEFINE_CUSTOM_GETTER(getterPaths, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());

@@ -19,8 +19,9 @@ test("JSON.stringify on a cyclic value throws with bounded memory (#40974)", asy
       }
     };
 
+    const payload = Buffer.alloc(50, "y").toString();
     const o = {};
-    for (let i = 0; i < 8; i++) o["k" + i] = "y".repeat(50);
+    for (let i = 0; i < 8; i++) o["k" + i] = payload;
     o.self = o;
 
     const arr = [1];

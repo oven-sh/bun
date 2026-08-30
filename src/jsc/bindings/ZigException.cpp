@@ -507,16 +507,21 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
     }
     if (except.type == SYNTAX_ERROR_CODE) {
         except.message = Bun::toStringRef(err->sanitizedMessageString(global));
-
-    } else if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
-        RETURN_IF_EXCEPTION(scope, );
-        except.message = Bun::toStringRef(global, message);
-        if (!scope.clearExceptionExceptTermination()) [[unlikely]]
-            return;
     } else {
-        RETURN_IF_EXCEPTION(scope, );
-
-        except.message = Bun::toStringRef(err->sanitizedMessageString(global));
+        // This one intentionally calls getters.
+        JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message);
+        if (scope.exception()) [[unlikely]] {
+            if (!scope.clearExceptionExceptTermination())
+                return;
+            message = {};
+        }
+        if (message) {
+            except.message = Bun::toStringRef(global, message);
+            if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+                return;
+        } else {
+            except.message = Bun::toStringRef(err->sanitizedMessageString(global));
+        }
     }
 
     if (!scope.clearExceptionExceptTermination()) [[unlikely]] {

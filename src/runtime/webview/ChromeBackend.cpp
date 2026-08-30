@@ -221,6 +221,13 @@ std::span<const char> jsonString(std::span<const char> field)
     return { p + 1, static_cast<size_t>(end - p - 2) };
 }
 
+WTF::String jsonStringValue(std::span<const char> field)
+{
+    auto value = JSON::Value::parseJSON(WTF::String::fromUTF8(field));
+    if (!value) return {};
+    return value->asString();
+}
+
 // --- Transport singleton ---------------------------------------------------
 
 Transport& transport()
@@ -732,8 +739,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
 
     if (!error.empty()) {
         // {"code":-32000,"message":"..."}
-        auto msgSlice = jsonString(jsonField(error, { "message", 7 }));
-        auto errStr = WTF::String::fromUTF8(std::span<const char>(msgSlice));
+        auto errStr = jsonStringValue(jsonField(error, { "message", 7 }));
         settle(g, view, entry.slot, false,
             createError(g, errStr.isEmpty() ? "CDP error"_s : errStr));
         return;
@@ -811,9 +817,9 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // pending entry so the event handler can look up the view by
         // sessionId — actually the event handler uses m_sessions, not
         // m_pending, so we just drop here.
-        auto err = jsonString(jsonField(result, { "errorText", 9 }));
-        if (!err.empty())
-            settle(g, view, entry.slot, false, createError(g, WTF::String::fromUTF8(err)));
+        auto err = jsonStringValue(jsonField(result, { "errorText", 9 }));
+        if (!err.isEmpty())
+            settle(g, view, entry.slot, false, createError(g, err));
         // Else: don't settle — Page.loadEventFired does.
         return;
     }
@@ -825,8 +831,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // Runtime.evaluate("document.title") chained from loadEventFired.
         // result.result.value is the string. Set m_title, settle Navigate.
         auto inner = jsonField(result, { "result", 6 });
-        auto value = jsonString(jsonField(inner, { "value", 5 }));
-        view->m_title = WTF::String::fromUTF8(value);
+        view->m_title = jsonStringValue(jsonField(inner, { "value", 5 }));
         settle(g, view, entry.slot, true, jsUndefined());
         return;
     }
@@ -1113,8 +1118,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
     // now the new document, resources may still be loading.
     if (method.size() == 19 && memcmp(method.data(), "Page.frameNavigated", 19) == 0) {
         auto frame = jsonField(params, { "frame", 5 });
-        auto url = jsonString(jsonField(frame, { "url", 3 }));
-        auto urlStr = WTF::String::fromUTF8(url);
+        auto urlStr = jsonStringValue(jsonField(frame, { "url", 3 }));
         view->m_url = urlStr;
         // m_loading stays true — loadEventFired flips it.
 

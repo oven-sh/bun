@@ -174,7 +174,14 @@ const it = chromePath && !chromeBroken && !edgeAsLocalSystem ? test : test.todo;
 // WebSocket-transport tests live in webview-chrome-ws.test.ts — the
 // Transport singleton means you can't mix pipe-mode (this file) and
 // connect-mode in one process.
-const chrome = { type: "chrome" as const, url: false as const };
+//
+// Chrome exits immediately when launched as root without --no-sandbox
+// (crbug.com/638180), which is how containers run this suite. Spawn flags
+// only take effect on the first launch in a process, so every site that
+// launches Chrome (this object and the subprocess fixtures below) passes
+// chromeArgv.
+const chromeArgv = process.platform !== "win32" && process.getuid!() === 0 ? ["--no-sandbox"] : [];
+const chrome = { type: "chrome" as const, url: false as const, argv: chromeArgv };
 
 const html = (h: string) => "data:text/html," + encodeURIComponent(h);
 
@@ -571,7 +578,7 @@ it("chrome: closeAll() kills the subprocess and pending promises reject", async 
       bunExe(),
       "-e",
       `
-        const view = new Bun.WebView({ backend: {type:"chrome", url:false}, width: 200, height: 200 });
+        const view = new Bun.WebView({ backend: ${JSON.stringify(chrome)}, width: 200, height: 200 });
         await view.navigate("data:text/html,<body>test</body>");
         const p = view.evaluate("new Promise(() => {})"); // never resolves
         Bun.WebView.closeAll();
@@ -748,7 +755,7 @@ it("chrome: backend.stderr defaults to ignore (Chrome noise hidden)", async () =
       bunExe(),
       "-e",
       `
-        const view = new Bun.WebView({ backend: {type:"chrome", url:false}, width: 200, height: 200 });
+        const view = new Bun.WebView({ backend: ${JSON.stringify(chrome)}, width: 200, height: 200 });
         await view.navigate("data:text/html,<body>test</body>");
         view.close();
       `,
@@ -788,7 +795,11 @@ it("backend: { type: 'chrome' } object form works", async () => {
   // path forces spawn-mode — without it, the bare object form would
   // auto-detect DevToolsActivePort and connect to the dev's Chrome,
   // locking the singleton into WS mode for subsequent tests.
-  await using view = new Bun.WebView({ backend: { type: "chrome", path: chromePath }, width: 200, height: 200 });
+  await using view = new Bun.WebView({
+    backend: { type: "chrome", path: chromePath, argv: chromeArgv },
+    width: 200,
+    height: 200,
+  });
   await view.navigate(html("<body>obj</body>"));
   expect(await view.evaluate("document.body.textContent")).toBe("obj");
 });
@@ -803,7 +814,7 @@ it("backend.argv appends after core flags", async () => {
       "-e",
       `
       const view = new Bun.WebView({
-        backend: { type: "chrome", argv: ["--user-agent=BunWebViewTest/1.0"] },
+        backend: { type: "chrome", argv: ${JSON.stringify([...chromeArgv, "--user-agent=BunWebViewTest/1.0"])} },
         width: 200, height: 200,
       });
       await view.navigate("data:text/html,<body></body>");
@@ -1023,6 +1034,45 @@ it("chrome: url/title getters populated after navigate", async () => {
   expect(view.title).toBe("Second");
 });
 
+// Chrome's CDP encoder escapes quotes, backslashes and every non-ASCII code
+// point (\uXXXX, surrogate pairs for astral) in the JSON it sends. The
+// strings the backend lifts out of that JSON by hand (title, frame url,
+// error messages) have to be decoded; evaluate() already JSON-parses its
+// result, so it doubles as the reference value.
+it("chrome: title getter decodes JSON escapes", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  const title = 'a"b\\c é 日本 \u{1F600}';
+  // charset=utf-8: without it Chrome decodes the percent-encoded bytes of a
+  // data: URL as windows-1252 and the title itself would be mojibake.
+  await view.navigate("data:text/html;charset=utf-8," + encodeURIComponent(`<title>${title}</title>`));
+  expect(await view.evaluate("document.title")).toBe(title);
+  expect(view.title).toBe(title);
+});
+
+it("chrome: url getter and onNavigated decode JSON escapes", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  const urls: string[] = [];
+  view.onNavigated = (url: string) => urls.push(url);
+  // The URL parser keeps " and \ verbatim in a data: URL's opaque path, so
+  // the committed URL Chrome reports contains both (as \" and \\ in JSON).
+  await view.navigate('data:text/html,<body>"q"\\b</body>');
+  const href = await view.evaluate("location.href");
+  expect(href).toContain('"q"\\b');
+  expect(view.url).toBe(href);
+  expect(urls.at(-1)).toBe(href);
+});
+
+it("chrome: CDP error messages decode JSON escapes", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(html("<body></body>"));
+  // Chrome echoes an unknown method name back in its -32601 message
+  // ("'<method>' wasn't found"), which gets each escape class into
+  // error.message. toThrow(string) is a substring match on the message.
+  for (const method of ['No.such"method', "No.such\\method", "No.such\nmethod"]) {
+    await expect(view.cdp(method)).rejects.toThrow(method);
+  }
+});
+
 it("chrome: onNavigated fires with committed URL", async () => {
   await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
   const urls: string[] = [];
@@ -1134,7 +1184,7 @@ it("chrome: console: globalThis.console forwards to parent's stdout", async () =
       "-e",
       `
       const view = new Bun.WebView({
-        backend: {type:"chrome", url:false}, width: 200, height: 200,
+        backend: ${JSON.stringify(chrome)}, width: 200, height: 200,
         console: globalThis.console,
       });
       await view.navigate("data:text/html,<body></body>");

@@ -1581,6 +1581,7 @@ impl<'a> Transpiler<'a> {
                     warn_about_unbundled_modules: !target.is_bun(),
                     allow_unresolved: &p_opts::AllowUnresolved::DEFAULT,
                     glob_resolver: None,
+                    glob_stem_extension_orders: [&[], &[]],
                     module_type: to_parser_module_type(this_parse.module_type),
                     output_format: p_opts::Format::Esm,
                     transform_only: self.options.transform_only,

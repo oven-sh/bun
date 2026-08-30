@@ -1013,14 +1013,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Extensions the default extension orders probe (`.node` on target bun),
-    /// so a stem key (`./src/cat` for `./src/cat.js`) resolves like a
-    /// hand-written `require("./src/cat")`.
-    const GLOB_STEM_EXTENSIONS: &'static [&'static [u8]] = &[
-        b".js", b".mjs", b".cjs", b".jsx", b".ts", b".mts", b".cts", b".tsx", b".json", b".node",
-    ];
-
-    fn glob_resolvable_stem(key: &[u8]) -> Option<&[u8]> {
+    /// A stem key (`./src/cat` for `./src/cat.js`) resolves like a
+    /// hand-written `require("./src/cat")`, so the extension must be in the
+    /// effective resolver order or the probe could not find the file.
+    fn glob_resolvable_stem<'k>(key: &'k [u8], extension_order: &[Box<[u8]>]) -> Option<&'k [u8]> {
         let base_start = strings::last_index_of_char(key, b'/').map_or(0, |i| i + 1);
         let base = &key[base_start..];
         let dot = strings::last_index_of_char(base, b'.')?;
@@ -1028,7 +1024,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return None;
         }
         let ext = &base[dot..];
-        if !Self::GLOB_STEM_EXTENSIONS.contains(&ext) {
+        if !extension_order.iter().any(|e| strings::eql(e, ext)) {
             return None;
         }
         Some(&key[..base_start + dot])
@@ -1129,8 +1125,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `./src/cat.js`, so also alias each stem the runtime string can
         // produce (it must end with the static text after the last placeholder).
         let static_suffix = &shape[strings::last_index_of_char(shape, 0).map_or(0, |i| i + 1)..];
+        let stem_order =
+            self.options.glob_stem_extension_orders[(kind == ImportKind::Dynamic) as usize];
         for i in 0..matches.len() {
-            let Some(stem) = Self::glob_resolvable_stem(keys[i].0) else {
+            let Some(stem) = Self::glob_resolvable_stem(keys[i].0, stem_order) else {
                 continue;
             };
             if !stem.ends_with(static_suffix) || keys.iter().any(|&(k, _)| k == stem) {

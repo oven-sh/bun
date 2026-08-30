@@ -2446,6 +2446,13 @@ pub mod parse_worker {
         // SAFETY: ARENA — `topts` outlives `opts` (worker-owned for the bundle pass).
         opts.allow_unresolved = unsafe { bun_collections::detach_ref(&topts.allow_unresolved) };
         opts.glob_resolver = Some(crate::options::parser_glob_resolver);
+        // SAFETY: ARENA — `topts` outlives `opts` (worker-owned for the bundle pass).
+        opts.glob_stem_extension_orders = unsafe {
+            [
+                bun_collections::detach_ref(&*topts.extension_order.default.default),
+                bun_collections::detach_ref(&*topts.extension_order.default.esm),
+            ]
+        };
         // `Transpiler.macro_context` is `Option<bun_ast::Macro::MacroContext>`
         // (same nominal type as `ParserOptions.macro_context`'s pointee). Reborrow
         // through the raw `*mut Transpiler` so the `&mut MacroContext` is disjoint

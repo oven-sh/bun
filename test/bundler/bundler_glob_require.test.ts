@@ -765,8 +765,9 @@ test.skipIf(isWindows)("glob-require/SymlinkedFileIsBundled", async () => {
   expect(exitCode).toBe(0);
 });
 
-// A stem alias is speculative. When a custom --extension-order cannot probe
-// the matched extension, the build must not fail on the alias record.
+// When a custom --extension-order cannot probe the matched extension, no stem
+// alias is emitted: the build succeeds, the literal key still works, and the
+// extensionless runtime string reaches the runtime require fallback.
 test("glob-require/StemAliasCustomExtensionOrder", async () => {
   using dir = tempDir("bundler-glob-extorder", {
     "entry.js": `const which = process.env.WHICH || "foo.mjs";\nconsole.log(require("./mods/" + which));`,
@@ -783,14 +784,20 @@ test("glob-require/StemAliasCustomExtensionOrder", async () => {
   expect(buildStderr).toBe("");
   expect(buildExitCode).toBe(0);
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "./out.js"],
-    env: bunEnv,
-    cwd: String(dir),
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout).toBe("mjs\n");
-  expect(exitCode).toBe(0);
+  const out = await Bun.file(join(String(dir), "out.js")).text();
+  expect(out).toContain('"./mods/foo.mjs"');
+  expect(out).not.toContain('"./mods/foo"');
+
+  for (const which of ["foo.mjs", "foo"]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "./out.js"],
+      env: { ...bunEnv, WHICH: which },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("mjs\n");
+    expect(exitCode).toBe(0);
+  }
 });

@@ -341,6 +341,30 @@ describe("bundler", () => {
     },
   });
 
+  // A dynamic import() miss in the closed map rejects the Promise like native
+  // import(), so .catch() observes it instead of a synchronous throw.
+  itBundled("allow-unresolved/StrictGlobImportMissRejects", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        const name = process.env.NAME;
+        import(\`./a/\${name}.js\`)
+          .then(m => console.log(m.default))
+          .catch(e => console.log("caught", e.code));
+      `,
+      "/a/foo.js": `export default "foo";`,
+    },
+    outdir: "/out",
+    allowUnresolved: [],
+    run: [
+      { env: { NAME: "foo" }, stdout: "foo" },
+      { env: { NAME: "bar" }, stdout: "caught MODULE_NOT_FOUND" },
+    ],
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("__glob(");
+    },
+  });
+
   // 23. A pattern that allows the shape keeps the runtime fallback next to the
   // bundled matches.
   itBundled("allow-unresolved/PatternGlobKeepsFallback", {

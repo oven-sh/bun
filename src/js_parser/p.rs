@@ -786,6 +786,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
+/// How a sub-expression contributes to a dynamic specifier shape.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ShapePart {
+    /// The expression's static shape was appended to the buffer (it may
+    /// contain placeholders from nested dynamic parts).
+    Appended,
+    /// Unknown at compile time: the caller adds one placeholder for it.
+    Opaque,
+    /// A literal NUL would be confused with the placeholder marker, so the
+    /// whole specifier cannot be shaped.
+    Poison,
+}
+
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) const ALLOW_MACROS: bool = !cfg!(target_family = "wasm");
 
@@ -805,7 +818,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         arg: Expr,
         buf: &'b mut BumpVec<'a, u8>,
     ) -> Result<&'b [u8], crate::Error> {
-        if self.append_dynamic_specifier_shape(arg, buf, 0)? {
+        if self.append_dynamic_specifier_shape(arg, buf, 0)? == ShapePart::Appended {
             Ok(buf.as_slice())
         } else {
             buf.clear();
@@ -833,64 +846,86 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(true)
     }
 
-    /// Appends `arg`'s static shape to `buf`; `false` means nothing was
-    /// appended (`buf` is truncated back to its entry length).
+    /// Appends `arg`'s static shape to `buf`. On `Opaque` and `Poison`
+    /// nothing is appended (`buf` is truncated back to its entry length).
     fn append_dynamic_specifier_shape(
         &mut self,
         arg: Expr,
         buf: &mut BumpVec<'a, u8>,
         depth: u32,
-    ) -> Result<bool, crate::Error> {
+    ) -> Result<ShapePart, crate::Error> {
+        use ShapePart::{Appended, Opaque, Poison};
         if depth >= 32 {
-            return Ok(false);
+            return Ok(Opaque);
         }
         let start = buf.len();
-        let ok = match &arg.data {
-            js_ast::ExprData::EString(s) => self.append_estring_rope(s, buf)?,
+        let part = match &arg.data {
+            js_ast::ExprData::EString(s) => {
+                if self.append_estring_rope(s, buf)? {
+                    Appended
+                } else {
+                    Poison
+                }
+            }
             js_ast::ExprData::ETemplate(tmpl) => 'tmpl: {
                 if tmpl.tag.is_some() {
-                    break 'tmpl false;
+                    break 'tmpl Opaque;
                 }
                 match &tmpl.head {
                     js_ast::e::TemplateContents::Cooked(head) => {
                         if !self.append_estring_rope(head, buf)? {
-                            break 'tmpl false;
+                            break 'tmpl Poison;
                         }
                     }
-                    js_ast::e::TemplateContents::Raw(_) => break 'tmpl false,
+                    js_ast::e::TemplateContents::Raw(_) => break 'tmpl Opaque,
                 }
-                let mut ok = true;
+                let mut out = Appended;
                 for part in tmpl.parts().iter() {
                     let value = part.value;
-                    if !self.append_dynamic_specifier_shape(value, buf, depth + 1)? {
-                        buf.push(0);
+                    match self.append_dynamic_specifier_shape(value, buf, depth + 1)? {
+                        Appended => {}
+                        Opaque => buf.push(0),
+                        Poison => {
+                            out = Poison;
+                            break;
+                        }
                     }
                     match &part.tail {
                         js_ast::e::TemplateContents::Cooked(tail) => {
                             if !self.append_estring_rope(tail, buf)? {
-                                ok = false;
+                                out = Poison;
                                 break;
                             }
                         }
                         js_ast::e::TemplateContents::Raw(_) => {
-                            ok = false;
+                            out = Opaque;
                             break;
                         }
                     }
                 }
-                ok
+                out
             }
-            js_ast::ExprData::EBinary(bin) if bin.op == js_ast::Op::Code::BinAdd => {
+            js_ast::ExprData::EBinary(bin) if bin.op == js_ast::Op::Code::BinAdd => 'add: {
                 let (l, r) = (bin.left, bin.right);
-                let ok_l = self.append_dynamic_specifier_shape(l, buf, depth + 1)?;
-                if !ok_l {
+                let part_l = self.append_dynamic_specifier_shape(l, buf, depth + 1)?;
+                if part_l == Poison {
+                    break 'add Poison;
+                }
+                if part_l == Opaque {
                     buf.push(0);
                 }
-                let ok_r = self.append_dynamic_specifier_shape(r, buf, depth + 1)?;
-                if !ok_r {
+                let part_r = self.append_dynamic_specifier_shape(r, buf, depth + 1)?;
+                if part_r == Poison {
+                    break 'add Poison;
+                }
+                if part_r == Opaque {
                     buf.push(0);
                 }
-                ok_l || ok_r
+                if part_l == Opaque && part_r == Opaque {
+                    Opaque
+                } else {
+                    Appended
+                }
             }
             js_ast::ExprData::EIdentifier(id) => {
                 let ref_ = id.ref_;
@@ -906,14 +941,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         return r;
                     }
                 }
-                false
+                Opaque
             }
-            _ => false,
+            _ => Opaque,
         };
-        if !ok {
+        if part != Appended {
             buf.truncate(start);
         }
-        Ok(ok)
+        Ok(part)
     }
 
     /// Relative, has a placeholder, and the static text before the first
@@ -1216,6 +1251,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let glob_args = match fallback {
             Some(fallback) => ExprNodeList::from_slice(&[map_obj, fallback]),
+            // Native `import()` rejects instead of throwing, so a miss with no
+            // fallback must reach `.catch()`. The third argument tells
+            // `__glob` to return a rejected Promise.
+            None if kind == ImportKind::Dynamic => {
+                let undef = self.new_expr(E::Undefined {}, loc);
+                let reject = self.new_expr(E::Number::new(1.0), loc);
+                ExprNodeList::from_slice(&[map_obj, undef, reject])
+            }
             None => ExprNodeList::init_one(map_obj),
         };
         let glob_call = self.call_runtime(loc, b"__glob", glob_args);

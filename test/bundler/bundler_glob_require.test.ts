@@ -240,6 +240,23 @@ describe("bundler", () => {
     },
   });
 
+  // A literal NUL anywhere in the specifier expression poisons the shape. It
+  // must not become a wildcard that globs the directory.
+  itBundled("glob-require/LiteralNulOperandNotGlobbed", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        const which = process.env.WHICH || "a";
+        try { require("./mods/" + which + "\\0"); } catch { console.log("caught"); }
+      `,
+      "/mods/a.js": `module.exports = 1;`,
+    },
+    run: { stdout: "caught" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__glob");
+    },
+  });
+
   // A `..` segment in the static text is normalized away in the map keys, so
   // the runtime string could never equal a key. The call must stay a runtime
   // call.

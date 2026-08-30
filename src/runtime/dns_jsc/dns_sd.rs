@@ -61,8 +61,7 @@ pub(crate) struct DNSServiceAttribute {
     _opaque: [u8; 0],
 }
 
-/// Status of a query that ended with no address: libinfo's `getaddrinfo` reports every
-/// such lookup as EAI_NONAME (`mdns_addrinfo`), whatever mDNSResponder's error was.
+/// No address: libinfo's `getaddrinfo` reports this as EAI_NONAME whatever the daemon's error was.
 pub(crate) const EMPTY_STATUS: c_int = libc::EAI_NONAME;
 
 pub(crate) fn protocol_for_family(family: bun_dns::Family) -> DNSServiceProtocol {

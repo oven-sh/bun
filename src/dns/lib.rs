@@ -464,11 +464,8 @@ impl Order {
     }
 }
 
-/// Whether a getaddrinfo-style lookup could ever answer `name`: a numeric address,
-/// or a host name within the RFC 1035 limits (labels of 1 to 63 bytes, 253 in
-/// all, one optional trailing dot) made of the bytes c-ares allows in a host name
-/// (`ares_is_hostnamech`) or of non-ASCII bytes (UTF-8 mDNS names). Anything
-/// else is EAI_NONAME without a resolver round trip, as with glibc and c-ares.
+/// A numeric address, or a host name within the RFC 1035 limits made of the bytes
+/// c-ares allows in one (`ares_is_hostnamech`) or of non-ASCII bytes (UTF-8 mDNS names).
 pub fn is_valid_hostname(name: &[u8]) -> bool {
     fn is_hostname_byte(b: u8) -> bool {
         b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'/' | b'*') || !b.is_ascii()

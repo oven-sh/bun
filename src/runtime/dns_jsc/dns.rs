@@ -3212,8 +3212,7 @@ pub mod internal {
         // touched under `global_cache().lock()`, which is held here.
         unsafe {
             if (*request).result.is_some() {
-                // Wakes the loop: this can run inside the dns_ready_head drain (a connect
-                // made from a connect-error callback), after the list was taken.
+                // Also wakes the loop: this can run inside the dns_ready_head drain itself.
                 query.notify_threadsafe(request);
                 return;
             }

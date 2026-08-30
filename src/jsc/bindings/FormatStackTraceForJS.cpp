@@ -598,21 +598,15 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(column_in);
 
-    // finalizeUnconditionally can run this from Heap::runEndPhase at an
-    // arbitrary GC safepoint while the suspended mutator has an unrelated
-    // pending exception (e.g. a module evaluation error captured mid
-    // CyclicModuleRecord::evaluate). Suspend it so tryClearException below
-    // only ever swallows an exception this computation itself raised; a
-    // pre-existing one belongs to the mutator and clearing it crashes the
-    // later reject-with-caught-exception site. Same pattern as
-    // TypeProfilerLog::processLogEntries.
+    // The GC end phase calls this while the mutator may be parked with its own
+    // pending exception (CyclicModuleRecord::evaluate between steps 9 and 9.d).
+    // Keep that exception out of reach of the clear below.
     JSC::SuspendExceptionScope suspendExceptionScope(vm);
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     WTF::String result = computeErrorInfoToString(vm, stackTrace, line, column, sourceURL);
     if (scope.exception()) {
-        // vm.setOnComputeErrorInfo doesn't handle a callback that throws.
-        // test/js/node/test/parallel/test-stream-writable-write-writev-finish.js trips the exception checker.
+        // The onComputeErrorInfo hook cannot propagate a throw.
         (void)scope.tryClearException();
         result = WTF::emptyString();
     }

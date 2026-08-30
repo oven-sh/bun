@@ -81,8 +81,7 @@ pub use bun_js_parser::options::AllowUnresolved;
 /// `glob_resolver` for the parser's template-literal `require()` / `import()`
 /// support: every file under `source_dir` matching `pattern`, each as the
 /// `./`- or `../`-prefixed POSIX-separated relative specifier the runtime
-/// string would have to equal. Hidden entries are skipped (`dot: false`), so
-/// a `**` walk never descends into `.git`.
+/// string would have to equal. Hidden entries are skipped (`dot: false`).
 pub fn parser_glob_resolver(source_dir: &[u8], pattern: &[u8]) -> Vec<Box<[u8]>> {
     let mut out: Vec<Box<[u8]>> = Vec::new();
     if !(pattern.starts_with(b"./") || pattern.starts_with(b"../")) {
@@ -105,9 +104,8 @@ pub fn parser_glob_resolver(source_dir: &[u8], pattern: &[u8]) -> Vec<Box<[u8]>>
     loop {
         match iter.next() {
             Ok(Ok(Some(abs))) => {
-                // `Loose` normalizes with host rules but emits `/` separators,
-                // so the key matches what the source builds at runtime on
-                // every platform.
+                // `Loose` emits `/` separators, so the key matches the
+                // string the source builds at runtime on every platform.
                 let rel = bun_paths::resolve_path::relative_platform::<
                     bun_paths::resolve_path::platform::Loose,
                     false,

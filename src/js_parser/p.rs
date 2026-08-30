@@ -1074,11 +1074,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         for m in matches.iter() {
             keys.push(self.arena.alloc_slice_copy(m));
         }
-        // `require("./src/" + name)` passes `./src/cat` for `./src/cat.js`.
-        // The alias record's path is the stem, so the bundler resolves it with
-        // its extension order exactly like a hand-written `require("./src/cat")`.
-        // Only stems the runtime string can still produce are added: they must
-        // end with the static text after the last placeholder.
+        // `require("./src/" + name)` passes the stem `./src/cat` for
+        // `./src/cat.js`, so also alias each stem the runtime string can
+        // produce (it must end with the static text after the last placeholder).
         let static_suffix = &shape[strings::last_index_of_char(shape, 0).map_or(0, |i| i + 1)..];
         for i in 0..matches.len() {
             let Some(stem) = Self::glob_resolvable_stem(keys[i]) else {
@@ -1164,11 +1162,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             loc,
         );
 
-        // On a map miss `__glob` hands the specifier to the runtime
-        // `require`/`import()`, so a file that is not in the bundle loads the
-        // same way it did before the call was rewritten. That is runtime
-        // resolution, so it exists only where `allowUnresolved` permits it;
-        // under `--reject-unresolved` the map is a closed set and a miss throws.
+        // On a map miss `__glob` falls back to the runtime `require`/`import()`.
+        // That is runtime resolution, so no fallback is emitted when
+        // `allowUnresolved` forbids the shape; a miss then throws.
         let fallback = if !self.options.allow_unresolved.allows(shape) {
             None
         } else if kind == ImportKind::Require {
